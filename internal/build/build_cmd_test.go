@@ -30,8 +30,8 @@ func (s stubAPIIndexer) RunQuiet() error {
 func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)
@@ -68,8 +68,8 @@ func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)
@@ -130,6 +130,19 @@ func TestShouldRetryWire(t *testing.T) {
 	nonRetryable := `wire: /private/tmp/test/wire/app.go:181:14: queue.DriverSync undefined`
 	if shouldRetryWire(nonRetryable) {
 		t.Fatalf("expected direct symbol error not to be retryable")
+	}
+}
+
+func TestBuildArgsAppendDefaultPackageWhenOnlyFlagsProvided(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/app: %v", err)
+	}
+	cmd := &Cmd{Root: root, Args: []string{"-o", "./bin/app"}}
+	got := cmd.buildArgs()
+	want := []string{"-o", "./bin/app", "./cmd/app"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("build args = %#v, want %#v", got, want)
 	}
 }
 
@@ -236,8 +249,8 @@ go get github.com/goforj/storage/driver/redisstorage`)
 func TestBuildProgressMarkers(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)

@@ -103,7 +103,7 @@ This creates `internal/events/user_registered_event.go` with a typed event and `
 forj make:subscriber billing:invoice-paid
 ```
 
-This creates a colocated subscriber, wires its provider into `wire/inject_event_subscribers.go`, and subscribes it to the default event bus. Use `--bus audit` to subscribe through a named event bus configured by `EVENTS_AUDIT_DRIVER`.
+This creates a colocated subscriber, wires its provider into `wire/inject_subscribers_app.go`, and subscribes it to the default event bus. Use `--bus audit` to subscribe through a named event bus configured by `EVENTS_AUDIT_DRIVER`.
 
 ## Behavior notes
 

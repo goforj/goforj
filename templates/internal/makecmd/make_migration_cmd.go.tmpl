@@ -25,9 +25,9 @@ type MigrationCmd struct {
 	EditorCommand string `name:"editor" env:"FORJ_EDITOR" hidden:""`
 }
 
-// Signature exposes make:migration as skip-boot metadata because migrations can be scaffolded before DB startup.
+// Signature exposes make:migration as preboot metadata because migrations can be scaffolded before DB startup.
 func (*MigrationCmd) Signature() string {
-	return `name:"make:migration" help:"Create a new migration" goforj:"skip_boot"`
+	return `name:"make:migration" help:"Create a new migration" goforj:"preboot"`
 }
 
 // NewMigrationCmd keeps migration generation dependency-free so every generated app can create migrations.

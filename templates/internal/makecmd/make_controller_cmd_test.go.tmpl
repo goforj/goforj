@@ -10,11 +10,11 @@ func TestControllerCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	t.Chdir(root)
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
-	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_http_controllers.go"), `package wire
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_http_controllers_app.go"), `package wire
 
-import "github.com/google/wire"
+import "github.com/goforj/wire"
 
-var httpAppControllerSet = wire.NewSet(
+var appHttpControllerSet = wire.NewSet(
 )
 `)
 	writeMakeCmdTestFile(t, filepath.Join("internal", "router", "routes_registry.go"), `package router
@@ -38,7 +38,7 @@ func ProvideAppRoutes(
 		"package reports",
 		`web.NewRoute(http.MethodGet, "/billing/reports", c.Get)`,
 	})
-	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_http_controllers.go"), []string{
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_http_controllers_app.go"), []string{
 		`billingReports "example.com/testapp/internal/billing/reports"`,
 		"billingReports.NewController",
 	})
@@ -54,7 +54,7 @@ func ProvideAppRoutes(
 	}
 
 	assertMakeCmdTestFileMissing(t, outputPath)
-	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_http_controllers.go"), []string{
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_http_controllers_app.go"), []string{
 		`billingReports "example.com/testapp/internal/billing/reports"`,
 		"billingReports.NewController",
 	})

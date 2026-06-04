@@ -1,0 +1,26 @@
+package observability
+
+import (
+	"context"
+
+	"{{.GoModuleName}}/internal/inspects"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+	"{{.GoModuleName}}/internal/storages"
+)
+
+// StorageObserver records storage operations through the configured observability sinks.
+func StorageObserver(
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) storages.Observer {
+	return storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
+		inspectManager.RecordStorageEvent(ctx, event)
+{{- if .Components.Metrics }}
+		metricsManager.RecordStorageOperation(ctx, event)
+{{- end }}
+	})
+}

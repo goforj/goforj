@@ -58,7 +58,7 @@ type cacheShellLaunch struct {
 
 // Signature defines CLI metadata for this command.
 func (*CacheShellCmd) Signature() string {
-	return `name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"skip_boot"`
+	return `name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.

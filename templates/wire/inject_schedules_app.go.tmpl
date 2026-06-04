@@ -1,15 +1,15 @@
-package wire
-
-// App-owned schedule wiring. This file is rendered once and preserved.
+// App-owned Wire injector. EDIT THIS FILE.
 // Add application schedule providers here, or use `forj make:schedule`.
 
+package wire
+
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"{{.GoModuleName}}/internal/schedules"
 )
 
-// schedulerScheduleSet contains application-owned schedule providers.
-var schedulerScheduleSet = wire.NewSet(
+// appScheduleSet contains application-owned schedule providers.
+var appScheduleSet = wire.NewSet(
 	ProvideAppSchedules,
 )
 

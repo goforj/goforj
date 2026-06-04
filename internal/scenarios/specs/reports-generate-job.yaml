@@ -35,8 +35,8 @@ markdown:
     - internal/reports/service_test.go
     - internal/jobs/generate_job.go
     - internal/notifications/service.go
-    - wire/inject_app_services.go
-    - wire/inject_jobs_app.go
+    - app/wire/inject_services_app.go
+    - app/wire/inject_jobs_app.go
   file_groups:
     - title: Configuration
       files:
@@ -48,13 +48,13 @@ markdown:
     - title: Jobs
       files:
         - internal/jobs/generate_job.go
-        - wire/inject_jobs_app.go
+        - app/wire/inject_jobs_app.go
     - title: Notifications
       files:
         - internal/notifications/service.go
     - title: App wiring
       files:
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   generated_files:
     intro: "The queue and storage generators update generated manager and accessor files."
     files:
@@ -319,7 +319,7 @@ steps:
     explain: |
       Register the job constructor from `internal/jobs`.
     replace:
-      path: wire/inject_jobs_app.go
+      path: app/wire/inject_jobs_app.go
       language: go
       old: |
                 "{{module}}/internal/reports"
@@ -329,7 +329,7 @@ steps:
     explain: |
       The App service set owns this job because notifications depend on its queueing interface.
     replace:
-      path: wire/inject_jobs_app.go
+      path: app/wire/inject_jobs_app.go
       language: go
       old: |
                 reports.NewGenerateJob,
@@ -418,7 +418,7 @@ steps:
     explain: |
       Add the report storage provider and report service constructor.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         import (
@@ -430,7 +430,7 @@ steps:
     explain: |
       Add imports for the report service and generated storage manager.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 "{{module}}/internal/notifications"
@@ -444,7 +444,7 @@ steps:
     explain: |
       The report service receives the named `reports` storage disk.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 provideEventBus,
@@ -459,7 +459,7 @@ steps:
     explain: |
       `provideReportStorage` selects the generated named storage resource.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         func provideEventBus(manager *events.Manager) events.Bus {

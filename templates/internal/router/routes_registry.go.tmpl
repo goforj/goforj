@@ -21,20 +21,6 @@ type AppRoutes struct {
 	protected []web.Route
 }
 
-{{if and .Components.DemoApp .Components.HasDatabase}}
-func splitMonitoringRoutes(routes []web.Route) (publicRoutes []web.Route, protectedRoutes []web.Route) {
-	for _, route := range routes {
-		switch route.Path() {
-		case "/monitoring/status-page", "/monitoring/monitors/:id/favicon", "/monitoring/monitors/:id/push":
-			publicRoutes = append(publicRoutes, route)
-		default:
-			protectedRoutes = append(protectedRoutes, route)
-		}
-	}
-	return publicRoutes, protectedRoutes
-}
-{{end}}
-
 // ProvideAppRoutes is a function that returns a slice of routes.
 func ProvideAppRoutes(
 	{{if and .Components.Auth .Components.HasDatabase}}authController *auth.Controller,{{end}}
@@ -53,12 +39,12 @@ func ProvideAppRoutes(
 	{{if and .Components.DemoApp .Components.HasDatabase}}
 		{{if and .Components.Auth .Components.HasDatabase}}
 	protectedRoutes = append(protectedRoutes, appsettingsController.Routes()...)
-	monitoringPublicRoutes, monitoringProtectedRoutes := splitMonitoringRoutes(monitoringController.Routes())
-	publicRoutes = append(publicRoutes, monitoringPublicRoutes...)
-	protectedRoutes = append(protectedRoutes, monitoringProtectedRoutes...)
+	publicRoutes = append(publicRoutes, monitoringController.PublicRoutes()...)
+	protectedRoutes = append(protectedRoutes, monitoringController.ProtectedRoutes()...)
 		{{else}}
 	publicRoutes = append(publicRoutes, appsettingsController.Routes()...)
-	publicRoutes = append(publicRoutes, monitoringController.Routes()...)
+	publicRoutes = append(publicRoutes, monitoringController.PublicRoutes()...)
+	publicRoutes = append(publicRoutes, monitoringController.ProtectedRoutes()...)
 		{{end}}
 	{{end}}
 	return &AppRoutes{
@@ -76,7 +62,7 @@ func ProvideRoutes(r *AppRoutes{{if and .Components.Auth .Components.HasDatabase
 	}
 	if len(r.protected) > 0 {
 		{{if and .Components.Auth .Components.HasDatabase}}
-		groups = append(groups, web.NewRouteGroup("/api/v1", r.protected, authService.RequireAuth()).WithMiddlewareNames("auth.RequireAuth"))
+		groups = append(groups, web.NewRouteGroup("/api/v1", r.protected, authService.RequireAuth))
 		{{else}}
 		groups = append(groups, web.NewRouteGroup("/api/v1", r.protected))
 		{{end}}

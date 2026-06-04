@@ -43,7 +43,7 @@ markdown:
     - internal/notifications/service.go
     - internal/notifications/subscribers.go
     - internal/app/lifecycle_registry.go
-    - wire/inject_app_services.go
+    - app/wire/inject_services_app.go
   file_groups:
     - title: Configuration
       files:
@@ -65,7 +65,7 @@ markdown:
     - title: Lifecycle and wiring
       files:
         - internal/app/lifecycle_registry.go
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   generated_files:
     intro: "The event generator may update generated event manager files."
     files:
@@ -576,7 +576,7 @@ steps:
     explain: |
       Add the event publisher and notification subscriber providers.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 "{{module}}/internal/makecmd"
@@ -588,7 +588,7 @@ steps:
     explain: |
       `provideEventBus` exposes the generated default event bus to the application publisher.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 users.NewService,
@@ -604,7 +604,7 @@ steps:
     explain: |
       Wire can now satisfy `users.NewUserEventPublisher`.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {

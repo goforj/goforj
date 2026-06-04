@@ -13,11 +13,11 @@ import (
 
 // Cmd runs the forj build pipeline.
 type Cmd struct {
-	logger   *logger.AppLogger
-	pipeline Pipeline
-	Timings  bool `help:"Print per-step timings for generate, api index, and go build"`
-	SkipWire bool `help:"Skip running wire before build" hidden:""`
-	AutoRun  bool `help:"Build binary so launching it with no args runs the app runtime command"`
+	logger        *logger.AppLogger
+	pipeline      Pipeline
+	Timings       bool   `help:"Print per-step timings for generate, api index, and go build"`
+	SkipWire      bool   `help:"Skip running wire before build" hidden:""`
+	AutoRun       bool   `help:"Build binary so launching it with no args runs the app runtime command"`
 	DefaultLaunch string `help:"Set compiled default command used when the built binary is launched without args"`
 	EnvDefaults   string `help:"Compile unset-only environment defaults as comma-separated KEY=value pairs"`
 	EnvOverrides  string `help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
@@ -26,11 +26,11 @@ type Cmd struct {
 	Profile bool `help:"Profile compile time for this build"`
 	Top     int  `help:"Limit profile results" default:"12"`
 
-	Root           string   `help:"Project root to build" default:"."`
-	Args           []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
-	compileProfile CompileProfileReport
+	Root            string   `help:"Project root to build" default:"."`
+	Args            []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
+	compileProfile  CompileProfileReport
 	lastBuildStatus string
-	goGetFunc      func([]string) error
+	goGetFunc       func([]string) error
 }
 
 func NewCmd(logger *logger.AppLogger, apiIndex *APIIndexRunner) *Cmd {
@@ -96,13 +96,57 @@ func (c *Cmd) buildArgs() []string {
 		if len(extraLdflags) > 0 {
 			args = append(args, "-ldflags", strings.Join(extraLdflags, " "))
 		}
-		return append(args, ".")
+		return append(args, defaultBuildPackage(c.Root))
 	}
 	args := append([]string{}, c.Args...)
+	if !hasGoBuildPackageArg(args) {
+		args = append(args, defaultBuildPackage(c.Root))
+	}
 	if len(extraLdflags) == 0 {
 		return args
 	}
 	return c.withExtraLdflags(args, extraLdflags...)
+}
+
+// hasGoBuildPackageArg reports whether pass-through go build args already name the package to build.
+func hasGoBuildPackageArg(args []string) bool {
+	flagsWithValue := map[string]struct{}{
+		"-asmflags": {}, "-buildmode": {}, "-compiler": {}, "-gccgoflags": {}, "-gcflags": {},
+		"-installsuffix": {}, "-ldflags": {}, "-mod": {}, "-modfile": {},
+		"-o": {}, "-overlay": {}, "-p": {}, "-pkgdir": {}, "-tags": {}, "-toolexec": {},
+	}
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+		if arg == "--" {
+			return i+1 < len(args)
+		}
+		if strings.HasPrefix(arg, "-") {
+			if strings.Contains(arg, "=") {
+				continue
+			}
+			// Some go build flags consume the next arg, so that value is not a package path.
+			if _, ok := flagsWithValue[arg]; ok && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// defaultBuildPackage keeps generated projects building the real app entrypoint instead of the framework root.
+func defaultBuildPackage(root string) string {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
+		return "./cmd/app"
+	}
+	return "."
 }
 
 func outputArgIndex(args []string) int {

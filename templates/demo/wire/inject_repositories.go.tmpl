@@ -1,25 +1,23 @@
 package wire
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
-	"{{.GoModuleName}}/internal/monitoring"
 	"{{.GoModuleName}}/internal/notification"
 )
 
 // repositorySet is a wire set for generated repositories.
 // Add repository providers here as you generate them.
 var repositorySet = wire.NewSet(
-	wire.Value(repositorySetPlaceholder{}),
-	models.NewIncidentRepo,
+	appsettings.NewAppSettingRepo,
 	models.NewAlertDispatchEventRepo,
+	models.NewIncidentRepo,
 	models.NewMonitorCheckRepo,
 	models.NewMonitorCheckRollupRepo,
 	models.NewMonitorRepo,
-	appsettings.NewAppSettingRepo,
-	monitoring.NewRetentionService,
 	notification.NewChannelRepo,
+	wire.Value(repositorySetPlaceholder{}),
 )
 
 // repositorySetPlaceholder keeps repositorySet non-empty until repos are generated.

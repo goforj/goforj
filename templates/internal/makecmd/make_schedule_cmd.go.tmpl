@@ -39,7 +39,7 @@ func NewScheduleCmd() *ScheduleCmd {
 
 // Signature defines CLI metadata for this command.
 func (*ScheduleCmd) Signature() string {
-	return `name:"make:schedule" help:"Create a new schedule" goforj:"skip_boot"`
+	return `name:"make:schedule" help:"Create a new schedule" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.
@@ -167,7 +167,7 @@ func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outp
 
 // injectIntoWireFile registers the generated schedule provider with the app scheduler wire set.
 func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
-	injectPath := "./wire/inject_scheduler_schedules.go"
+	injectPath := firstExistingGeneratedPath("./app/wire/inject_schedules_app.go", "./app/wire/inject_scheduler_schedules.go", "./wire/inject_schedules_app.go", "./wire/inject_scheduler_schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -187,13 +187,13 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 
 	data, err := os.ReadFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("reading inject_schedules_app.go: %w", err)
 	}
 	lines := strings.Split(string(data), "\n")
 	lines = scheduleInsertImportIfMissing(lines, importPath, importAliasForPackageRef(pkgName, pkgRef))
 
 	for i, line := range lines {
-		if strings.HasPrefix(line, "var schedulerScheduleSet = wire.NewSet(") {
+		if strings.HasPrefix(line, "var appScheduleSet = wire.NewSet(") {
 			closingIndex := -1
 			for j := i + 1; j < len(lines); j++ {
 				if strings.TrimSpace(lines[j]) == ")" {
@@ -216,10 +216,10 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 
 	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
 	if err != nil {
-		return fmt.Errorf("gofmt inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("gofmt inject_schedules_app.go: %w", err)
 	}
 	if err := os.WriteFile(injectPath, formatted, 0644); err != nil {
-		return fmt.Errorf("writing inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("writing inject_schedules_app.go: %w", err)
 	}
 
 	console.Successf("injected into %s: %s", injectPath, constructor)
@@ -227,7 +227,7 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 }
 
 func (c *ScheduleCmd) removeFromWireFile(structName string) error {
-	injectPath := "./wire/inject_scheduler_schedules.go"
+	injectPath := firstExistingGeneratedPath("./app/wire/inject_schedules_app.go", "./app/wire/inject_scheduler_schedules.go", "./wire/inject_schedules_app.go", "./wire/inject_scheduler_schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -246,7 +246,7 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("reading inject_schedules_app.go: %w", err)
 	}
 	original := append([]string{}, lines...)
 	var removed bool

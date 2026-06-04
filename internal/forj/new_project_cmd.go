@@ -185,7 +185,11 @@ func (m *model) finalizeConfig() {
 		SoundOnWatchError: true,
 		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
-		WirePaths:         []string{"wire"},
+		WirePaths:         []string{project.DefaultAppTarget().WireDir},
+	}
+	m.config.App = project.AppConfig{
+		DefaultTarget: project.DefaultAppTargetName,
+		Targets:       []project.AppTarget{project.DefaultAppTarget()},
 	}
 
 	if components.Docker {
@@ -221,7 +225,7 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile wire/wire_gen\\.go$ -postpone",
+			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
 			Exec:  "forj build -o ./bin/app",
 		})
 	}
@@ -558,14 +562,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.extrasIndex = 1
 				}
 				return m, nil
-				case "enter":
-					m.applyExtrasSelection()
-					m.stage = StageProjectPath
-					if m.pathInput.Value() == "" {
-						m.pathInput.SetValue(m.defaultTargetPath())
-					}
-					m.pathInput.Focus()
-					return m, nil
+			case "enter":
+				m.applyExtrasSelection()
+				m.stage = StageProjectPath
+				if m.pathInput.Value() == "" {
+					m.pathInput.SetValue(m.defaultTargetPath())
+				}
+				m.pathInput.Focus()
+				return m, nil
 			}
 
 		case StageRuntime:
@@ -595,12 +599,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queueDriverList, cmd = m.queueDriverList.Update(msg)
 			return m, cmd
 
-			case StageProjectPath:
-				switch msg.Type {
-				case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-					m.stage = StageExtras
-					return m, nil
-				}
+		case StageProjectPath:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageExtras
+				return m, nil
+			}
 
 			switch msg.String() {
 			case "enter":

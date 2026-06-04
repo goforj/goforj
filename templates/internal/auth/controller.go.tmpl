@@ -27,20 +27,20 @@ func (c *Controller) Routes() []web.Route {
 		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/start", c.StartOAuth),
 		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/callback", c.CompleteOAuth),
 		web.NewRoute(http.MethodPost, "/auth/oauth/:provider/callback", c.CompleteOAuth),
-		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/link/start", c.StartOAuthLink, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/link/start", c.StartOAuthLink, c.auth.RequireAuth),
 		{{- end }}
-		web.NewRoute(http.MethodPost, "/auth/email-verification/request", c.RequestEmailVerification, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/email-verification/request", c.RequestEmailVerification, c.auth.RequireAuth),
 		web.NewRoute(http.MethodPost, "/auth/email-verification/confirm", c.VerifyEmail),
 		web.NewRoute(http.MethodPost, "/auth/password-reset/request", c.RequestPasswordReset),
 		web.NewRoute(http.MethodPost, "/auth/password-reset/confirm", c.ResetPassword),
-		web.NewRoute(http.MethodPost, "/auth/change-password", c.ChangePassword, c.auth.RequireAuth()),
-		web.NewRoute(http.MethodPost, "/auth/profile", c.UpdateProfile, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/change-password", c.ChangePassword, c.auth.RequireAuth),
+		web.NewRoute(http.MethodPost, "/auth/profile", c.UpdateProfile, c.auth.RequireAuth),
 		web.NewRoute(http.MethodPost, "/auth/logout", c.Logout),
-		web.NewRoute(http.MethodPost, "/auth/logout-all", c.LogoutAll, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/logout-all", c.LogoutAll, c.auth.RequireAuth),
 		web.NewRoute(http.MethodPost, "/auth/refresh", c.Refresh),
-		web.NewRoute(http.MethodGet, "/auth/me", c.Me, c.auth.RequireAuth()),
-		web.NewRoute(http.MethodGet, "/auth/sessions", c.Sessions, c.auth.RequireAuth()),
-		web.NewRoute(http.MethodPost, "/auth/sessions/:id/revoke", c.RevokeSession, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodGet, "/auth/me", c.Me, c.auth.RequireAuth),
+		web.NewRoute(http.MethodGet, "/auth/sessions", c.Sessions, c.auth.RequireAuth),
+		web.NewRoute(http.MethodPost, "/auth/sessions/:id/revoke", c.RevokeSession, c.auth.RequireAuth),
 	}
 }
 

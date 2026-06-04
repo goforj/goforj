@@ -46,7 +46,7 @@ type healthProbeCheck struct {
 
 // Signature defines CLI metadata for this command.
 func (*HealthCmd) Signature() string {
-	return `name:"health" help:"Query a live app readiness or liveness endpoint" goforj:"skip_boot"`
+	return `name:"health" help:"Query a live app readiness or liveness endpoint" goforj:"preboot"`
 }
 
 // NewHealthCmd creates a new HealthCmd.

@@ -47,7 +47,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	maintainerHelp := maintainerHelpEnabled()
 
 	// If the selected node is a command, print its flags/help. Standalone
-	// skip-boot commands are both the selected command and the parser root.
+	// preboot commands are both the selected command and the parser root.
 	if node.Type == kong.CommandNode && (node != ctx.Model.Node || len(node.Children) == 0) {
 		printCommandHelp(out, node)
 		return nil

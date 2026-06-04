@@ -1,0 +1,52 @@
+package observability
+
+{{- if .Components.Jobs }}
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/queue"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+func TestQueueWorkflowLogIncludesQueueName(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_PREFIX", "Test › Jobs")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	appLogger := logger.NewAppLogger()
+	entries := make([]logger.LogEntry, 0, 1)
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	inspectManager := inspects.NewManager(store)
+
+	logQueueWorkflowEvent(appLogger, inspectManager, app.WithSource(context.Background(), app.SourceJobs), queue.Event{
+		Kind:    queue.EventProcessSucceeded,
+		Queue:   "reports",
+		JobType: "reports:generate",
+		Driver:  queue.DriverWorkerpool,
+	})
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 job log entry, got %d", len(entries))
+	}
+	if entries[0].Message != "Job processed" {
+		t.Fatalf("expected Job processed message, got %q", entries[0].Message)
+	}
+	if got := entries[0].Fields["queue"]; got != "reports" {
+		t.Fatalf("expected queue field %q, got %#v", "reports", got)
+	}
+	if got := entries[0].Fields["name"]; got != "reports:generate" {
+		t.Fatalf("expected job name field %q, got %#v", "reports:generate", got)
+	}
+}
+{{- end }}

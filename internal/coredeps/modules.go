@@ -41,7 +41,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/storage/driver/s3storage":      "v0.4.6",
 	"github.com/goforj/storage/driver/sftpstorage":    "v0.4.6",
 	"github.com/goforj/storage/storagecore":           "v0.4.6",
-	"github.com/goforj/web":                           "v0.4.1",
+	"github.com/goforj/web":                           "v0.4.2",
 	"github.com/goforj/str":                           "v1.2.0",
 	"github.com/nats-io/nats.go":                      "v1.50.0",
 }

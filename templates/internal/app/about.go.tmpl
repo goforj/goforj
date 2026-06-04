@@ -303,7 +303,7 @@ func (s *AboutService) Build() AboutReport {
 		},
 		Build: AboutBuild{
 			Components:    aboutComponents(),
-			WireGenerated: aboutPresence(filepath.Join("wire", "wire_gen.go")),
+			WireGenerated: aboutPresence(filepath.Join("app", "wire", "wire_gen.go")),
 {{- if .Components.WebUI }}
 			FrontendDist: aboutPresence(filepath.Join("frontend", "dist", "index.html")),
 {{- end }}

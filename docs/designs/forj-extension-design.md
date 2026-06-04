@@ -432,7 +432,7 @@ Example:
 package billingext
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"github.com/goforj/extension"
 )
 
@@ -535,7 +535,7 @@ package wire
 
 import (
 	"github.com/acme/goforj-billing-ext/billingext"
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 )
 
 var extensionSet = wire.NewSet(

@@ -80,7 +80,7 @@ This means JWTs are not treated as the only source of truth.
 
 Generated auth middleware follows this flow:
 
-1. `RequireAuth()` first tries the access cookie.
+1. `RequireAuth` first tries the access cookie.
 2. If the access token is missing or expired, it attempts refresh.
 3. If refresh succeeds, cookies rotate and the request continues.
 4. Otherwise the request returns `401`, and dedicated auth endpoints such as refresh or logout own cookie invalidation.
@@ -200,7 +200,7 @@ Important `auth_sessions` fields include:
 Require auth on a route:
 
 ```go
-web.NewRoute(http.MethodGet, "/auth/me", controller.Me, authService.RequireAuth())
+web.NewRoute(http.MethodGet, "/auth/me", controller.Me, authService.RequireAuth)
 ```
 
 Read the authenticated user inside a handler:

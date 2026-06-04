@@ -43,7 +43,7 @@ func currentCommandPrefix() string {
 	}
 	normalized := filepath.ToSlash(command)
 	if isGoRunCommandPath(normalized) {
-		return "go run ."
+		return "go run ./cmd/app"
 	}
 	return command
 }

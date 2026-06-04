@@ -33,9 +33,9 @@ markdown:
     - internal/uploads/service.go
     - internal/uploads/service_test.go
     - internal/uploads/controller.go
-    - wire/inject_app_services.go
-    - wire/inject_http_controllers.go
-    - internal/router/routes_registry.go
+    - app/wire/inject_services_app.go
+    - app/wire/inject_http_controllers_app.go
+    - app/routes.go
   file_groups:
     - title: Configuration
       files:
@@ -47,11 +47,11 @@ markdown:
         - internal/uploads/controller.go
     - title: HTTP registration
       files:
-        - wire/inject_http_controllers.go
-        - internal/router/routes_registry.go
+        - app/wire/inject_http_controllers_app.go
+        - app/routes.go
     - title: App wiring
       files:
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   generated_files:
     intro: "The storage generator updates:"
     files:
@@ -300,11 +300,11 @@ steps:
 
   - title: Wire The Disk And Service
     explain: |
-      Open `wire/inject_app_services.go`.
+      Open `app/wire/inject_services_app.go`.
 
       The App can now provide `UploadService` with the named disk.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         import (
@@ -316,7 +316,7 @@ steps:
     explain: |
       Add imports for the generated storage manager and uploads package.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 "{{module}}/internal/makecmd"
@@ -329,7 +329,7 @@ steps:
     explain: |
       Add the named disk provider and upload service constructor.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 provideUserProfileCache,
@@ -342,7 +342,7 @@ steps:
     explain: |
       `provideUploadsDisk` selects the generated named storage resource.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {

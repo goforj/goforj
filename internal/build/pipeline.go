@@ -394,17 +394,27 @@ func (p Pipeline) runAPIIndex() (string, error) {
 	return status, nil
 }
 
+// loadWirePaths reads project-configured Wire roots and falls back to the generated app layout.
 func loadWirePaths() []string {
 	config, err := project.LoadProjectConfig()
 	if err != nil {
-		return []string{"wire"}
+		return defaultWirePaths()
 	}
 	if len(config.Dev.WirePaths) == 0 {
-		return []string{"wire"}
+		return defaultWirePaths()
 	}
 	return config.Dev.WirePaths
 }
 
+// defaultWirePaths prefers app/wire so rendered projects do not depend on the legacy root wire directory.
+func defaultWirePaths() []string {
+	if hasDir(filepath.Join("app", "wire")) {
+		return []string{filepath.Join("app", "wire")}
+	}
+	return []string{"wire"}
+}
+
+// hasDir treats missing paths as a normal layout probe instead of an error.
 func hasDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()

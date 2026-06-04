@@ -14,9 +14,9 @@ Examples:
 - `internal/router/routes_registry.go`
 - `internal/jobs/worker.go`
 - `wire/inject_cmd.go`
-- `wire/inject_http_controllers.go`
+- `wire/inject_http_controllers_app.go`
 - `wire/inject_jobs_app.go`
-- `wire/inject_app_services.go`
+- `wire/inject_services_app.go`
 
 That works, but it makes the App composition surface feel scattered. For larger projects, users may reach for "services" or "modules" to create a clearer shape. That risks inventing a second model.
 
@@ -68,22 +68,20 @@ platform/
 
   app/
     commands.go
+    root_cmd.go
     routes.go
-    jobs.go
-    events.go
-    schedules.go
-    providers.go
 
     wire/
       wire.go
       wire_gen.go
       inject_cmd.go
+      inject_cmd_app.go
       inject_http.go
-      inject_http_controllers.go
+      inject_http_controllers_app.go
       inject_jobs.go
       inject_jobs_app.go
-      inject_repositories.go
-      inject_app_services.go
+      inject_repositories_app.go
+      inject_services_app.go
 
   internal/
     billing/
@@ -113,23 +111,21 @@ platform/
       main.go
 
   app/
+    commands.go
+    root_cmd.go
     routes.go
-    jobs.go
-    schedules.go
-    providers.go
     wire/
 
     billing/
+      commands.go
+      root_cmd.go
       routes.go
-      jobs.go
-      schedules.go
-      providers.go
       wire/
 
     reporting/
+      commands.go
+      root_cmd.go
       routes.go
-      jobs.go
-      providers.go
       wire/
 
   internal/
@@ -151,7 +147,11 @@ The fan-out rule is:
 
 > `internal/` owns behavior. `app/` and `app/<target>/` own exposure.
 
-Controllers, services, job handlers, subscribers, and domain-owned scheduled methods live under `internal/`. Routes, command registration, job registration, event subscription, schedule registration, provider selection, and Wire assembly live under the target.
+Controllers, services, job handlers, subscribers, and domain-owned scheduled methods live under `internal/`. Routes, command exposure, provider constructor selection, and Wire assembly live under the target. Dedicated target-level job, event, and schedule registry files should be added only when they own meaningful registration state; the current implementation keeps those registrations in generated internal runtime registries plus `app/wire/*` assembly.
+
+Provider constructors should not require a separate target-level `providers.go` file by default. The default generated shape keeps command exposure in `app/commands.go`, framework command assembly in `app/wire/inject_cmd.go`, and app-owned command provider constructors in `app/wire/inject_cmd_app.go`. Other provider constructors live in the relevant `app/wire/inject_*.go` file, such as `app/wire/inject_http_controllers_app.go`, `app/wire/inject_jobs_app.go`, or `app/wire/inject_repositories_app.go`.
+
+A target-level `providers.go` can still be created by users when they want a visible custom composition file, but it is not part of the default generator contract.
 
 Entrypoints under `cmd/<target>/` should stay thin. They should start the generated command surface for the target, not own routes, jobs, schedules, provider sets, or business workflows.
 
@@ -188,21 +188,29 @@ Runtime support can remain in generated `internal/...` packages when it is reusa
 Target composition should live in the App composition layer:
 
 - `app/commands.go` for the default target
+- `app/root_cmd.go` for the default target
 - `app/routes.go` for the default target
-- `app/jobs.go` for the default target
-- `app/events.go` for the default target
-- `app/schedules.go` for the default target
-- `app/providers.go` for the default target
+- `app/jobs.go` for the default target when a separate target-level job registry becomes useful
+- `app/events.go` for the default target when a separate target-level event registry becomes useful
+- `app/schedules.go` for the default target when a separate target-level schedule registry becomes useful
 - `app/wire/...` for the default target
 - `app/<target>/commands.go` for additional targets
+- `app/<target>/root_cmd.go` for additional targets
 - `app/<target>/routes.go` for additional targets
-- `app/<target>/jobs.go` for additional targets
-- `app/<target>/events.go` for additional targets
-- `app/<target>/schedules.go` for additional targets
-- `app/<target>/providers.go` for additional targets
+- `app/<target>/jobs.go` for additional targets when a separate target-level job registry becomes useful
+- `app/<target>/events.go` for additional targets when a separate target-level event registry becomes useful
+- `app/<target>/schedules.go` for additional targets when a separate target-level schedule registry becomes useful
 - `app/<target>/wire/...` for additional targets
 
 This keeps the App composition layer from becoming a dumping ground for business logic or low-level runtime implementation.
+
+For commands specifically:
+
+- `app/commands.go` defines the target's Kong command exposure.
+- `app/wire/inject_cmd.go` provides framework command assembly and the target root command.
+- `app/wire/inject_cmd_app.go` provides app-owned command constructors.
+- generated `make:command` updates both files for the active target.
+- legacy Apps can still fall back to `internal/cmd/app_commands.go` and `wire/inject_cmd.go`.
 
 ## Entrypoints
 
@@ -218,10 +226,9 @@ cmd/
     main.go
 
 app/
+  commands.go
+  root_cmd.go
   routes.go
-  jobs.go
-  schedules.go
-  providers.go
   wire/
 ```
 
@@ -237,21 +244,21 @@ cmd/
     main.go
 
 app/
+  commands.go
+  root_cmd.go
   routes.go
-  providers.go
   wire/
 
   billing/
+    commands.go
+    root_cmd.go
     routes.go
-    jobs.go
-    schedules.go
-    providers.go
     wire/
 
   reporting/
+    commands.go
+    root_cmd.go
     routes.go
-    jobs.go
-    providers.go
     wire/
 ```
 
@@ -295,6 +302,8 @@ forj <target> <command>
 ```
 
 If the first argument matches a configured App target, `forj` enters that target context and resolves the rest of the command against that target.
+
+The first implementation also supports binary dispatch: if `./bin/<target>` exists, `forj <target> ...` delegates to that binary with the remaining arguments. During dispatch, GoForj sets target identity environment defaults such as `FORJ_COMMAND_PREFIX=forj <target>`, `FORJ_APP_TARGET=<target>`, and `APP_TARGET=<target>` when those values are not already present.
 
 Examples:
 
@@ -342,13 +351,16 @@ Those binaries are built from `cmd/<target>/main.go`.
 
 In source-aware development, `forj` may delegate through the generated target command surface rather than requiring the binary to already exist.
 
+Current implementation note: built-binary dispatch exists for `forj <target> ...`. Full source-aware configured-target dispatch is still future work for named targets.
+
 ### Command Resolution
 
 Suggested resolution order:
 
 1. If the first argument is a native Framework command, run the native command.
-2. Else if the first argument is a configured target, set the active target and resolve the remaining command normally in that target context.
-3. Else resolve the command against the default target.
+2. Else if the first argument matches a built target binary at `./bin/<target>`, delegate the remaining arguments to that binary.
+3. Else if the first argument is a configured target, set the active target and resolve the remaining command normally in that target context.
+4. Else resolve the command against the default target.
 
 Target names should not be allowed to collide with native Framework commands such as `build`, `dev`, `render`, or `version`.
 
@@ -371,6 +383,8 @@ forj dev --target reporting
 ```
 
 If a generated App command collides with a native target-aware command, native commands should keep precedence. A collision escape hatch can remain explicit if needed.
+
+Current implementation note: `forj <target> build` works through binary dispatch once `./bin/<target>` exists. Native source-mode target scoping for configured targets remains future work.
 
 ## Build And Dev
 
@@ -433,8 +447,29 @@ Updates:
 
 ```text
 app/routes.go
-app/wire/inject_http_controllers.go
+app/wire/inject_http_controllers_app.go
 ```
+
+For commands:
+
+```bash
+forj make:command hello:test
+```
+
+Creates:
+
+```text
+internal/hello/test_cmd.go
+```
+
+Updates:
+
+```text
+app/commands.go
+app/wire/inject_cmd_app.go
+```
+
+`app/commands.go` exposes the command on the target root command. `app/wire/inject_cmd_app.go` registers the app-owned command constructor with Wire. The framework-owned `app/wire/inject_cmd.go` should remain stable and include `appCommandSet`. The generator should not create or require `app/providers.go` for command registration.
 
 In a multi-target project, the target prefix should scope registration:
 
@@ -462,10 +497,16 @@ Project-wide settings include:
 - dependency versions
 - shared local development defaults
 
-Target-specific settings include:
+Implemented target settings include:
 
 - target name
-- binary name
+- entrypoint path
+- composition directory
+- Wire directory
+
+Future target-specific settings may include:
+
+- binary name when it differs from the target name
 - supported runtimes
 - default launch behavior
 - process identity
@@ -478,18 +519,33 @@ Possible shape:
 app:
   default_target: app
   targets:
-    app:
-      binary: app
-      runtimes: [api, worker, scheduler]
-    billing:
-      binary: billing
-      runtimes: [api, worker, scheduler]
-    reporting:
-      binary: reporting
-      runtimes: [api, worker]
+    - name: app
+      entrypoint: cmd/app/main.go
+      app_dir: app
+      wire_dir: app/wire
+    - name: billing
+      entrypoint: cmd/billing/main.go
+      app_dir: app/billing
+      wire_dir: app/billing/wire
+    - name: reporting
+      entrypoint: cmd/reporting/main.go
+      app_dir: app/reporting
+      wire_dir: app/reporting/wire
 ```
 
 When the `app.targets` section is omitted, GoForj should synthesize the single-target default rather than requiring config boilerplate.
+
+The current implementation synthesizes:
+
+```yaml
+app:
+  default_target: app
+  targets:
+    - name: app
+      entrypoint: cmd/app/main.go
+      app_dir: app
+      wire_dir: app/wire
+```
 
 Target-specific env should be conservative. It is useful for process ports, worker counts, runtime toggles, and observability identity. It should not force every shared resource to be configured separately unless the target intentionally uses a different resource.
 
@@ -674,15 +730,15 @@ This should not be a sudden breaking layout change.
 
 Possible path:
 
-1. Define App targets in `.goforj.yml`, with `app` as the default target.
-2. Add new templates for `cmd/app/`, `app/`, and `app/wire/` in new Apps only.
-3. Keep compatibility with current `internal/` and `wire/` registration files for existing Apps.
-4. Teach generators to detect which layout exists.
-5. Add target detection and command resolution to `forj`.
-6. Add target-aware generator registration.
-7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata.
-8. Add rendered smoke scenarios for single-target and multi-target Apps.
-9. Update docs to describe App targets as the preferred generated shape.
+1. Define App targets in `.goforj.yml`, with `app` as the default target. Done for the default target.
+2. Add new templates for `cmd/app/`, `app/`, and `app/wire/` in new Apps. Done for the default target.
+3. Keep compatibility with current `internal/` and `wire/` registration files for existing Apps. Done through generator path fallback and legacy cleanup.
+4. Teach generators to detect which layout exists. Done for the default target generators.
+5. Add target detection and command resolution to `forj`. Partially done through built binary dispatch with `forj <target> ...`.
+6. Add target-aware generator registration. Partially done for default-target layout paths; named-target scoping remains.
+7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths and Lighthouse agent identity.
+8. Add rendered smoke scenarios for single-target and multi-target Apps. Done for default single-target render coverage; named-target coverage remains.
+9. Update docs to describe App targets as the preferred generated shape. In progress.
 10. Consider a migration command only after the new layout has proven itself.
 
 This project has not launched publicly yet, so migration urgency is lower than choosing the right default shape. Legacy detection still matters for local rendered Apps and existing internal smoke targets.
@@ -695,6 +751,13 @@ Generator detection could be:
 - if the active target is the default target and `app/wire/` exists, update `app/wire/*`
 - else if `app/<target>/wire/` exists, update `app/<target>/wire/*`
 - else update `wire/*`
+
+Command generator detection now follows that shape for the default target:
+
+- command implementation is generated under `internal/...`
+- command exposure is added to `app/commands.go`
+- command provider construction is added to `app/wire/inject_cmd_app.go`
+- if the new layout is absent, the generator falls back to legacy command files
 
 ## Reserved Names
 
@@ -712,75 +775,172 @@ Target names should also be validated as path-safe slugs and should not collide 
 
 Track implementation as concrete work items:
 
-- [ ] Add an App target model to project configuration.
-  - [ ] Synthesize the implicit single-target default when `app.targets` is omitted.
+- [x] Add the default App target model to project configuration.
+  - [x] Synthesize the implicit single-target default when `app.targets` is omitted.
+  - [x] Store default target metadata for `name`, `entrypoint`, `app_dir`, and `wire_dir`.
+  - [ ] Add full configured target parsing for additional targets.
+  - [ ] Validate `app.default_target` exists in configured targets.
   - [ ] Validate target names as path-safe slugs.
-  - [ ] Reject target names that collide with native Framework commands or reserved `app/` names.
+  - [ ] Reject target names that collide with native Framework commands.
+  - [ ] Reject target names that collide with reserved `app/` names such as `wire`.
+  - [ ] Reject target names that collide with generated files directly under `app/`, such as `commands.go`, `root_cmd.go`, and `routes.go`.
 
-- [ ] Render the new single-target layout for new Apps.
-  - [ ] Generate `cmd/app/main.go`.
-  - [ ] Generate default target composition under `app/`.
-  - [ ] Generate default target Wire files under `app/wire/`.
-  - [ ] Keep generated runtime support packages under `internal/...` where they are reusable machinery.
+- [x] Render the new single-target layout for new Apps.
+  - [x] Generate `cmd/app/main.go`.
+  - [x] Generate default target composition under `app/`.
+  - [x] Generate default target Wire files under `app/wire/`.
+  - [x] Keep generated runtime support packages under `internal/...` where they are reusable machinery.
+  - [x] Do not generate `app/providers.go` by default.
+  - [x] Co-locate the embedded frontend bundle under `cmd/app/frontend/dist`.
+  - [x] Remove legacy generated `main.go`, `wire/`, `internal/cmd/app_commands.go`, `internal/cmd/root_cmd.go`, and `internal/router/routes_registry.go` during full render cleanup.
+  - [x] Use consistent app-owned injector filenames:
+    - [x] `inject_cmd_app.go`
+    - [x] `inject_http_controllers_app.go`
+    - [x] `inject_jobs_app.go`
+    - [x] `inject_repositories_app.go`
+    - [x] `inject_schedules_app.go`
+    - [x] `inject_services_app.go`
+    - [x] `inject_subscribers_app.go`
+  - [x] Keep app-owned injectors render-once.
+  - [x] Keep framework-owned injectors overwrite-rendered.
+  - [x] Mark framework-owned injectors as `DO NOT EDIT`.
+  - [x] Mark app-owned injectors as `EDIT THIS FILE`.
+  - [x] Mark `wire.go` as an editable Wire harness that may be overwritten by rerender.
+  - [x] Keep `repositorySet` limited to repository providers.
+  - [x] Move app services such as monitoring retention and incident transition services to `inject_services_app.go`.
 
 - [ ] Add named target rendering.
   - [ ] Generate `cmd/<target>/main.go`.
   - [ ] Generate named target composition under `app/<target>/`.
+  - [ ] Generate `app/<target>/commands.go`.
+  - [ ] Generate `app/<target>/root_cmd.go`.
+  - [ ] Generate `app/<target>/routes.go` when the target has HTTP enabled.
   - [ ] Generate named target Wire files under `app/<target>/wire/`.
   - [ ] Derive Go-safe package names from target slugs.
+  - [ ] Ensure hyphenated target slugs map to legal package names.
+  - [ ] Ensure named target entrypoints import the correct target composition package.
+  - [ ] Keep named target `wire.go` editable-but-overwrite-rendered like the default target.
+  - [ ] Keep named target app-owned injectors render-once.
+  - [ ] Add named target cleanup behavior that does not delete user-created targets.
 
-- [ ] Update command resolution.
-  - [ ] Detect `forj <target> ...`.
-  - [ ] Set the active target for the remaining command.
-  - [ ] Keep unqualified commands on the default target.
-  - [ ] Preserve native Framework command precedence.
+- [ ] Partial: update command resolution.
+  - [x] Detect `forj <target> ...` when `./bin/<target>` exists.
+  - [x] Delegate remaining arguments to the built target binary.
+  - [x] Set target identity env defaults during binary dispatch.
+  - [x] Keep unqualified commands on the default target.
+  - [ ] Set the active target from configured targets when no binary exists.
+  - [ ] Route `forj <target> --help` through the configured target in source mode.
+  - [ ] Preserve native Framework command precedence for configured source-mode target dispatch.
+  - [ ] Make `forj <target> <native-command>` pass active target context into native commands.
+  - [ ] Make `forj <target> <app-command>` execute the selected target command surface.
   - [ ] Keep an explicit collision escape hatch for generated App commands if needed.
+  - [ ] Add tests for configured target dispatch without a prebuilt binary.
+  - [ ] Add tests for native-command precedence over target and App command names.
 
-- [ ] Update build and dev workflows.
-  - [ ] Make `forj build`, `forj dev`, and `forj test:render` operate on the default target.
+- [ ] Partial: update build and dev workflows.
+  - [x] Make `forj build` and `forj run` operate on `cmd/app` by default.
+  - [x] Prefer `app/wire` as the default Wire path with legacy `wire` fallback.
+  - [x] Build the default target binary from `cmd/app/main.go`.
+  - [ ] Make `forj build` target-aware in source mode.
+  - [ ] Make `forj run` target-aware in source mode.
+  - [ ] Make `forj dev` fully active-target aware for named targets.
+  - [ ] Decide whether `forj dev` runs only one target by default or supports explicit multi-target orchestration.
   - [ ] Add explicit all-target build or render validation when needed.
-  - [ ] Build target binaries from `cmd/<target>/main.go`.
-  - [ ] Ensure `forj <target> build` and `forj <target> dev` operate on the active target.
+  - [ ] Ensure source-mode `forj <target> build` and `forj <target> dev` operate on the active configured target.
+  - [ ] Add `build:all` or equivalent only if the workflow proves useful.
+  - [ ] Ensure Wire generation runs in the selected target's `wire_dir`.
+  - [ ] Ensure frontend build/watch uses the selected target entrypoint when a named target owns HTTP.
 
-- [ ] Update generators.
-  - [ ] Register generated controllers, commands, jobs, events, schedules, providers, and Wire entries into the active target.
-  - [ ] Keep generated implementation under `internal/...`.
-  - [ ] Preserve legacy layout detection for existing internal smoke targets.
-  - [ ] Add tests for default-target and named-target generation.
+- [ ] Partial: update generators.
+  - [x] Register generated controllers, commands, jobs, events, schedules, repositories, and Wire entries into the default target layout.
+  - [x] Keep generated implementation under `internal/...`.
+  - [x] Preserve legacy layout detection for existing internal smoke targets.
+  - [x] Move `make:command` provider constructor injection to `app/wire/inject_cmd_app.go`.
+  - [x] Keep command exposure injection in `app/commands.go`.
+  - [x] Add tests and rendered smoke coverage for default-target generation.
+  - [x] Make `make:controller` update `app/routes.go` and `app/wire/inject_http_controllers_app.go` for the default target.
+  - [x] Make `make:job` update `app/wire/inject_jobs_app.go` for the default target.
+  - [x] Make `make:schedule` update `app/wire/inject_schedules_app.go` for the default target.
+  - [x] Make `make:subscriber` update `app/wire/inject_subscribers_app.go` for the default target.
+  - [x] Make `make:model` update `app/wire/inject_repositories_app.go` for the default target.
+  - [ ] Add active-target context plumbing shared by all generators.
+  - [ ] Make `make:controller` update `app/<target>/routes.go` and `app/<target>/wire/inject_http_controllers_app.go`.
+  - [ ] Make `make:command` update `app/<target>/commands.go` and `app/<target>/wire/inject_cmd_app.go`.
+  - [ ] Make `make:job` update `app/<target>/wire/inject_jobs_app.go`.
+  - [ ] Make `make:schedule` update `app/<target>/wire/inject_schedules_app.go`.
+  - [ ] Make `make:subscriber` update `app/<target>/wire/inject_subscribers_app.go`.
+  - [ ] Make `make:model` update `app/<target>/wire/inject_repositories_app.go` when a named target owns repository composition.
+  - [ ] Decide whether `make:model` should default to all targets, default target only, or active target only.
+  - [ ] Add an advanced generate-without-registration mode for implementation-only files.
+  - [ ] Add named-target generator tests for controller, command, job, schedule, subscriber, and model flows.
+  - [ ] Preserve legacy fallback behavior for old `wire/` and old app injector filenames.
 
-- [ ] Move target-level registration out of runtime support packages.
-  - [ ] Move route registration to `app/routes.go` and `app/<target>/routes.go`.
-  - [ ] Move command registration to `app/commands.go` and `app/<target>/commands.go`.
-  - [ ] Move job registration to `app/jobs.go` and `app/<target>/jobs.go`.
-  - [ ] Move event registration to `app/events.go` and `app/<target>/events.go`.
-  - [ ] Move schedule registration to `app/schedules.go` and `app/<target>/schedules.go`.
-  - [ ] Keep HTTP, worker, scheduler, lifecycle, and command runtime machinery in generated `internal/...` packages for now.
+- [ ] Partial: move target-level registration out of runtime support packages.
+  - [x] Move route registration to `app/routes.go` for the default target.
+  - [x] Move command exposure to `app/commands.go` for the default target.
+  - [x] Keep framework command assembly in `app/wire/inject_cmd.go` for the default target.
+  - [x] Move app-owned command provider construction to `app/wire/inject_cmd_app.go` for the default target.
+  - [x] Move controller, job, schedule, event subscriber, repository, and app service Wire files to `app/wire/` for the default target.
+  - [x] Keep generated cache, queue, storage, event, mail, and database managers under `internal/...` as shared runtime support.
+  - [ ] Move job registration to `app/jobs.go` and `app/<target>/jobs.go` if a separate job registry file becomes useful.
+  - [ ] Move event registration to `app/events.go` and `app/<target>/events.go` if a separate event registry file becomes useful.
+  - [ ] Move schedule registration to `app/schedules.go` and `app/<target>/schedules.go` if a separate schedule registry file becomes useful.
+  - [ ] Decide whether current Wire-only registration for jobs, events, and schedules is sufficient long term.
+  - [x] Keep HTTP, worker, scheduler, lifecycle, and command runtime machinery in generated `internal/...` packages for now.
 
-- [ ] Update target-aware product surfaces.
-  - [ ] Scope API index and OpenAPI generation to the active target.
-  - [ ] Scope route lists to the active target.
-  - [ ] Decide which targets expose migration commands.
-  - [ ] Ensure auth routes, auth jobs, and auth schedules register through target composition.
-  - [ ] Ensure starter kits point frontend code at a specific target HTTP runtime.
+- [ ] Partial: update target-aware product surfaces.
+  - [x] Ensure auth routes and auth command wiring register through default target composition.
+  - [x] Ensure starter kits can serve from the default target entrypoint.
+  - [ ] Scope API index and OpenAPI generation to the active named target.
+  - [ ] Scope route lists to the active named target.
+  - [ ] Decide which named targets expose migration commands.
+  - [ ] Make migration command exposure configurable per target if needed.
+  - [ ] Ensure auth routes, auth jobs, and auth schedules register through named target composition.
+  - [ ] Ensure starter kits can point frontend code at a named target HTTP runtime.
+  - [ ] Ensure generated frontend assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
+  - [ ] Ensure route/openapi commands show the active target in human-readable output.
 
-- [ ] Add target-aware observability and Lighthouse identity.
-  - [ ] Add `app_name`, `app_target`, `runtime`, `instance_id`, and `environment` to Lighthouse agent identity.
-  - [ ] Use `app_target` in machine-readable metric, inspect, and Lighthouse metadata.
+- [ ] Partial: add target-aware observability and Lighthouse identity.
+  - [x] Add `app_target` to Lighthouse agent identity.
+  - [x] Read target identity from `APP_TARGET` or `FORJ_APP_TARGET`, defaulting to `app`.
+  - [x] Include `app_target` in hub agent metadata.
+  - [ ] Add or verify `app_target` across machine-readable metric and inspect metadata.
+  - [ ] Add or verify `app_target` in health/readiness/runtime inspect payloads where relevant.
   - [ ] Group Lighthouse data by `App -> App Target -> Runtime -> Instance`.
   - [ ] Collapse the App Target level in Lighthouse when the only target is `app`.
+  - [ ] Verify local multi-target Lighthouse connections use distinct target identity.
+  - [ ] Update Lighthouse UI copy and grouping tests for target-aware data.
 
-- [ ] Add rendered smoke coverage.
-  - [ ] Render and build a default single-target App.
+- [ ] Partial: add rendered smoke coverage.
+  - [x] Render and build default single-target Apps across the render matrix.
+  - [x] Verify unqualified commands use the default target.
+  - [x] Verify `make:command` updates `app/commands.go` and `app/wire/inject_cmd_app.go`.
+  - [x] Verify generated Wire rebuilds after `make:command`.
+  - [x] Verify app-owned injector files are preserved across rerender.
+  - [x] Verify framework-owned injector files are overwrite-rendered.
+  - [x] Verify `repositorySet` does not contain service providers.
   - [ ] Render and build a multi-target App with targets such as `billing` and `reporting`.
   - [ ] Verify target-specific route lists, jobs, schedules, and binaries.
-  - [ ] Verify unqualified commands use the default target.
-  - [ ] Verify `forj <target> ...` routes commands to the active target.
+  - [ ] Verify configured source-mode `forj <target> ...` routes commands to the active target.
+  - [ ] Verify named target generators update only the selected target.
+  - [ ] Verify default target generators continue to work when named targets are configured.
+  - [ ] Verify target name validation rejects reserved names and command collisions.
+  - [ ] Verify all-target build/render validation when that workflow is added.
 
-- [ ] Update docs and generated READMEs.
-  - [ ] Document `cmd/<target>`, `app/`, `app/<target>`, and `internal/` ownership.
-  - [ ] Document App targets as composition roots, not runtime types.
-  - [ ] Document the default single-target path before multi-target fan-out.
-  - [ ] Update generated component READMEs where registration paths move.
+- [ ] Partial: update docs and generated READMEs.
+  - [x] Document `cmd/<target>`, `app/`, `app/<target>`, and `internal/` ownership in this design.
+  - [x] Document App targets as composition roots, not runtime types.
+  - [x] Document the default single-target path before multi-target fan-out.
+  - [x] Document app-owned versus framework-owned injector ownership in generated headers.
+  - [ ] Update generated component READMEs where registration paths moved.
+  - [ ] Update `internal/events/README.md` to mention `app/wire/inject_subscribers_app.go`.
+  - [ ] Update scheduler docs to mention `app/wire/inject_schedules_app.go`.
+  - [ ] Update model/repository docs to mention `app/wire/inject_repositories_app.go`.
+  - [ ] Update controller docs/scenarios to mention `app/wire/inject_http_controllers_app.go`.
+  - [ ] Update service/resource workflow scenarios to mention `app/wire/inject_services_app.go`.
+  - [ ] Document that `wire.go` is editable but overwrite-rendered.
+  - [ ] Document that app-owned injectors are render-once and framework-owned injectors are regenerated.
+  - [ ] Decide whether to remove or update unused legacy demo Wire templates.
 
 ## Open Questions
 

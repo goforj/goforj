@@ -27,9 +27,9 @@ markdown:
     - internal/users/service.go
     - internal/users/service_test.go
     - internal/users/controller.go
-    - wire/inject_app_services.go
-    - wire/inject_http_controllers.go
-    - internal/router/routes_registry.go
+    - app/wire/inject_services_app.go
+    - app/wire/inject_http_controllers_app.go
+    - app/routes.go
   file_groups:
     - title: Users feature
       files:
@@ -38,11 +38,11 @@ markdown:
         - internal/users/controller.go
     - title: HTTP registration
       files:
-        - wire/inject_http_controllers.go
-        - internal/router/routes_registry.go
+        - app/wire/inject_http_controllers_app.go
+        - app/routes.go
     - title: App wiring
       files:
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   manual_check: |
     Run the HTTP server:
 
@@ -70,7 +70,7 @@ markdown:
   common_mistakes:
     - Do not put user lookup logic in `Show`.
     - Do not register routes directly in the HTTP server package.
-    - Do not edit `wire/wire_gen.go` by hand.
+    - Do not edit `app/wire/wire_gen.go` by hand.
     - Do not skip `forj build` after changing Wire providers.
     - Do not import the underlying HTTP engine in normal App controllers.
   next_steps:
@@ -80,7 +80,7 @@ markdown:
 steps:
   - title: Scaffold The Controller
     explain: |
-      Start with the real make command. It creates `internal/users/controller.go`, wires the controller constructor into `wire/inject_http_controllers.go`, and adds the controller routes to `internal/router/routes_registry.go`.
+      Start with the real make command. It creates `internal/users/controller.go`, wires the controller constructor into `app/wire/inject_http_controllers_app.go`, and adds the controller routes to `app/routes.go`.
     run:
       run: ["forj", "make:controller", "users"]
 
@@ -176,11 +176,11 @@ steps:
 
   - title: Provide The Service
     explain: |
-      Open `wire/inject_app_services.go`.
+      Open `app/wire/inject_services_app.go`.
 
       Wire can already construct the controller after the make command, but the controller now needs `*users.Service`. Add the users package to the imports, using your App module path.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         "{{module}}/internal/makecmd"
@@ -194,7 +194,7 @@ steps:
 
       `Service` is now part of the compiled App dependency graph, and Wire can construct the controller because `appSet` provides `*users.Service`.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 app.NewLifecycleRegistry,

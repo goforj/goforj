@@ -382,7 +382,7 @@ func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
 			DownOnExit:        false,
 			SoundOnWatchError: false,
 			Watches:           []project.DevWatch{},
-			WirePaths:         []string{"wire"},
+			WirePaths:         []string{project.DefaultAppTarget().WireDir},
 		},
 	}
 	body, err := yaml.Marshal(cfg)

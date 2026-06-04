@@ -26,6 +26,7 @@ type AgentConfig struct {
 	Secret       string
 	Source       string
 	App          string
+	AppTarget    string
 	Version      string
 	Env          string
 	Capabilities []string
@@ -83,6 +84,9 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	if host := strings.TrimSpace(a.config.Host); host != "" {
 		header.Set("X-Forj-Agent-Host", host)
+	}
+	if target := strings.TrimSpace(a.config.AppTarget); target != "" {
+		header.Set("X-Forj-App-Target", target)
 	}
 	header.Set("X-Forj-Agent-Pid", fmt.Sprintf("%d", os.Getpid()))
 	authWarned := false
@@ -226,6 +230,7 @@ func (a *Agent) register() error {
 		ID:           uuid.NewString(),
 		Source:       a.config.Source,
 		App:          a.config.App,
+		AppTarget:    a.config.AppTarget,
 		Version:      a.config.Version,
 		Env:          a.config.Env,
 		Capabilities: a.config.Capabilities,
@@ -399,12 +404,24 @@ func LoadAgentConfig(source string) AgentConfig {
 		Secret:       SharedSecretFromEnv(),
 		Source:       source,
 		App:          os.Getenv("APP_NAME"),
+		AppTarget:    appTargetFromEnv(),
 		Version:      os.Getenv("APP_VERSION"),
 		Env:          os.Getenv("APP_ENV"),
 		InstanceID:   os.Getenv("APP_INSTANCE_ID"),
 		InstanceKind: os.Getenv("APP_INSTANCE_KIND"),
 		Host:         host,
 	}
+}
+
+// appTargetFromEnv identifies the generated app target for Lighthouse agent registration.
+func appTargetFromEnv() string {
+	if target := strings.TrimSpace(os.Getenv("APP_TARGET")); target != "" {
+		return target
+	}
+	if target := strings.TrimSpace(os.Getenv("FORJ_APP_TARGET")); target != "" {
+		return target
+	}
+	return "app"
 }
 
 func SharedSecretFromEnv() string {

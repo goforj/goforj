@@ -648,7 +648,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 
 	if err := timer.Track("wire_gen", func() error {
 		wireCmd := exec.Command("wire")
-		wireCmd.Dir = filepath.Join(dir, "wire")
+		wireCmd.Dir = filepath.Join(dir, "app", "wire")
 		wireCmd.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
 			"GOCACHE="+buildCache,
@@ -671,7 +671,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		if renderBuildTraceEnabled() {
 			args = append(args, "-x")
 		}
-		args = append(args, "-o", filepath.Join(binDir, "app"))
+		args = append(args, "-o", filepath.Join(binDir, "app"), "./cmd/app")
 		build := exec.Command("go", args...)
 		build.Dir = dir
 		build.Env = append(os.Environ(),

@@ -549,7 +549,7 @@ Need:
 Likely touched files:
 
 - [`templates/internal/cmd/run_cmd.go.tmpl`](../../../templates/internal/cmd/run_cmd.go.tmpl)
-- [`templates/internal/cmd/root_cmd.go.tmpl`](../../../templates/internal/cmd/root_cmd.go.tmpl)
+- [`templates/app/root_cmd.go.tmpl`](../../../templates/app/root_cmd.go.tmpl)
 - [`templates/wire/app.go.tmpl`](../../../templates/wire/app.go.tmpl)
 - new files in `templates/internal/app/`
 

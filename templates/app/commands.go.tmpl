@@ -1,23 +1,29 @@
-package cmd
+// App-owned command registration. EDIT THIS FILE.
+// Add command fields here, or use `forj make:command`.
+
+package app
 
 {{- if or (and .Components.Auth .Components.HasDatabase) (and .Components.DemoApp .Components.HasDatabase) }}
 import (
 {{- if and .Components.Auth .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/auth"
 {{- end }}
+	"{{.GoModuleName}}/internal/cmd"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
 )
+{{- else }}
+import "{{.GoModuleName}}/internal/cmd"
 {{- end }}
 
-// AppCommands wires application-specific commands into the CLI.
+// Commands wires application-specific commands into the CLI.
 // Keep command implementations in the package that owns the workflow.
-type AppCommands struct {
-	AboutCmd AboutCmd `cmd:""`
-	CacheShellCmd CacheShellCmd `cmd:""`
+type Commands struct {
+	AboutCmd cmd.AboutCmd `cmd:""`
+	CacheShellCmd cmd.CacheShellCmd `cmd:""`
 	{{- if .Components.HasDatabase }}
-	DBShellCmd DBShellCmd `cmd:""`
+	DBShellCmd cmd.DBShellCmd `cmd:""`
 	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	AuthCreateUserCmd auth.CreateUserCmd `cmd:""`
@@ -25,10 +31,10 @@ type AppCommands struct {
 	AuthBootstrapCmd auth.BootstrapCmd `cmd:""`
 	{{- end }}
 	{{- if or .Components.WebAPI .Components.WebUI }}
-	HealthCmd HealthCmd `cmd:""`
+	HealthCmd cmd.HealthCmd `cmd:""`
 	{{- end }}
-	HelloWorldCmd HelloWorldCmd `cmd:""`
-	TestEventPipelineCmd TestEventPipelineCmd `cmd:""`
+	HelloWorldCmd cmd.HelloWorldCmd `cmd:""`
+	TestEventPipelineCmd cmd.TestEventPipelineCmd `cmd:""`
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	MonitorSeedCmd monitoring.SeedCmd `cmd:""`
 	MonitorResetCmd monitoring.ResetCmd `cmd:""`
@@ -38,18 +44,18 @@ type AppCommands struct {
 	PushMonitorTriggerCmd monitoring.PushTriggerCmd `cmd:""`
 	TestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:""`
 	{{- if .Components.StressTest }}
-	QueueStressTickCmd QueueStressTickCmd `cmd:""`
+	QueueStressTickCmd cmd.QueueStressTickCmd `cmd:""`
 	{{- end }}
 	{{- end }}
 	{{- end }}
 }
 
-// NewAppCommands creates a new AppCommands instance with the given commands.
-func NewAppCommands(
-	aboutCmd *AboutCmd,
-	cacheShellCmd *CacheShellCmd,
+// NewCommands creates a new Commands instance with the given commands.
+func NewCommands(
+	aboutCmd *cmd.AboutCmd,
+	cacheShellCmd *cmd.CacheShellCmd,
 	{{- if .Components.HasDatabase }}
-	dbShellCmd *DBShellCmd,
+	dbShellCmd *cmd.DBShellCmd,
 	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authCreateUserCmd *auth.CreateUserCmd,
@@ -57,10 +63,10 @@ func NewAppCommands(
 	authBootstrapCmd *auth.BootstrapCmd,
 	{{- end }}
 	{{- if or .Components.WebAPI .Components.WebUI }}
-	healthCmd *HealthCmd,
+	healthCmd *cmd.HealthCmd,
 	{{- end }}
-	helloWorldCmd *HelloWorldCmd, // Injected command
-	testEventPipelineCmd *TestEventPipelineCmd,
+	helloWorldCmd *cmd.HelloWorldCmd,
+	testEventPipelineCmd *cmd.TestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitorSeedCmd *monitoring.SeedCmd,
 	monitorResetCmd *monitoring.ResetCmd,
@@ -70,12 +76,12 @@ func NewAppCommands(
 	pushMonitorTriggerCmd *monitoring.PushTriggerCmd,
 	testMonitorPollLoopCmd *monitoring.TestPollLoopCmd,
 	{{- if .Components.StressTest }}
-	queueStressTickCmd *QueueStressTickCmd,
+	queueStressTickCmd *cmd.QueueStressTickCmd,
 	{{- end }}
 	{{- end }}
 	{{- end }}
-) *AppCommands {
-	return &AppCommands{
+) *Commands {
+	return &Commands{
 		AboutCmd: *aboutCmd,
 		CacheShellCmd: *cacheShellCmd,
 		{{- if .Components.HasDatabase }}
@@ -89,7 +95,7 @@ func NewAppCommands(
 		{{- if or .Components.WebAPI .Components.WebUI }}
 		HealthCmd: *healthCmd,
 		{{- end }}
-		HelloWorldCmd: *helloWorldCmd, // Assign the injected command
+		HelloWorldCmd: *helloWorldCmd,
 		TestEventPipelineCmd: *testEventPipelineCmd,
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
 		MonitorSeedCmd: *monitorSeedCmd,

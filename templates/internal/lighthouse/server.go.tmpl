@@ -646,6 +646,7 @@ func handleDevwatchWS(r web.Context, conn web.WebSocketConn, hub *Hub) error {
 			ID:           uuid.NewString(),
 			Source:       devwatchAgentSource,
 			App:          appName,
+			AppTarget:    "app",
 			Version:      os.Getenv("APP_VERSION"),
 			Env:          os.Getenv("APP_ENV"),
 			Capabilities: []string{"devwatch"},

@@ -37,7 +37,7 @@ func NewQueueCmd() *QueueCmd {
 
 // Signature defines CLI metadata for this command.
 func (*QueueCmd) Signature() string {
-	return `name:"make:queue" help:"Create a named queue" goforj:"skip_boot"`
+	return `name:"make:queue" help:"Create a named queue" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.
