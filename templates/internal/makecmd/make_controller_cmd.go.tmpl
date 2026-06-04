@@ -193,7 +193,7 @@ func (c *ControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	packageName := generatedPackageName(outputDir, "cmd")
 	packageRef := generatedPackageRef(outputDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_http_controllers_app.go", "./app/wire/inject_controllers_app.go", "./app/wire/inject_http_controllers.go", "./wire/inject_http_controllers_app.go", "./wire/inject_controllers_app.go", "./wire/inject_http_controllers.go")
+	injectPath := targetAppWireFile("inject_http_controllers_app.go", "./app/wire/inject_controllers_app.go", "./app/wire/inject_http_controllers.go", "./wire/inject_http_controllers_app.go", "./wire/inject_controllers_app.go", "./wire/inject_http_controllers.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -221,7 +221,7 @@ func (c *ControllerCmd) removeFromInjectHttp(target controllerTarget) error {
 
 	packageRef := generatedPackageRef(target.packageDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(target.packageDir))
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_http_controllers_app.go", "./app/wire/inject_controllers_app.go", "./app/wire/inject_http_controllers.go", "./wire/inject_http_controllers_app.go", "./wire/inject_controllers_app.go", "./wire/inject_http_controllers.go")
+	injectPath := targetAppWireFile("inject_http_controllers_app.go", "./app/wire/inject_controllers_app.go", "./app/wire/inject_http_controllers.go", "./wire/inject_http_controllers_app.go", "./wire/inject_controllers_app.go", "./wire/inject_http_controllers.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -258,7 +258,7 @@ func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error
 	packageName := generatedPackageName(outputDir, "cmd")
 	packageRef := generatedPackageRef(outputDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
-	injectPath := firstExistingGeneratedPath("./app/routes.go", "./internal/router/routes_registry.go")
+	injectPath := targetAppFile("routes.go", "./internal/router/routes_registry.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -299,7 +299,7 @@ func (c *ControllerCmd) removeFromAppRoutes(target controllerTarget) error {
 
 	packageRef := generatedPackageRef(target.packageDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(target.packageDir))
-	injectPath := firstExistingGeneratedPath("./app/routes.go", "./internal/router/routes_registry.go")
+	injectPath := targetAppFile("routes.go", "./internal/router/routes_registry.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {

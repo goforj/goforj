@@ -94,3 +94,71 @@ func NewCommands(
 		"reportsSyncCmd *reports.SyncCmd",
 	})
 }
+
+func TestCommandCmdUsesActiveAppTarget(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_cmd_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appCommandSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "commands.go"), `package app
+
+type Commands struct {
+}
+
+func NewCommands(
+) *Commands {
+	return &Commands{
+	}
+}
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_cmd_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appCommandSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "commands.go"), `package reporting
+
+type Commands struct {
+}
+
+func NewCommands(
+) *Commands {
+	return &Commands{
+	}
+}
+`)
+
+	cmd := &CommandCmd{Name: "Reports:Sync", OutputDir: defaultCommandOutputDir}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create targeted command: %v", err)
+	}
+
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_cmd_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewSyncCmd",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "commands.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"ReportsSyncCmd reports.SyncCmd",
+		"reportsSyncCmd *reports.SyncCmd",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_cmd_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewSyncCmd",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "commands.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"ReportsSyncCmd reports.SyncCmd",
+		"reportsSyncCmd *reports.SyncCmd",
+	})
+}

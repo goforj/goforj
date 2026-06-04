@@ -26,6 +26,49 @@ func TestGeneratedPackageHelpersUseCompactLowercaseSegments(t *testing.T) {
 	}
 }
 
+func TestActiveAppTargetPaths(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "")
+	t.Setenv("APP_TARGET", "")
+
+	if got := targetAppFile("commands.go"); got != filepath.Join("app", "commands.go") {
+		t.Fatalf("default app file = %q, want app/commands.go", got)
+	}
+	if got := targetAppWireFile("inject_cmd_app.go"); got != filepath.Join("app", "wire", "inject_cmd_app.go") {
+		t.Fatalf("default app wire file = %q, want app/wire/inject_cmd_app.go", got)
+	}
+
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+	if got := targetAppFile("commands.go"); got != filepath.Join("app", "reporting", "commands.go") {
+		t.Fatalf("target app file = %q, want app/reporting/commands.go", got)
+	}
+	if got := targetAppWireFile("inject_cmd_app.go"); got != filepath.Join("app", "reporting", "wire", "inject_cmd_app.go") {
+		t.Fatalf("target app wire file = %q, want app/reporting/wire/inject_cmd_app.go", got)
+	}
+
+	t.Setenv("FORJ_APP_TARGET", "../reporting")
+	if got := targetAppFile("commands.go"); got != filepath.Join("app", "commands.go") {
+		t.Fatalf("unsafe target app file = %q, want app/commands.go", got)
+	}
+}
+
+func TestInsertIntoCallBlockExpandsSingleLineCalls(t *testing.T) {
+	lines := []string{
+		"package wire",
+		"",
+		"var appCommandSet = wire.NewSet()",
+	}
+	got := strings.Join(insertIntoCallBlock(lines, "var appCommandSet = wire.NewSet(", "\treports.NewSyncCmd,"), "\n")
+	for _, want := range []string{
+		"var appCommandSet = wire.NewSet(",
+		"\treports.NewSyncCmd,",
+		")",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected expanded call to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func writeMakeCmdTestFile(t *testing.T, path string, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

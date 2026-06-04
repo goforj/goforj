@@ -1211,7 +1211,7 @@ func updateForjTag(existingLiteral, forjValue string) (string, bool) {
 		return "", false
 	}
 	clean := removeTagKey(raw, "forj")
-	if strings.TrimSpace(clean) == "" {
+	if str.Of(clean).TrimSpace().IsBlank() {
 		return fmt.Sprintf("forj:%q", forjValue), true
 	}
 	return clean + " " + fmt.Sprintf("forj:%q", forjValue), true
@@ -1446,7 +1446,7 @@ func (c *ModelCmd) ensureRepositoryProvider(modelName string) error {
 	if err != nil {
 		return err
 	}
-	wirePath := firstExistingGeneratedPath(filepath.Join("app", "wire", "inject_repositories_app.go"), filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
+	wirePath := targetAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
 
 	_, err = updateRepositorySet(wirePath, repoImportPath, repoPackage, repoCtor)
 	return err
@@ -1459,7 +1459,7 @@ func (c *ModelCmd) removeRepositoryProvider(modelName string) error {
 	if err != nil {
 		return err
 	}
-	wirePath := firstExistingGeneratedPath(filepath.Join("app", "wire", "inject_repositories_app.go"), filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
+	wirePath := targetAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
 
 	imports, providers, hasPlaceholder, err := readRepositorySet(wirePath)
 	if err != nil {

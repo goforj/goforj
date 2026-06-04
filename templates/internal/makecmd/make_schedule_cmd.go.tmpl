@@ -87,10 +87,10 @@ type scheduleTarget struct {
 }
 
 func (c *ScheduleCmd) target() (scheduleTarget, error) {
-	if strings.TrimSpace(c.OutputDir) == "" {
+	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
 		c.OutputDir = defaultScheduleOutputDir
 	}
-	interval := strings.TrimSpace(c.Every)
+	interval := str.Of(c.Every).TrimSpace().String()
 	if interval == "" {
 		interval = "1h"
 	}
@@ -167,8 +167,8 @@ func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outp
 
 // injectIntoWireFile registers the generated schedule with the app schedule registry.
 func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_schedules_app.go", "./wire/inject_schedules_app.go")
-	registryPath := firstExistingGeneratedPath("./app/schedules.go")
+	injectPath := targetAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
+	registryPath := targetAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -181,7 +181,7 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
-	paramName := str.Of(strings.TrimSuffix(structName, "Schedule")).Camel().String() + "Schedule"
+	paramName := str.Of(structName).ChopEnd("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
 	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
@@ -250,8 +250,8 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 }
 
 func (c *ScheduleCmd) removeFromWireFile(structName string) error {
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_schedules_app.go", "./wire/inject_schedules_app.go")
-	registryPath := firstExistingGeneratedPath("./app/schedules.go")
+	injectPath := targetAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
+	registryPath := targetAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -263,7 +263,7 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
-	paramName := str.Of(strings.TrimSuffix(structName, "Schedule")).Camel().String() + "Schedule"
+	paramName := str.Of(structName).ChopEnd("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
 	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
@@ -317,14 +317,14 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 
 // ensureScheduleSuffix appends Schedule when name does not already use that suffix.
 func ensureScheduleSuffix(name string) string {
-	clean := strings.TrimSpace(name)
-	if clean == "" {
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
 		return "ExampleSchedule"
 	}
-	if strings.HasSuffix(clean, "Schedule") {
-		return clean
+	if clean.EndsWith("Schedule") {
+		return clean.String()
 	}
-	return clean + "Schedule"
+	return clean.String() + "Schedule"
 }
 
 // isDefaultScheduleOutputDir reports whether the user left the schedule output at its default.
@@ -335,7 +335,7 @@ func isDefaultScheduleOutputDir(outputDir string) bool {
 // scheduleNameFromParts converts a grouped generator name into the operational schedule name.
 func scheduleNameFromParts(parts []string, structName string) string {
 	if len(parts) == 0 {
-		return strings.ToLower(strings.TrimSuffix(structName, "Schedule"))
+		return str.Of(structName).ChopEnd("Schedule").ToLower().String()
 	}
 	names := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -346,7 +346,7 @@ func scheduleNameFromParts(parts []string, structName string) string {
 		names = append(names, clean)
 	}
 	if len(names) == 0 {
-		return strings.ToLower(strings.TrimSuffix(structName, "Schedule"))
+		return str.Of(structName).ChopEnd("Schedule").ToLower().String()
 	}
 	return strings.Join(names, ":")
 }
