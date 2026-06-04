@@ -179,7 +179,7 @@ Not every generated runtime file should move into `app/<target>/`.
 
 Runtime support can remain in generated `internal/...` packages when it is reusable machinery:
 
-- `internal/app` for lifecycle, timeout policy, discovery, and root runtime support
+- `internal/runtime` for lifecycle, timeout policy, discovery, and root runtime support
 - `internal/http` for HTTP runtime implementation
 - `internal/jobs` for worker runtime implementation
 - `internal/schedules` for scheduler runtime implementation
@@ -860,7 +860,7 @@ Track implementation as concrete work items:
   - [x] Add tests and rendered smoke coverage for default-target generation.
   - [x] Make `make:controller` update `app/routes.go` and `app/wire/inject_http_controllers_app.go` for the default target.
   - [x] Make `make:job` update `app/wire/inject_jobs_app.go` for the default target.
-  - [x] Make `make:schedule` update `app/wire/inject_schedules_app.go` for the default target.
+  - [x] Make `make:schedule` update `app/schedules.go` and `app/wire/inject_schedules_app.go` for the default target.
   - [x] Make `make:subscriber` update `app/wire/inject_subscribers_app.go` for the default target.
   - [x] Make `make:model` update `app/wire/inject_repositories_app.go` for the default target.
   - [ ] Add active-target context plumbing shared by all generators.
@@ -881,10 +881,14 @@ Track implementation as concrete work items:
   - [x] Keep framework command assembly in `app/wire/inject_cmd.go` for the default target.
   - [x] Move app-owned command provider construction to `app/wire/inject_cmd_app.go` for the default target.
   - [x] Move controller, job, schedule, event subscriber, repository, and app service Wire files to `app/wire/` for the default target.
+  - [x] Move lifecycle hook registration from `internal/app/lifecycle_registry.go` to `app/lifecycle.go`.
+  - [x] Move schedule registration from `internal/schedules/scheduler_registry.go` to `app/schedules.go`.
+  - [x] Keep scheduler observer and runtime registration plumbing in `internal/schedules/registration.go`.
   - [x] Keep generated cache, queue, storage, event, mail, and database managers under `internal/...` as shared runtime support.
   - [ ] Move job registration to `app/jobs.go` and `app/<target>/jobs.go` if a separate job registry file becomes useful.
   - [ ] Move event registration to `app/events.go` and `app/<target>/events.go` if a separate event registry file becomes useful.
-  - [ ] Move schedule registration to `app/schedules.go` and `app/<target>/schedules.go` if a separate schedule registry file becomes useful.
+  - [x] Move schedule registration to `app/schedules.go` for the default target.
+  - [ ] Move schedule registration to `app/<target>/schedules.go` for named targets.
   - [ ] Decide whether current Wire-only registration for jobs, events, and schedules is sufficient long term.
   - [x] Keep HTTP, worker, scheduler, lifecycle, and command runtime machinery in generated `internal/...` packages for now.
 
@@ -932,9 +936,9 @@ Track implementation as concrete work items:
   - [x] Document App targets as composition roots, not runtime types.
   - [x] Document the default single-target path before multi-target fan-out.
   - [x] Document app-owned versus framework-owned injector ownership in generated headers.
-  - [ ] Update generated component READMEs where registration paths moved.
+  - [x] Update generated component READMEs where lifecycle registration paths moved.
   - [ ] Update `internal/events/README.md` to mention `app/wire/inject_subscribers_app.go`.
-  - [ ] Update scheduler docs to mention `app/wire/inject_schedules_app.go`.
+  - [x] Update scheduler docs to mention `app/schedules.go`.
   - [ ] Update model/repository docs to mention `app/wire/inject_repositories_app.go`.
   - [ ] Update controller docs/scenarios to mention `app/wire/inject_http_controllers_app.go`.
   - [ ] Update service/resource workflow scenarios to mention `app/wire/inject_services_app.go`.

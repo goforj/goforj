@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
@@ -241,10 +241,10 @@ func shouldSelectCacheShellStore(c *CacheShellCmd, stores []cacheShellStore) boo
 }
 
 func cacheShellStores() []cacheShellStore {
-	instances := appinfo.DiscoverCacheInstances()
+	instances := runtime.DiscoverCacheInstances()
 	out := make([]cacheShellStore, 0, len(instances))
 	for _, instance := range instances {
-		driver := appinfo.NormalizeCacheDriver(instance.Driver)
+		driver := runtime.NormalizeCacheDriver(instance.Driver)
 		out = append(out, cacheShellStore{
 			Name:               normalizeCacheShellStoreName(instance.Name),
 			Driver:             driver,

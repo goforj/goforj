@@ -12,7 +12,7 @@ import (
 	"github.com/goforj/cache"
 	"github.com/goforj/queue"
 	"github.com/goforj/storage"
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
@@ -157,19 +157,19 @@ func (r *benchmarkRunner) catalog() map[string]any {
 }
 
 func benchmarkCacheCatalog() []benchmarkCatalogItem {
-	instances := appinfo.DiscoverCacheInstances()
+	instances := runtime.DiscoverCacheInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
 	for _, instance := range instances {
 		items = append(items, benchmarkCatalogItem{
 			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeCacheDriver(instance.Driver),
+			Driver: runtime.NormalizeCacheDriver(instance.Driver),
 		})
 	}
 	return items
 }
 
 func benchmarkQueueCatalog(queues *queues.Manager) []benchmarkCatalogItem {
-	instances := appinfo.DiscoverQueueInstances()
+	instances := runtime.DiscoverQueueInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
 	runtimeDrivers := map[string]string{}
 	if queues != nil {
@@ -177,7 +177,7 @@ func benchmarkQueueCatalog(queues *queues.Manager) []benchmarkCatalogItem {
 			if instance.Queue == nil {
 				continue
 			}
-			runtimeDrivers[normalizedBenchmarkName(instance.Name)] = appinfo.NormalizeQueueDriver(string(instance.Queue.Driver()))
+			runtimeDrivers[normalizedBenchmarkName(instance.Name)] = runtime.NormalizeQueueDriver(string(instance.Queue.Driver()))
 		}
 	}
 	for _, instance := range instances {
@@ -195,16 +195,16 @@ func benchmarkQueueCatalogDriver(runtimeDrivers map[string]string, instanceName,
 	if driver != "" {
 		return driver
 	}
-	return appinfo.NormalizeQueueDriver(fallback)
+	return runtime.NormalizeQueueDriver(fallback)
 }
 
 func benchmarkStorageCatalog() []benchmarkCatalogItem {
-	instances := appinfo.DiscoverStorageInstances()
+	instances := runtime.DiscoverStorageInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
 	for _, instance := range instances {
 		items = append(items, benchmarkCatalogItem{
 			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeStorageDriver(instance.Driver),
+			Driver: runtime.NormalizeStorageDriver(instance.Driver),
 		})
 	}
 	return items
@@ -212,12 +212,12 @@ func benchmarkStorageCatalog() []benchmarkCatalogItem {
 
 {{- if .Components.HasDatabase }}
 func benchmarkDBCatalog() []benchmarkCatalogItem {
-	instances := appinfo.DiscoverDatabaseInstances()
+	instances := runtime.DiscoverDatabaseInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
 	for _, instance := range instances {
 		items = append(items, benchmarkCatalogItem{
 			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeDBDriver(instance.Driver),
+			Driver: runtime.NormalizeDBDriver(instance.Driver),
 		})
 	}
 	return items

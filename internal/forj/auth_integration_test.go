@@ -214,7 +214,7 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	t.Helper()
 
-	schedulerRegistryPath := filepath.Join(projectDir, "internal", "schedules", "scheduler_registry.go")
+	schedulerRegistryPath := filepath.Join(projectDir, "app", "schedules.go")
 	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
@@ -222,7 +222,7 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	for _, token := range []string{
 		`DailyAt("04:11")`,
 		`Name("auth:sessions:cleanup")`,
-		`Do(s.inspectTask("auth:sessions:cleanup", s.authService.Cleanup))`,
+		`Do(s.InspectTask("auth:sessions:cleanup", r.authService.Cleanup))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -235,10 +235,9 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 		t.Fatalf("read %s: %v", schedulerPath, err)
 	}
 	for _, token := range []string{
-		`/internal/auth"`,
-		`authService *auth.Service`,
+		`registry ScheduleRegistry`,
 		`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
-		`return app.WithSource(ctx, app.SourceScheduler)`,
+		`return runtime.WithSource(ctx, runtime.SourceScheduler)`,
 	} {
 		if !strings.Contains(string(schedulerSrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerPath)

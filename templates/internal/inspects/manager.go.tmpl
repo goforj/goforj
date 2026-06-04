@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 	goforjcache "github.com/goforj/cache"
@@ -90,11 +90,11 @@ type internalContextKey struct{}
 
 type inspectContext struct {
 	context.Context
-	source   app.Source
+	source   runtime.Source
 	recorder Recorder
 }
 
-func (c *inspectContext) AppSource() app.Source {
+func (c *inspectContext) AppSource() runtime.Source {
 	return c.source
 }
 
@@ -234,7 +234,7 @@ type Record struct {
 
 // RecentQuery controls recent-inspect lookup.
 type RecentQuery struct {
-	Source app.Source
+	Source runtime.Source
 	Limit  int
 }
 
@@ -292,7 +292,7 @@ type Recorder struct {
 	manager *Manager
 	inspectID string
 	state   *inflightInspect
-	source  app.Source
+	source  runtime.Source
 	name    string
 	labels  map[string]string
 	once    sync.Once
@@ -453,7 +453,7 @@ func IsInternalContext(ctx context.Context) bool {
 }
 
 // Begin starts an inspect for the current execution boundary and returns a derived context.
-func (m *Manager) Begin(ctx context.Context, source app.Source, name string, labels map[string]string) context.Context {
+func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string, labels map[string]string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -470,10 +470,10 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 		return ctx
 	}
 	if source == "" {
-		source = app.SourceFromContext(ctx)
+		source = runtime.SourceFromContext(ctx)
 	}
 	if source == "" {
-		source = app.SourceApp
+		source = runtime.SourceApp
 	}
 	inspectID := newInspectID()
 	inspectCtx := acquireInspectContext()
@@ -524,12 +524,12 @@ func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder 
 	inspectID := newInspectID()
 	inspectCtx := acquireInspectContext()
 	inspectCtx.Context = ctx
-	inspectCtx.source = app.SourceHTTP
+	inspectCtx.source = runtime.SourceHTTP
 	inspectCtx.recorder = Recorder{
 		manager:   m,
 		inspectID: inspectID,
 		state:     nil,
-		source:    app.SourceHTTP,
+		source:    runtime.SourceHTTP,
 		name:      normalizeInspectName(name),
 		owner:     inspectCtx,
 	}
@@ -1007,7 +1007,7 @@ func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
 	state.eventLen = 0
 	state.maxEvents = m.config.MaxEvents
 	state.finished = false
-	state.indexed = recorder.source != app.SourceHTTP
+	state.indexed = recorder.source != runtime.SourceHTTP
 	if state.indexed {
 		m.inflightMu.Lock()
 		m.inflight[recorder.inspectID] = state

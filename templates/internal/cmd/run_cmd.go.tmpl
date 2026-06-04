@@ -7,7 +7,7 @@ import (
 {{- if .Components.Metrics }}
 	"github.com/goforj/env/v2"
 {{- end }}
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 {{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
@@ -79,14 +79,14 @@ func (*RunCmd) Signature() string {
 }
 
 func (c *RunCmd) Run(ctx context.Context) error {
-	runtimes := make([]app.Runtime, 0, 3)
+	runtimes := make([]runtime.Runtime, 0, 3)
 {{- if or .Components.WebAPI .Components.WebUI }}
 	if c.httpRuntime != nil {
-		runtime := c.httpRuntime
-		runtimes = append(runtimes, app.RuntimeFunc{
-			RuntimeIdentity: runtime.Identity(),
+		httpRuntime := c.httpRuntime
+		runtimes = append(runtimes, runtime.RuntimeFunc{
+			RuntimeIdentity: httpRuntime.Identity(),
 			RunFn: func(ctx context.Context) error {
-				return runtime.RunWithConfig(ctx, http.RuntimeConfig{
+				return httpRuntime.RunWithConfig(ctx, http.RuntimeConfig{
 					DisableMetricsEndpoint: true,
 				})
 			},
@@ -95,11 +95,11 @@ func (c *RunCmd) Run(ctx context.Context) error {
 {{- end }}
 {{- if .Components.Scheduler }}
 	if c.schedulerRuntime != nil {
-		runtime := c.schedulerRuntime
-		runtimes = append(runtimes, app.RuntimeFunc{
-			RuntimeIdentity: runtime.Identity(),
+		schedulerRuntime := c.schedulerRuntime
+		runtimes = append(runtimes, runtime.RuntimeFunc{
+			RuntimeIdentity: schedulerRuntime.Identity(),
 			RunFn: func(ctx context.Context) error {
-				return runtime.RunWithConfig(ctx, schedules.RuntimeConfig{
+				return schedulerRuntime.RunWithConfig(ctx, schedules.RuntimeConfig{
 					DisableMetricsEndpoint: true,
 				})
 			},
@@ -108,11 +108,11 @@ func (c *RunCmd) Run(ctx context.Context) error {
 {{- end }}
 {{- if .Components.Jobs }}
 	if c.jobsRuntime != nil {
-		runtime := c.jobsRuntime
-		runtimes = append(runtimes, app.RuntimeFunc{
-			RuntimeIdentity: runtime.Identity(),
+		jobsRuntime := c.jobsRuntime
+		runtimes = append(runtimes, runtime.RuntimeFunc{
+			RuntimeIdentity: jobsRuntime.Identity(),
 			RunFn: func(ctx context.Context) error {
-				return runtime.RunWithConfig(ctx, jobs.RuntimeConfig{
+				return jobsRuntime.RunWithConfig(ctx, jobs.RuntimeConfig{
 					DisableMetricsEndpoint: true,
 				})
 			},
@@ -135,5 +135,5 @@ func (c *RunCmd) Run(ctx context.Context) error {
 	}
 {{- end }}
 
-	return app.NewRuntimeHost(runtimes...).Run(ctx)
+	return runtime.NewRuntimeHost(runtimes...).Run(ctx)
 }

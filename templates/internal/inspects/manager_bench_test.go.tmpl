@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	goforjcache "github.com/goforj/cache"
 )
 
@@ -16,7 +16,7 @@ func BenchmarkInspectBeginFinish(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		ctx := manager.Begin(context.Background(), app.SourceHTTP, "request", map[string]string{"path": "/bench"})
+		ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", map[string]string{"path": "/bench"})
 		manager.Finish(ctx, statusOK, nil)
 	}
 }
@@ -29,7 +29,7 @@ func BenchmarkInspectRecordEvent(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				ctx := manager.Begin(context.Background(), app.SourceHTTP, "request", map[string]string{"path": "/bench"})
+				ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", map[string]string{"path": "/bench"})
 				recorder := RecorderFromContext(ctx)
 				for seq := 0; seq < eventCount; seq++ {
 					recorder.RecordEvent(benchmarkEvent(seq))
@@ -49,7 +49,7 @@ func BenchmarkInspectBatchScales(b *testing.B) {
 			manager := newBenchmarkManager(b)
 			start := time.Now()
 			for i := 0; i < inspectCount; i++ {
-				ctx := manager.Begin(context.Background(), app.SourceHTTP, "request", map[string]string{"path": "/bench"})
+				ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", map[string]string{"path": "/bench"})
 				recorder := RecorderFromContext(ctx)
 				for seq := 0; seq < 8; seq++ {
 					recorder.RecordEvent(benchmarkEvent(seq))

@@ -23,9 +23,9 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	for _, snippet := range []string{
 		"func (a *App) Cache() *cache.Cache",
 		"return a.cache.Default()",
-		"func (a *App) Topology() runtimeapp.RuntimeTopology",
+		"func (a *App) Topology() runtime.RuntimeTopology",
 		"return a.topology.Normalized()",
-		`Mode: runtimeapp.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
+		`Mode: runtime.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
 		"func (a *App) Caches() *caches.Manager",
 		"func (a *App) Storage() *storages.Manager",
 		"func (a *App) Bus() eventcore.Bus",
@@ -34,7 +34,7 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"func (a *App) Queue() *queue.Queue",
 		"return a.queues.Default()",
 		"func (a *App) Queues() *queues.Manager",
-		`runtimeapp.NewLifecycle(appTimeouts)`,
+		`runtime.NewLifecycle(appTimeouts)`,
 		`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
 		`cmd.CommandParseError(parser, command, err)`,
@@ -72,8 +72,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func aboutConnectionInventoryRows(`,
 			`func aboutComponentGridRows(`,
 			`func aboutValueColor(`,
-			`appinfo "{{.GoModuleName}}/internal/app"`,
-			`func (c *AboutCmd) aboutService() *appinfo.AboutService`,
+			`"{{.GoModuleName}}/internal/runtime"`,
+			`func (c *AboutCmd) aboutService() *runtime.AboutService`,
 		},
 		filepath.Join(base, "about_cmd_test.go.tmpl"): {
 			`func TestAboutConnectionInventoryRendersOneRowPerResource(`,
@@ -111,7 +111,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func NewDBShellCmd() *DBShellCmd`,
 			`func (c *DBShellCmd) resolveLaunch(conn dbShellConnection)`,
 			`exec.Command(launch.Command, launch.Args...)`,
-			`appinfo "{{.GoModuleName}}/internal/app"`,
+			`"{{.GoModuleName}}/internal/runtime"`,
 		},
 		filepath.Join(base, "cache_shell_cmd.go.tmpl"): {
 			`name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"preboot"`,
@@ -126,7 +126,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func NewCacheShellCmd() *CacheShellCmd`,
 			`func (c *CacheShellCmd) resolveLaunch(store cacheShellStore)`,
 			`exec.Command(launch.Command, launch.Args...)`,
-			`appinfo "{{.GoModuleName}}/internal/app"`,
+			`"{{.GoModuleName}}/internal/runtime"`,
 		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutTerminalWidth() int`,
@@ -160,16 +160,16 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`base64.StdEncoding.DecodeString`,
 			`return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)`,
 		},
-		filepath.Join(filepath.Dir(base), "app", "about.go.tmpl"): {
-			`package app`,
+		filepath.Join(filepath.Dir(base), "runtime", "about.go.tmpl"): {
+			`package runtime`,
 			`type AboutService struct{}`,
 			`func (s *AboutService) Build() AboutReport`,
 			`type AboutSectionData struct {`,
 			`type AboutConnectionData struct {`,
 			`func aboutDatabaseDetails(name string) []AboutField`,
 		},
-		filepath.Join(filepath.Dir(base), "app", "discovery.go.tmpl"): {
-			`package app`,
+		filepath.Join(filepath.Dir(base), "runtime", "discovery.go.tmpl"): {
+			`package runtime`,
 			`type PrimitiveInstance struct {`,
 			`func DiscoverCacheInstances() []PrimitiveInstance`,
 			`func DiscoverQueueInstances() []PrimitiveInstance`,
@@ -568,7 +568,7 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`app.NewRuntimeHost(runtimes...).Run(ctx)`,
+		`runtime.NewRuntimeHost(runtimes...).Run(ctx)`,
 		`DisableMetricsEndpoint: true,`,
 		`type RunCmd struct {`,
 		`func NewRunCmd(`,
@@ -600,22 +600,22 @@ func TestSourcePropagationTemplates(t *testing.T) {
 
 	files := map[string][]string{
 		filepath.Join(root, "wire", "app.go.tmpl"): {
-			`ctx, stop := runtimeapp.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
+			`ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
 			`parseCtx.BindTo(ctx, (*context.Context)(nil))`,
 		},
 		filepath.Join(root, "internal", "http", "server.go.tmpl"): {
-			`router.Use(s.sourceContextMiddleware(app.SourceHTTP))`,
+			`router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))`,
 			`carrier.SetAppSourceName(sourceName)`,
 		},
 		filepath.Join(root, "internal", "schedules", "scheduler.go.tmpl"): {
 			`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
-			`return app.WithSource(ctx, app.SourceScheduler)`,
+			`return runtime.WithSource(ctx, runtime.SourceScheduler)`,
 		},
 		filepath.Join(root, "wire", "inject_services_app.go.tmpl"): {
-			`setupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+			`setupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)`,
 		},
 		filepath.Join(root, "demo", "internal", "monitoring", "controller.go.tmpl"): {
-			`startupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+			`startupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)`,
 		},
 	}
 

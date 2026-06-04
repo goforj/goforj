@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
@@ -238,7 +238,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		return r.JSON(http.StatusOK, project)
 	})
 	apiGroup.GET("/about", func(r web.Context) error {
-		return r.JSON(http.StatusOK, appinfo.NewAboutService().Build())
+		return r.JSON(http.StatusOK, runtime.NewAboutService().Build())
 	})
 	listInspect := func(r web.Context) error {
 		if config.Inspects == nil {
@@ -251,7 +251,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			}
 		}
 		items, err := config.Inspects.Recent(r.Request().Context(), inspects.RecentQuery{
-			Source: appinfo.NormalizeSource(r.Query("source")),
+			Source: runtime.NormalizeSource(r.Query("source")),
 			Limit:  limit,
 		})
 		if err != nil {

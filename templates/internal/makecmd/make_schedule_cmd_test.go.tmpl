@@ -21,19 +21,37 @@ func TestScheduleCmdGeneratesAndWiresSchedule(t *testing.T) {
 
 import (
 	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
-	ProvideAppSchedules,
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
 )
-
-func ProvideAppSchedules() *schedules.AppSchedules {
-	return schedules.NewAppSchedules(
-	)
-}
 `), 0644); err != nil {
 		t.Fatalf("write inject_schedules_app.go: %v", err)
+	}
+	if err := os.MkdirAll("app", 0755); err != nil {
+		t.Fatalf("mkdir app: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("app", "schedules.go"), []byte(`package app
+
+import "example.com/testapp/internal/schedules"
+
+type ScheduleRegistry struct {
+}
+
+func NewScheduleRegistry() *ScheduleRegistry {
+	return &ScheduleRegistry{
+	}
+}
+
+func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
+	return nil
+}
+`), 0644); err != nil {
+		t.Fatalf("write app/schedules.go: %v", err)
 	}
 	cmd := &ScheduleCmd{Name: "Reports:Daily", Every: "24h"}
 	if err := cmd.Run(); err != nil {
@@ -57,9 +75,13 @@ func ProvideAppSchedules() *schedules.AppSchedules {
 	assertScheduleTestContains(t, wireBody, []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
+	})
+	appSchedulesBody := readScheduleTestFile(t, filepath.Join("app", "schedules.go"))
+	assertScheduleTestContains(t, appSchedulesBody, []string{
+		`"example.com/testapp/internal/reports"`,
 		"dailySchedule *reports.DailySchedule",
-		"return schedules.NewAppSchedules(",
-		"dailySchedule,",
+		"dailySchedule: dailySchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailySchedule); err != nil {",
 	})
 }
 
@@ -72,17 +94,29 @@ func TestScheduleCmdRemoveDeletesFileAndWiring(t *testing.T) {
 
 import (
 	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
-	ProvideAppSchedules,
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
 )
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "schedules.go"), `package app
 
-func ProvideAppSchedules(
-) *schedules.AppSchedules {
-	return schedules.NewAppSchedules(
-	)
+import "example.com/testapp/internal/schedules"
+
+type ScheduleRegistry struct {
+}
+
+func NewScheduleRegistry() *ScheduleRegistry {
+	return &ScheduleRegistry{
+	}
+}
+
+func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
+	return nil
 }
 `)
 
@@ -99,8 +133,12 @@ func ProvideAppSchedules(
 	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_schedules_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("app", "schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
 		"dailySchedule *reports.DailySchedule",
-		"dailySchedule,",
+		"dailySchedule: dailySchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailySchedule); err != nil {",
 	})
 
 	remove := &ScheduleCmd{Name: "Reports:Daily", Every: "24h", Remove: true}
@@ -112,8 +150,12 @@ func ProvideAppSchedules(
 	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_schedules_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
 		"dailySchedule *reports.DailySchedule",
-		"dailySchedule,",
+		"dailySchedule: dailySchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailySchedule); err != nil {",
 	})
 }
 

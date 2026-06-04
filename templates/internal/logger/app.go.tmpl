@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"{{.GoModuleName}}/internal/app"
+	appruntime "{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"github.com/rs/zerolog"
 	"io"
@@ -660,7 +660,7 @@ func buildLoggerContextFields(ctx context.Context) []eventField {
 	if inspectID := inspects.InspectIDFromContext(ctx); inspectID != "" {
 		fields = append(fields, eventField{key: "inspect_id", value: inspectID})
 	}
-	if source := app.SourceFromContext(ctx); source != "" {
+	if source := appruntime.SourceFromContext(ctx); source != "" {
 		fields = append(fields, eventField{key: "source", value: source.String()})
 	}
 	return fields

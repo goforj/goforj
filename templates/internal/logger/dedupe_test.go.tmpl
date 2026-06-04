@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 )
 
@@ -214,7 +214,7 @@ func TestConcurrentContextLoggersPreserveResolvedContextFields(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ctx := app.WithSource(context.Background(), app.SourceHTTP)
+			ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 			ctx = inspects.WithInspectID(ctx, "inspect-"+string(rune('a'+worker)))
 			log := base.WithContext(ctx)
 			for i := 0; i < 8; i++ {

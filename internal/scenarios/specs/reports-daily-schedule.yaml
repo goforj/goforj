@@ -17,7 +17,7 @@ markdown:
     The schedule decides when daily report work should begin. The queue still owns execution, retries, worker lifecycle, and failure visibility.
   what_you_build:
     - "`internal/reports/daily.go` selects users that need daily reports."
-    - "`internal/schedules/scheduler_registry.go` registers a named `reports:daily` schedule."
+    - "`app/schedules.go` registers a named `reports:daily` schedule."
     - "The schedule calls a domain-owned method instead of putting report logic in scheduler bootstrap."
     - "The method dispatches `reports:generate` jobs, so workers continue to process report generation."
   diagrams:
@@ -48,7 +48,7 @@ markdown:
     - internal/reports/daily_test.go
     - internal/users/repository.go
     - internal/schedules/scheduler.go
-    - internal/schedules/scheduler_registry.go
+    - app/schedules.go
     - app/wire/inject_services_app.go
   file_groups:
     - title: Reports feature
@@ -61,7 +61,7 @@ markdown:
     - title: Scheduler
       files:
         - internal/schedules/scheduler.go
-        - internal/schedules/scheduler_registry.go
+        - app/schedules.go
     - title: App wiring
       files:
         - app/wire/inject_services_app.go
@@ -84,7 +84,7 @@ markdown:
     ```go
     s.Every(30).Seconds().
       Name("reports:daily").
-      Do(s.inspectTask("reports:daily", s.dailyReports.Run))
+      Do(s.InspectTask("reports:daily", r.dailyReports.Run))
     ```
 
     Return to `DailyAt("04:00")` before treating the schedule as production-shaped.
@@ -211,68 +211,67 @@ steps:
         	return targets, nil
         }
 
-  - title: Inject The Daily Runner Into Scheduler
+  - title: Import Reports Into The Schedule Registry
     explain: |
-      Add the daily runner to the generated scheduler type.
+      Add the daily runner package to the app-owned schedule registry.
     replace:
-      path: internal/schedules/scheduler.go
+      path: app/schedules.go
       language: go
       old: |
-                "{{module}}/internal/inspects"
+                "{{module}}/internal/schedules"
       new: |
-                "{{module}}/internal/inspects"
                 "{{module}}/internal/reports"
+                "{{module}}/internal/schedules"
 
-  - title: Add Scheduler Field
+  - title: Add Schedule Registry Field
     explain: |
-      Store the injected runner on the scheduler.
+      Store the injected runner on the app schedule registry.
     replace:
-      path: internal/schedules/scheduler.go
+      path: app/schedules.go
       language: go
       old: |
-                inspectManager *inspects.Manager
+                type ScheduleRegistry struct {
       new: |
-                inspectManager *inspects.Manager
+                type ScheduleRegistry struct {
                 dailyReports   *reports.DailyRunner
 
-  - title: Add Scheduler Constructor Parameter
+  - title: Add Schedule Registry Constructor Parameter
     explain: |
-      Wire can now provide the runner to the scheduler.
+      Wire can now provide the runner to the app schedule registry.
     replace:
-      path: internal/schedules/scheduler.go
+      path: app/schedules.go
       language: go
       old: |
-                inspectManager *inspects.Manager,
+                func NewScheduleRegistry(
       new: |
-                inspectManager *inspects.Manager,
+                func NewScheduleRegistry(
                 dailyReports *reports.DailyRunner,
 
-  - title: Assign Scheduler Runner
+  - title: Assign Schedule Registry Runner
     explain: |
-      Preserve the generated scheduler wiring and add the new field assignment.
+      Preserve generated schedule wiring and add the new field assignment.
     replace:
-      path: internal/schedules/scheduler.go
+      path: app/schedules.go
       language: go
       old: |
-                inspectManager: inspectManager,
+                return &ScheduleRegistry{
       new: |
-                inspectManager: inspectManager,
+                return &ScheduleRegistry{
                 dailyReports:   dailyReports,
 
   - title: Register The Schedule
     explain: |
       Keep the registry declarative. The registry names the schedule and points to the domain-owned method.
     replace:
-      path: internal/schedules/scheduler_registry.go
+      path: app/schedules.go
       language: go
       old: |
-                s.registerJobObservers()
+                func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
       new: |
-                s.registerJobObservers()
-
+                func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
                 s.DailyAt("04:00").
                         Name("reports:daily").
-                        Do(s.inspectTask("reports:daily", s.dailyReports.Run))
+                        Do(s.InspectTask("reports:daily", r.dailyReports.Run))
 
   - title: Wire The Runner
     explain: |

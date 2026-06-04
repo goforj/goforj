@@ -51,8 +51,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		filepath.Join("internal", "monitoring", "check_service.go"),
 		filepath.Join("internal", "monitoring", "monitor_check_job.go"),
 		filepath.Join("internal", "monitoring", "incident_transition_service.go"),
+		filepath.Join("app", "lifecycle.go"),
+		filepath.Join("app", "schedules.go"),
 		filepath.Join("internal", "app", "lifecycle.go"),
-		filepath.Join("internal", "app", "lifecycle_registry.go"),
 		filepath.Join("internal", "app", "README.md"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
@@ -115,15 +116,15 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		t.Fatalf("expected legacy file to be removed: %s", legacyLifecycleHooksCmdPath)
 	}
 
-	schedulerRegistryPath := filepath.Join("internal", "schedules", "scheduler_registry.go")
+	schedulerRegistryPath := filepath.Join("app", "schedules.go")
 	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
 	for _, token := range []string{
-		`Do(s.inspectTask("monitor:retention", s.retentionService.RunScheduled))`,
-		`Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`,
-		`Do(s.inspectTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))`,
+		`Do(s.InspectTask("monitor:retention", r.retentionService.RunScheduled))`,
+		`Do(s.InspectTask("monitor:poll", r.monitorCheckJob.RunScheduledPoll))`,
+		`Do(s.InspectTask("monitor:push-test-trigger", r.monitorCheckJob.RunScheduledPushTrigger))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -136,7 +137,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	}
 	for _, token := range []string{
 		`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
-		`return app.WithSource(ctx, app.SourceScheduler)`,
+		`return runtime.WithSource(ctx, runtime.SourceScheduler)`,
 	} {
 		if !strings.Contains(string(schedulerSrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerPath)
@@ -149,7 +150,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	}
 	for _, token := range []string{
 		`queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {`,
-		`return app.WithSource(ctx, app.SourceJobs)`,
+		`return runtime.WithSource(ctx, runtime.SourceJobs)`,
 	} {
 		if !strings.Contains(string(queueManagerSrc), token) {
 			t.Fatalf("expected %q in %s", token, queueManagerPath)

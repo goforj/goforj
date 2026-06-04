@@ -2,7 +2,7 @@ package metrics
 
 import (
 	"context"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
@@ -1360,7 +1360,7 @@ func (m *Manager) mailMetricLabels(ctx context.Context, event MailSendMetricEven
 {{- end }}
 
 func metricSourceContextLabel(ctx context.Context) string {
-	source := app.SourceFromContext(ctx)
+	source := runtime.SourceFromContext(ctx)
 	if strings.TrimSpace(string(source)) == "" {
 		return "app"
 	}

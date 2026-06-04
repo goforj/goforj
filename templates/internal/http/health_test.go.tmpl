@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -19,7 +19,7 @@ import (
 func TestHealthAndReadinessEndpoints(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -46,7 +46,7 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 }
 
 func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{
 			{
 				Name: "cache_default",
 				Check: func(_ context.Context) error {
@@ -80,7 +80,7 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 	t.Setenv("DB_DRIVER", "mysql")
 
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{
 			{
 				Name: "db_default",
 				Check: func(_ context.Context) error {

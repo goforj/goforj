@@ -422,7 +422,7 @@ import (
 	"path/filepath"
 {{- end }}
 
-	"{{ .GoModuleName }}/internal/app"
+	"{{ .GoModuleName }}/internal/runtime"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 	{{- range .Drivers }}
@@ -613,9 +613,9 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 // context at the queue execution boundary.
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
 	m.defaultQueue.Register(jobType, func(ctx context.Context, msg queue.Message) error {
-		ctx = app.WithSource(ctx, app.SourceJobs)
+		ctx = runtime.WithSource(ctx, runtime.SourceJobs)
 		if m != nil && m.inspects != nil {
-			ctx = m.inspects.Begin(ctx, app.SourceJobs, jobType, map[string]string{
+			ctx = m.inspects.Begin(ctx, runtime.SourceJobs, jobType, map[string]string{
 				"job_name": jobType,
 			})
 			recordJobPayload(ctx, msg)
@@ -710,7 +710,7 @@ func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queu
 	options := []queue.Option{
 		queue.WithWorkers(workerCount),
 		queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {
-			return app.WithSource(ctx, app.SourceJobs)
+			return runtime.WithSource(ctx, runtime.SourceJobs)
 		}),
 	}
 

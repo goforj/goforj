@@ -19,6 +19,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -470,14 +472,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_migration_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
-				"internal/app/lifecycle.go.tmpl",
-				"internal/app/lifecycle_test.go.tmpl",
-				"internal/app/runtime.go.tmpl",
-				"internal/app/source.go.tmpl",
-				"internal/app/runtime_host.go.tmpl",
-				"internal/app/runtime_host_test.go.tmpl",
-				"internal/app/timeouts.go.tmpl",
-				"internal/app/README.md.tmpl",
+				"internal/runtime/lifecycle.go.tmpl",
+				"internal/runtime/lifecycle_test.go.tmpl",
+				"internal/runtime/runtime.go.tmpl",
+				"internal/runtime/source.go.tmpl",
+				"internal/runtime/runtime_host.go.tmpl",
+				"internal/runtime/runtime_host_test.go.tmpl",
+				"internal/runtime/timeouts.go.tmpl",
+				"internal/runtime/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
 				"internal/storages/README.md.tmpl",
 				"internal/observability/cache_observer.go.tmpl",
@@ -487,8 +489,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/observability/queue_observer_test.go.tmpl",
 				"internal/observability/storage_observer.go.tmpl",
 				"internal/console/console.go.tmpl",
-				"internal/app/about.go.tmpl",
-				"internal/app/discovery.go.tmpl",
+				"internal/runtime/about.go.tmpl",
+				"internal/runtime/discovery.go.tmpl",
 				"internal/cmd/about_cmd.go.tmpl",
 				"internal/cmd/about_cmd_test.go.tmpl",
 				"internal/cmd/about_grid.go.tmpl",
@@ -528,7 +530,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
 				".db-relationships.yaml.tmpl",
-				"internal/app/lifecycle_registry.go.tmpl",
+				"app/lifecycle.go.tmpl",
 				"app/commands.go.tmpl",
 			},
 			action: func() error {
@@ -908,9 +910,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/schedules/scheduler.go.tmpl",
 				"internal/schedules/app_schedules.go.tmpl",
 				"internal/schedules/cmd.go.tmpl",
-				"internal/schedules/scheduler_registry.go.tmpl",
+				"internal/schedules/registration.go.tmpl",
 				"internal/makecmd/make_schedule_cmd.go.tmpl",
 				"internal/makecmd/make_schedule_cmd_test.go.tmpl",
+			},
+			renderOnceTemplates: []string{
+				"app/schedules.go.tmpl",
 			},
 			action: func() error {
 				if err := p.writeTemplateMappings([]templateMapping{
@@ -1163,9 +1168,20 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "lifecycle", "manager_test.go"),
 		filepath.Join("internal", "lifecycle", "settings.go"),
 		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "README.md"),
+		filepath.Join("internal", "app", "about.go"),
+		filepath.Join("internal", "app", "discovery.go"),
+		filepath.Join("internal", "app", "lifecycle.go"),
+		filepath.Join("internal", "app", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "lifecycle_test.go"),
 		filepath.Join("internal", "app", "manager.go"),
 		filepath.Join("internal", "app", "manager_test.go"),
 		filepath.Join("internal", "app", "registry.go"),
+		filepath.Join("internal", "app", "runtime.go"),
+		filepath.Join("internal", "app", "runtime_host.go"),
+		filepath.Join("internal", "app", "runtime_host_test.go"),
+		filepath.Join("internal", "app", "source.go"),
+		filepath.Join("internal", "app", "timeouts.go"),
 		filepath.Join("internal", "jobs", "devconsole.go"),
 		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
@@ -1175,6 +1191,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "scheduler", "runtime.go"),
 		filepath.Join("internal", "scheduler", "scheduler.go"),
 		filepath.Join("internal", "scheduler", "scheduler_registry.go"),
+		filepath.Join("internal", "schedules", "scheduler_registry.go"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
 		filepath.Join("wire", "app.go"),
@@ -1260,9 +1277,41 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		}
 	}
 
+	appServiceInjectorPath := filepath.Join("app", "wire", "inject_services_app.go")
+	if data, err := os.ReadFile(appServiceInjectorPath); err == nil {
+		updated := syncLegacyAppServiceInjector(string(data), p.config.GoModuleName)
+		if updated != string(data) {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appServiceInjectorPath, err)
+			}
+			if err := os.WriteFile(appServiceInjectorPath, formatted, 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	appLifecyclePath := filepath.Join("app", "lifecycle.go")
+	if data, err := os.ReadFile(appLifecyclePath); err == nil {
+		updated := syncLegacyAppLifecycleRegistry(string(data), p.config.GoModuleName)
+		if updated != string(data) {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appLifecyclePath, err)
+			}
+			if err := os.WriteFile(appLifecyclePath, formatted, 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	scheduleInjectorPath := filepath.Join("app", "wire", "inject_schedules_app.go")
 	if data, err := os.ReadFile(scheduleInjectorPath); err == nil {
-		updated := syncLegacyScheduleInjectorPackage(string(data))
+		updated := syncLegacyScheduleInjector(string(data), p.config.GoModuleName)
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
@@ -1276,13 +1325,18 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
-	// Migrate legacy scheduler command name when scheduler registry is render-once.
-	schedulerRegistryPath := filepath.Join("internal", "schedules", "scheduler_registry.go")
-	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
-		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "monitor:push-test-trigger")
+	// Migrate legacy scheduler command names in preserved app-owned schedules.
+	appSchedulesPath := filepath.Join("app", "schedules.go")
+	if data, err := os.ReadFile(appSchedulesPath); err == nil {
+		updated := syncLegacyScheduleInjectorPackage(string(data))
+		updated = strings.ReplaceAll(updated, "demo:push-monitor-trigger", "monitor:push-test-trigger")
 		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
 		if updated != string(data) {
-			if err := os.WriteFile(schedulerRegistryPath, []byte(updated), 0o644); err != nil {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appSchedulesPath, err)
+			}
+			if err := os.WriteFile(appSchedulesPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -1483,7 +1537,160 @@ func syncLegacyScheduleInjectorPackage(content string) string {
 	updated := strings.ReplaceAll(content, "/internal/scheduler", "/internal/schedules")
 	updated = strings.ReplaceAll(updated, "scheduler.AppSchedules", "schedules.AppSchedules")
 	updated = strings.ReplaceAll(updated, "scheduler.NewAppSchedules", "schedules.NewAppSchedules")
+	updated = strings.ReplaceAll(updated, "scheduler.ScheduleRegistry", "schedules.ScheduleRegistry")
+	updated = strings.ReplaceAll(updated, "scheduler.RegisterRecurring", "schedules.RegisterRecurring")
+	updated = strings.ReplaceAll(updated, "*scheduler.Scheduler", "*schedules.Scheduler")
 	return updated
+}
+
+// syncLegacyScheduleInjector updates preserved app schedule wiring after schedule registration moved to app/.
+func syncLegacyScheduleInjector(content string, moduleName string) string {
+	moduleName = strings.TrimSpace(moduleName)
+	if moduleName == "" {
+		return syncLegacyScheduleInjectorPackage(content)
+	}
+
+	updated := syncLegacyScheduleInjectorPackage(content)
+	schedulesPath := moduleName + "/internal/schedules"
+	targetAppPath := moduleName + "/app"
+	updated = ensureGoImport(updated, schedulesPath, "")
+	updated = ensureGoImport(updated, targetAppPath, "targetapp")
+	updated = strings.ReplaceAll(updated, "\tschedules.NewAppSchedules,", "\tProvideAppSchedules,")
+
+	if !strings.Contains(updated, "func ProvideAppSchedules(") {
+		updated = appendProvideAppSchedules(updated)
+	}
+	if !strings.Contains(updated, "targetapp.NewScheduleRegistry") {
+		updated = insertIntoWireSet(updated, "appScheduleSet", "\ttargetapp.NewScheduleRegistry,")
+	}
+	if !strings.Contains(updated, "wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry))") {
+		updated = insertIntoWireSet(updated, "appScheduleSet", "\twire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),")
+	}
+	return updated
+}
+
+// appendProvideAppSchedules adds the explicit zero-arg provider Wire needs for an empty legacy container.
+func appendProvideAppSchedules(content string) string {
+	content = strings.TrimRight(content, "\n")
+	return content + `
+
+// ProvideAppSchedules creates the legacy AppSchedules container.
+func ProvideAppSchedules() *schedules.AppSchedules {
+	return schedules.NewAppSchedules()
+}
+`
+}
+
+// syncLegacyAppServiceInjector updates preserved app service wiring after lifecycle moved to app/.
+func syncLegacyAppServiceInjector(content string, moduleName string) string {
+	moduleName = strings.TrimSpace(moduleName)
+	if moduleName == "" {
+		return content
+	}
+
+	updated := content
+	updated = replaceQualifiedIdentifier(updated, "app.NewLifecycleRegistry", "targetapp.NewLifecycleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "app.NewTimeouts", "runtime.NewTimeouts")
+	updated = replaceQualifiedIdentifier(updated, "app.BackgroundSourceContext", "runtime.BackgroundSourceContext")
+	updated = replaceQualifiedIdentifier(updated, "app.SourceStartup", "runtime.SourceStartup")
+	updated = replaceQualifiedIdentifier(updated, "runtimeapp.NewTimeouts", "runtime.NewTimeouts")
+	updated = replaceQualifiedIdentifier(updated, "runtimeapp.BackgroundSourceContext", "runtime.BackgroundSourceContext")
+	updated = replaceQualifiedIdentifier(updated, "runtimeapp.SourceStartup", "runtime.SourceStartup")
+
+	legacyRuntimePath := moduleName + "/internal/app"
+	runtimePath := moduleName + "/internal/runtime"
+	targetAppPath := moduleName + "/app"
+	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
+	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
+	updated = ensureGoImport(updated, targetAppPath, "targetapp")
+	return updated
+}
+
+// syncLegacyAppLifecycleRegistry updates preserved app lifecycle registration imports after the runtime package rename.
+func syncLegacyAppLifecycleRegistry(content string, moduleName string) string {
+	moduleName = strings.TrimSpace(moduleName)
+	if moduleName == "" {
+		return content
+	}
+
+	updated := content
+	for _, name := range []string{
+		"Lifecycle",
+		"BeforeStartup",
+		"Startup",
+		"AfterStartup",
+		"BeforeShutdown",
+		"Shutdown",
+		"AfterShutdown",
+	} {
+		updated = replaceQualifiedIdentifier(updated, "runtimeapp."+name, "runtime."+name)
+	}
+
+	legacyRuntimePath := moduleName + "/internal/app"
+	runtimePath := moduleName + "/internal/runtime"
+	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
+	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
+	return updated
+}
+
+// replaceQualifiedIdentifier rewrites an old qualifier without touching longer aliases.
+func replaceQualifiedIdentifier(content string, old string, replacement string) string {
+	re := regexp.MustCompile(`(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(old))
+	return re.ReplaceAllString(content, `${1}`+replacement)
+}
+
+// replaceGoImportPath rewrites an existing import to a new path and optional alias.
+func replaceGoImportPath(content string, oldPath string, newPath string, alias string) string {
+	oldQuotedPath := strconv.Quote(oldPath)
+	newQuotedPath := strconv.Quote(newPath)
+	replacement := "\t" + newQuotedPath
+	if alias != "" {
+		replacement = "\t" + alias + " " + newQuotedPath
+	}
+	replacements := map[string]string{
+		"\t" + oldQuotedPath:            replacement,
+		"\tapp " + oldQuotedPath:        replacement,
+		"\truntimeapp " + oldQuotedPath: replacement,
+		"\truntime " + oldQuotedPath:    replacement,
+	}
+	for from, to := range replacements {
+		content = strings.ReplaceAll(content, from, to)
+	}
+	return content
+}
+
+// ensureGoImport inserts a named import into the first import block when missing.
+func ensureGoImport(content string, importPath string, alias string) string {
+	if strings.Contains(content, strconv.Quote(importPath)) {
+		return content
+	}
+	importStart := strings.Index(content, "import (\n")
+	if importStart == -1 {
+		return content
+	}
+	insertAt := importStart + len("import (\n")
+	importLine := "\t" + strconv.Quote(importPath) + "\n"
+	if alias != "" {
+		importLine = "\t" + alias + " " + strconv.Quote(importPath) + "\n"
+	}
+	return content[:insertAt] + importLine + content[insertAt:]
+}
+
+// insertIntoWireSet inserts a provider before the named wire set closes.
+func insertIntoWireSet(content string, setName string, provider string) string {
+	lines := strings.Split(content, "\n")
+	inSet := false
+	for i, line := range lines {
+		if !inSet && strings.Contains(line, "var "+setName+" = wire.NewSet(") {
+			inSet = true
+			continue
+		}
+		if inSet && strings.TrimSpace(line) == ")" {
+			lines = append(lines[:i], append([]string{provider}, lines[i:]...)...)
+			return strings.Join(lines, "\n")
+		}
+	}
+	return content
 }
 
 // syncCommandsName migrates preserved app command registration away from the legacy AppCommands name.

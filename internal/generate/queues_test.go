@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-func writeQueueAppFixture(t *testing.T, root string) {
+func writeQueueRuntimeFixture(t *testing.T, root string) {
 	t.Helper()
-	appDir := filepath.Join(root, "internal", "app")
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
-		t.Fatalf("mkdir app package: %v", err)
+	runtimeDir := filepath.Join(root, "internal", "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("mkdir runtime package: %v", err)
 	}
-	const source = `package app
+	const source = `package runtime
 
 import "context"
 
@@ -28,8 +28,8 @@ func WithSource(ctx context.Context, source string) context.Context {
 	return context.WithValue(ctx, sourceKey{}, source)
 }
 `
-	if err := os.WriteFile(filepath.Join(appDir, "source.go"), []byte(source), 0o644); err != nil {
-		t.Fatalf("write app source fixture: %v", err)
+	if err := os.WriteFile(filepath.Join(runtimeDir, "source.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write runtime source fixture: %v", err)
 	}
 
 	inspectsDir := filepath.Join(root, "internal", "inspects")
@@ -72,7 +72,7 @@ func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []s
 		t.Fatalf("mkdir queue package: %v", err)
 	}
 	writeFixtureGoMod(t, root, fixtureModuleSpec(moduleName, requires, nil, replaces))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 }
 
 func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
@@ -87,7 +87,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		nil,
 		queueLocalReplaces(t),
 	))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -195,7 +195,7 @@ func TestGenerateQueueFilesAcceptsDefaultQueueCompatibilityAlias(t *testing.T) {
 		nil,
 		queueLocalReplaces(t),
 	))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestGenerateQueueFilesNamedQueuesInheritRootConfig(t *testing.T) {
 		nil,
 		queueLocalReplaces(t),
 	))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 		nil,
 		nil,
 	))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -432,7 +432,7 @@ func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 		nil,
 		nil,
 	))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -499,7 +499,7 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 		nil,
 		queueLocalReplaces(t),
 	))
-	writeQueueAppFixture(t, root)
+	writeQueueRuntimeFixture(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)

@@ -1,20 +1,23 @@
 // App-owned Wire injector. EDIT THIS FILE.
-// Add application schedule providers here, or use `forj make:schedule`.
+// Add app schedule providers here, or use `forj make:schedule`.
 
 package wire
 
 import (
 	"github.com/goforj/wire"
+
+	targetapp "{{.GoModuleName}}/app"
 	"{{.GoModuleName}}/internal/schedules"
 )
 
 // appScheduleSet contains application-owned schedule providers.
 var appScheduleSet = wire.NewSet(
 	ProvideAppSchedules,
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
 )
 
-// ProvideAppSchedules creates the application schedule registry.
+// ProvideAppSchedules creates the legacy AppSchedules container.
 func ProvideAppSchedules() *schedules.AppSchedules {
-	return schedules.NewAppSchedules(
-	)
+	return schedules.NewAppSchedules()
 }

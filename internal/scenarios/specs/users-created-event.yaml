@@ -18,7 +18,7 @@ markdown:
     - "`internal/events.UserCreated` defines the typed event."
     - "`UserService` publishes through a small application boundary."
     - "`notifications.Subscribers` reacts to `users.created`."
-    - "`internal/app/lifecycle_registry.go` registers and closes the subscription."
+    - "`app/lifecycle.go` registers and closes the subscription."
     - "A service test proves the event is published without starting the App runtime."
   prerequisites: |
     Complete [Cached User Profile](/scenarios/cached-user-profile) first.
@@ -42,7 +42,7 @@ markdown:
     - internal/users/controller.go
     - internal/notifications/service.go
     - internal/notifications/subscribers.go
-    - internal/app/lifecycle_registry.go
+    - app/lifecycle.go
     - app/wire/inject_services_app.go
   file_groups:
     - title: Configuration
@@ -64,7 +64,7 @@ markdown:
         - internal/notifications/subscribers.go
     - title: Lifecycle and wiring
       files:
-        - internal/app/lifecycle_registry.go
+        - app/lifecycle.go
         - app/wire/inject_services_app.go
   generated_files:
     intro: "The event generator may update generated event manager files."
@@ -451,11 +451,11 @@ steps:
 
   - title: Register Subscribers In The Lifecycle
     explain: |
-      Update `internal/app/lifecycle_registry.go`.
+      Update `app/lifecycle.go`.
 
       This keeps subscriber registration in the App lifecycle, not in `init`, package globals, or controller constructors.
     write:
-      path: internal/app/lifecycle_registry.go
+      path: app/lifecycle.go
       language: go
       content: |
         package app
@@ -464,6 +464,7 @@ steps:
                 "context"
 
                 "{{module}}/internal/events"
+                "{{module}}/internal/runtime"
                 "{{module}}/internal/notifications"
         )
 
@@ -483,8 +484,8 @@ steps:
                 }
         }
 
-        func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
-                lifecycle.On(Startup, func(ctx context.Context) error {
+        func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
+                lifecycle.On(runtime.Startup, func(ctx context.Context) error {
                         subscription, err := r.notificationSubscribers.Register(ctx, r.eventManager.Default())
                         if err != nil {
                                 return err
