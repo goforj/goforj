@@ -1150,7 +1150,7 @@ func (p *ProjectRenderer) namedAppRenderTargets() ([]project.AppTarget, error) {
 	targets := make([]project.AppTarget, 0)
 	add := func(target project.AppTarget) {
 		target = normalizeRenderAppTarget(target)
-		if target.Name == "" || seen[target.Name] || !project.IsSafeAppTargetName(target.Name) || isReservedAppTargetName(target.Name) {
+		if target.Name == "" || seen[target.Name] || !project.IsSafeAppTargetName(target.Name) || project.IsReservedAppTargetName(target.Name) {
 			return
 		}
 		seen[target.Name] = true
@@ -1193,7 +1193,7 @@ func discoverConventionalAppTargets() []project.AppTarget {
 				continue
 			}
 			name := entry.Name()
-			if name == project.DefaultAppTargetName || !project.IsSafeAppTargetName(name) || isReservedAppTargetName(name) {
+			if name == project.DefaultAppTargetName || !project.IsSafeAppTargetName(name) || project.IsReservedAppTargetName(name) {
 				continue
 			}
 			if hasConventionalAppTargetFiles(filepath.Join("app", name)) {
@@ -1210,11 +1210,6 @@ func discoverConventionalAppTargets() []project.AppTarget {
 		return targets[i].Name < targets[j].Name
 	})
 	return targets
-}
-
-// isReservedAppTargetName protects default target support directories under app/.
-func isReservedAppTargetName(name string) bool {
-	return name == "wire"
 }
 
 // hasConventionalAppTargetFiles avoids treating arbitrary app subpackages as targets unless they look target-owned.

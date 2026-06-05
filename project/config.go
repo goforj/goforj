@@ -350,6 +350,9 @@ func LoadProjectConfig() (*Config, error) {
 		return nil, err
 	}
 	normalizeAppConfig(config)
+	if err := validateAppConfig(config); err != nil {
+		return nil, err
+	}
 	if len(config.Dev.WirePaths) == 0 {
 		config.Dev.WirePaths = []string{DefaultAppTarget().WireDir}
 	}
@@ -381,4 +384,30 @@ func normalizeAppConfig(config *ProjectConfig) {
 			config.App.Targets[i].WireDir = namedDefault.WireDir
 		}
 	}
+}
+
+// validateAppConfig rejects target metadata that would render into ambiguous or unsafe paths.
+func validateAppConfig(config *ProjectConfig) error {
+	targets := make(map[string]struct{}, len(config.App.Targets))
+	for _, target := range config.App.Targets {
+		if !IsSafeAppTargetName(target.Name) {
+			return fmt.Errorf("invalid app target %q: target names must be path-safe slugs", target.Name)
+		}
+		if IsReservedAppTargetName(target.Name) {
+			return fmt.Errorf("invalid app target %q: target name is reserved", target.Name)
+		}
+		if _, exists := targets[target.Name]; exists {
+			return fmt.Errorf("invalid app target %q: duplicate target name", target.Name)
+		}
+		targets[target.Name] = struct{}{}
+	}
+	if _, exists := targets[config.App.DefaultTarget]; !exists {
+		return fmt.Errorf("invalid app default_target %q: target is not configured", config.App.DefaultTarget)
+	}
+	return nil
+}
+
+// IsReservedAppTargetName reports whether name is owned by the target composition layout.
+func IsReservedAppTargetName(name string) bool {
+	return name == "wire"
 }

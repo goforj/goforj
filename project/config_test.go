@@ -98,6 +98,52 @@ app:
 	}
 }
 
+func TestLoadProjectConfigRejectsInvalidAppTargets(t *testing.T) {
+	tests := map[string]string{
+		"default missing": `app:
+  default_target: reporting
+  targets:
+    - name: app
+`,
+		"duplicate": `app:
+  targets:
+    - name: reporting
+    - name: reporting
+`,
+		"unsafe": `app:
+  targets:
+    - name: ../reporting
+`,
+		"reserved": `app:
+  targets:
+    - name: wire
+`,
+	}
+	for name, appConfig := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			configPath := filepath.Join(root, ".goforj.yml")
+			content := "project_name: Test\nmodule_name: example.com/test\n" + appConfig
+			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			originalWD, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("getwd: %v", err)
+			}
+			if err := os.Chdir(root); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+			defer func() { _ = os.Chdir(originalWD) }()
+
+			if _, err := LoadProjectConfig(); err == nil {
+				t.Fatal("expected invalid target config to fail")
+			}
+		})
+	}
+}
+
 func TestIsSafeAppTargetName(t *testing.T) {
 	for _, name := range []string{"app", "reporting", "customer-portal", "ops_api", "v2"} {
 		if !IsSafeAppTargetName(name) {
@@ -108,6 +154,15 @@ func TestIsSafeAppTargetName(t *testing.T) {
 		if IsSafeAppTargetName(name) {
 			t.Fatalf("expected %q to be unsafe", name)
 		}
+	}
+}
+
+func TestIsReservedAppTargetName(t *testing.T) {
+	if !IsReservedAppTargetName("wire") {
+		t.Fatal("expected wire to be reserved")
+	}
+	if IsReservedAppTargetName("reporting") {
+		t.Fatal("expected reporting not to be reserved")
 	}
 }
 
