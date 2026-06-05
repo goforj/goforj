@@ -204,8 +204,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd.go.tmpl"): {
 			`appCommandSet,`,
-			`app.NewCommands,`,
-			`app.NewRootCmd,`,
+			`targetapp.NewCommands,`,
+			`targetapp.NewRootCmd,`,
 			`cmd.NewAboutCmd,`,
 			`cmd.NewCacheShellCmd,`,
 			`cmd.NewDBShellCmd,`,
@@ -391,10 +391,10 @@ func assertRendererTemplateOwnership(t *testing.T, source string, tmpl string, w
 		found = true
 		absoluteIdx := searchFrom + idx
 		callName := nearestRendererWriteCall(source[:absoluteIdx])
-		if wantOnce && callName != "writeTemplateMappingsOnce" {
+		if wantOnce && !strings.Contains(callName, "Once") {
 			t.Fatalf("expected %s to render once, got %s", tmpl, callName)
 		}
-		if !wantOnce && callName != "writeTemplateMappings" {
+		if !wantOnce && (callName == "" || strings.Contains(callName, "Once")) {
 			t.Fatalf("expected %s to render overwrite, got %s", tmpl, callName)
 		}
 		searchFrom = absoluteIdx + len(tmpl)
@@ -406,15 +406,30 @@ func assertRendererTemplateOwnership(t *testing.T, source string, tmpl string, w
 
 // nearestRendererWriteCall finds the render helper surrounding a template mapping assertion.
 func nearestRendererWriteCall(prefix string) string {
-	onceIdx := strings.LastIndex(prefix, "writeTemplateMappingsOnce(")
-	overwriteIdx := strings.LastIndex(prefix, "writeTemplateMappings(")
-	if onceIdx > overwriteIdx {
-		return "writeTemplateMappingsOnce"
+	candidates := []string{
+		"writeTemplateMappingsOnceForTarget(",
+		"writeTemplateMappingsForTarget(",
+		"writeTemplateMappingsOnce(",
+		"writeTemplateMappings(",
 	}
-	if overwriteIdx >= 0 {
-		return "writeTemplateMappings"
+	lastName := ""
+	lastIdx := -1
+	for _, name := range candidates {
+		idx := strings.LastIndex(prefix, name)
+		if idx > lastIdx {
+			lastIdx = idx
+			lastName = strings.TrimSuffix(name, "(")
+		}
 	}
-	return ""
+	frameworkMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appTargetFrameworkMappings")
+	appOwnedMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appTargetAppOwnedMappings")
+	if appOwnedMappingIdx > frameworkMappingIdx && appOwnedMappingIdx > lastIdx {
+		return "writeTemplateMappingsOnceForTarget"
+	}
+	if frameworkMappingIdx > lastIdx {
+		return "writeTemplateMappingsForTarget"
+	}
+	return lastName
 }
 
 func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
@@ -647,11 +662,12 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
-		`"{{.GoModuleName}}/app"`,
+		`targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"`,
+		`"{{.GoModuleName}}/{{.TargetWireImportPath}}"`,
 		`"{{.GoModuleName}}/internal/console"`,
 		`if err := cmd.LoadEnv(); err != nil {`,
 		`console.Fatalf("%v", err)`,
-		`handled, err := cmd.DispatchPrebootCommand(args, &app.RootCmd{})`,
+		`handled, err := cmd.DispatchPrebootCommand(args, &targetapp.RootCmd{})`,
 		`application, err := wire.InitializeApplication()`,
 		`application.Run(nil, args)`,
 	} {

@@ -1,4 +1,4 @@
-package app
+package {{.TargetPackageName}}
 
 import (
 {{- if or (and .Components.DemoApp .Components.Jobs) (and .Components.Jobs .Components.StressTest) }}

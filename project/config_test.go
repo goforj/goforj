@@ -111,6 +111,21 @@ func TestIsSafeAppTargetName(t *testing.T) {
 	}
 }
 
+func TestAppTargetPackageName(t *testing.T) {
+	tests := map[string]string{
+		"app":             "app",
+		"reporting":       "reporting",
+		"customer-portal": "customerportal",
+		"ops_api":         "opsapi",
+		"2fa":             "app2fa",
+	}
+	for input, want := range tests {
+		if got := AppTargetPackageName(input); got != want {
+			t.Fatalf("AppTargetPackageName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	components := Components{
 		Grafana:    true,

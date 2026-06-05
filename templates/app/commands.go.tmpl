@@ -1,7 +1,7 @@
 // App-owned command registration. EDIT THIS FILE.
 // Add command fields here, or use `forj make:command`.
 
-package app
+package {{.TargetPackageName}}
 
 {{- if or (and .Components.Auth .Components.HasDatabase) (and .Components.DemoApp .Components.HasDatabase) }}
 import (

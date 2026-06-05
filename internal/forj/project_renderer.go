@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,7 +90,12 @@ type renderCounts struct {
 
 type templateRenderConfig struct {
 	*project.Config
-	Components project.Components
+	Components           project.Components
+	Target               project.AppTarget
+	TargetPackageName    string
+	TargetAppImportPath  string
+	TargetWireImportPath string
+	TargetIsDefault      bool
 }
 
 type templateMapping struct {
@@ -970,6 +976,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				})
 			},
 		},
+		{
+			title:   "Named App Target Rendering",
+			enabled: input.renderAll,
+			action:  p.renderNamedAppTargets,
+		},
 	}
 
 	for _, step := range steps {
@@ -1117,6 +1128,199 @@ func hasDevTask(tasks []project.DevTask, target project.DevTask) bool {
 		}
 	}
 	return false
+}
+
+// renderNamedAppTargets renders every non-default target discovered from config or project layout.
+func (p *ProjectRenderer) renderNamedAppTargets() error {
+	targets, err := p.namedAppRenderTargets()
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if err := p.renderAppTarget(target); err != nil {
+			return fmt.Errorf("render app target %s: %w", target.Name, err)
+		}
+	}
+	return nil
+}
+
+// namedAppRenderTargets merges optional config metadata with conventional target directories.
+func (p *ProjectRenderer) namedAppRenderTargets() ([]project.AppTarget, error) {
+	seen := map[string]bool{project.DefaultAppTargetName: true}
+	targets := make([]project.AppTarget, 0)
+	add := func(target project.AppTarget) {
+		target = normalizeRenderAppTarget(target)
+		if target.Name == "" || seen[target.Name] || !project.IsSafeAppTargetName(target.Name) || isReservedAppTargetName(target.Name) {
+			return
+		}
+		seen[target.Name] = true
+		targets = append(targets, target)
+	}
+
+	if p.config != nil {
+		for _, target := range p.config.App.Targets {
+			add(target)
+		}
+	}
+
+	for _, target := range discoverConventionalAppTargets() {
+		add(target)
+	}
+
+	return targets, nil
+}
+
+// discoverConventionalAppTargets treats existing cmd/<target> and app/<target> layouts as source of truth.
+func discoverConventionalAppTargets() []project.AppTarget {
+	names := make(map[string]bool)
+	if entries, err := os.ReadDir("cmd"); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == project.DefaultAppTargetName || !project.IsSafeAppTargetName(name) {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join("cmd", name, "main.go")); err == nil {
+				names[name] = true
+			}
+		}
+	}
+	if entries, err := os.ReadDir("app"); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == project.DefaultAppTargetName || !project.IsSafeAppTargetName(name) || isReservedAppTargetName(name) {
+				continue
+			}
+			if hasConventionalAppTargetFiles(filepath.Join("app", name)) {
+				names[name] = true
+			}
+		}
+	}
+
+	targets := make([]project.AppTarget, 0, len(names))
+	for name := range names {
+		targets = append(targets, project.DefaultNamedAppTarget(name))
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		return targets[i].Name < targets[j].Name
+	})
+	return targets
+}
+
+// isReservedAppTargetName protects default target support directories under app/.
+func isReservedAppTargetName(name string) bool {
+	return name == "wire"
+}
+
+// hasConventionalAppTargetFiles avoids treating arbitrary app subpackages as targets unless they look target-owned.
+func hasConventionalAppTargetFiles(appDir string) bool {
+	for _, path := range []string{
+		filepath.Join(appDir, "wire"),
+		filepath.Join(appDir, "commands.go"),
+		filepath.Join(appDir, "root_cmd.go"),
+		filepath.Join(appDir, "routes.go"),
+		filepath.Join(appDir, "schedules.go"),
+		filepath.Join(appDir, "lifecycle.go"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeRenderAppTarget fills missing paths from the framework target conventions.
+func normalizeRenderAppTarget(target project.AppTarget) project.AppTarget {
+	if strings.TrimSpace(target.Name) == "" {
+		return project.DefaultAppTarget()
+	}
+	namedDefault := project.DefaultNamedAppTarget(target.Name)
+	if target.Entrypoint == "" {
+		target.Entrypoint = namedDefault.Entrypoint
+	}
+	if target.AppDir == "" {
+		target.AppDir = namedDefault.AppDir
+	}
+	if target.WireDir == "" {
+		target.WireDir = namedDefault.WireDir
+	}
+	return target
+}
+
+// renderAppTarget writes the target entrypoint, composition files, and target-local Wire graph.
+func (p *ProjectRenderer) renderAppTarget(target project.AppTarget) error {
+	target = normalizeRenderAppTarget(target)
+	if err := p.writeTemplateMappingsForTarget(target, p.appTargetFrameworkMappings(target)); err != nil {
+		return err
+	}
+	return p.writeTemplateMappingsOnceForTarget(target, p.appTargetAppOwnedMappings(target))
+}
+
+// appTargetFrameworkMappings returns files the CLI can safely refresh on every render.
+func (p *ProjectRenderer) appTargetFrameworkMappings(target project.AppTarget) []templateMapping {
+	mappings := []templateMapping{
+		mapTemplateTo("cmd/app/main.go.tmpl", target.Entrypoint),
+		mapTemplateTo("app/root_cmd.go.tmpl", filepath.Join(target.AppDir, "root_cmd.go")),
+		mapTemplateTo("wire/app.go.tmpl", filepath.Join(target.WireDir, "app.go")),
+		mapTemplateTo("wire/app_test.go.tmpl", filepath.Join(target.WireDir, "app_test.go")),
+		mapTemplateTo("wire/inject_cmd.go.tmpl", filepath.Join(target.WireDir, "inject_cmd.go")),
+		mapTemplateTo("wire/inject_managers.go.tmpl", filepath.Join(target.WireDir, "inject_managers.go")),
+		mapTemplateTo("wire/wire.go.tmpl", filepath.Join(target.WireDir, "wire.go")),
+	}
+	if p.config.Render.Components.HasDatabase() {
+		mappings = append(mappings, mapTemplateTo("wire/inject_db.go.tmpl", filepath.Join(target.WireDir, "inject_db.go")))
+	}
+	if p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {
+		mappings = append(mappings, mapTemplateTo("wire/inject_auth.go.tmpl", filepath.Join(target.WireDir, "inject_auth.go")))
+	}
+	if p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI {
+		mappings = append(mappings, mapTemplateTo("wire/inject_http.go.tmpl", filepath.Join(target.WireDir, "inject_http.go")))
+	}
+	if p.config.Render.Components.Scheduler {
+		mappings = append(mappings, mapTemplateTo("wire/inject_scheduler.go.tmpl", filepath.Join(target.WireDir, "inject_scheduler.go")))
+	}
+	if p.config.Render.Components.Jobs {
+		mappings = append(mappings, mapTemplateTo("wire/inject_jobs.go.tmpl", filepath.Join(target.WireDir, "inject_jobs.go")))
+	}
+	return mappings
+}
+
+// appTargetAppOwnedMappings returns customization files that should be created once and then preserved.
+func (p *ProjectRenderer) appTargetAppOwnedMappings(target project.AppTarget) []templateMapping {
+	mappings := []templateMapping{
+		mapTemplateTo("app/lifecycle.go.tmpl", filepath.Join(target.AppDir, "lifecycle.go")),
+		mapTemplateTo("app/commands.go.tmpl", filepath.Join(target.AppDir, "commands.go")),
+		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(target.WireDir, "inject_services_app.go")),
+		mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(target.WireDir, "inject_subscribers_app.go")),
+		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(target.WireDir, "inject_cmd_app.go")),
+	}
+	if p.config.Render.Components.WebUI {
+		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", filepath.Join(filepath.Dir(target.Entrypoint), "frontend", "dist", "index.html")))
+	}
+	if p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI {
+		mappings = append(mappings,
+			mapTemplateTo("app/routes.go.tmpl", filepath.Join(target.AppDir, "routes.go")),
+			mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", filepath.Join(target.WireDir, "inject_http_controllers_app.go")),
+		)
+	}
+	if p.config.Render.Components.HasDatabase() {
+		mappings = append(mappings, mapTemplateTo("wire/inject_repositories_app.go.tmpl", filepath.Join(target.WireDir, "inject_repositories_app.go")))
+	}
+	if p.config.Render.Components.Scheduler {
+		mappings = append(mappings,
+			mapTemplateTo("app/schedules.go.tmpl", filepath.Join(target.AppDir, "schedules.go")),
+			mapTemplateTo("wire/inject_schedules_app.go.tmpl", filepath.Join(target.WireDir, "inject_schedules_app.go")),
+		)
+	}
+	if p.config.Render.Components.Jobs {
+		mappings = append(mappings, mapTemplateTo("wire/inject_jobs_app.go.tmpl", filepath.Join(target.WireDir, "inject_jobs_app.go")))
+	}
+	return mappings
 }
 
 func writeProjectConfig(path string, cfg *project.Config) error {
@@ -1892,6 +2096,7 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 	return nil
 }
 
+// runWireGenerate refreshes Wire output for the default target and every discovered named target.
 func (p *ProjectRenderer) runWireGenerate() error {
 	wireInstallOnce.Do(func() {
 		if path, err := exec.LookPath("wire"); err == nil {
@@ -1904,34 +2109,70 @@ func (p *ProjectRenderer) runWireGenerate() error {
 		return wireInstallErr
 	}
 
-	if out, err := runWireCommand(wireBinaryPath); err != nil {
-		trimmed := strings.TrimSpace(string(out))
-		// If a stale wire binary was built with an older Go toolchain, reinstall
-		// wire with the current toolchain and retry once.
-		if strings.Contains(trimmed, "package requires newer Go version") {
-			path, installErr := installWire()
-			if installErr != nil {
-				return installErr
+	wireDirs := p.wireGenerateDirs()
+	for _, wireDir := range wireDirs {
+		if out, err := runWireCommand(wireBinaryPath, wireDir); err != nil {
+			trimmed := strings.TrimSpace(string(out))
+			// If a stale wire binary was built with an older Go toolchain, reinstall
+			// wire with the current toolchain and retry once.
+			if strings.Contains(trimmed, "package requires newer Go version") {
+				path, installErr := installWire()
+				if installErr != nil {
+					return installErr
+				}
+				wireBinaryPath = path
+				if retryOut, retryErr := runWireCommand(wireBinaryPath, wireDir); retryErr != nil {
+					return fmt.Errorf("wire generate %s: %w (%s)", wireDir, retryErr, strings.TrimSpace(string(retryOut)))
+				}
+			} else {
+				return fmt.Errorf("wire generate %s: %w (%s)", wireDir, err, trimmed)
 			}
-			wireBinaryPath = path
-			if retryOut, retryErr := runWireCommand(wireBinaryPath); retryErr != nil {
-				return fmt.Errorf("wire generate: %w (%s)", retryErr, strings.TrimSpace(string(retryOut)))
-			}
-		} else {
-			return fmt.Errorf("wire generate: %w (%s)", err, trimmed)
 		}
 	}
 
-	p.lines = append(p.lines, renderCountsLine("wire generate", 1, 0, "command"))
+	p.lines = append(p.lines, renderCountsLine("wire generate", len(wireDirs), 0, "commands"))
 	return nil
 }
 
-func runWireCommand(wirePath string) ([]byte, error) {
-	cmd := exec.Command(wirePath)
-	cmd.Dir = filepath.Join("app", "wire")
-	if info, err := os.Stat(cmd.Dir); err != nil || !info.IsDir() {
-		cmd.Dir = "wire"
+// wireGenerateDirs returns existing Wire directories in the order they should be generated.
+func (p *ProjectRenderer) wireGenerateDirs() []string {
+	seen := make(map[string]bool)
+	add := func(dir string, dirs *[]string) {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "." || dir == "" || seen[dir] {
+			return
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			seen[dir] = true
+			*dirs = append(*dirs, dir)
+		}
 	}
+
+	dirs := make([]string, 0)
+	add(project.DefaultAppTarget().WireDir, &dirs)
+	if p.config != nil {
+		for _, configured := range p.config.Dev.WirePaths {
+			add(configured, &dirs)
+		}
+		for _, target := range p.config.App.Targets {
+			add(normalizeRenderAppTarget(target).WireDir, &dirs)
+		}
+	}
+	if targets, err := p.namedAppRenderTargets(); err == nil {
+		for _, target := range targets {
+			add(target.WireDir, &dirs)
+		}
+	}
+	if len(dirs) == 0 {
+		add("wire", &dirs)
+	}
+	return dirs
+}
+
+// runWireCommand executes the Wire binary from one target-local Wire package.
+func runWireCommand(wirePath string, dir string) ([]byte, error) {
+	cmd := exec.Command(wirePath)
+	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	return cmd.CombinedOutput()
 }
@@ -2087,18 +2328,31 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 func templateData(data any) any {
 	switch value := data.(type) {
 	case *project.Config:
-		return templateRenderConfig{
-			Config:     value,
-			Components: value.Render.Components,
-		}
+		return templateDataForTarget(value, project.DefaultAppTarget())
 	case project.Config:
 		cfg := value
-		return templateRenderConfig{
-			Config:     &cfg,
-			Components: cfg.Render.Components,
-		}
+		return templateDataForTarget(&cfg, project.DefaultAppTarget())
+	case templateRenderConfig:
+		return value
 	default:
 		return data
+	}
+}
+
+func templateDataForTarget(config *project.Config, target project.AppTarget) templateRenderConfig {
+	if target.Name == "" {
+		target = project.DefaultAppTarget()
+	}
+	appImportPath := filepath.ToSlash(target.AppDir)
+	wireImportPath := filepath.ToSlash(target.WireDir)
+	return templateRenderConfig{
+		Config:               config,
+		Components:           config.Render.Components,
+		Target:               target,
+		TargetPackageName:    project.AppTargetPackageName(target.Name),
+		TargetAppImportPath:  appImportPath,
+		TargetWireImportPath: wireImportPath,
+		TargetIsDefault:      target.Name == project.DefaultAppTargetName,
 	}
 }
 
@@ -2118,6 +2372,17 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 func (p *ProjectRenderer) writeTemplateMappings(mappings []templateMapping) error {
 	for _, mapping := range mappings {
 		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeTemplateMappingsForTarget renders mapped templates with target-specific package and import data.
+func (p *ProjectRenderer) writeTemplateMappingsForTarget(target project.AppTarget, mappings []templateMapping) error {
+	data := templateDataForTarget(p.config, normalizeRenderAppTarget(target))
+	for _, mapping := range mappings {
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
 			return err
 		}
 	}
@@ -2247,6 +2512,21 @@ func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) 
 			continue
 		}
 		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeTemplateMappingsOnceForTarget preserves target-owned files after their first render.
+func (p *ProjectRenderer) writeTemplateMappingsOnceForTarget(target project.AppTarget, mappings []templateMapping) error {
+	data := templateDataForTarget(p.config, normalizeRenderAppTarget(target))
+	for _, mapping := range mappings {
+		if _, err := os.Stat(mapping.dest); err == nil {
+			p.stats.recordSkipped(mapping.dest)
+			continue
+		}
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
 			return err
 		}
 	}

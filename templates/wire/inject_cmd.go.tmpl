@@ -5,7 +5,7 @@ package wire
 
 import (
 	"github.com/goforj/wire"
-	"{{.GoModuleName}}/app"
+	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/makecmd"
 )
@@ -13,8 +13,8 @@ import (
 // cmdSet is a wire set that provides framework command wiring.
 var cmdSet = wire.NewSet(
 	appCommandSet,
-	app.NewCommands,
-	app.NewRootCmd,
+	targetapp.NewCommands,
+	targetapp.NewRootCmd,
 	cmd.NewAboutCmd,
 	cmd.NewCacheShellCmd,
 	{{- if .Components.HasDatabase }}

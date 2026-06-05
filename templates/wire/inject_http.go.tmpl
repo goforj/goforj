@@ -5,14 +5,14 @@ package wire
 
 import (
 	"github.com/goforj/wire"
-	"{{.GoModuleName}}/app"
+	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/lighthouse"
 )
 
 // httpServerSet is a wire set that provides the HTTP server and its routes.
 var httpServerSet = wire.NewSet(
-	app.ProvideRoutes,
+	targetapp.ProvideRoutes,
 	http.NewLighthouseRuntime,
 	http.NewRouteListCmd,
 	http.NewRuntime,

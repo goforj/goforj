@@ -17,7 +17,7 @@ import (
 	"github.com/goforj/queue"
 {{- end }}
 
-	targetapp "{{.GoModuleName}}/app"
+	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"

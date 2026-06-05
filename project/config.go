@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -93,6 +94,24 @@ func IsSafeAppTargetName(name string) bool {
 		return false
 	}
 	return true
+}
+
+// AppTargetPackageName converts a target slug into a valid Go package name.
+func AppTargetPackageName(name string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			builder.WriteRune(r)
+		}
+	}
+	pkg := builder.String()
+	if pkg == "" {
+		return DefaultAppTargetName
+	}
+	if pkg[0] >= '0' && pkg[0] <= '9' {
+		return DefaultAppTargetName + pkg
+	}
+	return pkg
 }
 
 // RenderConfig represents render-time defaults and selections.
