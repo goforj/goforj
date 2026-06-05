@@ -784,12 +784,12 @@ Track implementation as concrete work items:
   - [x] Synthesize the implicit single-target default when `app.targets` is omitted.
   - [x] Store default target metadata for `name`, `entrypoint`, `app_dir`, and `wire_dir`.
   - [x] Default named target metadata by convention when targets are present.
-  - [ ] Add full configured target validation for additional targets.
-  - [ ] Validate `app.default_target` exists in configured targets.
-  - [ ] Validate target names as path-safe slugs.
+  - [x] Add configured target validation for stable project-layout constraints.
+  - [x] Validate `app.default_target` exists in configured targets.
+  - [x] Validate target names as path-safe slugs.
   - [ ] Reject target names that collide with native Framework commands.
-  - [ ] Reject target names that collide with reserved `app/` names such as `wire`.
-  - [ ] Reject target names that collide with generated files directly under `app/`, such as `commands.go`, `root_cmd.go`, and `routes.go`.
+  - [x] Reject target names that collide with reserved `app/` names such as `wire`.
+  - [x] Reject target names that collide with generated files directly under `app/`, such as `commands.go`, `root_cmd.go`, and `routes.go`.
 
 - [x] Render the new single-target layout for new Apps.
   - [x] Generate `cmd/app/main.go`.
