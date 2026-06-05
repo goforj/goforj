@@ -136,6 +136,12 @@ func TestWithSourceStoresNormalizedSourceName(t *testing.T) {
 	}
 }
 
+func TestNormalizeSourceSupportsLighthouseSource(t *testing.T) {
+	if got := NormalizeSource(" LIGHTHOUSE "); got != SourceLighthouse {
+		t.Fatalf("expected source name %q, got %q", SourceLighthouse, got)
+	}
+}
+
 func TestSourceFromContextReturnsEmptyWhenUnset(t *testing.T) {
 	if got := SourceFromContext(context.Background()); got != "" {
 		t.Fatalf("expected empty source name, got %q", got)

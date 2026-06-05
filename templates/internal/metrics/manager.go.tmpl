@@ -1458,7 +1458,7 @@ func shouldTrackHTTPRequest(r web.Context) bool {
 func metricSourceLabel(source string) string {
 	source = strings.TrimSpace(strings.ToLower(source))
 	switch source {
-	case "http", "scheduler", "jobs", "cli", "startup", "app":
+	case "http", "scheduler", "jobs", "cli", "lighthouse", "startup", "app":
 		return source
 	default:
 		return "app"
