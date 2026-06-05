@@ -70,11 +70,15 @@ func TestDefaultAPIIndexPathsUsesNamedTargetArtifacts(t *testing.T) {
 	}
 }
 
-func TestExistingRouteCompositionPathRequiresFile(t *testing.T) {
+func TestExistingRouteCompositionPathKeepsDefaultFallback(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "app", "routes.go")
 
-	if got := existingRouteCompositionPath(path); got != "" {
+	got, err := existingRouteCompositionPath(project.DefaultAppTarget(), path)
+	if err != nil {
+		t.Fatalf("expected missing default route composition to fall back without error, got %v", err)
+	}
+	if got != "" {
 		t.Fatalf("expected missing route composition to be ignored, got %q", got)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -83,7 +87,22 @@ func TestExistingRouteCompositionPathRequiresFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package app\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if got := existingRouteCompositionPath(path); got != path {
+	got, err = existingRouteCompositionPath(project.DefaultAppTarget(), path)
+	if err != nil {
+		t.Fatalf("expected existing default route composition, got %v", err)
+	}
+	if got != path {
 		t.Fatalf("expected existing route composition, got %q", got)
+	}
+}
+
+func TestExistingRouteCompositionPathRequiresNamedTargetFile(t *testing.T) {
+	root := t.TempDir()
+	target := project.DefaultNamedAppTarget("customer-portal")
+	target.AppDir = filepath.Join(root, "app", "customer-portal")
+	path := filepath.Join(target.AppDir, "routes.go")
+
+	if _, err := existingRouteCompositionPath(target, path); err == nil {
+		t.Fatal("expected missing named target route composition to fail")
 	}
 }
