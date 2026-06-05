@@ -71,10 +71,7 @@ func (c *MigrationCmd) Run() error {
 		return fmt.Errorf("no supported drivers resolved from DB_SUPPORTED_DRIVERS/DB_DRIVER")
 	}
 
-	migrationsDir := "migrations"
-	if connName != "default" {
-		migrationsDir = filepath.Join(migrationsDir, connName)
-	}
+	migrationsDir := targetMigrationDir(connName)
 
 	if err := os.MkdirAll(migrationsDir, os.ModePerm); err != nil {
 		return err
@@ -126,10 +123,7 @@ func (c *MigrationCmd) remove() error {
 	if connName == "" {
 		connName = "default"
 	}
-	migrationsDir := "migrations"
-	if connName != "default" {
-		migrationsDir = filepath.Join(migrationsDir, connName)
-	}
+	migrationsDir := targetMigrationDir(connName)
 
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {

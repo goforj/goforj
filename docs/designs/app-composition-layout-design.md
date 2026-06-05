@@ -670,17 +670,95 @@ The exact command names may change, but the behavior should be target-scoped.
 
 ## Migrations And Database
 
-Migrations should remain project-level by default:
+Migration files should stay project-level, but their hierarchy changes once a project has more than one App target.
+
+Single-target projects keep the existing simple layout:
 
 ```text
 migrations/
+  2026_06_05_120000_create_users.up.sql
+  2026_06_05_120000_create_users.down.sql
+
+  reporting/
+    2026_06_05_121000_create_reports.up.sql
+    2026_06_05_121000_create_reports.down.sql
 ```
 
-Command exposure is target-level.
+In that shape:
+
+- `migrations/` is the default connection.
+- `migrations/<connection>/` is a named connection.
+
+When a second App target is created, migrations should expand into an explicit target-and-connection hierarchy:
+
+```text
+migrations/
+  app/
+    default/
+      2026_06_05_120000_create_users.up.sql
+      2026_06_05_120000_create_users.down.sql
+    reporting/
+      2026_06_05_121000_create_reports.up.sql
+      2026_06_05_121000_create_reports.down.sql
+
+  billing/
+    default/
+      2026_06_05_122000_create_invoices.up.sql
+      2026_06_05_122000_create_invoices.down.sql
+    ledger/
+      2026_06_05_123000_create_ledger_entries.up.sql
+      2026_06_05_123000_create_ledger_entries.down.sql
+    archive/
+      2026_06_05_124000_create_invoice_archive.up.sql
+      2026_06_05_124000_create_invoice_archive.down.sql
+```
+
+In the multi-target shape:
+
+- `migrations/<target>/` is the owning App target.
+- `migrations/<target>/<connection>/` is the connection stream for that target.
+- `default` is an explicit connection directory.
+- If two targets share the same physical database, only one target should own that database's migration source.
+
+This keeps single-target projects ergonomic while making monorepo service fan-out obvious. It also avoids overloading `migrations/<name>/` with both connection names and target names once multiple targets exist.
+
+Target-scoped migration connections still need to map onto the generated flat database connection registry:
+
+- `migrations/app/default/` uses database connection `default`.
+- `migrations/app/reporting/` uses database connection `reporting`.
+- `migrations/billing/default/` uses database connection `billing`.
+- `migrations/billing/ledger/` uses database connection `billing_ledger`.
+
+That means target-specific default databases naturally use env scopes such as `DB_BILLING_DRIVER`, while target-specific named connections use scopes such as `DB_BILLING_LEDGER_DRIVER`.
+
+Migration command exposure is target-level, and migration execution is orchestration-aware:
+
+```bash
+forj migrate
+forj billing migrate
+forj billing migrate --connection ledger
+```
+
+For a single-target project, `forj migrate` runs the default target's migrations.
+
+For a multi-target project, unqualified `forj migrate` should infer the all-target workflow. It should discover every target migration stream, build a target/connection migration plan, and run each owned stream once. A separate `migrate:all` command is not necessary for the primary workflow unless an explicit alias proves useful later.
+
+Target-prefixed migration commands should scope execution to the selected target. For example, `forj billing migrate` should run every connection under `migrations/billing/*`, while `forj billing migrate --connection ledger` should run only `migrations/billing/ledger`.
 
 For example, the default `app` target may expose migration commands for local development, while production targets may omit them unless explicitly configured.
 
 This avoids every generated binary casually exposing schema-changing commands by accident.
+
+Migration tracking and locking should carry enough identity to explain what ran:
+
+- App target name
+- connection name
+- migration source path
+- generated database connection name
+
+The physical database still owns its migration history table and lock. The target, logical connection, source path, and generated database connection name make route planning, logging, and Lighthouse/runtime visibility understandable without treating targets as database schemas.
+
+The runner does not need to fingerprint DSNs or dedupe streams by physical database identity right now. If two targets point at the same physical database, the project should give that database one owning migration stream.
 
 ## Auth, Frontend, And Starter Kits
 
@@ -918,8 +996,18 @@ Track implementation as concrete work items:
   - [x] Decide whether missing active target route composition should fail fast instead of silently falling back to whole-project API indexing.
   - [x] Add webindex fixtures for dead/local `.Routes()` calls in composition files so target-scoped OpenAPI cannot leak unrelated routes.
   - [x] Scope route lists to the active named target.
-  - [ ] Decide which named targets expose migration commands.
-  - [ ] Make migration command exposure configurable per target if needed.
+  - [x] Decide the multi-target migration hierarchy: single-target projects use `migrations/` and `migrations/<connection>/`; multi-target projects use `migrations/<target>/<connection>/`.
+  - [x] Move existing single-target migrations into `migrations/app/default/` and `migrations/app/<connection>/` when the first additional target is created.
+  - [x] Make `make:migration` target-aware so `forj <target> make:migration ...` writes into `migrations/<target>/default/`.
+  - [x] Make `make:migration --connection <name>` write into `migrations/<target>/<connection>/` for active multi-target projects.
+  - [x] Preserve the existing single-target migration paths until a second target exists.
+  - [x] Make unqualified `forj migrate` run the default target in single-target projects.
+  - [x] Make unqualified `forj migrate` infer all-target migration orchestration in multi-target projects.
+  - [x] Make `forj <target> migrate` run every connection under `migrations/<target>/*`.
+  - [x] Make `forj <target> migrate --connection <name>` run only `migrations/<target>/<connection>`.
+  - [x] Map target-scoped migration streams onto flat database connection names: `app/default -> default`, `app/<connection> -> <connection>`, `<target>/default -> <target>`, and `<target>/<connection> -> <target>_<connection>`.
+  - [x] Ensure the migration runner records or logs App target, connection name, migration source path, and generated database connection name.
+  - [ ] Decide whether target migration command exposure remains always available or becomes configurable per target.
   - [ ] Ensure auth routes, auth jobs, and auth schedules register through named target composition.
   - [ ] Ensure starter kits can point frontend code at a named target HTTP runtime.
   - [ ] Ensure generated frontend assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.

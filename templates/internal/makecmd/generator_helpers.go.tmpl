@@ -85,6 +85,47 @@ func targetAppWireFile(file string, legacyPaths ...string) string {
 	return targetAppFile(filepath.Join("wire", file), legacyPaths...)
 }
 
+// targetMigrationDir resolves where migration files belong for the active App target.
+func targetMigrationDir(connection string) string {
+	connection = str.Of(connection).TrimSpace().ToLower().String()
+	if connection == "" {
+		connection = "default"
+	}
+	target := targetAppName()
+	if target != "app" || hasNamedAppTargets() || hasTargetedMigrationLayout() {
+		return filepath.Join("migrations", target, connection)
+	}
+	if connection == "default" {
+		return "migrations"
+	}
+	return filepath.Join("migrations", connection)
+}
+
+// hasNamedAppTargets detects conventional target entrypoints without requiring project config.
+func hasNamedAppTargets() bool {
+	entries, err := os.ReadDir("cmd")
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "app" || !appTargetNameIsSafe(entry.Name()) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join("cmd", entry.Name(), "main.go")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTargetedMigrationLayout keeps generators in expanded layout after migrations have been moved.
+func hasTargetedMigrationLayout() bool {
+	if _, err := os.Stat(filepath.Join("migrations", "app")); err == nil {
+		return true
+	}
+	return false
+}
+
 // appTargetNameIsSafe prevents environment-provided target names from escaping app/.
 func appTargetNameIsSafe(target string) bool {
 	if target == "." || target == ".." {
