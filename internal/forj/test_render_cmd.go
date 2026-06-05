@@ -55,6 +55,13 @@ func (cmd *TestRenderCmd) Run() error {
 			SoundOnWatchError: false,
 			Watches:           []project.DevWatch{},
 		},
+		App: project.AppConfig{
+			DefaultTarget: project.DefaultAppTargetName,
+			Targets: []project.AppTarget{
+				project.DefaultAppTarget(),
+				project.DefaultNamedAppTarget("customer-portal"),
+			},
+		},
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:           true,
@@ -85,6 +92,9 @@ func (cmd *TestRenderCmd) Run() error {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
+		return err
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "build customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "build"}); err != nil {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "test", dir, modCache, buildCache, []string{"go", "test", "./..."}); err != nil {
