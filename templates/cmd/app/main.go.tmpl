@@ -2,8 +2,8 @@ package main
 
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
-	"{{.GoModuleName}}/app"
-	"{{.GoModuleName}}/app/wire"
+	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
+	"{{.GoModuleName}}/{{.TargetWireImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/console"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
@@ -21,7 +21,7 @@ func main() {
 		console.Fatalf("loading env: %v", err)
 	}
 
-	handled, err := cmd.DispatchPrebootCommand(args, &app.RootCmd{})
+	handled, err := cmd.DispatchPrebootCommand(args, &targetapp.RootCmd{})
 	if err != nil {
 		console.Fatalf("%v", err)
 	} else if handled {

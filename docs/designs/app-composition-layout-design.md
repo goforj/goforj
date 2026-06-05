@@ -815,19 +815,22 @@ Track implementation as concrete work items:
   - [x] Keep `repositorySet` limited to repository providers.
   - [x] Move app services such as monitoring retention and incident transition services to `inject_services_app.go`.
 
-- [ ] Add named target rendering.
-  - [ ] Generate `cmd/<target>/main.go`.
-  - [ ] Generate named target composition under `app/<target>/`.
-  - [ ] Generate `app/<target>/commands.go`.
-  - [ ] Generate `app/<target>/root_cmd.go`.
-  - [ ] Generate `app/<target>/routes.go` when the target has HTTP enabled.
-  - [ ] Generate named target Wire files under `app/<target>/wire/`.
-  - [ ] Derive Go-safe package names from target slugs.
-  - [ ] Ensure hyphenated target slugs map to legal package names.
-  - [ ] Ensure named target entrypoints import the correct target composition package.
-  - [ ] Keep named target `wire.go` editable-but-overwrite-rendered like the default target.
-  - [ ] Keep named target app-owned injectors render-once.
-  - [ ] Add named target cleanup behavior that does not delete user-created targets.
+- [x] Add named target rendering.
+  - [x] Discover named targets from optional config metadata and existing conventional `cmd/<target>/main.go` / `app/<target>/` layouts.
+  - [x] Generate `cmd/<target>/main.go`.
+  - [x] Generate named target composition under `app/<target>/`.
+  - [x] Generate `app/<target>/commands.go`.
+  - [x] Generate `app/<target>/root_cmd.go`.
+  - [x] Generate `app/<target>/routes.go` when the target has HTTP enabled.
+  - [x] Generate `app/<target>/schedules.go` when the scheduler is enabled.
+  - [x] Generate named target Wire files under `app/<target>/wire/`.
+  - [x] Derive Go-safe package names from target slugs.
+  - [x] Ensure hyphenated target slugs map to legal package names.
+  - [x] Ensure named target entrypoints import the correct target composition package.
+  - [x] Keep named target `wire.go` editable-but-overwrite-rendered like the default target.
+  - [x] Keep named target app-owned injectors render-once.
+  - [x] Generate target-local frontend dist placeholders under `cmd/<target>/frontend/dist` when Web UI is enabled.
+  - [x] Keep named target cleanup non-destructive by only writing known generated files and preserving app-owned files after first render.
 
 - [x] Update command resolution.
   - [x] Detect `forj <target> ...` when `./bin/<target>` exists.
@@ -856,6 +859,7 @@ Track implementation as concrete work items:
   - [ ] Ensure source-mode `forj <target> dev` operates on the active conventional target.
   - [ ] Add `build:all` or equivalent only if the workflow proves useful.
   - [x] Ensure Wire generation runs in the selected conventional target's `wire_dir` when it exists.
+  - [x] Ensure full render runs Wire generation for every discovered target Wire directory.
   - [ ] Ensure frontend build/watch uses the selected target entrypoint when a named target owns HTTP.
 
 - [x] Partial: update generators.
@@ -895,7 +899,7 @@ Track implementation as concrete work items:
   - [ ] Move job registration to `app/jobs.go` and `app/<target>/jobs.go` if a separate job registry file becomes useful.
   - [ ] Move event registration to `app/events.go` and `app/<target>/events.go` if a separate event registry file becomes useful.
   - [x] Move schedule registration to `app/schedules.go` for the default target.
-  - [ ] Move schedule registration to `app/<target>/schedules.go` for named targets.
+  - [x] Move schedule registration to `app/<target>/schedules.go` for named targets.
   - [ ] Decide whether current Wire-only registration for jobs, events, and schedules is sufficient long term.
   - [x] Keep HTTP, worker, scheduler, lifecycle, and command runtime machinery in generated `internal/...` packages for now.
 
@@ -928,6 +932,8 @@ Track implementation as concrete work items:
   - [x] Verify `make:command` updates `app/commands.go` and `app/wire/inject_cmd_app.go`.
   - [x] Verify generated Wire rebuilds after `make:command`.
   - [x] Verify app-owned injector files are preserved across rerender.
+  - [x] Add unit coverage for convention-discovered named targets and named target template rendering.
+  - [x] Manually verify a `/tmp` named-target render builds both default and named target binaries.
   - [x] Verify framework-owned injector files are overwrite-rendered.
   - [x] Verify `repositorySet` does not contain service providers.
   - [ ] Render and build a multi-target App with targets such as `billing` and `reporting`.

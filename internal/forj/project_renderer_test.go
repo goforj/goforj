@@ -2,10 +2,12 @@ package forj
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/internal/coredeps"
+	"github.com/goforj/goforj/project"
 )
 
 func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
@@ -35,6 +37,118 @@ func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
 	source := string(data)
 	if !strings.Contains(source, `requires: []string{`) || !strings.Contains(source, `"/auth/dev-session"`) {
 		t.Fatal("expected project renderer sync to require the lighthouse dev session auth route")
+	}
+}
+
+func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	for _, path := range []string{
+		filepath.Join("cmd", "reporting", "main.go"),
+		filepath.Join("app", "customer-portal", "wire", "wire.go"),
+		filepath.Join("app", "wire", "wire.go"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			App: project.AppConfig{
+				Targets: []project.AppTarget{{Name: "wire"}},
+			},
+		},
+	}
+	targets, err := renderer.namedAppRenderTargets()
+	if err != nil {
+		t.Fatalf("namedAppRenderTargets returned error: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected two named targets, got %#v", targets)
+	}
+	if targets[0].Name != "customer-portal" || targets[1].Name != "reporting" {
+		t.Fatalf("expected sorted conventional targets, got %#v", targets)
+	}
+}
+
+func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebAPI: true},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("customer-portal")
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	assertFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
+		`targetapp "example.com/test/app/customer-portal"`,
+		`"example.com/test/app/customer-portal/wire"`,
+		`&targetapp.RootCmd{}`,
+	)
+	assertFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportal")
+	assertFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportal")
+	assertFileContains(t, filepath.Join("app", "customer-portal", "wire", "inject_http.go"),
+		`targetapp "example.com/test/app/customer-portal"`,
+		"targetapp.ProvideRoutes",
+	)
+
+	commandsPath := filepath.Join("app", "customer-portal", "commands.go")
+	customCommands := "package customerportal\n\n// custom\n"
+	if err := os.WriteFile(commandsPath, []byte(customCommands), 0o644); err != nil {
+		t.Fatalf("write custom commands: %v", err)
+	}
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("rerender target returned error: %v", err)
+	}
+	content, err := os.ReadFile(commandsPath)
+	if err != nil {
+		t.Fatalf("read commands after rerender: %v", err)
+	}
+	if string(content) != customCommands {
+		t.Fatalf("expected app-owned commands to be preserved, got:\n%s", content)
+	}
+}
+
+func assertFileContains(t *testing.T, path string, snippets ...string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	source := string(content)
+	for _, snippet := range snippets {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected %s to contain %q:\n%s", path, snippet, source)
+		}
 	}
 }
 

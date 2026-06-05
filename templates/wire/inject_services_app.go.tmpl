@@ -6,7 +6,7 @@ package wire
 import (
 	"github.com/goforj/wire"
 
-	targetapp "{{.GoModuleName}}/app"
+	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
