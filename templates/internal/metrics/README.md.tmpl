@@ -89,7 +89,7 @@ Every framework-owned metric family emits `app_target` directly. Use it as the t
 
 Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache, storage, events, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
 
-When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards. HTTP request metrics fall back to `source="http"` because route traffic is always attributable to the HTTP runtime surface.
+When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards. HTTP request metrics fall back to `source="http"` because route traffic is always attributable to the HTTP runtime surface. Inspect-store cache operations use `source="lighthouse"` because that cache traffic is Lighthouse persistence, not app business cache traffic.
 
 Component-specific metric families are emitted when the corresponding component is enabled. Core primitive metrics such as cache, storage, and events are available for generated sources that wire those primitives.
 
@@ -98,7 +98,7 @@ Component-specific metric families are emitted when the corresponding component 
 Labels are intentionally low-cardinality:
 
 - `app_target` is the generated App composition target, such as `app`, `billing`, or `customer-portal`.
-- `source` is the runtime surface, such as `http`, `jobs`, `scheduler`, `cli`, `startup`, or `app`.
+- `source` is the runtime surface, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, `startup`, or `app`.
 - `route` uses the registered route pattern, such as `/api/users/:id`, not the raw URL.
 - `cache`, `disk`, `mailer`, `queue`, `connection`, and `bus` use named accessors or configured primitive names.
 - `target` for database metrics is the normalized table or query target when available.

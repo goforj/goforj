@@ -11,12 +11,13 @@ import (
 type Source string
 
 const (
-	SourceHTTP      Source = "http"
-	SourceJobs      Source = "jobs"
-	SourceScheduler Source = "scheduler"
-	SourceCLI       Source = "cli"
-	SourceStartup   Source = "startup"
-	SourceApp       Source = "app"
+	SourceHTTP       Source = "http"
+	SourceJobs       Source = "jobs"
+	SourceScheduler  Source = "scheduler"
+	SourceCLI        Source = "cli"
+	SourceLighthouse Source = "lighthouse"
+	SourceStartup    Source = "startup"
+	SourceApp        Source = "app"
 )
 
 func (s Source) String() string {
@@ -34,6 +35,8 @@ func NormalizeSource(value string) Source {
 		return SourceScheduler
 	case string(SourceCLI):
 		return SourceCLI
+	case string(SourceLighthouse):
+		return SourceLighthouse
 	case string(SourceStartup):
 		return SourceStartup
 	case string(SourceApp):

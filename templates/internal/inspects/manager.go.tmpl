@@ -1213,7 +1213,7 @@ func (m *Manager) withCacheIndexLock(cache *goforjcache.Cache, fn func(*goforjca
 }
 
 func (m *Manager) internalCache(ctx context.Context) *goforjcache.Cache {
-	return m.cache.WithContext(WithInternalContext(ctx))
+	return m.cache.WithContext(WithInternalContext(runtime.WithSource(ctx, runtime.SourceLighthouse)))
 }
 
 func inspectRecordKey(inspectID string) string {
