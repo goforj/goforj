@@ -915,7 +915,7 @@ Track implementation as concrete work items:
   - [x] Ensure starter kits can serve from the default target entrypoint.
   - [x] Scope API index and OpenAPI generation to the active named target.
   - [x] Tighten `webindex` target scoping so included owners are derived from route groups returned by the active composition file, not every `.Routes()` call that appears in the file.
-  - [ ] Decide whether missing active target route composition should fail fast instead of silently falling back to whole-project API indexing.
+  - [x] Decide whether missing active target route composition should fail fast instead of silently falling back to whole-project API indexing.
   - [x] Add webindex fixtures for dead/local `.Routes()` calls in composition files so target-scoped OpenAPI cannot leak unrelated routes.
   - [x] Scope route lists to the active named target.
   - [ ] Decide which named targets expose migration commands.
