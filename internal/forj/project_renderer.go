@@ -1142,7 +1142,118 @@ func (p *ProjectRenderer) renderNamedAppTargets() error {
 			return fmt.Errorf("render app target %s: %w", target.Name, err)
 		}
 	}
+	if len(targets) > 0 && p.config.Render.Components.HasDatabase() {
+		if err := p.expandDefaultMigrationsForNamedTargets(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// expandDefaultMigrationsForNamedTargets moves single-target migration streams into the explicit default target layout.
+func (p *ProjectRenderer) expandDefaultMigrationsForNamedTargets() error {
+	root := "migrations"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		source := filepath.Join(root, name)
+		if entry.IsDir() {
+			if shouldSkipMigrationExpansionDir(name) {
+				continue
+			}
+			if err := moveDirectMigrationSQLFiles(source, filepath.Join(root, "app", name)); err != nil {
+				return err
+			}
+			continue
+		}
+		if !isMigrationSQLFile(name) {
+			continue
+		}
+		if err := moveMigrationFile(source, filepath.Join(root, "app", "default", name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// shouldSkipMigrationExpansionDir preserves metadata and already-expanded target directories.
+func shouldSkipMigrationExpansionDir(name string) bool {
+	return name == ".goforj" || name == "app" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
+// moveDirectMigrationSQLFiles moves only legacy direct SQL files and leaves nested target layouts alone.
+func moveDirectMigrationSQLFiles(sourceDir, destDir string) error {
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return err
+	}
+	moved := false
+	for _, entry := range entries {
+		if entry.IsDir() || !isMigrationSQLFile(entry.Name()) {
+			continue
+		}
+		if err := moveMigrationFile(filepath.Join(sourceDir, entry.Name()), filepath.Join(destDir, entry.Name())); err != nil {
+			return err
+		}
+		moved = true
+	}
+	if !moved {
+		return nil
+	}
+
+	remaining, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
+		return os.Remove(sourceDir)
+	}
+	return nil
+}
+
+// moveMigrationFile moves one migration file unless a different destination already exists.
+func moveMigrationFile(source, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(dest); err == nil {
+		same, err := filesHaveSameContent(source, dest)
+		if err != nil {
+			return err
+		}
+		if same {
+			return os.Remove(source)
+		}
+		return fmt.Errorf("migration expansion destination already exists with different content: %s", dest)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(source, dest)
+}
+
+// filesHaveSameContent prevents migration expansion from overwriting user-edited migration files.
+func filesHaveSameContent(left, right string) (bool, error) {
+	leftBytes, err := os.ReadFile(left)
+	if err != nil {
+		return false, err
+	}
+	rightBytes, err := os.ReadFile(right)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(leftBytes, rightBytes), nil
+}
+
+// isMigrationSQLFile reports whether a file belongs to a generated SQL migration pair.
+func isMigrationSQLFile(name string) bool {
+	return strings.HasSuffix(name, ".up.sql") || strings.HasSuffix(name, ".down.sql")
 }
 
 // namedAppRenderTargets merges optional config metadata with conventional target directories.
@@ -2292,7 +2403,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 	t, err := template.New("").Parse(string(tmplBytes))
 	if err != nil {
-		return err
+		return fmt.Errorf("parse template %s: %w", tmpl, err)
 	}
 
 	var buf bytes.Buffer

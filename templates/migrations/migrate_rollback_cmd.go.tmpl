@@ -1,21 +1,25 @@
 package migrations
 
 import (
+	"fmt"
+
 	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
+// MigrateRollbackCmd rolls back applied database migrations for the selected migration stream.
 type MigrateRollbackCmd struct {
 	Step       int    `help:"Number of recent migrations to rollback" default:"1"`
-	Connection string `help:"Database connection name" default:"default"`
+	Connection string `help:"Database connection name"`
 
 	logger *logger.AppLogger
 	db     *database.Connections
 }
 
+// NewMigrateRollbackCmd creates a rollback command with database access.
 func NewMigrateRollbackCmd(logger *logger.AppLogger, db *database.Connections) *MigrateRollbackCmd {
-	return &MigrateRollbackCmd{Step: 1, Connection: "default", logger: logger, db: db}
+	return &MigrateRollbackCmd{Step: 1, logger: logger, db: db}
 }
 
 // Signature defines CLI metadata for this command.
@@ -23,24 +27,47 @@ func (*MigrateRollbackCmd) Signature() string {
 	return `name:"migrate:rollback" help:"Rollback database migration"`
 }
 
+// Run executes rollback for one or more target-scoped migration streams.
 func (c *MigrateRollbackCmd) Run() error {
-	if err := c.ensureMigrationsTable(); err != nil {
-		console.Fatalf("%v", err)
+	streams := migrationPlan(activeMigrationTarget(), c.Connection)
+	if len(streams) == 0 {
+		console.Infof("no migrations rolled back")
+		console.Successf("rollback complete (0)")
 		return nil
 	}
 
-	connName := normalizeConnectionName(c.Connection)
-	dbConn, err := c.db.Connection(connName)
+	total := 0
+	for _, stream := range streams {
+		rolledBack, err := c.rollbackStream(stream)
+		if err != nil {
+			console.Fatalf("%v", err)
+			return nil
+		}
+		total += rolledBack
+	}
+
+	if total == 0 {
+		console.Infof("no migrations rolled back")
+	}
+	console.Successf("rollback complete (%d)", total)
+
+	return nil
+}
+
+// rollbackStream rolls back the newest applied migrations for one target-scoped connection stream.
+func (c *MigrateRollbackCmd) rollbackStream(stream migrationStream) (int, error) {
+	dbConn, err := c.db.Connection(stream.DatabaseConnection)
 	if err != nil {
-		console.Fatalf("%v", err)
-		return nil
+		return 0, err
+	}
+	if err := ensureMigrationsTable(dbConn); err != nil {
+		return 0, err
 	}
 
 	var applied []string
 	err = dbConn.Table("migrations").Select("name").Scan(&applied).Error
 	if err != nil {
-		console.Fatalf("%v", err)
-		return nil
+		return 0, err
 	}
 
 	appliedSet := make(map[string]bool)
@@ -49,7 +76,7 @@ func (c *MigrateRollbackCmd) Run() error {
 	}
 
 	activeDriver := normalizeDriverName(dbConn.Dialector.Name())
-	all := selectMigrations(connName, activeDriver)
+	all := selectMigrations(stream.Target, stream.Connection, activeDriver)
 
 	rollbackCount := 0
 	for i := len(all) - 1; i >= 0; i-- {
@@ -62,37 +89,16 @@ func (c *MigrateRollbackCmd) Run() error {
 		}
 
 		if err := m.Down(dbConn); err != nil {
-			console.Fatalf("failed to rollback migration %s: %v", m.Name(), err)
-			return nil
+			return rollbackCount, fmt.Errorf("failed to rollback migration %s: %w", m.Name(), err)
 		}
 
 		if err := dbConn.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
-			console.Fatalf("%v", err)
-			return nil
+			return rollbackCount, err
 		}
 
-		console.Successf("reverted %s", m.Name())
+		console.Successf("reverted %s → target=%s connection=%s database=%s", m.Name(), stream.Target, stream.Connection, stream.DatabaseConnection)
 		rollbackCount++
 	}
 
-	if rollbackCount == 0 {
-		console.Infof("no migrations rolled back")
-	}
-	console.Successf("rollback complete (%d)", rollbackCount)
-
-	return nil
-}
-
-func (c *MigrateRollbackCmd) ensureMigrationsTable() error {
-	connName := normalizeConnectionName(c.Connection)
-	dbConn, err := c.db.Connection(connName)
-	if err != nil {
-		return err
-	}
-	return dbConn.Exec(`
-	CREATE TABLE IF NOT EXISTS migrations (
-		name VARCHAR(255) PRIMARY KEY,
-		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	`).Error
+	return rollbackCount, nil
 }

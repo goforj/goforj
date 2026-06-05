@@ -116,3 +116,14 @@ func assertMakeCmdTestFileMissing(t *testing.T, path string) {
 		t.Fatalf("stat %s: %v", path, err)
 	}
 }
+
+func assertMakeCmdTestGlob(t *testing.T, pattern string) {
+	t.Helper()
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatalf("glob %s: %v", pattern, err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("expected at least one file matching %s", pattern)
+	}
+}

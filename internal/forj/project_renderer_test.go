@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/coredeps"
+	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
+	"gopkg.in/yaml.v3"
 )
 
 func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
@@ -83,6 +85,91 @@ func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestExpandDefaultMigrationsForNamedTargets(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_users.up.sql"), "-- up\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_users.down.sql"), "-- down\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "reporting", "2026_01_02_000001_create_reports.up.sql"), "-- up\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "reporting", "2026_01_02_000001_create_reports.down.sql"), "-- down\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "migrations.go"), "package migrations\n")
+
+	renderer := &ProjectRenderer{}
+	if err := renderer.expandDefaultMigrationsForNamedTargets(); err != nil {
+		t.Fatalf("expand migrations: %v", err)
+	}
+
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "default", "2026_01_01_000001_create_users.up.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "default", "2026_01_01_000001_create_users.down.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "reporting", "2026_01_02_000001_create_reports.up.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "reporting", "2026_01_02_000001_create_reports.down.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "migrations.go"))
+	assertProjectRendererTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000001_create_users.up.sql"))
+	assertProjectRendererTestFileMissing(t, filepath.Join("migrations", "reporting"))
+}
+
+func TestRenderExpandsDefaultMigrationsWhenNamedTargetExists(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	cfg := &project.Config{
+		ProjectName:  "MigrationFanout",
+		GoModuleName: "example.com/migrationfanout",
+		App: project.AppConfig{
+			DefaultTarget: project.DefaultAppTargetName,
+			Targets: []project.AppTarget{
+				project.DefaultAppTarget(),
+				project.DefaultNamedAppTarget("billing"),
+			},
+		},
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:            true,
+				DatabaseSQLite: true,
+			},
+		},
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(".goforj.yml", data, 0o644); err != nil {
+		t.Fatalf("write .goforj.yml: %v", err)
+	}
+
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_users.up.sql"), "-- up\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_users.down.sql"), "-- down\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "analytics", "2026_01_02_000001_create_reports.up.sql"), "-- up\n")
+	writeProjectRendererTestFile(t, filepath.Join("migrations", "analytics", "2026_01_02_000001_create_reports.down.sql"), "-- down\n")
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "default", "2026_01_01_000001_create_users.up.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "default", "2026_01_01_000001_create_users.down.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "analytics", "2026_01_02_000001_create_reports.up.sql"))
+	assertProjectRendererTestFile(t, filepath.Join("migrations", "app", "analytics", "2026_01_02_000001_create_reports.down.sql"))
+	assertProjectRendererTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000001_create_users.up.sql"))
+	assertProjectRendererTestFileMissing(t, filepath.Join("migrations", "analytics"))
+}
+
 func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -135,6 +222,32 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	}
 	if string(content) != customCommands {
 		t.Fatalf("expected app-owned commands to be preserved, got:\n%s", content)
+	}
+}
+
+func writeProjectRendererTestFile(t *testing.T, path string, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertProjectRendererTestFile(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s: %v", path, err)
+	}
+}
+
+func assertProjectRendererTestFileMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("expected %s to be missing", path)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", path, err)
 	}
 }
 
