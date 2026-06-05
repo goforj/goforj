@@ -117,8 +117,8 @@ github.com/goforj/storage/storagecore v0.4.5 h1:PQucsQymVFz4h4mHD2Q/gsvk4fJ/X+I4
 github.com/goforj/storage/storagecore v0.4.5/go.mod h1:n6epEk/dinioVPKa8VkWduaf0b1ggcnycXRmd6nURCY=
 github.com/goforj/str v1.2.0 h1:WN+IXSvBC5uGaQG76vn7NVTk5gInMl944YzKyHeLtb4=
 github.com/goforj/str v1.2.0/go.mod h1:LGUzW/UEbvNG8TbN7kIzd9O10oq4wyGyF5Xk4SzfKZk=
-github.com/goforj/web v0.5.0 h1:rLQ31oDhr7csiIX8b1rBpGC5/mucMlYSyQOP3o7f7og=
-github.com/goforj/web v0.5.0/go.mod h1:Vxs9M8/LfKEM5uW/ENhoun4lOpDazJrYrVrlpULjREg=
+github.com/goforj/web v0.5.1 h1:jDAIfVvFH1+wbcazuS0CwuxoEuEKFi4GZdPrz//ARS8=
+github.com/goforj/web v0.5.1/go.mod h1:Vxs9M8/LfKEM5uW/ENhoun4lOpDazJrYrVrlpULjREg=
 github.com/goforj/wire v1.2.0 h1:F02xb36PwSJZCpazfWBs4Gc7qtm34NICH0QMAqfFtn4=
 github.com/goforj/wire v1.2.0/go.mod h1:liyCJqszv9cbeDz09W+/yAcWi05803Q4ncm7lhMO6QM=
 github.com/google/go-cmp v0.5.2/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
