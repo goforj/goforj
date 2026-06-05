@@ -908,7 +908,7 @@ Track implementation as concrete work items:
   - [x] Ensure auth routes and auth command wiring register through default target composition.
   - [x] Ensure starter kits can serve from the default target entrypoint.
   - [ ] Scope API index and OpenAPI generation to the active named target.
-  - [ ] Scope route lists to the active named target.
+  - [x] Scope route lists to the active named target.
   - [ ] Decide which named targets expose migration commands.
   - [ ] Make migration command exposure configurable per target if needed.
   - [ ] Ensure auth routes, auth jobs, and auth schedules register through named target composition.
@@ -938,7 +938,8 @@ Track implementation as concrete work items:
   - [x] Verify framework-owned injector files are overwrite-rendered.
   - [x] Verify `repositorySet` does not contain service providers.
   - [x] Render and build a multi-target App with targets such as `customer-portal`.
-  - [ ] Verify target-specific route lists, jobs, schedules, and binaries.
+  - [ ] Verify target-specific jobs and schedules in rendered smoke coverage.
+  - [x] Verify target-specific route lists and binaries in rendered smoke coverage.
   - [x] Verify convention source-mode `forj <target> ...` routes commands to the active target in rendered smoke coverage.
   - [ ] Verify named target generators update only the selected target.
   - [ ] Verify default target generators continue to work when named targets are configured.
