@@ -734,6 +734,10 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "jobs", "worker_cmd.go.tmpl"): {
 			`name:"queue:work" aliases:"worker" help:"Runs queue workers indefinitely"`,
 		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl"): {
+			`fmt.Printf("App Target: %s\n\n", routeListAppTarget())`,
+			`func routeListAppTarget() string`,
+		},
 	}
 	for file, snippets := range files {
 		content, err := os.ReadFile(file)
