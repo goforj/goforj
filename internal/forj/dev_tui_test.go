@@ -80,6 +80,16 @@ func TestBuildDevCommandModalBox(t *testing.T) {
 	}
 }
 
+func TestBuildDevCommandModalBoxUsesActiveTarget(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "customer-portal")
+	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
+		{Name: "route:list", Help: "List HTTP routes"},
+	}, 0, "", false, ""))
+	if !strings.Contains(box, "App commands from ./bin/customer-portal --help") {
+		t.Fatalf("expected target command source in command modal box:\n%s", box)
+	}
+}
+
 func TestBuildDevCommandModalBoxWithoutArgs(t *testing.T) {
 	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
 		{Name: "route:list", Help: "List HTTP routes"},
@@ -526,6 +536,31 @@ func TestDevBubbleModelCommandEnterExecutesSelection(t *testing.T) {
 		t.Fatalf("expected one command request, got %#v", requests)
 	}
 	if requests[0].ShellCommand != "./bin/app route:list --json" {
+		t.Fatalf("unexpected shell command: %#v", requests[0])
+	}
+}
+
+func TestDevBubbleModelCommandEnterUsesActiveTarget(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "customer-portal")
+	requests := []devShellCommandRequest{}
+	m := devBubbleModel{
+		commandVisible: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
+		},
+		requestCommand: func(req devShellCommandRequest) {
+			requests = append(requests, req)
+		},
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next.(devBubbleModel).commandVisible {
+		t.Fatal("expected command palette to close after executing")
+	}
+	if len(requests) != 1 {
+		t.Fatalf("expected one command request, got %#v", requests)
+	}
+	if requests[0].ShellCommand != "./bin/customer-portal route:list" {
 		t.Fatalf("unexpected shell command: %#v", requests[0])
 	}
 }

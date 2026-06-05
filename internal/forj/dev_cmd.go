@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	goruntime "runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,6 +130,7 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
+	config.Dev.Watches = devWatchesForTargets(config, config.Dev.Watches)
 
 	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -317,7 +320,7 @@ func runPreDevSetup(config *project.Config) error {
 	}
 	if config.Dev.AutoMigrate && components.HasDatabase() {
 		console.Actionf("Running auto-migrate")
-		res, err := execx.Command("bash", "-c", "./bin/app migrate").
+		res, err := execx.Command("bash", "-c", activeDevAppBinaryPath()+" migrate").
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(os.Stdout).
@@ -334,6 +337,145 @@ func runPreDevSetup(config *project.Config) error {
 		return err
 	}
 	return nil
+}
+
+// activeDevAppTarget returns the target selected for this dev session.
+func activeDevAppTarget() project.AppTarget {
+	targetName := requestedDevTargetName()
+	if targetName == "" {
+		targetName = project.DefaultAppTargetName
+	}
+	return project.DefaultNamedAppTarget(targetName)
+}
+
+// activeDevAppBinaryPath points dev helpers at the active target binary.
+func activeDevAppBinaryPath() string {
+	return "./bin/" + activeDevAppTarget().Name
+}
+
+// devWatchesForTargets expands the single-app default watchers across every discovered target.
+func devWatchesForTargets(config *project.Config, watches []project.DevWatch) []project.DevWatch {
+	targets := activeDevTargets(config)
+	if len(targets) == 1 && targets[0].Name == project.DefaultAppTargetName {
+		return watches
+	}
+	rewritten := make([]project.DevWatch, 0, len(watches)*len(targets))
+	for _, watch := range watches {
+		switch watch.Name {
+		case "Build App", "Run App":
+			for _, target := range targets {
+				rewritten = append(rewritten, devWatchForTarget(watch, target))
+			}
+		default:
+			rewritten = append(rewritten, watch)
+		}
+	}
+	return rewritten
+}
+
+// activeDevTargets returns one explicit target or every conventional target for all-app dev.
+func activeDevTargets(config *project.Config) []project.AppTarget {
+	if targetName := requestedDevTargetName(); targetName != "" {
+		return []project.AppTarget{project.DefaultNamedAppTarget(targetName)}
+	}
+	targets := configuredDevTargets(config)
+	if len(targets) == 0 {
+		return []project.AppTarget{project.DefaultAppTarget()}
+	}
+	return targets
+}
+
+// requestedDevTargetName reports whether the CLI selected a single target for this dev session.
+func requestedDevTargetName() string {
+	for _, key := range []string{"FORJ_APP_TARGET", "APP_TARGET"} {
+		targetName := strings.TrimSpace(os.Getenv(key))
+		if targetName == "" || !project.IsSafeAppTargetName(targetName) || project.IsReservedAppTargetName(targetName) {
+			continue
+		}
+		return targetName
+	}
+	return ""
+}
+
+// configuredDevTargets merges config metadata and conventional target directories for all-app dev.
+func configuredDevTargets(config *project.Config) []project.AppTarget {
+	seen := map[string]project.AppTarget{}
+	add := func(target project.AppTarget) {
+		target = normalizeRenderAppTarget(target)
+		if target.Name == "" || !project.IsSafeAppTargetName(target.Name) || project.IsReservedAppTargetName(target.Name) {
+			return
+		}
+		seen[target.Name] = target
+	}
+	add(project.DefaultAppTarget())
+	if config != nil {
+		for _, target := range config.App.Targets {
+			add(target)
+		}
+	}
+	for _, target := range discoverConventionalAppTargets() {
+		add(target)
+	}
+
+	targets := make([]project.AppTarget, 0, len(seen))
+	if target, ok := seen[project.DefaultAppTargetName]; ok {
+		targets = append(targets, target)
+		delete(seen, project.DefaultAppTargetName)
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		targets = append(targets, seen[name])
+	}
+	return targets
+}
+
+// devWatchForTarget rewrites one default watcher for a specific target without editing config.
+func devWatchForTarget(watch project.DevWatch, target project.AppTarget) project.DevWatch {
+	target = normalizeRenderAppTarget(target)
+	if target.Name != project.DefaultAppTargetName {
+		watch.Name = strings.ReplaceAll(watch.Name, "App", target.Name)
+	}
+	targetBinary := "./bin/" + target.Name
+	targetWireGen := filepath.ToSlash(filepath.Join(target.WireDir, "wire_gen\\.go$"))
+	watch.Exec = strings.ReplaceAll(watch.Exec, "./bin/app", targetBinary)
+	watch.Watch = strings.ReplaceAll(watch.Watch, "./bin/app", targetBinary)
+	watch.Watch = strings.ReplaceAll(watch.Watch, "app/wire/wire_gen\\.go$", targetWireGen)
+	watch.Env = copyDevWatchEnv(watch.Env)
+	watch.Env["FORJ_APP_TARGET"] = target.Name
+	watch.Env["APP_TARGET"] = target.Name
+	if target.Name == project.DefaultAppTargetName {
+		watch.Env["FORJ_COMMAND_PREFIX"] = "forj"
+	} else {
+		watch.Env["FORJ_COMMAND_PREFIX"] = "forj " + target.Name
+	}
+	return watch
+}
+
+// copyDevWatchEnv prevents synthesized target watchers from sharing mutable env maps.
+func copyDevWatchEnv(env map[string]string) map[string]string {
+	cloned := make(map[string]string, len(env)+3)
+	for key, value := range env {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+// devBuildCommands returns the build commands needed for the active dev target set.
+func devBuildCommands(config *project.Config) []string {
+	targets := activeDevTargets(config)
+	commands := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.Name == project.DefaultAppTargetName {
+			commands = append(commands, "forj build")
+			continue
+		}
+		commands = append(commands, "forj "+target.Name+" build")
+	}
+	return commands
 }
 
 func shouldRunAfterMigrate(task project.DevTask) bool {
@@ -408,7 +550,7 @@ watcherLoop:
 					return err
 				}
 				session.streamer = refreshedStreamer
-				if err := runDevBuild(session.outWriter, session.errWriter); err != nil {
+				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
 					disableDevFooter(session.outWriter)
 					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
@@ -435,7 +577,7 @@ watcherLoop:
 					return err
 				}
 				session.streamer = refreshedStreamer
-				if err := runDevRender(session.outWriter, session.errWriter); err != nil {
+				if err := runDevRender(session.config, session.outWriter, session.errWriter); err != nil {
 					disableDevFooter(session.outWriter)
 					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
@@ -488,19 +630,21 @@ func snapshotProcessEnv() map[string]string {
 	return envMap
 }
 
-func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
+func runDevRender(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
 	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render"); err != nil {
 		return fmt.Errorf("forj render failed: %w", err)
 	}
-	if err := runDevBuild(outWriter, errWriter); err != nil {
+	if err := runDevBuild(config, outWriter, errWriter); err != nil {
 		return err
 	}
 	return nil
 }
 
-func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
-	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj build", "forj build"); err != nil {
-		return fmt.Errorf("forj build failed: %w", err)
+func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	for _, command := range devBuildCommands(config) {
+		if err := runDevTerminalCommand(outWriter, errWriter, "Running "+command, command); err != nil {
+			return fmt.Errorf("forj build failed: %w", err)
+		}
 	}
 	return nil
 }
@@ -754,7 +898,7 @@ func startWatchers(
 	// startup block should close after those watchers have reported "starting".
 	// The single runtime supervisor watcher restarts after a fresh binary lands,
 	// so we bracket that restart with explicit shutdown/start section separators.
-	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), []string{"Run App"})
+	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), devRuntimeWatcherNames(watches))
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -771,7 +915,7 @@ func startWatchers(
 		for key, value := range watchEnv {
 			cmdEnv[key] = value
 		}
-		if watch.Name == "Build App" {
+		if isDevBuildWatcher(watch.Name) {
 			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
 		}
 		cmd := execx.Command("wgo").
@@ -790,6 +934,22 @@ func startWatchers(
 	}
 	emitWatcherLifecycleSummary(outWriter, streamer, startedNames, watcherStateStarted)
 	return watchers, exitCh
+}
+
+// devRuntimeWatcherNames identifies app runtime watchers that should bracket restart output.
+func devRuntimeWatcherNames(watches []project.DevWatch) []string {
+	names := make([]string, 0)
+	for _, watch := range watches {
+		if watch.Name == "Run App" || strings.HasPrefix(watch.Name, "Run ") {
+			names = append(names, watch.Name)
+		}
+	}
+	return names
+}
+
+// isDevBuildWatcher reports whether a watcher executes target build work.
+func isDevBuildWatcher(name string) bool {
+	return name == "Build App" || strings.HasPrefix(name, "Build ")
 }
 
 func buildWatcherExec(execCmd string) string {

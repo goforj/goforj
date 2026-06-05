@@ -853,14 +853,15 @@ Track implementation as concrete work items:
   - [x] Build the default target binary from `cmd/app/main.go`.
   - [x] Make `forj build` target-aware in source mode.
   - [x] Make `forj run` target-aware in source mode.
-  - [ ] Make `forj dev` fully active-target aware for named targets.
-  - [ ] Decide whether `forj dev` runs only one target by default or supports explicit multi-target orchestration.
+  - [x] Make `forj dev` fully active-target aware for named targets.
+  - [x] Make unqualified `forj dev` expand default Build/Run watchers across every discovered target.
+  - [x] Keep `forj <target> dev` scoped to the selected target.
   - [ ] Add explicit all-target build or render validation when needed.
-  - [ ] Ensure source-mode `forj <target> dev` operates on the active conventional target.
+  - [x] Ensure source-mode `forj <target> dev` operates on the active conventional target.
   - [ ] Add `build:all` or equivalent only if the workflow proves useful.
   - [x] Ensure Wire generation runs in the selected conventional target's `wire_dir` when it exists.
   - [x] Ensure full render runs Wire generation for every discovered target Wire directory.
-  - [ ] Ensure frontend build/watch uses the selected target entrypoint when a named target owns HTTP.
+  - [x] Ensure dev build/watch uses the selected target entrypoint and binary when a named target owns HTTP.
 
 - [x] Partial: update generators.
   - [x] Register generated controllers, commands, jobs, events, schedules, repositories, and Wire entries into the default target layout.
