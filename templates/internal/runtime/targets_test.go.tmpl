@@ -1,0 +1,55 @@
+package runtime
+
+import "testing"
+
+func TestAppTargetMetadataUsesDeterministicDefaults(t *testing.T) {
+	app := AppTarget("app")
+	if app.Index != 0 || app.HTTPPort != 3000 || app.RuntimeBase != 10000 {
+		t.Fatalf("app defaults = index %d http %d runtime %d", app.Index, app.HTTPPort, app.RuntimeBase)
+	}
+{{- if gt (len .RuntimeTargets) 1 }}
+	named := AppTargets[1]
+	if named.Index != 1 || named.HTTPPort != 3001 || named.RuntimeBase != 10010 {
+		t.Fatalf("first named defaults = index %d http %d runtime %d", named.Index, named.HTTPPort, named.RuntimeBase)
+	}
+{{- end }}
+}
+
+func TestTargetPortResolutionUsesTargetScopedOverrides(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "app")
+	t.Setenv("PORT", "3100")
+	t.Setenv("METRICS_PORT", "11000")
+	t.Setenv("SCHEDULER_METRICS_PORT", "11001")
+	t.Setenv("WORKER_METRICS_PORT", "11002")
+
+	if got := HTTPPort(); got != "3100" {
+		t.Fatalf("default HTTP port = %q", got)
+	}
+	if got := MetricsPort(); got != "11000" {
+		t.Fatalf("default metrics port = %q", got)
+	}
+	if got := SchedulerMetricsPort(); got != "11001" {
+		t.Fatalf("default scheduler metrics port = %q", got)
+	}
+	if got := WorkerMetricsPort(); got != "11002" {
+		t.Fatalf("default worker metrics port = %q", got)
+	}
+}
+
+{{- if gt (len .RuntimeTargets) 1 }}
+func TestNamedTargetIgnoresDefaultTargetPortOverrides(t *testing.T) {
+	t.Setenv("PORT", "3100")
+	t.Setenv("API_HTTP_PORT", "3200")
+	t.Setenv("METRICS_PORT", "11000")
+
+	target := AppTargets[1].Name
+	wantHTTP := "3001"
+	wantMetrics := "10010"
+	if got := HTTPPortForTarget(target); got != wantHTTP {
+		t.Fatalf("named target HTTP port = %q, want %q", got, wantHTTP)
+	}
+	if got := MetricsPortForTarget(target); got != wantMetrics {
+		t.Fatalf("named target metrics port = %q, want %q", got, wantMetrics)
+	}
+}
+{{- end }}

@@ -44,12 +44,6 @@ type AppTarget struct {
 	WireDir    string `yaml:"wire_dir" json:"wire_dir"`
 }
 
-// AppConfig describes the default and available application targets.
-type AppConfig struct {
-	DefaultTarget string      `yaml:"default_target" json:"default_target"`
-	Targets       []AppTarget `yaml:"targets" json:"targets"`
-}
-
 // DefaultAppTarget returns the conventional single-app target.
 func DefaultAppTarget() AppTarget {
 	return DefaultNamedAppTarget(DefaultAppTargetName)
@@ -130,7 +124,6 @@ type ProjectConfig struct {
 	GoModuleName string       `yaml:"module_name" json:"module_name"`
 	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
 	Dev          DevConfig    `yaml:"dev" json:"dev"`
-	App          AppConfig    `yaml:"app" json:"app"`
 	Render       RenderConfig `yaml:"render" json:"render"`
 
 	// temporary
@@ -349,65 +342,11 @@ func LoadProjectConfig() (*Config, error) {
 	if err := decoder.Decode(config); err != nil {
 		return nil, err
 	}
-	normalizeAppConfig(config)
-	if err := validateAppConfig(config); err != nil {
-		return nil, err
-	}
 	if len(config.Dev.WirePaths) == 0 {
 		config.Dev.WirePaths = []string{DefaultAppTarget().WireDir}
 	}
 
 	return config, nil
-}
-
-// normalizeAppConfig preserves single-app defaults when target configuration is omitted.
-func normalizeAppConfig(config *ProjectConfig) {
-	if config.App.DefaultTarget == "" {
-		config.App.DefaultTarget = DefaultAppTargetName
-	}
-	if len(config.App.Targets) == 0 {
-		config.App.Targets = []AppTarget{DefaultAppTarget()}
-		return
-	}
-	for i := range config.App.Targets {
-		namedDefault := DefaultNamedAppTarget(config.App.Targets[i].Name)
-		if config.App.Targets[i].Name == "" {
-			config.App.Targets[i].Name = namedDefault.Name
-		}
-		if config.App.Targets[i].Entrypoint == "" {
-			config.App.Targets[i].Entrypoint = namedDefault.Entrypoint
-		}
-		if config.App.Targets[i].AppDir == "" {
-			config.App.Targets[i].AppDir = namedDefault.AppDir
-		}
-		if config.App.Targets[i].WireDir == "" {
-			config.App.Targets[i].WireDir = namedDefault.WireDir
-		}
-	}
-}
-
-// validateAppConfig rejects target metadata that would render into ambiguous or unsafe paths.
-func validateAppConfig(config *ProjectConfig) error {
-	targets := make(map[string]struct{}, len(config.App.Targets))
-	for _, target := range config.App.Targets {
-		if !IsSafeAppTargetName(target.Name) {
-			return fmt.Errorf("invalid app target %q: target names must be path-safe slugs", target.Name)
-		}
-		if IsReservedAppTargetName(target.Name) {
-			return fmt.Errorf("invalid app target %q: target name is reserved", target.Name)
-		}
-		if IsNativeFrameworkCommandName(target.Name) {
-			return fmt.Errorf("invalid app target %q: target name collides with a native framework command", target.Name)
-		}
-		if _, exists := targets[target.Name]; exists {
-			return fmt.Errorf("invalid app target %q: duplicate target name", target.Name)
-		}
-		targets[target.Name] = struct{}{}
-	}
-	if _, exists := targets[config.App.DefaultTarget]; !exists {
-		return fmt.Errorf("invalid app default_target %q: target is not configured", config.App.DefaultTarget)
-	}
-	return nil
 }
 
 // IsReservedAppTargetName reports whether name is owned by the target composition layout.

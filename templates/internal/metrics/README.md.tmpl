@@ -8,18 +8,18 @@ Metrics are emitted by the generated framework wiring, not by ad-hoc application
 
 Standalone host mode (`app run`) prefers one shared metrics endpoint:
 
-- Host metrics: `http://localhost:9100/metrics`
+- Host metrics: `http://localhost:10000/metrics`
 
 Direct source commands keep their dedicated listeners:
 
 {{- if or .Components.WebAPI .Components.WebUI }}
-- HTTP metrics: `http://localhost:9100/metrics`
+- HTTP metrics: `http://localhost:10000/metrics`
 {{- end }}
 {{- if .Components.Jobs }}
-- Jobs metrics: `http://localhost:9101/metrics`
+- Jobs metrics: `http://localhost:10002/metrics`
 {{- end }}
 {{- if .Components.Scheduler }}
-- Scheduler metrics: `http://localhost:9102/metrics`
+- Scheduler metrics: `http://localhost:10001/metrics`
 {{- end }}
 {{- if .Components.WebAPI }}
 - App HTTP route: `GET /metrics`

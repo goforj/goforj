@@ -4,9 +4,6 @@ import (
 	"context"
 	"strings"
 
-{{- if .Components.Metrics }}
-	"github.com/goforj/env/v2"
-{{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
@@ -86,7 +83,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 {{- if .Components.Metrics }}
-		MetricsPort: env.Get("METRICS_SCHEDULER_PORT", "9102"),
+		MetricsPort: runtime.SchedulerMetricsPort(),
 {{- end }}
 	})
 }
@@ -96,7 +93,7 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 {{- if .Components.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
-		cfg.MetricsPort = "9102"
+		cfg.MetricsPort = runtime.SchedulerMetricsPort()
 	}
 {{- else }}
 	_ = strings.TrimSpace("")

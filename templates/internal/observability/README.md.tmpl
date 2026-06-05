@@ -29,15 +29,15 @@ Use this stack when you want a local production-style view of the generated app 
 
 | Service | Default | Purpose |
 | --- | --- | --- |
-| Shared metrics port | `9100` | Preferred shared metrics port for single-process and compose-style layouts |
+| Shared metrics port | `10000` | Preferred shared metrics port for single-process and compose-style layouts |
 {{- if or .Components.WebAPI .Components.WebUI }}
-| HTTP metrics | `9100` | Metrics emitted by the HTTP source |
+| HTTP metrics | `10000` | Metrics emitted by the HTTP source |
 {{- end }}
 {{- if .Components.Jobs }}
-| Jobs metrics | `9101` | Metrics emitted by the jobs source |
+| Jobs metrics | `10002` | Metrics emitted by the jobs source |
 {{- end }}
 {{- if .Components.Scheduler }}
-| Scheduler metrics | `9102` | Metrics emitted by the scheduler source |
+| Scheduler metrics | `10001` | Metrics emitted by the scheduler source |
 {{- end }}
 | VictoriaMetrics | `8428` | Local metrics storage and query API |
 {{- if .Components.Grafana }}
@@ -48,7 +48,7 @@ Use this stack when you want a local production-style view of the generated app 
 
 - standalone host mode uses `METRICS_PORT`.
 - `local-single` and `compose` target generation use `METRICS_PORT`.
-- `local-multi` target generation uses `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT`, falling back to `METRICS_PORT`, `METRICS_PORT+1`, and `METRICS_PORT+2`.
+- `local-multi` target generation uses `METRICS_API_PORT`, `METRICS_SCHEDULER_PORT`, and `METRICS_JOBS_PORT`, falling back to the generated target runtime block.
 
 Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
 
@@ -86,12 +86,12 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
     - intended for direct source commands or multi-process local layouts
     - default target host: `OBSERVABILITY_METRICS_TARGET_HOST`
     - default targets:
-      - HTTP: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9100/metrics`
+      - HTTP: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10000/metrics`
 {{- if .Components.Jobs }}
-      - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9101/metrics`
+      - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10002/metrics`
 {{- end }}
 {{- if .Components.Scheduler }}
-      - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9102/metrics`
+      - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10001/metrics`
 {{- end }}
   - `compose`
     - one target per source role
