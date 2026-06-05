@@ -115,3 +115,24 @@ Environment variables remain the override path:
 Named target prefixes use uppercase snake case. For example, `customer-portal` uses `CUSTOMER_PORTAL_PORT`.
 
 Named targets intentionally do not consume default-target globals such as `API_HTTP_PORT=3000`; otherwise existing single-app `.env` files would make every target try to bind the same listeners.
+
+## Lighthouse Agent Identity
+
+Lighthouse uses runtime target metadata to identify each connected process without relying on `.goforj.yml`.
+
+Each agent reports:
+
+- `app_target`: the App target, such as `app`, `billing`, or `customer-portal`
+- `source`: the runtime surface, such as `http`, `jobs`, or `scheduler`
+- `group_key`: the logical runtime group
+- `instance_key`: the concrete process instance
+
+The default target keeps compact group keys such as `http`, `jobs`, and `scheduler`. Named targets use `<app_target>/<source>`, such as `billing/http`.
+
+Instance keys are resolved in this order:
+
+1. `APP_INSTANCE_ID`
+2. hostname
+3. generated agent ID
+
+For local development, hostname is usually enough. In Kubernetes or any replicated runtime, set `APP_INSTANCE_ID` to a stable pod/process identity when you want Lighthouse to distinguish replicas clearly, for example `worker-01`, `worker-02`, or the pod name.
