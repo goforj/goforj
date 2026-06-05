@@ -93,6 +93,26 @@ func TestResolveTargetPrefixPreservesNativeCommandPrecedence(t *testing.T) {
 	}
 }
 
+func TestResolveTargetPrefixPreservesNativeCommandPrecedenceOverBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "build"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build"}
+
+	_, _, ok := resolveTargetPrefix([]string{"build"}, true)
+	if ok {
+		t.Fatal("expected native build command to keep precedence over a built target binary")
+	}
+}
+
 func TestWithTargetEnvOverridesExistingTargetIdentity(t *testing.T) {
 	env := withTargetEnv([]string{
 		"FORJ_COMMAND_PREFIX=forj billing",
