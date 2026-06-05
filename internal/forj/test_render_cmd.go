@@ -97,6 +97,9 @@ func (cmd *TestRenderCmd) Run() error {
 	if err := runStep(cmd.logger, cmd.Silent, "build customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "build"}); err != nil {
 		return err
 	}
+	if err := runStep(cmd.logger, cmd.Silent, "route list customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "route:list"}); err != nil {
+		return err
+	}
 	if err := runStep(cmd.logger, cmd.Silent, "test", dir, modCache, buildCache, []string{"go", "test", "./..."}); err != nil {
 		return err
 	}
