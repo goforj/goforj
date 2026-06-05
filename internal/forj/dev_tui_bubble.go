@@ -1033,8 +1033,9 @@ func (m devBubbleModel) selectedCommandRequest() devShellCommandRequest {
 	}
 	selected := m.commands[m.commandIndex]
 	args := strings.TrimSpace(m.commandArgs)
-	shellCommand := "./bin/app " + selected.Name
-	display := "./bin/app " + selected.Name
+	appBinary := activeDevAppBinaryPath()
+	shellCommand := appBinary + " " + selected.Name
+	display := appBinary + " " + selected.Name
 	if args != "" {
 		shellCommand += " " + args
 		display += " " + args

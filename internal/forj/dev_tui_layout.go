@@ -366,7 +366,7 @@ func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args 
 		commandModalVisibleCount = 10
 	)
 
-	lines := []string{helpStyle.Render("App commands from ./bin/app --help")}
+	lines := []string{helpStyle.Render("App commands from " + activeDevAppBinaryPath() + " --help")}
 	selectedAcceptsArgs := false
 	if strings.TrimSpace(loadError) != "" {
 		lines = append(lines, helpStyle.Render(loadError))

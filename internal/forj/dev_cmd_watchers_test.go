@@ -27,6 +27,89 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 	}
 }
 
+func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
+	watches := []project.DevWatch{
+		{
+			Name:  "Build App",
+			Watch: "-file .go -xfile app/wire/wire_gen\\.go$",
+			Exec:  "forj build -o ./bin/app",
+		},
+		{
+			Name:  "Run App",
+			Watch: "-file ./bin/app -file .env",
+			Exec:  "./bin/app run",
+		},
+		{
+			Name: "Custom",
+			Exec: "echo ok",
+		},
+	}
+	config := &project.Config{
+		App: project.AppConfig{
+			Targets: []project.AppTarget{
+				project.DefaultAppTarget(),
+				project.DefaultNamedAppTarget("customer-portal"),
+			},
+		},
+	}
+
+	got := devWatchesForTargets(config, watches)
+	if len(got) != 5 {
+		t.Fatalf("expected expanded watchers, got %#v", got)
+	}
+	if got[0].Name != "Build App" || got[0].Exec != "forj build -o ./bin/app" {
+		t.Fatalf("expected default build watcher first, got %#v", got[0])
+	}
+	if got[1].Name != "Build customer-portal" || got[1].Exec != "forj build -o ./bin/customer-portal" {
+		t.Fatalf("expected named build watcher, got %#v", got[1])
+	}
+	if !strings.Contains(got[1].Watch, "app/customer-portal/wire/wire_gen\\.go$") {
+		t.Fatalf("expected target wire exclusion, got %q", got[1].Watch)
+	}
+	if got[3].Name != "Run customer-portal" || got[3].Watch != "-file ./bin/customer-portal -file .env" || got[3].Exec != "./bin/customer-portal run" {
+		t.Fatalf("expected named run watcher, got %#v", got[3])
+	}
+	if got[3].Env["FORJ_APP_TARGET"] != "customer-portal" || got[3].Env["FORJ_COMMAND_PREFIX"] != "forj customer-portal" {
+		t.Fatalf("expected target env, got %#v", got[3].Env)
+	}
+	if got[4].Name != "Custom" {
+		t.Fatalf("expected custom watcher to be preserved, got %#v", got[4])
+	}
+	if watches[1].Exec != "./bin/app run" {
+		t.Fatalf("expected original watches to remain unchanged, got %q", watches[1].Exec)
+	}
+}
+
+func TestDevWatchesForTargetsCanScopeToExplicitTarget(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "customer-portal")
+	got := devWatchesForTargets(nil, []project.DevWatch{
+		{Name: "Build App", Watch: "-file .go -xfile app/wire/wire_gen\\.go$", Exec: "forj build -o ./bin/app"},
+		{Name: "Run App", Watch: "-file ./bin/app -file .env", Exec: "./bin/app run"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("expected target-scoped watchers, got %#v", got)
+	}
+	if got[0].Name != "Build customer-portal" || got[1].Name != "Run customer-portal" {
+		t.Fatalf("expected target-scoped watcher names, got %#v", got)
+	}
+}
+
+func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
+	config := &project.Config{
+		App: project.AppConfig{
+			Targets: []project.AppTarget{
+				project.DefaultAppTarget(),
+				project.DefaultNamedAppTarget("customer-portal"),
+			},
+		},
+	}
+	got := devBuildCommands(config)
+	want := []string{"forj build", "forj customer-portal build"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
+	}
+}
+
 func TestBuildWatcherCommandArgsPreservesEnvGlobPattern(t *testing.T) {
 	args := buildWatcherCommandArgs("-file .go -file .env -file .env.* -xdir forj -postpone", buildWatcherExec("./bin/app run"))
 	got := strings.Join(args, " ")
