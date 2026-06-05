@@ -913,7 +913,10 @@ Track implementation as concrete work items:
 - [ ] Partial: update target-aware product surfaces.
   - [x] Ensure auth routes and auth command wiring register through default target composition.
   - [x] Ensure starter kits can serve from the default target entrypoint.
-  - [ ] Scope API index and OpenAPI generation to the active named target. Framework artifact paths and compatibility wiring are done; publish/bump `github.com/goforj/web` after `b31cee0` to enable route-composition filtering.
+  - [x] Scope API index and OpenAPI generation to the active named target.
+  - [ ] Tighten `webindex` target scoping so included owners are derived from route groups returned by the active composition file, not every `.Routes()` call that appears in the file.
+  - [ ] Decide whether missing active target route composition should fail fast instead of silently falling back to whole-project API indexing.
+  - [ ] Add webindex fixtures for dead/local `.Routes()` calls in composition files so target-scoped OpenAPI cannot leak unrelated routes.
   - [x] Scope route lists to the active named target.
   - [ ] Decide which named targets expose migration commands.
   - [ ] Make migration command exposure configurable per target if needed.
