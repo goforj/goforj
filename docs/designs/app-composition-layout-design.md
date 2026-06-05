@@ -411,15 +411,21 @@ forj billing dev
 forj reporting dev
 ```
 
-Unqualified commands should operate on the default target only:
+Most unqualified commands should operate on the default target only:
 
 - `forj build` builds the default target.
-- `forj dev` runs the default target.
 - `forj test:render` validates the default target unless the command explicitly opts into all-target validation.
 - `forj build:all` or another explicit command can build every target.
-- multi-target dev orchestration could be explicit.
 
-The default should avoid surprising teams by starting every target just because it exists.
+`forj dev` is the deliberate exception. In a multi-target project, unqualified `forj dev` should orchestrate every discovered target at once: watch all target entrypoints, build all target binaries, and run all configured target runtimes together. This keeps local development closer to the deployed shape when an App has fanned out into multiple executables.
+
+Target-prefixed dev remains scoped:
+
+```bash
+forj billing dev
+```
+
+That command should watch, build, and run only the selected target.
 
 ## Generator Feel
 
@@ -741,7 +747,7 @@ Possible path:
 4. Teach generators to detect which layout exists. Done for the default target generators.
 5. Add target detection and command resolution to `forj`. Done for binary dispatch and source-mode convention dispatch.
 6. Add target-aware generator registration. Done for default and named target app-owned generator registration.
-7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths, source-mode target build/run/wire paths, and Lighthouse agent identity.
+7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths, source-mode target build/run/wire paths, all-target unqualified dev orchestration, and Lighthouse agent identity.
 8. Add rendered smoke scenarios for single-target and multi-target Apps. Done for default single-target render coverage; named-target coverage remains.
 9. Update docs to describe App targets as the preferred generated shape. In progress.
 10. Consider a migration command only after the new layout has proven itself.
