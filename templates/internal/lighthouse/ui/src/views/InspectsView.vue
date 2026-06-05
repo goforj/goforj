@@ -165,7 +165,7 @@
                   </span>
                 </div>
               </button>
-              <div v-if="filteredInspects.length === 0" class="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
+              <div v-if="filteredInspects.length === 0" class="mx-3 mt-2 rounded-2xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
                 No inspects matched the current filters.
               </div>
               <div v-else-if="inspectListBottomSpacerHeight > 0" :style="{ height: `${inspectListBottomSpacerHeight}px` }" aria-hidden="true"></div>
@@ -1005,6 +1005,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 type InspectSummary = {
   trace_id: string;
   source: string;
+  app_target?: string;
+  agent_key?: string;
+  group_key?: string;
+  instance_key?: string;
   name: string;
   status: string;
   started_at: string;
@@ -1569,7 +1573,6 @@ const selectedInspectEventView = computed(() => {
   for (const event of sortedEvents) {
     if (!requestExchangeEvent && event.kind === "http" && event.name === "http_exchange") {
       requestExchangeEvent = event;
-      continue;
     }
     if (!requestLogEvent && event.kind === "log" && event.message === "HTTP Request") {
       requestLogEvent = event;
@@ -2132,6 +2135,10 @@ const inspectSearchFields = (inspect: InspectSummary) => {
   };
   add(inspect.trace_id);
   add(inspect.source);
+  add(inspect.app_target);
+  add(inspect.agent_key);
+  add(inspect.group_key);
+  add(inspect.instance_key);
   add(inspect.name);
   add(inspect.status);
   add(inspectDisplayName(inspect));
@@ -2535,6 +2542,8 @@ const eventHeadline = (event: InspectEvent) => {
       const target = readAttr(event, "target");
       return target ? `${operation} ${target}` : operation;
     }
+    case "http":
+      return "HTTP exchange";
     case "log":
       if (isHTTPRequestLog(event)) {
         return "HTTP Request";
@@ -2687,6 +2696,15 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
         pair("rows", readAttr(event, "rows")),
         durationField(),
       ].filter(Boolean) as InlineField[];
+    case "http": {
+      const status = String(event.http?.response_status || readAttr(event, "response_status") || readAttr(event, "status"));
+      return [
+        pair("method", String(event.http?.method || readAttr(event, "method"))),
+        pair("status", status, statusValueClass(status)),
+        pair("host", String(event.http?.host || readAttr(event, "host"))),
+        pair("path", String(event.http?.uri || readAttr(event, "uri"))),
+      ].filter(Boolean) as InlineField[];
+    }
     case "log":
       if (isHTTPRequestLog(event)) {
         return [
@@ -2732,6 +2750,8 @@ const eventKindIcon = (kind?: string) => {
       return ScrollText;
     case "queue":
       return Package;
+    case "http":
+      return Route;
     case "log":
       return ScrollText;
     case "error":
@@ -2757,6 +2777,8 @@ const eventKindPillClass = (kind?: string) => {
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
     case "queue":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+    case "http":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200";
     case "log":
       return "border-border/60 bg-muted/40 text-foreground";
     case "error":

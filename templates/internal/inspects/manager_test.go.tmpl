@@ -300,6 +300,31 @@ func TestManagerPublishOnlySkipsLocalPersistence(t *testing.T) {
 	}
 }
 
+func TestManagerCaptureGateSkipsNewInspect(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+	active := false
+	manager.SetCaptureGate(func() bool {
+		return active
+	})
+
+	inactive := manager.Begin(context.Background(), "http", "request", nil)
+	if recorder := RecorderFromContext(inactive); recorder != nil {
+		t.Fatalf("expected inactive capture gate to skip recorder, got %q", recorder.InspectID())
+	}
+
+	active = true
+	captured := manager.Begin(context.Background(), "http", "request", nil)
+	recorder := RecorderFromContext(captured)
+	if recorder == nil {
+		t.Fatal("expected active capture gate to allow recorder")
+	}
+	manager.Finish(captured, statusOK, nil)
+}
+
 func TestRecordQueryEventNormalizesInspectEvent(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")

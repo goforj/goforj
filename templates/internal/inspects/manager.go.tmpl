@@ -181,16 +181,20 @@ type Config struct {
 
 // InspectSummary is the list-friendly view of an inspect record.
 type InspectSummary struct {
-	TraceID    string            `json:"trace_id"`
-	Source     string            `json:"source"`
-	Name       string            `json:"name"`
-	Status     string            `json:"status"`
-	StartedAt  time.Time         `json:"started_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-	EndedAt    time.Time         `json:"ended_at,omitempty"`
-	DurationMS int64             `json:"duration_ms,omitempty"`
-	EventCount int               `json:"event_count"`
-	Labels     map[string]string `json:"labels,omitempty"`
+	TraceID     string            `json:"trace_id"`
+	Source      string            `json:"source"`
+	AppTarget   string            `json:"app_target,omitempty"`
+	AgentKey    string            `json:"agent_key,omitempty"`
+	GroupKey    string            `json:"group_key,omitempty"`
+	InstanceKey string            `json:"instance_key,omitempty"`
+	Name        string            `json:"name"`
+	Status      string            `json:"status"`
+	StartedAt   time.Time         `json:"started_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	EndedAt     time.Time         `json:"ended_at,omitempty"`
+	DurationMS  int64             `json:"duration_ms,omitempty"`
+	EventCount  int               `json:"event_count"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 // InspectEvent is a normalized event captured within an inspect.
@@ -252,6 +256,7 @@ type Manager struct {
 	publisherMu sync.RWMutex
 	publisher Publisher
 	publishOnly bool
+	captureGate atomic.Value
 	inflightMu sync.RWMutex
 	inflight   map[string]*inflightInspect
 	inflightCount atomic.Int64
@@ -370,6 +375,14 @@ func (m *Manager) SetPublishOnly(enabled bool) {
 	m.publisherMu.Unlock()
 }
 
+// SetCaptureGate configures a fast predicate for starting new inspect captures.
+func (m *Manager) SetCaptureGate(gate func() bool) {
+	if m == nil || gate == nil {
+		return
+	}
+	m.captureGate.Store(gate)
+}
+
 func (m *Manager) publisherSnapshot() Publisher {
 	if m == nil {
 		return nil
@@ -386,6 +399,26 @@ func (m *Manager) publishModeSnapshot() (Publisher, bool) {
 	m.publisherMu.RLock()
 	defer m.publisherMu.RUnlock()
 	return m.publisher, m.publishOnly
+}
+
+func (m *Manager) captureAllowed() bool {
+	if m == nil {
+		return false
+	}
+	raw := m.captureGate.Load()
+	if raw == nil {
+		return true
+	}
+	gate, ok := raw.(func() bool)
+	if !ok || gate == nil {
+		return true
+	}
+	return gate()
+}
+
+// CaptureAllowed reports whether the manager would start a new inspect capture now.
+func (m *Manager) CaptureAllowed() bool {
+	return m.Enabled() && m.captureAllowed()
 }
 
 // WithInspectID annotates ctx with inspectID.
@@ -463,6 +496,9 @@ func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string,
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return ctx
 	}
+	if !m.captureAllowed() {
+		return ctx
+	}
 	if !m.shouldSample() {
 		return ctx
 	}
@@ -514,6 +550,9 @@ func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder 
 	}
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return existing
+	}
+	if !m.captureAllowed() {
+		return nil
 	}
 	if !m.shouldSample() {
 		return nil
@@ -1283,6 +1322,10 @@ func (m *Manager) loadRecordWithCache(cache *goforjcache.Cache, inspectID string
 func normalizeRecord(record Record) Record {
 	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
 	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.AppTarget = strings.TrimSpace(record.Summary.AppTarget)
+	record.Summary.AgentKey = strings.TrimSpace(record.Summary.AgentKey)
+	record.Summary.GroupKey = strings.TrimSpace(record.Summary.GroupKey)
+	record.Summary.InstanceKey = strings.TrimSpace(record.Summary.InstanceKey)
 	record.Summary.Name = normalizeInspectName(record.Summary.Name)
 	if record.Summary.Status == "" {
 		record.Summary.Status = statusOK
@@ -1343,6 +1386,10 @@ func materializeInflightRecord(state *inflightInspect) Record {
 	record := state.record
 	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
 	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.AppTarget = strings.TrimSpace(record.Summary.AppTarget)
+	record.Summary.AgentKey = strings.TrimSpace(record.Summary.AgentKey)
+	record.Summary.GroupKey = strings.TrimSpace(record.Summary.GroupKey)
+	record.Summary.InstanceKey = strings.TrimSpace(record.Summary.InstanceKey)
 	record.Summary.Name = normalizeInspectName(record.Summary.Name)
 	if record.Summary.Status == "" {
 		record.Summary.Status = statusOK

@@ -3,6 +3,7 @@ package lighthouse
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -10,6 +11,9 @@ import (
 // AgentInfo represents a connected agent.
 type AgentInfo struct {
 	ID           string    `json:"id"`
+	Key          string    `json:"key"`
+	GroupKey     string    `json:"group_key"`
+	InstanceKey  string    `json:"instance_key"`
 	Source       string    `json:"source"`
 	App          string    `json:"app"`
 	AppTarget    string    `json:"app_target"`
@@ -29,11 +33,16 @@ type agentConn struct {
 	conn *wsConn
 }
 
+type pendingCommand struct {
+	conn     *wsConn
+	agentKey string
+}
+
 // Hub is the control-plane registry for agents and console connections.
 type Hub struct {
 	mu                sync.RWMutex
 	agents            map[string]*agentConn
-	pending           map[string]*wsConn
+	pending           map[string]pendingCommand
 	consoles          map[*wsConn]struct{}
 	devwatch          map[*wsConn]struct{}
 	sources           map[*wsConn]struct{}
@@ -67,7 +76,7 @@ func (h *Hub) ClearDevwatchLog() {
 func NewHub() *Hub {
 	hub := &Hub{
 		agents:            map[string]*agentConn{},
-		pending:           map[string]*wsConn{},
+		pending:           map[string]pendingCommand{},
 		consoles:          map[*wsConn]struct{}{},
 		devwatch:          map[*wsConn]struct{}{},
 		sources:           map[*wsConn]struct{}{},
@@ -110,7 +119,7 @@ func (h *Hub) Agents() []AgentInfo {
 	if h.devwatchAgent != nil {
 		found := false
 		for _, agent := range list {
-			if agent.Source == h.devwatchAgent.Source {
+			if agent.Key == h.devwatchAgent.Key {
 				found = true
 				break
 			}
@@ -173,7 +182,8 @@ func (h *Hub) RegisterDevwatchAgent(conn *wsConn, info AgentInfo) {
 	h.mu.Lock()
 	info.LastSeen = time.Now()
 	info.ConnectedAt = time.Now()
-	h.agents[info.Source] = &agentConn{info: info, conn: conn}
+	info = normalizeAgentInfo(info)
+	h.agents[info.Key] = &agentConn{info: info, conn: conn}
 	copyInfo := info
 	h.devwatchAgent = &copyInfo
 	h.mu.Unlock()
@@ -207,7 +217,8 @@ func (h *Hub) RegisterAgent(conn *wsConn, info AgentInfo) {
 	h.mu.Lock()
 	info.LastSeen = time.Now()
 	info.ConnectedAt = time.Now()
-	h.agents[info.Source] = &agentConn{info: info, conn: conn}
+	info = normalizeAgentInfo(info)
+	h.agents[info.Key] = &agentConn{info: info, conn: conn}
 	h.mu.Unlock()
 	h.BroadcastAgents()
 	h.broadcastInspectControl()
@@ -233,7 +244,7 @@ func (h *Hub) UpdateHeartbeat(source string, startedAt time.Time) {
 func (h *Hub) RemoveAgent(source string) {
 	h.mu.Lock()
 	delete(h.agents, source)
-	if h.devwatchAgent != nil && h.devwatchAgent.Source == source {
+	if h.devwatchAgent != nil && h.devwatchAgent.Key == source {
 		h.devwatchAgent = nil
 	}
 	h.mu.Unlock()
@@ -245,28 +256,60 @@ func (h *Hub) RouteCommand(conn *wsConn, msg Message) error {
 	h.mu.Lock()
 	agent := h.agents[msg.Target]
 	if agent == nil {
-		h.mu.Unlock()
-		return fmt.Errorf("agent not connected: %s", msg.Target)
+		var ambiguous bool
+		agent, ambiguous = h.resolveAgentLocked(msg.Target)
+		if ambiguous {
+			h.mu.Unlock()
+			return fmt.Errorf("agent target is ambiguous: %s", msg.Target)
+		}
+		if agent == nil {
+			h.mu.Unlock()
+			return fmt.Errorf("agent not connected: %s", msg.Target)
+		}
 	}
 	var consoleConn *wsConn
 	consoleConn = conn
 	if consoleConn != nil {
-		h.pending[msg.ID] = consoleConn
+		h.pending[msg.ID] = pendingCommand{conn: consoleConn, agentKey: agent.info.Key}
 	}
 	h.mu.Unlock()
 
 	return agent.conn.writeJSON(msg)
 }
 
+func (h *Hub) resolveAgentLocked(target string) (*agentConn, bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, false
+	}
+	var match *agentConn
+	for _, agent := range h.agents {
+		if agent == nil {
+			continue
+		}
+		if agent.info.GroupKey != target && agent.info.Source != target {
+			continue
+		}
+		if match != nil {
+			return nil, true
+		}
+		match = agent
+	}
+	return match, false
+}
+
 // HandleResponse routes a response back to the waiting console.
 func (h *Hub) HandleResponse(msg Message) {
 	h.mu.Lock()
-	conn := h.pending[msg.ReplyTo]
+	pending := h.pending[msg.ReplyTo]
 	delete(h.pending, msg.ReplyTo)
 	h.mu.Unlock()
 
-	if conn != nil {
-		_ = conn.writeJSON(msg)
+	if pending.agentKey != "" {
+		msg.Source = pending.agentKey
+	}
+	if pending.conn != nil {
+		_ = pending.conn.writeJSON(msg)
 	}
 }
 
@@ -277,6 +320,7 @@ func (h *Hub) RecordEvent(msg Message) {
 	}
 	if err := json.Unmarshal(msg.Payload, &payload); err == nil {
 		if payload.Log.Message != "" || payload.Log.Level != "" {
+			payload.Log.Source = msg.Source
 			h.addLog(payload.Log)
 		}
 	}
@@ -302,7 +346,7 @@ func (h *Hub) BroadcastAgents() {
 	if h.devwatchAgent != nil {
 		found := false
 		for _, agent := range agents {
-			if agent.Source == h.devwatchAgent.Source {
+			if agent.Key == h.devwatchAgent.Key {
 				found = true
 				break
 			}
@@ -417,7 +461,9 @@ func (h *Hub) broadcastInspectControl() {
 	active := len(h.consoles) > 0
 	agents := make([]*wsConn, 0, len(h.agents))
 	for _, agent := range h.agents {
-		agents = append(agents, agent.conn)
+		if agent.conn != nil {
+			agents = append(agents, agent.conn)
+		}
 	}
 	h.mu.RUnlock()
 
@@ -447,5 +493,71 @@ func parseAgentInfo(raw json.RawMessage) (AgentInfo, error) {
 	if err := json.Unmarshal(raw, &info); err != nil {
 		return AgentInfo{}, err
 	}
-	return info, nil
+	return normalizeAgentInfo(info), nil
+}
+
+// normalizeAgentInfo gives every runtime a stable command key without changing the raw runtime source.
+func normalizeAgentInfo(info AgentInfo) AgentInfo {
+	info.ID = strings.TrimSpace(info.ID)
+	info.Source = strings.TrimSpace(info.Source)
+	info.AppTarget = strings.TrimSpace(info.AppTarget)
+	info.Host = strings.TrimSpace(info.Host)
+	info.InstanceID = strings.TrimSpace(info.InstanceID)
+	if info.AppTarget == "" {
+		info.AppTarget = "app"
+	}
+	info.GroupKey = strings.TrimSpace(info.GroupKey)
+	if info.GroupKey == "" {
+		info.GroupKey = agentGroupKey(info.AppTarget, info.Source)
+	}
+	info.InstanceKey = strings.TrimSpace(info.InstanceKey)
+	if info.InstanceKey == "" {
+		info.InstanceKey = agentInstanceKey(info)
+	}
+	info.Key = strings.TrimSpace(info.Key)
+	if info.Key == "" {
+		info.Key = agentKey(info.GroupKey, info.InstanceKey)
+	}
+	return info
+}
+
+func agentGroupKey(appTarget string, source string) string {
+	appTarget = agentKeyPart(appTarget)
+	source = agentKeyPart(source)
+	if source == "" {
+		source = "app"
+	}
+	if appTarget == "" || appTarget == "app" {
+		return source
+	}
+	return appTarget + "/" + source
+}
+
+func agentKey(groupKey string, instanceKey string) string {
+	groupKey = strings.Trim(strings.Join(strings.Fields(strings.TrimSpace(groupKey)), "_"), "/")
+	instanceKey = agentKeyPart(instanceKey)
+	if groupKey == "" {
+		groupKey = "app"
+	}
+	if instanceKey == "" {
+		return groupKey
+	}
+	return groupKey + "/" + instanceKey
+}
+
+func agentInstanceKey(info AgentInfo) string {
+	if info.InstanceID != "" {
+		return info.InstanceID
+	}
+	if info.Host != "" {
+		return info.Host
+	}
+	return info.ID
+}
+
+func agentKeyPart(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "/", "_")
+	value = strings.Join(strings.Fields(value), "_")
+	return value
 }

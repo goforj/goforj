@@ -177,8 +177,12 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 
 	queryLogger := newGORMQueryLogger(logMode, slowQueryThreshold)
 {{- if .Components.Metrics }}
-	if c != nil && c.metrics != nil && c.metrics.DatabaseEnabled() {
-		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, c.inspectManager, name, driver, slowQueryThreshold)
+	if c != nil && (c.inspectManager != nil || (c.metrics != nil && c.metrics.DatabaseEnabled())) {
+		var metricsManager *metrics.Manager
+		if c.metrics != nil && c.metrics.DatabaseEnabled() {
+			metricsManager = c.metrics
+		}
+		queryLogger = newMetricsQueryLogger(queryLogger, metricsManager, c.inspectManager, name, driver, slowQueryThreshold)
 	}
 {{- end }}
 

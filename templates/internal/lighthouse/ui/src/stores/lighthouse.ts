@@ -3,7 +3,12 @@ import { lighthousePath, lighthouseWSURL } from "../lib/base-path";
 
 type AgentInfo = {
   id: string;
+  key?: string;
+  group_key?: string;
+  instance_key?: string;
   source: string;
+  runtime_source?: string;
+  app_target?: string;
   env: string;
   capabilities: string[];
   last_seen?: string;
@@ -616,7 +621,7 @@ const scheduleReconnect = () => {
 };
 
 const syncAgents = (agents: AgentInfo[]) => {
-  state.agents = agents.sort((a, b) => a.source.localeCompare(b.source));
+  state.agents = agents.map(normalizeAgent).sort(compareAgents);
   if (state.agents.length > 0) {
     const hasSelected = state.agents.some((agent) => agent.source === state.selectedAgent);
     if (!hasSelected) {
@@ -625,6 +630,41 @@ const syncAgents = (agents: AgentInfo[]) => {
   } else {
     state.selectedAgent = "";
   }
+};
+
+const normalizeAgent = (agent: AgentInfo): AgentInfo => {
+  const runtimeSource = (agent.runtime_source || agent.source || "app").trim();
+  const appTarget = (agent.app_target || "app").trim();
+  const groupKey = (agent.group_key || agentGroupKey(appTarget, runtimeSource)).trim();
+  const instanceKey = (agent.instance_key || agent.instance_id || agent.host || "").trim();
+  const key = (agent.key || agentKey(groupKey, instanceKey)).trim();
+  return {
+    ...agent,
+    key,
+    source: key,
+    group_key: groupKey,
+    instance_key: instanceKey,
+    runtime_source: runtimeSource,
+    app_target: appTarget,
+  };
+};
+
+const agentGroupKey = (appTarget: string, source: string) => {
+  if (!appTarget || appTarget === "app") return source || "app";
+  return `${appTarget}/${source || "app"}`;
+};
+
+const agentKey = (groupKey: string, instanceKey: string) => {
+  if (!instanceKey) return groupKey || "app";
+  return `${groupKey || "app"}/${instanceKey.replaceAll("/", "_")}`;
+};
+
+const compareAgents = (a: AgentInfo, b: AgentInfo) => {
+  const targetCompare = (a.app_target || "app").localeCompare(b.app_target || "app");
+  if (targetCompare !== 0) return targetCompare;
+  const sourceCompare = (a.runtime_source || a.source).localeCompare(b.runtime_source || b.source);
+  if (sourceCompare !== 0) return sourceCompare;
+  return (a.instance_key || "").localeCompare(b.instance_key || "");
 };
 
 const waitForSocket = async () => {

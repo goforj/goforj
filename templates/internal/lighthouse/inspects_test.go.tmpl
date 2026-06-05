@@ -33,7 +33,7 @@ func (c *captureWSConnection) Close() error {
 }
 
 func TestInspectPublisherFlushesBatch(t *testing.T) {
-	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
+	agent := NewAgent(AgentConfig{Source: "http", AppTarget: "billing", InstanceID: "api-01", Secret: "test-secret"})
 	agent.inspectActive.Store(true)
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
@@ -88,6 +88,18 @@ func TestInspectPublisherFlushesBatch(t *testing.T) {
 	}
 	if envelope.Records[0].Summary.TraceID != record.Summary.TraceID {
 		t.Fatalf("expected trace id %q, got %q", record.Summary.TraceID, envelope.Records[0].Summary.TraceID)
+	}
+	if envelope.Records[0].Summary.AppTarget != "billing" {
+		t.Fatalf("expected app target billing, got %q", envelope.Records[0].Summary.AppTarget)
+	}
+	if envelope.Records[0].Summary.GroupKey != "billing/http" {
+		t.Fatalf("expected group key billing/http, got %q", envelope.Records[0].Summary.GroupKey)
+	}
+	if envelope.Records[0].Summary.InstanceKey != "api-01" {
+		t.Fatalf("expected instance key api-01, got %q", envelope.Records[0].Summary.InstanceKey)
+	}
+	if envelope.Records[0].Summary.AgentKey != "billing/http/api-01" {
+		t.Fatalf("expected agent key billing/http/api-01, got %q", envelope.Records[0].Summary.AgentKey)
 	}
 }
 

@@ -30,7 +30,6 @@ import (
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-	"{{.GoModuleName}}/internal/observability"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/queues"
@@ -309,7 +308,6 @@ func NewApplication(
 
 	attachInspectLogSink(appLogger, inspectManager)
 	logStorageWarnings(appLogger, storage)
-	cacheManager = cacheManager.WithObserver(observability.CacheInspectObserver(inspectManager))
 {{- if .Components.HasDatabase }}
 	registerDatabaseShutdown(lifecycleManager, appLogger, db)
 {{- end }}

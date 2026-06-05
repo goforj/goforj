@@ -710,6 +710,16 @@ app_name="platform", app_target="billing", runtime="worker"
 app_name="platform", app_target="reporting", runtime="worker"
 ```
 
+Lighthouse should keep separate keys for the logical runtime group and the concrete runtime instance:
+
+```text
+group_key="billing/jobs"
+key="billing/jobs/worker-01"
+key="billing/jobs/worker-02"
+```
+
+The default single-target group key remains `http`, `jobs`, or `scheduler` for simple local ergonomics. The concrete agent key can still include host or instance identity when multiple replicas connect.
+
 The UI should group runtime data as:
 
 ```text
@@ -1102,12 +1112,16 @@ Track implementation as concrete work items:
   - [x] Add `app_target` to Lighthouse agent identity.
   - [x] Read target identity from `APP_TARGET` or `FORJ_APP_TARGET`, defaulting to `app`.
   - [x] Include `app_target` in hub agent metadata.
-  - [ ] Add or verify `app_target` across machine-readable metric and inspect metadata.
-  - [ ] Add or verify `app_target` in health/readiness/runtime inspect payloads where relevant.
-  - [ ] Group Lighthouse data by `App -> App Target -> Runtime -> Instance`.
-  - [ ] Collapse the App Target level in Lighthouse when the only target is `app`.
-  - [ ] Verify local multi-target Lighthouse connections use distinct target identity.
-  - [ ] Update Lighthouse UI copy and grouping tests for target-aware data.
+  - [x] Add stable Lighthouse group keys so the default target keeps source groups such as `http`, while named targets use `<app_target>/<source>` such as `billing/http`.
+  - [x] Add stable Lighthouse agent keys that include instance identity, such as `billing/jobs/worker-01`.
+  - [x] Add generated hub coverage proving two App targets and two replicas can keep distinct identities for the same runtime source.
+  - [ ] Verify local multi-target Lighthouse websocket connections use distinct target identity.
+  - [x] Add `app_target`, `agent_key`, `group_key`, and `instance_key` to inspect metadata shipped through Lighthouse.
+  - [x] Add `app_target` to readiness payloads while keeping the hot health payload stable.
+  - [ ] Decide whether every Prometheus metric should gain an explicit `app_target` label, or whether per-target scrape endpoints plus runtime metadata are sufficient.
+  - [x] Group Lighthouse-selectable agents by App Target through generated agent keys.
+  - [x] Collapse the App Target level in Lighthouse when the only target is `app` by preserving default source keys.
+  - [ ] Update Lighthouse UI copy and deeper grouping tests for target-aware data.
 
 - [ ] Partial: add rendered smoke coverage.
   - [x] Render and build default single-target Apps across the render matrix.

@@ -224,7 +224,7 @@ const refreshJobTotals = async () => {
     (entry) =>
       entry.capabilities.includes("queue") ||
       entry.capabilities.includes("jobs") ||
-      entry.source === "jobs"
+      (entry.runtime_source || entry.source) === "jobs"
   );
   if (!agent) {
     jobTotals.value = { pending: 0, active: 0, scheduled: 0, retry: 0, processed: 0, failed: 0 };

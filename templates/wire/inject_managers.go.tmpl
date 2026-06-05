@@ -57,9 +57,11 @@ func provideCacheManager(
 	return manager, nil
 }
 
-// provideInspectManager reuses the cache manager's inspect store so inspect records share the configured cache backend.
+// provideInspectManager reuses the cache manager's inspect store and attaches cache inspect capture before app services are constructed.
 func provideInspectManager(cacheManager *caches.Manager) *inspects.Manager {
-	return inspects.NewManager(cacheManager.Inspects())
+	manager := inspects.NewManager(cacheManager.Inspects())
+	cacheManager.WithObserver(observability.CacheInspectObserver(manager))
+	return manager
 }
 
 // provideEventManager attaches observability hooks without making the observability package construct managers.
