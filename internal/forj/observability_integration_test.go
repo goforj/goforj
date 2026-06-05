@@ -51,9 +51,9 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	t.Setenv("APP_ENV", "local")
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
 	t.Setenv("API_HTTP_PORT", "3000")
-	t.Setenv("METRICS_API_PORT", "9100")
-	t.Setenv("METRICS_JOBS_PORT", "9101")
-	t.Setenv("METRICS_SCHEDULER_PORT", "9102")
+	t.Setenv("METRICS_API_PORT", "10000")
+	t.Setenv("METRICS_JOBS_PORT", "10002")
+	t.Setenv("METRICS_SCHEDULER_PORT", "10001")
 	if _, err := generate.GenerateObservabilityFiles(projectDir); err != nil {
 		t.Fatalf("generate observability files: %v", err)
 	}
@@ -109,10 +109,10 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	envText := readRenderedFile(t, projectDir, ".env")
 	for _, token := range []string{
-		"METRICS_PORT=9100",
-		"METRICS_API_PORT=9100",
-		"METRICS_JOBS_PORT=9101",
-		"METRICS_SCHEDULER_PORT=9102",
+		"METRICS_PORT=10000",
+		"METRICS_API_PORT=10000",
+		"METRICS_JOBS_PORT=10002",
+		"METRICS_SCHEDULER_PORT=10001",
 		"OBSERVABILITY_METRICS_TARGET_MODE=auto",
 		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
 	} {

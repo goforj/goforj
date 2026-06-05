@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 
-{{- if .Components.Metrics }}
-	"github.com/goforj/env/v2"
-{{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 {{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/http"
@@ -129,7 +126,7 @@ func (c *RunCmd) Run(ctx context.Context) error {
 		if metricsLogger != nil {
 			metricsLogger = metricsLogger.WithComponent("Metrics")
 		}
-		if err := metrics.StartPrometheusEndpoint(ctx, metricsLogger, "app", env.Get("METRICS_PORT", "9100"), c.metricsManager.Registry()); err != nil {
+		if err := metrics.StartPrometheusEndpoint(ctx, metricsLogger, "app", runtime.MetricsPort(), c.metricsManager.Registry()); err != nil {
 			return err
 		}
 	}

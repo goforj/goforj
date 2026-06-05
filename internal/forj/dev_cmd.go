@@ -355,7 +355,7 @@ func activeDevAppBinaryPath() string {
 
 // devWatchesForTargets expands the single-app default watchers across every discovered target.
 func devWatchesForTargets(config *project.Config, watches []project.DevWatch) []project.DevWatch {
-	targets := activeDevTargets(config)
+	targets := activeDevTargets()
 	if len(targets) == 1 && targets[0].Name == project.DefaultAppTargetName {
 		return watches
 	}
@@ -374,11 +374,11 @@ func devWatchesForTargets(config *project.Config, watches []project.DevWatch) []
 }
 
 // activeDevTargets returns one explicit target or every conventional target for all-app dev.
-func activeDevTargets(config *project.Config) []project.AppTarget {
+func activeDevTargets() []project.AppTarget {
 	if targetName := requestedDevTargetName(); targetName != "" {
 		return []project.AppTarget{project.DefaultNamedAppTarget(targetName)}
 	}
-	targets := configuredDevTargets(config)
+	targets := configuredDevTargets()
 	if len(targets) == 0 {
 		return []project.AppTarget{project.DefaultAppTarget()}
 	}
@@ -397,8 +397,8 @@ func requestedDevTargetName() string {
 	return ""
 }
 
-// configuredDevTargets merges config metadata and conventional target directories for all-app dev.
-func configuredDevTargets(config *project.Config) []project.AppTarget {
+// configuredDevTargets discovers all-app dev targets from conventional project layout only.
+func configuredDevTargets() []project.AppTarget {
 	seen := map[string]project.AppTarget{}
 	add := func(target project.AppTarget) {
 		target = normalizeRenderAppTarget(target)
@@ -408,11 +408,6 @@ func configuredDevTargets(config *project.Config) []project.AppTarget {
 		seen[target.Name] = target
 	}
 	add(project.DefaultAppTarget())
-	if config != nil {
-		for _, target := range config.App.Targets {
-			add(target)
-		}
-	}
 	for _, target := range discoverConventionalAppTargets() {
 		add(target)
 	}
@@ -466,7 +461,7 @@ func copyDevWatchEnv(env map[string]string) map[string]string {
 
 // devBuildCommands returns the build commands needed for the active dev target set.
 func devBuildCommands(config *project.Config) []string {
-	targets := activeDevTargets(config)
+	targets := activeDevTargets()
 	commands := make([]string, 0, len(targets))
 	for _, target := range targets {
 		if target.Name == project.DefaultAppTargetName {

@@ -53,102 +53,14 @@ render:
 	if got := cfg.Render.ModuleReplaces["github.com/goforj/web"]; got != "/Users/cmiles/code/web" {
 		t.Fatalf("expected module replace to be loaded, got %#v", cfg.Render.ModuleReplaces)
 	}
-	if cfg.App.DefaultTarget != DefaultAppTargetName {
-		t.Fatalf("expected default app target %q, got %q", DefaultAppTargetName, cfg.App.DefaultTarget)
-	}
-	if len(cfg.App.Targets) != 1 || cfg.App.Targets[0].WireDir != DefaultAppTarget().WireDir {
-		t.Fatalf("expected synthesized default target, got %#v", cfg.App.Targets)
-	}
 }
 
-func TestLoadProjectConfigDefaultsNamedTargetPathsByConvention(t *testing.T) {
-	root := t.TempDir()
-	configPath := filepath.Join(root, ".goforj.yml")
-	if err := os.WriteFile(configPath, []byte(`project_name: Test
-module_name: example.com/test
-app:
-  default_target: reporting
-  targets:
-    - name: reporting
-`), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(originalWD) }()
-
-	cfg, err := LoadProjectConfig()
-	if err != nil {
-		t.Fatalf("LoadProjectConfig returned error: %v", err)
-	}
-	if len(cfg.App.Targets) != 1 {
-		t.Fatalf("expected one target, got %#v", cfg.App.Targets)
-	}
-	target := cfg.App.Targets[0]
+func TestDefaultNamedAppTargetUsesConvention(t *testing.T) {
+	target := DefaultNamedAppTarget("reporting")
 	if target.Entrypoint != filepath.Join("cmd", "reporting", "main.go") ||
 		target.AppDir != filepath.Join("app", "reporting") ||
 		target.WireDir != filepath.Join("app", "reporting", "wire") {
 		t.Fatalf("expected conventional reporting paths, got %#v", target)
-	}
-}
-
-func TestLoadProjectConfigRejectsInvalidAppTargets(t *testing.T) {
-	tests := map[string]string{
-		"default missing": `app:
-  default_target: reporting
-  targets:
-    - name: app
-`,
-		"duplicate": `app:
-  targets:
-    - name: reporting
-    - name: reporting
-`,
-		"unsafe": `app:
-  targets:
-    - name: ../reporting
-`,
-		"reserved": `app:
-  targets:
-    - name: wire
-`,
-		"native command": `app:
-  targets:
-    - name: build
-`,
-		"native command alias": `app:
-  targets:
-    - name: x
-`,
-	}
-	for name, appConfig := range tests {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			configPath := filepath.Join(root, ".goforj.yml")
-			content := "project_name: Test\nmodule_name: example.com/test\n" + appConfig
-			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-				t.Fatalf("write config: %v", err)
-			}
-
-			originalWD, err := os.Getwd()
-			if err != nil {
-				t.Fatalf("getwd: %v", err)
-			}
-			if err := os.Chdir(root); err != nil {
-				t.Fatalf("chdir: %v", err)
-			}
-			defer func() { _ = os.Chdir(originalWD) }()
-
-			if _, err := LoadProjectConfig(); err == nil {
-				t.Fatal("expected invalid target config to fail")
-			}
-		})
 	}
 }
 

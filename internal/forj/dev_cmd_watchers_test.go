@@ -28,6 +28,8 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 }
 
 func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
+	withConventionalTarget(t, "customer-portal")
+
 	watches := []project.DevWatch{
 		{
 			Name:  "Build App",
@@ -44,16 +46,7 @@ func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
 			Exec: "echo ok",
 		},
 	}
-	config := &project.Config{
-		App: project.AppConfig{
-			Targets: []project.AppTarget{
-				project.DefaultAppTarget(),
-				project.DefaultNamedAppTarget("customer-portal"),
-			},
-		},
-	}
-
-	got := devWatchesForTargets(config, watches)
+	got := devWatchesForTargets(&project.Config{}, watches)
 	if len(got) != 5 {
 		t.Fatalf("expected expanded watchers, got %#v", got)
 	}
@@ -95,18 +88,33 @@ func TestDevWatchesForTargetsCanScopeToExplicitTarget(t *testing.T) {
 }
 
 func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
-	config := &project.Config{
-		App: project.AppConfig{
-			Targets: []project.AppTarget{
-				project.DefaultAppTarget(),
-				project.DefaultNamedAppTarget("customer-portal"),
-			},
-		},
-	}
-	got := devBuildCommands(config)
+	withConventionalTarget(t, "customer-portal")
+
+	got := devBuildCommands(&project.Config{})
 	want := []string{"forj build", "forj customer-portal build"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
+	}
+}
+
+func withConventionalTarget(t *testing.T, name string) {
+	t.Helper()
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	targetMain := filepath.Join("cmd", name, "main.go")
+	if err := os.MkdirAll(filepath.Dir(targetMain), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	if err := os.WriteFile(targetMain, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write target main: %v", err)
 	}
 }
 

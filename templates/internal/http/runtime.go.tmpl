@@ -81,9 +81,9 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 		Host: env.Get("API_HTTP_HOST", "0.0.0.0"),
-		Port: env.Get("API_HTTP_PORT", "3000"),
+		Port: runtime.HTTPPort(),
 {{- if .Components.Metrics }}
-		MetricsPort: env.Get("METRICS_API_PORT", "9100"),
+		MetricsPort: runtime.MetricsPort(),
 {{- end }}
 	})
 }
@@ -95,12 +95,12 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 	}
 	cfg.Port = strings.TrimSpace(cfg.Port)
 	if cfg.Port == "" {
-		cfg.Port = "3000"
+		cfg.Port = runtime.HTTPPort()
 	}
 {{- if .Components.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
-		cfg.MetricsPort = "9100"
+		cfg.MetricsPort = runtime.MetricsPort()
 	}
 {{- end }}
 	return cfg

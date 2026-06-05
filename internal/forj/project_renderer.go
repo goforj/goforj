@@ -96,6 +96,15 @@ type templateRenderConfig struct {
 	TargetAppImportPath  string
 	TargetWireImportPath string
 	TargetIsDefault      bool
+	RuntimeTargets       []runtimeTargetMetadata
+}
+
+type runtimeTargetMetadata struct {
+	Name        string
+	Index       int
+	EnvPrefix   string
+	HTTPPort    int
+	RuntimeBase int
 }
 
 type templateMapping struct {
@@ -482,6 +491,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/runtime/lifecycle_test.go.tmpl",
 				"internal/runtime/runtime.go.tmpl",
 				"internal/runtime/source.go.tmpl",
+				"internal/runtime/targets.go.tmpl",
+				"internal/runtime/targets_test.go.tmpl",
 				"internal/runtime/runtime_host.go.tmpl",
 				"internal/runtime/runtime_host_test.go.tmpl",
 				"internal/runtime/timeouts.go.tmpl",
@@ -1088,14 +1099,6 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	}
 	changed := false
 	defaultTarget := project.DefaultAppTarget()
-	if strings.TrimSpace(p.config.App.DefaultTarget) == "" {
-		p.config.App.DefaultTarget = project.DefaultAppTargetName
-		changed = true
-	}
-	if len(p.config.App.Targets) == 0 {
-		p.config.App.Targets = []project.AppTarget{defaultTarget}
-		changed = true
-	}
 	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
 		p.config.Dev.WirePaths = []string{defaultTarget.WireDir}
 		changed = true
@@ -1131,7 +1134,7 @@ func hasDevTask(tasks []project.DevTask, target project.DevTask) bool {
 	return false
 }
 
-// renderNamedAppTargets renders every non-default target discovered from config or project layout.
+// renderNamedAppTargets renders every non-default target discovered from conventional project layout.
 func (p *ProjectRenderer) renderNamedAppTargets() error {
 	targets, err := p.namedAppRenderTargets()
 	if err != nil {
@@ -1256,7 +1259,7 @@ func isMigrationSQLFile(name string) bool {
 	return strings.HasSuffix(name, ".up.sql") || strings.HasSuffix(name, ".down.sql")
 }
 
-// namedAppRenderTargets merges optional config metadata with conventional target directories.
+// namedAppRenderTargets discovers named targets from conventional project layout only.
 func (p *ProjectRenderer) namedAppRenderTargets() ([]project.AppTarget, error) {
 	seen := map[string]bool{project.DefaultAppTargetName: true}
 	targets := make([]project.AppTarget, 0)
@@ -1267,12 +1270,6 @@ func (p *ProjectRenderer) namedAppRenderTargets() ([]project.AppTarget, error) {
 		}
 		seen[target.Name] = true
 		targets = append(targets, target)
-	}
-
-	if p.config != nil {
-		for _, target := range p.config.App.Targets {
-			add(target)
-		}
 	}
 
 	for _, target := range discoverConventionalAppTargets() {
@@ -2261,9 +2258,6 @@ func (p *ProjectRenderer) wireGenerateDirs() []string {
 		for _, configured := range p.config.Dev.WirePaths {
 			add(configured, &dirs)
 		}
-		for _, target := range p.config.App.Targets {
-			add(normalizeRenderAppTarget(target).WireDir, &dirs)
-		}
 	}
 	if targets, err := p.namedAppRenderTargets(); err == nil {
 		for _, target := range targets {
@@ -2460,7 +2454,79 @@ func templateDataForTarget(config *project.Config, target project.AppTarget) tem
 		TargetAppImportPath:  appImportPath,
 		TargetWireImportPath: wireImportPath,
 		TargetIsDefault:      target.Name == project.DefaultAppTargetName,
+		RuntimeTargets:       runtimeTargetMetadataForRender(),
 	}
+}
+
+// runtimeTargetMetadataForRender creates the compiled target table used by generated runtime defaults.
+func runtimeTargetMetadataForRender() []runtimeTargetMetadata {
+	targets := renderAppTargets()
+	out := make([]runtimeTargetMetadata, 0, len(targets))
+	for i, target := range targets {
+		out = append(out, runtimeTargetMetadata{
+			Name:        target.Name,
+			Index:       i,
+			EnvPrefix:   targetEnvPrefix(target.Name),
+			HTTPPort:    3000 + i,
+			RuntimeBase: 10000 + i*10,
+		})
+	}
+	return out
+}
+
+// renderAppTargets returns the default target plus named targets in deterministic runtime order.
+func renderAppTargets() []project.AppTarget {
+	seen := map[string]bool{}
+	targets := make([]project.AppTarget, 0)
+	add := func(target project.AppTarget) {
+		target = normalizeRenderAppTarget(target)
+		if target.Name == "" || seen[target.Name] || !project.IsSafeAppTargetName(target.Name) || project.IsReservedAppTargetName(target.Name) {
+			return
+		}
+		seen[target.Name] = true
+		targets = append(targets, target)
+	}
+
+	add(project.DefaultAppTarget())
+	for _, target := range discoverConventionalAppTargets() {
+		add(target)
+	}
+	if len(targets) <= 1 {
+		return targets
+	}
+	sort.SliceStable(targets[1:], func(i, j int) bool {
+		return targets[i+1].Name < targets[j+1].Name
+	})
+	return targets
+}
+
+// targetEnvPrefix converts target slugs into the uppercase env prefix used by generated defaults.
+func targetEnvPrefix(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || name == project.DefaultAppTargetName {
+		return ""
+	}
+	var builder strings.Builder
+	lastWasSeparator := true
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r - 'a' + 'A')
+			lastWasSeparator = false
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+			lastWasSeparator = false
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastWasSeparator = false
+		default:
+			if !lastWasSeparator {
+				builder.WriteByte('_')
+				lastWasSeparator = true
+			}
+		}
+	}
+	return strings.Trim(builder.String(), "_")
 }
 
 // writeTemplates writes templates to the destination directory of the project

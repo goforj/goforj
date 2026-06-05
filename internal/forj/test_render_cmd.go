@@ -55,13 +55,6 @@ func (cmd *TestRenderCmd) Run() error {
 			SoundOnWatchError: false,
 			Watches:           []project.DevWatch{},
 		},
-		App: project.AppConfig{
-			DefaultTarget: project.DefaultAppTargetName,
-			Targets: []project.AppTarget{
-				project.DefaultAppTarget(),
-				project.DefaultNamedAppTarget("customer-portal"),
-			},
-		},
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:           true,
@@ -77,6 +70,9 @@ func (cmd *TestRenderCmd) Run() error {
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 	if err := WriteYAML(ymlPath, cfg); err != nil {
+		return err
+	}
+	if err := writeConventionalAppTargetMarker(dir, "customer-portal"); err != nil {
 		return err
 	}
 
@@ -120,6 +116,14 @@ func (cmd *TestRenderCmd) Run() error {
 		cmd.logger.Info().Str("path", dir).Msg("Render/build/test completed")
 	}
 	return nil
+}
+
+func writeConventionalAppTargetMarker(root string, name string) error {
+	mainPath := filepath.Join(root, "cmd", name, "main.go")
+	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(mainPath, []byte("package main\n"), 0o644)
 }
 
 func assertGlobExists(pattern string) error {

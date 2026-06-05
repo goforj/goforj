@@ -66,13 +66,7 @@ func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
 		}
 	}
 
-	renderer := &ProjectRenderer{
-		config: &project.Config{
-			App: project.AppConfig{
-				Targets: []project.AppTarget{{Name: "wire"}},
-			},
-		},
-	}
+	renderer := &ProjectRenderer{config: &project.Config{}}
 	targets, err := renderer.namedAppRenderTargets()
 	if err != nil {
 		t.Fatalf("namedAppRenderTargets returned error: %v", err)
@@ -82,6 +76,36 @@ func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
 	}
 	if targets[0].Name != "customer-portal" || targets[1].Name != "reporting" {
 		t.Fatalf("expected sorted conventional targets, got %#v", targets)
+	}
+}
+
+func TestRuntimeTargetMetadataUsesCompiledTargetOrder(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
+	writeProjectRendererTestFile(t, filepath.Join("cmd", "customer-portal", "main.go"), "package main\n")
+
+	got := runtimeTargetMetadataForRender()
+	want := []runtimeTargetMetadata{
+		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000},
+		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010},
+		{Name: "customer-portal", Index: 2, EnvPrefix: "CUSTOMER_PORTAL", HTTPPort: 3002, RuntimeBase: 10020},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("metadata length = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("metadata[%d] = %#v, want %#v", i, got[i], want[i])
+		}
 	}
 }
 
@@ -130,13 +154,6 @@ func TestRenderExpandsDefaultMigrationsWhenNamedTargetExists(t *testing.T) {
 	cfg := &project.Config{
 		ProjectName:  "MigrationFanout",
 		GoModuleName: "example.com/migrationfanout",
-		App: project.AppConfig{
-			DefaultTarget: project.DefaultAppTargetName,
-			Targets: []project.AppTarget{
-				project.DefaultAppTarget(),
-				project.DefaultNamedAppTarget("billing"),
-			},
-		},
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:            true,
@@ -156,6 +173,7 @@ func TestRenderExpandsDefaultMigrationsWhenNamedTargetExists(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_users.down.sql"), "-- down\n")
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "analytics", "2026_01_02_000001_create_reports.up.sql"), "-- up\n")
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "analytics", "2026_01_02_000001_create_reports.down.sql"), "-- down\n")
+	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
@@ -196,14 +214,14 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 		t.Fatalf("renderAppTarget returned error: %v", err)
 	}
 
-	assertFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
+	assertProjectRendererFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
 		`targetapp "example.com/test/app/customer-portal"`,
 		`"example.com/test/app/customer-portal/wire"`,
 		`&targetapp.RootCmd{}`,
 	)
-	assertFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportal")
-	assertFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportal")
-	assertFileContains(t, filepath.Join("app", "customer-portal", "wire", "inject_http.go"),
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportal")
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportal")
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "wire", "inject_http.go"),
 		`targetapp "example.com/test/app/customer-portal"`,
 		"targetapp.ProvideRoutes",
 	)
@@ -251,7 +269,7 @@ func assertProjectRendererTestFileMissing(t *testing.T, path string) {
 	}
 }
 
-func assertFileContains(t *testing.T, path string, snippets ...string) {
+func assertProjectRendererFileContains(t *testing.T, path string, snippets ...string) {
 	t.Helper()
 	content, err := os.ReadFile(path)
 	if err != nil {

@@ -187,11 +187,6 @@ func (m *model) finalizeConfig() {
 		DownOnExit:        true,
 		WirePaths:         []string{project.DefaultAppTarget().WireDir},
 	}
-	m.config.App = project.AppConfig{
-		DefaultTarget: project.DefaultAppTargetName,
-		Targets:       []project.AppTarget{project.DefaultAppTarget()},
-	}
-
 	if components.Docker {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Run Docker Compose",
