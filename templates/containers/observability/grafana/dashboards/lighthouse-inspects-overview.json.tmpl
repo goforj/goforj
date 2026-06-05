@@ -48,7 +48,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(lighthouse_inspects_buffer_depth{source=~\"$source\"}) or vector(0)",
+          "expr": "sum(lighthouse_inspects_buffer_depth{app_target=~\"$app_target\", source=~\"$source\"}) or vector(0)",
           "legendFormat": "depth",
           "range": true,
           "refId": "A"
@@ -87,7 +87,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(lighthouse_inspects_dropped_total{source=~\"$source\"}[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(lighthouse_inspects_dropped_total{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "drops",
           "range": true,
           "refId": "A"
@@ -127,7 +127,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "(sum(rate(lighthouse_inspects_dropped_total{source=~\"$source\"}[$__rate_interval])) / clamp_min(sum(rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval])), 1e-9)) or vector(0)",
+          "expr": "(sum(rate(lighthouse_inspects_dropped_total{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])) / clamp_min(sum(rate(lighthouse_inspects_flush_batch_size_sum{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])), 1e-9)) or vector(0)",
           "legendFormat": "ratio",
           "range": true,
           "refId": "A"
@@ -166,7 +166,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(lighthouse_inspects_flush_batch_size_sum{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "inspects",
           "range": true,
           "refId": "A"
@@ -203,7 +203,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source) (rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval]))",
+          "expr": "sum by (source) (rate(lighthouse_inspects_flush_batch_size_sum{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -271,7 +271,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_duration_seconds_bucket{source=~\"$source\"}[$__rate_interval])) by (le)) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_duration_seconds_bucket{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])) by (le)) or vector(0)",
           "legendFormat": "p95",
           "range": true,
           "refId": "A"
@@ -310,7 +310,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(lighthouse_inspects_flush_errors_total{source=~\"$source\"}[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(lighthouse_inspects_flush_errors_total{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "errors",
           "range": true,
           "refId": "A"
@@ -349,7 +349,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_batch_size_bucket{source=~\"$source\"}[$__rate_interval])) by (le)) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_batch_size_bucket{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])) by (le)) or vector(0)",
           "legendFormat": "p95 size",
           "range": true,
           "refId": "A"
@@ -393,7 +393,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source) (lighthouse_inspects_buffer_depth{source=~\"$source\"})",
+          "expr": "sum by (source) (lighthouse_inspects_buffer_depth{app_target=~\"$app_target\", source=~\"$source\"})",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -437,7 +437,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source, reason) (rate(lighthouse_inspects_dropped_total{source=~\"$source\"}[$__rate_interval]))",
+          "expr": "sum by (source, reason) (rate(lighthouse_inspects_dropped_total{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
@@ -481,7 +481,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source) (rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval]))",
+          "expr": "sum by (source) (rate(lighthouse_inspects_flush_batch_size_sum{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -525,7 +525,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source, status) (rate(lighthouse_inspects_flushes_total{source=~\"$source\"}[$__rate_interval]))",
+          "expr": "sum by (source, status) (rate(lighthouse_inspects_flushes_total{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
@@ -569,7 +569,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_duration_seconds_bucket{source=~\"$source\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_duration_seconds_bucket{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -613,7 +613,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_batch_size_bucket{source=~\"$source\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_batch_size_bucket{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -657,7 +657,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source, reason) (rate(lighthouse_inspects_flush_errors_total{source=~\"$source\"}[$__rate_interval]))",
+          "expr": "sum by (source, reason) (rate(lighthouse_inspects_flush_errors_total{app_target=~\"$app_target\", source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
@@ -678,10 +678,35 @@
         "current": {
           "selected": true,
           "text": "All",
+          "value": "$__all"
+        },
+        "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+        "definition": "label_values(app_target)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "App Target",
+        "multi": false,
+        "name": "app_target",
+        "options": [],
+        "query": {
+          "query": "label_values(app_target)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
           "value": ".*"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(lighthouse_inspects_buffer_depth, source)",
+        "definition": "label_values(lighthouse_inspects_buffer_depth{app_target=~\"$app_target\"}, source)",
         "hide": 0,
         "includeAll": true,
         "label": "Source",
@@ -690,7 +715,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(lighthouse_inspects_buffer_depth, source)",
+          "query": "label_values(lighthouse_inspects_buffer_depth{app_target=~\"$app_target\"}, source)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

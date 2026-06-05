@@ -1118,7 +1118,7 @@ Track implementation as concrete work items:
   - [ ] Verify local multi-target Lighthouse websocket connections use distinct target identity.
   - [x] Add `app_target`, `agent_key`, `group_key`, and `instance_key` to inspect metadata shipped through Lighthouse.
   - [x] Add `app_target` to readiness payloads while keeping the hot health payload stable.
-  - [ ] Decide whether every Prometheus metric should gain an explicit `app_target` label, or whether per-target scrape endpoints plus runtime metadata are sufficient.
+  - [x] Add explicit `app_target` labels to framework-owned Prometheus metrics and generated Grafana dashboard selectors.
   - [x] Group Lighthouse-selectable agents by App Target through generated agent keys.
   - [x] Collapse the App Target level in Lighthouse when the only target is `app` by preserving default source keys.
   - [ ] Update Lighthouse UI copy and deeper grouping tests for target-aware data.
