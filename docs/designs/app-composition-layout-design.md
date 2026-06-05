@@ -845,7 +845,7 @@ Track implementation as concrete work items:
   - [x] Make `forj <target> <app-command>` execute the selected target command surface.
   - [ ] Keep an explicit collision escape hatch for generated App commands if needed.
   - [x] Add tests for convention target dispatch without a prebuilt binary.
-  - [ ] Add tests for native-command precedence over target and App command names.
+  - [x] Add tests for native-command precedence over target and App command names.
 
 - [ ] Partial: update build and dev workflows.
   - [x] Make `forj build` and `forj run` operate on `cmd/app` by default.
