@@ -913,14 +913,14 @@ Track implementation as concrete work items:
 - [ ] Partial: update target-aware product surfaces.
   - [x] Ensure auth routes and auth command wiring register through default target composition.
   - [x] Ensure starter kits can serve from the default target entrypoint.
-  - [ ] Scope API index and OpenAPI generation to the active named target.
+  - [ ] Scope API index and OpenAPI generation to the active named target. Framework artifact paths and compatibility wiring are done; publish/bump `github.com/goforj/web` after `b31cee0` to enable route-composition filtering.
   - [x] Scope route lists to the active named target.
   - [ ] Decide which named targets expose migration commands.
   - [ ] Make migration command exposure configurable per target if needed.
   - [ ] Ensure auth routes, auth jobs, and auth schedules register through named target composition.
   - [ ] Ensure starter kits can point frontend code at a named target HTTP runtime.
   - [ ] Ensure generated frontend assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
-  - [ ] Ensure route/openapi commands show the active target in human-readable output.
+  - [ ] Ensure route/openapi commands show the active target in human-readable output. Route list output now shows the active App Target; OpenAPI command/output labeling still needs the final command surface decision.
 
 - [ ] Partial: add target-aware observability and Lighthouse identity.
   - [x] Add `app_target` to Lighthouse agent identity.

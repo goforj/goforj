@@ -3,6 +3,8 @@ package http
 import (
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
@@ -52,7 +54,18 @@ func (s *Server) swaggerUIHandler(r web.Context) error {
 func (s *Server) swaggerSpecHandler(r web.Context) error {
 	specPath := os.Getenv("OPENAPI_SPEC_PATH")
 	if specPath == "" {
-		specPath = defaultOpenAPISpecPath
+		specPath = defaultOpenAPISpecPathForTarget()
 	}
 	return r.File(specPath)
+}
+
+func defaultOpenAPISpecPathForTarget() string {
+	target := strings.TrimSpace(os.Getenv("APP_TARGET"))
+	if target == "" {
+		target = strings.TrimSpace(os.Getenv("FORJ_APP_TARGET"))
+	}
+	if target == "" || target == "app" {
+		return defaultOpenAPISpecPath
+	}
+	return filepath.Join("build", target, "openapi.json")
 }

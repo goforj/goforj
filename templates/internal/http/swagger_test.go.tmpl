@@ -53,6 +53,33 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{}}`, rec.Body.String())
 }
 
+func TestSwaggerSpecUsesTargetDefaultPath(t *testing.T) {
+	t.Setenv("API_SWAGGER_ENABLED", "true")
+	t.Setenv("APP_TARGET", "customer-portal")
+
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build", "customer-portal")
+	require.NoError(t, os.MkdirAll(buildDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(buildDir, "openapi.json"), []byte(`{"openapi":"3.0.3","paths":{"/target":{}}}`), 0o644))
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	e, err := s.bootstrap("")
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/target":{}}}`, rec.Body.String())
+}
+
 func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "false")
 

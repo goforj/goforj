@@ -662,6 +662,7 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
+		`cmd.ApplyLaunchTarget("{{.Target.Name}}")`,
 		`targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"`,
 		`"{{.GoModuleName}}/{{.TargetWireImportPath}}"`,
 		`"{{.GoModuleName}}/internal/console"`,
@@ -737,6 +738,15 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl"): {
 			`fmt.Printf("App Target: %s\n\n", routeListAppTarget())`,
 			`func routeListAppTarget() string`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "swagger.go.tmpl"): {
+			`func defaultOpenAPISpecPathForTarget() string`,
+			`filepath.Join("build", target, "openapi.json")`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "target_identity.go.tmpl"): {
+			`func ApplyLaunchTarget(target string)`,
+			`os.Setenv("FORJ_APP_TARGET", target)`,
+			`os.Setenv("APP_TARGET", target)`,
 		},
 	}
 	for file, snippets := range files {
