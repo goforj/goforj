@@ -793,7 +793,7 @@ Track implementation as concrete work items:
   - [x] Add configured target validation for stable project-layout constraints.
   - [x] Validate `app.default_target` exists in configured targets.
   - [x] Validate target names as path-safe slugs.
-  - [ ] Reject target names that collide with native Framework commands.
+  - [x] Reject target names that collide with native Framework commands.
   - [x] Reject target names that collide with reserved `app/` names such as `wire`.
   - [x] Reject target names that collide with generated files directly under `app/`, such as `commands.go`, `root_cmd.go`, and `routes.go`.
 
@@ -949,7 +949,7 @@ Track implementation as concrete work items:
   - [x] Verify convention source-mode `forj <target> ...` routes commands to the active target in rendered smoke coverage.
   - [ ] Verify named target generators update only the selected target.
   - [ ] Verify default target generators continue to work when named targets are configured.
-  - [ ] Verify target name validation rejects reserved names and command collisions.
+  - [x] Verify target name validation rejects reserved names and command collisions.
   - [ ] Verify all-target build/render validation when that workflow is added.
 
 - [ ] Partial: update docs and generated READMEs.
