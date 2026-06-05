@@ -39,7 +39,7 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 
 	handler := manager.HTTPMiddleware()(func(c web.Context) error {
 		if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
-			{Key: "source", Value: "app"},
+			{Key: "source", Value: "http"},
 		}); got != 1 {
 			t.Fatalf("inflight during request: got %d want 1", got)
 		}
@@ -48,9 +48,24 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 
 	assert.NoError(t, handler(ctx))
 	if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 	}); got != 0 {
 		t.Fatalf("inflight after request: got %d want 0", got)
+	}
+}
+
+func TestHTTPMetricsIncludeAppTargetAndRuntimeSource(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/hello")
+	ctx := webtest.NewContext(req, nil, "/hello", nil)
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, time.Millisecond)
+
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "app_target", Value: "app"},
+		{Key: "source", Value: "http"},
+	}); got != 1 {
+		t.Fatalf("request count with app_target/source labels: got %d want 1", got)
 	}
 }
 
@@ -1365,6 +1380,7 @@ func histogramCountByLabels(t *testing.T, manager *Manager, name string, labels 
 }
 
 func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	b = expectedMetricsLabels(b)
 	if len(a) != len(b) {
 		return false
 	}
@@ -1374,4 +1390,16 @@ func sameMetricsLabels(a, b []gmetrics.Label) bool {
 		}
 	}
 	return true
+}
+
+func expectedMetricsLabels(labels []gmetrics.Label) []gmetrics.Label {
+	for _, label := range labels {
+		if label.Key == "app_target" {
+			return labels
+		}
+	}
+	out := make([]gmetrics.Label, 0, len(labels)+1)
+	out = append(out, gmetrics.Label{Key: "app_target", Value: "app"})
+	out = append(out, labels...)
+	return out
 }
