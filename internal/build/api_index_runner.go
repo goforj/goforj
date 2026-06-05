@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -15,6 +16,7 @@ const noChangesStatus = "no changes"
 
 type apiIndexPaths struct {
 	root             string
+	appTarget        string
 	out              string
 	diagnostics      string
 	openAPI          string
@@ -36,7 +38,7 @@ func NewAPIIndexRunner(appLogger *logger.AppLogger) *APIIndexRunner {
 }
 
 func (r *APIIndexRunner) Run(root string, out string, diagnostics string, openAPI string, emitLog bool) error {
-	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI, "")
+	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI, "", "")
 	if err != nil {
 		return err
 	}
@@ -66,11 +68,12 @@ func (r *APIIndexRunner) RunDefaultWithStatus() (string, error) {
 		return "", err
 	}
 	paths.routeComposition = routeComposition
-	return r.runDefaultWithStatus(".", paths.out, paths.diagnostics, paths.openAPI, paths.routeComposition)
+	paths.root = "."
+	return r.runDefaultWithStatus(paths)
 }
 
-func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnostics string, openAPI string, routeComposition string) (string, error) {
-	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI, routeComposition)
+func (r *APIIndexRunner) runDefaultWithStatus(paths apiIndexPaths) (string, error) {
+	paths, err := resolveAPIIndexPaths(paths.root, paths.out, paths.diagnostics, paths.openAPI, paths.routeComposition, paths.appTarget)
 	if err != nil {
 		return "", err
 	}
@@ -86,18 +89,22 @@ func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnosti
 		return "", err
 	}
 	if before.equal(after) {
-		return noChangesStatus, nil
+		return apiIndexStatus(paths.appTarget, noChangesStatus), nil
 	}
-	return "", nil
+	return apiIndexStatus(paths.appTarget, ""), nil
 }
 
-func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI string, routeComposition string) (apiIndexPaths, error) {
+func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI string, routeComposition string, appTarget string) (apiIndexPaths, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return apiIndexPaths{}, err
 	}
+	if appTarget == "" {
+		appTarget = project.DefaultAppTargetName
+	}
 	return apiIndexPaths{
 		root:             absRoot,
+		appTarget:        appTarget,
 		out:              out,
 		diagnostics:      diagnostics,
 		openAPI:          openAPI,
@@ -119,6 +126,7 @@ func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (webindex.Manifest, error
 func defaultAPIIndexPaths(target project.AppTarget) apiIndexPaths {
 	if target.Name == "" || target.Name == project.DefaultAppTargetName {
 		return apiIndexPaths{
+			appTarget:        project.DefaultAppTargetName,
 			out:              "build/api_index.json",
 			diagnostics:      "build/api_index.diagnostics.json",
 			openAPI:          "build/openapi.json",
@@ -127,11 +135,25 @@ func defaultAPIIndexPaths(target project.AppTarget) apiIndexPaths {
 	}
 	buildDir := filepath.Join("build", target.Name)
 	return apiIndexPaths{
+		appTarget:        target.Name,
 		out:              filepath.Join(buildDir, "api_index.json"),
 		diagnostics:      filepath.Join(buildDir, "api_index.diagnostics.json"),
 		openAPI:          filepath.Join(buildDir, "openapi.json"),
 		routeComposition: filepath.Join(target.AppDir, "routes.go"),
 	}
+}
+
+// apiIndexStatus keeps timing output explicit about which App target produced OpenAPI artifacts.
+func apiIndexStatus(appTarget string, status string) string {
+	appTarget = strings.TrimSpace(appTarget)
+	if appTarget == "" {
+		appTarget = project.DefaultAppTargetName
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "app target " + appTarget
+	}
+	return "app target " + appTarget + ", " + status
 }
 
 func existingRouteCompositionPath(target project.AppTarget, routeComposition string) (string, error) {
@@ -149,6 +171,7 @@ func existingRouteCompositionPath(target project.AppTarget, routeComposition str
 
 func (r *APIIndexRunner) logManifestSummary(manifest webindex.Manifest, paths apiIndexPaths) {
 	r.logger.Info().
+		Str("app_target", paths.appTarget).
 		Any("operations", len(manifest.Operations)).
 		Any("schemas", len(manifest.Schemas)).
 		Any("diagnostics", len(manifest.Diagnostics)).
