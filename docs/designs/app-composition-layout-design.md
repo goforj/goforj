@@ -909,7 +909,7 @@ Possible path:
 4. Teach generators to detect which layout exists. Done for the default target generators.
 5. Add target detection and command resolution to `forj`. Done for binary dispatch and source-mode convention dispatch.
 6. Add target-aware generator registration. Done for default and named target app-owned generator registration.
-7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths, source-mode target build/run/wire paths, all-target unqualified dev orchestration, and Lighthouse agent identity.
+7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths, source-mode target build/run/wire paths, all-target unqualified dev orchestration, API index/OpenAPI target paths and status labeling, and Lighthouse agent identity.
 8. Add rendered smoke scenarios for single-target and multi-target Apps. Done for default single-target render coverage; named-target coverage remains.
 9. Update docs to describe App targets as the preferred generated shape. In progress.
 10. Consider a migration command only after the new layout has proven itself.
@@ -1106,7 +1106,8 @@ Track implementation as concrete work items:
   - [x] Ensure auth routes and auth schedules register through named target composition. Auth does not currently define target-owned job registrations.
   - [ ] Ensure starter kits can point frontend code at a named target HTTP runtime.
   - [ ] Ensure generated frontend assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
-  - [ ] Ensure route/openapi commands show the active target in human-readable output. Route list output now shows the active App Target; OpenAPI command/output labeling still needs the final command surface decision.
+  - [x] Ensure route/API index/OpenAPI output shows the active target where command output exists. Route list output shows the active App Target; API index/OpenAPI status and logs include the active App target.
+  - [ ] Decide whether to add a dedicated user-facing API index/OpenAPI command surface beyond build/run pipeline generation.
 
 - [ ] Partial: add target-aware observability and Lighthouse identity.
   - [x] Add `app_target` to Lighthouse agent identity.
