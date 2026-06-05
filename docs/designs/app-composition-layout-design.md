@@ -937,9 +937,9 @@ Track implementation as concrete work items:
   - [x] Manually verify a `/tmp` named-target render builds both default and named target binaries.
   - [x] Verify framework-owned injector files are overwrite-rendered.
   - [x] Verify `repositorySet` does not contain service providers.
-  - [ ] Render and build a multi-target App with targets such as `billing` and `reporting`.
+  - [x] Render and build a multi-target App with targets such as `customer-portal`.
   - [ ] Verify target-specific route lists, jobs, schedules, and binaries.
-  - [ ] Verify convention source-mode `forj <target> ...` routes commands to the active target in rendered smoke coverage.
+  - [x] Verify convention source-mode `forj <target> ...` routes commands to the active target in rendered smoke coverage.
   - [ ] Verify named target generators update only the selected target.
   - [ ] Verify default target generators continue to work when named targets are configured.
   - [ ] Verify target name validation rejects reserved names and command collisions.
