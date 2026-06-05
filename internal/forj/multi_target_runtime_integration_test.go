@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -232,7 +233,7 @@ func assertTargetHTTPRuntimeReady(target multiTargetRuntimeSpec, proc *procHandl
 	if err := waitForHTTPStatus(proc, baseURL+"/api/v1/hello", http.StatusOK, 10*time.Second); err != nil {
 		return err
 	}
-	return waitForHTTPStatus(proc, metricsURL, http.StatusOK, 10*time.Second)
+	return waitForHTTPMetricLabels(proc, metricsURL, target.name, 10*time.Second)
 }
 
 // assertTargetMetricsRuntimeReady checks a non-HTTP runtime's dedicated metrics listener.
@@ -300,6 +301,61 @@ func waitForHTTPStatus(proc *procHandle, url string, wantStatus int, timeout tim
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("%s did not return status %d before timeout; last status=%d last error=%v\n%s", url, wantStatus, lastStatus, lastErr, proc.Output())
+}
+
+// waitForHTTPMetricLabels proves the generated target identity reaches runtime metrics, not just port selection.
+func waitForHTTPMetricLabels(proc *procHandle, url string, target string, timeout time.Duration) error {
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := proc.ExitError(); err != nil {
+			return fmt.Errorf("%s exited before %s exposed target HTTP metrics: %w", proc.name, url, err)
+		}
+		body, err := getHTTPBody(client, url)
+		if err != nil {
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if hasHTTPMetricLabels(body, target) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("%s did not expose HTTP metric labels app_target=%q source=http before timeout; last error=%v\n%s", url, target, lastErr, proc.Output())
+}
+
+// getHTTPBody keeps metric assertions small while preserving the short request timeout used by readiness checks.
+func getHTTPBody(client *http.Client, url string) (string, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// hasHTTPMetricLabels scans complete Prometheus samples so label order changes do not make the smoke test brittle.
+func hasHTTPMetricLabels(body string, target string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "http_requests_total{") {
+			continue
+		}
+		if strings.Contains(line, `app_target="`+target+`"`) &&
+			strings.Contains(line, `source="http"`) &&
+			!strings.Contains(line, `source="app"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // requirePortsAvailable avoids making opt-in integration runs fail just because a developer already has local services open.
