@@ -2,7 +2,6 @@ package lighthouse
 
 import (
 	"context"
-	"sync/atomic"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -11,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"encoding/json"
@@ -50,8 +50,8 @@ var errAgentNotConnected = errors.New("lighthouse agent not connected")
 // NewAgent creates a new agent instance.
 func NewAgent(config AgentConfig) *Agent {
 	return &Agent{
-		config:   config,
-		commands: map[string]CommandHandler{},
+		config:    config,
+		commands:  map[string]CommandHandler{},
 		startedAt: time.Now(),
 	}
 }
@@ -226,7 +226,7 @@ func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
 
 // register sends the agent metadata to the control plane.
 func (a *Agent) register() error {
-	payload, err := json.Marshal(AgentInfo{
+	info := normalizeAgentInfo(AgentInfo{
 		ID:           uuid.NewString(),
 		Source:       a.config.Source,
 		App:          a.config.App,
@@ -239,6 +239,7 @@ func (a *Agent) register() error {
 		Host:         a.config.Host,
 		StartedAt:    a.startedAt,
 	})
+	payload, err := json.Marshal(info)
 	if err != nil {
 		return err
 	}
@@ -260,7 +261,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 			return
 		case <-ticker.C:
 			payload, _ := json.Marshal(map[string]any{
-				"uptime":    time.Now().Unix(),
+				"uptime":     time.Now().Unix(),
 				"started_at": a.startedAt,
 			})
 			_ = a.write(Message{

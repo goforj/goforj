@@ -29,7 +29,7 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 		expectedCode int
 	}{
 		{path: "/-/health", expectedBody: `{"status":"ok"}`, expectedCode: http.StatusOK},
-		{path: "/-/ready", expectedBody: `{"status":"ready"}`, expectedCode: http.StatusOK},
+		{path: "/-/ready", expectedBody: `{"status":"ready","app_target":"app"}`, expectedCode: http.StatusOK},
 	}
 
 	for _, testCase := range testCases {
@@ -71,7 +71,7 @@ func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.JSONEq(
 		t,
-		`{"status":"not_ready"}`,
+		`{"status":"not_ready","app_target":"app"}`,
 		rec.Body.String(),
 	)
 }
@@ -100,7 +100,7 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.JSONEq(
 		t,
-		`{"status":"not_ready","checks":[{"type":"db","name":"default","driver":"mysql","status":"failed","error":"dial tcp 127.0.0.1:5432: connect: connection refused"}]}`,
+		`{"status":"not_ready","app_target":"app","checks":[{"type":"db","name":"default","driver":"mysql","status":"failed","error":"dial tcp 127.0.0.1:5432: connect: connection refused"}]}`,
 		rec.Body.String(),
 	)
 }

@@ -1,0 +1,85 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/runtime"
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/web"
+)
+
+func TestHTTPInspectCapturesChildEvents(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
+	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
+	inspectManager := inspects.NewManager(store)
+
+	server := NewServer(
+		logger.NewSilentLogger(),
+		runtime.NewTimeouts(),
+		[]web.RouteGroup{
+			web.NewRouteGroup("", []web.Route{
+				web.NewRoute(http.MethodGet, "/probe", func(r web.Context) error {
+					if recorder := inspects.RecorderFromContext(r.Context()); recorder == nil {
+						t.Fatal("handler context has no inspect recorder")
+					}
+					inspectManager.RecordLog(r.Context(), inspects.LogInspectEvent{
+						Level:   "info",
+						Message: "child event",
+					})
+					return r.NoContent(http.StatusOK)
+				}),
+			}),
+		},
+		nil,
+		nil,
+		nil,
+		inspectManager,
+{{- if .Components.Metrics }}
+		nil,
+{{- end }}
+	)
+	handler, err := server.bootstrap("")
+	if err != nil {
+		t.Fatalf("bootstrap server: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/probe", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	recent, err := inspectManager.Recent(context.Background(), inspects.RecentQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("recent inspects: %v", err)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("recent inspect count = %d, want 1", len(recent))
+	}
+	record, ok, err := inspectManager.ByID(context.Background(), recent[0].TraceID)
+	if err != nil {
+		t.Fatalf("inspect by id: %v", err)
+	}
+	if !ok {
+		t.Fatalf("inspect %q not found", recent[0].TraceID)
+	}
+	if len(record.Events) != 2 {
+		t.Fatalf("event count = %d, want 2: %#v", len(record.Events), record.Events)
+	}
+	if record.Events[0].Kind != inspects.EventKindLog {
+		t.Fatalf("first event kind = %q, want %q", record.Events[0].Kind, inspects.EventKindLog)
+	}
+	if record.Events[1].Kind != inspects.EventKindHTTP {
+		t.Fatalf("second event kind = %q, want %q", record.Events[1].Kind, inspects.EventKindHTTP)
+	}
+}

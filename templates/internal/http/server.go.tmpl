@@ -382,6 +382,9 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 			if strings.Contains(strings.ToLower(r.Header("Upgrade")), "websocket") {
 				return next(r)
 			}
+			if inspects.RecorderFromContext(r.Context()) == nil {
+				return next(r)
+			}
 
 			req := web.RawRequest(r)
 			ctx := r.Context()
@@ -520,6 +523,9 @@ func (s *Server) sourceContextMiddleware(source runtime.Source) web.Middleware {
 func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
+			if s.inspectManager == nil || !s.inspectManager.CaptureAllowed() {
+				return next(r)
+			}
 			path, _, _ := strings.Cut(r.URI(), "?")
 			name := r.Method() + " " + path
 			web.BindContext(r, s.inspectManager.BeginHTTP(r.Context(), name))

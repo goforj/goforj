@@ -65,6 +65,7 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 	publisher := lighthouse.NewInspectPublisher(r.agent{{- if .Components.Metrics }}, r.metrics{{- end }})
 	r.inspects.SetPublisher(publisher)
 	r.inspects.SetPublishOnly(true)
+	r.inspects.SetCaptureGate(r.agent.InspectActive)
 	go publisher.Start(ctx)
 	r.agent.RegisterCapability("inspects")
 	r.agent.RegisterCapability("cli")

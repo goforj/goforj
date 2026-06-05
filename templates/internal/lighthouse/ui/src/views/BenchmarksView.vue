@@ -541,7 +541,7 @@ const benchmarkAgents = computed(() => {
   if (capable.length > 0) return capable;
   const likely = state.agents.filter(
     (agent) =>
-      agent.source === "jobs" ||
+      (agent.runtime_source || agent.source) === "jobs" ||
       agent.capabilities.includes("jobs") ||
       agent.capabilities.includes("queue")
   );
@@ -664,7 +664,7 @@ watch(
     if (agents.length === 0) {
       return;
     }
-    const preferred = agents.find((agent) => agent.source === "jobs")?.source || agents[0].source;
+    const preferred = agents.find((agent) => (agent.runtime_source || agent.source) === "jobs")?.source || agents[0].source;
     const currentValid = agents.some((agent) => agent.source === target.value);
     if (!target.value || !currentValid) {
       target.value = preferred;
@@ -1035,7 +1035,7 @@ const runFromConfig = async (cfg: RunConfig) => {
   if (benchmarkAgents.value.length > 0) {
     const selectedIsCapable = benchmarkAgents.value.some((agent) => agent.source === cfg.target);
     if (!selectedIsCapable) {
-      target.value = benchmarkAgents.value.find((agent) => agent.source === "jobs")?.source || benchmarkAgents.value[0].source;
+      target.value = benchmarkAgents.value.find((agent) => (agent.runtime_source || agent.source) === "jobs")?.source || benchmarkAgents.value[0].source;
     }
   }
   if (!target.value && state.agents.length > 0) {
