@@ -396,6 +396,9 @@ func validateAppConfig(config *ProjectConfig) error {
 		if IsReservedAppTargetName(target.Name) {
 			return fmt.Errorf("invalid app target %q: target name is reserved", target.Name)
 		}
+		if IsNativeFrameworkCommandName(target.Name) {
+			return fmt.Errorf("invalid app target %q: target name collides with a native framework command", target.Name)
+		}
 		if _, exists := targets[target.Name]; exists {
 			return fmt.Errorf("invalid app target %q: duplicate target name", target.Name)
 		}
@@ -410,4 +413,23 @@ func validateAppConfig(config *ProjectConfig) error {
 // IsReservedAppTargetName reports whether name is owned by the target composition layout.
 func IsReservedAppTargetName(name string) bool {
 	return name == "wire"
+}
+
+// IsNativeFrameworkCommandName reports whether name is owned by the framework CLI.
+func IsNativeFrameworkCommandName(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "build",
+		"dev",
+		"down",
+		"generate",
+		"help",
+		"new",
+		"render",
+		"run",
+		"version",
+		"x":
+		return true
+	default:
+		return false
+	}
 }

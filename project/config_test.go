@@ -118,6 +118,14 @@ func TestLoadProjectConfigRejectsInvalidAppTargets(t *testing.T) {
   targets:
     - name: wire
 `,
+		"native command": `app:
+  targets:
+    - name: build
+`,
+		"native command alias": `app:
+  targets:
+    - name: x
+`,
 	}
 	for name, appConfig := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -163,6 +171,19 @@ func TestIsReservedAppTargetName(t *testing.T) {
 	}
 	if IsReservedAppTargetName("reporting") {
 		t.Fatal("expected reporting not to be reserved")
+	}
+}
+
+func TestIsNativeFrameworkCommandName(t *testing.T) {
+	for _, name := range []string{"build", "dev", "render", "run", "x", "help", "version"} {
+		if !IsNativeFrameworkCommandName(name) {
+			t.Fatalf("expected %q to be a native framework command", name)
+		}
+	}
+	for _, name := range []string{"app", "reporting", "customer-portal"} {
+		if IsNativeFrameworkCommandName(name) {
+			t.Fatalf("expected %q not to be a native framework command", name)
+		}
 	}
 }
 
