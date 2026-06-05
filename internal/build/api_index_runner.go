@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -102,12 +101,12 @@ func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI s
 
 func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (webindex.Manifest, error) {
 	options := webindex.IndexOptions{
-		Root:            paths.root,
-		OutPath:         paths.out,
-		DiagnosticsPath: paths.diagnostics,
-		OpenAPIPath:     paths.openAPI,
+		Root:                 paths.root,
+		OutPath:              paths.out,
+		DiagnosticsPath:      paths.diagnostics,
+		OpenAPIPath:          paths.openAPI,
+		RouteCompositionPath: paths.routeComposition,
 	}
-	applyRouteCompositionPath(&options, paths.routeComposition)
 	return webindex.Run(context.Background(), options)
 }
 
@@ -126,17 +125,6 @@ func defaultAPIIndexPaths(target project.AppTarget) apiIndexPaths {
 		diagnostics:      filepath.Join(buildDir, "api_index.diagnostics.json"),
 		openAPI:          filepath.Join(buildDir, "openapi.json"),
 		routeComposition: filepath.Join(target.AppDir, "routes.go"),
-	}
-}
-
-func applyRouteCompositionPath(options *webindex.IndexOptions, routeComposition string) {
-	routeComposition = filepath.ToSlash(filepath.Clean(routeComposition))
-	if routeComposition == "." || routeComposition == "" {
-		return
-	}
-	field := reflect.ValueOf(options).Elem().FieldByName("RouteCompositionPath")
-	if field.IsValid() && field.CanSet() && field.Kind() == reflect.String {
-		field.SetString(routeComposition)
 	}
 }
 

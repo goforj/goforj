@@ -3,12 +3,10 @@ package build
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/web/webindex"
 )
 
 func TestAPIIndexRunnerRunWritesArtifacts(t *testing.T) {
@@ -69,17 +67,6 @@ func TestDefaultAPIIndexPathsUsesNamedTargetArtifacts(t *testing.T) {
 	}
 	if paths.routeComposition != filepath.Join("app", "customer-portal", "routes.go") {
 		t.Fatalf("unexpected route composition path: %s", paths.routeComposition)
-	}
-}
-
-func TestApplyRouteCompositionPathIsDependencyCompatible(t *testing.T) {
-	options := webindex.IndexOptions{}
-
-	applyRouteCompositionPath(&options, filepath.Join("app", "customer-portal", "routes.go"))
-
-	field := reflect.ValueOf(&options).Elem().FieldByName("RouteCompositionPath")
-	if field.IsValid() && field.String() != "app/customer-portal/routes.go" {
-		t.Fatalf("unexpected route composition path: %s", field.String())
 	}
 }
 
