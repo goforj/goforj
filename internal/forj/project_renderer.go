@@ -518,6 +518,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/env_defaults_test.go.tmpl",
 				"internal/cmd/preboot.go.tmpl",
 				"internal/cmd/preboot_test.go.tmpl",
+				"internal/cmd/target_identity.go.tmpl",
 				"internal/cmd/run_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
 				"internal/logger/bench_test.go.tmpl",

@@ -17,6 +17,8 @@ var spa embed.FS
 {{end}}
 func main() {
 	args := cmd.EffectiveLaunchArgs(os.Args[1:])
+	cmd.ApplyLaunchTarget("{{.Target.Name}}")
+
 	if err := cmd.LoadEnv(); err != nil {
 		console.Fatalf("loading env: %v", err)
 	}

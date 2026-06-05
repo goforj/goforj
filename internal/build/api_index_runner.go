@@ -4,18 +4,21 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/web/webindex"
 )
 
 const noChangesStatus = "no changes"
 
 type apiIndexPaths struct {
-	root        string
-	out         string
-	diagnostics string
-	openAPI     string
+	root             string
+	out              string
+	diagnostics      string
+	openAPI          string
+	routeComposition string
 }
 
 type fileSnapshot struct {
@@ -33,7 +36,7 @@ func NewAPIIndexRunner(appLogger *logger.AppLogger) *APIIndexRunner {
 }
 
 func (r *APIIndexRunner) Run(root string, out string, diagnostics string, openAPI string, emitLog bool) error {
-	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI)
+	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI, "")
 	if err != nil {
 		return err
 	}
@@ -56,11 +59,13 @@ func (r *APIIndexRunner) RunDefaultWithStatus() (string, error) {
 		}
 		return "", nil
 	}
-	return r.runDefaultWithStatus(".", "build/api_index.json", "build/api_index.diagnostics.json", "build/openapi.json")
+	paths := defaultAPIIndexPaths(activeAppTarget())
+	paths.routeComposition = existingRouteCompositionPath(paths.routeComposition)
+	return r.runDefaultWithStatus(".", paths.out, paths.diagnostics, paths.openAPI, paths.routeComposition)
 }
 
-func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnostics string, openAPI string) (string, error) {
-	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI)
+func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnostics string, openAPI string, routeComposition string) (string, error) {
+	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI, routeComposition)
 	if err != nil {
 		return "", err
 	}
@@ -81,26 +86,68 @@ func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnosti
 	return "", nil
 }
 
-func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI string) (apiIndexPaths, error) {
+func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI string, routeComposition string) (apiIndexPaths, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return apiIndexPaths{}, err
 	}
 	return apiIndexPaths{
-		root:        absRoot,
-		out:         out,
-		diagnostics: diagnostics,
-		openAPI:     openAPI,
+		root:             absRoot,
+		out:              out,
+		diagnostics:      diagnostics,
+		openAPI:          openAPI,
+		routeComposition: routeComposition,
 	}, nil
 }
 
 func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (webindex.Manifest, error) {
-	return webindex.Run(context.Background(), webindex.IndexOptions{
+	options := webindex.IndexOptions{
 		Root:            paths.root,
 		OutPath:         paths.out,
 		DiagnosticsPath: paths.diagnostics,
 		OpenAPIPath:     paths.openAPI,
-	})
+	}
+	applyRouteCompositionPath(&options, paths.routeComposition)
+	return webindex.Run(context.Background(), options)
+}
+
+func defaultAPIIndexPaths(target project.AppTarget) apiIndexPaths {
+	if target.Name == "" || target.Name == project.DefaultAppTargetName {
+		return apiIndexPaths{
+			out:              "build/api_index.json",
+			diagnostics:      "build/api_index.diagnostics.json",
+			openAPI:          "build/openapi.json",
+			routeComposition: filepath.Join("app", "routes.go"),
+		}
+	}
+	buildDir := filepath.Join("build", target.Name)
+	return apiIndexPaths{
+		out:              filepath.Join(buildDir, "api_index.json"),
+		diagnostics:      filepath.Join(buildDir, "api_index.diagnostics.json"),
+		openAPI:          filepath.Join(buildDir, "openapi.json"),
+		routeComposition: filepath.Join(target.AppDir, "routes.go"),
+	}
+}
+
+func applyRouteCompositionPath(options *webindex.IndexOptions, routeComposition string) {
+	routeComposition = filepath.ToSlash(filepath.Clean(routeComposition))
+	if routeComposition == "." || routeComposition == "" {
+		return
+	}
+	field := reflect.ValueOf(options).Elem().FieldByName("RouteCompositionPath")
+	if field.IsValid() && field.CanSet() && field.Kind() == reflect.String {
+		field.SetString(routeComposition)
+	}
+}
+
+func existingRouteCompositionPath(routeComposition string) string {
+	if routeComposition == "" {
+		return ""
+	}
+	if _, err := os.Stat(routeComposition); err != nil {
+		return ""
+	}
+	return routeComposition
 }
 
 func (r *APIIndexRunner) logManifestSummary(manifest webindex.Manifest, paths apiIndexPaths) {
