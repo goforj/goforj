@@ -24,11 +24,11 @@ function parseNumber(value: string | undefined, fallback: number) {
 }
 
 export const passwordPolicy = {
-  minLength: parseNumber(import.meta.env.AUTH_PASSWORD_MIN_LENGTH, 8),
-  requireUpper: parseBoolean(import.meta.env.AUTH_PASSWORD_REQUIRE_UPPER, true),
-  requireLower: parseBoolean(import.meta.env.AUTH_PASSWORD_REQUIRE_LOWER, false),
-  requireNumber: parseBoolean(import.meta.env.AUTH_PASSWORD_REQUIRE_NUMBER, false),
-  requireSymbol: parseBoolean(import.meta.env.AUTH_PASSWORD_REQUIRE_SYMBOL, true),
+  minLength: parseNumber(import.meta.env.VITE_AUTH_PASSWORD_MIN_LENGTH, 8),
+  requireUpper: parseBoolean(import.meta.env.VITE_AUTH_PASSWORD_REQUIRE_UPPER, true),
+  requireLower: parseBoolean(import.meta.env.VITE_AUTH_PASSWORD_REQUIRE_LOWER, false),
+  requireNumber: parseBoolean(import.meta.env.VITE_AUTH_PASSWORD_REQUIRE_NUMBER, false),
+  requireSymbol: parseBoolean(import.meta.env.VITE_AUTH_PASSWORD_REQUIRE_SYMBOL, true),
 }
 
 export function passwordRequirements() {

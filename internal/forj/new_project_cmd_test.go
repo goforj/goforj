@@ -516,7 +516,7 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	m.finalizeConfig()
 
 	for _, task := range m.config.Dev.Pre {
-		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd frontend && npm install" {
+		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd cmd/app/frontend && npm install" {
 			return
 		}
 	}

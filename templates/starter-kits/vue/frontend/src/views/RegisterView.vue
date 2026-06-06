@@ -140,7 +140,7 @@ async function submit() {
     const result = await registerWithPassword(displayName.value, email.value, password.value)
     if (result.requires_email_verification) {
       successMessage.value = 'Check your email to verify your account before logging in.'
-      if (result.verification_token && import.meta.env.APP_ENV === 'local') {
+      if (result.verification_token && import.meta.env.VITE_APP_ENV === 'local') {
         verificationLink.value = `/verify-email?token=${encodeURIComponent(result.verification_token)}`
       }
       displayName.value = ''

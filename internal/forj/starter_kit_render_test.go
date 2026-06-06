@@ -20,10 +20,11 @@ func TestScaffoldVueStarterKitOverwritesFrontend(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join("frontend", "dist"), 0o755); err != nil {
+	frontendDir := defaultFrontendDir()
+	if err := os.MkdirAll(filepath.Join(frontendDir, "dist"), 0o755); err != nil {
 		t.Fatalf("mkdir frontend: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join("frontend", "custom.txt"), []byte("user file"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(frontendDir, "custom.txt"), []byte("user file"), 0o644); err != nil {
 		t.Fatalf("write custom file: %v", err)
 	}
 
@@ -32,20 +33,20 @@ func TestScaffoldVueStarterKitOverwritesFrontend(t *testing.T) {
 		t.Fatalf("scaffold vue starter kit: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join("frontend", "custom.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(frontendDir, "custom.txt")); !os.IsNotExist(err) {
 		t.Fatalf("expected existing frontend to be overwritten, stat err = %v", err)
 	}
 	for _, path := range []string{
-		filepath.Join("frontend", "package.json"),
-		filepath.Join("frontend", "components.json"),
-		filepath.Join("frontend", "src", "App.vue"),
-		filepath.Join("frontend", "dist", "index.html"),
+		filepath.Join(frontendDir, "package.json"),
+		filepath.Join(frontendDir, "components.json"),
+		filepath.Join(frontendDir, "src", "App.vue"),
+		filepath.Join(frontendDir, "dist", "index.html"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join("frontend", "node_modules")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(frontendDir, "node_modules")); !os.IsNotExist(err) {
 		t.Fatalf("expected node_modules to be excluded, stat err = %v", err)
 	}
 }
@@ -81,7 +82,6 @@ func TestFrontendDistPlaceholderUsesNamedTargets(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		filepath.Join("frontend", "dist", "index.html"),
 		filepath.Join("cmd", "app", "frontend", "dist", "index.html"),
 		filepath.Join("cmd", "customer-portal", "frontend", "dist", "index.html"),
 	} {
