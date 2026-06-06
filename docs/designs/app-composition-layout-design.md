@@ -962,6 +962,7 @@ Track implementation as concrete work items:
   - [x] Generate `cmd/app/main.go`.
   - [x] Generate default target composition under `app/`.
   - [x] Generate default target Wire files under `app/wire/`.
+  - [x] Render the default target through the same target renderer used by named targets.
   - [x] Keep generated runtime support packages under `internal/...` where they are reusable machinery.
   - [x] Do not generate `app/providers.go` by default.
   - [x] Co-locate the embedded frontend bundle under `cmd/app/frontend/dist`.
