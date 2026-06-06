@@ -243,6 +243,57 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	}
 }
 
+func TestRenderAppTargetWritesDefaultTargetShape(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					WebAPI:         true,
+					DatabaseSQLite: true,
+					Scheduler:      true,
+					Jobs:           true,
+				},
+			},
+		},
+		stats: &renderStats{},
+	}
+	if err := renderer.renderAppTarget(project.DefaultAppTarget()); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join("cmd", "app", "main.go"),
+		filepath.Join("app", "commands.go"),
+		filepath.Join("app", "lifecycle.go"),
+		filepath.Join("app", "root_cmd.go"),
+		filepath.Join("app", "routes.go"),
+		filepath.Join("app", "schedules.go"),
+		filepath.Join("app", "wire", "wire.go"),
+		filepath.Join("app", "wire", "inject_cmd.go"),
+		filepath.Join("app", "wire", "inject_cmd_app.go"),
+		filepath.Join("app", "wire", "inject_db.go"),
+		filepath.Join("app", "wire", "inject_http.go"),
+		filepath.Join("app", "wire", "inject_jobs.go"),
+		filepath.Join("app", "wire", "inject_jobs_app.go"),
+		filepath.Join("app", "wire", "inject_repositories_app.go"),
+		filepath.Join("app", "wire", "inject_schedules_app.go"),
+		filepath.Join("app", "wire", "inject_scheduler.go"),
+	} {
+		assertProjectRendererTestFile(t, path)
+	}
+}
+
 func writeProjectRendererTestFile(t *testing.T, path string, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

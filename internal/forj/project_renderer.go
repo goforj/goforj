@@ -244,9 +244,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			action:  p.createGoMod,
 		},
 		{
-			title:     "App Entrypoint Rendering",
-			enabled:   input.renderAll,
-			templates: []string{"cmd/app/main.go.tmpl"},
+			title:   "Default App Target Rendering",
+			enabled: input.renderAll,
+			action: func() error {
+				return p.renderAppTarget(project.DefaultAppTarget())
+			},
 		},
 		{
 			title:   "Environment Files Initialization",
@@ -543,29 +545,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
 				"internal/lighthouse/project_config.go.tmpl",
-				"app/root_cmd.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
 				".db-relationships.yaml.tmpl",
-				"app/lifecycle.go.tmpl",
-				"app/commands.go.tmpl",
-			},
-			action: func() error {
-				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplateTo("wire/app.go.tmpl", "app/wire/app.go"),
-					mapTemplateTo("wire/app_test.go.tmpl", "app/wire/app_test.go"),
-					mapTemplateTo("wire/inject_cmd.go.tmpl", "app/wire/inject_cmd.go"),
-					mapTemplateTo("wire/inject_managers.go.tmpl", "app/wire/inject_managers.go"),
-					mapTemplateTo("wire/wire.go.tmpl", "app/wire/wire.go"),
-				}); err != nil {
-					return err
-				}
-				return p.writeTemplateMappingsOnce([]templateMapping{
-					mapTemplateTo("wire/inject_services_app.go.tmpl", "app/wire/inject_services_app.go"),
-					mapTemplateTo("wire/inject_subscribers_app.go.tmpl", "app/wire/inject_subscribers_app.go"),
-					mapTemplateTo("wire/inject_cmd_app.go.tmpl", "app/wire/inject_cmd_app.go"),
-				})
 			},
 			raw: []string{
 				"internal/makecmd/event.tmpl",
@@ -643,10 +626,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_controller_cmd.go.tmpl",
 				"internal/makecmd/make_controller_cmd_test.go.tmpl",
 			},
-			renderOnceTemplates: []string{
-				"app/routes.go.tmpl",
-			},
 			action: func() error {
+				if input.renderAll {
+					return nil
+				}
 				if err := p.writeTemplateMappings([]templateMapping{
 					mapTemplateTo("wire/inject_http.go.tmpl", "app/wire/inject_http.go"),
 				}); err != nil {
@@ -665,6 +648,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"frontend/dist/index.html.tmpl",
 			},
 			action: func() error {
+				if input.renderAll {
+					return nil
+				}
 				return p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplateTo("frontend/dist/index.html.tmpl", filepath.Join("cmd", "app", "frontend", "dist", "index.html")),
 				})
@@ -757,14 +743,20 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/auth/user.go.tmpl",
 			},
 			action: func() error {
-				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplate("app/routes.go.tmpl"),
-					mapTemplateTo("wire/inject_auth.go.tmpl", "app/wire/inject_auth.go"),
-				}); err != nil {
-					return err
+				if !input.renderAll {
+					if err := p.writeTemplateMappings([]templateMapping{
+						mapTemplate("app/routes.go.tmpl"),
+						mapTemplateTo("wire/inject_auth.go.tmpl", "app/wire/inject_auth.go"),
+					}); err != nil {
+						return err
+					}
+					if err := p.writeTemplateMappingsOnce([]templateMapping{
+						mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
+					}); err != nil {
+						return err
+					}
 				}
-				if err := p.writeTemplateMappingsOnce([]templateMapping{
-					mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
+				return p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl"),
@@ -795,10 +787,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.down.sql.tmpl"),
-				}); err != nil {
-					return err
-				}
-				return nil
+				})
 			},
 		},
 		{
@@ -864,16 +853,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err := p.writeTemplatesUnder("demo/internal/migrations", "migrations", nil); err != nil {
 					return err
 				}
-
-				// Demo app evolves routes on render while preserving app-owned controller wiring.
-				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplate("app/routes.go.tmpl"),
-				}); err != nil {
-					return err
-				}
-				return p.writeTemplateMappingsOnce([]templateMapping{
-					mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
-				})
+				return nil
 			},
 		},
 		{
@@ -904,8 +884,19 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			}()...),
 			raw: []string{"internal/makecmd/model.tmpl"},
 			action: func() error {
-				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplateTo("wire/inject_db.go.tmpl", "app/wire/inject_db.go"),
+				if !input.renderAll {
+					if err := p.writeTemplateMappings([]templateMapping{
+						mapTemplateTo("wire/inject_db.go.tmpl", "app/wire/inject_db.go"),
+					}); err != nil {
+						return err
+					}
+					if err := p.writeTemplateMappingsOnce([]templateMapping{
+						mapTemplateTo("wire/inject_repositories_app.go.tmpl", "app/wire/inject_repositories_app.go"),
+					}); err != nil {
+						return err
+					}
+				}
+				return p.writeTemplateMappings([]templateMapping{
 					mapTemplate("migrations/migrations.go.tmpl"),
 					mapTemplate("migrations/migrations_test.go.tmpl"),
 					mapTemplate("migrations/migration_connection_test.go.tmpl"),
@@ -913,11 +904,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mapTemplate("migrations/migrate_cmd.go.tmpl"),
 					mapTemplate("migrations/migrate_rollback_cmd.go.tmpl"),
 					mapTemplate("migrations/.goforj/placeholder.txt.tmpl"),
-				}); err != nil {
-					return err
-				}
-				return p.writeTemplateMappingsOnce([]templateMapping{
-					mapTemplateTo("wire/inject_repositories_app.go.tmpl", "app/wire/inject_repositories_app.go"),
 				})
 			},
 		},
@@ -934,10 +920,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_schedule_cmd.go.tmpl",
 				"internal/makecmd/make_schedule_cmd_test.go.tmpl",
 			},
-			renderOnceTemplates: []string{
-				"app/schedules.go.tmpl",
-			},
 			action: func() error {
+				if input.renderAll {
+					return nil
+				}
 				if err := p.writeTemplateMappings([]templateMapping{
 					mapTemplateTo("wire/inject_scheduler.go.tmpl", "app/wire/inject_scheduler.go"),
 				}); err != nil {
@@ -980,6 +966,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			}()...),
 			raw: []string{"internal/makecmd/job.tmpl"},
 			action: func() error {
+				if input.renderAll {
+					return nil
+				}
 				if err := p.writeTemplateMappings([]templateMapping{
 					mapTemplateTo("wire/inject_jobs.go.tmpl", "app/wire/inject_jobs.go"),
 				}); err != nil {
