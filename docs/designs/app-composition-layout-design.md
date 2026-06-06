@@ -1105,7 +1105,8 @@ Track implementation as concrete work items:
   - [ ] Decide whether target migration command exposure remains always available or becomes configurable per target.
   - [x] Ensure auth routes and auth schedules register through named target composition. Auth does not currently define target-owned job registrations.
   - [ ] Ensure starter kits can point frontend code at a named target HTTP runtime.
-  - [ ] Ensure generated frontend assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
+  - [x] Ensure generated frontend placeholder assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
+  - [ ] Decide whether a first-class frontend build/publish command should copy real built assets from project-level `frontend/dist` into one or more target-owned embedded dist directories.
   - [x] Ensure route/API index/OpenAPI output shows the active target where command output exists. Route list output shows the active App Target; API index/OpenAPI status and logs include the active App target.
   - [ ] Decide whether to add a dedicated user-facing API index/OpenAPI command surface beyond build/run pipeline generation.
 

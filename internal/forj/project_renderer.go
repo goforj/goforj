@@ -2373,10 +2373,11 @@ func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
 	content := "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in frontend to publish SPA assets.</body></html>\n"
-	for _, index := range []string{
-		filepath.Join("frontend", "dist", "index.html"),
-		filepath.Join("cmd", "app", "frontend", "dist", "index.html"),
-	} {
+	paths := []string{filepath.Join("frontend", "dist", "index.html")}
+	for _, target := range renderAppTargets() {
+		paths = append(paths, filepath.Join(filepath.Dir(target.Entrypoint), "frontend", "dist", "index.html"))
+	}
+	for _, index := range paths {
 		if _, err := os.Stat(index); err == nil {
 			continue
 		}
