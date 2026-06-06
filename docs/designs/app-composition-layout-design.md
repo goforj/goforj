@@ -852,7 +852,16 @@ Auth implementation may live under `internal/auth`, while auth routes are expose
 
 Background auth behavior, such as cleanup schedules or mail jobs, may be exposed by a target's worker or scheduler runtimes.
 
-Frontend starter kits should point at a specific target HTTP runtime. A project that later moves background work into another target should not need to rewrite frontend-owned code just because worker or scheduler composition moved.
+Frontend source and build output should live next to the command package that embeds it: `cmd/<target>/frontend`. That keeps `npm run build` writing directly to the embedded `frontend/dist` path for the active target and avoids a separate publish/copy step for the common case.
+
+Frontend starter kits should point at a specific target HTTP runtime. A project that later moves background work into another target should not need to rewrite frontend-owned code just because worker or scheduler composition moved. Generated starter kits may use `FRONTEND_BACKEND_URL` or `<TARGET>_FRONTEND_BACKEND_URL` to override the local proxy target when the frontend needs to talk to a non-default HTTP target.
+
+Root `.env` remains the source for generated frontend configuration. Browser-visible values must opt in through frontend-specific prefixes and are transposed by Vite into `import.meta.env.VITE_*`:
+
+- `FRONTEND_*` applies to every frontend in every target.
+- `<TARGET>_FRONTEND_*` applies to one app target, such as `CUSTOMER_PORTAL_FRONTEND_BACKEND_URL`.
+
+This keeps server-only variables private by default while avoiding per-key manual mapping in Vite config. The default frontend remains `cmd/<target>/frontend`. Multiple SPAs are intentionally left as a future design pass.
 
 ## What Should Not Happen
 
@@ -965,7 +974,7 @@ Track implementation as concrete work items:
   - [x] Render the default target through the same target renderer used by named targets.
   - [x] Keep generated runtime support packages under `internal/...` where they are reusable machinery.
   - [x] Do not generate `app/providers.go` by default.
-  - [x] Co-locate the embedded frontend bundle under `cmd/app/frontend/dist`.
+  - [x] Co-locate frontend source and embedded build output under `cmd/app/frontend`.
   - [x] Remove legacy generated `main.go`, `wire/`, `internal/cmd/app_commands.go`, `internal/cmd/root_cmd.go`, and `internal/router/routes_registry.go` during full render cleanup.
   - [x] Use consistent app-owned injector filenames:
     - [x] `inject_cmd_app.go`
@@ -997,7 +1006,7 @@ Track implementation as concrete work items:
   - [x] Ensure named target entrypoints import the correct target composition package.
   - [x] Keep named target `wire.go` editable-but-overwrite-rendered like the default target.
   - [x] Keep named target app-owned injectors render-once.
-  - [x] Generate target-local frontend dist placeholders under `cmd/<target>/frontend/dist` when Web UI is enabled.
+  - [x] Generate target-local frontend source/build paths under `cmd/<target>/frontend` when Web UI is enabled.
   - [x] Keep named target cleanup non-destructive by only writing known generated files and preserving app-owned files after first render.
 
 - [x] Update command resolution.
@@ -1105,9 +1114,13 @@ Track implementation as concrete work items:
   - [x] Ensure the migration runner records or logs App target, connection name, migration source path, and generated database connection name.
   - [ ] Decide whether target migration command exposure remains always available or becomes configurable per target.
   - [x] Ensure auth routes and auth schedules register through named target composition. Auth does not currently define target-owned job registrations.
-  - [ ] Ensure starter kits can point frontend code at a named target HTTP runtime.
+  - [x] Ensure starter kits can point frontend code at a named target HTTP runtime through frontend-prefixed root `.env` keys.
+  - [x] Move starter frontend scaffolds under `cmd/app/frontend` so frontend source and embedded assets share the target-local command package.
+  - [x] Transpose root `.env` `FRONTEND_*` values into Vite `import.meta.env.VITE_*` values.
+  - [x] Support target-specific frontend env overrides with `<TARGET>_FRONTEND_*`.
+  - [ ] Design the multiple-SPA story separately, including filesystem layout, env scope, route mount, and `http.RegisterSpa` generation.
   - [x] Ensure generated frontend placeholder assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
-  - [ ] Decide whether a first-class frontend build/publish command should copy real built assets from project-level `frontend/dist` into one or more target-owned embedded dist directories.
+  - [x] Avoid a first-class frontend publish/copy command by making target-local `npm run build` write directly to `cmd/<target>/frontend/dist`.
   - [x] Ensure route/API index/OpenAPI output shows the active target where command output exists. Route list output shows the active App Target; API index/OpenAPI status and logs include the active App target.
   - [ ] Decide whether to add a dedicated user-facing API index/OpenAPI command surface beyond build/run pipeline generation.
 

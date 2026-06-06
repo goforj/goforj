@@ -652,7 +652,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return nil
 				}
 				return p.writeTemplateMappingsOnce([]templateMapping{
-					mapTemplateTo("frontend/dist/index.html.tmpl", filepath.Join("cmd", "app", "frontend", "dist", "index.html")),
+					mapTemplateTo("frontend/dist/index.html.tmpl", appTargetFrontendDistIndex(project.DefaultAppTarget())),
 				})
 			},
 		},
@@ -1103,7 +1103,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	if p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp {
 		task := project.DevTask{
 			Name: "Install Frontend Dependencies",
-			Cmd:  "cd frontend && npm install",
+			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
 		}
 		if !hasDevTask(p.config.Dev.Pre, task) {
 			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
@@ -1347,6 +1347,22 @@ func normalizeRenderAppTarget(target project.AppTarget) project.AppTarget {
 	return target
 }
 
+// defaultFrontendDir returns the editable frontend root for the conventional default target.
+func defaultFrontendDir() string {
+	return appTargetFrontendDir(project.DefaultAppTarget())
+}
+
+// appTargetFrontendDir keeps frontend source next to the command package that embeds its build output.
+func appTargetFrontendDir(target project.AppTarget) string {
+	target = normalizeRenderAppTarget(target)
+	return filepath.Join(filepath.Dir(target.Entrypoint), "frontend")
+}
+
+// appTargetFrontendDistIndex returns the target-local placeholder path required by go:embed.
+func appTargetFrontendDistIndex(target project.AppTarget) string {
+	return filepath.Join(appTargetFrontendDir(target), "dist", "index.html")
+}
+
 // renderAppTarget writes the target entrypoint, composition files, and target-local Wire graph.
 func (p *ProjectRenderer) renderAppTarget(target project.AppTarget) error {
 	target = normalizeRenderAppTarget(target)
@@ -1395,7 +1411,7 @@ func (p *ProjectRenderer) appTargetAppOwnedMappings(target project.AppTarget) []
 		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(target.WireDir, "inject_cmd_app.go")),
 	}
 	if p.config.Render.Components.WebUI {
-		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", filepath.Join(filepath.Dir(target.Entrypoint), "frontend", "dist", "index.html")))
+		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", appTargetFrontendDistIndex(target)))
 	}
 	if p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI {
 		mappings = append(mappings,
@@ -2317,23 +2333,25 @@ func commandExists(name string) bool {
 }
 
 func (p *ProjectRenderer) scaffoldDemoFrontend() error {
-	if err := p.copyRawPathToDest("demo/frontend", "frontend"); err != nil {
+	frontendDir := defaultFrontendDir()
+	if err := p.copyRawPathToDest("demo/frontend", frontendDir); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
 		return p.ensureFrontendDistPlaceholder()
 	}
 	return nil
 }
 
 func (p *ProjectRenderer) scaffoldVueStarterKit() error {
-	if err := os.RemoveAll("frontend"); err != nil {
+	frontendDir := defaultFrontendDir()
+	if err := os.RemoveAll(frontendDir); err != nil {
 		return err
 	}
-	if err := p.copyRawPathToDestFiltered("starter-kits/vue/frontend", "frontend", skipFrontendBuildArtifact); err != nil {
+	if err := p.copyRawPathToDestFiltered("starter-kits/vue/frontend", frontendDir, skipFrontendBuildArtifact); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
 		return p.ensureFrontendDistPlaceholder()
 	}
 	return nil
@@ -2361,10 +2379,10 @@ func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 }
 
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
-	content := "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in frontend to publish SPA assets.</body></html>\n"
-	paths := []string{filepath.Join("frontend", "dist", "index.html")}
+	content := "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in the target frontend directory to publish SPA assets.</body></html>\n"
+	paths := make([]string, 0)
 	for _, target := range renderAppTargets() {
-		paths = append(paths, filepath.Join(filepath.Dir(target.Entrypoint), "frontend", "dist", "index.html"))
+		paths = append(paths, appTargetFrontendDistIndex(target))
 	}
 	for _, index := range paths {
 		if _, err := os.Stat(index); err == nil {
@@ -2816,7 +2834,8 @@ func (p *ProjectRenderer) nextSteps() []string {
 
 	if p.config != nil {
 		if p.config.Render.Components.WebUI {
-			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
+			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install"
+			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render(cmd)))
 		}
 		if p.config.Render.Components.Mail && p.config.Render.Components.Docker {
 			steps = append(steps, fmt.Sprintf("Open Mailpit inbox at %s", commandStyle.Render("http://localhost:8025")))

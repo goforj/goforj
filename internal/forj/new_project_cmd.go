@@ -212,7 +212,7 @@ func (m *model) finalizeConfig() {
 	if components.WebUI && m.config.Render.StarterKit == project.StarterKitVue {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Install Frontend Dependencies",
-			Cmd:  "cd frontend && npm install",
+			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
 		})
 	}
 
@@ -236,7 +236,7 @@ func (m *model) finalizeConfig() {
 	if components.WebUI && (m.config.Render.StarterKit == project.StarterKitVue || packageJSONHasNpmDev()) {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
-			Watch: "-cd ./frontend -xdir _data -xdir .",
+			Watch: "-cd ./" + filepath.ToSlash(defaultFrontendDir()) + " -xdir _data -xdir .",
 			Exec:  "npm run dev",
 		})
 	}
@@ -1569,9 +1569,9 @@ func renderFooter(actions []string, termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, bar, panelBorderStyle.Render(line))
 }
 
-// packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
+// packageJSONHasNpmDev checks whether the target-local frontend defines an npm dev script.
 func packageJSONHasNpmDev() bool {
-	path := filepath.Join("frontend", "package.json")
+	path := filepath.Join(defaultFrontendDir(), "package.json")
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return false

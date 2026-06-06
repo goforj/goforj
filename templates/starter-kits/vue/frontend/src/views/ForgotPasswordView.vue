@@ -85,7 +85,7 @@ const submitted = ref(false)
 const successMessage = ref('')
 const errorMessage = ref('')
 const resetLink = ref('')
-const showLocalResetLink = computed(() => import.meta.env.APP_ENV === 'local' && Boolean(resetLink.value))
+const showLocalResetLink = computed(() => import.meta.env.VITE_APP_ENV === 'local' && Boolean(resetLink.value))
 
 async function submit() {
   submitting.value = true
