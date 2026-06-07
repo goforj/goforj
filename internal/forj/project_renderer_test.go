@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -269,6 +270,25 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	}
 	if string(content) != customCommands {
 		t.Fatalf("expected app-owned commands to be preserved, got:\n%s", content)
+	}
+}
+
+func TestRemoveLegacyInitialBuildTask(t *testing.T) {
+	tasks := []project.DevTask{
+		{Name: "Initial build", Cmd: "forj build -o ./bin/app"},
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
+		{Name: "Initial build", Cmd: "make build"},
+	}
+
+	if !removeLegacyInitialBuildTask(&tasks) {
+		t.Fatal("expected legacy initial build task to be removed")
+	}
+	want := []project.DevTask{
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
+		{Name: "Initial build", Cmd: "make build"},
+	}
+	if !reflect.DeepEqual(tasks, want) {
+		t.Fatalf("tasks = %#v, want %#v", tasks, want)
 	}
 }
 
@@ -868,10 +888,10 @@ func TestUpsertTargetEnvDefaultsGroupsAndOrdersTargetKeys(t *testing.T) {
 	}
 
 	defaults := map[string]string{
-		"BILLING_DB_DATABASE":       "billing",
-		"BILLING_APP_URL":           "http://localhost:3001",
-		"BILLING_API_HTTP_PORT":     "3001",
-		"BILLING_METRICS_JOBS_PORT": "10012",
+		"BILLING_DB_DATABASE":        "billing",
+		"BILLING_APP_URL":            "http://localhost:3001",
+		"BILLING_API_HTTP_PORT":      "3001",
+		"BILLING_DB_SQLITE_DATABASE": "./_data/sqlite/billing.db",
 	}
 	err := upsertTargetEnvDefaults(path, "billing", "BILLING", defaults)
 	if err != nil {
@@ -885,8 +905,8 @@ func TestUpsertTargetEnvDefaultsGroupsAndOrdersTargetKeys(t *testing.T) {
 		"# Billing",
 		"BILLING_APP_URL=http://localhost:3001",
 		"BILLING_API_HTTP_PORT=3001",
-		"BILLING_METRICS_JOBS_PORT=10012",
 		"BILLING_DB_DATABASE=billing",
+		"BILLING_DB_SQLITE_DATABASE=./_data/sqlite/billing.db",
 		"",
 	}, "\n")
 	if text != want {
@@ -978,13 +998,21 @@ func TestWriteTargetEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 		"# Reporting",
 		"REPORTING_APP_URL=http://localhost:3001",
 		"REPORTING_API_HTTP_PORT=3001",
-		"REPORTING_METRICS_API_PORT=10010",
 		"REPORTING_DB_DRIVER=postgres",
 		"REPORTING_DB_DATABASE=reporting",
 		"REPORTING_DB_SQLITE_DATABASE=./_data/sqlite/reporting.db",
 	} {
 		if !strings.Contains(envText, want) {
 			t.Fatalf(".env did not include %q:\n%s", want, envText)
+		}
+	}
+	for _, unwanted := range []string{
+		"REPORTING_METRICS_API_PORT",
+		"REPORTING_METRICS_SCHEDULER_PORT",
+		"REPORTING_METRICS_JOBS_PORT",
+	} {
+		if strings.Contains(envText, unwanted) {
+			t.Fatalf(".env should not include generated metrics override %q:\n%s", unwanted, envText)
 		}
 	}
 	hostText := readMakeAppTestFile(t, ".env.host")

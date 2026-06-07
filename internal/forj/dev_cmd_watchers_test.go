@@ -127,7 +127,7 @@ func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
 	}
 }
 
-func TestDevInitialBuildCommandsOnlyBuildMissingBinaries(t *testing.T) {
+func TestDevInitialBuildCommandsBuildEveryTarget(t *testing.T) {
 	withConventionalTarget(t, "customer-portal")
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
@@ -137,7 +137,7 @@ func TestDevInitialBuildCommandsOnlyBuildMissingBinaries(t *testing.T) {
 	}
 
 	got := devInitialBuildCommands(&project.Config{})
-	want := []string{"forj build -o ./bin/customer-portal ./cmd/customer-portal"}
+	want := []string{"forj build -o ./bin/app ./cmd/app", "forj build -o ./bin/customer-portal ./cmd/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial dev build commands: got %#v want %#v", got, want)
 	}
@@ -268,6 +268,26 @@ func TestCreateDatabaseScriptsIncludeAllDatabases(t *testing.T) {
 		if !strings.Contains(postgresScript, want) {
 			t.Fatalf("postgres script missing %q:\n%s", want, postgresScript)
 		}
+	}
+}
+
+func TestDevAutoMigrateUsesUnqualifiedFrameworkPrefix(t *testing.T) {
+	if got := devAutoMigrateShellCommand(); got != "./bin/app migrate" {
+		t.Fatalf("auto-migrate command = %q, want ./bin/app migrate", got)
+	}
+	if got := devAutoMigrateEnv()["FORJ_COMMAND_PREFIX"]; got != "forj" {
+		t.Fatalf("auto-migrate prefix = %q, want forj", got)
+	}
+}
+
+func TestDevAutoMigrateKeepsExplicitTargetBinary(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "billing")
+
+	if got := devAutoMigrateShellCommand(); got != "./bin/billing migrate" {
+		t.Fatalf("auto-migrate command = %q, want ./bin/billing migrate", got)
+	}
+	if got := devAutoMigrateEnv()["FORJ_COMMAND_PREFIX"]; got != "forj" {
+		t.Fatalf("auto-migrate prefix = %q, want forj", got)
 	}
 }
 

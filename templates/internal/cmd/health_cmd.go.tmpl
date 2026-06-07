@@ -13,6 +13,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/httpx"
 	"{{.GoModuleName}}/internal/console"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 const (
@@ -23,7 +24,7 @@ const (
 
 // HealthCmd queries a live app health or readiness endpoint without booting local runtime dependencies.
 type HealthCmd struct {
-	URL       string `help:"Base app URL or full probe URL" default:"http://127.0.0.1:3000"`
+	URL       string `help:"Base app URL or full probe URL"`
 	Probe     string `help:"Probe to query" enum:"ready,health" default:"ready"`
 	TimeoutMs int    `help:"Request timeout in milliseconds" default:"2000"`
 	JSON      bool   `help:"Print command result as JSON"`
@@ -116,7 +117,10 @@ func (c *HealthCmd) Run(ctx context.Context) error {
 func (c *HealthCmd) probeURL() (string, error) {
 	raw := strings.TrimSpace(c.URL)
 	if raw == "" {
-		raw = "http://127.0.0.1:3000"
+		raw = strings.TrimSpace(env.Get("APP_URL", ""))
+	}
+	if raw == "" {
+		raw = "http://127.0.0.1:" + runtime.HTTPPort()
 	}
 	if !strings.Contains(raw, "://") {
 		raw = "http://" + raw

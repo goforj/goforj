@@ -103,6 +103,19 @@ func TestHealthCmdGroupsResourceChecks(t *testing.T) {
 	}
 }
 
+func TestHealthCmdDefaultsToAppURL(t *testing.T) {
+	t.Setenv("APP_URL", "http://localhost:3015")
+
+	cmd := NewHealthCmd()
+	got, err := cmd.probeURL()
+	if err != nil {
+		t.Fatalf("probeURL returned error: %v", err)
+	}
+	if got != "http://localhost:3015/-/ready" {
+		t.Fatalf("probeURL = %q, want target app URL", got)
+	}
+}
+
 func TestHealthCmdJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/-/health" {

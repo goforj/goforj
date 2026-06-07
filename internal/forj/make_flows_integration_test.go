@@ -432,6 +432,77 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 }
 
+func TestMakeAppBuildsNamedTargetAfterFullRender(t *testing.T) {
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "TestApp",
+			GoModuleName: "example.com/testapp",
+			UpdatedAt:    "2026-06-07 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				StarterKit:  project.StarterKitVue,
+				Components: project.Components{
+					CLI:           true,
+					DemoApp:       true,
+					Mail:          true,
+					Auth:          true,
+					OAuth:         true,
+					WebAPI:        true,
+					WebUI:         true,
+					Metrics:       true,
+					Observability: true,
+					Grafana:       true,
+					Docker:        true,
+					DatabaseMySQL: true,
+					Scheduler:     true,
+					Jobs:          true,
+				},
+			},
+		},
+	})
+
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+	runForj := func(tb testing.TB, args ...string) string {
+		tb.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			tb.Fatalf("forj %s failed: %v\n%s", strings.Join(args, " "), err, out.String())
+		}
+		return out.String()
+	}
+
+	runForj(t, "make:app", "billing")
+	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("chdir project: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("load project config: %v", err)
+	}
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := runDevBuild(cfg, &out, &errOut); err != nil {
+		t.Fatalf("runDevBuild failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+}
+
 func TestMakeModelFlowIntegration(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{

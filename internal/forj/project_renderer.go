@@ -1326,23 +1326,12 @@ func splitEnvDefaultsByPrefix(defaults map[string]string, prefix string) (map[st
 	return globals, targetDefaults
 }
 
-// targetRuntimeEnvDefaults makes deterministic target runtime ports visible in .env.
+// targetRuntimeEnvDefaults writes only target values that app owners commonly edit.
 func targetRuntimeEnvDefaults(prefix string, metadata runtimeTargetMetadata, components project.Components) map[string]string {
 	values := map[string]string{}
 	if components.WebAPI || components.WebUI {
 		values[prefix+"_APP_URL"] = fmt.Sprintf("http://localhost:%d", metadata.HTTPPort)
 		values[prefix+"_API_HTTP_PORT"] = strconv.Itoa(metadata.HTTPPort)
-	}
-	if components.Metrics {
-		if components.WebAPI || components.WebUI {
-			values[prefix+"_METRICS_API_PORT"] = strconv.Itoa(metadata.RuntimeBase)
-		}
-		if components.Scheduler {
-			values[prefix+"_METRICS_SCHEDULER_PORT"] = strconv.Itoa(metadata.RuntimeBase + 1)
-		}
-		if components.Jobs {
-			values[prefix+"_METRICS_JOBS_PORT"] = strconv.Itoa(metadata.RuntimeBase + 2)
-		}
 	}
 	return values
 }
@@ -1753,6 +1742,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		p.config.Dev.WirePaths = []string{defaultTarget.WireDir}
 		changed = true
 	}
+	if removeLegacyInitialBuildTask(&p.config.Dev.Pre) {
+		changed = true
+	}
 	for i := range p.config.Dev.Watches {
 		if strings.Contains(p.config.Dev.Watches[i].Watch, "wire/wire_gen\\.go$") {
 			p.config.Dev.Watches[i].Watch = strings.ReplaceAll(p.config.Dev.Watches[i].Watch, "wire/wire_gen\\.go$", "app/wire/wire_gen\\.go$")
@@ -1773,6 +1765,24 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		return nil
 	}
 	return writeProjectConfig(".goforj.yml", p.config)
+}
+
+// removeLegacyInitialBuildTask removes the old single-app bootstrap build now owned by forj dev.
+func removeLegacyInitialBuildTask(tasks *[]project.DevTask) bool {
+	if tasks == nil {
+		return false
+	}
+	filtered := (*tasks)[:0]
+	removed := false
+	for _, task := range *tasks {
+		if strings.TrimSpace(task.Name) == "Initial build" && strings.TrimSpace(task.Cmd) == "forj build -o ./bin/app" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	*tasks = filtered
+	return removed
 }
 
 func hasDevTask(tasks []project.DevTask, target project.DevTask) bool {

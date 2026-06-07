@@ -65,6 +65,58 @@ func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 	}
 }
 
+func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
+	}
+	for rel, contents := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	binPath := filepath.Join(root, "bin", "app")
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(binPath, []byte("not executable"), 0o644); err != nil {
+		t.Fatalf("write stale binary: %v", err)
+	}
+
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousWD) })
+
+	cmd := &Cmd{Root: "."}
+	if _, err := cmd.runPlainGoBuild([]string{"-o", "./bin/app", "./cmd/app"}); err != nil {
+		t.Fatalf("runPlainGoBuild returned error: %v", err)
+	}
+	info, err := os.Stat(binPath)
+	if err != nil {
+		t.Fatalf("stat built binary: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("expected built binary to be executable, mode %s", info.Mode())
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "bin", ".app.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob temp binaries: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected temporary build outputs to be cleaned up, got %#v", matches)
+	}
+}
+
 func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{

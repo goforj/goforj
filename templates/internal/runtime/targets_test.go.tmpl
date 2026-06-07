@@ -36,6 +36,20 @@ func TestTargetPortResolutionUsesTargetScopedOverrides(t *testing.T) {
 	}
 }
 
+func TestDatabaseDiscoveryIgnoresDriverHelperDatabaseKeys(t *testing.T) {
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_SQLITE_DATABASE", "./_data/sqlite/app.db")
+
+	instances := DiscoverDatabaseInstances()
+	if len(instances) != 1 {
+		t.Fatalf("database instances = %#v, want only default", instances)
+	}
+	if instances[0].Name != "default" || instances[0].Driver != "mysql" {
+		t.Fatalf("default database instance = %#v, want mysql default", instances[0])
+	}
+}
+
 {{- if gt (len .RuntimeTargets) 1 }}
 func TestNamedTargetIgnoresDefaultTargetPortOverrides(t *testing.T) {
 	t.Setenv("PORT", "3100")

@@ -130,10 +130,89 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 
 func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 	c.lastBuildStatus = ""
+	if atomicArgs, output, cleanup, ok, err := atomicGoBuildArgs(args); ok || err != nil {
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, err := c.runGoBuild(atomicArgs, goBuildOptions{allowRecovery: true}); err != nil {
+			return "", err
+		}
+		if err := os.Chmod(output.temp, 0o755); err != nil {
+			return "", fmt.Errorf("prepare built binary permissions: %w", err)
+		}
+		if err := os.Rename(output.temp, output.final); err != nil {
+			return "", fmt.Errorf("publish built binary: %w", err)
+		}
+		return c.lastBuildStatus, nil
+	}
 	if _, err := c.runGoBuild(args, goBuildOptions{allowRecovery: true}); err != nil {
 		return "", err
 	}
 	return c.lastBuildStatus, nil
+}
+
+type atomicBuildOutput struct {
+	final string
+	temp  string
+}
+
+// atomicGoBuildArgs builds watched binaries away from their final path so dev never executes a partial file.
+func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool, error) {
+	outIndex := outputArgIndex(args)
+	if outIndex < 0 {
+		return args, atomicBuildOutput{}, nil, false, nil
+	}
+	final := outputPath(args[outIndex])
+	if !atomicBuildOutputPath(final) {
+		return args, atomicBuildOutput{}, nil, false, nil
+	}
+	dir := filepath.Dir(final)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	file, err := os.CreateTemp(dir, "."+filepath.Base(final)+".tmp-*")
+	if err != nil {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	temp := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(temp)
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	if err := os.Remove(temp); err != nil {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	atomicArgs := replaceBuildOutputArg(args, outIndex, temp)
+	cleanup := func() { _ = os.Remove(temp) }
+	return atomicArgs, atomicBuildOutput{final: final, temp: temp}, cleanup, true, nil
+}
+
+// atomicBuildOutputPath avoids rewriting cases where go build expects -o to be a directory.
+func atomicBuildOutputPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "." {
+		return false
+	}
+	if strings.HasSuffix(path, string(os.PathSeparator)) || strings.HasSuffix(path, "/") {
+		return false
+	}
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return false
+	}
+	return true
+}
+
+func replaceBuildOutputArg(args []string, outIndex int, output string) []string {
+	out := append([]string(nil), args...)
+	if strings.HasPrefix(out[outIndex], "-o=") {
+		out[outIndex] = "-o=" + output
+		return out
+	}
+	out[outIndex] = output
+	return out
 }
 
 func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {

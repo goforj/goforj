@@ -232,12 +232,7 @@ func (m *model) finalizeConfig() {
 
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
-		Pre: []project.DevTask{
-			{
-				Name: "Initial build",
-				Cmd:  "forj build -o ./bin/app",
-			},
-		},
+		Pre:               []project.DevTask{},
 		SoundOnWatchError: true,
 		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
