@@ -550,6 +550,43 @@ When no named target layout exists, GoForj should synthesize the single-target d
 
 Do not keep `app.targets` or `app.default_target` in `.goforj.yml` unless a future feature proves it needs explicit configuration and cannot be expressed by layout or environment overrides.
 
+Per-target component participation is allowed, but it should not become target discovery. A named target is discovered from `cmd/<target>/main.go` and `app/<target>/`; `.goforj.yml` may persist only the target's selected component slice and starter-kit choice:
+
+```yaml
+app_targets:
+  billing:
+    components:
+      web_api: true
+      jobs: true
+    starter_kit: none
+  customer-portal:
+    components:
+      web_api: true
+      web_ui: true
+    starter_kit: vue
+```
+
+The project-level component set is the currently rendered support surface, not a hard ceiling for future targets. `make:app` may promote newly selected target-safe capabilities into the project render set. For example, a project that starts with MySQL can create a `reporting` target that uses Postgres; the target keeps an exclusive database driver selection while the project records both drivers as supported.
+
+`make:app` should reuse the same component catalog and starter-kit catalog as `forj new`, filtered to target-safe choices. The interactive target wizard should show the target-affecting choices that can be compiled into the project, not only the choices used by the default App. This keeps the sub-App creation flow from feeling artificially constrained by the first App's choices.
+
+The interactive target wizard should stay focused on choices that change the generated target surface: Web API, Web UI, Auth, OAuth, database driver, scheduler, and jobs. Auth and OAuth are not separate deployable runtimes, but they do affect route exposure, Wire inputs, generated environment, and supporting dependencies, so hiding them would make target creation less transparent. Synthetic stress tooling should live in a separate harness instead of becoming part of app target composition.
+
+Project-only capabilities such as Docker, Observability, Grafana, and Demo App stay project-level. They can be available because the project has them, but they should not become per-target toggles unless a later feature gives them target-specific runtime meaning.
+
+`forj make:app <target>` should support both the no-friction default and explicit target shape:
+
+```bash
+forj make:app billing
+forj make:app billing --components web-api,jobs
+forj make:app customer-portal --components web-api,web-ui --starter-kit vue
+forj make:app worker --without web-ui
+```
+
+When no component flags are provided from an interactive terminal, `make:app` opens the target wizard by default. Non-interactive runs mirror the app-surface components already enabled for the project. Explicit `--components` starts from the provided target-safe component set and skips the wizard. `--without` removes choices from the default target slice and also skips the wizard. The wizard is just an ergonomic frontend over the same component and starter-kit rules.
+
+Database choices are target-exclusive but project-supported. Selecting `Database (Postgres)` for one target should clear other database choices for that target, add Postgres to the project-supported driver set, add target-scoped env defaults such as `REPORTING_DB_DRIVER=postgres`, extend `DB_SUPPORTED_DRIVERS` in the base `.env`, add host-safe target overrides in `.env.host`, and leave the default App's root `DB_DRIVER` alone.
+
 Target names should be validated as path-safe slugs and should not collide with generated files directly under `app/`.
 
 Target-specific env should be conservative. It is useful for process ports, worker counts, runtime toggles, and observability identity. It should not force every shared resource to be configured separately unless the target intentionally uses a different resource.
@@ -1012,7 +1049,13 @@ Track implementation as concrete work items:
   - [x] Keep named target cleanup non-destructive by only writing known generated files and preserving app-owned files after first render.
   - [x] Add `forj make:app <target>` to create a named app target from convention.
   - [x] Keep `make:app` narrow by rendering only the new target scaffold, runtime target metadata, migration layout updates, and Wire generation.
-  - [ ] Decide whether `make:app` should support per-target component selection beyond the project-level rendered component set.
+  - [x] Support per-target component selection from the target-safe component catalog.
+  - [x] Promote newly selected target-safe capabilities into the project render set when a named target needs them.
+  - [x] Keep database driver choices exclusive per target while allowing multiple project-supported database drivers.
+  - [x] Persist per-target component and starter-kit choices without using config as target discovery.
+  - [x] Scope the `make:app` command and interactive target wizard under `internal/forj/makeapp`.
+  - [x] Add `forj make:app <target> --remove` for conservative removal of conventional target files, persisted target choices, built target binaries, and regenerated runtime target metadata.
+  - [x] Keep `make:app --remove` from deleting target migrations or unknown command-package files.
 
 - [x] Update command resolution.
   - [x] Detect `forj <target> ...` when `./bin/<target>` exists.
