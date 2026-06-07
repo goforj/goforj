@@ -64,6 +64,21 @@ func TestDefaultNamedAppTargetUsesConvention(t *testing.T) {
 	}
 }
 
+func TestDefaultSelectedComponentsIncludeMetricsStack(t *testing.T) {
+	components := DefaultSelectedComponents()
+	if !components.Metrics || !components.Observability || !components.Grafana {
+		t.Fatalf("expected metrics, observability, and grafana to be selected by default: %#v", components)
+	}
+}
+
+func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
+	for _, definition := range ComponentCatalog() {
+		if definition.Description == "" {
+			t.Fatalf("expected component %q to have a wizard description", definition.Key)
+		}
+	}
+}
+
 func TestIsSafeAppTargetName(t *testing.T) {
 	for _, name := range []string{"app", "reporting", "customer-portal", "ops_api", "v2"} {
 		if !IsSafeAppTargetName(name) {
@@ -116,9 +131,8 @@ func TestAppTargetPackageName(t *testing.T) {
 
 func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	components := Components{
-		Grafana:    true,
-		OAuth:      true,
-		StressTest: true,
+		Grafana: true,
+		OAuth:   true,
 	}
 
 	normalized := components.WithResolvedDependencies()
@@ -128,9 +142,6 @@ func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	}
 	if !normalized.Grafana || !normalized.Observability || !normalized.Metrics || !normalized.WebAPI || !normalized.Docker {
 		t.Fatalf("expected grafana normalization to enable observability, metrics, web api, and docker: %#v", normalized)
-	}
-	if !normalized.StressTest || !normalized.Jobs {
-		t.Fatalf("expected stress test normalization to enable jobs: %#v", normalized)
 	}
 	if components.Auth || components.Mail || components.Jobs || components.WebAPI || components.Observability || components.Metrics || components.Docker {
 		t.Fatalf("expected Normalized to leave the original value unchanged: %#v", components)
@@ -164,6 +175,96 @@ func TestValidateStarterKitContractRequiresWebUI(t *testing.T) {
 	err = ValidateStarterKitContract(StarterKitVue, Components{WebUI: true})
 	if err != nil {
 		t.Fatalf("expected vue starter kit with web ui to validate, got %v", err)
+	}
+}
+
+func TestTargetComponentsFromKeysUsesProjectCapabilities(t *testing.T) {
+	available := Components{
+		WebAPI:        true,
+		WebUI:         true,
+		Metrics:       true,
+		DatabaseMySQL: true,
+		Auth:          true,
+		Mail:          true,
+		Jobs:          true,
+	}
+
+	components, err := TargetComponentsFromKeys(available, []ComponentKey{ComponentAuth, ComponentJobs})
+	if err != nil {
+		t.Fatalf("TargetComponentsFromKeys returned error: %v", err)
+	}
+	if !components.Auth || !components.WebAPI || !components.DatabaseMySQL || !components.Mail || !components.Jobs || !components.Metrics {
+		t.Fatalf("target components missing expected dependencies: %#v", components)
+	}
+	if components.WebUI || components.Docker || components.Observability || components.Grafana || components.DemoApp {
+		t.Fatalf("target components included non-selected project-level components: %#v", components)
+	}
+}
+
+func TestTargetComponentsAllowNewDatabaseDriver(t *testing.T) {
+	available := Components{
+		WebAPI:        true,
+		DatabaseMySQL: true,
+	}
+
+	components, err := TargetComponentsFromKeys(available, []ComponentKey{ComponentWebAPI, ComponentDatabasePostgres})
+	if err != nil {
+		t.Fatalf("TargetComponentsFromKeys returned error: %v", err)
+	}
+	if !components.WebAPI || !components.DatabasePostgres {
+		t.Fatalf("target components missing selected postgres driver: %#v", components)
+	}
+	if components.DatabaseMySQL || components.DatabaseSQLite {
+		t.Fatalf("expected target database selection to be exclusive: %#v", components)
+	}
+}
+
+func TestTargetComponentsKeepLastDatabaseDriver(t *testing.T) {
+	components, err := TargetComponentsFromKeys(Components{}, []ComponentKey{ComponentDatabaseMySQL, ComponentDatabasePostgres})
+	if err != nil {
+		t.Fatalf("TargetComponentsFromKeys returned error: %v", err)
+	}
+	if !components.DatabasePostgres || components.DatabaseMySQL || components.DatabaseSQLite {
+		t.Fatalf("expected last database driver to win: %#v", components)
+	}
+}
+
+func TestPromoteTargetComponentsAddsProjectCapabilities(t *testing.T) {
+	available := Components{
+		WebAPI:        true,
+		DatabaseMySQL: true,
+		Docker:        true,
+	}
+	selected := Components{
+		WebAPI:           true,
+		Auth:             true,
+		DatabasePostgres: true,
+		Jobs:             true,
+	}
+
+	promoted := PromoteTargetComponents(available, selected)
+	if !promoted.WebAPI || !promoted.Auth || !promoted.Mail || !promoted.DatabaseMySQL || !promoted.DatabasePostgres || !promoted.Jobs {
+		t.Fatalf("promoted components missing expected capabilities: %#v", promoted)
+	}
+	if !promoted.Docker {
+		t.Fatalf("expected project-level docker capability to be preserved: %#v", promoted)
+	}
+}
+
+func TestTargetComponentsRejectProjectOnlyComponent(t *testing.T) {
+	_, err := TargetComponentsFromKeys(Components{Docker: true}, []ComponentKey{ComponentDocker})
+	if err == nil {
+		t.Fatal("expected project-only component to be rejected")
+	}
+}
+
+func TestParseComponentKeyAcceptsCliSpelling(t *testing.T) {
+	key, err := ParseComponentKey("web-api")
+	if err != nil {
+		t.Fatalf("ParseComponentKey returned error: %v", err)
+	}
+	if key != ComponentWebAPI {
+		t.Fatalf("key = %q, want %q", key, ComponentWebAPI)
 	}
 }
 

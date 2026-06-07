@@ -2,7 +2,6 @@ package build
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +67,9 @@ func (r *APIIndexRunner) RunDefaultWithStatus() (string, error) {
 		return "", err
 	}
 	paths.routeComposition = routeComposition
+	if paths.routeComposition == "" {
+		return apiIndexStatus(paths.appTarget, "no route composition"), nil
+	}
 	paths.root = "."
 	return r.runDefaultWithStatus(paths)
 }
@@ -161,9 +163,6 @@ func existingRouteCompositionPath(target project.AppTarget, routeComposition str
 		return "", nil
 	}
 	if _, err := os.Stat(routeComposition); err != nil {
-		if target.Name != "" && target.Name != project.DefaultAppTargetName && os.IsNotExist(err) {
-			return "", fmt.Errorf("api index: active app target %q is missing route composition file %s", target.Name, routeComposition)
-		}
 		return "", nil
 	}
 	return routeComposition, nil

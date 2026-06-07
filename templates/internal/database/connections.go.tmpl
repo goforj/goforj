@@ -144,6 +144,17 @@ func envOr(name, suffix string) string {
 	return env.WithPrefix("DB").Get(suffix, "")
 }
 
+// databaseEnvOr prefers driver-specific database names when a driver needs a different shape.
+func databaseEnvOr(name, driver string) string {
+	switch driver {
+	case "sqlite", "sqlite3":
+		if value := envOr(name, "SQLITE_DATABASE"); value != "" {
+			return value
+		}
+	}
+	return envOr(name, "DATABASE")
+}
+
 // openConnection opens a new database connection for the name.
 func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	driver := str.Of(envOr(name, "DRIVER")).TrimSpace().ToLower().String()
@@ -249,7 +260,7 @@ func buildDSN(name, driver string) (string, error) {
 	port := envOr(name, "PORT")
 	user := envOr(name, "USERNAME")
 	pass := envOr(name, "PASSWORD")
-	database := envOr(name, "DATABASE")
+	database := databaseEnvOr(name, driver)
 
 	switch driver {
 	case "mysql", "mariadb":

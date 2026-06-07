@@ -179,13 +179,17 @@ func TestExistingRouteCompositionPathKeepsDefaultFallback(t *testing.T) {
 	}
 }
 
-func TestExistingRouteCompositionPathRequiresNamedTargetFile(t *testing.T) {
+func TestExistingRouteCompositionPathSkipsMissingNamedTargetFile(t *testing.T) {
 	root := t.TempDir()
 	target := project.DefaultNamedAppTarget("customer-portal")
 	target.AppDir = filepath.Join(root, "app", "customer-portal")
 	path := filepath.Join(target.AppDir, "routes.go")
 
-	if _, err := existingRouteCompositionPath(target, path); err == nil {
-		t.Fatal("expected missing named target route composition to fail")
+	got, err := existingRouteCompositionPath(target, path)
+	if err != nil {
+		t.Fatalf("expected missing named target route composition to skip without error, got %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected missing named target route composition to be ignored, got %q", got)
 	}
 }
