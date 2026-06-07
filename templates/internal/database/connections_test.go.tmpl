@@ -57,6 +57,33 @@ func TestEnvOr(t *testing.T) {
 	}
 }
 
+func TestDatabaseEnvOrUsesSQLiteSpecificPath(t *testing.T) {
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_SQLITE_DATABASE", "./_data/sqlite/app.db")
+	if got := databaseEnvOr("default", "sqlite"); got != "./_data/sqlite/app.db" {
+		t.Fatalf("expected sqlite database path, got %q", got)
+	}
+	if got := databaseEnvOr("default", "mysql"); got != "db" {
+		t.Fatalf("expected default database for mysql, got %q", got)
+	}
+}
+
+func TestDatabaseEnvOrFallsBackToDatabaseForSQLite(t *testing.T) {
+	t.Setenv("DB_DATABASE", "./_data/sqlite/app.db")
+	if got := databaseEnvOr("default", "sqlite"); got != "./_data/sqlite/app.db" {
+		t.Fatalf("expected sqlite fallback database path, got %q", got)
+	}
+}
+
+func TestDatabaseEnvOrUsesNamedSQLiteSpecificPath(t *testing.T) {
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_ANALYTICS_DATABASE", "analytics")
+	t.Setenv("DB_ANALYTICS_SQLITE_DATABASE", "./_data/sqlite/analytics.db")
+	if got := databaseEnvOr("analytics", "sqlite"); got != "./_data/sqlite/analytics.db" {
+		t.Fatalf("expected named sqlite database path, got %q", got)
+	}
+}
+
 func TestBuildDSNMySQL(t *testing.T) {
 	t.Setenv("DB_ANALYTICS_HOST", "db")
 	t.Setenv("DB_ANALYTICS_PORT", "3306")

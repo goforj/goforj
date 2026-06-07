@@ -272,6 +272,49 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	}
 }
 
+func TestRenderAppTargetUsesPersistedTargetComponents(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Test",
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebAPI: true, WebUI: true},
+				StarterKit: project.StarterKitVue,
+			},
+			AppTargets: map[string]project.AppTargetConfig{
+				"billing": {
+					Components: project.Components{CLI: true, WebAPI: true},
+					StarterKit: project.StarterKitNone,
+				},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("billing")
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	mainSrc := readMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"))
+	if strings.Contains(mainSrc, `"embed"`) || strings.Contains(mainSrc, "RegisterSpa") {
+		t.Fatalf("expected target components to omit frontend embedding:\n%s", mainSrc)
+	}
+	if _, err := os.Stat(filepath.Join("cmd", "billing", "frontend", "dist", "index.html")); !os.IsNotExist(err) {
+		t.Fatalf("expected target components to omit frontend placeholder, stat err = %v", err)
+	}
+}
+
 func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -301,7 +344,9 @@ func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "billing", "frontend", "dist", "index.html"),
 		"<title>Test / billing</title>",
-		"You've not deployed anything for Test / billing yet.",
+		"<span>GoForj</span>",
+		"<h1>Test / billing</h1>",
+		"This app target is running, but no frontend build has been deployed yet.",
 	)
 }
 
@@ -337,7 +382,9 @@ func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
 
 	assertProjectRendererFileContains(t, indexPath,
 		"<title>Test / billing</title>",
-		"You've not deployed anything for Test / billing yet.",
+		"<span>GoForj</span>",
+		"<h1>Test / billing</h1>",
+		"This app target is running, but no frontend build has been deployed yet.",
 	)
 }
 
@@ -646,5 +693,308 @@ var appScheduleSet = wire.NewSet(
 	}
 	if strings.Contains(updated, "\tschedules.NewAppSchedules,") {
 		t.Fatalf("expected direct variadic provider to be removed:\n%s", updated)
+	}
+}
+
+func TestSyncDemoAppJobInjectorAddsMissingProviders(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+	"example.com/testapp/internal/jobs"
+)
+
+var appJobSet = wire.NewSet(
+	jobs.NewExampleHelloJob,
+	jobs.NewExampleHelloJobCmd,
+)
+`
+
+	updated := syncDemoAppJobInjector(legacy, "example.com/testapp", project.Components{
+		DemoApp: true,
+		Jobs:    true,
+	})
+	for _, want := range []string{
+		`"example.com/testapp/internal/alerts"`,
+		`"example.com/testapp/internal/monitoring"`,
+		"alerts.NewDispatchJob",
+		"monitoring.NewCheckService",
+		"monitoring.NewMonitorCheckJob",
+		"jobs.NewExampleHelloJob",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected demo job injector migration to contain %q:\n%s", want, updated)
+		}
+	}
+
+	idempotent := syncDemoAppJobInjector(updated, "example.com/testapp", project.Components{
+		DemoApp: true,
+		Jobs:    true,
+	})
+	if idempotent != updated {
+		t.Fatalf("expected demo job injector migration to be idempotent:\n%s", idempotent)
+	}
+}
+
+func TestSyncDemoAppRepositoryInjectorAddsMissingProviders(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+)
+
+var repositorySet = wire.NewSet(
+	wire.Value(repositorySetPlaceholder{}),
+)
+
+type repositorySetPlaceholder struct{}
+`
+
+	updated := syncDemoAppRepositoryInjector(legacy, "example.com/testapp", project.Components{
+		DemoApp:       true,
+		DatabaseMySQL: true,
+	})
+	for _, want := range []string{
+		`"example.com/testapp/internal/appsettings"`,
+		`"example.com/testapp/internal/models"`,
+		`"example.com/testapp/internal/notification"`,
+		"appsettings.NewAppSettingRepo",
+		"models.NewMonitorRepo",
+		"notification.NewChannelRepo",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected demo repository injector migration to contain %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "wire.Value(repositorySetPlaceholder{})") {
+		t.Fatalf("expected repository placeholder to be removed:\n%s", updated)
+	}
+
+	idempotent := syncDemoAppRepositoryInjector(updated, "example.com/testapp", project.Components{
+		DemoApp:       true,
+		DatabaseMySQL: true,
+	})
+	if idempotent != updated {
+		t.Fatalf("expected demo repository injector migration to be idempotent:\n%s", idempotent)
+	}
+}
+
+func TestSyncDemoAppServiceInjectorAddsMissingProviders(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app"
+	"example.com/testapp/internal/runtime"
+	"example.com/testapp/internal/makecmd"
+)
+
+var appSet = wire.NewSet(
+	targetapp.NewLifecycleRegistry,
+	runtime.NewTimeouts,
+	makecmd.NewEventCmd,
+	makecmd.NewSubscriberCmd,
+)
+`
+
+	updated := syncDemoAppServiceInjector(legacy, "example.com/testapp", project.Components{
+		DemoApp:       true,
+		DatabaseMySQL: true,
+	})
+	for _, want := range []string{
+		`"example.com/testapp/internal/appsettings"`,
+		`"example.com/testapp/internal/logger"`,
+		`"example.com/testapp/internal/monitoring"`,
+		`"example.com/testapp/internal/notification"`,
+		"monitoring.NewIncidentTransitionService",
+		"monitoring.NewRetentionService",
+		"notification.NewManager",
+		"preseedDemoDefaults",
+		"type demoPreseedReady struct{}",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected demo service injector migration to contain %q:\n%s", want, updated)
+		}
+	}
+
+	idempotent := syncDemoAppServiceInjector(updated, "example.com/testapp", project.Components{
+		DemoApp:       true,
+		DatabaseMySQL: true,
+	})
+	if idempotent != updated {
+		t.Fatalf("expected demo service injector migration to be idempotent:\n%s", idempotent)
+	}
+}
+
+func TestUpsertEnvDefaultsAddsTargetDatabaseDriver(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".env")
+	if err := os.WriteFile(path, []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+
+	err := upsertEnvDefaults(path, targetDatabaseEnvDefaults("REPORTING", "postgres", "mysql", false))
+	if err != nil {
+		t.Fatalf("upsert env defaults: %v", err)
+	}
+
+	text := readMakeAppTestFile(t, path)
+	for _, want := range []string{
+		"DB_DRIVER=mysql",
+		"DB_SUPPORTED_DRIVERS=mysql,postgres",
+		"REPORTING_DB_DRIVER=postgres",
+		"REPORTING_DB_DATABASE=reporting",
+		"REPORTING_DB_HOST=postgres",
+		"REPORTING_DB_PORT=5432",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected env to contain %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestUpsertTargetEnvDefaultsGroupsAndOrdersTargetKeys(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".env")
+	initial := strings.Join([]string{
+		"APP_NAME=Test",
+		"BILLING_DB_DATABASE=old",
+		"# Billing",
+		"BILLING_APP_URL=http://localhost:2999",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+
+	defaults := map[string]string{
+		"BILLING_DB_DATABASE":       "billing",
+		"BILLING_APP_URL":           "http://localhost:3001",
+		"BILLING_API_HTTP_PORT":     "3001",
+		"BILLING_METRICS_JOBS_PORT": "10012",
+	}
+	err := upsertTargetEnvDefaults(path, "billing", "BILLING", defaults)
+	if err != nil {
+		t.Fatalf("upsert target env defaults: %v", err)
+	}
+
+	text := readMakeAppTestFile(t, path)
+	want := strings.Join([]string{
+		"APP_NAME=Test",
+		"",
+		"# Billing",
+		"BILLING_APP_URL=http://localhost:3001",
+		"BILLING_API_HTTP_PORT=3001",
+		"BILLING_METRICS_JOBS_PORT=10012",
+		"BILLING_DB_DATABASE=billing",
+		"",
+	}, "\n")
+	if text != want {
+		t.Fatalf("unexpected target env section:\nwant:\n%s\ngot:\n%s", want, text)
+	}
+	if strings.Count(text, "BILLING_DB_DATABASE=") != 1 {
+		t.Fatalf("expected exactly one target database override:\n%s", text)
+	}
+}
+
+func TestTargetDatabaseHostDefaultsUseLocalhostForHostEnv(t *testing.T) {
+	defaults := targetDatabaseEnvDefaults("REPORTING", "postgres", "mysql", true)
+	if got := defaults["REPORTING_DB_HOST"]; got != "localhost" {
+		t.Fatalf("REPORTING_DB_HOST = %q, want localhost", got)
+	}
+}
+
+func TestTargetDatabaseEnvDefaultsInheritSharedConnection(t *testing.T) {
+	defaults := targetDatabaseEnvDefaults("BILLING", "mysql", "mysql", false)
+	for _, want := range []string{
+		"DB_SUPPORTED_DRIVERS",
+		"BILLING_DB_DATABASE",
+		"BILLING_DB_SQLITE_DATABASE",
+	} {
+		if _, ok := defaults[want]; !ok {
+			t.Fatalf("expected %s in target database defaults: %#v", want, defaults)
+		}
+	}
+	for _, unwanted := range []string{
+		"BILLING_DB_DRIVER",
+		"BILLING_DB_HOST",
+		"BILLING_DB_USERNAME",
+		"BILLING_DB_PASSWORD",
+		"BILLING_DB_PORT",
+	} {
+		if _, ok := defaults[unwanted]; ok {
+			t.Fatalf("did not expect inherited connection key %s in target database defaults: %#v", unwanted, defaults)
+		}
+	}
+	if defaults["BILLING_DB_DATABASE"] != "billing" {
+		t.Fatalf("BILLING_DB_DATABASE = %q, want billing", defaults["BILLING_DB_DATABASE"])
+	}
+	if defaults["BILLING_DB_SQLITE_DATABASE"] != "./_data/sqlite/billing.db" {
+		t.Fatalf("BILLING_DB_SQLITE_DATABASE = %q, want sqlite fallback", defaults["BILLING_DB_SQLITE_DATABASE"])
+	}
+}
+
+func TestTargetDatabaseEnvDefaultsDoNotDuplicateActiveSQLiteDatabase(t *testing.T) {
+	defaults := targetDatabaseEnvDefaults("BILLING", "sqlite", "sqlite", false)
+	if defaults["BILLING_DB_DATABASE"] != "./_data/sqlite/billing.db" {
+		t.Fatalf("BILLING_DB_DATABASE = %q, want sqlite path", defaults["BILLING_DB_DATABASE"])
+	}
+	if _, ok := defaults["BILLING_DB_SQLITE_DATABASE"]; ok {
+		t.Fatalf("did not expect duplicate sqlite fallback for active sqlite driver: %#v", defaults)
+	}
+}
+
+func TestWriteTargetEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	if err := os.WriteFile(".env", []byte("DB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.WriteFile(".env.host", []byte("DB_HOST=localhost\n"), 0o644); err != nil {
+		t.Fatalf("write .env.host: %v", err)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer.config = &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{DatabaseMySQL: true},
+		},
+	}
+	err = renderer.writeTargetEnvDefaults(project.DefaultNamedAppTarget("reporting"), project.Components{WebAPI: true, Metrics: true, DatabasePostgres: true})
+	if err != nil {
+		t.Fatalf("write target env defaults: %v", err)
+	}
+
+	envText := readMakeAppTestFile(t, ".env")
+	for _, want := range []string{
+		"DB_SUPPORTED_DRIVERS=mysql,postgres",
+		"# Reporting",
+		"REPORTING_APP_URL=http://localhost:3001",
+		"REPORTING_API_HTTP_PORT=3001",
+		"REPORTING_METRICS_API_PORT=10010",
+		"REPORTING_DB_DRIVER=postgres",
+		"REPORTING_DB_DATABASE=reporting",
+		"REPORTING_DB_SQLITE_DATABASE=./_data/sqlite/reporting.db",
+	} {
+		if !strings.Contains(envText, want) {
+			t.Fatalf(".env did not include %q:\n%s", want, envText)
+		}
+	}
+	hostText := readMakeAppTestFile(t, ".env.host")
+	if strings.Contains(hostText, "DB_SUPPORTED_DRIVERS") {
+		t.Fatalf(".env.host should not override supported drivers:\n%s", hostText)
+	}
+	if !strings.Contains(hostText, "# Reporting") {
+		t.Fatalf(".env.host missing target section heading:\n%s", hostText)
+	}
+	if !strings.Contains(hostText, "REPORTING_DB_HOST=localhost") {
+		t.Fatalf(".env.host missing target localhost override:\n%s", hostText)
 	}
 }

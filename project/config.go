@@ -34,6 +34,7 @@ type DevConfig struct {
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
+// DefaultAppTargetName is the conventional target name used when no named target is selected.
 const DefaultAppTargetName = "app"
 
 // AppTarget describes one executable application target in the project.
@@ -118,13 +119,20 @@ type RenderConfig struct {
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 }
 
+// AppTargetConfig records optional per-target participation in project-level capabilities.
+type AppTargetConfig struct {
+	Components Components `yaml:"components" json:"components"`
+	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
+}
+
 // ProjectConfig represents the configuration for a project.
 type ProjectConfig struct {
-	ProjectName  string       `yaml:"project_name" json:"project_name"`
-	GoModuleName string       `yaml:"module_name" json:"module_name"`
-	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
-	Dev          DevConfig    `yaml:"dev" json:"dev"`
-	Render       RenderConfig `yaml:"render" json:"render"`
+	ProjectName  string                     `yaml:"project_name" json:"project_name"`
+	GoModuleName string                     `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string                     `yaml:"updated_at" json:"updated_at"`
+	Dev          DevConfig                  `yaml:"dev" json:"dev"`
+	Render       RenderConfig               `yaml:"render" json:"render"`
+	AppTargets   map[string]AppTargetConfig `yaml:"app_targets,omitempty" json:"app_targets,omitempty"`
 
 	// temporary
 	AppKey           string `yaml:"-" json:"-"`
@@ -154,7 +162,6 @@ type Components struct {
 	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
-	StressTest       bool `yaml:"stress_test" json:"stress_test"`
 }
 
 // Enabled reports whether a component is enabled.
@@ -192,8 +199,6 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.Scheduler
 	case ComponentJobs:
 		return c.Jobs
-	case ComponentStressTest:
-		return c.StressTest
 	default:
 		return false
 	}
@@ -237,8 +242,6 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.Scheduler = enabled
 	case ComponentJobs:
 		c.Jobs = enabled
-	case ComponentStressTest:
-		c.StressTest = enabled
 	}
 }
 
@@ -291,9 +294,6 @@ func (c Components) ValidateRenderContract() error {
 	}
 	if c.OAuth && !c.HasDatabase() {
 		return fmt.Errorf("oauth component requires a database")
-	}
-	if c.StressTest && !c.Jobs {
-		return fmt.Errorf("stress_test component requires jobs")
 	}
 	return nil
 }
