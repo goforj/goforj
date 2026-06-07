@@ -44,11 +44,12 @@ Use this stack when you want a local production-style view of the generated app 
 | Grafana | `13001` | Local dashboard UI |
 {{- end }}
 
-`METRICS_PORT` is the primary shared-port default.
+`METRICS_PORT` is the primary shared-port default for the default app target.
 
-- standalone host mode uses `METRICS_PORT`.
-- `local-single` and `compose` target generation use `METRICS_PORT`.
-- `local-multi` target generation uses `METRICS_API_PORT`, `METRICS_SCHEDULER_PORT`, and `METRICS_JOBS_PORT`, falling back to the generated target runtime block.
+- standalone host mode scrapes each app target's HTTP port when the HTTP source is present, and falls back to that target's shared metrics port otherwise.
+- `local-single` target generation emits one scrape target per app target.
+- `local-multi` target generation emits one scrape target per app target and source role.
+- named target metrics env vars are optional overrides; otherwise the generated target runtime block supplies deterministic non-conflicting ports.
 
 Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
 
@@ -76,16 +77,17 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
     - chooses `local-single` when `RUNTIME_MODE` is unset or `standalone`
     - chooses `local-multi` when `RUNTIME_MODE=distributed` and multiple source roles are generated
   - `local-single`
-    - one generated target
+    - one generated target per app target
     - intended for standalone host mode
-    - default target: `http://host.docker.internal:$API_HTTP_PORT/metrics` when the HTTP source is present
-    - otherwise defaults to `http://host.docker.internal:$METRICS_PORT/metrics`
-    - generated label: `process=app`
+    - default target for `app`: `http://host.docker.internal:3000/metrics` when the HTTP source is present
+    - default target for the first named target: `http://host.docker.internal:3001/metrics` when the HTTP source is present
+    - otherwise defaults to that target's shared metrics port, such as `10000` for `app` or `10010` for the first named target
+    - generated labels: `process=app` and `app_target=<target>`
   - `local-multi`
-    - one host, one target per source role
+    - one host, one target per app target and source role
     - intended for direct source commands or multi-process local layouts
     - default target host: `OBSERVABILITY_METRICS_TARGET_HOST`
-    - default targets:
+    - default targets for `app`:
       - HTTP: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10000/metrics`
 {{- if .Components.Jobs }}
       - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10002/metrics`
@@ -93,6 +95,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 {{- if .Components.Scheduler }}
       - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10001/metrics`
 {{- end }}
+    - default targets for the first named target use the next runtime block, such as `10010`, `10011`, and `10012`
   - `compose`
     - one target per source role
     - same shared port by default
@@ -114,9 +117,10 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 - Escape hatch:
   - set `OBSERVABILITY_METRICS_TARGET_MODE=disabled` to fully opt out of target generation
   - or set `OBSERVABILITY_METRICS_TARGET_HOST=` empty in local modes to leave the existing `metrics-targets.json` untouched
-- Each generated target includes `service`, `environment`, and `process` labels.
+- Each generated target includes `service`, `environment`, `process`, and `app_target` labels.
 - In standalone host mode, `process=app` reflects the single host process.
 - In direct source mode, `process` reflects the direct source command being scraped, such as `http`, `jobs`, or `scheduler`.
+- Use `app_target` to filter a single target such as `app`, `billing`, or `customer-portal`.
 - Use `source` labels from the emitted metric families for logical source attribution when available.
 - Framework-owned transport endpoints like `/metrics` itself and Lighthouse source routes are excluded from application HTTP request metrics.
 

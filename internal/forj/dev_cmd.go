@@ -189,17 +189,16 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
+	writeDevTargetBuildLine(os.Stdout, activeDevTargets())
+	if err := runDevInitialBuild(config, os.Stdout, os.Stderr); err != nil {
+		return err
+	}
 	if err := runPreDevSetup(config); err != nil {
 		return err
 	}
 	if outWriter == nil || errWriter == nil {
 		outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender, requestCommand)
 		runtimeState.refreshWriters()
-	}
-	writeDevTargetBuildLine(outWriter, activeDevTargets())
-	if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
-		cleanupDevTerminal()
-		return err
 	}
 
 	session := &devWatchSession{
@@ -445,8 +444,9 @@ func runPreDevSetup(config *project.Config) error {
 	}
 	if config.Dev.AutoMigrate && components.HasDatabase() {
 		console.Actionf("Running auto-migrate")
-		res, err := execx.Command("bash", "-c", activeDevAppBinaryPath()+" migrate").
+		res, err := execx.Command("bash", "-c", devAutoMigrateShellCommand()).
 			EnvInherit().
+			Env(devAutoMigrateEnv()).
 			StdinReader(os.Stdin).
 			StdoutWriter(os.Stdout).
 			StderrWriter(os.Stderr).
@@ -462,6 +462,18 @@ func runPreDevSetup(config *project.Config) error {
 		return err
 	}
 	return nil
+}
+
+// devAutoMigrateShellCommand runs migrations through the active binary so dev stays aligned with generated app commands.
+func devAutoMigrateShellCommand() string {
+	return activeDevAppBinaryPath() + " migrate"
+}
+
+// devAutoMigrateEnv marks auto-migrate as an unqualified framework command so the generated migration planner can fan out across App targets.
+func devAutoMigrateEnv() map[string]string {
+	return map[string]string{
+		"FORJ_COMMAND_PREFIX": "forj",
+	}
 }
 
 // activeDevAppTarget returns the target selected for this dev session.
@@ -609,9 +621,9 @@ func devBuildCommands(config *project.Config) []string {
 	return commands
 }
 
-// devInitialBuildCommands returns bootstrap builds for target binaries that do not exist yet.
+// devInitialBuildCommands returns bootstrap builds for every active target so dev never starts from a stale binary.
 func devInitialBuildCommands(config *project.Config) []string {
-	jobs := devBuildJobs(config, true)
+	jobs := devBuildJobs(config, false)
 	commands := make([]string, 0, len(jobs))
 	for _, job := range jobs {
 		commands = append(commands, job.command)
@@ -875,9 +887,9 @@ func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Write
 	return runDevBuildJobs(config, outWriter, errWriter, false, "forj build failed")
 }
 
-// runDevInitialBuild creates missing target binaries before file watchers try to execute them.
+// runDevInitialBuild builds every active target before pre-dev tasks can call generated app commands.
 func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevBuildJobs(config, outWriter, errWriter, true, "initial forj build failed")
+	return runDevBuildJobs(config, outWriter, errWriter, false, "initial forj build failed")
 }
 
 type devBuildResult struct {

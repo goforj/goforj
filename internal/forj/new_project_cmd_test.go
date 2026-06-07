@@ -472,6 +472,12 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 
 	m.finalizeConfig()
 
+	for _, task := range m.config.Dev.Pre {
+		if task.Name == "Initial build" && task.Cmd == "forj build -o ./bin/app" {
+			t.Fatalf("expected initial build to be owned by forj dev, got pre task %#v", task)
+		}
+	}
+
 	var buildWatch *string
 	for _, watch := range m.config.Dev.Watches {
 		switch watch.Name {

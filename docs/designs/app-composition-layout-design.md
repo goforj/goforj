@@ -664,6 +664,8 @@ customer-portal
   CUSTOMER_PORTAL_WORKER_METRICS_PORT=10022
 ```
 
+These metric env keys are override examples, not required rendered `.env` output. Generated target metadata owns the deterministic defaults; app owners only add target-scoped metric env vars when they want to override a port.
+
 Runtime port resolution should prefer the most specific env value and then fall back to deterministic defaults:
 
 ```text
@@ -713,6 +715,13 @@ Logs, metrics, inspects, health, readiness, and Lighthouse payloads should prese
 - App target name
 - runtime name
 - process or instance identity when relevant
+
+Local observability target generation should use the conventional app target layout, not `.goforj.yml`, as the source of target existence:
+
+- `local-single` writes one scrape target per app target. When the HTTP source exists, each target is scraped through its HTTP port (`3000`, `3001`, `3002`, ...). If a target has no HTTP source, generation falls back to that target's shared metrics port.
+- `local-multi` writes one scrape target per app target and runtime source. Ports come from the deterministic runtime block (`10000`, `10001`, `10002` for `app`; `10010`, `10011`, `10012` for the first named target; etc.).
+- every generated scrape entry includes `app_target`, `process`, `service`, and `environment` labels.
+- target component config may filter source roles for a target, but target existence is still discovered from `cmd/<target>` and `app/<target>` conventions.
 
 Use **App target** in docs and UI. For machine-readable fields, prefer `app_target` over `app` because `App` already means the whole generated GoForj App.
 
@@ -1171,6 +1180,9 @@ Track implementation as concrete work items:
   - [x] Ensure generated frontend placeholder assets are embedded under the correct `cmd/<target>/frontend/dist` when a named target owns Web UI.
   - [x] Avoid a first-class frontend publish/copy command by making target-local `npm run build` write directly to `cmd/<target>/frontend/dist`.
   - [x] Ensure route/API index/OpenAPI output shows the active target where command output exists. Route list output shows the active App Target; API index/OpenAPI status and logs include the active App target.
+  - [x] Keep queue names logical in app code and `.env`; physicalize backend queue names from the active App target so named targets use queues such as `billing_default` and `billing_reports`.
+  - [x] Avoid a separate `QUEUE_NAMESPACE` setting. The App target name is the queue namespace for named targets, and the default `app` target keeps existing queue names unchanged.
+  - [x] Add queue driver coverage for target-isolated queue names across Redis, SQL, NATS, SQS, and RabbitMQ.
   - [ ] Decide whether to add a dedicated user-facing API index/OpenAPI command surface beyond build/run pipeline generation.
 
 - [ ] Partial: add target-aware observability and Lighthouse identity.
@@ -1184,6 +1196,7 @@ Track implementation as concrete work items:
   - [x] Add `app_target`, `agent_key`, `group_key`, and `instance_key` to inspect metadata shipped through Lighthouse.
   - [x] Add `app_target` to readiness payloads while keeping the hot health payload stable.
   - [x] Add explicit `app_target` labels to framework-owned Prometheus metrics and generated Grafana dashboard selectors.
+  - [x] Generate vmagent scrape targets for every conventional app target in local modes, including `app_target` labels and deterministic target runtime ports.
   - [x] Group Lighthouse-selectable agents by App Target through generated agent keys.
   - [x] Collapse the App Target level in Lighthouse when the only target is `app` by preserving default source keys.
   - [ ] Update Lighthouse UI copy and deeper grouping tests for target-aware data.

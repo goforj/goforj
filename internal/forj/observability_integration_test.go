@@ -3,6 +3,7 @@
 package forj
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -299,6 +300,65 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	}
 }
 
+func TestRenderedObservabilityTargetsIncludeConventionalAppTargets(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, target := range []string{"billing", "customer-portal"} {
+		if err := writeConventionalAppTargetMarker(projectDir, target); err != nil {
+			t.Fatalf("write %s target marker: %v", target, err)
+		}
+	}
+
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Observability Target Test",
+			GoModuleName: "example.com/observabilitytargettest",
+			UpdatedAt:    "2026-06-07 00:00:00 UTC",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					CLI:           true,
+					WebAPI:        true,
+					Metrics:       true,
+					Docker:        true,
+					Scheduler:     true,
+					Jobs:          true,
+					Observability: true,
+				},
+				QueueDriver: "workerpool",
+			},
+		},
+	})
+
+	targets := readRenderedMetricsTargets(t, projectDir)
+	want := []renderedMetricsTarget{
+		{AppTarget: "app", Process: "app", Target: "host.docker.internal:3000"},
+		{AppTarget: "billing", Process: "app", Target: "host.docker.internal:3001"},
+		{AppTarget: "customer-portal", Process: "app", Target: "host.docker.internal:3002"},
+	}
+	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
+
+	t.Setenv("APP_NAME", "Observability Target Test")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "local-multi")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	if _, err := generate.GenerateObservabilityFiles(projectDir); err != nil {
+		t.Fatalf("generate local-multi observability targets: %v", err)
+	}
+
+	targets = readRenderedMetricsTargets(t, projectDir)
+	want = []renderedMetricsTarget{
+		{AppTarget: "app", Process: "api", Target: "host.docker.internal:10000"},
+		{AppTarget: "app", Process: "jobs", Target: "host.docker.internal:10002"},
+		{AppTarget: "app", Process: "scheduler", Target: "host.docker.internal:10001"},
+		{AppTarget: "billing", Process: "api", Target: "host.docker.internal:10010"},
+		{AppTarget: "billing", Process: "jobs", Target: "host.docker.internal:10012"},
+		{AppTarget: "billing", Process: "scheduler", Target: "host.docker.internal:10011"},
+		{AppTarget: "customer-portal", Process: "api", Target: "host.docker.internal:10020"},
+		{AppTarget: "customer-portal", Process: "jobs", Target: "host.docker.internal:10022"},
+		{AppTarget: "customer-portal", Process: "scheduler", Target: "host.docker.internal:10021"},
+	}
+	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
+}
+
 func readRenderedFile(t *testing.T, root string, rel string) string {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(root, rel))
@@ -306,4 +366,52 @@ func readRenderedFile(t *testing.T, root string, rel string) string {
 		t.Fatalf("read rendered file %s: %v", rel, err)
 	}
 	return string(body)
+}
+
+type renderedMetricsTarget struct {
+	AppTarget string
+	Process   string
+	Target    string
+}
+
+type renderedMetricsTargetEntry struct {
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
+}
+
+func readRenderedMetricsTargets(t *testing.T, root string) []renderedMetricsTargetEntry {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, "containers", "observability", "vmagent", "metrics-targets.json"))
+	if err != nil {
+		t.Fatalf("read rendered metrics targets: %v", err)
+	}
+	var entries []renderedMetricsTargetEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		t.Fatalf("unmarshal rendered metrics targets: %v\n%s", err, body)
+	}
+	return entries
+}
+
+func assertRenderedMetricsTargets(t *testing.T, entries []renderedMetricsTargetEntry, service string, environment string, want []renderedMetricsTarget) {
+	t.Helper()
+	if len(entries) != len(want) {
+		t.Fatalf("metrics target count = %d, want %d\n%#v", len(entries), len(want), entries)
+	}
+	for i, entry := range entries {
+		if len(entry.Targets) != 1 || entry.Targets[0] != want[i].Target {
+			t.Fatalf("metrics target[%d] = %#v, want %q", i, entry.Targets, want[i].Target)
+		}
+		if entry.Labels["app_target"] != want[i].AppTarget {
+			t.Fatalf("metrics target[%d] app_target = %q, want %q", i, entry.Labels["app_target"], want[i].AppTarget)
+		}
+		if entry.Labels["process"] != want[i].Process {
+			t.Fatalf("metrics target[%d] process = %q, want %q", i, entry.Labels["process"], want[i].Process)
+		}
+		if entry.Labels["service"] != service {
+			t.Fatalf("metrics target[%d] service = %q, want %q", i, entry.Labels["service"], service)
+		}
+		if entry.Labels["environment"] != environment {
+			t.Fatalf("metrics target[%d] environment = %q, want %q", i, entry.Labels["environment"], environment)
+		}
+	}
 }

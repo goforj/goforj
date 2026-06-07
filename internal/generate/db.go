@@ -73,17 +73,27 @@ func GenerateDBFiles(projectDir string) (int, error) {
 }
 
 func discoverDBConnectionNames() []string {
-	names := env.WithPrefix("DB").ChildNames(dbRootKeys)
+	names := exactScopedChildNames("DB", dbRootKeys)
 	out := make([]string, 0, len(names))
 	for _, name := range names {
 		normalized := str.Of(name).TrimSpace().ToLower().String()
-		if normalized == "" || normalized == "root" {
+		if normalized == "" || normalized == "root" || dbHelperConnectionName(normalized) {
 			continue
 		}
 		out = append(out, normalized)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// dbHelperConnectionName skips driver-specific helper keys such as DB_SQLITE_DATABASE.
+func dbHelperConnectionName(name string) bool {
+	switch strings.TrimSpace(strings.ToLower(name)) {
+	case "mysql", "postgres", "postgresql", "sqlite", "sqlite3":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderDBAccessors(names []string, drivers []dbDriverSpec) ([]byte, error) {

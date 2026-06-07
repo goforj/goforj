@@ -751,25 +751,41 @@ func queueWorkerCount(scope env.Scope, rootScope env.Scope) int {
 func queueDefaultQueue(name string, scope env.Scope, rootScope env.Scope) string {
 	value := strings.TrimSpace(scope.Get("NAME", ""))
 	if value != "" {
-		return value
+		return queuePhysicalName(value)
 	}
 	value = strings.TrimSpace(scope.Get("DEFAULT_QUEUE", ""))
 	if value != "" {
-		return value
+		return queuePhysicalName(value)
 	}
 	name = strings.TrimSpace(name)
 	if name != "" && name != string(defaultQueueName) {
-		return name
+		return queuePhysicalName(name)
 	}
 	value = strings.TrimSpace(rootScope.Get("NAME", ""))
 	if value != "" {
-		return value
+		return queuePhysicalName(value)
 	}
 	value = strings.TrimSpace(rootScope.Get("DEFAULT_QUEUE", "default"))
 	if value == "" {
-		return "default"
+		return queuePhysicalName("default")
 	}
-	return value
+	return queuePhysicalName(value)
+}
+
+func queuePhysicalName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = string(defaultQueueName)
+	}
+	target := strings.TrimSpace(runtime.CurrentAppTarget().Name)
+	if target == "" || target == "app" {
+		return name
+	}
+	prefix := target + "_"
+	if strings.HasPrefix(name, prefix) {
+		return name
+	}
+	return prefix + name
 }
 
 func queueString(scope env.Scope, rootScope env.Scope, key string, fallback string) string {

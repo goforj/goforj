@@ -15,11 +15,27 @@ func writeQueueRuntimeFixture(t *testing.T, root string) {
 	}
 	const source = `package runtime
 
-import "context"
+import (
+	"context"
+	"os"
+	"strings"
+)
 
 type sourceKey struct{}
 
 const SourceJobs = "jobs"
+
+type AppTargetInfo struct {
+	Name string
+}
+
+func CurrentAppTarget() AppTargetInfo {
+	name := strings.TrimSpace(os.Getenv("FORJ_APP_TARGET"))
+	if name == "" {
+		name = "app"
+	}
+	return AppTargetInfo{Name: name}
+}
 
 func WithSource(ctx context.Context, source string) context.Context {
 	if ctx == nil {
@@ -141,6 +157,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 import (
 	"testing"
 
+	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 )
 
@@ -163,6 +180,13 @@ func TestGeneratedAccessors(t *testing.T) {
 	if _, err := mgr.Dispatch(queue.NewJob("jobs:smoke")); err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
 	}
+	if got := mgr.defaultQueueName; got != "default" {
+		t.Fatalf("default queue name = %q, want default", got)
+	}
+	queueScope := env.WithPrefix("QUEUE")
+	if got := queueDefaultQueue("critical", queueScope.Child("critical"), queueScope); got != "critical" {
+		t.Fatalf("critical queue name = %q, want critical", got)
+	}
 
 	checks := mgr.ReadinessChecks()
 	if len(checks) != 2 {
@@ -172,6 +196,25 @@ func TestGeneratedAccessors(t *testing.T) {
 		if err := check.Check(t.Context()); err != nil {
 			t.Fatalf("readiness check %s returned error: %v", check.Name, err)
 		}
+	}
+}
+
+func TestGeneratedQueueNamesUseCurrentAppTarget(t *testing.T) {
+	t.Setenv("FORJ_APP_TARGET", "billing")
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
+	t.Setenv("QUEUE_CRITICAL_NAME", "critical")
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if got := mgr.defaultQueueName; got != "billing_default" {
+		t.Fatalf("default queue name = %q, want billing_default", got)
+	}
+	queueScope := env.WithPrefix("QUEUE")
+	if got := queueDefaultQueue("critical", queueScope.Child("critical"), queueScope); got != "billing_critical" {
+		t.Fatalf("critical queue name = %q, want billing_critical", got)
 	}
 }
 `

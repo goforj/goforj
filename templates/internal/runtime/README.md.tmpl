@@ -111,12 +111,34 @@ runtime.MetricsPortForTarget("customer-portal")
 
 Environment variables remain the override path:
 
-- default app target: `PORT`, `API_HTTP_PORT`, `METRICS_PORT`, `METRICS_API_PORT`, `METRICS_SCHEDULER_PORT`, and `METRICS_JOBS_PORT`
-- named targets: `<TARGET>_PORT`, `<TARGET>_METRICS_PORT`, `<TARGET>_SCHEDULER_METRICS_PORT`, and `<TARGET>_WORKER_METRICS_PORT`
+- default app target: `PORT`, `API_HTTP_PORT`, `METRICS_PORT`, `API_METRICS_PORT`, `METRICS_API_PORT`, `SCHEDULER_METRICS_PORT`, `METRICS_SCHEDULER_PORT`, `WORKER_METRICS_PORT`, `JOBS_METRICS_PORT`, and `METRICS_JOBS_PORT`
+- named targets: `<TARGET>_PORT`, `<TARGET>_API_HTTP_PORT`, `<TARGET>_METRICS_PORT`, `<TARGET>_API_METRICS_PORT`, `<TARGET>_METRICS_API_PORT`, `<TARGET>_SCHEDULER_METRICS_PORT`, `<TARGET>_METRICS_SCHEDULER_PORT`, `<TARGET>_WORKER_METRICS_PORT`, `<TARGET>_JOBS_METRICS_PORT`, and `<TARGET>_METRICS_JOBS_PORT`
 
 Named target prefixes use uppercase snake case. For example, `customer-portal` uses `CUSTOMER_PORTAL_PORT`.
 
+Named target metrics env vars are not generated into `.env`. The compiled target manifest already provides non-conflicting deterministic ports, so add metrics env vars only when you need to override one target.
+
 Named targets intentionally do not consume default-target globals such as `API_HTTP_PORT=3000`; otherwise existing single-app `.env` files would make every target try to bind the same listeners.
+
+## App Targets And Queue Names
+
+Queue names are physicalized from the current app target at runtime.
+
+The default `app` target keeps existing queue names unchanged:
+
+- `default`
+- `reports`
+- `emails`
+
+Named targets add the target name as a deterministic prefix:
+
+- `billing` + `default` -> `billing_default`
+- `billing` + `reports` -> `billing_reports`
+- `customer-portal` + `emails` -> `customer-portal_emails`
+
+App code should continue to use logical queue names such as `default`, `reports`, or `emails`. GoForj applies the target prefix at the queue boundary so multiple app targets can share the same Redis, RabbitMQ, NATS, SQS, or SQL queue backend without workers consuming each other's jobs.
+
+Do not add a separate queue namespace env var for normal app targets. The namespace is the app target name.
 
 ## Lighthouse Agent Identity
 

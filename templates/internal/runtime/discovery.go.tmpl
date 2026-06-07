@@ -123,7 +123,24 @@ func QueueDefaultQueue(name string) string {
 	if value == "" {
 		value = "default"
 	}
-	return value
+	return QueuePhysicalName(value)
+}
+
+// QueuePhysicalName returns the physical backend queue name for the current app target.
+func QueuePhysicalName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "default"
+	}
+	target := strings.TrimSpace(CurrentAppTarget().Name)
+	if target == "" || target == defaultAppTargetName {
+		return name
+	}
+	prefix := target + "_"
+	if strings.HasPrefix(name, prefix) {
+		return name
+	}
+	return prefix + name
 }
 
 func normalizedAppInstanceName(name string) string {
@@ -339,12 +356,12 @@ func aboutExactScopedChildren(prefix string, rootKeys []string) []string {
 
 func aboutDatabaseNames() []string {
 	scope := env.WithPrefix("DB")
-	children := scope.ChildNames(aboutDatabaseRootKeys)
+	children := aboutExactScopedChildren("DB", aboutDatabaseRootKeys)
 	names := []string{"default"}
 	normalized := make([]string, 0, len(children))
 	for _, child := range children {
 		name := str.Of(child).TrimSpace().ToLower().String()
-		if name == "" {
+		if name == "" || aboutDatabaseHelperName(name) {
 			continue
 		}
 		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
@@ -355,6 +372,15 @@ func aboutDatabaseNames() []string {
 	}
 	sort.Strings(normalized)
 	return append(names, normalized...)
+}
+
+func aboutDatabaseHelperName(name string) bool {
+	switch strings.TrimSpace(strings.ToLower(name)) {
+	case "mysql", "postgres", "postgresql", "sqlite", "sqlite3":
+		return true
+	default:
+		return false
+	}
 }
 
 func aboutDatabaseDefaultName() string {
