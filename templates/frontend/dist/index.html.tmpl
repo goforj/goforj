@@ -2,11 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
-
-    You've not deployed anything for {{.ProjectName}} yet.
+    <title>{{if .TargetIsDefault}}{{.ProjectName}}{{else}}{{.ProjectName}} / {{.Target.Name}}{{end}}</title>
 </head>
 <body>
-
+    You've not deployed anything for {{if .TargetIsDefault}}{{.ProjectName}}{{else}}{{.ProjectName}} / {{.Target.Name}}{{end}} yet.
 </body>
 </html>

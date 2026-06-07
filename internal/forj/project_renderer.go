@@ -56,6 +56,11 @@ type ComponentRenderInput struct {
 	renderAll  bool
 }
 
+// AppTargetRenderOptions controls narrow target rendering used by make:app.
+type AppTargetRenderOptions struct {
+	SkipWire bool
+}
+
 // ProjectRenderer is well, a project renderer :)
 type ProjectRenderer struct {
 	logger *logger.AppLogger
@@ -274,6 +279,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsForjMakeOpen := path == ".env" && !strings.Contains(text, "FORJ_MAKE_OPEN=")
 					needsForjEditor := path == ".env" && !strings.Contains(text, "FORJ_EDITOR=")
+					needsGrafanaPortDefault := false
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					needsJWTSecret := false
 
@@ -321,7 +327,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
 						needsJWTSecret = true
 					}
-					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsForjMakeOpen || needsForjEditor || needsKey || needsJWTSecret) {
+					if path == ".env" && p.config.Render.Components.Grafana {
+						lines, needsGrafanaPortDefault = migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
+					}
+					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsForjMakeOpen || needsForjEditor || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
 						return nil
 					}
 					if needsAppDiagToken && appDiagToken == "" {
@@ -1051,6 +1060,57 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	return nil
 }
 
+// RenderAppTargetOnly renders one named app target without replaying the full project scaffold.
+func (p *ProjectRenderer) RenderAppTargetOnly(target project.AppTarget, opts AppTargetRenderOptions) error {
+	p.stats = &renderStats{}
+	p.lines = nil
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		return err
+	}
+	p.config = cfg
+	if p.config.Render.Components.DemoApp {
+		p.config.Render.Components.Auth = true
+		p.config.Render.StarterKit = project.StarterKitNone
+	}
+	p.config.Render.Components.ResolveDependencies()
+	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
+		return err
+	}
+	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
+	if !p.config.Render.Components.WebUI {
+		p.config.Render.StarterKit = project.StarterKitNone
+	}
+	if err := project.ValidateStarterKitContract(p.config.Render.StarterKit, p.config.Render.Components); err != nil {
+		return err
+	}
+	if err := p.migrateAppOwnedWireFilenames(); err != nil {
+		return err
+	}
+
+	if err := p.renderAppTarget(target); err != nil {
+		return err
+	}
+	if err := p.writeTemplates([]string{
+		"internal/runtime/targets.go.tmpl",
+		"internal/runtime/targets_test.go.tmpl",
+	}); err != nil {
+		return err
+	}
+	if p.config.Render.Components.HasDatabase() {
+		if err := p.expandDefaultMigrationsForNamedTargets(); err != nil {
+			return err
+		}
+	}
+	if !opts.SkipWire {
+		if err := p.runWireGenerate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *ProjectRenderer) timeRenderStage(name string, fn func() error) error {
 	if !renderStageTimingEnabled() {
 		return fn()
@@ -1072,6 +1132,26 @@ func renderStageTimingEnabled() bool {
 		}
 	}
 	return false
+}
+
+// migrateGeneratedEnvDefault updates old generated defaults without overriding custom app owner values.
+func migrateGeneratedEnvDefault(lines []string, key string, oldValue string, newValue string) ([]string, bool) {
+	prefix := key + "="
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+		if value != oldValue {
+			return lines, false
+		}
+		updated := make([]string, len(lines))
+		copy(updated, lines)
+		updated[i] = key + "=" + newValue
+		return updated, true
+	}
+	return lines, false
 }
 
 func renderDebugEnabled() bool {
@@ -1369,7 +1449,46 @@ func (p *ProjectRenderer) renderAppTarget(target project.AppTarget) error {
 	if err := p.writeTemplateMappingsForTarget(target, p.appTargetFrameworkMappings(target)); err != nil {
 		return err
 	}
+	if err := p.migrateFrontendDistPlaceholder(target); err != nil {
+		return err
+	}
 	return p.writeTemplateMappingsOnceForTarget(target, p.appTargetAppOwnedMappings(target))
+}
+
+// migrateFrontendDistPlaceholder updates the old generated "no frontend deployed" page without touching real SPA builds.
+func (p *ProjectRenderer) migrateFrontendDistPlaceholder(target project.AppTarget) error {
+	if p.config == nil || !p.config.Render.Components.WebUI {
+		return nil
+	}
+	target = normalizeRenderAppTarget(target)
+	path := appTargetFrontendDistIndex(target)
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(content)) != strings.TrimSpace(oldFrontendDistPlaceholder(p.config.ProjectName)) {
+		return nil
+	}
+	return p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target))
+}
+
+// oldFrontendDistPlaceholder matches the previous generated placeholder so migrations do not overwrite custom HTML.
+func oldFrontendDistPlaceholder(projectName string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+
+    You've not deployed anything for %s yet.
+</head>
+<body>
+
+</body>
+</html>`, projectName)
 }
 
 // appTargetFrameworkMappings returns files the CLI can safely refresh on every render.
@@ -2852,7 +2971,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))
 		}
 		if p.config.Render.Components.Grafana {
-			steps = append(steps, fmt.Sprintf("Open Grafana at %s with %s / %s", commandStyle.Render("http://localhost:3001"), commandStyle.Render("admin"), commandStyle.Render("admin")))
+			steps = append(steps, fmt.Sprintf("Open Grafana at %s with %s / %s", commandStyle.Render("http://localhost:13001"), commandStyle.Render("admin"), commandStyle.Render("admin")))
 		}
 	}
 

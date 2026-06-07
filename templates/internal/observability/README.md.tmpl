@@ -17,7 +17,7 @@ Use this stack when you want a local production-style view of the generated app 
 {{- if .Components.Grafana }}
 - `grafana`
   - preprovisioned datasource and first-party dashboards
-  - default local URL: `http://localhost:3001`
+  - default local URL: `http://localhost:13001`
   - default credentials: `admin` / `admin`
 
 - `grafana-seed`
@@ -41,7 +41,7 @@ Use this stack when you want a local production-style view of the generated app 
 {{- end }}
 | VictoriaMetrics | `8428` | Local metrics storage and query API |
 {{- if .Components.Grafana }}
-| Grafana | `3001` | Local dashboard UI |
+| Grafana | `13001` | Local dashboard UI |
 {{- end }}
 
 `METRICS_PORT` is the primary shared-port default.
@@ -64,7 +64,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 4. Open the stack:
    - VictoriaMetrics: `http://localhost:8428`
 {{- if .Components.Grafana }}
-   - Grafana: `http://localhost:3001`
+   - Grafana: `http://localhost:13001`
 {{- end }}
 
 ## Scraping Model

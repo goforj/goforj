@@ -109,6 +109,35 @@ func TestRuntimeTargetMetadataUsesCompiledTargetOrder(t *testing.T) {
 	}
 }
 
+func TestMigrateGeneratedEnvDefaultOnlyUpdatesOldDefault(t *testing.T) {
+	lines := []string{
+		"APP_NAME=test",
+		"GRAFANA_PORT=3001",
+		"GRAFANA_ADMIN_USER=admin",
+	}
+
+	got, changed := migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
+	if !changed {
+		t.Fatal("expected old generated default to be migrated")
+	}
+	if got[1] != "GRAFANA_PORT=13001" {
+		t.Fatalf("migrated line = %q", got[1])
+	}
+	if lines[1] != "GRAFANA_PORT=3001" {
+		t.Fatalf("migrateGeneratedEnvDefault mutated input slice: %#v", lines)
+	}
+
+	custom, changed := migrateGeneratedEnvDefault([]string{"GRAFANA_PORT=3100"}, "GRAFANA_PORT", "3001", "13001")
+	if changed {
+		t.Fatalf("custom value should not be migrated: %#v", custom)
+	}
+
+	commented, changed := migrateGeneratedEnvDefault([]string{"# GRAFANA_PORT=3001"}, "GRAFANA_PORT", "3001", "13001")
+	if changed {
+		t.Fatalf("commented value should not be migrated: %#v", commented)
+	}
+}
+
 func TestExpandDefaultMigrationsForNamedTargets(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -240,6 +269,115 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	}
 	if string(content) != customCommands {
 		t.Fatalf("expected app-owned commands to be preserved, got:\n%s", content)
+	}
+}
+
+func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Test",
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebUI: true},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("billing")
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	assertProjectRendererFileContains(t, filepath.Join("cmd", "billing", "frontend", "dist", "index.html"),
+		"<title>Test / billing</title>",
+		"You've not deployed anything for Test / billing yet.",
+	)
+}
+
+func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Test",
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebUI: true},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("billing")
+	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
+	writeProjectRendererTestFile(t, indexPath, oldFrontendDistPlaceholder("Test")+"\n")
+
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	assertProjectRendererFileContains(t, indexPath,
+		"<title>Test / billing</title>",
+		"You've not deployed anything for Test / billing yet.",
+	)
+}
+
+func TestRenderAppTargetPreservesCustomFrontendPlaceholder(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Test",
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebUI: true},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("billing")
+	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
+	custom := "<!doctype html><html><body>custom</body></html>\n"
+	writeProjectRendererTestFile(t, indexPath, custom)
+
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	content, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", indexPath, err)
+	}
+	if string(content) != custom {
+		t.Fatalf("expected custom frontend placeholder to be preserved, got:\n%s", content)
 	}
 }
 

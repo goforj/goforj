@@ -91,6 +91,8 @@ Example generated targets:
 | `billing` | `1` | `3001` | `10010` | `10011` | `10012` |
 | `customer-portal` | `2` | `3002` | `10020` | `10021` | `10022` |
 
+Bundled local development tools avoid the app HTTP range. For example, Grafana defaults to `13001`, leaving `3001` available for the first named target.
+
 Use the runtime helpers when framework or app code needs the current target's defaults:
 
 ```go

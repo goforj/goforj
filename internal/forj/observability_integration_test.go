@@ -115,6 +115,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"METRICS_SCHEDULER_PORT=10001",
 		"OBSERVABILITY_METRICS_TARGET_MODE=auto",
 		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
+		"GRAFANA_PORT=13001",
 	} {
 		if !strings.Contains(envText, token) {
 			t.Fatalf(".env missing %q\n%s", token, envText)
@@ -292,7 +293,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	observabilityReadme := readRenderedFile(t, projectDir, "internal/observability/README.md")
 	if !strings.Contains(observabilityReadme, "http://localhost:8428") ||
-		!strings.Contains(observabilityReadme, "http://localhost:3001") ||
+		!strings.Contains(observabilityReadme, "http://localhost:13001") ||
 		!strings.Contains(observabilityReadme, "grafana-seed") {
 		t.Fatalf("observability readme missing local URLs\n%s", observabilityReadme)
 	}
