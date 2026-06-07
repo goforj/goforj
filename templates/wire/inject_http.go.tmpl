@@ -6,8 +6,17 @@ package wire
 import (
 	"github.com/goforj/wire"
 	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
+	"{{.GoModuleName}}/internal/caches"
+{{- if .ProjectComponents.HasDatabase }}
+	"{{.GoModuleName}}/internal/database"
+{{- end }}
+	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/http"
+{{- if .ProjectComponents.Jobs }}
+	"{{.GoModuleName}}/internal/queues"
+{{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 // httpServerSet is a wire set that provides the HTTP server and its routes.
@@ -18,6 +27,38 @@ var httpServerSet = wire.NewSet(
 	http.NewRuntime,
 	http.NewServeCmd,
 	http.NewServer,
-	http.ProvideReadinessChecks,
+	provideReadinessChecks,
 	lighthouse.NewHub,
 )
+
+func provideReadinessChecks(
+	caches *caches.Manager,
+	storage *storages.Manager,
+	events *events.Manager,
+{{- if and .ProjectComponents.Jobs .Components.Jobs }}
+	queues *queues.Manager,
+{{- end }}
+{{- if and .ProjectComponents.HasDatabase .Components.HasDatabase }}
+	db *database.Connections,
+{{- end }}
+) []http.ReadinessCheck {
+	return http.ProvideReadinessChecks(
+		caches,
+		storage,
+		events,
+{{- if .ProjectComponents.Jobs }}
+		{{- if .Components.Jobs }}
+		queues,
+		{{- else }}
+		(*queues.Manager)(nil),
+		{{- end }}
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+		{{- if .Components.HasDatabase }}
+		db,
+		{{- else }}
+		(*database.Connections)(nil),
+		{{- end }}
+{{- end }}
+	)
+}

@@ -19,9 +19,6 @@ var appJobSet = wire.NewSet(
 	{{- end }}
 	jobs.NewExampleHelloJob,
 	jobs.NewExampleHelloJobCmd,
-	{{- if and .Components.Jobs .Components.StressTest }}
-	jobs.NewStressJob,
-	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitoring.NewCheckService,
 	monitoring.NewMonitorCheckJob,

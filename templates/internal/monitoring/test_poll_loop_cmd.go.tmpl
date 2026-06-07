@@ -12,7 +12,7 @@ import (
 	{{- end }}
 )
 
-// TestPollLoopCmd repeatedly triggers monitor polling to stress queue/drain behavior.
+// TestPollLoopCmd repeatedly triggers monitor polling to validate queue drain behavior.
 type TestPollLoopCmd struct {
 	Count    int    `help:"Number of poll cycles to trigger" default:"10"`
 	SleepMs  int    `help:"Pause in milliseconds between cycles" default:"250"`

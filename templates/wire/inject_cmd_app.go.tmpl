@@ -14,9 +14,6 @@ import (
 // appCommandSet is a wire set that provides app-owned command providers.
 var appCommandSet = wire.NewSet(
 	cmd.NewHelloWorldCmd,
-	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs .Components.StressTest }}
-	cmd.NewQueueStressTickCmd,
-	{{- end }}
 	cmd.NewTestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	monitoring.NewPollCmd,

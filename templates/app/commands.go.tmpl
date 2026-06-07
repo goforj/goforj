@@ -43,9 +43,6 @@ type Commands struct {
 	MonitorPollCmd monitoring.PollCmd `cmd:""`
 	PushMonitorTriggerCmd monitoring.PushTriggerCmd `cmd:""`
 	TestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:""`
-	{{- if .Components.StressTest }}
-	QueueStressTickCmd cmd.QueueStressTickCmd `cmd:""`
-	{{- end }}
 	{{- end }}
 	{{- end }}
 }
@@ -75,9 +72,6 @@ func NewCommands(
 	monitorPollCmd *monitoring.PollCmd,
 	pushMonitorTriggerCmd *monitoring.PushTriggerCmd,
 	testMonitorPollLoopCmd *monitoring.TestPollLoopCmd,
-	{{- if .Components.StressTest }}
-	queueStressTickCmd *cmd.QueueStressTickCmd,
-	{{- end }}
 	{{- end }}
 	{{- end }}
 ) *Commands {
@@ -105,9 +99,6 @@ func NewCommands(
 		MonitorPollCmd: *monitorPollCmd,
 		PushMonitorTriggerCmd: *pushMonitorTriggerCmd,
 		TestMonitorPollLoopCmd: *testMonitorPollLoopCmd,
-		{{- if .Components.StressTest }}
-		QueueStressTickCmd: *queueStressTickCmd,
-		{{- end }}
 		{{- end }}
 		{{- end }}
 	}

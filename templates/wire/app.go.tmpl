@@ -299,9 +299,6 @@ func NewApplication(
 	dispatchJob *alerts.DispatchJob,
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
-	{{- if and .Components.Jobs .Components.StressTest }}
-	stressJob *jobs.StressJob,
-	{{- end }}
 	{{- end }}
 ) App {
 	lifecycleManager := runtime.NewLifecycle(appTimeouts)
@@ -318,9 +315,6 @@ func NewApplication(
 {{- if and .Components.DemoApp .Components.Jobs }}
 		dispatchJob,
 		monitorCheckJob,
-{{- end }}
-{{- if and .Components.Jobs .Components.StressTest }}
-		stressJob,
 {{- end }}
 	)
 {{- end }}
@@ -418,17 +412,11 @@ func registerQueueHandlers(
 	dispatchJob *alerts.DispatchJob,
 	monitorCheckJob *monitoring.MonitorCheckJob,
 {{- end }}
-{{- if and .Components.Jobs .Components.StressTest }}
-	stressJob *jobs.StressJob,
-{{- end }}
 ) {
 	queues.Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
 {{- if and .Components.DemoApp .Components.Jobs }}
 	queues.Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
 	queues.Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
-{{- end }}
-{{- if and .Components.Jobs .Components.StressTest }}
-	queues.Register(jobs.StressJobTypeName, stressJob.HandleTask)
 {{- end }}
 }
 {{- end }}

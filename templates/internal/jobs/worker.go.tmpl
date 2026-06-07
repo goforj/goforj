@@ -10,10 +10,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	"{{.GoModuleName}}/internal/alerts"
-	"{{.GoModuleName}}/internal/monitoring"
-	{{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 	{{- if .Components.Jobs }}
@@ -30,11 +26,6 @@ type Worker struct {
 	{{- if .Components.Jobs }}
 	queues      *queues.Manager
 	{{- end }}
-	hello  *ExampleHelloJob
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheck  *monitoring.MonitorCheckJob
-	alertDispatch *alerts.DispatchJob
-	{{- end }}
 }
 
 // NewWorker creates a new Worker with the given logger.
@@ -44,11 +35,6 @@ func NewWorker(
 	appTimeouts *runtime.Timeouts,
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
-	{{- end }}
-	hello *ExampleHelloJob,
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheck *monitoring.MonitorCheckJob,
-	alertDispatch *alerts.DispatchJob,
 	{{- end }}
 ) *Worker {
 	componentLogger := logger
@@ -61,11 +47,6 @@ func NewWorker(
 		appTimeouts: appTimeouts,
 		{{- if .Components.Jobs }}
 		queues: queues,
-		{{- end }}
-		hello:  hello,
-		{{- if and .Components.DemoApp .Components.Jobs }}
-		monitorCheck:  monitorCheck,
-		alertDispatch: alertDispatch,
 		{{- end }}
 	}
 }
