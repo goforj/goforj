@@ -97,7 +97,7 @@ type devRefreshEnvMsg struct {
 }
 type devQuitMsg struct{}
 
-var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+([A-Za-z][A-Za-z0-9_-]*)\s+`)
+var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+(?:[a-z][a-z0-9_-]*\s+)?([A-Za-z][A-Za-z0-9_-]*)\s+`)
 var devAppCommandLinePattern = regexp.MustCompile(`^\s{2}(\S+)\s{2,}(.+)$`)
 var devMetadataSeparatorPattern = regexp.MustCompile(`\s*(?:\x1b\[[0-9;]*m)*·(?:\x1b\[[0-9;]*m)*\s*`)
 var devComponentFilterOrder = []string{

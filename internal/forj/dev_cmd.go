@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -48,6 +49,7 @@ type devShellCommandRequest struct {
 
 type devWatchSession struct {
 	config        *project.Config
+	baseWatches   []project.DevWatch
 	streamer      *devwatchStreamer
 	restartCh     chan struct{}
 	buildCh       chan struct{}
@@ -130,7 +132,8 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	config.Dev.Watches = devWatchesForTargets(config, config.Dev.Watches)
+	baseWatches := copyDevWatches(config.Dev.Watches)
+	config.Dev.Watches = devWatchesForTargets(config, baseWatches)
 
 	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -193,6 +196,7 @@ func (c *DevCmd) Run() error {
 		outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender, requestCommand)
 		runtimeState.refreshWriters()
 	}
+	writeDevTargetBuildLine(outWriter, activeDevTargets())
 	if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
 		cleanupDevTerminal()
 		return err
@@ -200,6 +204,7 @@ func (c *DevCmd) Run() error {
 
 	session := &devWatchSession{
 		config:        config,
+		baseWatches:   baseWatches,
 		streamer:      currentStreamer,
 		restartCh:     restartCh,
 		buildCh:       buildCh,
@@ -237,10 +242,16 @@ func ensureDevDatabaseExists(config *project.Config) error {
 	if config == nil {
 		return nil
 	}
-	components := config.Render.Components
-	switch {
-	case components.DatabaseMySQL:
-		res, err := execx.Command("bash", "-c", "docker-compose exec -T mysql sh -c 'mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'").
+	databases, err := devDatabasesForTargets(config, activeDevTargets())
+	if err != nil {
+		return err
+	}
+	databasesByDriver := map[string][]string{}
+	for _, database := range databases {
+		databasesByDriver[database.Driver] = append(databasesByDriver[database.Driver], database.Name)
+	}
+	if names := databasesByDriver["mysql"]; len(names) > 0 {
+		res, err := execx.Command("docker-compose", "exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(os.Stdout).
@@ -252,8 +263,9 @@ func ensureDevDatabaseExists(config *project.Config) error {
 		if !res.OK() {
 			return fmt.Errorf("ensure mysql database failed with exit code %d", res.ExitCode)
 		}
-	case components.DatabasePostgres:
-		res, err := execx.Command("bash", "-c", "docker-compose exec -T postgres sh -c 'psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'").
+	}
+	if names := databasesByDriver["postgres"]; len(names) > 0 {
+		res, err := execx.Command("docker-compose", "exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(os.Stdout).
@@ -267,6 +279,115 @@ func ensureDevDatabaseExists(config *project.Config) error {
 		}
 	}
 	return nil
+}
+
+type devDatabase struct {
+	Target string
+	Driver string
+	Name   string
+}
+
+// devDatabasesForTargets discovers every server database the current dev session must create.
+func devDatabasesForTargets(config *project.Config, targets []project.AppTarget) ([]devDatabase, error) {
+	if config == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	databases := make([]devDatabase, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeRenderAppTarget(target)
+		components := targetRenderComponents(config, target)
+		if !components.HasDatabase() {
+			continue
+		}
+		driver := normalizeDevDatabaseDriver(targetScopedEnvValue(target, "DB_DRIVER"))
+		if driver == "" {
+			driver = normalizeDevDatabaseDriver(components.DatabaseDriver())
+		}
+		if driver == "" || driver == "sqlite" {
+			continue
+		}
+		name := targetScopedEnvValue(target, "DB_DATABASE")
+		if name == "" {
+			return nil, fmt.Errorf("missing %s for %s database target %s", targetScopedEnvKey(target, "DB_DATABASE"), driver, target.Name)
+		}
+		if err := validateDevDatabaseName(name); err != nil {
+			return nil, fmt.Errorf("%s for target %s: %w", targetScopedEnvKey(target, "DB_DATABASE"), target.Name, err)
+		}
+		key := driver + "\x00" + name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		databases = append(databases, devDatabase{Target: target.Name, Driver: driver, Name: name})
+	}
+	sort.Slice(databases, func(left, right int) bool {
+		if databases[left].Driver != databases[right].Driver {
+			return databases[left].Driver < databases[right].Driver
+		}
+		return databases[left].Name < databases[right].Name
+	})
+	return databases, nil
+}
+
+// normalizeDevDatabaseDriver maps common aliases to the compose service driver names.
+func normalizeDevDatabaseDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "mysql", "mariadb":
+		return "mysql"
+	case "postgres", "postgresql":
+		return "postgres"
+	case "sqlite", "sqlite3":
+		return "sqlite"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
+}
+
+// targetScopedEnvValue reads target-specific env with the same fallback shape used by app runtime.
+func targetScopedEnvValue(target project.AppTarget, key string) string {
+	if target.Name != "" && target.Name != project.DefaultAppTargetName {
+		if value := strings.TrimSpace(os.Getenv(targetScopedEnvKey(target, key))); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+// targetScopedEnvKey returns the target-prefixed env key that overrides a base env value.
+func targetScopedEnvKey(target project.AppTarget, key string) string {
+	if target.Name == "" || target.Name == project.DefaultAppTargetName {
+		return key
+	}
+	prefix := strEnvPrefix(target.Name)
+	if prefix == "" {
+		return key
+	}
+	return prefix + "_" + key
+}
+
+// validateDevDatabaseName keeps local database creation scripts simple and injection-safe.
+func validateDevDatabaseName(name string) error {
+	if name == "" {
+		return fmt.Errorf("database name is empty")
+	}
+	for _, char := range name {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_' {
+			continue
+		}
+		return fmt.Errorf("database name %q must contain only letters, numbers, and underscores", name)
+	}
+	return nil
+}
+
+// mysqlCreateDatabasesScript creates every needed MySQL database after the service is ready.
+func mysqlCreateDatabasesScript(names []string) string {
+	return `while ! mysqladmin ping -h "mysql" --silent; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do mysql -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mysql -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
+}
+
+// postgresCreateDatabasesScript creates every needed Postgres database after the service is ready.
+func postgresCreateDatabasesScript(names []string) string {
+	return `until pg_isready -h "postgres" -p 5432; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$db\";"; done`
 }
 
 func runDevTasks(heading string, tasks []project.DevTask) error {
@@ -377,6 +498,16 @@ func devWatchesForTargets(config *project.Config, watches []project.DevWatch) []
 	return rewritten
 }
 
+// copyDevWatches preserves the configured watcher template before dev expands target watchers.
+func copyDevWatches(watches []project.DevWatch) []project.DevWatch {
+	copied := make([]project.DevWatch, len(watches))
+	for index, watch := range watches {
+		watch.Env = copyDevWatchEnv(watch.Env)
+		copied[index] = watch
+	}
+	return copied
+}
+
 // activeDevTargets returns one explicit target or every conventional target for all-app dev.
 func activeDevTargets() []project.AppTarget {
 	if targetName := requestedDevTargetName(); targetName != "" {
@@ -463,34 +594,118 @@ func copyDevWatchEnv(env map[string]string) map[string]string {
 	return cloned
 }
 
+type devBuildJob struct {
+	target  project.AppTarget
+	command string
+}
+
 // devBuildCommands returns the build commands needed for the active dev target set.
 func devBuildCommands(config *project.Config) []string {
-	targets := activeDevTargets()
-	commands := make([]string, 0, len(targets))
-	for _, target := range targets {
-		commands = append(commands, devBuildCommandForTarget(target))
+	jobs := devBuildJobs(config, false)
+	commands := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		commands = append(commands, job.command)
 	}
 	return commands
 }
 
 // devInitialBuildCommands returns bootstrap builds for target binaries that do not exist yet.
 func devInitialBuildCommands(config *project.Config) []string {
-	targets := activeDevTargets()
-	commands := make([]string, 0, len(targets))
-	for _, target := range targets {
-		target = normalizeRenderAppTarget(target)
-		if _, err := os.Stat(filepath.Join("bin", target.Name)); err == nil {
-			continue
-		}
-		commands = append(commands, devBuildCommandForTarget(target))
+	jobs := devBuildJobs(config, true)
+	commands := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		commands = append(commands, job.command)
 	}
 	return commands
 }
 
-// devBuildCommandForTarget calls the native build command directly so new targets can build before delegation exists.
-func devBuildCommandForTarget(target project.AppTarget) string {
+// devBuildJobs resolves target build commands while preserving the target label for compact output.
+func devBuildJobs(config *project.Config, missingOnly bool) []devBuildJob {
+	targets := activeDevTargets()
+	jobs := make([]devBuildJob, 0, len(targets))
+	baseCommand := devBaseBuildCommand(config)
+	for _, target := range targets {
+		target = normalizeRenderAppTarget(target)
+		if missingOnly {
+			if _, err := os.Stat(filepath.Join("bin", target.Name)); err == nil {
+				continue
+			}
+		}
+		command := devBuildCommandForTarget(baseCommand, target)
+		if strings.TrimSpace(command) == "" {
+			continue
+		}
+		jobs = append(jobs, devBuildJob{target: target, command: command})
+	}
+	return jobs
+}
+
+// devBaseBuildCommand uses the configured default build watcher as the template for target builds.
+func devBaseBuildCommand(config *project.Config) string {
+	if config != nil {
+		for _, watch := range config.Dev.Watches {
+			if watch.Name == "Build App" && strings.TrimSpace(watch.Exec) != "" {
+				return watch.Exec
+			}
+		}
+		for _, watch := range config.Dev.Watches {
+			if isDevBuildWatcher(watch.Name) && strings.TrimSpace(watch.Exec) != "" {
+				return watch.Exec
+			}
+		}
+	}
+	return "forj build -o ./bin/app"
+}
+
+// devBuildCommandForTarget derives target builds from the configured default build command.
+func devBuildCommandForTarget(baseCommand string, target project.AppTarget) string {
 	target = normalizeRenderAppTarget(target)
-	return "forj build -o ./bin/" + target.Name + " ./" + filepath.ToSlash(filepath.Dir(target.Entrypoint))
+	command := strings.TrimSpace(baseCommand)
+	if command == "" {
+		command = "forj build -o ./bin/app"
+	}
+
+	defaultTarget := project.DefaultAppTarget()
+	defaultBinary := "./bin/" + defaultTarget.Name
+	targetBinary := "./bin/" + target.Name
+	defaultPackage := "./" + filepath.ToSlash(filepath.Dir(defaultTarget.Entrypoint))
+	targetPackage := "./" + filepath.ToSlash(filepath.Dir(target.Entrypoint))
+
+	command = replaceBuildToken(command, defaultBinary, targetBinary)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultBinary, "./"), strings.TrimPrefix(targetBinary, "./"))
+	command = replaceBuildToken(command, defaultPackage, targetPackage)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultPackage, "./"), strings.TrimPrefix(targetPackage, "./"))
+	if !devBuildCommandIncludesPackage(command, targetPackage) {
+		command += " " + targetPackage
+	}
+	return command
+}
+
+// replaceBuildToken preserves the configured command shape while rewriting conventional target paths.
+func replaceBuildToken(command string, from string, to string) string {
+	return strings.ReplaceAll(command, from, to)
+}
+
+// devBuildCommandIncludesPackage avoids appending a duplicate target package argument.
+func devBuildCommandIncludesPackage(command string, targetPackage string) bool {
+	args, err := shellSplitArgs(command)
+	if err != nil {
+		args = strings.Fields(command)
+	}
+	normalizedTarget := normalizeBuildPackageArg(targetPackage)
+	for _, arg := range args {
+		if normalizeBuildPackageArg(arg) == normalizedTarget {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeBuildPackageArg compares local package paths regardless of leading ./ spelling.
+func normalizeBuildPackageArg(arg string) string {
+	arg = strings.TrimSpace(arg)
+	arg = strings.TrimPrefix(arg, "./")
+	return filepath.ToSlash(arg)
 }
 
 func shouldRunAfterMigrate(task project.DevTask) bool {
@@ -527,6 +742,7 @@ const (
 func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
 watcherLoop:
 	for {
+		session.config.Dev.Watches = devWatchesForTargets(session.config, session.baseWatches)
 		watchers, exitCh := startWatchers(
 			session.config.ProjectName,
 			session.config.Dev.Watches,
@@ -656,42 +872,152 @@ func runDevRender(config *project.Config, outWriter io.Writer, errWriter io.Writ
 }
 
 func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	for _, command := range devBuildCommands(config) {
-		if err := runDevTerminalCommand(outWriter, errWriter, "Running "+command, command); err != nil {
-			return fmt.Errorf("forj build failed: %w", err)
-		}
-	}
-	return nil
+	return runDevBuildJobs(config, outWriter, errWriter, false, "forj build failed")
 }
 
 // runDevInitialBuild creates missing target binaries before file watchers try to execute them.
 func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	for _, command := range devInitialBuildCommands(config) {
-		if err := runDevTerminalCommand(outWriter, errWriter, "Running "+command, command); err != nil {
-			return fmt.Errorf("initial forj build failed: %w", err)
+	return runDevBuildJobs(config, outWriter, errWriter, true, "initial forj build failed")
+}
+
+type devBuildResult struct {
+	job    devBuildJob
+	stdout string
+	stderr string
+	err    error
+}
+
+// runDevBuildJobs runs target builds together so multi-app dev startup scales with the slowest build.
+func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, missingOnly bool, failurePrefix string) error {
+	jobs := devBuildJobs(config, missingOnly)
+	switch len(jobs) {
+	case 0:
+		return nil
+	case 1:
+		if err := runDevBuildCommand(outWriter, errWriter, jobs[0]); err != nil {
+			return fmt.Errorf("%s: %w", failurePrefix, err)
 		}
+		return nil
+	}
+
+	heading := "Building app targets"
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
+
+	results := make([]devBuildResult, len(jobs))
+	var wg sync.WaitGroup
+	for index, job := range jobs {
+		writeDevActionLine(outWriter, "Building "+job.target.Name)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[index] = runDevBuildJobBuffered(job)
+		}()
+	}
+	wg.Wait()
+
+	failures := make([]string, 0)
+	for _, result := range results {
+		if result.err == nil {
+			continue
+		}
+		writeDevBuildFailureOutput(outWriter, errWriter, result)
+		failures = append(failures, fmt.Sprintf("%s: %v", result.job.target.Name, result.err))
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s: %s", failurePrefix, strings.Join(failures, "; "))
 	}
 	return nil
 }
 
-func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	writeDevCommandLine(outWriter, heading)
+// runDevBuildJobBuffered keeps concurrent build output grouped by target instead of interleaving lines.
+func runDevBuildJobBuffered(job devBuildJob) devBuildResult {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := runDevSubprocessCommand(&stdout, &stderr, job.command, true)
+	return devBuildResult{
+		job:    job,
+		stdout: stripBuildProgressMarkerLines(stdout.String()),
+		stderr: stripBuildProgressMarkerLines(stderr.String()),
+		err:    err,
+	}
+}
+
+// stripBuildProgressMarkerLines keeps the subprocess progress protocol out of replayed build logs.
+func stripBuildProgressMarkerLines(output string) string {
+	if !strings.Contains(output, buildProgressMarker) {
+		return output
+	}
+	lines := strings.SplitAfter(output, "\n")
+	var filtered strings.Builder
+	for _, line := range lines {
+		normalized := strings.ReplaceAll(line, "\r", "")
+		normalized = ansiCSI.ReplaceAllString(normalized, "")
+		if strings.HasPrefix(strings.TrimSpace(normalized), buildProgressMarker) {
+			continue
+		}
+		filtered.WriteString(line)
+	}
+	return filtered.String()
+}
+
+// writeDevBuildFailureOutput prints a failed target's buffered transcript only when it is useful.
+func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
+	writeDevActionLine(outWriter, "Build failed for "+result.job.target.Name)
+	if strings.TrimSpace(result.stdout) != "" {
+		_, _ = io.WriteString(outWriter, result.stdout)
+		if !strings.HasSuffix(result.stdout, "\n") {
+			_, _ = io.WriteString(outWriter, "\n")
+		}
+	}
+	if strings.TrimSpace(result.stderr) != "" {
+		_, _ = io.WriteString(errWriter, result.stderr)
+		if !strings.HasSuffix(result.stderr, "\n") {
+			_, _ = io.WriteString(errWriter, "\n")
+		}
+	}
+}
+
+// runDevBuildCommand keeps target builds compact in the dev transcript.
+func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJob) error {
+	heading := "Building " + job.target.Name
+	writeDevActionLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
-	devNull, err := os.Open(os.DevNull)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", os.DevNull, err)
+
+	if _, ok := outWriter.(*devBubbleWriter); ok {
+		return runDevSubprocessCommand(outWriter, errWriter, job.command, true)
 	}
-	defer devNull.Close()
+	if _, ok := errWriter.(*devBubbleWriter); ok {
+		return runDevSubprocessCommand(outWriter, errWriter, job.command, true)
+	}
+
+	disableDevFooter(outWriter)
+	disableDevFooter(errWriter)
+	defer enableDevFooter(outWriter)
+	defer enableDevFooter(errWriter)
+	return runDevSubprocessCommand(os.Stdout, os.Stderr, job.command, false)
+}
+
+// runDevSubprocessCommand centralizes dev subprocess environment and exit handling.
+func runDevSubprocessCommand(outWriter io.Writer, errWriter io.Writer, command string, transcript bool) error {
+	stdin := io.Reader(os.Stdin)
+	env := map[string]string{"CLICOLOR_FORCE": "1"}
+	if transcript {
+		devNull, err := os.Open(os.DevNull)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", os.DevNull, err)
+		}
+		defer devNull.Close()
+		stdin = devNull
+		env["FORJ_SUBPROCESS"] = "1"
+		env["FORJ_COMMAND_ORIGIN"] = "dev_command"
+		env["TERM"] = "dumb"
+	}
 	cmd := execx.Command("bash", "-c", command).
 		EnvInherit().
-		EnvAppend(map[string]string{
-			"CLICOLOR_FORCE":      "1",
-			"FORJ_SUBPROCESS":     "1",
-			"FORJ_COMMAND_ORIGIN": "dev_command",
-			"TERM":                "dumb",
-		}).
-		StdinReader(devNull).
+		EnvAppend(env).
+		StdinReader(stdin).
 		StdoutWriter(outWriter).
 		StderrWriter(errWriter)
 	res, err := cmd.Run()
@@ -700,6 +1026,16 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	}
 	if !res.OK() {
 		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
+	}
+	return nil
+}
+
+func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
+	writeDevCommandLine(outWriter, heading)
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
+	if err := runDevSubprocessCommand(outWriter, errWriter, command, true); err != nil {
+		return err
 	}
 	writeDevCommandBoundary(outWriter)
 	return nil
@@ -722,20 +1058,7 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 	defer enableDevFooter(outWriter)
 	defer enableDevFooter(errWriter)
 
-	cmd := execx.Command("bash", "-c", command).
-		EnvInherit().
-		EnvAppend(map[string]string{"CLICOLOR_FORCE": "1"}).
-		StdinReader(os.Stdin).
-		StdoutWriter(os.Stdout).
-		StderrWriter(os.Stderr)
-	res, err := cmd.Run()
-	if err != nil {
-		return err
-	}
-	if !res.OK() {
-		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
-	}
-	return nil
+	return runDevSubprocessCommand(os.Stdout, os.Stderr, command, false)
 }
 
 func writeDevActionLine(out io.Writer, message string) {
@@ -744,6 +1067,32 @@ func writeDevActionLine(out io.Writer, message string) {
 		return
 	}
 	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
+}
+
+// writeDevTargetBuildLine makes convention-expanded targets visible without adding a large startup block.
+func writeDevTargetBuildLine(out io.Writer, targets []project.AppTarget) {
+	names := devTargetNames(targets)
+	if len(names) == 0 || len(names) == 1 && names[0] == project.DefaultAppTargetName {
+		return
+	}
+	label := "Building app target"
+	if len(names) > 1 {
+		label = "Building app targets"
+	}
+	writeDevActionLine(out, label+": "+strings.Join(names, ", "))
+}
+
+// devTargetNames formats target names in runtime order for user-facing dev output.
+func devTargetNames(targets []project.AppTarget) []string {
+	names := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeRenderAppTarget(target)
+		if target.Name == "" {
+			continue
+		}
+		names = append(names, target.Name)
+	}
+	return names
 }
 
 func writeDevCommandLine(out io.Writer, message string) {
@@ -924,6 +1273,9 @@ func startWatchers(
 	// The single runtime supervisor watcher restarts after a fresh binary lands,
 	// so we bracket that restart with explicit shutdown/start section separators.
 	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), devRuntimeWatcherNames(watches))
+	runtimeTargets := devAppTargetNames(activeDevTargets())
+	showAppTargetColumn := len(runtimeTargets) > 1
+	appTargetWidth := devAppTargetColumnWidth(runtimeTargets)
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -943,11 +1295,12 @@ func startWatchers(
 		if isDevBuildWatcher(watch.Name) {
 			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
 		}
+		appTarget := devRuntimeWatcherTarget(watch.Name)
 		cmd := execx.Command("wgo").
 			Arg(wgoArgs).
 			EnvOnly(cmdEnv).
-			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, lifecycleState)).
-			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, lifecycleState))
+			StdoutWriter(newDevwatchWriterForTarget(outWriter, streamer, "stdout", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState)).
+			StderrWriter(newDevwatchWriterForTarget(errWriter, streamer, "stderr", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState))
 		cmd = configureWatcherPTY(cmd, soundOnError)
 		proc := cmd.Start()
 		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
@@ -959,6 +1312,65 @@ func startWatchers(
 	}
 	emitWatcherLifecycleSummary(outWriter, streamer, startedNames, watcherStateStarted)
 	return watchers, exitCh
+}
+
+// devAppTargetNames returns target names in the same order used by active dev.
+func devAppTargetNames(targets []project.AppTarget) []string {
+	names := make([]string, 0, len(targets))
+	seen := map[string]bool{}
+	for _, target := range targets {
+		target = normalizeRenderAppTarget(target)
+		if target.Name == "" || seen[target.Name] {
+			continue
+		}
+		seen[target.Name] = true
+		names = append(names, target.Name)
+	}
+	return names
+}
+
+// devRuntimeWatcherTargets returns runtime target names in watcher order.
+func devRuntimeWatcherTargets(watches []project.DevWatch) []string {
+	targets := make([]string, 0)
+	seen := map[string]bool{}
+	for _, watch := range watches {
+		target := devRuntimeWatcherTarget(watch.Name)
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+		targets = append(targets, target)
+	}
+	return targets
+}
+
+// devRuntimeWatcherTarget derives the app target from generated runtime watcher names.
+func devRuntimeWatcherTarget(watcher string) string {
+	watcher = str.Of(watcher).TrimSpace().String()
+	switch {
+	case watcher == "Run App":
+		return project.DefaultAppTargetName
+	case strings.HasPrefix(watcher, "Run "):
+		return strings.TrimSpace(strings.TrimPrefix(watcher, "Run "))
+	default:
+		return ""
+	}
+}
+
+// devAppTargetColumnWidth keeps target log columns aligned without letting long slugs dominate output.
+func devAppTargetColumnWidth(targets []string) int {
+	const maxWidth = 18
+	width := len(project.DefaultAppTargetName)
+	for _, target := range targets {
+		target = str.Of(target).TrimSpace().String()
+		if len(target) > width {
+			width = len(target)
+		}
+	}
+	if width > maxWidth {
+		return maxWidth
+	}
+	return width
 }
 
 // devRuntimeWatcherNames identifies app runtime watchers that should bracket restart output.
