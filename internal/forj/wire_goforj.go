@@ -13,6 +13,7 @@ var WireSet = wire.NewSet(
 	build.NewCmd,
 	generate.NewCmd,
 	NewNewProjectCmd,
+	NewMakeAppCmd,
 	NewDevCmd,
 	NewDownCmd,
 	NewBuildBinaryCmd,

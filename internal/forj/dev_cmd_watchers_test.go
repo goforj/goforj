@@ -91,9 +91,25 @@ func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
 	withConventionalTarget(t, "customer-portal")
 
 	got := devBuildCommands(&project.Config{})
-	want := []string{"forj build", "forj customer-portal build"}
+	want := []string{"forj build -o ./bin/app ./cmd/app", "forj build -o ./bin/customer-portal ./cmd/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
+	}
+}
+
+func TestDevInitialBuildCommandsOnlyBuildMissingBinaries(t *testing.T) {
+	withConventionalTarget(t, "customer-portal")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "app"), []byte("binary"), 0o755); err != nil {
+		t.Fatalf("write app binary: %v", err)
+	}
+
+	got := devInitialBuildCommands(&project.Config{})
+	want := []string{"forj build -o ./bin/customer-portal ./cmd/customer-portal"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected initial dev build commands: got %#v want %#v", got, want)
 	}
 }
 

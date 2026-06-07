@@ -14,6 +14,7 @@ type RootCmd struct {
 	BuildCmd                  build.Cmd                       `cmd:""`
 	GenerateCmd               generate.Cmd                    `cmd:""`
 	NewProjectCmd             NewProjectCmd                   `cmd:""`
+	MakeAppCmd                MakeAppCmd                      `cmd:""`
 	DevCmd                    DevCmd                          `cmd:""`
 	DownCmd                   DownCmd                         `cmd:""`
 	BuildBinaryCmd            BuildBinaryCmd                  `cmd:""`
@@ -39,6 +40,7 @@ func NewRootCmd(
 	buildCmd *build.Cmd,
 	generateCmd *generate.Cmd,
 	newProjectCmd *NewProjectCmd,
+	makeAppCmd *MakeAppCmd,
 	devCmd *DevCmd,
 	downCmd *DownCmd,
 	buildBinaryCmd *BuildBinaryCmd,
@@ -62,6 +64,7 @@ func NewRootCmd(
 		BuildCmd:                  *buildCmd,
 		GenerateCmd:               *generateCmd,
 		NewProjectCmd:             *newProjectCmd,
+		MakeAppCmd:                *makeAppCmd,
 		DevCmd:                    *devCmd,
 		DownCmd:                   *downCmd,
 		BuildBinaryCmd:            *buildBinaryCmd,

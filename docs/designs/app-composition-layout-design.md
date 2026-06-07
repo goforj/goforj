@@ -596,6 +596,8 @@ Port defaults should be deterministic by convention:
 
 The runtime port block is intentionally separate from the HTTP/API range because each target can run multiple listener-owning processes at the same time.
 
+Bundled local development tools should avoid the app HTTP range. For example, Grafana defaults to `13001` instead of `3001` so the first named app target can use the natural `3000 + targetIndex` default.
+
 Within each target runtime block:
 
 - HTTP metrics/runtime listener: `runtimeBase + 0`
@@ -1008,6 +1010,9 @@ Track implementation as concrete work items:
   - [x] Keep named target app-owned injectors render-once.
   - [x] Generate target-local frontend source/build paths under `cmd/<target>/frontend` when Web UI is enabled.
   - [x] Keep named target cleanup non-destructive by only writing known generated files and preserving app-owned files after first render.
+  - [x] Add `forj make:app <target>` to create a named app target from convention.
+  - [x] Keep `make:app` narrow by rendering only the new target scaffold, runtime target metadata, migration layout updates, and Wire generation.
+  - [ ] Decide whether `make:app` should support per-target component selection beyond the project-level rendered component set.
 
 - [x] Update command resolution.
   - [x] Detect `forj <target> ...` when `./bin/<target>` exists.
@@ -1043,6 +1048,7 @@ Track implementation as concrete work items:
   - [x] Keep `internal/runtime/targets.go` regenerated on render and document that app owners should not edit it.
   - [x] Add deterministic target indexes for runtime defaults: `app = 0`, named targets sorted alphabetically from `1`.
   - [x] Add target-aware HTTP port defaults: `3000 + targetIndex`.
+  - [x] Move bundled Grafana's default host port out of the app target range to `13001`.
   - [x] Add target-aware runtime port blocks: `10000 + (targetIndex * 10)`.
   - [x] Resolve HTTP ports from target-scoped env, default-target env, then deterministic target default.
   - [x] Resolve HTTP metrics ports from target-scoped env, default-target env, then deterministic target runtime default.

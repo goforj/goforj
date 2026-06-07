@@ -193,6 +193,10 @@ func (c *DevCmd) Run() error {
 		outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender, requestCommand)
 		runtimeState.refreshWriters()
 	}
+	if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+		cleanupDevTerminal()
+		return err
+	}
 
 	session := &devWatchSession{
 		config:        config,
@@ -464,13 +468,29 @@ func devBuildCommands(config *project.Config) []string {
 	targets := activeDevTargets()
 	commands := make([]string, 0, len(targets))
 	for _, target := range targets {
-		if target.Name == project.DefaultAppTargetName {
-			commands = append(commands, "forj build")
-			continue
-		}
-		commands = append(commands, "forj "+target.Name+" build")
+		commands = append(commands, devBuildCommandForTarget(target))
 	}
 	return commands
+}
+
+// devInitialBuildCommands returns bootstrap builds for target binaries that do not exist yet.
+func devInitialBuildCommands(config *project.Config) []string {
+	targets := activeDevTargets()
+	commands := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeRenderAppTarget(target)
+		if _, err := os.Stat(filepath.Join("bin", target.Name)); err == nil {
+			continue
+		}
+		commands = append(commands, devBuildCommandForTarget(target))
+	}
+	return commands
+}
+
+// devBuildCommandForTarget calls the native build command directly so new targets can build before delegation exists.
+func devBuildCommandForTarget(target project.AppTarget) string {
+	target = normalizeRenderAppTarget(target)
+	return "forj build -o ./bin/" + target.Name + " ./" + filepath.ToSlash(filepath.Dir(target.Entrypoint))
 }
 
 func shouldRunAfterMigrate(task project.DevTask) bool {
@@ -644,6 +664,16 @@ func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Write
 	return nil
 }
 
+// runDevInitialBuild creates missing target binaries before file watchers try to execute them.
+func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	for _, command := range devInitialBuildCommands(config) {
+		if err := runDevTerminalCommand(outWriter, errWriter, "Running "+command, command); err != nil {
+			return fmt.Errorf("initial forj build failed: %w", err)
+		}
+	}
+	return nil
+}
+
 func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
 	writeDevCommandLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
@@ -804,7 +834,7 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 		tools = append(tools, devToolLink{
 			Label:  "Grafana",
 			Detail: fmt.Sprintf("(%s / admin)", adminUser),
-			URL:    resolveURLWithPort(env, "http", "localhost", "GRAFANA_PORT", "3001"),
+			URL:    resolveURLWithPort(env, "http", "localhost", "GRAFANA_PORT", "13001"),
 		})
 	}
 
