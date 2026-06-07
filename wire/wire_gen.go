@@ -11,6 +11,7 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
+	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 )
@@ -25,7 +26,7 @@ func InitializeApplication() (App, error) {
 	generateCmd := generate.NewCmd()
 	projectRenderer := forj.NewProjectRenderer(appLogger)
 	newProjectCmd := forj.NewNewProjectCmd(appLogger, projectRenderer)
-	makeAppCmd := forj.NewMakeAppCmd(appLogger, projectRenderer)
+	makeAppCmd := makeapp.NewCmd(appLogger, projectRenderer)
 	devCmd := forj.NewDevCmd(appLogger)
 	downCmd := forj.NewDownCmd(appLogger)
 	buildBinaryCmd := forj.NewBuildBinaryCmd(appLogger)

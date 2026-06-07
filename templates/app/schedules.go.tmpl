@@ -1,7 +1,7 @@
 package {{.TargetPackageName}}
 
 import (
-{{- if or (and .Components.DemoApp .Components.Jobs) (and .Components.Jobs .Components.StressTest) }}
+{{- if and .Components.DemoApp .Components.Jobs }}
 	"github.com/goforj/env/v2"
 {{- end }}
 {{- if and .Components.Auth .Components.HasDatabase }}
@@ -75,15 +75,6 @@ func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
 	s.Every(pollIntervalSeconds).Seconds().Name("monitor:poll").Do(s.InspectTask("monitor:poll", r.monitorCheckJob.RunScheduledPoll))
 	// This pings the synthetic push monitor trigger, useful for validating push checks.
 	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.InspectTask("monitor:push-test-trigger", r.monitorCheckJob.RunScheduledPushTrigger))
-{{- end }}
-{{- if and .Components.Jobs .Components.StressTest }}
-	if env.GetBool("STRESS_ENABLED", "false") {
-		interval := env.GetInt("STRESS_INTERVAL_SECONDS", "2")
-		if interval <= 0 {
-			interval = 2
-		}
-		s.Every(interval).Seconds().Name("queue:stress:tick").Command("queue:stress:tick")
-	}
 {{- end }}
 	return nil
 }

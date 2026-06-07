@@ -7,7 +7,22 @@ import (
 	"github.com/goforj/wire"
 	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
+{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) (or .ProjectComponents.WebAPI .ProjectComponents.WebUI) }}
+	"{{.GoModuleName}}/internal/http"
+{{- end }}
+{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) .ProjectComponents.Jobs }}
+	"{{.GoModuleName}}/internal/jobs"
+{{- end }}
+{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+	"{{.GoModuleName}}/internal/logger"
+{{- end }}
 	"{{.GoModuleName}}/internal/makecmd"
+{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) .ProjectComponents.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) .ProjectComponents.Scheduler }}
+	"{{.GoModuleName}}/internal/schedules"
+{{- end }}
 )
 
 // cmdSet is a wire set that provides framework command wiring.
@@ -24,7 +39,7 @@ var cmdSet = wire.NewSet(
 	cmd.NewHealthCmd,
 	{{- end }}
 	{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
-	cmd.NewRunCmd,
+	provideRunCmd,
 	{{- end }}
 	makecmd.NewCommandCmd,
 	{{- if or .Components.WebAPI .Components.WebUI }}
@@ -32,3 +47,53 @@ var cmdSet = wire.NewSet(
 	{{- end }}
 	makecmd.NewMigrationCmd,
 )
+
+{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+func provideRunCmd(
+	logger *logger.AppLogger,
+{{- if and (or .ProjectComponents.WebAPI .ProjectComponents.WebUI) (or .Components.WebAPI .Components.WebUI) }}
+	httpRuntime *http.Runtime,
+{{- end }}
+{{- if and .ProjectComponents.Scheduler .Components.Scheduler }}
+	schedulerRuntime *schedules.Runtime,
+{{- end }}
+{{- if and .ProjectComponents.Jobs .Components.Jobs }}
+	jobsRuntime *jobs.Runtime,
+{{- end }}
+{{- if and .ProjectComponents.Metrics .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) *cmd.RunCmd {
+	return cmd.NewRunCmd(
+		logger,
+{{- if or .ProjectComponents.WebAPI .ProjectComponents.WebUI }}
+		{{- if or .Components.WebAPI .Components.WebUI }}
+		httpRuntime,
+		{{- else }}
+		(*http.Runtime)(nil),
+		{{- end }}
+{{- end }}
+{{- if .ProjectComponents.Scheduler }}
+		{{- if .Components.Scheduler }}
+		schedulerRuntime,
+		{{- else }}
+		(*schedules.Runtime)(nil),
+		{{- end }}
+{{- end }}
+{{- if .ProjectComponents.Jobs }}
+		{{- if .Components.Jobs }}
+		jobsRuntime,
+		{{- else }}
+		(*jobs.Runtime)(nil),
+		{{- end }}
+{{- end }}
+{{- if .ProjectComponents.Metrics }}
+		{{- if .Components.Metrics }}
+		metricsManager,
+		{{- else }}
+		(*metrics.Manager)(nil),
+		{{- end }}
+{{- end }}
+	)
+}
+{{- end }}
