@@ -331,6 +331,10 @@ func TestDevTranscriptComponent(t *testing.T) {
 	if got := devTranscriptComponent(line); got != "HTTP" {
 		t.Fatalf("expected HTTP component, got %q", got)
 	}
+	multiAppLine := "19:27:32.402 billing HTTP HTTP Request"
+	if got := devTranscriptComponent(multiAppLine); got != "HTTP" {
+		t.Fatalf("expected HTTP component from multi-app line, got %q", got)
+	}
 	if got := devTranscriptComponent("Starting Run App - ./bin/app run"); got != "" {
 		t.Fatalf("expected no component for orchestration line, got %q", got)
 	}

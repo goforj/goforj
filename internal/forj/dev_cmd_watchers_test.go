@@ -87,11 +87,41 @@ func TestDevWatchesForTargetsCanScopeToExplicitTarget(t *testing.T) {
 	}
 }
 
+func TestDevWatchesForTargetsDropsRemovedConventionalTarget(t *testing.T) {
+	withConventionalTarget(t, "billing")
+	base := []project.DevWatch{
+		{Name: "Build App", Watch: "-file .go", Exec: "forj build -o ./bin/app"},
+		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
+	}
+	if got := devWatchesForTargets(&project.Config{}, base); len(got) != 4 {
+		t.Fatalf("expected billing watchers before removal, got %#v", got)
+	}
+	if err := os.RemoveAll(filepath.Join("cmd", "billing")); err != nil {
+		t.Fatalf("remove billing target: %v", err)
+	}
+
+	got := devWatchesForTargets(&project.Config{}, base)
+	if len(got) != 2 {
+		t.Fatalf("expected only default watchers after removal, got %#v", got)
+	}
+	for _, watch := range got {
+		if strings.Contains(watch.Name, "billing") || strings.Contains(watch.Exec, "billing") {
+			t.Fatalf("did not expect stale billing watcher after removal: %#v", got)
+		}
+	}
+}
+
 func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
 	withConventionalTarget(t, "customer-portal")
 
-	got := devBuildCommands(&project.Config{})
-	want := []string{"forj build -o ./bin/app ./cmd/app", "forj build -o ./bin/customer-portal ./cmd/customer-portal"}
+	got := devBuildCommands(&project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: "FORJ_BUILD=1 forj build --race -o ./bin/app"},
+			},
+		},
+	})
+	want := []string{"FORJ_BUILD=1 forj build --race -o ./bin/app ./cmd/app", "FORJ_BUILD=1 forj build --race -o ./bin/customer-portal ./cmd/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
 	}
@@ -110,6 +140,287 @@ func TestDevInitialBuildCommandsOnlyBuildMissingBinaries(t *testing.T) {
 	want := []string{"forj build -o ./bin/customer-portal ./cmd/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial dev build commands: got %#v want %#v", got, want)
+	}
+}
+
+func TestDevBuildCommandForTargetRewritesExistingPackageArgument(t *testing.T) {
+	target := project.DefaultNamedAppTarget("billing")
+	got := devBuildCommandForTarget("forj build --tags dev -o ./bin/app ./cmd/app", target)
+	want := "forj build --tags dev -o ./bin/billing ./cmd/billing"
+	if got != want {
+		t.Fatalf("target build command = %q, want %q", got, want)
+	}
+}
+
+func TestDevBuildJobsKeepTargetLabels(t *testing.T) {
+	withConventionalTarget(t, "billing")
+
+	got := devBuildJobs(&project.Config{}, false)
+	if len(got) != 2 {
+		t.Fatalf("expected default and billing build jobs, got %#v", got)
+	}
+	if got[0].target.Name != "app" || got[1].target.Name != "billing" {
+		t.Fatalf("unexpected build job targets: %#v", got)
+	}
+}
+
+func TestDevDatabasesForTargetsIncludesNamedTargetDatabase(t *testing.T) {
+	withConventionalTarget(t, "billing")
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("BILLING_DB_DATABASE", "billing")
+
+	got, err := devDatabasesForTargets(&project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{DatabaseMySQL: true},
+		},
+		AppTargets: map[string]project.AppTargetConfig{
+			"billing": {
+				Components: project.Components{DatabaseMySQL: true},
+			},
+		},
+	}, activeDevTargets())
+	if err != nil {
+		t.Fatalf("devDatabasesForTargets returned error: %v", err)
+	}
+	want := []devDatabase{
+		{Target: "billing", Driver: "mysql", Name: "billing"},
+		{Target: "app", Driver: "mysql", Name: "db"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dev databases = %#v, want %#v", got, want)
+	}
+}
+
+func TestDevDatabasesForTargetsSupportsMixedDrivers(t *testing.T) {
+	withConventionalTarget(t, "reporting")
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("REPORTING_DB_DRIVER", "postgres")
+	t.Setenv("REPORTING_DB_DATABASE", "reporting")
+
+	got, err := devDatabasesForTargets(&project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{DatabaseMySQL: true, DatabasePostgres: true},
+		},
+		AppTargets: map[string]project.AppTargetConfig{
+			"reporting": {
+				Components: project.Components{DatabasePostgres: true},
+			},
+		},
+	}, activeDevTargets())
+	if err != nil {
+		t.Fatalf("devDatabasesForTargets returned error: %v", err)
+	}
+	want := []devDatabase{
+		{Target: "app", Driver: "mysql", Name: "db"},
+		{Target: "reporting", Driver: "postgres", Name: "reporting"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dev databases = %#v, want %#v", got, want)
+	}
+}
+
+func TestDevDatabasesForTargetsRejectsUnsafeDatabaseNames(t *testing.T) {
+	withConventionalTarget(t, "billing")
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("BILLING_DB_DATABASE", "billing-prod")
+
+	_, err := devDatabasesForTargets(&project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{DatabaseMySQL: true},
+		},
+		AppTargets: map[string]project.AppTargetConfig{
+			"billing": {
+				Components: project.Components{DatabaseMySQL: true},
+			},
+		},
+	}, activeDevTargets())
+	if err == nil {
+		t.Fatal("expected unsafe database name to return an error")
+	}
+	if !strings.Contains(err.Error(), "BILLING_DB_DATABASE") {
+		t.Fatalf("expected target env key in error, got %v", err)
+	}
+}
+
+func TestCreateDatabaseScriptsIncludeAllDatabases(t *testing.T) {
+	mysqlScript := mysqlCreateDatabasesScript([]string{"billing", "db"})
+	for _, want := range []string{
+		`mysqladmin ping`,
+		`for db in billing db`,
+		"CREATE DATABASE IF NOT EXISTS \\`$db\\`;",
+		"GRANT ALL PRIVILEGES ON \\`$db\\`.* TO '$MARIADB_USER'@'%';",
+		`FLUSH PRIVILEGES;`,
+	} {
+		if !strings.Contains(mysqlScript, want) {
+			t.Fatalf("mysql script missing %q:\n%s", want, mysqlScript)
+		}
+	}
+
+	postgresScript := postgresCreateDatabasesScript([]string{"app", "reporting"})
+	for _, want := range []string{
+		`pg_isready`,
+		`for db in app reporting`,
+		`CREATE DATABASE \"$db\";`,
+	} {
+		if !strings.Contains(postgresScript, want) {
+			t.Fatalf("postgres script missing %q:\n%s", want, postgresScript)
+		}
+	}
+}
+
+func TestRunDevBuildRunsTargetsInParallel(t *testing.T) {
+	withConventionalTarget(t, "billing")
+
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: `bash -c "sleep 0.5; mkdir -p bin; touch ./bin/app"`},
+			},
+		},
+	}
+
+	start := time.Now()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := runDevBuild(config, &out, &errOut); err != nil {
+		t.Fatalf("runDevBuild returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+	if elapsed := time.Since(start); elapsed > 900*time.Millisecond {
+		t.Fatalf("expected target builds to run in parallel, elapsed %s", elapsed)
+	}
+	if _, err := os.Stat(filepath.Join("bin", "app")); err != nil {
+		t.Fatalf("expected app binary marker: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("bin", "billing")); err != nil {
+		t.Fatalf("expected billing binary marker: %v", err)
+	}
+}
+
+func TestRunDevBuildBuffersFailureOutputByTarget(t *testing.T) {
+	withConventionalTarget(t, "billing")
+
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: `test ./bin/app = ./bin/billing && echo billing failed >&2 && exit 7 || echo app ok`},
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := runDevBuild(config, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected runDevBuild to fail")
+	}
+	if !strings.Contains(err.Error(), "billing") {
+		t.Fatalf("expected target name in error, got %v", err)
+	}
+	if !strings.Contains(out.String(), "Build failed for billing") {
+		t.Fatalf("expected target failure heading, got stdout %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "billing failed") {
+		t.Fatalf("expected buffered stderr, got %q", errOut.String())
+	}
+}
+
+func TestRunDevBuildDoesNotReplayProgressMarkersOnFailure(t *testing.T) {
+	withConventionalTarget(t, "billing")
+
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: `test ./bin/app = ./bin/billing && printf "__FORJ_BUILD_PROGRESS__ step 3/4 build:api-index\nreal failure\n" >&2 && exit 7 || true`},
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := runDevBuild(config, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected runDevBuild to fail")
+	}
+	if strings.Contains(out.String(), buildProgressMarker) || strings.Contains(errOut.String(), buildProgressMarker) {
+		t.Fatalf("expected progress markers to be stripped, stdout %q stderr %q", out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "real failure") {
+		t.Fatalf("expected non-protocol failure output to remain, got %q", errOut.String())
+	}
+}
+
+func TestWriteDevTargetBuildLineSkipsSingleDefaultTarget(t *testing.T) {
+	var out bytes.Buffer
+	writeDevTargetBuildLine(&out, []project.AppTarget{project.DefaultAppTarget()})
+	if out.Len() != 0 {
+		t.Fatalf("expected no target line for default-only dev, got %q", out.String())
+	}
+}
+
+func TestWriteDevTargetBuildLineShowsExpandedTargets(t *testing.T) {
+	var out bytes.Buffer
+	writeDevTargetBuildLine(&out, []project.AppTarget{
+		project.DefaultAppTarget(),
+		project.DefaultNamedAppTarget("billing"),
+	})
+	if !contains(out.String(), "Building app targets: app, billing") {
+		t.Fatalf("expected target build note, got %q", out.String())
+	}
+}
+
+func TestDevRuntimeWatcherTargetsReturnsRunTargets(t *testing.T) {
+	got := devRuntimeWatcherTargets([]project.DevWatch{
+		{Name: "Build App"},
+		{Name: "Run App"},
+		{Name: "Build billing"},
+		{Name: "Run billing"},
+	})
+	want := []string{"app", "billing"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("runtime watcher targets = %#v, want %#v", got, want)
+	}
+}
+
+func TestDevAppTargetNamesUsesActiveTargetsOnly(t *testing.T) {
+	got := devAppTargetNames([]project.AppTarget{project.DefaultAppTarget(), project.DefaultAppTarget()})
+	want := []string{"app"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("active target names = %#v, want %#v", got, want)
+	}
+}
+
+func TestDecorateDevAppLogTargetColumnAddsTargetAfterTimestamp(t *testing.T) {
+	line := "23:35:28.370 HTTP         Starting HTTP server"
+	got := stripANSI(decorateDevAppLogTargetColumn(line, "billing", len("billing"), true))
+	want := "23:35:28.370 billing HTTP         Starting HTTP server"
+	if got != want {
+		t.Fatalf("decorated log line = %q, want %q", got, want)
+	}
+}
+
+func TestDecorateDevAppLogTargetColumnSkipsSingleAppMode(t *testing.T) {
+	line := "23:35:28.370 HTTP         Starting HTTP server"
+	got := decorateDevAppLogTargetColumn(line, "app", len("app"), false)
+	if got != line {
+		t.Fatalf("expected single-app log line to remain unchanged, got %q", got)
+	}
+}
+
+func TestDecorateDevAppLogTargetColumnHandlesColoredTimestamp(t *testing.T) {
+	line := "\x1b[90m23:35:28.370\x1b[0m HTTP         Starting HTTP server"
+	got := stripANSI(decorateDevAppLogTargetColumn(line, "app", len("billing"), true))
+	want := "23:35:28.370 app     HTTP         Starting HTTP server"
+	if got != want {
+		t.Fatalf("decorated colored log line = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultDevAppTargetColorDiffersFromTimestampGray(t *testing.T) {
+	if devDefaultAppTargetColor == console.ColorGray {
+		t.Fatal("expected default app target color to differ from timestamp gray")
 	}
 }
 
@@ -475,6 +786,16 @@ func TestFormatBuildProgressStatus(t *testing.T) {
 	}
 	if !contains(line, "wire") {
 		t.Fatalf("expected step name in status line: %q", line)
+	}
+}
+
+func TestHandleBuildProgressLineConsumesNamedTargetBuildMarkers(t *testing.T) {
+	var out bytes.Buffer
+	if !handleBuildProgressLine(&out, "Build billing", "__FORJ_BUILD_PROGRESS__ step 2/4 wire") {
+		t.Fatal("expected named target build progress marker to be handled")
+	}
+	if strings.Contains(out.String(), buildProgressMarker) {
+		t.Fatalf("did not expect raw progress marker in output: %q", out.String())
 	}
 }
 

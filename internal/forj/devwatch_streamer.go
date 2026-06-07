@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 	"github.com/gorilla/websocket"
 )
@@ -541,6 +543,9 @@ type devwatchWriter struct {
 	stream                string
 	watcher               string
 	command               string
+	appTarget             string
+	appTargetWidth        int
+	showAppTargetColumn   bool
 	lifecycle             *devwatchLifecycleState
 	skipBlankAfterTrigger bool
 	buf                   bytes.Buffer
@@ -550,6 +555,9 @@ type devwatchWriter struct {
 
 const watcherTriggerMarker = "__FORJ_WATCHER_TRIGGER__"
 const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
+const devDefaultAppTargetColor = "\033[38;5;109m"
+
+var devLogTimestampPrefixPattern = regexp.MustCompile(`^((?:\x1b\[[0-9;?]*[ -/]*[@-~])*\d{2}:\d{2}:\d{2}\.\d{3}(?:\x1b\[[0-9;?]*[ -/]*[@-~])*)(\s+)`)
 
 type devwatchLifecycleState struct {
 	mu              sync.Mutex
@@ -659,16 +667,34 @@ var devwatchOutputMu sync.Mutex
 
 // newDevwatchWriter creates a writer that mirrors output to the devwatch websocket while still writing to the original writer.
 func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, lifecycle *devwatchLifecycleState) io.Writer {
+	return newDevwatchWriterForTarget(out, streamer, stream, watcher, command, "", 0, false, lifecycle)
+}
+
+// newDevwatchWriterForTarget creates a writer that can add dev-only target context to runtime logs.
+func newDevwatchWriterForTarget(
+	out io.Writer,
+	streamer *devwatchStreamer,
+	stream string,
+	watcher string,
+	command string,
+	appTarget string,
+	appTargetWidth int,
+	showAppTargetColumn bool,
+	lifecycle *devwatchLifecycleState,
+) io.Writer {
 	if out == nil {
 		return out
 	}
 	return &devwatchWriter{
-		out:       out,
-		streamer:  streamer,
-		stream:    stream,
-		watcher:   watcher,
-		command:   command,
-		lifecycle: lifecycle,
+		out:                 out,
+		streamer:            streamer,
+		stream:              stream,
+		watcher:             watcher,
+		command:             command,
+		appTarget:           appTarget,
+		appTargetWidth:      appTargetWidth,
+		showAppTargetColumn: showAppTargetColumn,
+		lifecycle:           lifecycle,
 	}
 }
 
@@ -704,10 +730,11 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		if handled := handleBuildProgressLine(w.out, w.watcher, rawLine); handled {
 			continue
 		}
-		if w.watcher == "Build App" && hasDevStatusLine(w.out) {
+		if isDevBuildWatcher(w.watcher) && hasDevStatusLine(w.out) {
 			clearDevStatusLine(w.out)
 		}
 		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
+		outLine = decorateDevAppLogTargetColumn(outLine, w.appTarget, w.appTargetWidth, w.showAppTargetColumn)
 		restartSeparator := ""
 		shutdownSeparator := false
 		if w.lifecycle.startupEmittedAlready() {
@@ -773,6 +800,59 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// decorateDevAppLogTargetColumn adds a dev-only target column to timestamped runtime log lines.
+func decorateDevAppLogTargetColumn(line string, appTarget string, width int, enabled bool) string {
+	appTarget = str.Of(appTarget).TrimSpace().String()
+	if !enabled || appTarget == "" || width <= 0 {
+		return line
+	}
+	match := devLogTimestampPrefixPattern.FindStringSubmatchIndex(line)
+	if len(match) < 6 {
+		return line
+	}
+	targetLabel := truncateDevAppTarget(appTarget, width)
+	column := fmt.Sprintf(" %-*s ", width, targetLabel)
+	column = colorizeDevAppTargetColumn(column, appTarget)
+	return line[:match[3]] + column + line[match[5]:]
+}
+
+// colorizeDevAppTargetColumn keeps the default target quiet and gives named targets stable accents.
+func colorizeDevAppTargetColumn(column string, appTarget string) string {
+	if appTarget == project.DefaultAppTargetName {
+		return console.Colorize(devDefaultAppTargetColor, column)
+	}
+	return console.Colorize(devAppTargetColor(appTarget), column)
+}
+
+// devAppTargetColor maps target names to a stable restrained ANSI palette.
+func devAppTargetColor(appTarget string) string {
+	palette := []string{
+		console.ColorCyan,
+		console.ColorGreen,
+		console.ColorYellow,
+		"\033[34m",
+		"\033[35m",
+		"\033[96m",
+	}
+	hash := uint32(2166136261)
+	for _, r := range strings.ToLower(appTarget) {
+		hash ^= uint32(r)
+		hash *= 16777619
+	}
+	return palette[int(hash%uint32(len(palette)))]
+}
+
+// truncateDevAppTarget keeps the target column stable when a long target name appears in dev logs.
+func truncateDevAppTarget(appTarget string, width int) string {
+	if width <= 0 || len(appTarget) <= width {
+		return appTarget
+	}
+	if width == 1 {
+		return appTarget[:1]
+	}
+	return appTarget[:width-1] + "~"
+}
+
 func decorateWatcherLine(line, watcher string, command string) string {
 	if watcher == "" {
 		return line
@@ -804,7 +884,7 @@ func isWatcherTriggerLine(line string) bool {
 }
 
 func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
-	if watcher != "Build App" {
+	if !isDevBuildWatcher(watcher) {
 		return false
 	}
 	line = strings.ReplaceAll(line, "\r", "")

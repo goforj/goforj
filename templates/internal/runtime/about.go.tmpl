@@ -527,9 +527,6 @@ func aboutComponents() []string {
 {{- if .Components.DemoApp }}
 	components = append(components, "demo")
 {{- end }}
-{{- if .Components.StressTest }}
-	components = append(components, "stress")
-{{- end }}
 	return components
 }
 
