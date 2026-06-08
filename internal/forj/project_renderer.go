@@ -1749,8 +1749,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		changed = true
 	}
 	for i := range p.config.Dev.Watches {
-		if strings.Contains(p.config.Dev.Watches[i].Watch, "wire/wire_gen\\.go$") {
-			p.config.Dev.Watches[i].Watch = strings.ReplaceAll(p.config.Dev.Watches[i].Watch, "wire/wire_gen\\.go$", "app/wire/wire_gen\\.go$")
+		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
+		if normalized != p.config.Dev.Watches[i].Watch {
+			p.config.Dev.Watches[i].Watch = normalized
 			changed = true
 		}
 	}
@@ -1768,6 +1769,15 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		return nil
 	}
 	return writeProjectConfig(".goforj.yml", p.config)
+}
+
+// normalizeDevWatchWireGenExclusion keeps the generated wire exclusion stable across repeated renders.
+func normalizeDevWatchWireGenExclusion(watch string) string {
+	normalized := strings.ReplaceAll(watch, "-xfile wire/wire_gen\\.go$", "-xfile app/wire/wire_gen\\.go$")
+	for strings.Contains(normalized, "app/app/") {
+		normalized = strings.ReplaceAll(normalized, "app/app/", "app/")
+	}
+	return normalized
 }
 
 // removeLegacyInitialBuildTask removes the old single-app bootstrap build now owned by forj dev.
@@ -2109,20 +2119,26 @@ func isGeneratedFrontendDistPlaceholderNeedingRefresh(content string, projectNam
 	oldSubtitle := "Application " + "target"
 	previousSubtitle := "Ready for your " + "frontend"
 	previousCopy := "Your app " + "is running. Add your " + "frontend to make this page yours."
+	previousPolishedCopy := "Your application is accepting requests and ready to go."
 	hasGeneratedPlaceholderCopy := strings.Contains(trimmed, oldPlaceholderCopy) ||
 		strings.Contains(trimmed, previousCopy) ||
 		strings.Contains(trimmed, "Your app is live. Create the experience that belongs here.") ||
-		strings.Contains(trimmed, "Your app is live. Build the interface that belongs here.")
+		strings.Contains(trimmed, "Your app is live. Build the interface that belongs here.") ||
+		strings.Contains(trimmed, previousPolishedCopy)
 	if !hasGeneratedPlaceholderCopy || !strings.Contains(trimmed, "GoForj") {
 		return false
 	}
 	legacyLogoName := "goforj-" + "v7.png"
 	return strings.Contains(trimmed, `<span class="mark">G</span>`) ||
 		strings.Contains(trimmed, legacyLogoName) ||
-		!strings.Contains(trimmed, "brand-subtitle") ||
+		!strings.Contains(trimmed, "brand-tagline") ||
 		strings.Contains(trimmed, oldSubtitle) ||
 		strings.Contains(trimmed, previousSubtitle) ||
 		!strings.Contains(trimmed, "Composable apps for Go") ||
+		!strings.Contains(trimmed, `class="app-meta"`) ||
+		!strings.Contains(trimmed, `class="particles"`) ||
+		!strings.Contains(trimmed, "Read the docs") ||
+		!strings.Contains(trimmed, `class="visual"`) ||
 		!strings.Contains(trimmed, `class="status"`) ||
 		!strings.Contains(trimmed, `rel="icon"`)
 }
@@ -3338,7 +3354,7 @@ const (
 
 // defaultFrontendDistPlaceholderContent keeps no-SPA fallback pages consistent across targets.
 func defaultFrontendDistPlaceholderContent() string {
-	return "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Ready to build</title><link rel=\"icon\" href=\"./goforj-logo.png\" type=\"image/png\"><link rel=\"apple-touch-icon\" href=\"./goforj-logo.png\"></head><body><img src=\"./goforj-logo.png\" alt=\"GoForj logo\">Your app is live. Build the interface that belongs here.</body></html>\n"
+	return "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Ready to build</title><link rel=\"icon\" href=\"./goforj-logo.png\" type=\"image/png\"><link rel=\"apple-touch-icon\" href=\"./goforj-logo.png\"></head><body><img src=\"./goforj-logo.png\" alt=\"GoForj logo\"></body></html>\n"
 }
 
 // writeFrontendDistPlaceholder writes a fallback SPA page and records it in render stats.

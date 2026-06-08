@@ -9,12 +9,15 @@
     <style>
         :root {
             color-scheme: dark;
-            --bg: #090b10;
-            --panel: #11141c;
-            --line: #262b36;
-            --text: #f5f7fb;
-            --muted: #9aa3b2;
-            --accent: #69e6a3;
+            --bg: #05080b;
+            --panel: #0d1118;
+            --panel-soft: #101720;
+            --line: rgba(210, 225, 255, 0.14);
+            --text: #f7f8fb;
+            --muted: #a6adba;
+            --soft: #d1d6e0;
+            --accent: #09f0a3;
+            --accent-2: #58ffd0;
         }
 
         * {
@@ -28,128 +31,626 @@
             place-items: center;
             padding: 32px;
             background:
-                radial-gradient(circle at 50% 0%, rgba(105, 230, 163, 0.12), transparent 34rem),
-                var(--bg);
+                radial-gradient(circle at 28% 0%, rgba(9, 240, 163, 0.13), transparent 31rem),
+                radial-gradient(circle at 78% 12%, rgba(88, 255, 208, 0.08), transparent 29rem),
+                linear-gradient(180deg, #071016 0%, var(--bg) 52%, #040609 100%);
             color: var(--text);
             font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
 
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
         main {
-            width: min(100%, 560px);
-            padding: 42px;
+            position: relative;
+            width: min(100%, 1240px);
+            min-height: 680px;
+            display: grid;
+            grid-template-columns: minmax(0, 0.92fr) minmax(390px, 1.08fr);
+            overflow: hidden;
             border: 1px solid var(--line);
             border-radius: 8px;
             background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 38%),
-                rgba(17, 20, 28, 0.92);
-            box-shadow: 0 28px 90px rgba(0, 0, 0, 0.36);
+                linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 34%),
+                rgba(13, 17, 24, 0.93);
+            box-shadow: 0 38px 110px rgba(0, 0, 0, 0.48);
         }
 
-        .topbar {
+        .content {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 680px;
+            padding: 58px;
+            border-right: 1px solid var(--line);
+        }
+
+        .header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            gap: 18px;
-            margin-bottom: 30px;
-            padding-bottom: 28px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            justify-content: flex-start;
         }
 
         .brand {
             display: inline-flex;
             align-items: center;
-            gap: 13px;
+            gap: 12px;
             min-width: 0;
         }
 
         .mark {
-            width: 38px;
-            height: 38px;
+            width: 34px;
+            height: 34px;
             object-fit: contain;
         }
 
-        .brand-text {
-            display: grid;
-            gap: 2px;
-        }
-
         .brand-name {
-            color: var(--text);
-            font-size: 15px;
+            display: block;
+            font-size: 17px;
             font-weight: 800;
             letter-spacing: 0;
+            line-height: 1.1;
         }
 
-        .brand-subtitle {
+        .brand-tagline {
+            display: block;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.25;
+            margin-top: 3px;
+        }
+
+        .header-actions {
+            position: absolute;
+            top: 58px;
+            right: 58px;
+            z-index: 3;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--soft);
+            font-size: 13px;
             font-weight: 650;
+            white-space: nowrap;
+        }
+
+        .header-actions a:last-child {
+            min-width: 86px;
+            height: 38px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            padding: 0 14px;
+            border: 1px solid rgba(9, 240, 163, 0.48);
+            border-radius: 8px;
+            color: var(--text);
+            background: rgba(9, 240, 163, 0.04);
+        }
+
+        .hero {
+            margin-top: auto;
+            margin-bottom: auto;
+            padding: 76px 0 48px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(56px, 7vw, 88px);
+            font-weight: 850;
+            line-height: 0.98;
             letter-spacing: 0;
+            text-transform: capitalize;
+        }
+
+        .app-heading {
+            display: block;
+        }
+
+        .app-meta {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 17px;
+            font-weight: 600;
+            line-height: 1.35;
+            text-transform: lowercase;
+        }
+
+        .app-meta-divider {
+            width: 1px;
+            height: 20px;
+            background: rgba(9, 240, 163, 0.52);
         }
 
         .status {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            height: 28px;
-            padding: 0 12px;
-            border: 1px solid rgba(105, 230, 163, 0.24);
+            gap: 9px;
+            height: 34px;
+            margin-top: 22px;
+            padding: 0 16px;
+            border: 1px solid rgba(9, 240, 163, 0.22);
             border-radius: 999px;
-            background: rgba(105, 230, 163, 0.08);
-            color: #c7f8dd;
-            font-size: 12px;
-            font-weight: 750;
-            white-space: nowrap;
+            background: rgba(9, 240, 163, 0.08);
+            color: #6dffc5;
+            font-size: 15px;
+            font-weight: 800;
         }
 
         .status-dot {
-            width: 7px;
-            height: 7px;
+            width: 9px;
+            height: 9px;
             border-radius: 999px;
             background: var(--accent);
-            box-shadow: 0 0 18px rgba(105, 230, 163, 0.72);
+            box-shadow: 0 0 20px rgba(9, 240, 163, 0.8);
         }
 
-        h1 {
-            margin: 0 0 12px;
-            font-size: clamp(28px, 5vw, 40px);
-            line-height: 1.08;
-            letter-spacing: 0;
+        .rule {
+            width: 100%;
+            height: 1px;
+            margin: 46px 0 28px;
+            background: var(--line);
         }
 
-        p {
-            margin: 0;
+        .cta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 22px;
+            padding: 18px 18px;
+            border: 1px solid rgba(210, 225, 255, 0.12);
+            border-radius: 8px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+                rgba(13, 23, 29, 0.72);
+        }
+
+        .cta-icon {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border: 1px solid rgba(9, 240, 163, 0.42);
+            border-radius: 10px;
+            color: var(--accent);
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .cta-copy {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .cta-title {
+            display: block;
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 800;
+        }
+
+        .cta-subtitle {
+            display: block;
+            margin-top: 4px;
             color: var(--muted);
-            font-size: 16px;
-            line-height: 1.6;
+            font-size: 13px;
+            line-height: 1.35;
         }
 
-        @media (max-width: 520px) {
-            main {
-                padding: 30px;
+        .cta-arrow {
+            color: var(--muted);
+            font-size: 28px;
+            line-height: 1;
+        }
+
+        .footer {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            margin-top: auto;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .footer-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--accent);
+        }
+
+        .visual {
+            position: relative;
+            min-height: 680px;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at 50% 52%, rgba(9, 240, 163, 0.32), transparent 13rem),
+                radial-gradient(circle at 52% 42%, rgba(9, 240, 163, 0.16), transparent 29rem),
+                radial-gradient(circle at 34% 32%, rgba(88, 255, 208, 0.1), transparent 15rem),
+                linear-gradient(135deg, rgba(6, 16, 22, 0.92), rgba(5, 8, 11, 0.96));
+        }
+
+        .grid {
+            position: absolute;
+            inset: 7%;
+            z-index: 0;
+            opacity: 0.58;
+            transform: perspective(720px) rotateX(58deg) rotateZ(-45deg);
+            background-image:
+                linear-gradient(rgba(9, 240, 163, 0.22) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(9, 240, 163, 0.22) 1px, transparent 1px);
+            background-size: 28px 28px;
+            mask-image: radial-gradient(circle, black 0%, transparent 68%);
+        }
+
+        .particles {
+            position: absolute;
+            inset: 12% 18%;
+            z-index: 0;
+            opacity: 0.78;
+            background:
+                radial-gradient(circle at 23% 58%, rgba(9, 240, 163, 0.9) 0 2px, transparent 3px),
+                radial-gradient(circle at 31% 66%, rgba(9, 240, 163, 0.55) 0 1px, transparent 2px),
+                radial-gradient(circle at 44% 19%, rgba(9, 240, 163, 0.75) 0 1px, transparent 2px),
+                radial-gradient(circle at 51% 12%, rgba(9, 240, 163, 0.55) 0 2px, transparent 3px),
+                radial-gradient(circle at 62% 17%, rgba(9, 240, 163, 0.8) 0 1px, transparent 2px),
+                radial-gradient(circle at 69% 57%, rgba(9, 240, 163, 0.85) 0 2px, transparent 3px),
+                radial-gradient(circle at 83% 63%, rgba(9, 240, 163, 0.6) 0 2px, transparent 3px);
+            filter: drop-shadow(0 0 12px rgba(9, 240, 163, 0.65));
+        }
+
+        .connectors {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+            opacity: 0.78;
+            overflow: visible;
+            pointer-events: none;
+        }
+
+        .connectors path {
+            fill: none;
+            stroke: rgba(9, 240, 163, 0.28);
+            stroke-width: 1.4;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-dasharray: 1 10;
+            filter: drop-shadow(0 0 10px rgba(9, 240, 163, 0.28));
+        }
+
+        .connectors circle {
+            fill: var(--accent);
+            opacity: 0.72;
+            filter: drop-shadow(0 0 12px rgba(9, 240, 163, 0.78));
+        }
+
+        .connector-mask {
+            position: absolute;
+            z-index: 2;
+            left: 50%;
+            top: 52%;
+            width: 270px;
+            height: 180px;
+            transform: translate(-50%, -46%);
+            background:
+                radial-gradient(ellipse at 50% 46%, rgba(11, 51, 43, 0.72), rgba(8, 17, 19, 0.2) 57%, transparent 72%);
+            pointer-events: none;
+        }
+
+        .node {
+            position: absolute;
+            z-index: 4;
+            width: 126px;
+            height: 92px;
+            display: grid;
+            place-items: center;
+            border: 1px solid rgba(88, 255, 208, 0.45);
+            border-radius: 8px;
+            background:
+                radial-gradient(circle at 50% 18%, rgba(88, 255, 208, 0.18), transparent 48%),
+                linear-gradient(145deg, rgba(25, 54, 52, 0.86), rgba(8, 17, 22, 0.94));
+            color: var(--accent-2);
+            box-shadow:
+                0 20px 30px rgba(0, 0, 0, 0.46),
+                0 0 34px rgba(9, 240, 163, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        .node::after {
+            content: "";
+            position: absolute;
+            inset: auto 13px -16px;
+            height: 16px;
+            border-radius: 0 0 8px 8px;
+            background: rgba(4, 9, 12, 0.94);
+            border: 1px solid rgba(9, 240, 163, 0.16);
+            border-top: 0;
+        }
+
+        .node::before {
+            content: "";
+            position: absolute;
+            inset: 10px;
+            border: 1px solid rgba(88, 255, 208, 0.08);
+            border-radius: 6px;
+            pointer-events: none;
+        }
+
+        .node svg {
+            width: 34px;
+            height: 34px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.85;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            filter: drop-shadow(0 0 14px rgba(88, 255, 208, 0.52));
+        }
+
+        .node-api {
+            left: 10%;
+            top: 24%;
+        }
+
+        .node-job {
+            right: 10%;
+            top: 25%;
+        }
+
+        .node-cloud {
+            left: 12%;
+            bottom: 18%;
+        }
+
+        .node-data {
+            right: 10%;
+            bottom: 18%;
+        }
+
+        .core {
+            position: absolute;
+            z-index: 3;
+            left: 50%;
+            top: 52%;
+            width: 360px;
+            height: 285px;
+            transform: translate(-50%, -50%);
+        }
+
+        .base {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            width: 320px;
+            height: 160px;
+            transform: translateX(-50%) skewX(-28deg);
+            border: 1px solid rgba(9, 240, 163, 0.42);
+            border-radius: 8px;
+            background:
+                radial-gradient(circle at 50% 12%, rgba(9, 240, 163, 0.16), transparent 58%),
+                linear-gradient(145deg, rgba(14, 32, 34, 0.82), rgba(6, 12, 17, 0.94));
+            box-shadow:
+                0 30px 46px rgba(0, 0, 0, 0.44),
+                0 0 54px rgba(9, 240, 163, 0.22);
+        }
+
+        .base::before {
+            content: "";
+            position: absolute;
+            inset: 16px -18px -18px 18px;
+            z-index: -1;
+            border: 1px solid rgba(9, 240, 163, 0.22);
+            border-radius: 8px;
+            background: rgba(6, 12, 17, 0.74);
+        }
+
+        .cube {
+            position: absolute;
+            left: 50%;
+            top: 6px;
+            width: 204px;
+            height: 204px;
+            display: grid;
+            place-items: center;
+            transform: translateX(-50%);
+            border: 1px solid rgba(88, 255, 208, 0.65);
+            border-radius: 10px;
+            background:
+                linear-gradient(180deg, rgba(88, 255, 208, 0.18), rgba(9, 240, 163, 0.42)),
+                rgba(12, 45, 41, 0.72);
+            box-shadow:
+                0 22px 42px rgba(0, 0, 0, 0.38),
+                0 0 70px rgba(9, 240, 163, 0.42),
+                inset 0 0 42px rgba(88, 255, 208, 0.14),
+                inset 0 0 72px rgba(255, 255, 255, 0.08);
+        }
+
+        .cube::before,
+        .cube::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 10px;
+            border: 1px solid rgba(88, 255, 208, 0.36);
+            pointer-events: none;
+        }
+
+        .cube::before {
+            transform: translate(18px, 12px);
+            opacity: 0.3;
+        }
+
+        .cube::after {
+            transform: translate(-18px, 12px);
+            opacity: 0.24;
+        }
+
+        .cube img {
+            position: relative;
+            z-index: 1;
+            width: 88px;
+            height: 88px;
+        }
+
+        @media (max-width: 960px) {
+            body {
+                padding: 22px;
             }
 
-            .topbar {
+            main {
+                grid-template-columns: 1fr;
+                min-height: 0;
+            }
+
+            .content {
+                min-height: 0;
+                border-right: 0;
+                padding: 34px;
+            }
+
+            .visual {
+                min-height: 360px;
+                border-top: 1px solid var(--line);
+            }
+        }
+
+        @media (max-width: 560px) {
+            .header {
                 align-items: flex-start;
                 flex-direction: column;
+            }
+
+            .header-actions {
+                position: static;
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .hero {
+                padding-top: 54px;
+            }
+
+            h1 {
+                font-size: clamp(48px, 16vw, 72px);
+            }
+
+            .app-heading {
+                display: block;
+            }
+
+            .visual {
+                display: none;
             }
         }
     </style>
 </head>
 <body>
     <main>
-        <div class="topbar">
-            <div class="brand">
-                <img class="mark" src="./goforj-logo.png" alt="GoForj logo">
-                <span class="brand-text">
-                    <span class="brand-name">GoForj</span>
-                    <span class="brand-subtitle">Composable apps for Go</span>
-                </span>
+        <section class="content">
+            <header class="header">
+                <div class="brand">
+                    <img class="mark" src="./goforj-logo.png" alt="GoForj logo">
+                    <span class="brand-copy">
+                        <span class="brand-name">GoForj</span>
+                        <span class="brand-tagline">Composable apps for Go</span>
+                    </span>
+                </div>
+                <nav class="header-actions" aria-label="Project links">
+                    <a href="https://goforj.dev">Docs</a>
+                    <a href="https://github.com/goforj">
+                        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                            <path fill="currentColor" d="M12 .5A11.5 11.5 0 0 0 8.36 22.9c.58.11.79-.25.79-.56v-2.1c-3.22.7-3.9-1.38-3.9-1.38-.53-1.33-1.29-1.68-1.29-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.11-.75.41-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.72 0-1.26.45-2.3 1.2-3.11-.12-.29-.52-1.47.11-3.06 0 0 .98-.31 3.2 1.19a11.1 11.1 0 0 1 5.84 0c2.22-1.5 3.2-1.19 3.2-1.19.63 1.59.23 2.77.11 3.06.75.81 1.2 1.85 1.2 3.11 0 4.45-2.7 5.43-5.28 5.72.42.36.79 1.08.79 2.18v3.07c0 .31.21.68.8.56A11.5 11.5 0 0 0 12 .5Z"></path>
+                        </svg>
+                        GitHub
+                    </a>
+                </nav>
+            </header>
+
+            <div class="hero">
+                <div class="app-heading">
+                    <h1>{{if .TargetIsDefault}}{{.ProjectName}}{{else}}{{.Target.Name}}{{end}}</h1>
+                    <div class="app-meta">
+                        <span>{{.ProjectName}}</span>
+                        <span class="app-meta-divider"></span>
+                        <span>local</span>
+                    </div>
+                </div>
+                <div class="status"><span class="status-dot"></span>Running</div>
+
+                <div class="rule"></div>
+
+                <a class="cta" href="https://goforj.dev">
+                    <span class="cta-icon">≡</span>
+                    <span class="cta-copy">
+                        <span class="cta-title">Read the docs</span>
+                        <span class="cta-subtitle">Everything you need to get started.</span>
+                    </span>
+                    <span class="cta-arrow">→</span>
+                </a>
             </div>
-            <span class="status"><span class="status-dot"></span>Live</span>
-        </div>
-        <h1>{{if .TargetIsDefault}}{{.ProjectName}}{{else}}{{.ProjectName}} / {{.Target.Name}}{{end}}</h1>
-        <p>Your app is live. Build the interface that belongs here.</p>
+
+            <footer class="footer">
+                <span>{{if .Render.GoForjVersion}}GoForj {{.Render.GoForjVersion}}{{else}}GoForj{{end}}</span>
+                <span class="footer-dot"></span>
+                <span>Local environment</span>
+            </footer>
+        </section>
+
+        <section class="visual" aria-hidden="true">
+            <div class="grid"></div>
+            <div class="particles"></div>
+            <svg class="connectors" viewBox="0 0 640 620" preserveAspectRatio="none">
+                <path d="M 166 224 C 230 276 242 318 284 342"></path>
+                <path d="M 484 224 C 420 276 398 318 356 342"></path>
+                <path d="M 166 460 C 230 418 250 404 286 394"></path>
+                <path d="M 484 460 C 418 418 392 404 354 394"></path>
+                <circle cx="145" cy="220" r="4"></circle>
+                <circle cx="498" cy="224" r="4"></circle>
+                <circle cx="155" cy="460" r="4"></circle>
+                <circle cx="493" cy="460" r="4"></circle>
+            </svg>
+            <div class="connector-mask"></div>
+            <div class="node node-api">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m8 16-4-4 4-4"></path>
+                    <path d="m16 8 4 4-4 4"></path>
+                    <path d="m14 4-4 16"></path>
+                </svg>
+            </div>
+            <div class="node node-job">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M13 2 4 14h8l-1 8 9-12h-8l1-8Z"></path>
+                </svg>
+            </div>
+            <div class="node node-cloud">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M17.5 19H8a5 5 0 1 1 1.6-9.74A6.5 6.5 0 0 1 22 12.5 4.5 4.5 0 0 1 17.5 19Z"></path>
+                </svg>
+            </div>
+            <div class="node node-data">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <ellipse cx="12" cy="5" rx="7" ry="3"></ellipse>
+                    <path d="M5 5v6c0 1.66 3.13 3 7 3s7-1.34 7-3V5"></path>
+                    <path d="M5 11v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"></path>
+                </svg>
+            </div>
+            <div class="core">
+                <div class="base"></div>
+                <div class="cube">
+                    <img src="./goforj-logo.png" alt="">
+                </div>
+            </div>
+        </section>
     </main>
 </body>
 </html>
