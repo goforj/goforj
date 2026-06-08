@@ -113,6 +113,45 @@ func TestResolveTargetPrefixPreservesNativeCommandPrecedenceOverBinary(t *testin
 	}
 }
 
+func TestConventionalAppHelpTargetsIncludesSourceAndBinaryTargets(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceTarget(t, "billing")
+	writeSourceTarget(t, "build")
+	writeSourceTarget(t, "wire")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "reporting"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build"}
+
+	targets := conventionalAppHelpTargets(true)
+	want := []string{"app", "billing", "reporting"}
+	if len(targets) != len(want) {
+		t.Fatalf("help targets = %#v, want %#v", targets, want)
+	}
+	for i := range want {
+		if targets[i] != want[i] {
+			t.Fatalf("help targets = %#v, want %#v", targets, want)
+		}
+	}
+}
+
+func TestConventionalAppHelpTargetsSkipsNonGeneratedProjects(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeSourceTarget(t, "billing")
+
+	if targets := conventionalAppHelpTargets(false); len(targets) != 0 {
+		t.Fatalf("expected no generated app help targets, got %#v", targets)
+	}
+}
+
 func TestWithTargetEnvOverridesExistingTargetIdentity(t *testing.T) {
 	env := withTargetEnv([]string{
 		"FORJ_COMMAND_PREFIX=forj billing",
@@ -236,6 +275,18 @@ func chdirTemp(t *testing.T) func() {
 		if err := os.Chdir(previous); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func writeSourceTarget(t *testing.T, target string) {
+	t.Helper()
+
+	writeMain := filepath.Join("cmd", target, "main.go")
+	if err := os.MkdirAll(filepath.Dir(writeMain), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(writeMain, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
