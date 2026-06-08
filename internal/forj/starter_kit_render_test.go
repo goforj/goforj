@@ -41,6 +41,7 @@ func TestScaffoldVueStarterKitOverwritesFrontend(t *testing.T) {
 		filepath.Join(frontendDir, "components.json"),
 		filepath.Join(frontendDir, "src", "App.vue"),
 		filepath.Join(frontendDir, "dist", "index.html"),
+		filepath.Join(frontendDir, "dist", "goforj-logo.png"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
@@ -83,7 +84,9 @@ func TestFrontendDistPlaceholderUsesNamedTargets(t *testing.T) {
 
 	for _, path := range []string{
 		filepath.Join("cmd", "app", "frontend", "dist", "index.html"),
+		filepath.Join("cmd", "app", "frontend", "dist", "goforj-logo.png"),
 		filepath.Join("cmd", "customer-portal", "frontend", "dist", "index.html"),
+		filepath.Join("cmd", "customer-portal", "frontend", "dist", "goforj-logo.png"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)

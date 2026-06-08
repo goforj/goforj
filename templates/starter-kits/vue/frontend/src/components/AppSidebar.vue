@@ -7,7 +7,7 @@ import NavDocuments from './NavDocuments.vue'
 import NavMain from './NavMain.vue'
 import NavSecondary from './NavSecondary.vue'
 import NavUser from './NavUser.vue'
-import goforjLogo from '../assets/goforj-v7.png'
+import goforjLogo from '../assets/goforj-logo.png'
 import { appNavMain } from '@/lib/navigation'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from './ui/sidebar'
 

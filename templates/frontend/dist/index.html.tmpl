@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{if .TargetIsDefault}}{{.ProjectName}}{{else}}{{.ProjectName}} / {{.Target.Name}}{{end}}</title>
+    <link rel="icon" href="./goforj-logo.png" type="image/png">
+    <link rel="apple-touch-icon" href="./goforj-logo.png">
     <style>
         :root {
             color-scheme: dark;
@@ -13,7 +15,6 @@
             --text: #f5f7fb;
             --muted: #9aa3b2;
             --accent: #69e6a3;
-            --accent-soft: rgba(105, 230, 163, 0.16);
         }
 
         * {
@@ -34,34 +35,79 @@
         }
 
         main {
-            width: min(100%, 520px);
-            padding: 32px;
+            width: min(100%, 560px);
+            padding: 42px;
             border: 1px solid var(--line);
-            border-radius: 12px;
-            background: rgba(17, 20, 28, 0.92);
-            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+            border-radius: 8px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 38%),
+                rgba(17, 20, 28, 0.92);
+            box-shadow: 0 28px 90px rgba(0, 0, 0, 0.36);
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 30px;
+            padding-bottom: 28px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .brand {
             display: inline-flex;
             align-items: center;
-            gap: 10px;
-            margin-bottom: 28px;
-            color: var(--muted);
-            font-size: 14px;
-            font-weight: 700;
-            letter-spacing: 0;
+            gap: 13px;
+            min-width: 0;
         }
 
         .mark {
+            width: 38px;
+            height: 38px;
+            object-fit: contain;
+        }
+
+        .brand-text {
             display: grid;
-            place-items: center;
-            width: 30px;
-            height: 30px;
-            border-radius: 8px;
-            background: var(--accent-soft);
-            color: var(--accent);
+            gap: 2px;
+        }
+
+        .brand-name {
+            color: var(--text);
+            font-size: 15px;
             font-weight: 800;
+            letter-spacing: 0;
+        }
+
+        .brand-subtitle {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 650;
+            letter-spacing: 0;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            height: 28px;
+            padding: 0 12px;
+            border: 1px solid rgba(105, 230, 163, 0.24);
+            border-radius: 999px;
+            background: rgba(105, 230, 163, 0.08);
+            color: #c7f8dd;
+            font-size: 12px;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: var(--accent);
+            box-shadow: 0 0 18px rgba(105, 230, 163, 0.72);
         }
 
         h1 {
@@ -77,16 +123,33 @@
             font-size: 16px;
             line-height: 1.6;
         }
+
+        @media (max-width: 520px) {
+            main {
+                padding: 30px;
+            }
+
+            .topbar {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
     </style>
 </head>
 <body>
     <main>
-        <div class="brand">
-            <span class="mark">G</span>
-            <span>GoForj</span>
+        <div class="topbar">
+            <div class="brand">
+                <img class="mark" src="./goforj-logo.png" alt="GoForj logo">
+                <span class="brand-text">
+                    <span class="brand-name">GoForj</span>
+                    <span class="brand-subtitle">Composable apps for Go</span>
+                </span>
+            </div>
+            <span class="status"><span class="status-dot"></span>Live</span>
         </div>
         <h1>{{if .TargetIsDefault}}{{.ProjectName}}{{else}}{{.ProjectName}} / {{.Target.Name}}{{end}}</h1>
-        <p>This app target is running, but no frontend build has been deployed yet.</p>
+        <p>Your app is live. Build the interface that belongs here.</p>
     </main>
 </body>
 </html>

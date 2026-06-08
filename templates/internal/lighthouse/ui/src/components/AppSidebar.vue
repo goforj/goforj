@@ -11,7 +11,7 @@ import NavDocuments from "./NavDocuments.vue";
 import NavMain from "./NavMain.vue";
 import NavSecondary from "./NavSecondary.vue";
 import NavUser from "./NavUser.vue";
-import goforjLighthouseLogo from "../assets/goforj-v7.png";
+import goforjLighthouseLogo from "../assets/goforj-logo.png";
 import { appNavSections } from "../lib/navigation";
 import {
   Sidebar,
