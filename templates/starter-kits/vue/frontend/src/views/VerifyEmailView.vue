@@ -46,7 +46,7 @@ import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { LoaderCircle } from 'lucide-vue-next'
 import { verifyEmail } from '@/lib/auth'
-import logoMark from '@/assets/goforj-v7.png'
+import logoMark from '@/assets/goforj-logo.png'
 import Button from '@/components/ui/button/Button.vue'
 
 const route = useRoute()

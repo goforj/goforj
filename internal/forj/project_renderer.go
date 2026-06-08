@@ -657,9 +657,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if input.renderAll {
 					return nil
 				}
-				return p.writeTemplateMappingsOnce([]templateMapping{
+				if err := p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplateTo("frontend/dist/index.html.tmpl", appTargetFrontendDistIndex(project.DefaultAppTarget())),
-				})
+				}); err != nil {
+					return err
+				}
+				return p.ensureFrontendPlaceholderLogo(project.DefaultAppTarget())
 			},
 		},
 		{
@@ -2044,6 +2047,9 @@ func (p *ProjectRenderer) renderAppTarget(target project.AppTarget) error {
 	if err := p.writeTemplateMappingsOnceForTarget(target, p.appTargetAppOwnedMappings(target)); err != nil {
 		return err
 	}
+	if err := p.ensureFrontendPlaceholderLogo(target); err != nil {
+		return err
+	}
 	if target.Name != project.DefaultAppTargetName {
 		return p.scaffoldTargetStarterKit(target)
 	}
@@ -2064,10 +2070,61 @@ func (p *ProjectRenderer) migrateFrontendDistPlaceholder(target project.AppTarge
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(content)) != strings.TrimSpace(oldFrontendDistPlaceholder(p.config.ProjectName)) {
+	if !isGeneratedFrontendDistPlaceholderNeedingRefresh(string(content), p.config.ProjectName) {
 		return nil
 	}
-	return p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target))
+	if err := p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target)); err != nil {
+		return err
+	}
+	return p.ensureFrontendPlaceholderLogo(target)
+}
+
+// ensureFrontendPlaceholderLogo copies the logo only when the generated fallback page references it.
+func (p *ProjectRenderer) ensureFrontendPlaceholderLogo(target project.AppTarget) error {
+	if p.config == nil || !targetRenderComponents(p.config, target).WebUI {
+		return nil
+	}
+	target = normalizeRenderAppTarget(target)
+	index := appTargetFrontendDistIndex(target)
+	content, err := os.ReadFile(index)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(content), frontendPlaceholderLogoName) {
+		return nil
+	}
+	return p.copyFrontendPlaceholderLogo(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName))
+}
+
+// isGeneratedFrontendDistPlaceholderNeedingRefresh recognizes generated fallback pages that predate the current placeholder.
+func isGeneratedFrontendDistPlaceholderNeedingRefresh(content string, projectName string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == strings.TrimSpace(oldFrontendDistPlaceholder(projectName)) {
+		return true
+	}
+	oldPlaceholderCopy := "This app " + "target is running, but no frontend " + "build has been deployed yet."
+	oldSubtitle := "Application " + "target"
+	previousSubtitle := "Ready for your " + "frontend"
+	previousCopy := "Your app " + "is running. Add your " + "frontend to make this page yours."
+	hasGeneratedPlaceholderCopy := strings.Contains(trimmed, oldPlaceholderCopy) ||
+		strings.Contains(trimmed, previousCopy) ||
+		strings.Contains(trimmed, "Your app is live. Create the experience that belongs here.") ||
+		strings.Contains(trimmed, "Your app is live. Build the interface that belongs here.")
+	if !hasGeneratedPlaceholderCopy || !strings.Contains(trimmed, "GoForj") {
+		return false
+	}
+	legacyLogoName := "goforj-" + "v7.png"
+	return strings.Contains(trimmed, `<span class="mark">G</span>`) ||
+		strings.Contains(trimmed, legacyLogoName) ||
+		!strings.Contains(trimmed, "brand-subtitle") ||
+		strings.Contains(trimmed, oldSubtitle) ||
+		strings.Contains(trimmed, previousSubtitle) ||
+		!strings.Contains(trimmed, "Composable apps for Go") ||
+		!strings.Contains(trimmed, `class="status"`) ||
+		!strings.Contains(trimmed, `rel="icon"`)
 }
 
 // oldFrontendDistPlaceholder matches the previous generated placeholder so migrations do not overwrite custom HTML.
@@ -3223,7 +3280,10 @@ func (p *ProjectRenderer) scaffoldVueStarterKitForTarget(target project.AppTarge
 	}
 	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
 		if p.config != nil {
-			return p.renderTemplateFile(appTargetFrontendDistIndex(target), "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target))
+			if err := p.renderTemplateFile(appTargetFrontendDistIndex(target), "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target)); err != nil {
+				return err
+			}
+			return p.ensureFrontendPlaceholderLogo(target)
 		}
 		return p.writeFrontendDistPlaceholder(appTargetFrontendDistIndex(target), defaultFrontendDistPlaceholderContent())
 	}
@@ -3271,9 +3331,14 @@ func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
 	return nil
 }
 
+const (
+	frontendPlaceholderLogoName     = "goforj-logo.png"
+	frontendPlaceholderLogoTemplate = "starter-kits/vue/frontend/public/goforj-logo.png"
+)
+
 // defaultFrontendDistPlaceholderContent keeps no-SPA fallback pages consistent across targets.
 func defaultFrontendDistPlaceholderContent() string {
-	return "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in the target frontend directory to publish SPA assets.</body></html>\n"
+	return "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Ready to build</title><link rel=\"icon\" href=\"./goforj-logo.png\" type=\"image/png\"><link rel=\"apple-touch-icon\" href=\"./goforj-logo.png\"></head><body><img src=\"./goforj-logo.png\" alt=\"GoForj logo\">Your app is live. Build the interface that belongs here.</body></html>\n"
 }
 
 // writeFrontendDistPlaceholder writes a fallback SPA page and records it in render stats.
@@ -3286,6 +3351,33 @@ func (p *ProjectRenderer) writeFrontendDistPlaceholder(index string, content str
 	}
 	if p.stats != nil {
 		p.stats.recordCreated(index)
+	}
+	if strings.Contains(content, frontendPlaceholderLogoName) {
+		return p.copyFrontendPlaceholderLogo(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName))
+	}
+	return nil
+}
+
+// copyFrontendPlaceholderLogo keeps the fallback page self-contained without overwriting identical assets.
+func (p *ProjectRenderer) copyFrontendPlaceholderLogo(dest string) error {
+	content, err := templatesFS.ReadFile(frontendPlaceholderLogoTemplate)
+	if err != nil {
+		return err
+	}
+	if existing, err := os.ReadFile(dest); err == nil && bytes.Equal(existing, content) {
+		if p.stats != nil {
+			p.stats.recordSkipped(dest)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, content, 0644); err != nil {
+		return err
+	}
+	if p.stats != nil {
+		p.stats.recordCreated(dest)
 	}
 	return nil
 }

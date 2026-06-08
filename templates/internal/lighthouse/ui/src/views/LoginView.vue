@@ -77,7 +77,7 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/input/Input.vue";
-import logoMark from "../assets/goforj-v7.png";
+import logoMark from "../assets/goforj-logo.png";
 
 const router = useRouter();
 const store = useLighthouseStore();

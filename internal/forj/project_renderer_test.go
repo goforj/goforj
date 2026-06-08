@@ -1,6 +1,8 @@
 package forj
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -364,10 +366,15 @@ func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "billing", "frontend", "dist", "index.html"),
 		"<title>Test / billing</title>",
-		"<span>GoForj</span>",
+		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
+		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
+		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
+		`<span class="brand-subtitle">Composable apps for Go</span>`,
+		`<span class="status"><span class="status-dot"></span>Live</span>`,
 		"<h1>Test / billing</h1>",
-		"This app target is running, but no frontend build has been deployed yet.",
+		"Your app is live. Build the interface that belongs here.",
 	)
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
 
 func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
@@ -402,10 +409,99 @@ func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
 
 	assertProjectRendererFileContains(t, indexPath,
 		"<title>Test / billing</title>",
-		"<span>GoForj</span>",
+		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
+		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
+		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
+		`<span class="brand-subtitle">Composable apps for Go</span>`,
+		`<span class="status"><span class="status-dot"></span>Live</span>`,
 		"<h1>Test / billing</h1>",
-		"This app target is running, but no frontend build has been deployed yet.",
+		"Your app is live. Build the interface that belongs here.",
 	)
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
+}
+
+func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Test",
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebUI: true},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("billing")
+	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
+	writeProjectRendererTestFile(t, indexPath, styledFrontendPlaceholderWithoutLogo("Test / billing"))
+
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	assertProjectRendererFileContains(t, indexPath,
+		"<title>Test / billing</title>",
+		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
+		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
+		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
+		`<span class="brand-subtitle">Composable apps for Go</span>`,
+		`<span class="status"><span class="status-dot"></span>Live</span>`,
+		"<h1>Test / billing</h1>",
+		"Your app is live. Build the interface that belongs here.",
+	)
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
+}
+
+func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Test",
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{WebUI: true},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	target := project.DefaultNamedAppTarget("billing")
+	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
+	legacyLogoName := "goforj-" + "v7.png"
+	writeProjectRendererTestFile(t, indexPath, styledFrontendPlaceholderWithLogo("Test / billing", legacyLogoName))
+
+	if err := renderer.renderAppTarget(target); err != nil {
+		t.Fatalf("renderAppTarget returned error: %v", err)
+	}
+
+	assertProjectRendererFileContains(t, indexPath,
+		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
+		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
+		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
+		`<span class="brand-subtitle">Composable apps for Go</span>`,
+		`<span class="status"><span class="status-dot"></span>Live</span>`,
+	)
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
 
 func TestRenderAppTargetPreservesCustomFrontendPlaceholder(t *testing.T) {
@@ -445,6 +541,9 @@ func TestRenderAppTargetPreservesCustomFrontendPlaceholder(t *testing.T) {
 	}
 	if string(content) != custom {
 		t.Fatalf("expected custom frontend placeholder to be preserved, got:\n%s", content)
+	}
+	if _, err := os.Stat(filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png")); !os.IsNotExist(err) {
+		t.Fatalf("expected custom frontend placeholder not to receive logo asset, stat err = %v", err)
 	}
 }
 
@@ -536,6 +635,69 @@ func assertProjectRendererFileContains(t *testing.T, path string, snippets ...st
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected %s to contain %q:\n%s", path, snippet, source)
 		}
+	}
+}
+
+func styledFrontendPlaceholderWithoutLogo(title string) string {
+	return fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>%s</title>
+</head>
+<body>
+    <main>
+        <div class="brand">
+            <span class="mark">G</span>
+            <span>GoForj</span>
+        </div>
+        <h1>%s</h1>
+        <p>%s</p>
+    </main>
+</body>
+</html>
+`, title, title, oldStyledFrontendPlaceholderCopy())
+}
+
+func styledFrontendPlaceholderWithLogo(title string, logo string) string {
+	return fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>%s</title>
+</head>
+<body>
+    <main>
+        <div class="brand">
+            <img class="mark" src="./%s" alt="GoForj logo">
+            <span>GoForj</span>
+        </div>
+        <h1>%s</h1>
+        <p>%s</p>
+    </main>
+</body>
+</html>
+`, title, logo, title, oldStyledFrontendPlaceholderCopy())
+}
+
+func oldStyledFrontendPlaceholderCopy() string {
+	return "This app " + "target is running, but no frontend " + "build has been deployed yet."
+}
+
+func assertProjectRendererLogoCopied(t *testing.T, path string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read copied logo %s: %v", path, err)
+	}
+	want, err := templatesFS.ReadFile(frontendPlaceholderLogoTemplate)
+	if err != nil {
+		t.Fatalf("read template logo: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("copied logo %s did not match template asset", path)
 	}
 }
 
