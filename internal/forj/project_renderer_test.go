@@ -294,6 +294,22 @@ func TestRemoveLegacyInitialBuildTask(t *testing.T) {
 	}
 }
 
+func TestNormalizeDevWatchWireGenExclusionIsIdempotent(t *testing.T) {
+	tests := map[string]string{
+		"-file .go -xfile wire/wire_gen\\.go$ -postpone":                         "-file .go -xfile app/wire/wire_gen\\.go$ -postpone",
+		"-file .go -xfile app/wire/wire_gen\\.go$ -postpone":                     "-file .go -xfile app/wire/wire_gen\\.go$ -postpone",
+		"-file .go -xfile app/app/app/wire/wire_gen\\.go$ -postpone":             "-file .go -xfile app/wire/wire_gen\\.go$ -postpone",
+		"-file .go -xfile app/customer-portal/wire/wire_gen\\.go$ -postpone":     "-file .go -xfile app/customer-portal/wire/wire_gen\\.go$ -postpone",
+		"-file .go -xfile app/app/customer-portal/wire/wire_gen\\.go$ -postpone": "-file .go -xfile app/customer-portal/wire/wire_gen\\.go$ -postpone",
+	}
+
+	for input, want := range tests {
+		if got := normalizeDevWatchWireGenExclusion(input); got != want {
+			t.Fatalf("normalizeDevWatchWireGenExclusion(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestRenderAppTargetUsesPersistedTargetComponents(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -369,10 +385,14 @@ func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
 		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
 		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-subtitle">Composable apps for Go</span>`,
-		`<span class="status"><span class="status-dot"></span>Live</span>`,
-		"<h1>Test / billing</h1>",
-		"Your app is live. Build the interface that belongs here.",
+		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<div class="status"><span class="status-dot"></span>Running</div>`,
+		"<h1>billing</h1>",
+		`<div class="app-meta">`,
+		`<span class="app-meta-divider"></span>`,
+		"Read the docs",
+		`<div class="particles"></div>`,
+		`<section class="visual" aria-hidden="true">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
@@ -412,10 +432,14 @@ func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
 		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
 		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
 		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-subtitle">Composable apps for Go</span>`,
-		`<span class="status"><span class="status-dot"></span>Live</span>`,
-		"<h1>Test / billing</h1>",
-		"Your app is live. Build the interface that belongs here.",
+		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<div class="status"><span class="status-dot"></span>Running</div>`,
+		"<h1>billing</h1>",
+		`<div class="app-meta">`,
+		`<span class="app-meta-divider"></span>`,
+		"Read the docs",
+		`<div class="particles"></div>`,
+		`<section class="visual" aria-hidden="true">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
@@ -455,10 +479,14 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.
 		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
 		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
 		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-subtitle">Composable apps for Go</span>`,
-		`<span class="status"><span class="status-dot"></span>Live</span>`,
-		"<h1>Test / billing</h1>",
-		"Your app is live. Build the interface that belongs here.",
+		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<div class="status"><span class="status-dot"></span>Running</div>`,
+		"<h1>billing</h1>",
+		`<div class="app-meta">`,
+		`<span class="app-meta-divider"></span>`,
+		"Read the docs",
+		`<div class="particles"></div>`,
+		`<section class="visual" aria-hidden="true">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
@@ -498,8 +526,13 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *t
 		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
 		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
 		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-subtitle">Composable apps for Go</span>`,
-		`<span class="status"><span class="status-dot"></span>Live</span>`,
+		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<div class="status"><span class="status-dot"></span>Running</div>`,
+		`<div class="app-meta">`,
+		`<span class="app-meta-divider"></span>`,
+		"Read the docs",
+		`<div class="particles"></div>`,
+		`<section class="visual" aria-hidden="true">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
