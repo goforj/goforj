@@ -134,6 +134,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(base, "preboot.go.tmpl"): {
 			`func DispatchPrebootCommand(args []string, root interface{}) (bool, error)`,
+			`func rootHelpRequested(args []string) bool`,
+			`func printRootPrebootHelp(root interface{}) error`,
 			`func findPrebootCommand(root interface{}, commandName string) interface{}`,
 			`func findPrebootCommandValue(value reflect.Value, commandName string) interface{}`,
 			`func prebootCommandMatches(command interface{}, commandName string) bool`,
@@ -142,6 +144,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func applyStandalonePrebootSignature(node *kong.Node, command standaloneCommand)`,
 		},
 		filepath.Join(base, "preboot_test.go.tmpl"): {
+			`func TestDispatchPrebootCommandHandlesRootHelpBeforeBoot(`,
 			`func TestCommandHelpRequestedAllowsPositionalArgs(`,
 			`args: []string{"Wow", "--help"}, want: true`,
 			`args: []string{"Wow", "--", "--help"}, want: false`,

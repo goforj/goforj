@@ -78,8 +78,7 @@ func main() {
 		} else {
 			printRootHelp(parser)
 			if inGeneratedApp {
-				fmt.Println()
-				if err := runAppCommandThroughSource(app.RootCmd(), appRootHelpArgs()); err != nil {
+				if err := printGeneratedAppHelp(app.RootCmd(), conventionalAppHelpTargets(inGeneratedApp)); err != nil {
 					if code, ok := build.ChildExitCode(err); ok {
 						os.Exit(code)
 					}
@@ -133,6 +132,75 @@ func resolveTargetPrefix(args []string, inGeneratedApp bool) (string, []string, 
 	return "", args, false
 }
 
+// conventionalAppHelpTargets discovers the app targets that should be visible from `forj --help`.
+func conventionalAppHelpTargets(inGeneratedApp bool) []string {
+	if !inGeneratedApp {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	targets := []string{}
+	appendConventionalAppHelpTarget(&targets, seen, project.DefaultAppTargetName)
+
+	appendConventionalAppHelpTargetsFromDir(&targets, seen, "cmd")
+	appendConventionalBinaryHelpTargets(&targets, seen, filepath.Join(".", "bin"))
+
+	if len(targets) <= 1 {
+		return targets
+	}
+	named := append([]string(nil), targets[1:]...)
+	sort.Strings(named)
+	return append([]string{project.DefaultAppTargetName}, named...)
+}
+
+// appendConventionalAppHelpTargetsFromDir treats cmd/<target>/main.go as a source-owned app target.
+func appendConventionalAppHelpTargetsFromDir(targets *[]string, seen map[string]struct{}, root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		target := entry.Name()
+		if !regularFileExists(filepath.Join(root, target, "main.go")) {
+			continue
+		}
+		appendConventionalAppHelpTarget(targets, seen, target)
+	}
+}
+
+// appendConventionalBinaryHelpTargets keeps binary-only targets visible after a build.
+func appendConventionalBinaryHelpTargets(targets *[]string, seen map[string]struct{}, root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		appendConventionalAppHelpTarget(targets, seen, entry.Name())
+	}
+}
+
+// appendConventionalAppHelpTarget applies the same safety and native-command precedence rules as target dispatch.
+func appendConventionalAppHelpTarget(targets *[]string, seen map[string]struct{}, target string) {
+	target = strings.TrimSpace(target)
+	if target == "" || !project.IsSafeAppTargetName(target) || project.IsReservedAppTargetName(target) {
+		return
+	}
+	if target != project.DefaultAppTargetName && isNativeCommandName(target) {
+		return
+	}
+	if _, ok := seen[target]; ok {
+		return
+	}
+	seen[target] = struct{}{}
+	*targets = append(*targets, target)
+}
+
 // isConventionalSourceTarget reports whether cmd/<target>/main.go defines an app target.
 func isConventionalSourceTarget(target string) bool {
 	target = strings.TrimSpace(target)
@@ -155,16 +223,10 @@ func isNativeCommandName(name string) bool {
 
 // runTargetBinary delegates `forj <target> ...` to ./bin/<target> when that target exists.
 func runTargetBinary(target string, args []string) bool {
-	binPath := filepath.Join(".", "bin", strings.TrimSpace(target))
-	if !regularFileExists(binPath) {
-		return false
-	}
-	cmd := exec.Command(binPath, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = targetCommandEnv(target)
-	if err := cmd.Run(); err != nil {
+	if err := runTargetBinaryCommand(target, args); err != nil {
+		if errors.Is(err, errTargetBinaryNotFound) {
+			return false
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.ExitCode())
@@ -172,6 +234,26 @@ func runTargetBinary(target string, args []string) bool {
 		console.Fatalf("%v", err)
 	}
 	return true
+}
+
+// errTargetBinaryNotFound lets target-prefix dispatch fall back to source-mode handling.
+var errTargetBinaryNotFound = errors.New("target binary not found")
+
+// runTargetBinaryCommand delegates to ./bin/<target> while leaving exit handling to the caller.
+func runTargetBinaryCommand(target string, args []string) error {
+	binPath := filepath.Join(".", "bin", strings.TrimSpace(target))
+	if !regularFileExists(binPath) {
+		return errTargetBinaryNotFound
+	}
+	command := exec.Command(binPath, args...)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	command.Env = targetCommandEnv(target)
+	if err := command.Run(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // applySourceTargetEnv makes native source-mode commands operate against the selected target.
@@ -235,6 +317,30 @@ func appRootHelpArgs() []string {
 	return []string{"--help"}
 }
 
+// printGeneratedAppHelp prints each generated app target help screen under a small target header.
+func printGeneratedAppHelp(root *cmd.RootCmd, targets []string) error {
+	for _, target := range targets {
+		fmt.Println()
+		fmt.Printf("App target: %s\n", target)
+		if err := runAppHelpForTarget(root, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runAppHelpForTarget prefers source-mode help so root help is not coupled to stale target binaries.
+func runAppHelpForTarget(root *cmd.RootCmd, target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" || target == project.DefaultAppTargetName {
+		return runAppCommandThroughSource(root, appRootHelpArgs())
+	}
+	if isConventionalSourceTarget(target) {
+		return runAppCommandThroughSourceWithEnv(root, appRootHelpArgs(), withTargetEnv(delegatedAppEnv(), target))
+	}
+	return runTargetBinaryCommand(target, appRootHelpArgs())
+}
+
 // printRootHelp prints native GoForj help.
 func printRootHelp(parser *kong.Kong) {
 	ctx, _ := kong.Trace(parser, []string{})
@@ -252,10 +358,15 @@ func shouldDelegateToAppCommand(args []string, parseErr error, inGeneratedApp bo
 
 // runAppCommandThroughSource runs a generated App command through the same source path as forj run.
 func runAppCommandThroughSource(root *cmd.RootCmd, args []string) error {
+	return runAppCommandThroughSourceWithEnv(root, args, delegatedAppEnv())
+}
+
+// runAppCommandThroughSourceWithEnv runs source-mode app commands with an explicit environment overlay.
+func runAppCommandThroughSourceWithEnv(root *cmd.RootCmd, args []string, env []string) error {
 	run := &root.RootCmd.RunCmd
 	run.Root = "."
 	run.Args = append([]string(nil), args...)
-	run.Env = delegatedAppEnv()
+	run.Env = env
 	run.PreserveTTY = true
 	return run.Run()
 }

@@ -17,6 +17,9 @@ type standaloneCommand interface {
 
 // DispatchPrebootCommand runs commands marked to bypass full app bootstrap.
 func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
+	if rootHelpRequested(args) {
+		return true, printRootPrebootHelp(root)
+	}
 	if len(args) == 0 {
 		return false, nil
 	}
@@ -50,6 +53,30 @@ func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
 	}
 	parseCtx.BindTo(runtime.CLIContext(), (*context.Context)(nil))
 	return true, parseCtx.Run()
+}
+
+// rootHelpRequested keeps root app help available before dependency wiring starts.
+func rootHelpRequested(args []string) bool {
+	return len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help")
+}
+
+// printRootPrebootHelp prints the generated app command surface without constructing injected services.
+func printRootPrebootHelp(root interface{}) error {
+	name := strings.ToLower(strings.TrimSpace(os.Getenv("APP_NAME")))
+	if name == "" {
+		name = "app"
+	}
+	parser, err := kong.New(
+		root,
+		kong.Name(name),
+		kong.Help(KongHelpFormatter),
+	)
+	if err != nil {
+		return err
+	}
+	ctx, _ := kong.Trace(parser, []string{})
+	ctx.PrintUsage(false)
+	return nil
 }
 
 // applyStandalonePrebootSignature copies Signature metadata onto a single-command parser root.
