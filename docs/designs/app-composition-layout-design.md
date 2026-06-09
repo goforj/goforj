@@ -452,6 +452,10 @@ Most unqualified commands should operate on the default target only:
 
 `forj dev` is the deliberate exception. In a multi-target project, unqualified `forj dev` should orchestrate every discovered target at once: watch all target entrypoints, build all target binaries, and run all configured target runtimes together. This keeps local development closer to the deployed shape when an App has fanned out into multiple executables.
 
+Shutdown should behave like orchestration, not a serial script. When `forj dev` exits, restarts, or rerenders, all running watcher subprocesses should receive the shutdown signal in parallel and then be awaited as a group. A slow worker or scheduler in one target should not delay another target from receiving its interrupt. The shutdown budget should be bounded by the slowest subprocess, not by the sum of every subprocess timeout.
+
+Generated local infrastructure should also avoid holding up dev shutdown. Long-running Docker Compose services can keep normal graceful shutdown behavior, but one-shot helper containers should not inherit a long default stop grace period. For example, `grafana-seed` is an idempotent dashboard preference helper and should use a short Compose `stop_grace_period` so Ctrl+C does not appear stuck on that helper container.
+
 Target-prefixed dev remains scoped:
 
 ```bash
@@ -1096,6 +1100,8 @@ Track implementation as concrete work items:
   - [x] Ensure Wire generation runs in the selected conventional target's `wire_dir` when it exists.
   - [x] Ensure full render runs Wire generation for every discovered target Wire directory.
   - [x] Ensure dev build/watch uses the selected target entrypoint and binary when a named target owns HTTP.
+  - [x] Shut down all `forj dev` watcher subprocesses in parallel on Ctrl+C, restart, and render-triggered restarts.
+  - [x] Keep one-shot Compose helper containers from delaying dev shutdown, starting with a short `grafana-seed` stop grace period.
   - [x] Generate framework-owned compiled target metadata in `internal/runtime/targets.go`.
   - [x] Keep `internal/runtime/targets.go` regenerated on render and document that app owners should not edit it.
   - [x] Add deterministic target indexes for runtime defaults: `app = 0`, named targets sorted alphabetically from `1`.
@@ -1212,11 +1218,11 @@ Track implementation as concrete work items:
   - [x] Verify framework-owned injector files are overwrite-rendered.
   - [x] Verify `repositorySet` does not contain service providers.
   - [x] Render and build a multi-target App with targets such as `customer-portal`.
-  - [ ] Verify target-specific jobs and schedules in rendered smoke coverage.
+  - [x] Verify target-specific jobs and schedules in rendered smoke coverage.
   - [x] Verify target-specific route lists and binaries in rendered smoke coverage.
   - [x] Verify convention source-mode `forj <target> ...` routes commands to the active target in rendered smoke coverage.
-  - [ ] Verify named target generators update only the selected target.
-  - [ ] Verify default target generators continue to work when named targets are configured.
+  - [x] Verify named target generators update only the selected target.
+  - [x] Verify default target generators continue to work when named targets are configured.
   - [x] Verify target name validation rejects reserved names and command collisions.
   - [ ] Verify all-target build/render validation when that workflow is added.
 

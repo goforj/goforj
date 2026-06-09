@@ -662,7 +662,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}); err != nil {
 					return err
 				}
-				return p.ensureFrontendPlaceholderLogo(project.DefaultAppTarget())
+				return p.ensureFrontendPlaceholderAssets(project.DefaultAppTarget())
 			},
 		},
 		{
@@ -2057,7 +2057,7 @@ func (p *ProjectRenderer) renderAppTarget(target project.AppTarget) error {
 	if err := p.writeTemplateMappingsOnceForTarget(target, p.appTargetAppOwnedMappings(target)); err != nil {
 		return err
 	}
-	if err := p.ensureFrontendPlaceholderLogo(target); err != nil {
+	if err := p.ensureFrontendPlaceholderAssets(target); err != nil {
 		return err
 	}
 	if target.Name != project.DefaultAppTargetName {
@@ -2086,11 +2086,11 @@ func (p *ProjectRenderer) migrateFrontendDistPlaceholder(target project.AppTarge
 	if err := p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target)); err != nil {
 		return err
 	}
-	return p.ensureFrontendPlaceholderLogo(target)
+	return p.ensureFrontendPlaceholderAssets(target)
 }
 
-// ensureFrontendPlaceholderLogo copies the logo only when the generated fallback page references it.
-func (p *ProjectRenderer) ensureFrontendPlaceholderLogo(target project.AppTarget) error {
+// ensureFrontendPlaceholderAssets copies static assets only when the generated fallback page references them.
+func (p *ProjectRenderer) ensureFrontendPlaceholderAssets(target project.AppTarget) error {
 	if p.config == nil || !targetRenderComponents(p.config, target).WebUI {
 		return nil
 	}
@@ -2103,10 +2103,13 @@ func (p *ProjectRenderer) ensureFrontendPlaceholderLogo(target project.AppTarget
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(content), frontendPlaceholderLogoName) {
-		return nil
+	contentString := string(content)
+	if strings.Contains(contentString, frontendPlaceholderLogoName) {
+		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName), frontendPlaceholderLogoTemplate); err != nil {
+			return err
+		}
 	}
-	return p.copyFrontendPlaceholderLogo(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName))
+	return nil
 }
 
 // isGeneratedFrontendDistPlaceholderNeedingRefresh recognizes generated fallback pages that predate the current placeholder.
@@ -2136,7 +2139,8 @@ func isGeneratedFrontendDistPlaceholderNeedingRefresh(content string, projectNam
 		strings.Contains(trimmed, previousSubtitle) ||
 		!strings.Contains(trimmed, "Composable apps for Go") ||
 		!strings.Contains(trimmed, `class="app-meta"`) ||
-		!strings.Contains(trimmed, `class="particles"`) ||
+		!strings.Contains(trimmed, `class="core"`) ||
+		!strings.Contains(trimmed, `class="cube"`) ||
 		!strings.Contains(trimmed, "Read the docs") ||
 		!strings.Contains(trimmed, `class="visual"`) ||
 		!strings.Contains(trimmed, `class="status"`) ||
@@ -3299,7 +3303,7 @@ func (p *ProjectRenderer) scaffoldVueStarterKitForTarget(target project.AppTarge
 			if err := p.renderTemplateFile(appTargetFrontendDistIndex(target), "frontend/dist/index.html.tmpl", templateDataForTarget(p.config, target)); err != nil {
 				return err
 			}
-			return p.ensureFrontendPlaceholderLogo(target)
+			return p.ensureFrontendPlaceholderAssets(target)
 		}
 		return p.writeFrontendDistPlaceholder(appTargetFrontendDistIndex(target), defaultFrontendDistPlaceholderContent())
 	}
@@ -3369,14 +3373,16 @@ func (p *ProjectRenderer) writeFrontendDistPlaceholder(index string, content str
 		p.stats.recordCreated(index)
 	}
 	if strings.Contains(content, frontendPlaceholderLogoName) {
-		return p.copyFrontendPlaceholderLogo(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName))
+		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName), frontendPlaceholderLogoTemplate); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// copyFrontendPlaceholderLogo keeps the fallback page self-contained without overwriting identical assets.
-func (p *ProjectRenderer) copyFrontendPlaceholderLogo(dest string) error {
-	content, err := templatesFS.ReadFile(frontendPlaceholderLogoTemplate)
+// copyFrontendPlaceholderAsset keeps fallback pages self-contained without overwriting identical assets.
+func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath string) error {
+	content, err := templatesFS.ReadFile(templatePath)
 	if err != nil {
 		return err
 	}

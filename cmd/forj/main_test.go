@@ -72,6 +72,30 @@ func TestResolveTargetPrefixUsesConventionalSourceTarget(t *testing.T) {
 	}
 }
 
+func TestTargetPrefixedNativeCommandStaysInSourceMode(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceTarget(t, "billing")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "billing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	target, remaining, ok := resolveTargetPrefix([]string{"billing", "build", "-o", "./bin/billing"}, true)
+	if !ok || target != "billing" {
+		t.Fatalf("target prefix = (%q, %#v, %t), want billing target", target, remaining, ok)
+	}
+	if !shouldRunTargetNativeCommand(remaining) {
+		t.Fatalf("expected target-prefixed native command to stay source-scoped, got %#v", remaining)
+	}
+}
+
 func TestResolveTargetPrefixPreservesNativeCommandPrecedence(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()

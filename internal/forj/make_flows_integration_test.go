@@ -432,6 +432,124 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 }
 
+func TestMakeFlowsTargetIsolationIntegration(t *testing.T) {
+	projectDir := t.TempDir()
+	renderAppAtDir(t, projectDir)
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+	_ = testkit.EnsureIntegrationToolsDir(t)
+
+	runForj := func(tb testing.TB, args ...string) string {
+		tb.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationProcessEnv(t, nil)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			tb.Fatalf("forj %s failed: %v\n%s", strings.Join(args, " "), err, out.String())
+		}
+		return out.String()
+	}
+
+	buildTarget := func(tb testing.TB, target string) {
+		tb.Helper()
+		args := []string{"build", "-o", "./bin/" + target}
+		if target != project.DefaultAppTargetName {
+			args = append([]string{target}, args...)
+		}
+		runForj(tb, args...)
+		if _, err := os.Stat(filepath.Join(projectDir, "bin", target)); err != nil {
+			tb.Fatalf("expected built %s binary: %v", target, err)
+		}
+	}
+
+	runForj(t, "make:app", "billing", "--components", "web-api,jobs,scheduler")
+
+	runForj(t, "billing", "make:controller", "Billing:Invoices")
+	runForj(t, "billing", "make:job", "Billing:SendInvoices", "--queue", "invoices")
+	runForj(t, "billing", "make:schedule", "Billing:DailyClose", "--every", "1h")
+
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "routes.go"), []string{
+		`billingInvoices "example.com/testapp/internal/billing/invoices"`,
+		"billingInvoicesController *billingInvoices.Controller",
+		"billingInvoicesController.Routes(),",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_http_controllers_app.go"), []string{
+		`billingInvoices "example.com/testapp/internal/billing/invoices"`,
+		"billingInvoices.NewController",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/billing"`,
+		"billing.NewSendInvoicesJob",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_schedules_app.go"), []string{
+		`"example.com/testapp/internal/billing"`,
+		"billing.NewDailyCloseSchedule",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "schedules.go"), []string{
+		"dailyCloseSchedule *billing.DailyCloseSchedule",
+		"dailyCloseSchedule: dailyCloseSchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailyCloseSchedule); err != nil {",
+	})
+
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "routes.go"), []string{
+		"billingInvoicesController",
+		"billingInvoices.Controller",
+		"billingInvoicesController.Routes(),",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
+		"billing.NewSendInvoicesJob",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
+		"billing.NewDailyCloseSchedule",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "schedules.go"), []string{
+		"dailyCloseSchedule *billing.DailyCloseSchedule",
+	})
+
+	runForj(t, "make:controller", "Reports:Overview")
+	runForj(t, "make:job", "Reports:BuildSummary", "--queue", "reports")
+	runForj(t, "make:schedule", "Reports:Nightly", "--every", "24h")
+
+	assertFileContains(t, filepath.Join(projectDir, "app", "routes.go"), []string{
+		`reportsOverview "example.com/testapp/internal/reports/overview"`,
+		"reportsOverviewController *reportsOverview.Controller",
+		"reportsOverviewController.Routes(),",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewBuildSummaryJob",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewNightlySchedule",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "schedules.go"), []string{
+		"nightlySchedule *reports.NightlySchedule",
+		"nightlySchedule: nightlySchedule,",
+	})
+
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "routes.go"), []string{
+		"reportsOverviewController",
+		"reportsOverview.Controller",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_jobs_app.go"), []string{
+		"reports.NewBuildSummaryJob",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_schedules_app.go"), []string{
+		"reports.NewNightlySchedule",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "schedules.go"), []string{
+		"nightlySchedule *reports.NightlySchedule",
+	})
+
+	buildTarget(t, project.DefaultAppTargetName)
+	buildTarget(t, "billing")
+}
+
 func TestMakeAppBuildsNamedTargetAfterFullRender(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
