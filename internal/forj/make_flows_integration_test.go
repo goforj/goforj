@@ -599,10 +599,13 @@ func TestMakeAppBuildsNamedTargetAfterFullRender(t *testing.T) {
 
 	runForj(t, "make:app", "billing")
 	rootHelp := runForj(t, "--help")
-	for _, want := range []string{"GoForj CLI", "App target: app", "App target: billing"} {
+	for _, want := range []string{"GoForj CLI", "testapp · app", "testapp · billing"} {
 		if !strings.Contains(rootHelp, want) {
 			t.Fatalf("expected root help to include %q, got:\n%s", want, rootHelp)
 		}
+	}
+	if strings.Contains(rootHelp, "App target:") {
+		t.Fatalf("expected root help to omit app target labels, got:\n%s", rootHelp)
 	}
 	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
 

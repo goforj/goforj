@@ -30,7 +30,7 @@ func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
 
 	parser, err := kong.New(
 		command,
-		kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
+		kong.Name(AppHelpName()),
 		kong.Help(KongHelpFormatter),
 	)
 	if err != nil {
@@ -60,15 +60,27 @@ func rootHelpRequested(args []string) bool {
 	return len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help")
 }
 
-// printRootPrebootHelp prints the generated app command surface without constructing injected services.
-func printRootPrebootHelp(root interface{}) error {
+// AppHelpName qualifies generated app help only when the project has multiple app binaries.
+func AppHelpName() string {
 	name := strings.ToLower(strings.TrimSpace(os.Getenv("APP_NAME")))
 	if name == "" {
 		name = "app"
 	}
+	target := runtime.CurrentAppTarget().Name
+	if target == "" {
+		target = "app"
+	}
+	if target != "app" || os.Getenv("FORJ_MULTI_APP_HELP") == "1" || len(runtime.AppTargets) > 1 {
+		return name + " · " + target
+	}
+	return name
+}
+
+// printRootPrebootHelp prints the generated app command surface without constructing injected services.
+func printRootPrebootHelp(root interface{}) error {
 	parser, err := kong.New(
 		root,
-		kong.Name(name),
+		kong.Name(AppHelpName()),
 		kong.Help(KongHelpFormatter),
 	)
 	if err != nil {

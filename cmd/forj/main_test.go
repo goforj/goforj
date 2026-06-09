@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,6 +144,7 @@ func TestConventionalAppHelpTargetsIncludesSourceAndBinaryTargets(t *testing.T) 
 	restore := chdirTemp(t)
 	defer restore()
 	writeGeneratedAppMarker(t)
+	writeSourceTarget(t, "admin")
 	writeSourceTarget(t, "billing")
 	writeSourceTarget(t, "build")
 	writeSourceTarget(t, "wire")
@@ -155,7 +159,7 @@ func TestConventionalAppHelpTargetsIncludesSourceAndBinaryTargets(t *testing.T) 
 	cliNativeCommandNames = []string{"build"}
 
 	targets := conventionalAppHelpTargets(true)
-	want := []string{"app", "billing", "reporting"}
+	want := []string{"admin", "app", "billing", "reporting"}
 	if len(targets) != len(want) {
 		t.Fatalf("help targets = %#v, want %#v", targets, want)
 	}
@@ -173,6 +177,136 @@ func TestConventionalAppHelpTargetsSkipsNonGeneratedProjects(t *testing.T) {
 
 	if targets := conventionalAppHelpTargets(false); len(targets) != 0 {
 		t.Fatalf("expected no generated app help targets, got %#v", targets)
+	}
+}
+
+func TestRunAppHelpForTargetShellsThroughRootBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	scriptPath, err := filepath.Abs("fake-forj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$1|$2|$FORJ_APP_TARGET|$APP_TARGET\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousArg0 := os.Args[0]
+	defer func() { os.Args[0] = previousArg0 }()
+	os.Args[0] = scriptPath
+
+	output, err := runAppHelpForTarget("billing", true)
+	if err != nil {
+		t.Fatalf("run app help: %v\n%s", err, output)
+	}
+	if output != "billing|--help|billing|billing\n" {
+		t.Fatalf("unexpected help command output: %q", output)
+	}
+}
+
+func TestRunAppHelpForTargetMarksMultiAppHelp(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	scriptPath, err := filepath.Abs("fake-forj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$FORJ_MULTI_APP_HELP\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousArg0 := os.Args[0]
+	defer func() { os.Args[0] = previousArg0 }()
+	os.Args[0] = scriptPath
+
+	output, err := runAppHelpForTarget("app", true)
+	if err != nil {
+		t.Fatalf("run app help: %v\n%s", err, output)
+	}
+	if output != "1\n" {
+		t.Fatalf("unexpected multi-app marker: %q", output)
+	}
+}
+
+func TestCompactGeneratedAppHelpDeduplicatesSharedCommands(t *testing.T) {
+	results := []appHelpResult{
+		{target: "app", output: strings.Join([]string{
+			"test · app",
+			"",
+			"app",
+			"  about    Show environment",
+			"  health   Query readiness",
+			"monitor",
+			"  seed     Seed monitors",
+			"",
+		}, "\n")},
+		{target: "billing", output: strings.Join([]string{
+			"test · billing",
+			"",
+			"app",
+			"  about    Show environment",
+			"  health   Query readiness",
+			"queue",
+			"  invoice  Process invoices",
+			"",
+		}, "\n")},
+		{target: "reporting", output: strings.Join([]string{
+			"test · reporting",
+			"",
+			"app",
+			"  about    Show environment",
+			"  health   Query readiness",
+			"",
+		}, "\n")},
+	}
+
+	output, ok := compactGeneratedAppHelp(results)
+	if !ok {
+		t.Fatal("expected compact help output")
+	}
+	for _, want := range []string{
+		"test · available in all apps",
+		"  about   Show environment",
+		"  health  Query readiness",
+		"test · app",
+		"  seed  Seed monitors",
+		"test · billing",
+		"  invoice  Process invoices",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected compact help to include %q, got:\n%s", want, output)
+		}
+	}
+	for _, unexpected := range []string{"app only", "billing only", "test · reporting"} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("expected compact help to omit %q, got:\n%s", unexpected, output)
+		}
+	}
+}
+
+func TestPrintTargetUsageHelpOnlyForMultiApp(t *testing.T) {
+	single := captureStdout(t, func() {
+		printTargetUsageHelp([]string{"app"})
+	})
+	if single != "" {
+		t.Fatalf("expected no target usage for single app, got:\n%s", single)
+	}
+
+	multi := captureStdout(t, func() {
+		printTargetUsageHelp([]string{"app", "billing"})
+	})
+	for _, want := range []string{
+		"app usage",
+		"forj <app> <command>",
+		"Run a command for a specific app",
+		"forj <app> build",
+		"Build a specific app binary",
+		"forj dev",
+		"Build and run all apps in development",
+	} {
+		if !strings.Contains(multi, want) {
+			t.Fatalf("expected target usage help to include %q, got:\n%s", want, multi)
+		}
 	}
 }
 
@@ -194,6 +328,31 @@ func TestWithTargetEnvOverridesExistingTargetIdentity(t *testing.T) {
 			t.Fatalf("expected env to include %q, got %#v", want, env)
 		}
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	previous := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	defer func() {
+		os.Stdout = previous
+	}()
+
+	fn()
+
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, read); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
 }
 
 func TestDelegatedAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
