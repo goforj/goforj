@@ -140,10 +140,16 @@ func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 		if _, err := c.runGoBuild(atomicArgs, goBuildOptions{allowRecovery: true}); err != nil {
 			return "", err
 		}
-		if err := os.Chmod(output.temp, 0o755); err != nil {
+		if err := os.Chmod(output.cache, 0o755); err != nil {
 			return "", fmt.Errorf("prepare built binary permissions: %w", err)
 		}
-		if err := os.Rename(output.temp, output.final); err != nil {
+		if err := copyFile(output.cache, output.publish); err != nil {
+			return "", fmt.Errorf("stage built binary: %w", err)
+		}
+		if err := os.Chmod(output.publish, 0o755); err != nil {
+			return "", fmt.Errorf("prepare published binary permissions: %w", err)
+		}
+		if err := os.Rename(output.publish, output.final); err != nil {
 			return "", fmt.Errorf("publish built binary: %w", err)
 		}
 		return c.lastBuildStatus, nil
@@ -155,8 +161,9 @@ func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 }
 
 type atomicBuildOutput struct {
-	final string
-	temp  string
+	final   string
+	cache   string
+	publish string
 }
 
 // atomicGoBuildArgs builds watched binaries away from their final path so dev never executes a partial file.
@@ -173,21 +180,40 @@ func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, atomicBuildOutput{}, nil, true, err
 	}
-	file, err := os.CreateTemp(dir, "."+filepath.Base(final)+".tmp-*")
+	cacheDir := filepath.Join(dir, ".forj-build-cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	cache := filepath.Join(cacheDir, filepath.Base(final))
+	publish := filepath.Join(dir, "."+filepath.Base(final)+".publish")
+	if err := os.Remove(publish); err != nil && !os.IsNotExist(err) {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	atomicArgs := replaceBuildOutputArg(args, outIndex, cache)
+	cleanup := func() { _ = os.Remove(publish) }
+	return atomicArgs, atomicBuildOutput{final: final, cache: cache, publish: publish}, cleanup, true, nil
+}
+
+// copyFile stages the cached build output onto a separate inode before the atomic publish rename.
+func copyFile(from string, to string) error {
+	src, err := os.Open(from)
 	if err != nil {
-		return nil, atomicBuildOutput{}, nil, true, err
+		return err
 	}
-	temp := file.Name()
-	if err := file.Close(); err != nil {
-		_ = os.Remove(temp)
-		return nil, atomicBuildOutput{}, nil, true, err
+	defer src.Close()
+
+	dst, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
 	}
-	if err := os.Remove(temp); err != nil {
-		return nil, atomicBuildOutput{}, nil, true, err
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		return err
 	}
-	atomicArgs := replaceBuildOutputArg(args, outIndex, temp)
-	cleanup := func() { _ = os.Remove(temp) }
-	return atomicArgs, atomicBuildOutput{final: final, temp: temp}, cleanup, true, nil
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // atomicBuildOutputPath avoids rewriting cases where go build expects -o to be a directory.

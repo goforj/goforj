@@ -117,6 +117,13 @@ It should not own process naming policy or app log prefix semantics beyond watch
 
 The child app/process topology belongs lower in `run` and runtime launch logic.
 
+For shutdown, `forj dev` owns watcher process orchestration:
+
+- Ctrl+C, restart, and render-triggered restarts should signal all watcher subprocesses in parallel.
+- Shutdown waits for the group after signaling, so one slow target does not delay other targets from receiving an interrupt.
+- Keep output collapsed into concise watcher lifecycle lines instead of per-process shutdown spam.
+- Do not make Docker Compose helper-container delays look like app runtime shutdown. If a one-shot helper is safe to interrupt, prefer a short service-level Compose grace period over shortening shutdown for the whole stack.
+
 ## Frequent Pitfalls
 
 - do not use `~` in `module_replaces`

@@ -58,12 +58,17 @@ func main() {
 	inGeneratedApp := isGeneratedAppDir()
 	targetContext := ""
 	if target, remaining, ok := resolveTargetPrefix(args, inGeneratedApp); ok {
-		if runTargetBinary(target, remaining) {
+		if shouldRunTargetNativeCommand(remaining) {
+			applySourceTargetEnv(target)
+			targetContext = target
+			args = remaining
+		} else if runTargetBinary(target, remaining) {
 			return
+		} else {
+			applySourceTargetEnv(target)
+			targetContext = target
+			args = remaining
 		}
-		applySourceTargetEnv(target)
-		targetContext = target
-		args = remaining
 	}
 	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
 
@@ -130,6 +135,14 @@ func resolveTargetPrefix(args []string, inGeneratedApp bool) (string, []string, 
 		return target, args[1:], true
 	}
 	return "", args, false
+}
+
+// shouldRunTargetNativeCommand keeps framework-owned commands target-scoped instead of delegating them to app binaries.
+func shouldRunTargetNativeCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return isNativeCommandName(args[0])
 }
 
 // conventionalAppHelpTargets discovers the app targets that should be visible from `forj --help`.

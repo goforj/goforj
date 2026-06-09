@@ -242,6 +242,8 @@ Current reality:
 - events now cover both publish and delivery views; keep validating that in-process and cross-process drivers behave consistently from an operator perspective
 - Grafana dashboards are seeded as starred dashboards so the first-party views are visible from the left navigation after the stack comes up
 
+Grafana seed is a one-shot local helper, not a durable service. It is safe to interrupt because seeding only stars dashboards and sets Grafana preferences. The generated `grafana-seed` Compose service should keep a short `stop_grace_period` so `forj dev` shutdown does not feel blocked by Docker waiting on a helper container.
+
 Database specifically now includes:
 
 - general operation counters and duration histograms

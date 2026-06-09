@@ -66,6 +66,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"grafana-data-init:",
 		"grafana:",
 		"grafana-seed:",
+		"stop_grace_period: 1s",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
 		`condition: service_completed_successfully`,
 		`mkdir -p /var/lib/grafana/plugins`,

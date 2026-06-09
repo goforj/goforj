@@ -2,6 +2,8 @@ package forj
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -53,7 +55,7 @@ func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
 	if got[0].Name != "Build App" || got[0].Exec != "forj build -o ./bin/app" {
 		t.Fatalf("expected default build watcher first, got %#v", got[0])
 	}
-	if got[1].Name != "Build customer-portal" || got[1].Exec != "forj build -o ./bin/customer-portal" {
+	if got[1].Name != "Build customer-portal" || got[1].Exec != "forj customer-portal build -o ./bin/customer-portal" {
 		t.Fatalf("expected named build watcher, got %#v", got[1])
 	}
 	if !strings.Contains(got[1].Watch, "app/customer-portal/wire/wire_gen\\.go$") {
@@ -121,7 +123,7 @@ func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
 			},
 		},
 	})
-	want := []string{"FORJ_BUILD=1 forj build --race -o ./bin/app ./cmd/app", "FORJ_BUILD=1 forj build --race -o ./bin/customer-portal ./cmd/customer-portal"}
+	want := []string{"FORJ_BUILD=1 forj build --race -o ./bin/app", "FORJ_BUILD=1 forj customer-portal build --race -o ./bin/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
 	}
@@ -137,7 +139,7 @@ func TestDevInitialBuildCommandsBuildEveryTarget(t *testing.T) {
 	}
 
 	got := devInitialBuildCommands(&project.Config{})
-	want := []string{"forj build -o ./bin/app ./cmd/app", "forj build -o ./bin/customer-portal ./cmd/customer-portal"}
+	want := []string{"forj build -o ./bin/app", "forj customer-portal build -o ./bin/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial dev build commands: got %#v want %#v", got, want)
 	}
@@ -146,7 +148,7 @@ func TestDevInitialBuildCommandsBuildEveryTarget(t *testing.T) {
 func TestDevBuildCommandForTargetRewritesExistingPackageArgument(t *testing.T) {
 	target := project.DefaultNamedAppTarget("billing")
 	got := devBuildCommandForTarget("forj build --tags dev -o ./bin/app ./cmd/app", target)
-	want := "forj build --tags dev -o ./bin/billing ./cmd/billing"
+	want := "forj billing build --tags dev -o ./bin/billing"
 	if got != want {
 		t.Fatalf("target build command = %q, want %q", got, want)
 	}
@@ -242,6 +244,69 @@ func TestDevDatabasesForTargetsRejectsUnsafeDatabaseNames(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "BILLING_DB_DATABASE") {
 		t.Fatalf("expected target env key in error, got %v", err)
+	}
+}
+
+func TestShouldRunDevAutoMigrateUsesNamedTargetDatabase(t *testing.T) {
+	withConventionalTarget(t, "billing")
+
+	if !shouldRunDevAutoMigrate(&project.Config{
+		Dev: project.DevConfig{AutoMigrate: true},
+		AppTargets: map[string]project.AppTargetConfig{
+			"billing": {
+				Components: project.Components{DatabaseMySQL: true},
+			},
+		},
+	}) {
+		t.Fatal("expected named target database component to require auto-migrate")
+	}
+}
+
+func TestDevAppTargetWatcherDetectsNewConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	triggered := make(chan struct{}, 1)
+	stop := startDevAppTargetWatcher(ctx, func() {
+		select {
+		case triggered <- struct{}{}:
+		default:
+		}
+	}, 10*time.Millisecond)
+	defer stop()
+
+	targetMain := filepath.Join("cmd", "billing", "main.go")
+	if err := os.MkdirAll(filepath.Dir(targetMain), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	if err := os.WriteFile(targetMain, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write target main: %v", err)
+	}
+
+	select {
+	case <-triggered:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected target watcher to trigger after new target appears")
+	}
+}
+
+func TestDevAppTargetsChangedComparesTargetNames(t *testing.T) {
+	prev := devAppTargetFingerprint{names: []string{"app"}}
+	current := devAppTargetFingerprint{names: []string{"app", "billing"}}
+	if !devAppTargetsChanged(prev, current) {
+		t.Fatal("expected added target to be detected")
+	}
+	if devAppTargetsChanged(current, devAppTargetFingerprint{names: []string{"app", "billing"}}) {
+		t.Fatal("expected matching target snapshots to be unchanged")
 	}
 }
 
@@ -614,6 +679,21 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	}
 	if strings.Count(got, "stopping") != 1 {
 		t.Fatalf("expected one stopping summary line, got %q", got)
+	}
+}
+
+func TestStopWatchersShutsDownProcessesInParallel(t *testing.T) {
+	script := "trap 'sleep 0.25; exit 0' INT TERM; while true; do sleep 0.05; done"
+	watchers := []runningWatcher{
+		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
+		{name: "Billing", proc: execx.Command("sh", "-c", script).Start()},
+	}
+
+	start := time.Now()
+	stopWatchers(watchers, 2*time.Second, io.Discard, nil, true)
+	elapsed := time.Since(start)
+	if elapsed > 450*time.Millisecond {
+		t.Fatalf("expected parallel shutdown, took %s", elapsed)
 	}
 }
 

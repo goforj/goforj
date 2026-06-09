@@ -45,6 +45,25 @@ func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
 	}
 }
 
+func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "docker-compose.yml.tmpl"))
+	if err != nil {
+		t.Fatalf("read docker compose template: %v", err)
+	}
+	template := string(data)
+	seedIndex := strings.Index(template, "  grafana-seed:")
+	if seedIndex < 0 {
+		t.Fatal("expected docker compose template to include grafana-seed")
+	}
+	seedBlock := template[seedIndex:]
+	if endIndex := strings.Index(seedBlock, "\n{{- end }}"); endIndex >= 0 {
+		seedBlock = seedBlock[:endIndex]
+	}
+	if !strings.Contains(seedBlock, "stop_grace_period: 1s") {
+		t.Fatalf("expected grafana-seed to stop quickly during dev shutdown:\n%s", seedBlock)
+	}
+}
+
 func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -391,8 +410,10 @@ func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 		`<div class="app-meta">`,
 		`<span class="app-meta-divider"></span>`,
 		"Read the docs",
-		`<div class="particles"></div>`,
 		`<section class="visual" aria-hidden="true">`,
+		`<div class="core">`,
+		`<div class="cube">`,
+		`<img src="./goforj-logo.png" alt="">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
@@ -438,8 +459,10 @@ func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
 		`<div class="app-meta">`,
 		`<span class="app-meta-divider"></span>`,
 		"Read the docs",
-		`<div class="particles"></div>`,
 		`<section class="visual" aria-hidden="true">`,
+		`<div class="core">`,
+		`<div class="cube">`,
+		`<img src="./goforj-logo.png" alt="">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
@@ -485,8 +508,10 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.
 		`<div class="app-meta">`,
 		`<span class="app-meta-divider"></span>`,
 		"Read the docs",
-		`<div class="particles"></div>`,
 		`<section class="visual" aria-hidden="true">`,
+		`<div class="core">`,
+		`<div class="cube">`,
+		`<img src="./goforj-logo.png" alt="">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
@@ -531,8 +556,10 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *t
 		`<div class="app-meta">`,
 		`<span class="app-meta-divider"></span>`,
 		"Read the docs",
-		`<div class="particles"></div>`,
 		`<section class="visual" aria-hidden="true">`,
+		`<div class="core">`,
+		`<div class="cube">`,
+		`<img src="./goforj-logo.png" alt="">`,
 	)
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }

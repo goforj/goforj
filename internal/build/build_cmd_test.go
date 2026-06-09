@@ -108,12 +108,11 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	if info.Mode()&0o111 == 0 {
 		t.Fatalf("expected built binary to be executable, mode %s", info.Mode())
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "bin", ".app.tmp-*"))
-	if err != nil {
-		t.Fatalf("glob temp binaries: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "bin", ".app.publish")); !os.IsNotExist(err) {
+		t.Fatalf("expected publish temporary build output to be cleaned up, got %v", err)
 	}
-	if len(matches) != 0 {
-		t.Fatalf("expected temporary build outputs to be cleaned up, got %#v", matches)
+	if _, err := os.Stat(filepath.Join(root, "bin", ".forj-build-cache", "app")); err != nil {
+		t.Fatalf("expected persistent build cache output: %v", err)
 	}
 }
 
