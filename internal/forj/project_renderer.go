@@ -98,6 +98,7 @@ type templateRenderConfig struct {
 	TargetAppImportPath  string
 	TargetWireImportPath string
 	TargetIsDefault      bool
+	HasNamedTargets      bool
 	RuntimeTargets       []runtimeTargetMetadata
 }
 
@@ -3462,6 +3463,7 @@ func templateDataForTarget(config *project.Config, target project.AppTarget) tem
 	appImportPath := filepath.ToSlash(target.AppDir)
 	wireImportPath := filepath.ToSlash(target.WireDir)
 	components := targetRenderComponents(config, target)
+	runtimeTargets := runtimeTargetMetadataForRender()
 	return templateRenderConfig{
 		Config:               config,
 		Components:           components,
@@ -3471,7 +3473,8 @@ func templateDataForTarget(config *project.Config, target project.AppTarget) tem
 		TargetAppImportPath:  appImportPath,
 		TargetWireImportPath: wireImportPath,
 		TargetIsDefault:      target.Name == project.DefaultAppTargetName,
-		RuntimeTargets:       runtimeTargetMetadataForRender(),
+		HasNamedTargets:      target.Name != project.DefaultAppTargetName || len(runtimeTargets) > 1,
+		RuntimeTargets:       runtimeTargets,
 	}
 }
 

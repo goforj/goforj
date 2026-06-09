@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/build"
@@ -83,7 +86,9 @@ func main() {
 		} else {
 			printRootHelp(parser)
 			if inGeneratedApp {
-				if err := printGeneratedAppHelp(app.RootCmd(), conventionalAppHelpTargets(inGeneratedApp)); err != nil {
+				targets := conventionalAppHelpTargets(inGeneratedApp)
+				printTargetUsageHelp(targets)
+				if err := printGeneratedAppHelp(targets); err != nil {
 					if code, ok := build.ChildExitCode(err); ok {
 						os.Exit(code)
 					}
@@ -158,12 +163,8 @@ func conventionalAppHelpTargets(inGeneratedApp bool) []string {
 	appendConventionalAppHelpTargetsFromDir(&targets, seen, "cmd")
 	appendConventionalBinaryHelpTargets(&targets, seen, filepath.Join(".", "bin"))
 
-	if len(targets) <= 1 {
-		return targets
-	}
-	named := append([]string(nil), targets[1:]...)
-	sort.Strings(named)
-	return append([]string{project.DefaultAppTargetName}, named...)
+	sort.Strings(targets)
+	return targets
 }
 
 // appendConventionalAppHelpTargetsFromDir treats cmd/<target>/main.go as a source-owned app target.
@@ -330,28 +331,293 @@ func appRootHelpArgs() []string {
 	return []string{"--help"}
 }
 
-// printGeneratedAppHelp prints each generated app target help screen under a small target header.
-func printGeneratedAppHelp(root *cmd.RootCmd, targets []string) error {
-	for _, target := range targets {
-		fmt.Println()
-		fmt.Printf("App target: %s\n", target)
-		if err := runAppHelpForTarget(root, target); err != nil {
-			return err
+// printTargetUsageHelp explains app prefixing once when a project has multiple app targets.
+func printTargetUsageHelp(targets []string) {
+	if len(targets) <= 1 {
+		return
+	}
+	fmt.Println()
+	fmt.Println(console.Colorize(console.ColorBoldWhite, "app usage"))
+	renderTargetUsageRow("forj <app> <command>", "Run a command for a specific app")
+	renderTargetUsageRow("forj <app> build", "Build a specific app binary")
+	renderTargetUsageRow("forj dev", "Build and run all apps in development")
+}
+
+// renderTargetUsageRow prints one compact root help example row.
+func renderTargetUsageRow(command string, help string) {
+	const width = 23
+	spacing := strings.Repeat(" ", width-len(command)+2)
+	fmt.Printf("  %s%s%s\n",
+		console.Colorize(console.ColorBoldGreen, command),
+		spacing,
+		console.Colorize(console.ColorGray, help),
+	)
+}
+
+// printGeneratedAppHelp prints generated app help screens in target order after collecting them concurrently.
+func printGeneratedAppHelp(targets []string) error {
+	results := collectGeneratedAppHelp(targets)
+	for _, result := range results {
+		if result.err != nil {
+			return fmt.Errorf("%s help: %w", result.target, result.err)
 		}
+	}
+	if output, ok := compactGeneratedAppHelp(results); ok {
+		fmt.Print(output)
+		return nil
+	}
+	for _, result := range results {
+		fmt.Println()
+		fmt.Print(result.output)
 	}
 	return nil
 }
 
-// runAppHelpForTarget prefers source-mode help so root help is not coupled to stale target binaries.
-func runAppHelpForTarget(root *cmd.RootCmd, target string) error {
+type appHelpResult struct {
+	target string
+	output string
+	err    error
+}
+
+type appHelpCommand struct {
+	section string
+	name    string
+	help    string
+}
+
+type parsedAppHelp struct {
+	target   string
+	title    string
+	baseName string
+	commands []appHelpCommand
+}
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// compactGeneratedAppHelp folds identical generated app command surfaces into one shared help block.
+func compactGeneratedAppHelp(results []appHelpResult) (string, bool) {
+	if len(results) <= 1 {
+		return "", false
+	}
+	parsed := make([]parsedAppHelp, 0, len(results))
+	for _, result := range results {
+		help, ok := parseGeneratedAppHelp(result.target, result.output)
+		if !ok {
+			return "", false
+		}
+		parsed = append(parsed, help)
+	}
+
+	shared := sharedAppHelpCommands(parsed)
+	if len(shared) == 0 {
+		return "", false
+	}
+
+	baseName := parsed[0].baseName
+	var out strings.Builder
+	renderAppHelpBlock(&out, baseName+" · available in all apps", shared)
+	for _, help := range parsed {
+		delta := appHelpDelta(help.commands, shared)
+		if len(delta) == 0 {
+			continue
+		}
+		renderAppHelpBlock(&out, baseName+" · "+help.target, delta)
+	}
+	return out.String(), true
+}
+
+// parseGeneratedAppHelp extracts command rows from the generated app root help format.
+func parseGeneratedAppHelp(target string, output string) (parsedAppHelp, bool) {
+	lines := strings.Split(stripANSI(output), "\n")
+	help := parsedAppHelp{target: strings.TrimSpace(target)}
+	currentSection := ""
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if help.title == "" {
+			help.title = strings.TrimSpace(line)
+			help.baseName = generatedHelpBaseName(help.title)
+			continue
+		}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			command, ok := parseGeneratedAppHelpCommand(currentSection, line)
+			if ok {
+				help.commands = append(help.commands, command)
+			}
+			continue
+		}
+		currentSection = strings.TrimSpace(line)
+	}
+	return help, help.title != "" && help.baseName != "" && len(help.commands) > 0
+}
+
+// parseGeneratedAppHelpCommand parses one aligned command row from generated app help.
+func parseGeneratedAppHelpCommand(section string, line string) (appHelpCommand, bool) {
+	section = strings.TrimSpace(section)
+	if section == "" {
+		return appHelpCommand{}, false
+	}
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return appHelpCommand{}, false
+	}
+	name, help, found := strings.Cut(trimmed, " ")
+	if !found || name == "" {
+		return appHelpCommand{}, false
+	}
+	return appHelpCommand{section: section, name: name, help: strings.TrimSpace(help)}, true
+}
+
+// generatedHelpBaseName returns the app name before the optional target qualifier.
+func generatedHelpBaseName(title string) string {
+	title = strings.TrimSpace(title)
+	if before, _, ok := strings.Cut(title, " · "); ok {
+		return strings.TrimSpace(before)
+	}
+	if before, _, ok := strings.Cut(title, " | "); ok {
+		return strings.TrimSpace(before)
+	}
+	return title
+}
+
+// sharedAppHelpCommands returns commands that are exactly present in every parsed app target.
+func sharedAppHelpCommands(parsed []parsedAppHelp) []appHelpCommand {
+	counts := map[string]int{}
+	commands := map[string]appHelpCommand{}
+	for _, help := range parsed {
+		seen := map[string]struct{}{}
+		for _, command := range help.commands {
+			key := appHelpCommandKey(command)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			counts[key]++
+			commands[key] = command
+		}
+	}
+	shared := make([]appHelpCommand, 0)
+	for key, count := range counts {
+		if count == len(parsed) {
+			shared = append(shared, commands[key])
+		}
+	}
+	sortAppHelpCommands(shared)
+	return shared
+}
+
+// appHelpDelta removes shared commands from one target's command list.
+func appHelpDelta(commands []appHelpCommand, shared []appHelpCommand) []appHelpCommand {
+	sharedKeys := map[string]struct{}{}
+	for _, command := range shared {
+		sharedKeys[appHelpCommandKey(command)] = struct{}{}
+	}
+	delta := make([]appHelpCommand, 0)
+	for _, command := range commands {
+		if _, ok := sharedKeys[appHelpCommandKey(command)]; ok {
+			continue
+		}
+		delta = append(delta, command)
+	}
+	sortAppHelpCommands(delta)
+	return delta
+}
+
+// renderAppHelpBlock writes one compact app help block with the same simple grouping as generated help.
+func renderAppHelpBlock(out *strings.Builder, title string, commands []appHelpCommand) {
+	if len(commands) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, console.Colorize(console.ColorBoldWhite, title))
+	fmt.Fprintln(out)
+	sections := map[string][]appHelpCommand{}
+	maxLen := 0
+	for _, command := range commands {
+		sections[command.section] = append(sections[command.section], command)
+		if len(command.name) > maxLen {
+			maxLen = len(command.name)
+		}
+	}
+	for _, section := range sortedStringKeys(sections) {
+		fmt.Fprintln(out, console.Colorize(console.ColorBoldWhite, section))
+		for _, command := range sections[section] {
+			spacing := strings.Repeat(" ", maxLen-len(command.name)+2)
+			fmt.Fprintf(out, "  %s%s%s\n",
+				console.Colorize(console.ColorBoldGreen, command.name),
+				spacing,
+				console.Colorize(console.ColorGray, command.help),
+			)
+		}
+	}
+}
+
+// sortAppHelpCommands keeps compact help deterministic by section then command name.
+func sortAppHelpCommands(commands []appHelpCommand) {
+	sort.Slice(commands, func(i, j int) bool {
+		if commands[i].section != commands[j].section {
+			return commands[i].section < commands[j].section
+		}
+		return commands[i].name < commands[j].name
+	})
+}
+
+// sortedStringKeys returns sorted map keys for compact help rendering.
+func sortedStringKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// appHelpCommandKey identifies a command row exactly, including its section and description.
+func appHelpCommandKey(command appHelpCommand) string {
+	return command.section + "\x00" + command.name + "\x00" + command.help
+}
+
+// stripANSI removes color escape sequences before parsing generated help output.
+func stripANSI(value string) string {
+	return ansiEscapePattern.ReplaceAllString(value, "")
+}
+
+// collectGeneratedAppHelp shells out per target so help rendering can run in parallel without sharing parser state.
+func collectGeneratedAppHelp(targets []string) []appHelpResult {
+	results := make([]appHelpResult, len(targets))
+	multi := len(targets) > 1
+	var wait sync.WaitGroup
+	for index, target := range targets {
+		wait.Add(1)
+		go func(index int, target string, multi bool) {
+			defer wait.Done()
+			output, err := runAppHelpForTarget(target, multi)
+			results[index] = appHelpResult{target: target, output: output, err: err}
+		}(index, target, multi)
+	}
+	wait.Wait()
+	return results
+}
+
+// runAppHelpForTarget invokes the selected target through the root binary so source and built targets share one path.
+func runAppHelpForTarget(target string, multi bool) (string, error) {
 	target = strings.TrimSpace(target)
-	if target == "" || target == project.DefaultAppTargetName {
-		return runAppCommandThroughSource(root, appRootHelpArgs())
+	if target == "" {
+		target = project.DefaultAppTargetName
 	}
-	if isConventionalSourceTarget(target) {
-		return runAppCommandThroughSourceWithEnv(root, appRootHelpArgs(), withTargetEnv(delegatedAppEnv(), target))
+	command := exec.Command(os.Args[0], target, "--help")
+	command.Env = withTargetEnv(delegatedAppEnv(), target)
+	if multi {
+		command.Env = append(command.Env, "FORJ_MULTI_APP_HELP=1")
 	}
-	return runTargetBinaryCommand(target, appRootHelpArgs())
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Run(); err != nil {
+		return output.String(), err
+	}
+	return output.String(), nil
 }
 
 // printRootHelp prints native GoForj help.

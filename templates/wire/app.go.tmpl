@@ -189,7 +189,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	origin := strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN"))
 	parser, err := kong.New(
 		a.RootCmd(),
-		kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
+		kong.Name(cmd.AppHelpName()),
 		kong.Help(cmd.KongHelpFormatter),
 	)
 	if err != nil {

@@ -37,6 +37,7 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		`runtime.NewLifecycle(appTimeouts)`,
 		`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
+		`kong.Name(cmd.AppHelpName())`,
 		`cmd.CommandParseError(parser, command, err)`,
 	} {
 		if !strings.Contains(source, snippet) {
@@ -135,6 +136,9 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "preboot.go.tmpl"): {
 			`func DispatchPrebootCommand(args []string, root interface{}) (bool, error)`,
 			`func rootHelpRequested(args []string) bool`,
+			`func AppHelpName() string`,
+			`os.Getenv("FORJ_MULTI_APP_HELP") == "1"`,
+			`return name + " · " + target`,
 			`func printRootPrebootHelp(root interface{}) error`,
 			`func findPrebootCommand(root interface{}, commandName string) interface{}`,
 			`func findPrebootCommandValue(value reflect.Value, commandName string) interface{}`,

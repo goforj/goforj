@@ -545,7 +545,7 @@
                     <div class="app-meta">
                         <span>{{.ProjectName}}</span>
                         <span class="app-meta-divider"></span>
-                        <span>local</span>
+                        <span>{{if .HasNamedTargets}}{{.Target.Name}}{{else}}local{{end}}</span>
                     </div>
                 </div>
                 <div class="status"><span class="status-dot"></span>Running</div>
