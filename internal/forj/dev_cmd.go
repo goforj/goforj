@@ -862,22 +862,28 @@ watcherLoop:
 				continue watcherLoop
 			case <-session.renderCh:
 				writeDevActionLine(session.outWriter, "Rendering app and restarting watchers")
-				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
-				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				waitForStop := beginStopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
 				if err := reloadDevWatchSessionConfig(session); err != nil {
+					waitForStop()
+					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
 					return err
 				}
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
+					waitForStop()
+					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
 					return err
 				}
 				session.streamer = refreshedStreamer
-				if err := runDevRender(session.config, session.outWriter, session.errWriter); err != nil {
+				renderErr := runDevRender(session.config, session.outWriter, session.errWriter)
+				waitForStop()
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				if renderErr != nil {
 					disableDevFooter(session.outWriter)
 					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
-					console.Errorf("forj render failed: %v", err)
-					return fmt.Errorf("forj render failed: %w", err)
+					console.Errorf("forj render failed: %v", renderErr)
+					return fmt.Errorf("forj render failed: %w", renderErr)
 				}
 				if err := reloadDevWatchSessionConfig(session); err != nil {
 					return err
@@ -950,7 +956,7 @@ func snapshotProcessEnv() map[string]string {
 }
 
 func runDevRender(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render"); err != nil {
+	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render --timings"); err != nil {
 		return fmt.Errorf("forj render failed: %w", err)
 	}
 	if err := runDevBuild(config, outWriter, errWriter); err != nil {
@@ -1378,8 +1384,22 @@ func startWatchers(
 	errWriter io.Writer,
 	soundOnError bool,
 ) ([]runningWatcher, <-chan watcherExit) {
+	return startWatchersWithStarter(projectName, watches, streamer, outWriter, errWriter, soundOnError, func(cmd *execx.Cmd) *execx.Process {
+		return cmd.Start()
+	})
+}
+
+func startWatchersWithStarter(
+	projectName string,
+	watches []project.DevWatch,
+	streamer *devwatchStreamer,
+	outWriter io.Writer,
+	errWriter io.Writer,
+	soundOnError bool,
+	start func(*execx.Cmd) *execx.Process,
+) ([]runningWatcher, <-chan watcherExit) {
 	exitCh := make(chan watcherExit, len(watches))
-	watchers := make([]runningWatcher, 0, len(watches))
+	watchers := make([]runningWatcher, len(watches))
 	// Only non-postponed watchers emit an initial trigger during boot, so the
 	// startup block should close after those watchers have reported "starting".
 	// The single runtime supervisor watcher restarts after a fresh binary lands,
@@ -1391,36 +1411,44 @@ func startWatchers(
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
+	var wg sync.WaitGroup
+	for i, watch := range watches {
+		wg.Add(1)
+		go func(i int, watch project.DevWatch) {
+			defer wg.Done()
+			watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
+			watchExec := buildWatcherExec(watchExecCmd)
+			triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
+			wgoArgs := buildWatcherCommandArgs(watch.Watch, watchExec)
+			cmdEnv := snapshotProcessEnv()
+			for key, value := range watch.Env {
+				cmdEnv[key] = value
+			}
+			for key, value := range watchEnv {
+				cmdEnv[key] = value
+			}
+			if isDevBuildWatcher(watch.Name) {
+				cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
+			}
+			appTarget := devRuntimeWatcherTarget(watch.Name)
+			cmd := execx.Command("wgo").
+				Arg(wgoArgs).
+				EnvOnly(cmdEnv).
+				StdoutWriter(newDevwatchWriterForTarget(outWriter, streamer, "stdout", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState)).
+				StderrWriter(newDevwatchWriterForTarget(errWriter, streamer, "stderr", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState))
+			cmd = configureWatcherPTY(cmd, soundOnError)
+			proc := start(cmd)
+			watchers[i] = runningWatcher{name: watch.Name, proc: proc}
+			go func(name string, proc *execx.Process) {
+				res, err := proc.Wait()
+				exitCh <- watcherExit{name: name, result: res, err: err}
+			}(watch.Name, proc)
+		}(i, watch)
+	}
+	wg.Wait()
 	startedNames := make([]string, 0, len(watches))
 	for _, watch := range watches {
-		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
-		watchExec := buildWatcherExec(watchExecCmd)
-		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
-		wgoArgs := buildWatcherCommandArgs(watch.Watch, watchExec)
-		cmdEnv := snapshotProcessEnv()
-		for key, value := range watch.Env {
-			cmdEnv[key] = value
-		}
-		for key, value := range watchEnv {
-			cmdEnv[key] = value
-		}
-		if isDevBuildWatcher(watch.Name) {
-			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
-		}
-		appTarget := devRuntimeWatcherTarget(watch.Name)
-		cmd := execx.Command("wgo").
-			Arg(wgoArgs).
-			EnvOnly(cmdEnv).
-			StdoutWriter(newDevwatchWriterForTarget(outWriter, streamer, "stdout", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState)).
-			StderrWriter(newDevwatchWriterForTarget(errWriter, streamer, "stderr", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState))
-		cmd = configureWatcherPTY(cmd, soundOnError)
-		proc := cmd.Start()
-		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
 		startedNames = append(startedNames, watch.Name)
-		go func(name string, proc *execx.Process) {
-			res, err := proc.Wait()
-			exitCh <- watcherExit{name: name, result: res, err: err}
-		}(watch.Name, proc)
 	}
 	emitWatcherLifecycleSummary(outWriter, streamer, startedNames, watcherStateStarted)
 	return watchers, exitCh
@@ -1518,6 +1546,11 @@ func buildWatcherCommandArgs(watchExpr string, execCmd string) []string {
 // Coordinated shutdowns (restart/render/Ctrl+C) collapse the in-progress signal
 // into one summary line; single watcher failures still emit per-watcher stops.
 func stopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer, collapse bool) {
+	wait := beginStopWatchers(watchers, timeout, out, streamer, collapse)
+	wait()
+}
+
+func beginStopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer, collapse bool) func() {
 	if collapse {
 		names := make([]string, 0, len(watchers))
 		for _, watcher := range watchers {
@@ -1547,7 +1580,7 @@ func stopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Write
 			_ = proc.GracefulShutdown(os.Interrupt, timeout)
 		}(watcher.proc)
 	}
-	wg.Wait()
+	return wg.Wait
 }
 
 // drainWatcherExits drains a fixed number of exit events to ensure goroutines finish cleanly.

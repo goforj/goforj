@@ -356,6 +356,62 @@ func TestDevAutoMigrateKeepsExplicitTargetBinary(t *testing.T) {
 	}
 }
 
+func TestRunDevRenderUsesTimingsFlag(t *testing.T) {
+	toolsDir := t.TempDir()
+	logPath := filepath.Join(toolsDir, "forj-args.log")
+	forjPath := filepath.Join(toolsDir, "forj")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\nexit 0\n"
+	if err := os.WriteFile(forjPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake forj: %v", err)
+	}
+	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: "forj build -o ./bin/app"},
+			},
+		},
+	}
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := runDevRender(config, &out, &errOut); err != nil {
+		t.Fatalf("runDevRender returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake forj log: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "render --timings\n") {
+		t.Fatalf("expected dev render to pass --timings, got:\n%s", got)
+	}
+	if !strings.Contains(got, "build -o ./bin/app\n") {
+		t.Fatalf("expected dev render to build after render, got:\n%s", got)
+	}
+}
+
+func TestRenderTimingLinesStreamInsideDevCommand(t *testing.T) {
+	t.Setenv("FORJ_COMMAND_ORIGIN", "dev_command")
+
+	renderer := NewProjectRenderer(nil)
+	renderer.SetTimings(true)
+	before := renderer.stats.counts()
+	renderer.stats.recordSkipped("go.mod")
+
+	out := captureStdout(t, func() {
+		renderer.printStepSummary("Go Module Initialization", before, 12*time.Millisecond)
+	})
+
+	if !strings.Contains(out, "Go Module Initialization") || !strings.Contains(out, "12ms") {
+		t.Fatalf("expected timed render phase to stream, got %q", out)
+	}
+	if len(renderer.lines) != 0 {
+		t.Fatalf("expected streamed render line to be removed from buffered summary, got %#v", renderer.lines)
+	}
+}
+
 func TestRunDevBuildRunsTargetsInParallel(t *testing.T) {
 	withConventionalTarget(t, "billing")
 
@@ -382,6 +438,38 @@ func TestRunDevBuildRunsTargetsInParallel(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("bin", "billing")); err != nil {
 		t.Fatalf("expected billing binary marker: %v", err)
 	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = original
+	}()
+
+	fn()
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read stdout pipe: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
+	return string(data)
 }
 
 func TestRunDevBuildBuffersFailureOutputByTarget(t *testing.T) {
@@ -695,6 +783,68 @@ func TestStopWatchersShutsDownProcessesInParallel(t *testing.T) {
 	if elapsed > 450*time.Millisecond {
 		t.Fatalf("expected parallel shutdown, took %s", elapsed)
 	}
+}
+
+func TestBeginStopWatchersReturnsBeforeProcessesExit(t *testing.T) {
+	script := "trap 'sleep 0.3; exit 0' INT TERM; while true; do sleep 0.05; done"
+	watchers := []runningWatcher{
+		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
+	}
+
+	start := time.Now()
+	waitForStop := beginStopWatchers(watchers, 2*time.Second, io.Discard, nil, true)
+	elapsed := time.Since(start)
+	if elapsed > 150*time.Millisecond {
+		t.Fatalf("expected shutdown request to return before process exit, took %s", elapsed)
+	}
+
+	waitForStop()
+}
+
+func TestStartWatchersStartsProcessesInParallel(t *testing.T) {
+	watches := []project.DevWatch{
+		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
+		{Name: "Run billing", Watch: "-file ./bin/billing", Exec: "./bin/billing run"},
+	}
+	entered := make(chan struct{}, len(watches))
+	release := make(chan struct{})
+	starter := func(_ *execx.Cmd) *execx.Process {
+		entered <- struct{}{}
+		<-release
+		return execx.Command("sh", "-c", "exit 0").Start()
+	}
+
+	type startResult struct {
+		watchers []runningWatcher
+		exitCh   <-chan watcherExit
+	}
+	done := make(chan startResult, 1)
+	go func() {
+		watchers, exitCh := startWatchersWithStarter("Test", watches, nil, io.Discard, io.Discard, false, starter)
+		done <- startResult{watchers: watchers, exitCh: exitCh}
+	}()
+
+	for range watches {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected every watcher starter to be entered")
+		}
+	}
+	select {
+	case <-done:
+		t.Fatal("expected watcher startup to wait until all parallel starts are released")
+	default:
+	}
+	close(release)
+
+	result := <-done
+	watchers := result.watchers
+	if got := []string{watchers[0].name, watchers[1].name}; !reflect.DeepEqual(got, []string{"Run App", "Run billing"}) {
+		t.Fatalf("expected watcher order to be preserved, got %#v", got)
+	}
+
+	drainWatcherExits(result.exitCh, len(watches), io.Discard, nil, true)
 }
 
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {

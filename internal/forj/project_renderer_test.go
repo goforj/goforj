@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/logger"
@@ -98,6 +100,58 @@ func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
 	}
 	if targets[0].Name != "customer-portal" || targets[1].Name != "reporting" {
 		t.Fatalf("expected sorted conventional targets, got %#v", targets)
+	}
+}
+
+func TestRunWireGenerateRunsTargetDirsInParallel(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	for _, path := range []string{
+		filepath.Join("app", "wire"),
+		filepath.Join("app", "billing", "wire"),
+		filepath.Join("cmd", "billing"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join("cmd", "billing", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write billing main: %v", err)
+	}
+
+	toolsDir := t.TempDir()
+	wirePath := filepath.Join(toolsDir, "wire")
+	wireScript := "#!/bin/sh\nsleep 0.2\nexit 0\n"
+	if err := os.WriteFile(wirePath, []byte(wireScript), 0o755); err != nil {
+		t.Fatalf("write fake wire: %v", err)
+	}
+	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	wireInstallOnce = sync.Once{}
+	wireInstallErr = nil
+	wireBinaryPath = ""
+	defer func() {
+		wireInstallOnce = sync.Once{}
+		wireInstallErr = nil
+		wireBinaryPath = ""
+	}()
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	start := time.Now()
+	if err := renderer.runWireGenerate(); err != nil {
+		t.Fatalf("runWireGenerate returned error: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 350*time.Millisecond {
+		t.Fatalf("expected wire dirs to run in parallel, took %s", elapsed)
 	}
 }
 

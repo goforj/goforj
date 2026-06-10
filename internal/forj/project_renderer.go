@@ -40,6 +40,7 @@ var (
 	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Bold(true)
 	nextStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	timingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("·")
 	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	boxBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -51,6 +52,21 @@ var (
 
 var templatesFS = templates.FS
 
+type wireGenerateError struct {
+	dir    string
+	output string
+	err    error
+	stale  bool
+}
+
+func (e *wireGenerateError) Error() string {
+	return fmt.Sprintf("wire generate %s: %v (%s)", e.dir, e.err, e.output)
+}
+
+func (e *wireGenerateError) Unwrap() error {
+	return e.err
+}
+
 // ComponentRenderInput controls whether rendering uses explicit components or the stored project config.
 type ComponentRenderInput struct {
 	components project.Components
@@ -59,13 +75,15 @@ type ComponentRenderInput struct {
 
 // ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
-	logger *logger.AppLogger
-	config *project.Config
-	stats  *renderStats
-	lines  []string
+	logger  *logger.AppLogger
+	config  *project.Config
+	stats   *renderStats
+	lines   []string
+	timings bool
 }
 
 type renderStats struct {
+	mu      sync.Mutex
 	created []string
 	skipped []string
 }
@@ -74,6 +92,8 @@ func (s *renderStats) recordCreated(path string) {
 	if path == "" {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.created = append(s.created, path)
 }
 
@@ -81,6 +101,8 @@ func (s *renderStats) recordSkipped(path string) {
 	if path == "" {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.skipped = append(s.skipped, path)
 }
 
@@ -130,6 +152,8 @@ func mapTemplateTo(tmpl, dest string) templateMapping {
 }
 
 func (s *renderStats) counts() renderCounts {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return renderCounts{
 		created: len(s.created),
 		skipped: len(s.skipped),
@@ -146,6 +170,22 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 		line += fmt.Sprintf(" %s %d skipped", markSkip, skipped)
 	}
 	return line
+}
+
+func renderCountsLineWithTiming(title string, created, skipped int, unit string, elapsed time.Duration) string {
+	line := renderCountsLine(title, created, skipped, unit)
+	return appendRenderTiming(line, elapsed)
+}
+
+func formatRenderElapsed(elapsed time.Duration) string {
+	return formatDevElapsed(elapsed)
+}
+
+func appendRenderTiming(line string, elapsed time.Duration) string {
+	if elapsed <= 0 {
+		return line
+	}
+	return line + " " + markSkip + " " + timingStyle.Render(formatRenderElapsed(elapsed))
 }
 
 func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
@@ -994,6 +1034,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 
 		before := p.stats.counts()
+		started := time.Now()
 
 		if len(step.templates) > 0 {
 			if err := p.writeTemplates(step.templates); err != nil {
@@ -1018,7 +1059,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			}
 		}
 
-		p.printStepSummary(step.title, before)
+		p.printStepSummary(step.title, before, time.Since(started))
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
@@ -1683,19 +1724,35 @@ func parseEnvLine(line string) (string, string, bool) {
 	return key, value, key != ""
 }
 
+// SetTimings controls whether render summaries include elapsed phase timings.
+func (p *ProjectRenderer) SetTimings(enabled bool) {
+	p.timings = enabled
+}
+
 func (p *ProjectRenderer) timeRenderStage(name string, fn func() error) error {
-	if !renderStageTimingEnabled() {
+	timingEnabled := p.renderTimingEnabled()
+	if !timingEnabled {
 		return fn()
 	}
+	lineStart := len(p.lines)
 	started := time.Now()
 	err := fn()
-	console.Debugf("render stage %s: %s", name, time.Since(started))
+	elapsed := time.Since(started)
+	if err == nil {
+		for i := lineStart; i < len(p.lines); i++ {
+			p.lines[i] = appendRenderTiming(p.lines[i], elapsed)
+		}
+		p.flushRenderLines(lineStart)
+		if renderDebugEnabled() {
+			console.Debugf("render stage %s: %s", name, elapsed)
+		}
+	}
 	return err
 }
 
-func renderStageTimingEnabled() bool {
-	if !renderDebugEnabled() {
-		return false
+func (p *ProjectRenderer) renderTimingEnabled() bool {
+	if p != nil && p.timings {
+		return true
 	}
 	for _, key := range []string{"FORJ_RENDER_TIMINGS", "FORJ_RENDER_DEBUG_TIMINGS"} {
 		value := strings.TrimSpace(os.Getenv(key))
@@ -1704,6 +1761,25 @@ func renderStageTimingEnabled() bool {
 		}
 	}
 	return false
+}
+
+func (p *ProjectRenderer) streamRenderTimings() bool {
+	return runningInsideDevCommand() && p.renderTimingEnabled()
+}
+
+func (p *ProjectRenderer) appendRenderLine(line string) {
+	p.lines = append(p.lines, line)
+	p.flushRenderLines(len(p.lines) - 1)
+}
+
+func (p *ProjectRenderer) flushRenderLines(start int) {
+	if !p.streamRenderTimings() || start >= len(p.lines) {
+		return
+	}
+	for _, line := range p.lines[start:] {
+		fmt.Println(line)
+	}
+	p.lines = p.lines[:start]
 }
 
 // migrateGeneratedEnvDefault updates old generated defaults without overriding custom app owner values.
@@ -1814,9 +1890,28 @@ func (p *ProjectRenderer) renderNamedAppTargets() error {
 	if err != nil {
 		return err
 	}
-	for _, target := range targets {
+	if len(targets) == 1 {
+		target := targets[0]
 		if err := p.renderAppTarget(target); err != nil {
 			return fmt.Errorf("render app target %s: %w", target.Name, err)
+		}
+	} else if len(targets) > 1 {
+		errs := make([]error, len(targets))
+		var wg sync.WaitGroup
+		for i, target := range targets {
+			wg.Add(1)
+			go func(i int, target project.AppTarget) {
+				defer wg.Done()
+				if err := p.renderAppTarget(target); err != nil {
+					errs[i] = fmt.Errorf("render app target %s: %w", target.Name, err)
+				}
+			}(i, target)
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(targets) > 0 && p.config.Render.Components.HasDatabase() {
@@ -3106,27 +3201,61 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	}
 
 	wireDirs := p.wireGenerateDirs()
-	for _, wireDir := range wireDirs {
-		if out, err := runWireCommand(wireBinaryPath, wireDir); err != nil {
-			trimmed := strings.TrimSpace(string(out))
-			// If a stale wire binary was built with an older Go toolchain, reinstall
-			// wire with the current toolchain and retry once.
-			if strings.Contains(trimmed, "package requires newer Go version") {
-				path, installErr := installWire()
-				if installErr != nil {
-					return installErr
-				}
-				wireBinaryPath = path
-				if retryOut, retryErr := runWireCommand(wireBinaryPath, wireDir); retryErr != nil {
-					return fmt.Errorf("wire generate %s: %w (%s)", wireDir, retryErr, strings.TrimSpace(string(retryOut)))
-				}
-			} else {
-				return fmt.Errorf("wire generate %s: %w (%s)", wireDir, err, trimmed)
+	if err := firstWireGenerateError(runWireGenerateDirs(wireBinaryPath, wireDirs)); err != nil {
+		// If a stale wire binary was built with an older Go toolchain, reinstall
+		// wire with the current toolchain and retry all target-local graphs once.
+		if wireGenerateErr, ok := err.(*wireGenerateError); ok && wireGenerateErr.stale {
+			path, installErr := installWire()
+			if installErr != nil {
+				return installErr
 			}
+			wireBinaryPath = path
+			if retryErr := firstWireGenerateError(runWireGenerateDirs(wireBinaryPath, wireDirs)); retryErr != nil {
+				return retryErr
+			}
+		} else {
+			return err
 		}
 	}
 
 	p.lines = append(p.lines, renderCountsLine("wire generate", len(wireDirs), 0, "commands"))
+	return nil
+}
+
+func runWireGenerateDirs(wirePath string, wireDirs []string) []error {
+	errs := make([]error, len(wireDirs))
+	var wg sync.WaitGroup
+	for i, wireDir := range wireDirs {
+		wg.Add(1)
+		go func(i int, wireDir string) {
+			defer wg.Done()
+			errs[i] = runWireGenerateDir(wirePath, wireDir)
+		}(i, wireDir)
+	}
+	wg.Wait()
+	return errs
+}
+
+func runWireGenerateDir(wirePath string, wireDir string) error {
+	out, err := runWireCommand(wirePath, wireDir)
+	if err == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	return &wireGenerateError{
+		dir:    wireDir,
+		output: trimmed,
+		err:    err,
+		stale:  strings.Contains(trimmed, "package requires newer Go version"),
+	}
+}
+
+func firstWireGenerateError(errs []error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -3812,11 +3941,15 @@ func countTidyModules(stdout, stderr string) int {
 	return count
 }
 
-func (p *ProjectRenderer) printStepSummary(title string, before renderCounts) {
+func (p *ProjectRenderer) printStepSummary(title string, before renderCounts, elapsed time.Duration) {
 	after := p.stats.counts()
 	created := after.created - before.created
 	skipped := after.skipped - before.skipped
-	p.lines = append(p.lines, renderCountsLine(title, created, skipped, "files"))
+	if p.renderTimingEnabled() {
+		p.appendRenderLine(renderCountsLineWithTiming(title, created, skipped, "files", elapsed))
+		return
+	}
+	p.appendRenderLine(renderCountsLine(title, created, skipped, "files"))
 }
 
 func renderBox(title string, lines []string) string {
