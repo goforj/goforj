@@ -34,33 +34,33 @@ type DevConfig struct {
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
-// DefaultAppTargetName is the conventional target name used when no named target is selected.
-const DefaultAppTargetName = "app"
+// DefaultAppName is the conventional app name used when no named app is selected.
+const DefaultAppName = "app"
 
-// AppTarget describes one executable application target in the project.
-type AppTarget struct {
+// App describes one executable app in the project.
+type App struct {
 	Name       string `yaml:"name" json:"name"`
 	Entrypoint string `yaml:"entrypoint" json:"entrypoint"`
 	AppDir     string `yaml:"app_dir" json:"app_dir"`
 	WireDir    string `yaml:"wire_dir" json:"wire_dir"`
 }
 
-// DefaultAppTarget returns the conventional single-app target.
-func DefaultAppTarget() AppTarget {
-	return DefaultNamedAppTarget(DefaultAppTargetName)
+// DefaultApp returns the conventional single-app project app.
+func DefaultApp() App {
+	return DefaultNamedApp(DefaultAppName)
 }
 
-// DefaultNamedAppTarget returns conventional paths for a generated app target name.
-func DefaultNamedAppTarget(name string) AppTarget {
-	if name == "" || name == DefaultAppTargetName {
-		return AppTarget{
-			Name:       DefaultAppTargetName,
+// DefaultNamedApp returns conventional paths for a generated app name.
+func DefaultNamedApp(name string) App {
+	if name == "" || name == DefaultAppName {
+		return App{
+			Name:       DefaultAppName,
 			Entrypoint: "cmd/app/main.go",
 			AppDir:     "app",
 			WireDir:    "app/wire",
 		}
 	}
-	return AppTarget{
+	return App{
 		Name:       name,
 		Entrypoint: filepath.Join("cmd", name, "main.go"),
 		AppDir:     filepath.Join("app", name),
@@ -68,8 +68,8 @@ func DefaultNamedAppTarget(name string) AppTarget {
 	}
 }
 
-// IsSafeAppTargetName reports whether name is safe for target-owned paths.
-func IsSafeAppTargetName(name string) bool {
+// IsSafeAppName reports whether name is safe for app-owned paths.
+func IsSafeAppName(name string) bool {
 	if name == "" || name == "." || name == ".." {
 		return false
 	}
@@ -91,8 +91,8 @@ func IsSafeAppTargetName(name string) bool {
 	return true
 }
 
-// AppTargetPackageName converts a target slug into a valid Go package name.
-func AppTargetPackageName(name string) string {
+// AppPackageName converts an app slug into a valid Go package name.
+func AppPackageName(name string) string {
 	var builder strings.Builder
 	for _, r := range strings.ToLower(name) {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
@@ -101,10 +101,10 @@ func AppTargetPackageName(name string) string {
 	}
 	pkg := builder.String()
 	if pkg == "" {
-		return DefaultAppTargetName
+		return DefaultAppName
 	}
 	if pkg[0] >= '0' && pkg[0] <= '9' {
-		return DefaultAppTargetName + pkg
+		return DefaultAppName + pkg
 	}
 	return pkg
 }
@@ -119,20 +119,20 @@ type RenderConfig struct {
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 }
 
-// AppTargetConfig records optional per-target participation in project-level capabilities.
-type AppTargetConfig struct {
+// AppConfig records optional per-app participation in project-level capabilities.
+type AppConfig struct {
 	Components Components `yaml:"components" json:"components"`
 	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
 }
 
 // ProjectConfig represents the configuration for a project.
 type ProjectConfig struct {
-	ProjectName  string                     `yaml:"project_name" json:"project_name"`
-	GoModuleName string                     `yaml:"module_name" json:"module_name"`
-	UpdatedAt    string                     `yaml:"updated_at" json:"updated_at"`
-	Dev          DevConfig                  `yaml:"dev" json:"dev"`
-	Render       RenderConfig               `yaml:"render" json:"render"`
-	AppTargets   map[string]AppTargetConfig `yaml:"app_targets,omitempty" json:"app_targets,omitempty"`
+	ProjectName  string               `yaml:"project_name" json:"project_name"`
+	GoModuleName string               `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string               `yaml:"updated_at" json:"updated_at"`
+	Dev          DevConfig            `yaml:"dev" json:"dev"`
+	Render       RenderConfig         `yaml:"render" json:"render"`
+	Apps         map[string]AppConfig `yaml:"apps,omitempty" json:"apps,omitempty"`
 
 	// temporary
 	AppKey           string `yaml:"-" json:"-"`
@@ -343,14 +343,14 @@ func LoadProjectConfig() (*Config, error) {
 		return nil, err
 	}
 	if len(config.Dev.WirePaths) == 0 {
-		config.Dev.WirePaths = []string{DefaultAppTarget().WireDir}
+		config.Dev.WirePaths = []string{DefaultApp().WireDir}
 	}
 
 	return config, nil
 }
 
-// IsReservedAppTargetName reports whether name is owned by the target composition layout.
-func IsReservedAppTargetName(name string) bool {
+// IsReservedAppName reports whether name is owned by the app composition layout.
+func IsReservedAppName(name string) bool {
 	return name == "wire"
 }
 

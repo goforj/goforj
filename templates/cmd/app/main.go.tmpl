@@ -2,8 +2,8 @@ package main
 
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
-	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
-	"{{.GoModuleName}}/{{.TargetWireImportPath}}"
+	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.WireImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/console"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
@@ -17,13 +17,13 @@ var spa embed.FS
 {{end}}
 func main() {
 	args := cmd.EffectiveLaunchArgs(os.Args[1:])
-	cmd.ApplyLaunchTarget("{{.Target.Name}}")
+	cmd.ApplyLaunchApp("{{.App.Name}}")
 
 	if err := cmd.LoadEnv(); err != nil {
 		console.Fatalf("loading env: %v", err)
 	}
 
-	handled, err := cmd.DispatchPrebootCommand(args, &targetapp.RootCmd{})
+	handled, err := cmd.DispatchPrebootCommand(args, &compositionapp.RootCmd{})
 	if err != nil {
 		console.Fatalf("%v", err)
 	} else if handled {

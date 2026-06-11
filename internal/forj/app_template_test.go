@@ -138,7 +138,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func rootHelpRequested(args []string) bool`,
 			`func AppHelpName() string`,
 			`os.Getenv("FORJ_MULTI_APP_HELP") == "1"`,
-			`return name + " · " + target`,
+			`return name + " · " + appName`,
 			`func printRootPrebootHelp(root interface{}) error`,
 			`func findPrebootCommand(root interface{}, commandName string) interface{}`,
 			`func findPrebootCommandValue(value reflect.Value, commandName string) interface{}`,
@@ -211,8 +211,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd.go.tmpl"): {
 			`appCommandSet,`,
-			`targetapp.NewCommands,`,
-			`targetapp.NewRootCmd,`,
+			`compositionapp.NewCommands,`,
+			`compositionapp.NewRootCmd,`,
 			`cmd.NewAboutCmd,`,
 			`cmd.NewCacheShellCmd,`,
 			`cmd.NewDBShellCmd,`,
@@ -414,8 +414,8 @@ func assertRendererTemplateOwnership(t *testing.T, source string, tmpl string, w
 // nearestRendererWriteCall finds the render helper surrounding a template mapping assertion.
 func nearestRendererWriteCall(prefix string) string {
 	candidates := []string{
-		"writeTemplateMappingsOnceForTarget(",
-		"writeTemplateMappingsForTarget(",
+		"writeTemplateMappingsOnceForApp(",
+		"writeTemplateMappingsForApp(",
 		"writeTemplateMappingsOnce(",
 		"writeTemplateMappings(",
 	}
@@ -428,13 +428,13 @@ func nearestRendererWriteCall(prefix string) string {
 			lastName = strings.TrimSuffix(name, "(")
 		}
 	}
-	frameworkMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appTargetFrameworkMappings")
-	appOwnedMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appTargetAppOwnedMappings")
+	frameworkMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appFrameworkMappings")
+	appOwnedMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appOwnedMappings")
 	if appOwnedMappingIdx > frameworkMappingIdx && appOwnedMappingIdx > lastIdx {
-		return "writeTemplateMappingsOnceForTarget"
+		return "writeTemplateMappingsOnceForApp"
 	}
 	if frameworkMappingIdx > lastIdx {
-		return "writeTemplateMappingsForTarget"
+		return "writeTemplateMappingsForApp"
 	}
 	return lastName
 }
@@ -669,13 +669,13 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
-		`cmd.ApplyLaunchTarget("{{.Target.Name}}")`,
-		`targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"`,
-		`"{{.GoModuleName}}/{{.TargetWireImportPath}}"`,
+		`cmd.ApplyLaunchApp("{{.App.Name}}")`,
+		`compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"`,
+		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
 		`"{{.GoModuleName}}/internal/console"`,
 		`if err := cmd.LoadEnv(); err != nil {`,
 		`console.Fatalf("%v", err)`,
-		`handled, err := cmd.DispatchPrebootCommand(args, &targetapp.RootCmd{})`,
+		`handled, err := cmd.DispatchPrebootCommand(args, &compositionapp.RootCmd{})`,
 		`application, err := wire.InitializeApplication()`,
 		`application.Run(nil, args)`,
 	} {
@@ -743,17 +743,16 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 			`name:"queue:work" aliases:"worker" help:"Runs queue workers indefinitely"`,
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl"): {
-			`fmt.Printf("App Target: %s\n\n", routeListAppTarget())`,
-			`func routeListAppTarget() string`,
+			`fmt.Printf("App: %s\n\n", routeListApp())`,
+			`func routeListApp() string`,
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "swagger.go.tmpl"): {
-			`func defaultOpenAPISpecPathForTarget() string`,
-			`filepath.Join("build", target, "openapi.json")`,
+			`func defaultOpenAPISpecPathForApp() string`,
+			`filepath.Join("build", app, "openapi.json")`,
 		},
-		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "target_identity.go.tmpl"): {
-			`func ApplyLaunchTarget(target string)`,
-			`os.Setenv("FORJ_APP_TARGET", target)`,
-			`os.Setenv("APP_TARGET", target)`,
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "app_identity.go.tmpl"): {
+			`func ApplyLaunchApp(app string)`,
+			`os.Setenv("FORJ_APP", app)`,
 		},
 	}
 	for file, snippets := range files {

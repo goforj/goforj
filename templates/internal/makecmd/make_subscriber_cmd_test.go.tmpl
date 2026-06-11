@@ -63,10 +63,10 @@ func ProvideEventSubscribers(
 	})
 }
 
-func TestSubscriberCmdUsesActiveAppTarget(t *testing.T) {
+func TestSubscriberCmdUsesActiveApp(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("FORJ_APP_TARGET", "reporting")
+	t.Setenv("FORJ_APP", "reporting")
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
 	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_subscribers_app.go"), `package wire

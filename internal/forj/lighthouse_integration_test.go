@@ -69,7 +69,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_SECRET":          token,
+			"LIGHTHOUSE_SECRET":         token,
 			"LIGHTHOUSE_URL":            "ws://127.0.0.1:" + port + "/lighthouse/ws/agent",
 			"LIGHTHOUSE_AGENT_RETRY_MS": "100",
 		},
@@ -97,7 +97,7 @@ func buildAgentEnv(t *testing.T, baseURL, token string) []string {
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_SECRET":          token,
+			"LIGHTHOUSE_SECRET":         token,
 			"LIGHTHOUSE_URL":            agentURL,
 			"LIGHTHOUSE_AGENT_RETRY_MS": "50",
 		},
@@ -778,7 +778,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	token := "test-token"
 	envs := map[string]string{
 		"LIGHTHOUSE_ENABLED": "true",
-		"LIGHTHOUSE_SECRET":   token,
+		"LIGHTHOUSE_SECRET":  token,
 	}
 	for key, value := range envs {
 		t.Setenv(key, value)
@@ -1375,10 +1375,10 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"params": map[string]any{},
 	})
 	if err := consoleConn.WriteJSON(map[string]any{
-		"type":    "command",
-		"id":      "cmd-1",
-		"target":  "http",
-		"payload": json.RawMessage(commandPayload),
+		"type":        "command",
+		"id":          "cmd-1",
+		"destination": "http",
+		"payload":     json.RawMessage(commandPayload),
 	}); err != nil {
 		t.Fatalf("send command: %v", err)
 	}
@@ -1388,13 +1388,13 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	for time.Now().Before(readDeadline) {
 		agentConn.SetReadDeadline(readDeadline)
 		var msg struct {
-			Type    string          `json:"type"`
-			ID      string          `json:"id"`
-			Target  string          `json:"target"`
-			Payload json.RawMessage `json:"payload"`
+			Type        string          `json:"type"`
+			ID          string          `json:"id"`
+			Destination string          `json:"destination"`
+			Payload     json.RawMessage `json:"payload"`
 		}
 		readEncryptedAgentJSON(t, agentConn, token, &msg)
-		if msg.Type != "command" || msg.Target != "http" {
+		if msg.Type != "command" || msg.Destination != "http" {
 			continue
 		}
 		gotCommand = true

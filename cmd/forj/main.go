@@ -59,24 +59,24 @@ func main() {
 
 	args := os.Args[1:]
 	inGeneratedApp := isGeneratedAppDir()
-	targetContext := ""
-	if target, remaining, ok := resolveTargetPrefix(args, inGeneratedApp); ok {
-		if shouldRunTargetNativeCommand(remaining) {
-			applySourceTargetEnv(target)
-			targetContext = target
+	appContext := ""
+	if appName, remaining, ok := resolveAppPrefix(args, inGeneratedApp); ok {
+		if shouldRunAppNativeCommand(remaining) {
+			applySourceAppEnv(appName)
+			appContext = appName
 			args = remaining
-		} else if runTargetBinary(target, remaining) {
+		} else if runAppBinary(appName, remaining) {
 			return
 		} else {
-			applySourceTargetEnv(target)
-			targetContext = target
+			applySourceAppEnv(appName)
+			appContext = appName
 			args = remaining
 		}
 	}
 	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
 
 	if isRootHelp(args) {
-		if targetContext != "" {
+		if appContext != "" {
 			if err := runAppCommandThroughSource(app.RootCmd(), appRootHelpArgs()); err != nil {
 				if code, ok := build.ChildExitCode(err); ok {
 					os.Exit(code)
@@ -86,9 +86,9 @@ func main() {
 		} else {
 			printRootHelp(parser)
 			if inGeneratedApp {
-				targets := conventionalAppHelpTargets(inGeneratedApp)
-				printTargetUsageHelp(targets)
-				if err := printGeneratedAppHelp(targets); err != nil {
+				apps := conventionalAppHelpApps(inGeneratedApp)
+				printAppUsageHelp(apps)
+				if err := printGeneratedAppHelp(apps); err != nil {
 					if code, ok := build.ChildExitCode(err); ok {
 						os.Exit(code)
 					}
@@ -124,51 +124,51 @@ func main() {
 	}
 }
 
-// resolveTargetPrefix strips a conventional target prefix while preserving native command precedence.
-func resolveTargetPrefix(args []string, inGeneratedApp bool) (string, []string, bool) {
+// resolveAppPrefix strips a conventional app prefix while preserving native command precedence.
+func resolveAppPrefix(args []string, inGeneratedApp bool) (string, []string, bool) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return "", args, false
 	}
-	target := strings.TrimSpace(args[0])
-	if !project.IsSafeAppTargetName(target) || isNativeCommandName(target) {
+	appName := strings.TrimSpace(args[0])
+	if !project.IsSafeAppName(appName) || isNativeCommandName(appName) {
 		return "", args, false
 	}
-	if regularFileExists(filepath.Join(".", "bin", target)) {
-		return target, args[1:], true
+	if regularFileExists(filepath.Join(".", "bin", appName)) {
+		return appName, args[1:], true
 	}
-	if inGeneratedApp && isConventionalSourceTarget(target) {
-		return target, args[1:], true
+	if inGeneratedApp && isConventionalSourceApp(appName) {
+		return appName, args[1:], true
 	}
 	return "", args, false
 }
 
-// shouldRunTargetNativeCommand keeps framework-owned commands target-scoped instead of delegating them to app binaries.
-func shouldRunTargetNativeCommand(args []string) bool {
+// shouldRunAppNativeCommand keeps framework-owned commands app-scoped instead of delegating them to app binaries.
+func shouldRunAppNativeCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
 	return isNativeCommandName(args[0])
 }
 
-// conventionalAppHelpTargets discovers the app targets that should be visible from `forj --help`.
-func conventionalAppHelpTargets(inGeneratedApp bool) []string {
+// conventionalAppHelpApps discovers the apps that should be visible from `forj --help`.
+func conventionalAppHelpApps(inGeneratedApp bool) []string {
 	if !inGeneratedApp {
 		return nil
 	}
 
 	seen := map[string]struct{}{}
-	targets := []string{}
-	appendConventionalAppHelpTarget(&targets, seen, project.DefaultAppTargetName)
+	apps := []string{}
+	appendConventionalAppHelpApp(&apps, seen, project.DefaultAppName)
 
-	appendConventionalAppHelpTargetsFromDir(&targets, seen, "cmd")
-	appendConventionalBinaryHelpTargets(&targets, seen, filepath.Join(".", "bin"))
+	appendConventionalAppHelpAppsFromDir(&apps, seen, "cmd")
+	appendConventionalBinaryHelpApps(&apps, seen, filepath.Join(".", "bin"))
 
-	sort.Strings(targets)
-	return targets
+	sort.Strings(apps)
+	return apps
 }
 
-// appendConventionalAppHelpTargetsFromDir treats cmd/<target>/main.go as a source-owned app target.
-func appendConventionalAppHelpTargetsFromDir(targets *[]string, seen map[string]struct{}, root string) {
+// appendConventionalAppHelpAppsFromDir treats cmd/<app>/main.go as a source-owned app.
+func appendConventionalAppHelpAppsFromDir(apps *[]string, seen map[string]struct{}, root string) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
@@ -177,16 +177,16 @@ func appendConventionalAppHelpTargetsFromDir(targets *[]string, seen map[string]
 		if !entry.IsDir() {
 			continue
 		}
-		target := entry.Name()
-		if !regularFileExists(filepath.Join(root, target, "main.go")) {
+		appName := entry.Name()
+		if !regularFileExists(filepath.Join(root, appName, "main.go")) {
 			continue
 		}
-		appendConventionalAppHelpTarget(targets, seen, target)
+		appendConventionalAppHelpApp(apps, seen, appName)
 	}
 }
 
-// appendConventionalBinaryHelpTargets keeps binary-only targets visible after a build.
-func appendConventionalBinaryHelpTargets(targets *[]string, seen map[string]struct{}, root string) {
+// appendConventionalBinaryHelpApps keeps binary-only apps visible after a build.
+func appendConventionalBinaryHelpApps(apps *[]string, seen map[string]struct{}, root string) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
@@ -195,33 +195,33 @@ func appendConventionalBinaryHelpTargets(targets *[]string, seen map[string]stru
 		if entry.IsDir() {
 			continue
 		}
-		appendConventionalAppHelpTarget(targets, seen, entry.Name())
+		appendConventionalAppHelpApp(apps, seen, entry.Name())
 	}
 }
 
-// appendConventionalAppHelpTarget applies the same safety and native-command precedence rules as target dispatch.
-func appendConventionalAppHelpTarget(targets *[]string, seen map[string]struct{}, target string) {
-	target = strings.TrimSpace(target)
-	if target == "" || !project.IsSafeAppTargetName(target) || project.IsReservedAppTargetName(target) {
+// appendConventionalAppHelpApp applies the same safety and native-command precedence rules as app dispatch.
+func appendConventionalAppHelpApp(apps *[]string, seen map[string]struct{}, appName string) {
+	appName = strings.TrimSpace(appName)
+	if appName == "" || !project.IsSafeAppName(appName) || project.IsReservedAppName(appName) {
 		return
 	}
-	if target != project.DefaultAppTargetName && isNativeCommandName(target) {
+	if appName != project.DefaultAppName && isNativeCommandName(appName) {
 		return
 	}
-	if _, ok := seen[target]; ok {
+	if _, ok := seen[appName]; ok {
 		return
 	}
-	seen[target] = struct{}{}
-	*targets = append(*targets, target)
+	seen[appName] = struct{}{}
+	*apps = append(*apps, appName)
 }
 
-// isConventionalSourceTarget reports whether cmd/<target>/main.go defines an app target.
-func isConventionalSourceTarget(target string) bool {
-	target = strings.TrimSpace(target)
-	if !project.IsSafeAppTargetName(target) {
+// isConventionalSourceApp reports whether cmd/<app>/main.go defines an app.
+func isConventionalSourceApp(appName string) bool {
+	appName = strings.TrimSpace(appName)
+	if !project.IsSafeAppName(appName) {
 		return false
 	}
-	return regularFileExists(filepath.Join(".", "cmd", target, "main.go"))
+	return regularFileExists(filepath.Join(".", "cmd", appName, "main.go"))
 }
 
 // isNativeCommandName reports whether name belongs to the framework CLI grammar.
@@ -235,10 +235,10 @@ func isNativeCommandName(name string) bool {
 	return false
 }
 
-// runTargetBinary delegates `forj <target> ...` to ./bin/<target> when that target exists.
-func runTargetBinary(target string, args []string) bool {
-	if err := runTargetBinaryCommand(target, args); err != nil {
-		if errors.Is(err, errTargetBinaryNotFound) {
+// runAppBinary delegates `forj <app> ...` to ./bin/<app> when that app exists.
+func runAppBinary(appName string, args []string) bool {
+	if err := runAppBinaryCommand(appName, args); err != nil {
+		if errors.Is(err, errAppBinaryNotFound) {
 			return false
 		}
 		var exitErr *exec.ExitError
@@ -250,45 +250,44 @@ func runTargetBinary(target string, args []string) bool {
 	return true
 }
 
-// errTargetBinaryNotFound lets target-prefix dispatch fall back to source-mode handling.
-var errTargetBinaryNotFound = errors.New("target binary not found")
+// errAppBinaryNotFound lets app-prefix dispatch fall back to source-mode handling.
+var errAppBinaryNotFound = errors.New("app binary not found")
 
-// runTargetBinaryCommand delegates to ./bin/<target> while leaving exit handling to the caller.
-func runTargetBinaryCommand(target string, args []string) error {
-	binPath := filepath.Join(".", "bin", strings.TrimSpace(target))
+// runAppBinaryCommand delegates to ./bin/<app> while leaving exit handling to the caller.
+func runAppBinaryCommand(appName string, args []string) error {
+	appName = strings.TrimSpace(appName)
+	binPath := filepath.Join(".", "bin", appName)
 	if !regularFileExists(binPath) {
-		return errTargetBinaryNotFound
+		return errAppBinaryNotFound
 	}
 	command := exec.Command(binPath, args...)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
-	command.Env = targetCommandEnv(target)
+	command.Env = appCommandEnv(appName)
 	if err := command.Run(); err != nil {
 		return err
 	}
 	return nil
 }
 
-// applySourceTargetEnv makes native source-mode commands operate against the selected target.
-func applySourceTargetEnv(target string) {
-	target = strings.TrimSpace(target)
-	_ = os.Setenv("FORJ_COMMAND_PREFIX", "forj "+target)
-	_ = os.Setenv("FORJ_APP_TARGET", target)
-	_ = os.Setenv("APP_TARGET", target)
+// applySourceAppEnv makes native source-mode commands operate against the selected app.
+func applySourceAppEnv(appName string) {
+	appName = strings.TrimSpace(appName)
+	_ = os.Setenv("FORJ_COMMAND_PREFIX", "forj "+appName)
+	_ = os.Setenv("FORJ_APP", appName)
 }
 
-// targetCommandEnv marks delegated target commands, with the explicit CLI target taking precedence.
-func targetCommandEnv(target string) []string {
-	return withTargetEnv(os.Environ(), strings.TrimSpace(target))
+// appCommandEnv marks delegated app commands, with the explicit CLI app taking precedence.
+func appCommandEnv(appName string) []string {
+	return withAppEnv(os.Environ(), strings.TrimSpace(appName))
 }
 
-// withTargetEnv overlays target identity onto an environment slice.
-func withTargetEnv(env []string, target string) []string {
+// withAppEnv overlays app identity onto an environment slice.
+func withAppEnv(env []string, appName string) []string {
 	updates := map[string]string{
-		"FORJ_COMMAND_PREFIX": "forj " + target,
-		"FORJ_APP_TARGET":     target,
-		"APP_TARGET":          target,
+		"FORJ_COMMAND_PREFIX": "forj " + appName,
+		"FORJ_APP":            appName,
 	}
 	out := make([]string, 0, len(env)+len(updates))
 	seen := map[string]struct{}{}
@@ -331,20 +330,20 @@ func appRootHelpArgs() []string {
 	return []string{"--help"}
 }
 
-// printTargetUsageHelp explains app prefixing once when a project has multiple app targets.
-func printTargetUsageHelp(targets []string) {
-	if len(targets) <= 1 {
+// printAppUsageHelp explains app prefixing once when a project has multiple apps.
+func printAppUsageHelp(apps []string) {
+	if len(apps) <= 1 {
 		return
 	}
 	fmt.Println()
 	fmt.Println(console.Colorize(console.ColorBoldWhite, "app usage"))
-	renderTargetUsageRow("forj <app> <command>", "Run a command for a specific app")
-	renderTargetUsageRow("forj <app> build", "Build a specific app binary")
-	renderTargetUsageRow("forj dev", "Build and run all apps in development")
+	renderAppUsageRow("forj <app> <command>", "Run a command for a specific app")
+	renderAppUsageRow("forj <app> build", "Build a specific app binary")
+	renderAppUsageRow("forj dev", "Build and run all apps in development")
 }
 
-// renderTargetUsageRow prints one compact root help example row.
-func renderTargetUsageRow(command string, help string) {
+// renderAppUsageRow prints one compact root help example row.
+func renderAppUsageRow(command string, help string) {
 	const width = 23
 	spacing := strings.Repeat(" ", width-len(command)+2)
 	fmt.Printf("  %s%s%s\n",
@@ -354,12 +353,12 @@ func renderTargetUsageRow(command string, help string) {
 	)
 }
 
-// printGeneratedAppHelp prints generated app help screens in target order after collecting them concurrently.
-func printGeneratedAppHelp(targets []string) error {
-	results := collectGeneratedAppHelp(targets)
+// printGeneratedAppHelp prints generated app help screens in app order after collecting them concurrently.
+func printGeneratedAppHelp(apps []string) error {
+	results := collectGeneratedAppHelp(apps)
 	for _, result := range results {
 		if result.err != nil {
-			return fmt.Errorf("%s help: %w", result.target, result.err)
+			return fmt.Errorf("%s help: %w", result.app, result.err)
 		}
 	}
 	if output, ok := compactGeneratedAppHelp(results); ok {
@@ -374,7 +373,7 @@ func printGeneratedAppHelp(targets []string) error {
 }
 
 type appHelpResult struct {
-	target string
+	app    string
 	output string
 	err    error
 }
@@ -386,7 +385,7 @@ type appHelpCommand struct {
 }
 
 type parsedAppHelp struct {
-	target   string
+	app      string
 	title    string
 	baseName string
 	commands []appHelpCommand
@@ -401,7 +400,7 @@ func compactGeneratedAppHelp(results []appHelpResult) (string, bool) {
 	}
 	parsed := make([]parsedAppHelp, 0, len(results))
 	for _, result := range results {
-		help, ok := parseGeneratedAppHelp(result.target, result.output)
+		help, ok := parseGeneratedAppHelp(result.app, result.output)
 		if !ok {
 			return "", false
 		}
@@ -421,15 +420,15 @@ func compactGeneratedAppHelp(results []appHelpResult) (string, bool) {
 		if len(delta) == 0 {
 			continue
 		}
-		renderAppHelpBlock(&out, baseName+" · "+help.target, delta)
+		renderAppHelpBlock(&out, baseName+" · "+help.app, delta)
 	}
 	return out.String(), true
 }
 
 // parseGeneratedAppHelp extracts command rows from the generated app root help format.
-func parseGeneratedAppHelp(target string, output string) (parsedAppHelp, bool) {
+func parseGeneratedAppHelp(appName string, output string) (parsedAppHelp, bool) {
 	lines := strings.Split(stripANSI(output), "\n")
-	help := parsedAppHelp{target: strings.TrimSpace(target)}
+	help := parsedAppHelp{app: strings.TrimSpace(appName)}
 	currentSection := ""
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -469,7 +468,7 @@ func parseGeneratedAppHelpCommand(section string, line string) (appHelpCommand, 
 	return appHelpCommand{section: section, name: name, help: strings.TrimSpace(help)}, true
 }
 
-// generatedHelpBaseName returns the app name before the optional target qualifier.
+// generatedHelpBaseName returns the app name before the optional app qualifier.
 func generatedHelpBaseName(title string) string {
 	title = strings.TrimSpace(title)
 	if before, _, ok := strings.Cut(title, " · "); ok {
@@ -481,7 +480,7 @@ func generatedHelpBaseName(title string) string {
 	return title
 }
 
-// sharedAppHelpCommands returns commands that are exactly present in every parsed app target.
+// sharedAppHelpCommands returns commands that are exactly present in every parsed app.
 func sharedAppHelpCommands(parsed []parsedAppHelp) []appHelpCommand {
 	counts := map[string]int{}
 	commands := map[string]appHelpCommand{}
@@ -507,7 +506,7 @@ func sharedAppHelpCommands(parsed []parsedAppHelp) []appHelpCommand {
 	return shared
 }
 
-// appHelpDelta removes shared commands from one target's command list.
+// appHelpDelta removes shared commands from one app's command list.
 func appHelpDelta(commands []appHelpCommand, shared []appHelpCommand) []appHelpCommand {
 	sharedKeys := map[string]struct{}{}
 	for _, command := range shared {
@@ -583,31 +582,31 @@ func stripANSI(value string) string {
 	return ansiEscapePattern.ReplaceAllString(value, "")
 }
 
-// collectGeneratedAppHelp shells out per target so help rendering can run in parallel without sharing parser state.
-func collectGeneratedAppHelp(targets []string) []appHelpResult {
-	results := make([]appHelpResult, len(targets))
-	multi := len(targets) > 1
+// collectGeneratedAppHelp shells out per app so help rendering can run in parallel without sharing parser state.
+func collectGeneratedAppHelp(apps []string) []appHelpResult {
+	results := make([]appHelpResult, len(apps))
+	multi := len(apps) > 1
 	var wait sync.WaitGroup
-	for index, target := range targets {
+	for index, appName := range apps {
 		wait.Add(1)
-		go func(index int, target string, multi bool) {
+		go func(index int, appName string, multi bool) {
 			defer wait.Done()
-			output, err := runAppHelpForTarget(target, multi)
-			results[index] = appHelpResult{target: target, output: output, err: err}
-		}(index, target, multi)
+			output, err := runAppHelpForApp(appName, multi)
+			results[index] = appHelpResult{app: appName, output: output, err: err}
+		}(index, appName, multi)
 	}
 	wait.Wait()
 	return results
 }
 
-// runAppHelpForTarget invokes the selected target through the root binary so source and built targets share one path.
-func runAppHelpForTarget(target string, multi bool) (string, error) {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		target = project.DefaultAppTargetName
+// runAppHelpForApp invokes the selected app through the root binary so source and built apps share one path.
+func runAppHelpForApp(appName string, multi bool) (string, error) {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		appName = project.DefaultAppName
 	}
-	command := exec.Command(os.Args[0], target, "--help")
-	command.Env = withTargetEnv(delegatedAppEnv(), target)
+	command := exec.Command(os.Args[0], appName, "--help")
+	command.Env = withAppEnv(delegatedAppEnv(), appName)
 	if multi {
 		command.Env = append(command.Env, "FORJ_MULTI_APP_HELP=1")
 	}

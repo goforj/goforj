@@ -54,18 +54,15 @@ func (s *Server) swaggerUIHandler(r web.Context) error {
 func (s *Server) swaggerSpecHandler(r web.Context) error {
 	specPath := os.Getenv("OPENAPI_SPEC_PATH")
 	if specPath == "" {
-		specPath = defaultOpenAPISpecPathForTarget()
+		specPath = defaultOpenAPISpecPathForApp()
 	}
 	return r.File(specPath)
 }
 
-func defaultOpenAPISpecPathForTarget() string {
-	target := strings.TrimSpace(os.Getenv("APP_TARGET"))
-	if target == "" {
-		target = strings.TrimSpace(os.Getenv("FORJ_APP_TARGET"))
-	}
-	if target == "" || target == "app" {
+func defaultOpenAPISpecPathForApp() string {
+	app := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	if app == "" || app == "app" {
 		return defaultOpenAPISpecPath
 	}
-	return filepath.Join("build", target, "openapi.json")
+	return filepath.Join("build", app, "openapi.json")
 }

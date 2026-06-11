@@ -11,12 +11,12 @@ import (
 
 // Message is the shared envelope for all control-plane traffic.
 type Message struct {
-	Type    string          `json:"type"`
-	ID      string          `json:"id"`
-	ReplyTo string          `json:"reply_to,omitempty"`
-	Source  string          `json:"source,omitempty"`
-	Target  string          `json:"target,omitempty"`
-	Payload json.RawMessage `json:"payload"`
+	Type        string          `json:"type"`
+	ID          string          `json:"id"`
+	ReplyTo     string          `json:"reply_to,omitempty"`
+	Source      string          `json:"source,omitempty"`
+	Destination string          `json:"destination,omitempty"`
+	Payload     json.RawMessage `json:"payload"`
 }
 
 // EncryptedMessage is the shared encrypted envelope for agent websocket traffic.

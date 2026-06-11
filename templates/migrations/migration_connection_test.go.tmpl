@@ -37,17 +37,17 @@ func TestAutoRegisterMigrationsByConnection(t *testing.T) {
 		return migrations[i].Name() < migrations[j].Name()
 	})
 
-	if migrations[0].Name() != "2026_01_01_init" || migrations[0].Target() != "app" || migrations[0].Connection() != "default" || migrations[0].DatabaseConnection() != "default" {
-		t.Fatalf("expected app/default migration, got %s (%s/%s -> %s)", migrations[0].Name(), migrations[0].Target(), migrations[0].Connection(), migrations[0].DatabaseConnection())
+	if migrations[0].Name() != "2026_01_01_init" || migrations[0].App() != "app" || migrations[0].Connection() != "default" || migrations[0].DatabaseConnection() != "default" {
+		t.Fatalf("expected app/default migration, got %s (%s/%s -> %s)", migrations[0].Name(), migrations[0].App(), migrations[0].Connection(), migrations[0].DatabaseConnection())
 	}
-	if migrations[1].Name() != "2026_01_02_metrics" || migrations[1].Target() != "app" || migrations[1].Connection() != "analytics" || migrations[1].DatabaseConnection() != "analytics" {
-		t.Fatalf("expected app/analytics migration, got %s (%s/%s -> %s)", migrations[1].Name(), migrations[1].Target(), migrations[1].Connection(), migrations[1].DatabaseConnection())
+	if migrations[1].Name() != "2026_01_02_metrics" || migrations[1].App() != "app" || migrations[1].Connection() != "analytics" || migrations[1].DatabaseConnection() != "analytics" {
+		t.Fatalf("expected app/analytics migration, got %s (%s/%s -> %s)", migrations[1].Name(), migrations[1].App(), migrations[1].Connection(), migrations[1].DatabaseConnection())
 	}
-	if migrations[2].Name() != "2026_01_03_billing" || migrations[2].Target() != "billing" || migrations[2].Connection() != "default" || migrations[2].DatabaseConnection() != "billing" {
-		t.Fatalf("expected billing/default migration, got %s (%s/%s -> %s)", migrations[2].Name(), migrations[2].Target(), migrations[2].Connection(), migrations[2].DatabaseConnection())
+	if migrations[2].Name() != "2026_01_03_billing" || migrations[2].App() != "billing" || migrations[2].Connection() != "default" || migrations[2].DatabaseConnection() != "billing" {
+		t.Fatalf("expected billing/default migration, got %s (%s/%s -> %s)", migrations[2].Name(), migrations[2].App(), migrations[2].Connection(), migrations[2].DatabaseConnection())
 	}
-	if migrations[3].Name() != "2026_01_04_ledger" || migrations[3].Target() != "billing" || migrations[3].Connection() != "ledger" || migrations[3].DatabaseConnection() != "billing_ledger" {
-		t.Fatalf("expected billing/ledger migration, got %s (%s/%s -> %s)", migrations[3].Name(), migrations[3].Target(), migrations[3].Connection(), migrations[3].DatabaseConnection())
+	if migrations[3].Name() != "2026_01_04_ledger" || migrations[3].App() != "billing" || migrations[3].Connection() != "ledger" || migrations[3].DatabaseConnection() != "billing_ledger" {
+		t.Fatalf("expected billing/ledger migration, got %s (%s/%s -> %s)", migrations[3].Name(), migrations[3].App(), migrations[3].Connection(), migrations[3].DatabaseConnection())
 	}
 }
 

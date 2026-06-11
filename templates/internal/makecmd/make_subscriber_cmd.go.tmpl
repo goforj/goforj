@@ -152,7 +152,7 @@ func (c *SubscriberCmd) writeSubscriberFile(target subscriberTarget) error {
 
 // injectIntoWireFile registers the subscriber constructor and event bus subscription.
 func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName string) error {
-	injectPath := targetAppWireFile("inject_subscribers_app.go", "./app/wire/inject_event_subscribers.go", "./wire/inject_subscribers_app.go", "./wire/inject_event_subscribers.go")
+	injectPath := activeAppWireFile("inject_subscribers_app.go", "./app/wire/inject_event_subscribers.go", "./wire/inject_subscribers_app.go", "./wire/inject_event_subscribers.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -203,7 +203,7 @@ func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName stri
 }
 
 func (c *SubscriberCmd) removeFromWireFile(target subscriberTarget, busName string) error {
-	injectPath := targetAppWireFile("inject_subscribers_app.go", "./app/wire/inject_event_subscribers.go", "./wire/inject_subscribers_app.go", "./wire/inject_event_subscribers.go")
+	injectPath := activeAppWireFile("inject_subscribers_app.go", "./app/wire/inject_event_subscribers.go", "./wire/inject_subscribers_app.go", "./wire/inject_event_subscribers.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {

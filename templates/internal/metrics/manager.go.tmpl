@@ -181,56 +181,56 @@ type sourceNameRequestContext interface {
 }
 
 type metricRegistry struct {
-	appTarget string
+	appName string
 	registry  *gmetrics.Registry
 }
 
 type metricCounterVec struct {
-	appTarget string
+	appName string
 	vec       *gmetrics.CounterVec
 }
 
 type metricGaugeVec struct {
-	appTarget string
+	appName string
 	vec       *gmetrics.GaugeVec
 }
 
 type metricHistogramVec struct {
-	appTarget string
+	appName string
 	vec       *gmetrics.HistogramVec
 }
 
 func (r metricRegistry) MustCounterVec(desc gmetrics.Descriptor, labelKeys []string) *metricCounterVec {
 	return &metricCounterVec{
-		appTarget: r.appTarget,
+		appName: r.appName,
 		vec:       r.registry.MustCounterVec(desc, labelKeys),
 	}
 }
 
 func (r metricRegistry) MustGaugeVec(desc gmetrics.Descriptor, labelKeys []string) *metricGaugeVec {
 	return &metricGaugeVec{
-		appTarget: r.appTarget,
+		appName: r.appName,
 		vec:       r.registry.MustGaugeVec(desc, labelKeys),
 	}
 }
 
 func (r metricRegistry) MustHistogramVec(desc gmetrics.Descriptor, labelKeys []string, bounds []int64) *metricHistogramVec {
 	return &metricHistogramVec{
-		appTarget: r.appTarget,
+		appName: r.appName,
 		vec:       r.registry.MustHistogramVec(desc, labelKeys, bounds),
 	}
 }
 
 func (v *metricCounterVec) WithLabelValues(values ...string) *gmetrics.Counter {
-	return v.vec.WithLabelValues(metricLabelValues(v.appTarget, values...)...)
+	return v.vec.WithLabelValues(metricLabelValues(v.appName, values...)...)
 }
 
 func (v *metricGaugeVec) WithLabelValues(values ...string) *gmetrics.Gauge {
-	return v.vec.WithLabelValues(metricLabelValues(v.appTarget, values...)...)
+	return v.vec.WithLabelValues(metricLabelValues(v.appName, values...)...)
 }
 
 func (v *metricHistogramVec) WithLabelValues(values ...string) *gmetrics.Histogram {
-	return v.vec.WithLabelValues(metricLabelValues(v.appTarget, values...)...)
+	return v.vec.WithLabelValues(metricLabelValues(v.appName, values...)...)
 }
 
 // NewConfig resolves framework metrics config from environment.
@@ -269,8 +269,8 @@ func NewManager() *Manager {
 // NewManagerWithConfig creates a metrics manager with the provided config.
 func NewManagerWithConfig(config Config) *Manager {
 	baseRegistry := gmetrics.NewRegistry()
-	appTarget := metricAppTargetLabel(runtime.CurrentAppTarget().Name)
-	registry := metricRegistry{appTarget: appTarget, registry: baseRegistry}
+	appName := metricAppLabel(runtime.CurrentApp().Name)
+	registry := metricRegistry{appName: appName, registry: baseRegistry}
 
 	return &Manager{
 		registry: baseRegistry,
@@ -1465,7 +1465,7 @@ func metricSourceLabel(source string) string {
 	}
 }
 
-func metricAppTargetLabel(target string) string {
+func metricAppLabel(target string) string {
 	target = strings.TrimSpace(strings.ToLower(target))
 	if target == "" {
 		return "app"
@@ -1475,14 +1475,14 @@ func metricAppTargetLabel(target string) string {
 
 func metricLabelKeys(keys ...string) []string {
 	out := make([]string, 0, len(keys)+1)
-	out = append(out, "app_target")
+	out = append(out, "app")
 	out = append(out, keys...)
 	return out
 }
 
-func metricLabelValues(appTarget string, values ...string) []string {
+func metricLabelValues(appName string, values ...string) []string {
 	out := make([]string, 0, len(values)+1)
-	out = append(out, metricAppTargetLabel(appTarget))
+	out = append(out, metricAppLabel(appName))
 	out = append(out, values...)
 	return out
 }

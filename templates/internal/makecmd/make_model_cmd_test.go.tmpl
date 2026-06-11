@@ -85,10 +85,10 @@ type WidgetRepo struct{}
 	})
 }
 
-func TestModelCmdUsesActiveAppTargetForRepositoryWiring(t *testing.T) {
+func TestModelCmdUsesActiveAppForRepositoryWiring(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("FORJ_APP_TARGET", "reporting")
+	t.Setenv("FORJ_APP", "reporting")
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
 	if err := writeRepositorySetFile(filepath.Join("app", "wire", "inject_repositories_app.go"), map[string]string{

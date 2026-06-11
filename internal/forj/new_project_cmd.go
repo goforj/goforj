@@ -236,7 +236,7 @@ func (m *model) finalizeConfig() {
 		SoundOnWatchError: true,
 		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
-		WirePaths:         []string{project.DefaultAppTarget().WireDir},
+		WirePaths:         []string{project.DefaultApp().WireDir},
 	}
 	if components.Docker {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{

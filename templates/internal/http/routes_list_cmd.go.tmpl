@@ -28,17 +28,14 @@ func (*RouteListCmd) Signature() string {
 // Run executes the command to list all registered routes.
 func (c *RouteListCmd) Run() error {
 	entries := web.BuildRouteEntries(c.server.GetRoutes())
-	fmt.Printf("App Target: %s\n\n", routeListAppTarget())
+	fmt.Printf("App: %s\n\n", routeListApp())
 	fmt.Println(web.RenderRouteTable(entries))
 	return nil
 }
 
-func routeListAppTarget() string {
-	if target := strings.TrimSpace(os.Getenv("APP_TARGET")); target != "" {
-		return target
-	}
-	if target := strings.TrimSpace(os.Getenv("FORJ_APP_TARGET")); target != "" {
-		return target
+func routeListApp() string {
+	if app := strings.TrimSpace(os.Getenv("FORJ_APP")); app != "" {
+		return app
 	}
 	return "app"
 }

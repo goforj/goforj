@@ -48,52 +48,47 @@ func firstExistingGeneratedPath(paths ...string) string {
 	return paths[0]
 }
 
-// targetAppName lets delegated target commands scope app-owned registration without adding generator flags.
-func targetAppName() string {
-	for _, key := range []string{"FORJ_APP_TARGET", "APP_TARGET"} {
-		target := str.Of(os.Getenv(key)).TrimSpace()
-		if target.IsBlank() {
-			continue
-		}
-		if appTargetNameIsSafe(target.String()) {
-			return target.String()
-		}
+// activeAppName lets delegated app commands scope app-owned registration without adding generator flags.
+func activeAppName() string {
+	app := str.Of(os.Getenv("FORJ_APP")).TrimSpace()
+	if !app.IsBlank() && appNameIsSafe(app.String()) {
+		return app.String()
 	}
 	return "app"
 }
 
-// targetAppDir maps the implicit default target to app/ and named targets to app/<target>/.
-func targetAppDir() string {
-	target := targetAppName()
-	if target == "app" {
+// activeAppDir maps the implicit default app to app/ and named apps to app/<app>/.
+func activeAppDir() string {
+	app := activeAppName()
+	if app == "app" {
 		return "app"
 	}
-	return filepath.Join("app", target)
+	return filepath.Join("app", app)
 }
 
-// targetAppFile keeps legacy fallback paths available only for the default single-app target.
-func targetAppFile(file string, legacyPaths ...string) string {
-	path := filepath.Join(targetAppDir(), file)
-	if targetAppName() != "app" {
+// activeAppFile keeps legacy fallback paths available only for the default single-app.
+func activeAppFile(file string, legacyPaths ...string) string {
+	path := filepath.Join(activeAppDir(), file)
+	if activeAppName() != "app" {
 		return path
 	}
 	return firstExistingGeneratedPath(append([]string{path}, legacyPaths...)...)
 }
 
-// targetAppWireFile scopes app-owned Wire injector mutations to the target composition root.
-func targetAppWireFile(file string, legacyPaths ...string) string {
-	return targetAppFile(filepath.Join("wire", file), legacyPaths...)
+// activeAppWireFile scopes app-owned Wire injector mutations to the active app composition root.
+func activeAppWireFile(file string, legacyPaths ...string) string {
+	return activeAppFile(filepath.Join("wire", file), legacyPaths...)
 }
 
-// targetMigrationDir resolves where migration files belong for the active App target.
-func targetMigrationDir(connection string) string {
+// appMigrationDir resolves where migration files belong for the active app.
+func appMigrationDir(connection string) string {
 	connection = str.Of(connection).TrimSpace().ToLower().String()
 	if connection == "" {
 		connection = "default"
 	}
-	target := targetAppName()
-	if target != "app" || hasNamedAppTargets() || hasTargetedMigrationLayout() {
-		return filepath.Join("migrations", target, connection)
+	app := activeAppName()
+	if app != "app" || hasNamedApps() || hasAppMigrationLayout() {
+		return filepath.Join("migrations", app, connection)
 	}
 	if connection == "default" {
 		return "migrations"
@@ -101,14 +96,14 @@ func targetMigrationDir(connection string) string {
 	return filepath.Join("migrations", connection)
 }
 
-// hasNamedAppTargets detects conventional target entrypoints without requiring project config.
-func hasNamedAppTargets() bool {
+// hasNamedApps detects conventional app entrypoints without requiring project config.
+func hasNamedApps() bool {
 	entries, err := os.ReadDir("cmd")
 	if err != nil {
 		return false
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "app" || !appTargetNameIsSafe(entry.Name()) {
+		if !entry.IsDir() || entry.Name() == "app" || !appNameIsSafe(entry.Name()) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join("cmd", entry.Name(), "main.go")); err == nil {
@@ -118,20 +113,20 @@ func hasNamedAppTargets() bool {
 	return false
 }
 
-// hasTargetedMigrationLayout keeps generators in expanded layout after migrations have been moved.
-func hasTargetedMigrationLayout() bool {
+// hasAppMigrationLayout keeps generators in expanded layout after migrations have been moved.
+func hasAppMigrationLayout() bool {
 	if _, err := os.Stat(filepath.Join("migrations", "app")); err == nil {
 		return true
 	}
 	return false
 }
 
-// appTargetNameIsSafe prevents environment-provided target names from escaping app/.
-func appTargetNameIsSafe(target string) bool {
-	if target == "." || target == ".." {
+// appNameIsSafe prevents environment-provided app names from escaping app/.
+func appNameIsSafe(app string) bool {
+	if app == "." || app == ".." {
 		return false
 	}
-	for _, r := range target {
+	for _, r := range app {
 		if r >= 'a' && r <= 'z' {
 			continue
 		}

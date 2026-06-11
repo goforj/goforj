@@ -36,7 +36,7 @@ func TestRunCmdRunArgsUseActiveConventionalTarget(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "reporting"), 0o755); err != nil {
 		t.Fatalf("mkdir cmd/reporting: %v", err)
 	}
-	t.Setenv("FORJ_APP_TARGET", "reporting")
+	t.Setenv("FORJ_APP", "reporting")
 
 	cmd := &RunCmd{Root: root}
 	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {

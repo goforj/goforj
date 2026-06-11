@@ -1446,7 +1446,7 @@ func (c *ModelCmd) ensureRepositoryProvider(modelName string) error {
 	if err != nil {
 		return err
 	}
-	wirePath := targetAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
+	wirePath := activeAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
 
 	_, err = updateRepositorySet(wirePath, repoImportPath, repoPackage, repoCtor)
 	return err
@@ -1459,7 +1459,7 @@ func (c *ModelCmd) removeRepositoryProvider(modelName string) error {
 	if err != nil {
 		return err
 	}
-	wirePath := targetAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
+	wirePath := activeAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
 
 	imports, providers, hasPlaceholder, err := readRepositorySet(wirePath)
 	if err != nil {

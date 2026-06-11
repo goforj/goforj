@@ -66,12 +66,12 @@ func AppHelpName() string {
 	if name == "" {
 		name = "app"
 	}
-	target := runtime.CurrentAppTarget().Name
-	if target == "" {
-		target = "app"
+	appName := runtime.CurrentApp().Name
+	if appName == "" {
+		appName = "app"
 	}
-	if target != "app" || os.Getenv("FORJ_MULTI_APP_HELP") == "1" || len(runtime.AppTargets) > 1 {
-		return name + " · " + target
+	if appName != "app" || os.Getenv("FORJ_MULTI_APP_HELP") == "1" || len(runtime.Apps) > 1 {
+		return name + " · " + appName
 	}
 	return name
 }

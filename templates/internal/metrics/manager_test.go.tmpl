@@ -54,7 +54,7 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 	}
 }
 
-func TestHTTPMetricsIncludeAppTargetAndRuntimeSource(t *testing.T) {
+func TestHTTPMetricsIncludeAppAndRuntimeSource(t *testing.T) {
 	manager := NewManager()
 	req := httptestNewRequest(http.MethodGet, "/hello")
 	ctx := webtest.NewContext(req, nil, "/hello", nil)
@@ -62,10 +62,10 @@ func TestHTTPMetricsIncludeAppTargetAndRuntimeSource(t *testing.T) {
 	manager.RecordHTTPRequest(ctx, http.StatusOK, time.Millisecond)
 
 	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
-		{Key: "app_target", Value: "app"},
+		{Key: "app", Value: "app"},
 		{Key: "source", Value: "http"},
 	}); got != 1 {
-		t.Fatalf("request count with app_target/source labels: got %d want 1", got)
+		t.Fatalf("request count with app/source labels: got %d want 1", got)
 	}
 }
 
@@ -1394,12 +1394,12 @@ func sameMetricsLabels(a, b []gmetrics.Label) bool {
 
 func expectedMetricsLabels(labels []gmetrics.Label) []gmetrics.Label {
 	for _, label := range labels {
-		if label.Key == "app_target" {
+		if label.Key == "app" {
 			return labels
 		}
 	}
 	out := make([]gmetrics.Label, 0, len(labels)+1)
-	out = append(out, gmetrics.Label{Key: "app_target", Value: "app"})
+	out = append(out, gmetrics.Label{Key: "app", Value: "app"})
 	out = append(out, labels...)
 	return out
 }

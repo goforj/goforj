@@ -133,7 +133,7 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	baseWatches := copyDevWatches(config.Dev.Watches)
-	config.Dev.Watches = devWatchesForTargets(config, baseWatches)
+	config.Dev.Watches = devWatchesForApps(config, baseWatches)
 
 	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -180,7 +180,7 @@ func (c *DevCmd) Run() error {
 	}
 	stopEnvWatch := startDevEnvFileWatcher(runCtx, requestBuild, 250*time.Millisecond)
 	defer stopEnvWatch()
-	stopTargetWatch := startDevAppTargetWatcher(runCtx, requestBuild, 500*time.Millisecond)
+	stopTargetWatch := startDevAppWatcher(runCtx, requestBuild, 500*time.Millisecond)
 	defer stopTargetWatch()
 	var outWriter io.Writer
 	var errWriter io.Writer
@@ -191,7 +191,7 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	writeDevTargetBuildLine(os.Stdout, activeDevTargets())
+	writeDevAppBuildLine(os.Stdout, activeDevApps())
 	if err := runDevInitialBuild(config, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
@@ -247,7 +247,7 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 	if config == nil {
 		return nil
 	}
-	databases, err := devDatabasesForTargets(config, activeDevTargets())
+	databases, err := devDatabasesForApps(config, activeDevApps())
 	if err != nil {
 		return err
 	}
@@ -287,44 +287,44 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 }
 
 type devDatabase struct {
-	Target string
+	App    string
 	Driver string
 	Name   string
 }
 
-// devDatabasesForTargets discovers every server database the current dev session must create.
-func devDatabasesForTargets(config *project.Config, targets []project.AppTarget) ([]devDatabase, error) {
+// devDatabasesForApps discovers every server database the current dev session must create.
+func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatabase, error) {
 	if config == nil {
 		return nil, nil
 	}
 	seen := map[string]bool{}
-	databases := make([]devDatabase, 0, len(targets))
-	for _, target := range targets {
-		target = normalizeRenderAppTarget(target)
-		components := targetRenderComponents(config, target)
+	databases := make([]devDatabase, 0, len(apps))
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		components := appRenderComponents(config, app)
 		if !components.HasDatabase() {
 			continue
 		}
-		driver := normalizeDevDatabaseDriver(targetScopedEnvValue(target, "DB_DRIVER"))
+		driver := normalizeDevDatabaseDriver(appScopedEnvValue(app, "DB_DRIVER"))
 		if driver == "" {
 			driver = normalizeDevDatabaseDriver(components.DatabaseDriver())
 		}
 		if driver == "" || driver == "sqlite" {
 			continue
 		}
-		name := targetScopedEnvValue(target, "DB_DATABASE")
+		name := appScopedEnvValue(app, "DB_DATABASE")
 		if name == "" {
-			return nil, fmt.Errorf("missing %s for %s database target %s", targetScopedEnvKey(target, "DB_DATABASE"), driver, target.Name)
+			return nil, fmt.Errorf("missing %s for %s database app %s", appScopedEnvKey(app, "DB_DATABASE"), driver, app.Name)
 		}
 		if err := validateDevDatabaseName(name); err != nil {
-			return nil, fmt.Errorf("%s for target %s: %w", targetScopedEnvKey(target, "DB_DATABASE"), target.Name, err)
+			return nil, fmt.Errorf("%s for app %s: %w", appScopedEnvKey(app, "DB_DATABASE"), app.Name, err)
 		}
 		key := driver + "\x00" + name
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		databases = append(databases, devDatabase{Target: target.Name, Driver: driver, Name: name})
+		databases = append(databases, devDatabase{App: app.Name, Driver: driver, Name: name})
 	}
 	sort.Slice(databases, func(left, right int) bool {
 		if databases[left].Driver != databases[right].Driver {
@@ -349,22 +349,22 @@ func normalizeDevDatabaseDriver(driver string) string {
 	}
 }
 
-// targetScopedEnvValue reads target-specific env with the same fallback shape used by app runtime.
-func targetScopedEnvValue(target project.AppTarget, key string) string {
-	if target.Name != "" && target.Name != project.DefaultAppTargetName {
-		if value := strings.TrimSpace(os.Getenv(targetScopedEnvKey(target, key))); value != "" {
+// appScopedEnvValue reads app-specific env with the same fallback shape used by app runtime.
+func appScopedEnvValue(app project.App, key string) string {
+	if app.Name != "" && app.Name != project.DefaultAppName {
+		if value := strings.TrimSpace(os.Getenv(appScopedEnvKey(app, key))); value != "" {
 			return value
 		}
 	}
 	return strings.TrimSpace(os.Getenv(key))
 }
 
-// targetScopedEnvKey returns the target-prefixed env key that overrides a base env value.
-func targetScopedEnvKey(target project.AppTarget, key string) string {
-	if target.Name == "" || target.Name == project.DefaultAppTargetName {
+// appScopedEnvKey returns the app-prefixed env key that overrides a base env value.
+func appScopedEnvKey(app project.App, key string) string {
+	if app.Name == "" || app.Name == project.DefaultAppName {
 		return key
 	}
-	prefix := strEnvPrefix(target.Name)
+	prefix := strEnvPrefix(app.Name)
 	if prefix == "" {
 		return key
 	}
@@ -483,13 +483,13 @@ func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 	return nil
 }
 
-// shouldRunDevAutoMigrate checks target-local components, not only the root app selection.
+// shouldRunDevAutoMigrate checks app-local components, not only the root app selection.
 func shouldRunDevAutoMigrate(config *project.Config) bool {
 	if config == nil || !config.Dev.AutoMigrate {
 		return false
 	}
-	for _, target := range activeDevTargets() {
-		if targetRenderComponents(config, target).HasDatabase() {
+	for _, target := range activeDevApps() {
+		if appRenderComponents(config, target).HasDatabase() {
 			return true
 		}
 	}
@@ -501,39 +501,39 @@ func devAutoMigrateShellCommand() string {
 	return activeDevAppBinaryPath() + " migrate"
 }
 
-// devAutoMigrateEnv marks auto-migrate as an unqualified framework command so the generated migration planner can fan out across App targets.
+// devAutoMigrateEnv marks auto-migrate as an unqualified framework command so the generated migration planner can fan out across Apps.
 func devAutoMigrateEnv() map[string]string {
 	return map[string]string{
 		"FORJ_COMMAND_PREFIX": "forj",
 	}
 }
 
-// activeDevAppTarget returns the target selected for this dev session.
-func activeDevAppTarget() project.AppTarget {
-	targetName := requestedDevTargetName()
-	if targetName == "" {
-		targetName = project.DefaultAppTargetName
+// activeDevApp returns the app selected for this dev session.
+func activeDevApp() project.App {
+	appName := requestedDevAppName()
+	if appName == "" {
+		appName = project.DefaultAppName
 	}
-	return project.DefaultNamedAppTarget(targetName)
+	return project.DefaultNamedApp(appName)
 }
 
-// activeDevAppBinaryPath points dev helpers at the active target binary.
+// activeDevAppBinaryPath points dev helpers at the active app binary.
 func activeDevAppBinaryPath() string {
-	return "./bin/" + activeDevAppTarget().Name
+	return "./bin/" + activeDevApp().Name
 }
 
-// devWatchesForTargets expands the single-app default watchers across every discovered target.
-func devWatchesForTargets(config *project.Config, watches []project.DevWatch) []project.DevWatch {
-	targets := activeDevTargets()
-	if len(targets) == 1 && targets[0].Name == project.DefaultAppTargetName {
+// devWatchesForApps expands the single-app default watchers across every discovered app.
+func devWatchesForApps(config *project.Config, watches []project.DevWatch) []project.DevWatch {
+	apps := activeDevApps()
+	if len(apps) == 1 && apps[0].Name == project.DefaultAppName {
 		return watches
 	}
-	rewritten := make([]project.DevWatch, 0, len(watches)*len(targets))
+	rewritten := make([]project.DevWatch, 0, len(watches)*len(apps))
 	for _, watch := range watches {
 		switch watch.Name {
 		case "Build App", "Run App":
-			for _, target := range targets {
-				rewritten = append(rewritten, devWatchForTarget(watch, target))
+			for _, app := range apps {
+				rewritten = append(rewritten, devWatchForApp(watch, app))
 			}
 		default:
 			rewritten = append(rewritten, watch)
@@ -542,7 +542,7 @@ func devWatchesForTargets(config *project.Config, watches []project.DevWatch) []
 	return rewritten
 }
 
-// copyDevWatches preserves the configured watcher template before dev expands target watchers.
+// copyDevWatches preserves the configured watcher template before dev expands app watchers.
 func copyDevWatches(watches []project.DevWatch) []project.DevWatch {
 	copied := make([]project.DevWatch, len(watches))
 	for index, watch := range watches {
@@ -552,49 +552,46 @@ func copyDevWatches(watches []project.DevWatch) []project.DevWatch {
 	return copied
 }
 
-// activeDevTargets returns one explicit target or every conventional target for all-app dev.
-func activeDevTargets() []project.AppTarget {
-	if targetName := requestedDevTargetName(); targetName != "" {
-		return []project.AppTarget{project.DefaultNamedAppTarget(targetName)}
+// activeDevApps returns one explicit app or every conventional app for all-app dev.
+func activeDevApps() []project.App {
+	if appName := requestedDevAppName(); appName != "" {
+		return []project.App{project.DefaultNamedApp(appName)}
 	}
-	targets := configuredDevTargets()
-	if len(targets) == 0 {
-		return []project.AppTarget{project.DefaultAppTarget()}
+	apps := configuredDevApps()
+	if len(apps) == 0 {
+		return []project.App{project.DefaultApp()}
 	}
-	return targets
+	return apps
 }
 
-// requestedDevTargetName reports whether the CLI selected a single target for this dev session.
-func requestedDevTargetName() string {
-	for _, key := range []string{"FORJ_APP_TARGET", "APP_TARGET"} {
-		targetName := strings.TrimSpace(os.Getenv(key))
-		if targetName == "" || !project.IsSafeAppTargetName(targetName) || project.IsReservedAppTargetName(targetName) {
-			continue
-		}
-		return targetName
+// requestedDevAppName reports whether the CLI selected a single app for this dev session.
+func requestedDevAppName() string {
+	appName := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	if appName == "" || !project.IsSafeAppName(appName) || project.IsReservedAppName(appName) {
+		return ""
 	}
-	return ""
+	return appName
 }
 
-// configuredDevTargets discovers all-app dev targets from conventional project layout only.
-func configuredDevTargets() []project.AppTarget {
-	seen := map[string]project.AppTarget{}
-	add := func(target project.AppTarget) {
-		target = normalizeRenderAppTarget(target)
-		if target.Name == "" || !project.IsSafeAppTargetName(target.Name) || project.IsReservedAppTargetName(target.Name) {
+// configuredDevApps discovers all-app dev apps from conventional project layout only.
+func configuredDevApps() []project.App {
+	seen := map[string]project.App{}
+	add := func(app project.App) {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
 			return
 		}
-		seen[target.Name] = target
+		seen[app.Name] = app
 	}
-	add(project.DefaultAppTarget())
-	for _, target := range discoverConventionalAppTargets() {
-		add(target)
+	add(project.DefaultApp())
+	for _, app := range discoverConventionalApps() {
+		add(app)
 	}
 
-	targets := make([]project.AppTarget, 0, len(seen))
-	if target, ok := seen[project.DefaultAppTargetName]; ok {
-		targets = append(targets, target)
-		delete(seen, project.DefaultAppTargetName)
+	apps := make([]project.App, 0, len(seen))
+	if app, ok := seen[project.DefaultAppName]; ok {
+		apps = append(apps, app)
+		delete(seen, project.DefaultAppName)
 	}
 	names := make([]string, 0, len(seen))
 	for name := range seen {
@@ -602,39 +599,38 @@ func configuredDevTargets() []project.AppTarget {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		targets = append(targets, seen[name])
+		apps = append(apps, seen[name])
 	}
-	return targets
+	return apps
 }
 
-// devWatchForTarget rewrites one default watcher for a specific target without editing config.
-func devWatchForTarget(watch project.DevWatch, target project.AppTarget) project.DevWatch {
-	target = normalizeRenderAppTarget(target)
+// devWatchForApp rewrites one default watcher for a specific app without editing config.
+func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
+	app = normalizeRenderApp(app)
 	baseName := watch.Name
-	if target.Name != project.DefaultAppTargetName {
-		watch.Name = strings.ReplaceAll(watch.Name, "App", target.Name)
+	if app.Name != project.DefaultAppName {
+		watch.Name = strings.ReplaceAll(watch.Name, "App", app.Name)
 	}
-	targetBinary := "./bin/" + target.Name
-	targetWireGen := filepath.ToSlash(filepath.Join(target.WireDir, "wire_gen\\.go$"))
+	appBinary := "./bin/" + app.Name
+	appWireGen := filepath.ToSlash(filepath.Join(app.WireDir, "wire_gen\\.go$"))
 	if isDevBuildWatcher(baseName) {
-		watch.Exec = devBuildCommandForTarget(watch.Exec, target)
+		watch.Exec = devBuildCommandForApp(watch.Exec, app)
 	} else {
-		watch.Exec = strings.ReplaceAll(watch.Exec, "./bin/app", targetBinary)
+		watch.Exec = strings.ReplaceAll(watch.Exec, "./bin/app", appBinary)
 	}
-	watch.Watch = strings.ReplaceAll(watch.Watch, "./bin/app", targetBinary)
-	watch.Watch = strings.ReplaceAll(watch.Watch, "app/wire/wire_gen\\.go$", targetWireGen)
+	watch.Watch = strings.ReplaceAll(watch.Watch, "./bin/app", appBinary)
+	watch.Watch = strings.ReplaceAll(watch.Watch, "app/wire/wire_gen\\.go$", appWireGen)
 	watch.Env = copyDevWatchEnv(watch.Env)
-	watch.Env["FORJ_APP_TARGET"] = target.Name
-	watch.Env["APP_TARGET"] = target.Name
-	if target.Name == project.DefaultAppTargetName {
+	watch.Env["FORJ_APP"] = app.Name
+	if app.Name == project.DefaultAppName {
 		watch.Env["FORJ_COMMAND_PREFIX"] = "forj"
 	} else {
-		watch.Env["FORJ_COMMAND_PREFIX"] = "forj " + target.Name
+		watch.Env["FORJ_COMMAND_PREFIX"] = "forj " + app.Name
 	}
 	return watch
 }
 
-// copyDevWatchEnv prevents synthesized target watchers from sharing mutable env maps.
+// copyDevWatchEnv prevents synthesized app watchers from sharing mutable env maps.
 func copyDevWatchEnv(env map[string]string) map[string]string {
 	cloned := make(map[string]string, len(env)+3)
 	for key, value := range env {
@@ -644,11 +640,11 @@ func copyDevWatchEnv(env map[string]string) map[string]string {
 }
 
 type devBuildJob struct {
-	target  project.AppTarget
+	app     project.App
 	command string
 }
 
-// devBuildCommands returns the build commands needed for the active dev target set.
+// devBuildCommands returns the build commands needed for the active dev app set.
 func devBuildCommands(config *project.Config) []string {
 	jobs := devBuildJobs(config, false)
 	commands := make([]string, 0, len(jobs))
@@ -658,7 +654,7 @@ func devBuildCommands(config *project.Config) []string {
 	return commands
 }
 
-// devInitialBuildCommands returns bootstrap builds for every active target so dev never starts from a stale binary.
+// devInitialBuildCommands returns bootstrap builds for every active app so dev never starts from a stale binary.
 func devInitialBuildCommands(config *project.Config) []string {
 	jobs := devBuildJobs(config, false)
 	commands := make([]string, 0, len(jobs))
@@ -668,28 +664,28 @@ func devInitialBuildCommands(config *project.Config) []string {
 	return commands
 }
 
-// devBuildJobs resolves target build commands while preserving the target label for compact output.
+// devBuildJobs resolves app build commands while preserving the app label for compact output.
 func devBuildJobs(config *project.Config, missingOnly bool) []devBuildJob {
-	targets := activeDevTargets()
-	jobs := make([]devBuildJob, 0, len(targets))
+	apps := activeDevApps()
+	jobs := make([]devBuildJob, 0, len(apps))
 	baseCommand := devBaseBuildCommand(config)
-	for _, target := range targets {
-		target = normalizeRenderAppTarget(target)
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
 		if missingOnly {
-			if _, err := os.Stat(filepath.Join("bin", target.Name)); err == nil {
+			if _, err := os.Stat(filepath.Join("bin", app.Name)); err == nil {
 				continue
 			}
 		}
-		command := devBuildCommandForTarget(baseCommand, target)
+		command := devBuildCommandForApp(baseCommand, app)
 		if strings.TrimSpace(command) == "" {
 			continue
 		}
-		jobs = append(jobs, devBuildJob{target: target, command: command})
+		jobs = append(jobs, devBuildJob{app: app, command: command})
 	}
 	return jobs
 }
 
-// devBaseBuildCommand uses the configured default build watcher as the template for target builds.
+// devBaseBuildCommand uses the configured default build watcher as the template for app builds.
 func devBaseBuildCommand(config *project.Config) string {
 	if config != nil {
 		for _, watch := range config.Dev.Watches {
@@ -706,37 +702,37 @@ func devBaseBuildCommand(config *project.Config) string {
 	return "forj build -o ./bin/app"
 }
 
-// devBuildCommandForTarget derives target builds from the configured default build command.
-func devBuildCommandForTarget(baseCommand string, target project.AppTarget) string {
-	target = normalizeRenderAppTarget(target)
+// devBuildCommandForApp derives app builds from the configured default build command.
+func devBuildCommandForApp(baseCommand string, app project.App) string {
+	app = normalizeRenderApp(app)
 	command := strings.TrimSpace(baseCommand)
 	if command == "" {
 		command = "forj build -o ./bin/app"
 	}
 
-	defaultTarget := project.DefaultAppTarget()
-	defaultBinary := "./bin/" + defaultTarget.Name
-	targetBinary := "./bin/" + target.Name
-	defaultPackage := "./" + filepath.ToSlash(filepath.Dir(defaultTarget.Entrypoint))
-	targetPackage := "./" + filepath.ToSlash(filepath.Dir(target.Entrypoint))
+	defaultApp := project.DefaultApp()
+	defaultBinary := "./bin/" + defaultApp.Name
+	appBinary := "./bin/" + app.Name
+	defaultPackage := "./" + filepath.ToSlash(filepath.Dir(defaultApp.Entrypoint))
+	appPackage := "./" + filepath.ToSlash(filepath.Dir(app.Entrypoint))
 
-	command = replaceBuildToken(command, defaultBinary, targetBinary)
-	command = replaceBuildToken(command, strings.TrimPrefix(defaultBinary, "./"), strings.TrimPrefix(targetBinary, "./"))
-	command = replaceBuildToken(command, defaultPackage, targetPackage)
-	command = replaceBuildToken(command, strings.TrimPrefix(defaultPackage, "./"), strings.TrimPrefix(targetPackage, "./"))
-	command = removeBuildPackageToken(command, targetPackage)
-	if target.Name != project.DefaultAppTargetName {
-		command = prefixForjBuildCommandForTarget(command, target.Name)
+	command = replaceBuildToken(command, defaultBinary, appBinary)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultBinary, "./"), strings.TrimPrefix(appBinary, "./"))
+	command = replaceBuildToken(command, defaultPackage, appPackage)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultPackage, "./"), strings.TrimPrefix(appPackage, "./"))
+	command = removeBuildPackageToken(command, appPackage)
+	if app.Name != project.DefaultAppName {
+		command = prefixForjBuildCommandForApp(command, app.Name)
 	}
 	return strings.TrimSpace(command)
 }
 
-// replaceBuildToken preserves the configured command shape while rewriting conventional target paths.
+// replaceBuildToken preserves the configured command shape while rewriting conventional app paths.
 func replaceBuildToken(command string, from string, to string) string {
 	return strings.ReplaceAll(command, from, to)
 }
 
-// removeBuildPackageToken lets the target-aware build command infer its own entrypoint package.
+// removeBuildPackageToken lets the app-aware build command infer its own entrypoint package.
 func removeBuildPackageToken(command string, targetPackage string) string {
 	targetPackage = strings.TrimSpace(targetPackage)
 	if targetPackage == "" {
@@ -747,13 +743,13 @@ func removeBuildPackageToken(command string, targetPackage string) string {
 	return strings.TrimSpace(command)
 }
 
-// prefixForjBuildCommandForTarget uses the same target command shape users run by hand.
-func prefixForjBuildCommandForTarget(command string, targetName string) string {
-	targetName = strings.TrimSpace(targetName)
-	if targetName == "" || targetName == project.DefaultAppTargetName {
+// prefixForjBuildCommandForApp uses the same app command shape users run by hand.
+func prefixForjBuildCommandForApp(command string, appName string) string {
+	appName = strings.TrimSpace(appName)
+	if appName == "" || appName == project.DefaultAppName {
 		return command
 	}
-	return strings.Replace(command, "forj build", "forj "+targetName+" build", 1)
+	return strings.Replace(command, "forj build", "forj "+appName+" build", 1)
 }
 
 func shouldRunAfterMigrate(task project.DevTask) bool {
@@ -793,7 +789,7 @@ watcherLoop:
 		if err := reloadDevWatchSessionConfig(session); err != nil {
 			return err
 		}
-		session.config.Dev.Watches = devWatchesForTargets(session.config, session.baseWatches)
+		session.config.Dev.Watches = devWatchesForApps(session.config, session.baseWatches)
 		watchers, exitCh := startWatchers(
 			session.config.ProjectName,
 			session.config.Dev.Watches,
@@ -969,7 +965,7 @@ func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Write
 	return runDevBuildJobs(config, outWriter, errWriter, false, "forj build failed")
 }
 
-// runDevInitialBuild builds every active target before pre-dev tasks can call generated app commands.
+// runDevInitialBuild builds every active app before pre-dev tasks can call generated app commands.
 func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
 	return runDevBuildJobs(config, outWriter, errWriter, false, "initial forj build failed")
 }
@@ -982,7 +978,7 @@ type devBuildResult struct {
 	err     error
 }
 
-// runDevBuildJobs runs target builds together so multi-app dev startup scales with the slowest build.
+// runDevBuildJobs runs app builds together so multi-app dev startup scales with the slowest build.
 func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, missingOnly bool, failurePrefix string) error {
 	jobs := devBuildJobs(config, missingOnly)
 	switch len(jobs) {
@@ -993,11 +989,11 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 		if err := runDevBuildCommand(outWriter, errWriter, jobs[0]); err != nil {
 			return fmt.Errorf("%s: %w", failurePrefix, err)
 		}
-		writeDevTimingLine(outWriter, "Built "+jobs[0].target.Name+" in "+formatDevElapsed(time.Since(start)))
+		writeDevTimingLine(outWriter, "Built "+jobs[0].app.Name+" in "+formatDevElapsed(time.Since(start)))
 		return nil
 	}
 
-	heading := "Building app targets"
+	heading := "Building apps"
 	start := time.Now()
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
@@ -1005,7 +1001,7 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	results := make([]devBuildResult, len(jobs))
 	var wg sync.WaitGroup
 	for index, job := range jobs {
-		writeDevActionLine(outWriter, "Building "+job.target.Name)
+		writeDevActionLine(outWriter, "Building "+job.app.Name)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1017,20 +1013,20 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	failures := make([]string, 0)
 	for _, result := range results {
 		if result.err == nil {
-			writeDevTimingLine(outWriter, "Built "+result.job.target.Name+" in "+formatDevElapsed(result.elapsed))
+			writeDevTimingLine(outWriter, "Built "+result.job.app.Name+" in "+formatDevElapsed(result.elapsed))
 			continue
 		}
 		writeDevBuildFailureOutput(outWriter, errWriter, result)
-		failures = append(failures, fmt.Sprintf("%s: %v", result.job.target.Name, result.err))
+		failures = append(failures, fmt.Sprintf("%s: %v", result.job.app.Name, result.err))
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%s: %s", failurePrefix, strings.Join(failures, "; "))
 	}
-	writeDevTimingLine(outWriter, "Built app targets in "+formatDevElapsed(time.Since(start)))
+	writeDevTimingLine(outWriter, "Built apps in "+formatDevElapsed(time.Since(start)))
 	return nil
 }
 
-// runDevBuildJobBuffered keeps concurrent build output grouped by target instead of interleaving lines.
+// runDevBuildJobBuffered keeps concurrent build output grouped by app instead of interleaving lines.
 func runDevBuildJobBuffered(job devBuildJob) devBuildResult {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -1063,9 +1059,9 @@ func stripBuildProgressMarkerLines(output string) string {
 	return filtered.String()
 }
 
-// writeDevBuildFailureOutput prints a failed target's buffered transcript only when it is useful.
+// writeDevBuildFailureOutput prints a failed app's buffered transcript only when it is useful.
 func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
-	writeDevActionLine(outWriter, "Build failed for "+result.job.target.Name)
+	writeDevActionLine(outWriter, "Build failed for "+result.job.app.Name)
 	if strings.TrimSpace(result.stdout) != "" {
 		_, _ = io.WriteString(outWriter, result.stdout)
 		if !strings.HasSuffix(result.stdout, "\n") {
@@ -1080,9 +1076,9 @@ func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result
 	}
 }
 
-// runDevBuildCommand keeps target builds compact in the dev transcript.
+// runDevBuildCommand keeps app builds compact in the dev transcript.
 func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJob) error {
-	heading := "Building " + job.target.Name
+	heading := "Building " + job.app.Name
 	writeDevActionLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
@@ -1187,28 +1183,28 @@ func formatDevElapsed(elapsed time.Duration) string {
 	return elapsed.Round(100 * time.Millisecond).String()
 }
 
-// writeDevTargetBuildLine makes convention-expanded targets visible without adding a large startup block.
-func writeDevTargetBuildLine(out io.Writer, targets []project.AppTarget) {
-	names := devTargetNames(targets)
-	if len(names) == 0 || len(names) == 1 && names[0] == project.DefaultAppTargetName {
+// writeDevAppBuildLine makes convention-expanded apps visible without adding a large startup block.
+func writeDevAppBuildLine(out io.Writer, apps []project.App) {
+	names := devAppBuildNames(apps)
+	if len(names) == 0 || len(names) == 1 && names[0] == project.DefaultAppName {
 		return
 	}
-	label := "Building app target"
+	label := "Building app"
 	if len(names) > 1 {
-		label = "Building app targets"
+		label = "Building apps"
 	}
 	writeDevActionLine(out, label+": "+strings.Join(names, ", "))
 }
 
-// devTargetNames formats target names in runtime order for user-facing dev output.
-func devTargetNames(targets []project.AppTarget) []string {
-	names := make([]string, 0, len(targets))
-	for _, target := range targets {
-		target = normalizeRenderAppTarget(target)
-		if target.Name == "" {
+// devAppBuildNames formats app names in runtime order for user-facing dev output.
+func devAppBuildNames(apps []project.App) []string {
+	names := make([]string, 0, len(apps))
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		if app.Name == "" {
 			continue
 		}
-		names = append(names, target.Name)
+		names = append(names, app.Name)
 	}
 	return names
 }
@@ -1405,9 +1401,9 @@ func startWatchersWithStarter(
 	// The single runtime supervisor watcher restarts after a fresh binary lands,
 	// so we bracket that restart with explicit shutdown/start section separators.
 	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), devRuntimeWatcherNames(watches))
-	runtimeTargets := devAppTargetNames(activeDevTargets())
-	showAppTargetColumn := len(runtimeTargets) > 1
-	appTargetWidth := devAppTargetColumnWidth(runtimeTargets)
+	runtimeTargets := devAppNames(activeDevApps())
+	showAppColumn := len(runtimeTargets) > 1
+	appNameWidth := devAppColumnWidth(runtimeTargets)
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -1430,12 +1426,12 @@ func startWatchersWithStarter(
 			if isDevBuildWatcher(watch.Name) {
 				cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
 			}
-			appTarget := devRuntimeWatcherTarget(watch.Name)
+			appName := devRuntimeWatcherApp(watch.Name)
 			cmd := execx.Command("wgo").
 				Arg(wgoArgs).
 				EnvOnly(cmdEnv).
-				StdoutWriter(newDevwatchWriterForTarget(outWriter, streamer, "stdout", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState)).
-				StderrWriter(newDevwatchWriterForTarget(errWriter, streamer, "stderr", watch.Name, triggerCmd, appTarget, appTargetWidth, showAppTargetColumn, lifecycleState))
+				StdoutWriter(newDevwatchWriterForApp(outWriter, streamer, "stdout", watch.Name, triggerCmd, appName, appNameWidth, showAppColumn, lifecycleState)).
+				StderrWriter(newDevwatchWriterForApp(errWriter, streamer, "stderr", watch.Name, triggerCmd, appName, appNameWidth, showAppColumn, lifecycleState))
 			cmd = configureWatcherPTY(cmd, soundOnError)
 			proc := start(cmd)
 			watchers[i] = runningWatcher{name: watch.Name, proc: proc}
@@ -1454,42 +1450,42 @@ func startWatchersWithStarter(
 	return watchers, exitCh
 }
 
-// devAppTargetNames returns target names in the same order used by active dev.
-func devAppTargetNames(targets []project.AppTarget) []string {
-	names := make([]string, 0, len(targets))
+// devAppNames returns app names in the same order used by active dev.
+func devAppNames(apps []project.App) []string {
+	names := make([]string, 0, len(apps))
 	seen := map[string]bool{}
-	for _, target := range targets {
-		target = normalizeRenderAppTarget(target)
-		if target.Name == "" || seen[target.Name] {
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || seen[app.Name] {
 			continue
 		}
-		seen[target.Name] = true
-		names = append(names, target.Name)
+		seen[app.Name] = true
+		names = append(names, app.Name)
 	}
 	return names
 }
 
-// devRuntimeWatcherTargets returns runtime target names in watcher order.
-func devRuntimeWatcherTargets(watches []project.DevWatch) []string {
-	targets := make([]string, 0)
+// devRuntimeWatcherApps returns runtime app names in watcher order.
+func devRuntimeWatcherApps(watches []project.DevWatch) []string {
+	apps := make([]string, 0)
 	seen := map[string]bool{}
 	for _, watch := range watches {
-		target := devRuntimeWatcherTarget(watch.Name)
-		if target == "" || seen[target] {
+		app := devRuntimeWatcherApp(watch.Name)
+		if app == "" || seen[app] {
 			continue
 		}
-		seen[target] = true
-		targets = append(targets, target)
+		seen[app] = true
+		apps = append(apps, app)
 	}
-	return targets
+	return apps
 }
 
-// devRuntimeWatcherTarget derives the app target from generated runtime watcher names.
-func devRuntimeWatcherTarget(watcher string) string {
+// devRuntimeWatcherApp derives the app from generated runtime watcher names.
+func devRuntimeWatcherApp(watcher string) string {
 	watcher = str.Of(watcher).TrimSpace().String()
 	switch {
 	case watcher == "Run App":
-		return project.DefaultAppTargetName
+		return project.DefaultAppName
 	case strings.HasPrefix(watcher, "Run "):
 		return strings.TrimSpace(strings.TrimPrefix(watcher, "Run "))
 	default:
@@ -1497,14 +1493,14 @@ func devRuntimeWatcherTarget(watcher string) string {
 	}
 }
 
-// devAppTargetColumnWidth keeps target log columns aligned without letting long slugs dominate output.
-func devAppTargetColumnWidth(targets []string) int {
+// devAppColumnWidth keeps app log columns aligned without letting long slugs dominate output.
+func devAppColumnWidth(apps []string) int {
 	const maxWidth = 18
-	width := len(project.DefaultAppTargetName)
-	for _, target := range targets {
-		target = str.Of(target).TrimSpace().String()
-		if len(target) > width {
-			width = len(target)
+	width := len(project.DefaultAppName)
+	for _, app := range apps {
+		app = str.Of(app).TrimSpace().String()
+		if len(app) > width {
+			width = len(app)
 		}
 	}
 	if width > maxWidth {
@@ -1524,7 +1520,7 @@ func devRuntimeWatcherNames(watches []project.DevWatch) []string {
 	return names
 }
 
-// isDevBuildWatcher reports whether a watcher executes target build work.
+// isDevBuildWatcher reports whether a watcher executes app build work.
 func isDevBuildWatcher(name string) bool {
 	return name == "Build App" || strings.HasPrefix(name, "Build ")
 }

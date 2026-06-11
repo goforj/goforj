@@ -20,7 +20,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-func TestRenderedMultiTargetRuntimesUseDeterministicPorts(t *testing.T) {
+func TestRenderedMultiAppRuntimesUseDeterministicPorts(t *testing.T) {
 	requirePortsAvailable(t, []string{
 		"127.0.0.1:3000",
 		"127.0.0.1:3001",
@@ -37,23 +37,23 @@ func TestRenderedMultiTargetRuntimesUseDeterministicPorts(t *testing.T) {
 	})
 
 	projectDir := t.TempDir()
-	renderMultiTargetRuntimeTestApp(t, projectDir)
-	buildMultiTargetRuntimeBinaries(t, projectDir, []multiTargetRuntimeSpec{
+	renderMultiAppRuntimeTestApp(t, projectDir)
+	buildMultiAppRuntimeBinaries(t, projectDir, []multiAppRuntimeSpec{
 		{name: "app", packagePath: "./cmd/app"},
 		{name: "billing", packagePath: "./cmd/billing"},
 		{name: "customer-portal", packagePath: "./cmd/customer-portal"},
 	})
 
-	targets := []multiTargetRuntimeSpec{
+	apps := []multiAppRuntimeSpec{
 		{name: "app", httpPort: "3000", metricsPort: "10000", schedulerMetricsPort: "10001", workerMetricsPort: "10002"},
 		{name: "billing", httpPort: "3001", metricsPort: "10010", schedulerMetricsPort: "10011", workerMetricsPort: "10012"},
 		{name: "customer-portal", httpPort: "3002", metricsPort: "10020", schedulerMetricsPort: "10021", workerMetricsPort: "10022"},
 	}
-	procs := make([]*procHandle, 0, len(targets)*3)
-	for _, target := range targets {
-		procs = append(procs, startTargetHTTPRuntime(t, projectDir, target))
-		procs = append(procs, startTargetSchedulerRuntime(t, projectDir, target))
-		procs = append(procs, startTargetWorkerRuntime(t, projectDir, target))
+	procs := make([]*procHandle, 0, len(apps)*3)
+	for _, app := range apps {
+		procs = append(procs, startAppHTTPRuntime(t, projectDir, app))
+		procs = append(procs, startAppSchedulerRuntime(t, projectDir, app))
+		procs = append(procs, startAppWorkerRuntime(t, projectDir, app))
 	}
 	defer func() {
 		for _, proc := range procs {
@@ -61,28 +61,28 @@ func TestRenderedMultiTargetRuntimesUseDeterministicPorts(t *testing.T) {
 		}
 	}()
 
-	checks := make([]runtimeReadinessCheck, 0, len(targets)*3)
-	for _, target := range targets {
-		httpProc := findRuntimeProc(t, procs, target.name+" http")
-		schedulerProc := findRuntimeProc(t, procs, target.name+" scheduler")
-		workerProc := findRuntimeProc(t, procs, target.name+" worker")
+	checks := make([]runtimeReadinessCheck, 0, len(apps)*3)
+	for _, app := range apps {
+		httpProc := findRuntimeProc(t, procs, app.name+" http")
+		schedulerProc := findRuntimeProc(t, procs, app.name+" scheduler")
+		workerProc := findRuntimeProc(t, procs, app.name+" worker")
 		checks = append(checks,
 			runtimeReadinessCheck{
-				name: target.name + " http",
+				name: app.name + " http",
 				run: func() error {
-					return assertTargetHTTPRuntimeReady(target, httpProc)
+					return assertAppHTTPRuntimeReady(app, httpProc)
 				},
 			},
 			runtimeReadinessCheck{
-				name: target.name + " scheduler",
+				name: app.name + " scheduler",
 				run: func() error {
-					return assertTargetMetricsRuntimeReady(target.name+" scheduler", target.schedulerMetricsPort, schedulerProc)
+					return assertAppMetricsRuntimeReady(app.name+" scheduler", app.schedulerMetricsPort, schedulerProc)
 				},
 			},
 			runtimeReadinessCheck{
-				name: target.name + " worker",
+				name: app.name + " worker",
 				run: func() error {
-					return assertTargetMetricsRuntimeReady(target.name+" worker", target.workerMetricsPort, workerProc)
+					return assertAppMetricsRuntimeReady(app.name+" worker", app.workerMetricsPort, workerProc)
 				},
 			},
 		)
@@ -90,7 +90,7 @@ func TestRenderedMultiTargetRuntimesUseDeterministicPorts(t *testing.T) {
 	assertRuntimeReadiness(t, checks)
 }
 
-type multiTargetRuntimeSpec struct {
+type multiAppRuntimeSpec struct {
 	name                 string
 	packagePath          string
 	httpPort             string
@@ -104,12 +104,12 @@ type runtimeReadinessCheck struct {
 	run  func() error
 }
 
-// renderMultiTargetRuntimeTestApp keeps the fixture intentionally small so failures point at target runtime behavior.
-func renderMultiTargetRuntimeTestApp(t *testing.T, dir string) {
+// renderMultiAppRuntimeTestApp keeps the fixture intentionally small so failures point at app runtime behavior.
+func renderMultiAppRuntimeTestApp(t *testing.T, dir string) {
 	t.Helper()
 	cfg := project.Config{
-		ProjectName:  "MultiTargetRuntime",
-		GoModuleName: "example.com/multitargetruntime",
+		ProjectName:  "MultiAppRuntime",
+		GoModuleName: "example.com/multiappruntime",
 		UpdatedAt:    "2026-06-05 00:00:00 UTC",
 		Render: project.RenderConfig{
 			QueueDriver: "workerpool",
@@ -125,9 +125,9 @@ func renderMultiTargetRuntimeTestApp(t *testing.T, dir string) {
 	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
 	}
-	for _, target := range []string{"billing", "customer-portal"} {
-		if err := writeConventionalAppTargetMarker(dir, target); err != nil {
-			t.Fatalf("write %s target marker: %v", target, err)
+	for _, app := range []string{"billing", "customer-portal"} {
+		if err := writeConventionalAppMarker(dir, app); err != nil {
+			t.Fatalf("write %s app marker: %v", app, err)
 		}
 	}
 	originalWD, err := os.Getwd()
@@ -143,20 +143,20 @@ func renderMultiTargetRuntimeTestApp(t *testing.T, dir string) {
 	if err := runQuietly(func() error {
 		return renderer.Render(ComponentRenderInput{renderAll: true})
 	}); err != nil {
-		t.Fatalf("render multi-target runtime app: %v", err)
+		t.Fatalf("render multi-app runtime app: %v", err)
 	}
 }
 
-// buildMultiTargetRuntimeBinaries builds entrypoint packages directly so the test focuses on compiled runtime defaults.
-func buildMultiTargetRuntimeBinaries(t *testing.T, projectDir string, targets []multiTargetRuntimeSpec) {
+// buildMultiAppRuntimeBinaries builds entrypoint packages directly so the test focuses on compiled runtime defaults.
+func buildMultiAppRuntimeBinaries(t *testing.T, projectDir string, apps []multiAppRuntimeSpec) {
 	t.Helper()
 	binDir := filepath.Join(projectDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("create bin dir: %v", err)
 	}
 	args := []string{"build", "-o", binDir}
-	for _, target := range targets {
-		args = append(args, target.packagePath)
+	for _, app := range apps {
+		args = append(args, app.packagePath)
 	}
 	buildCmd := exec.Command("go", args...)
 	buildCmd.Dir = projectDir
@@ -166,16 +166,16 @@ func buildMultiTargetRuntimeBinaries(t *testing.T, projectDir string, targets []
 	}
 }
 
-// startTargetHTTPRuntime starts the generated binary without flags so ports must come from compiled target defaults.
-func startTargetHTTPRuntime(t *testing.T, projectDir string, target multiTargetRuntimeSpec) *procHandle {
+// startAppHTTPRuntime starts the generated binary without flags so ports must come from compiled app defaults.
+func startAppHTTPRuntime(t *testing.T, projectDir string, app multiAppRuntimeSpec) *procHandle {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	binPath := filepath.Join(projectDir, "bin", target.name)
+	binPath := filepath.Join(projectDir, "bin", app.name)
 	cmd := exec.CommandContext(ctx, binPath, "http:serve")
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	handle := &procHandle{
-		name:   target.name + " http",
+		name:   app.name + " http",
 		cmd:    cmd,
 		cancel: cancel,
 	}
@@ -183,33 +183,33 @@ func startTargetHTTPRuntime(t *testing.T, projectDir string, target multiTargetR
 	cmd.Stderr = &handle.stderr
 	if err := handle.Start(); err != nil {
 		cancel()
-		t.Fatalf("start %s HTTP runtime: %v", target.name, err)
+		t.Fatalf("start %s HTTP runtime: %v", app.name, err)
 	}
 	return handle
 }
 
-// startTargetSchedulerRuntime starts schedule:run so the scheduler metrics listener must use target defaults.
-func startTargetSchedulerRuntime(t *testing.T, projectDir string, target multiTargetRuntimeSpec) *procHandle {
+// startAppSchedulerRuntime starts schedule:run so the scheduler metrics listener must use app defaults.
+func startAppSchedulerRuntime(t *testing.T, projectDir string, app multiAppRuntimeSpec) *procHandle {
 	t.Helper()
-	return startTargetRuntimeCommand(t, projectDir, target, "scheduler", "schedule:run")
+	return startAppRuntimeCommand(t, projectDir, app, "scheduler", "schedule:run")
 }
 
-// startTargetWorkerRuntime starts queue:work so the worker metrics listener must use target defaults.
-func startTargetWorkerRuntime(t *testing.T, projectDir string, target multiTargetRuntimeSpec) *procHandle {
+// startAppWorkerRuntime starts queue:work so the worker metrics listener must use app defaults.
+func startAppWorkerRuntime(t *testing.T, projectDir string, app multiAppRuntimeSpec) *procHandle {
 	t.Helper()
-	return startTargetRuntimeCommand(t, projectDir, target, "worker", "queue:work")
+	return startAppRuntimeCommand(t, projectDir, app, "worker", "queue:work")
 }
 
-// startTargetRuntimeCommand starts a long-running generated runtime command for one target binary.
-func startTargetRuntimeCommand(t *testing.T, projectDir string, target multiTargetRuntimeSpec, runtimeName string, command string) *procHandle {
+// startAppRuntimeCommand starts a long-running generated runtime command for one app binary.
+func startAppRuntimeCommand(t *testing.T, projectDir string, app multiAppRuntimeSpec, runtimeName string, command string) *procHandle {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	binPath := filepath.Join(projectDir, "bin", target.name)
+	binPath := filepath.Join(projectDir, "bin", app.name)
 	cmd := exec.CommandContext(ctx, binPath, command)
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	handle := &procHandle{
-		name:   target.name + " " + runtimeName,
+		name:   app.name + " " + runtimeName,
 		cmd:    cmd,
 		cancel: cancel,
 	}
@@ -217,15 +217,15 @@ func startTargetRuntimeCommand(t *testing.T, projectDir string, target multiTarg
 	cmd.Stderr = &handle.stderr
 	if err := handle.Start(); err != nil {
 		cancel()
-		t.Fatalf("start %s %s runtime: %v", target.name, runtimeName, err)
+		t.Fatalf("start %s %s runtime: %v", app.name, runtimeName, err)
 	}
 	return handle
 }
 
-// assertTargetHTTPRuntimeReady checks both user traffic and the dedicated metrics listener for one target.
-func assertTargetHTTPRuntimeReady(target multiTargetRuntimeSpec, proc *procHandle) error {
-	baseURL := "http://127.0.0.1:" + target.httpPort
-	metricsURL := "http://127.0.0.1:" + target.metricsPort + "/metrics"
+// assertAppHTTPRuntimeReady checks both user traffic and the dedicated metrics listener for one app.
+func assertAppHTTPRuntimeReady(app multiAppRuntimeSpec, proc *procHandle) error {
+	baseURL := "http://127.0.0.1:" + app.httpPort
+	metricsURL := "http://127.0.0.1:" + app.metricsPort + "/metrics"
 
 	if err := waitForHTTPStatus(proc, baseURL+"/-/health", http.StatusOK, 10*time.Second); err != nil {
 		return err
@@ -233,11 +233,11 @@ func assertTargetHTTPRuntimeReady(target multiTargetRuntimeSpec, proc *procHandl
 	if err := waitForHTTPStatus(proc, baseURL+"/api/v1/hello", http.StatusOK, 10*time.Second); err != nil {
 		return err
 	}
-	return waitForHTTPMetricLabels(proc, metricsURL, target.name, 10*time.Second)
+	return waitForHTTPMetricLabels(proc, metricsURL, app.name, 10*time.Second)
 }
 
-// assertTargetMetricsRuntimeReady checks a non-HTTP runtime's dedicated metrics listener.
-func assertTargetMetricsRuntimeReady(name string, port string, proc *procHandle) error {
+// assertAppMetricsRuntimeReady checks a non-HTTP runtime's dedicated metrics listener.
+func assertAppMetricsRuntimeReady(name string, port string, proc *procHandle) error {
 	return waitForHTTPStatus(proc, "http://127.0.0.1:"+port+"/metrics", http.StatusOK, 10*time.Second)
 }
 
@@ -303,14 +303,14 @@ func waitForHTTPStatus(proc *procHandle, url string, wantStatus int, timeout tim
 	return fmt.Errorf("%s did not return status %d before timeout; last status=%d last error=%v\n%s", url, wantStatus, lastStatus, lastErr, proc.Output())
 }
 
-// waitForHTTPMetricLabels proves the generated target identity reaches runtime metrics, not just port selection.
-func waitForHTTPMetricLabels(proc *procHandle, url string, target string, timeout time.Duration) error {
+// waitForHTTPMetricLabels proves the generated app identity reaches runtime metrics, not just port selection.
+func waitForHTTPMetricLabels(proc *procHandle, url string, appName string, timeout time.Duration) error {
 	client := &http.Client{Timeout: 300 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		if err := proc.ExitError(); err != nil {
-			return fmt.Errorf("%s exited before %s exposed target HTTP metrics: %w", proc.name, url, err)
+			return fmt.Errorf("%s exited before %s exposed app HTTP metrics: %w", proc.name, url, err)
 		}
 		body, err := getHTTPBody(client, url)
 		if err != nil {
@@ -318,12 +318,12 @@ func waitForHTTPMetricLabels(proc *procHandle, url string, target string, timeou
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		if hasHTTPMetricLabels(body, target) {
+		if hasHTTPMetricLabels(body, appName) {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("%s did not expose HTTP metric labels app_target=%q source=http before timeout; last error=%v\n%s", url, target, lastErr, proc.Output())
+	return fmt.Errorf("%s did not expose HTTP metric labels app=%q source=http before timeout; last error=%v\n%s", url, appName, lastErr, proc.Output())
 }
 
 // getHTTPBody keeps metric assertions small while preserving the short request timeout used by readiness checks.
@@ -344,12 +344,12 @@ func getHTTPBody(client *http.Client, url string) (string, error) {
 }
 
 // hasHTTPMetricLabels scans complete Prometheus samples so label order changes do not make the smoke test brittle.
-func hasHTTPMetricLabels(body string, target string) bool {
+func hasHTTPMetricLabels(body string, appName string) bool {
 	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "http_requests_total{") {
 			continue
 		}
-		if strings.Contains(line, `app_target="`+target+`"`) &&
+		if strings.Contains(line, `app="`+appName+`"`) &&
 			strings.Contains(line, `source="http"`) &&
 			!strings.Contains(line, `source="app"`) {
 			return true
@@ -368,7 +368,7 @@ func requirePortsAvailable(t *testing.T, addrs []string) {
 			for _, existing := range listeners {
 				_ = existing.Close()
 			}
-			t.Skipf("default target runtime port %s is unavailable: %v", addr, err)
+			t.Skipf("default runtime port %s is unavailable: %v", addr, err)
 		}
 		listeners = append(listeners, listener)
 	}

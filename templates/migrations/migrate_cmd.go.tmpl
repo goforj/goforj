@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// MigrateCmd runs database migrations for the selected App target stream.
+// MigrateCmd runs database migrations for the selected app stream.
 type MigrateCmd struct {
 	Step       int    `help:"Number of migrations to apply" default:"0"` // 0 = all
 	DryRun     bool   `help:"Show what would run without applying"`
@@ -38,7 +38,7 @@ func (*MigrateCmd) Signature() string {
 
 // Run executes the command.
 func (c *MigrateCmd) Run() error {
-	streams := migrationPlan(activeMigrationTarget(), c.Connection)
+	streams := migrationPlan(activeMigrationApp(), c.Connection)
 	if len(streams) == 0 {
 		console.Successf("migrations complete (0)")
 		return nil
@@ -79,7 +79,7 @@ func (c *MigrateCmd) runStream(stream migrationStream) (int, error) {
 	}
 
 	activeDriver := normalizeDriverName(dbConn.Dialector.Name())
-	candidates := selectMigrations(stream.Target, stream.Connection, activeDriver)
+	candidates := selectMigrations(stream.App, stream.Connection, activeDriver)
 
 	applied := 0
 	for _, m := range candidates {
@@ -91,7 +91,7 @@ func (c *MigrateCmd) runStream(stream migrationStream) (int, error) {
 		}
 
 		if c.DryRun {
-			console.Infof("would apply %s → target=%s connection=%s database=%s", m.Name(), stream.Target, stream.Connection, stream.DatabaseConnection)
+			console.Infof("would apply %s → app=%s connection=%s database=%s", m.Name(), stream.App, stream.Connection, stream.DatabaseConnection)
 			applied++
 			continue
 		}
@@ -102,7 +102,7 @@ func (c *MigrateCmd) runStream(stream migrationStream) (int, error) {
 
 		record := migrationRecord{
 			Name:       m.Name(),
-			Target:     stream.Target,
+			App:        stream.App,
 			Connection: stream.Connection,
 			SourcePath: m.SourcePath(),
 			AppliedAt:  time.Now(),
@@ -111,18 +111,18 @@ func (c *MigrateCmd) runStream(stream migrationStream) (int, error) {
 			return applied, err
 		}
 
-		console.Successf("applied %s → target=%s connection=%s database=%s", m.Name(), stream.Target, stream.Connection, stream.DatabaseConnection)
+		console.Successf("applied %s → app=%s connection=%s database=%s", m.Name(), stream.App, stream.Connection, stream.DatabaseConnection)
 		applied++
 	}
 
 	return applied, nil
 }
 
-// migrationRecord stores the migration identity fields that make target-scoped runs auditable.
+// migrationRecord stores the migration identity fields that make app-scoped runs auditable.
 type migrationRecord struct {
 	ID         uint
 	Name       string
-	Target     string
+	App        string
 	Connection string
 	SourcePath string
 	AppliedAt  time.Time
@@ -133,7 +133,7 @@ func (migrationRecord) TableName() string {
 	return "migrations"
 }
 
-// ensureMigrationsTable creates the migration table and adds target metadata columns for older databases.
+// ensureMigrationsTable creates the migration table and adds app metadata columns for older databases.
 func ensureMigrationsTable(dbConn *gorm.DB) error {
 	driver := dbConn.Dialector.Name()
 	ddl := ""
@@ -143,7 +143,7 @@ func ensureMigrationsTable(dbConn *gorm.DB) error {
 CREATE TABLE IF NOT EXISTS migrations (
 	id BIGSERIAL PRIMARY KEY,
 	name VARCHAR(255) NOT NULL UNIQUE,
-	target VARCHAR(255) NOT NULL DEFAULT 'app',
+	app VARCHAR(255) NOT NULL DEFAULT 'app',
 	connection VARCHAR(255) NOT NULL DEFAULT 'default',
 	source_path VARCHAR(512) NOT NULL DEFAULT '',
 	applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS migrations (
 CREATE TABLE IF NOT EXISTS migrations (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL UNIQUE,
-	target TEXT NOT NULL DEFAULT 'app',
+	app TEXT NOT NULL DEFAULT 'app',
 	connection TEXT NOT NULL DEFAULT 'default',
 	source_path TEXT NOT NULL DEFAULT '',
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS migrations (
 CREATE TABLE IF NOT EXISTS migrations (
 	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	name VARCHAR(255) NOT NULL UNIQUE,
-	target VARCHAR(255) NOT NULL DEFAULT 'app',
+	app VARCHAR(255) NOT NULL DEFAULT 'app',
 	connection VARCHAR(255) NOT NULL DEFAULT 'default',
 	source_path VARCHAR(512) NOT NULL DEFAULT '',
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS migrations (
 	if err := dbConn.Exec(ddl).Error; err != nil {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
-	if err := ensureMigrationColumn(dbConn, "target"); err != nil {
+	if err := ensureMigrationColumn(dbConn, "app"); err != nil {
 		return err
 	}
 	if err := ensureMigrationColumn(dbConn, "connection"); err != nil {

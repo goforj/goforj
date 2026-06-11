@@ -138,7 +138,7 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	}
 }
 
-func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
+func TestNamedAppRenderAppsUseConventionsWithoutConfig(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -163,19 +163,19 @@ func TestNamedAppRenderTargetsUseConventionsWithoutConfig(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{config: &project.Config{}}
-	targets, err := renderer.namedAppRenderTargets()
+	apps, err := renderer.namedAppRenderApps()
 	if err != nil {
-		t.Fatalf("namedAppRenderTargets returned error: %v", err)
+		t.Fatalf("namedAppRenderApps returned error: %v", err)
 	}
-	if len(targets) != 2 {
-		t.Fatalf("expected two named targets, got %#v", targets)
+	if len(apps) != 2 {
+		t.Fatalf("expected two named apps, got %#v", apps)
 	}
-	if targets[0].Name != "customer-portal" || targets[1].Name != "reporting" {
-		t.Fatalf("expected sorted conventional targets, got %#v", targets)
+	if apps[0].Name != "customer-portal" || apps[1].Name != "reporting" {
+		t.Fatalf("expected sorted conventional apps, got %#v", apps)
 	}
 }
 
-func TestRunWireGenerateRunsTargetDirsInParallel(t *testing.T) {
+func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -227,7 +227,7 @@ func TestRunWireGenerateRunsTargetDirsInParallel(t *testing.T) {
 	}
 }
 
-func TestRuntimeTargetMetadataUsesCompiledTargetOrder(t *testing.T) {
+func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -241,8 +241,8 @@ func TestRuntimeTargetMetadataUsesCompiledTargetOrder(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "customer-portal", "main.go"), "package main\n")
 
-	got := runtimeTargetMetadataForRender()
-	want := []runtimeTargetMetadata{
+	got := runtimeAppMetadataForRender()
+	want := []runtimeAppMetadata{
 		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000},
 		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010},
 		{Name: "customer-portal", Index: 2, EnvPrefix: "CUSTOMER_PORTAL", HTTPPort: 3002, RuntimeBase: 10020},
@@ -286,7 +286,7 @@ func TestMigrateGeneratedEnvDefaultOnlyUpdatesOldDefault(t *testing.T) {
 	}
 }
 
-func TestExpandDefaultMigrationsForNamedTargets(t *testing.T) {
+func TestExpandDefaultMigrationsForNamedApps(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -304,7 +304,7 @@ func TestExpandDefaultMigrationsForNamedTargets(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "migrations.go"), "package migrations\n")
 
 	renderer := &ProjectRenderer{}
-	if err := renderer.expandDefaultMigrationsForNamedTargets(); err != nil {
+	if err := renderer.expandDefaultMigrationsForNamedApps(); err != nil {
 		t.Fatalf("expand migrations: %v", err)
 	}
 
@@ -317,7 +317,7 @@ func TestExpandDefaultMigrationsForNamedTargets(t *testing.T) {
 	assertProjectRendererTestFileMissing(t, filepath.Join("migrations", "reporting"))
 }
 
-func TestRenderExpandsDefaultMigrationsWhenNamedTargetExists(t *testing.T) {
+func TestRenderExpandsDefaultMigrationsWhenNamedAppExists(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -365,7 +365,7 @@ func TestRenderExpandsDefaultMigrationsWhenNamedTargetExists(t *testing.T) {
 	assertProjectRendererTestFileMissing(t, filepath.Join("migrations", "analytics"))
 }
 
-func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
+func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -386,21 +386,21 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("customer-portal")
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	app := project.DefaultNamedApp("customer-portal")
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
-		`targetapp "example.com/test/app/customer-portal"`,
+		`compositionapp "example.com/test/app/customer-portal"`,
 		`"example.com/test/app/customer-portal/wire"`,
-		`&targetapp.RootCmd{}`,
+		`&compositionapp.RootCmd{}`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportal")
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportal")
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "wire", "inject_http.go"),
-		`targetapp "example.com/test/app/customer-portal"`,
-		"targetapp.ProvideRoutes",
+		`compositionapp "example.com/test/app/customer-portal"`,
+		"compositionapp.ProvideRoutes",
 	)
 
 	commandsPath := filepath.Join("app", "customer-portal", "commands.go")
@@ -408,8 +408,8 @@ func TestRenderAppTargetWritesNamedTargetPackagesAndImports(t *testing.T) {
 	if err := os.WriteFile(commandsPath, []byte(customCommands), 0o644); err != nil {
 		t.Fatalf("write custom commands: %v", err)
 	}
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("rerender target returned error: %v", err)
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("rerender app returned error: %v", err)
 	}
 	content, err := os.ReadFile(commandsPath)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestNormalizeDevWatchWireGenExclusionIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRenderAppTargetUsesPersistedTargetComponents(t *testing.T) {
+func TestRenderAppUsesPersistedAppComponents(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -474,7 +474,7 @@ func TestRenderAppTargetUsesPersistedTargetComponents(t *testing.T) {
 				Components: project.Components{WebAPI: true, WebUI: true},
 				StarterKit: project.StarterKitVue,
 			},
-			AppTargets: map[string]project.AppTargetConfig{
+			Apps: map[string]project.AppConfig{
 				"billing": {
 					Components: project.Components{CLI: true, WebAPI: true},
 					StarterKit: project.StarterKitNone,
@@ -484,21 +484,21 @@ func TestRenderAppTargetUsesPersistedTargetComponents(t *testing.T) {
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("billing")
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	app := project.DefaultNamedApp("billing")
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	mainSrc := readMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"))
 	if strings.Contains(mainSrc, `"embed"`) || strings.Contains(mainSrc, "RegisterSpa") {
-		t.Fatalf("expected target components to omit frontend embedding:\n%s", mainSrc)
+		t.Fatalf("expected app components to omit frontend embedding:\n%s", mainSrc)
 	}
 	if _, err := os.Stat(filepath.Join("cmd", "billing", "frontend", "dist", "index.html")); !os.IsNotExist(err) {
-		t.Fatalf("expected target components to omit frontend placeholder, stat err = %v", err)
+		t.Fatalf("expected app components to omit frontend placeholder, stat err = %v", err)
 	}
 }
 
-func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
+func TestRenderAppWritesAppAwareFrontendPlaceholder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -520,9 +520,9 @@ func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("billing")
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	app := project.DefaultNamedApp("billing")
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "billing", "frontend", "dist", "index.html"),
@@ -545,7 +545,7 @@ func TestRenderAppTargetWritesTargetAwareFrontendPlaceholder(t *testing.T) {
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
 
-func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
+func TestRenderAppMigratesOldFrontendPlaceholder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -567,12 +567,12 @@ func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("billing")
+	app := project.DefaultNamedApp("billing")
 	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
 	writeProjectRendererTestFile(t, indexPath, oldFrontendDistPlaceholder("Test")+"\n")
 
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	assertProjectRendererFileContains(t, indexPath,
@@ -595,7 +595,7 @@ func TestRenderAppTargetMigratesOldFrontendPlaceholder(t *testing.T) {
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
 
-func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.T) {
+func TestRenderAppMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -617,12 +617,12 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("billing")
+	app := project.DefaultNamedApp("billing")
 	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
 	writeProjectRendererTestFile(t, indexPath, styledFrontendPlaceholderWithoutLogo("Test / billing"))
 
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	assertProjectRendererFileContains(t, indexPath,
@@ -645,7 +645,7 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
 
-func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *testing.T) {
+func TestRenderAppMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -667,13 +667,13 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *t
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("billing")
+	app := project.DefaultNamedApp("billing")
 	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
 	legacyLogoName := "goforj-" + "v7.png"
 	writeProjectRendererTestFile(t, indexPath, styledFrontendPlaceholderWithLogo("Test / billing", legacyLogoName))
 
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	assertProjectRendererFileContains(t, indexPath,
@@ -693,7 +693,7 @@ func TestRenderAppTargetMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *t
 	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
 }
 
-func TestRenderAppTargetPreservesCustomFrontendPlaceholder(t *testing.T) {
+func TestRenderAppPreservesCustomFrontendPlaceholder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -715,13 +715,13 @@ func TestRenderAppTargetPreservesCustomFrontendPlaceholder(t *testing.T) {
 		stats: &renderStats{},
 	}
 
-	target := project.DefaultNamedAppTarget("billing")
+	app := project.DefaultNamedApp("billing")
 	indexPath := filepath.Join("cmd", "billing", "frontend", "dist", "index.html")
 	custom := "<!doctype html><html><body>custom</body></html>\n"
 	writeProjectRendererTestFile(t, indexPath, custom)
 
-	if err := renderer.renderAppTarget(target); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	if err := renderer.renderApp(app); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	content, err := os.ReadFile(indexPath)
@@ -736,7 +736,7 @@ func TestRenderAppTargetPreservesCustomFrontendPlaceholder(t *testing.T) {
 	}
 }
 
-func TestRenderAppTargetWritesDefaultTargetShape(t *testing.T) {
+func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -761,8 +761,8 @@ func TestRenderAppTargetWritesDefaultTargetShape(t *testing.T) {
 		},
 		stats: &renderStats{},
 	}
-	if err := renderer.renderAppTarget(project.DefaultAppTarget()); err != nil {
-		t.Fatalf("renderAppTarget returned error: %v", err)
+	if err := renderer.renderApp(project.DefaultApp()); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
 	}
 
 	for _, path := range []string{
@@ -872,7 +872,7 @@ func styledFrontendPlaceholderWithLogo(title string, logo string) string {
 }
 
 func oldStyledFrontendPlaceholderCopy() string {
-	return "This app " + "target is running, but no frontend " + "build has been deployed yet."
+	return "This app is running, but no frontend build has been deployed yet."
 }
 
 func assertProjectRendererLogoCopied(t *testing.T, path string) {
@@ -890,7 +890,7 @@ func assertProjectRendererLogoCopied(t *testing.T, path string) {
 	}
 }
 
-func TestSyncLegacyAppServiceInjectorMovesLifecycleRegistryToTargetApp(t *testing.T) {
+func TestSyncLegacyAppServiceInjectorMovesLifecycleRegistryToCompositionApp(t *testing.T) {
 	legacy := `package wire
 
 import (
@@ -907,11 +907,11 @@ var appSet = wire.NewSet(
 )
 `
 
-	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp")
+	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp", "app")
 	for _, want := range []string{
-		`targetapp "example.com/testapp/app"`,
+		`compositionapp "example.com/testapp/app"`,
 		`"example.com/testapp/internal/runtime"`,
-		"targetapp.NewLifecycleRegistry",
+		"compositionapp.NewLifecycleRegistry",
 		"runtime.NewTimeouts",
 	} {
 		if !strings.Contains(updated, want) {
@@ -922,7 +922,7 @@ var appSet = wire.NewSet(
 		"\t\"example.com/testapp/internal/app\"",
 		"\tapp.NewLifecycleRegistry",
 		"\tapp.NewTimeouts",
-		"targettargetapp",
+		"compositioncompositionapp",
 		"runtimeruntime",
 		"runtimeapp",
 	} {
@@ -931,9 +931,37 @@ var appSet = wire.NewSet(
 		}
 	}
 
-	idempotent := syncLegacyAppServiceInjector(updated, "example.com/testapp")
+	idempotent := syncLegacyAppServiceInjector(updated, "example.com/testapp", "app")
 	if idempotent != updated {
 		t.Fatalf("expected migration to be idempotent:\n%s", idempotent)
+	}
+}
+
+func TestSyncLegacyAppServiceInjectorUsesNamedAppImport(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+
+	targetapp "example.com/testapp/app/billing"
+)
+
+var appSet = wire.NewSet(
+	targetapp.NewLifecycleRegistry,
+)
+`
+
+	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp", "app/billing")
+	for _, want := range []string{
+		`compositionapp "example.com/testapp/app/billing"`,
+		"compositionapp.NewLifecycleRegistry",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected migrated service injector to contain %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "targetapp") {
+		t.Fatalf("expected targetapp alias to be replaced:\n%s", updated)
 	}
 }
 
@@ -991,7 +1019,7 @@ func (r *LifecycleRegistry) AfterShutdown(context.Context) error { return nil }
 	}
 }
 
-func TestSyncLegacyScheduleInjectorAddsTargetRegistryProvider(t *testing.T) {
+func TestSyncLegacyScheduleInjectorAddsAppRegistryProvider(t *testing.T) {
 	legacy := `package wire
 
 import (
@@ -1014,12 +1042,12 @@ func ProvideAppSchedules(
 }
 `
 
-	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp")
+	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app")
 	for _, want := range []string{
-		`targetapp "example.com/testapp/app"`,
+		`compositionapp "example.com/testapp/app"`,
 		`"example.com/testapp/internal/schedules"`,
-		"targetapp.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry))",
+		"compositionapp.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
 		"ProvideAppSchedules",
 		"reports.NewDailySchedule",
 		"dailySchedule *reports.DailySchedule",
@@ -1029,9 +1057,85 @@ func ProvideAppSchedules(
 		}
 	}
 
-	idempotent := syncLegacyScheduleInjector(updated, "example.com/testapp")
+	idempotent := syncLegacyScheduleInjector(updated, "example.com/testapp", "app")
 	if idempotent != updated {
 		t.Fatalf("expected schedule migration to be idempotent:\n%s", idempotent)
+	}
+}
+
+func TestSyncLegacyScheduleInjectorAliasesExistingAppImport(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app"
+	"example.com/testapp/internal/schedules"
+)
+
+var appScheduleSet = wire.NewSet(
+	ProvideAppSchedules,
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
+)
+
+func ProvideAppSchedules() *schedules.AppSchedules {
+	return schedules.NewAppSchedules()
+}
+`
+
+	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app")
+	for _, want := range []string{
+		`compositionapp "example.com/testapp/app"`,
+		"compositionapp.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected migrated schedule injector to contain %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "\t\"example.com/testapp/app\"") {
+		t.Fatalf("expected unaliased app import to be replaced:\n%s", updated)
+	}
+	if strings.Contains(updated, "targetapp.") {
+		t.Fatalf("expected targetapp references to be replaced:\n%s", updated)
+	}
+	if count := strings.Count(updated, "compositionapp.NewScheduleRegistry"); count != 1 {
+		t.Fatalf("expected one schedule registry provider, got %d:\n%s", count, updated)
+	}
+	if count := strings.Count(updated, "wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))"); count != 1 {
+		t.Fatalf("expected one schedule registry binding, got %d:\n%s", count, updated)
+	}
+}
+
+func TestSyncLegacyScheduleInjectorUsesNamedAppImport(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app/billing"
+	"example.com/testapp/internal/schedules"
+)
+
+var appScheduleSet = wire.NewSet(
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+)
+`
+
+	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app/billing")
+	for _, want := range []string{
+		`compositionapp "example.com/testapp/app/billing"`,
+		"compositionapp.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected migrated schedule injector to contain %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "targetapp") {
+		t.Fatalf("expected targetapp alias to be replaced:\n%s", updated)
 	}
 }
 
@@ -1041,18 +1145,18 @@ func TestSyncLegacyScheduleInjectorReplacesVariadicScheduleProvider(t *testing.T
 import (
 	"github.com/goforj/wire"
 
-	targetapp "example.com/testapp/app"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
 	schedules.NewAppSchedules,
-	targetapp.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 )
 `
 
-	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp")
+	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app")
 	for _, want := range []string{
 		"ProvideAppSchedules,",
 		"func ProvideAppSchedules() *schedules.AppSchedules",
@@ -1155,13 +1259,13 @@ func TestSyncDemoAppServiceInjectorAddsMissingProviders(t *testing.T) {
 
 import (
 	"github.com/goforj/wire"
-	targetapp "example.com/testapp/app"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/runtime"
 	"example.com/testapp/internal/makecmd"
 )
 
 var appSet = wire.NewSet(
-	targetapp.NewLifecycleRegistry,
+	compositionapp.NewLifecycleRegistry,
 	runtime.NewTimeouts,
 	makecmd.NewEventCmd,
 	makecmd.NewSubscriberCmd,
@@ -1197,14 +1301,14 @@ var appSet = wire.NewSet(
 	}
 }
 
-func TestUpsertEnvDefaultsAddsTargetDatabaseDriver(t *testing.T) {
+func TestUpsertEnvDefaultsAddsAppDatabaseDriver(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".env")
 	if err := os.WriteFile(path, []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
 
-	err := upsertEnvDefaults(path, targetDatabaseEnvDefaults("REPORTING", "postgres", "mysql", false))
+	err := upsertEnvDefaults(path, appDatabaseEnvDefaults("REPORTING", "postgres", "mysql", false))
 	if err != nil {
 		t.Fatalf("upsert env defaults: %v", err)
 	}
@@ -1224,7 +1328,7 @@ func TestUpsertEnvDefaultsAddsTargetDatabaseDriver(t *testing.T) {
 	}
 }
 
-func TestUpsertTargetEnvDefaultsGroupsAndOrdersTargetKeys(t *testing.T) {
+func TestUpsertAppEnvDefaultsGroupsAndOrdersAppKeys(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".env")
 	initial := strings.Join([]string{
@@ -1244,9 +1348,9 @@ func TestUpsertTargetEnvDefaultsGroupsAndOrdersTargetKeys(t *testing.T) {
 		"BILLING_API_HTTP_PORT":      "3001",
 		"BILLING_DB_SQLITE_DATABASE": "./_data/sqlite/billing.db",
 	}
-	err := upsertTargetEnvDefaults(path, "billing", "BILLING", defaults)
+	err := upsertAppEnvDefaults(path, "billing", "BILLING", defaults)
 	if err != nil {
-		t.Fatalf("upsert target env defaults: %v", err)
+		t.Fatalf("upsert app env defaults: %v", err)
 	}
 
 	text := readMakeAppTestFile(t, path)
@@ -1261,29 +1365,29 @@ func TestUpsertTargetEnvDefaultsGroupsAndOrdersTargetKeys(t *testing.T) {
 		"",
 	}, "\n")
 	if text != want {
-		t.Fatalf("unexpected target env section:\nwant:\n%s\ngot:\n%s", want, text)
+		t.Fatalf("unexpected app env section:\nwant:\n%s\ngot:\n%s", want, text)
 	}
 	if strings.Count(text, "BILLING_DB_DATABASE=") != 1 {
-		t.Fatalf("expected exactly one target database override:\n%s", text)
+		t.Fatalf("expected exactly one app database override:\n%s", text)
 	}
 }
 
-func TestTargetDatabaseHostDefaultsUseLocalhostForHostEnv(t *testing.T) {
-	defaults := targetDatabaseEnvDefaults("REPORTING", "postgres", "mysql", true)
+func TestAppDatabaseHostDefaultsUseLocalhostForHostEnv(t *testing.T) {
+	defaults := appDatabaseEnvDefaults("REPORTING", "postgres", "mysql", true)
 	if got := defaults["REPORTING_DB_HOST"]; got != "localhost" {
 		t.Fatalf("REPORTING_DB_HOST = %q, want localhost", got)
 	}
 }
 
-func TestTargetDatabaseEnvDefaultsInheritSharedConnection(t *testing.T) {
-	defaults := targetDatabaseEnvDefaults("BILLING", "mysql", "mysql", false)
+func TestAppDatabaseEnvDefaultsInheritSharedConnection(t *testing.T) {
+	defaults := appDatabaseEnvDefaults("BILLING", "mysql", "mysql", false)
 	for _, want := range []string{
 		"DB_SUPPORTED_DRIVERS",
 		"BILLING_DB_DATABASE",
 		"BILLING_DB_SQLITE_DATABASE",
 	} {
 		if _, ok := defaults[want]; !ok {
-			t.Fatalf("expected %s in target database defaults: %#v", want, defaults)
+			t.Fatalf("expected %s in app database defaults: %#v", want, defaults)
 		}
 	}
 	for _, unwanted := range []string{
@@ -1294,7 +1398,7 @@ func TestTargetDatabaseEnvDefaultsInheritSharedConnection(t *testing.T) {
 		"BILLING_DB_PORT",
 	} {
 		if _, ok := defaults[unwanted]; ok {
-			t.Fatalf("did not expect inherited connection key %s in target database defaults: %#v", unwanted, defaults)
+			t.Fatalf("did not expect inherited connection key %s in app database defaults: %#v", unwanted, defaults)
 		}
 	}
 	if defaults["BILLING_DB_DATABASE"] != "billing" {
@@ -1305,8 +1409,8 @@ func TestTargetDatabaseEnvDefaultsInheritSharedConnection(t *testing.T) {
 	}
 }
 
-func TestTargetDatabaseEnvDefaultsDoNotDuplicateActiveSQLiteDatabase(t *testing.T) {
-	defaults := targetDatabaseEnvDefaults("BILLING", "sqlite", "sqlite", false)
+func TestAppDatabaseEnvDefaultsDoNotDuplicateActiveSQLiteDatabase(t *testing.T) {
+	defaults := appDatabaseEnvDefaults("BILLING", "sqlite", "sqlite", false)
 	if defaults["BILLING_DB_DATABASE"] != "./_data/sqlite/billing.db" {
 		t.Fatalf("BILLING_DB_DATABASE = %q, want sqlite path", defaults["BILLING_DB_DATABASE"])
 	}
@@ -1315,7 +1419,7 @@ func TestTargetDatabaseEnvDefaultsDoNotDuplicateActiveSQLiteDatabase(t *testing.
 	}
 }
 
-func TestWriteTargetEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
+func TestWriteAppEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -1338,9 +1442,9 @@ func TestWriteTargetEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 			Components: project.Components{DatabaseMySQL: true},
 		},
 	}
-	err = renderer.writeTargetEnvDefaults(project.DefaultNamedAppTarget("reporting"), project.Components{WebAPI: true, Metrics: true, DatabasePostgres: true})
+	err = renderer.writeAppEnvDefaults(project.DefaultNamedApp("reporting"), project.Components{WebAPI: true, Metrics: true, DatabasePostgres: true})
 	if err != nil {
-		t.Fatalf("write target env defaults: %v", err)
+		t.Fatalf("write app env defaults: %v", err)
 	}
 
 	envText := readMakeAppTestFile(t, ".env")
@@ -1371,9 +1475,9 @@ func TestWriteTargetEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 		t.Fatalf(".env.host should not override supported drivers:\n%s", hostText)
 	}
 	if !strings.Contains(hostText, "# Reporting") {
-		t.Fatalf(".env.host missing target section heading:\n%s", hostText)
+		t.Fatalf(".env.host missing app section heading:\n%s", hostText)
 	}
 	if !strings.Contains(hostText, "REPORTING_DB_HOST=localhost") {
-		t.Fatalf(".env.host missing target localhost override:\n%s", hostText)
+		t.Fatalf(".env.host missing app localhost override:\n%s", hostText)
 	}
 }

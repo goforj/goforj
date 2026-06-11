@@ -9,9 +9,9 @@ import (
 )
 
 type metricsTargetWant struct {
-	process   string
-	appTarget string
-	target    string
+	process string
+	appName string
+	target  string
 }
 
 func TestGenerateObservabilityFilesWritesSingleProcessTargetsByDefaultInStandaloneMode(t *testing.T) {
@@ -56,17 +56,17 @@ func TestGenerateObservabilityFilesWritesLocalMultiTargetsByDefaultInDistributed
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "api", appTarget: "app", target: "metrics.internal:10000"},
-		{process: "jobs", appTarget: "app", target: "metrics.internal:10002"},
-		{process: "scheduler", appTarget: "app", target: "metrics.internal:10001"},
+		{process: "api", appName: "app", target: "metrics.internal:10000"},
+		{process: "jobs", appName: "app", target: "metrics.internal:10002"},
+		{process: "scheduler", appName: "app", target: "metrics.internal:10001"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "staging", want)
 }
 
-func TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalAppTargets(t *testing.T) {
+func TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalApps(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
-	writeObservabilityTargetMarker(t, projectDir, "billing")
-	writeObservabilityTargetMarker(t, projectDir, "customer-portal")
+	writeObservabilityAppMarker(t, projectDir, "billing")
+	writeObservabilityAppMarker(t, projectDir, "customer-portal")
 
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "local")
@@ -83,17 +83,17 @@ func TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalAppTarg
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "app", appTarget: "app", target: "host.docker.internal:3000"},
-		{process: "app", appTarget: "billing", target: "host.docker.internal:3001"},
-		{process: "app", appTarget: "customer-portal", target: "host.docker.internal:3002"},
+		{process: "app", appName: "app", target: "host.docker.internal:3000"},
+		{process: "app", appName: "billing", target: "host.docker.internal:3001"},
+		{process: "app", appName: "customer-portal", target: "host.docker.internal:3002"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
-func TestGenerateObservabilityFilesWritesLocalMultiTargetsForConventionalAppTargets(t *testing.T) {
+func TestGenerateObservabilityFilesWritesLocalMultiTargetsForConventionalApps(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
-	writeObservabilityTargetMarker(t, projectDir, "billing")
-	writeObservabilityTargetMarker(t, projectDir, "customer-portal")
+	writeObservabilityAppMarker(t, projectDir, "billing")
+	writeObservabilityAppMarker(t, projectDir, "customer-portal")
 
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "local")
@@ -111,23 +111,23 @@ func TestGenerateObservabilityFilesWritesLocalMultiTargetsForConventionalAppTarg
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "api", appTarget: "app", target: "host.docker.internal:10000"},
-		{process: "jobs", appTarget: "app", target: "host.docker.internal:10002"},
-		{process: "scheduler", appTarget: "app", target: "host.docker.internal:10001"},
-		{process: "api", appTarget: "billing", target: "host.docker.internal:10010"},
-		{process: "jobs", appTarget: "billing", target: "host.docker.internal:11012"},
-		{process: "scheduler", appTarget: "billing", target: "host.docker.internal:10011"},
-		{process: "api", appTarget: "customer-portal", target: "host.docker.internal:10020"},
-		{process: "jobs", appTarget: "customer-portal", target: "host.docker.internal:10022"},
-		{process: "scheduler", appTarget: "customer-portal", target: "host.docker.internal:10021"},
+		{process: "api", appName: "app", target: "host.docker.internal:10000"},
+		{process: "jobs", appName: "app", target: "host.docker.internal:10002"},
+		{process: "scheduler", appName: "app", target: "host.docker.internal:10001"},
+		{process: "api", appName: "billing", target: "host.docker.internal:10010"},
+		{process: "jobs", appName: "billing", target: "host.docker.internal:11012"},
+		{process: "scheduler", appName: "billing", target: "host.docker.internal:10011"},
+		{process: "api", appName: "customer-portal", target: "host.docker.internal:10020"},
+		{process: "jobs", appName: "customer-portal", target: "host.docker.internal:10022"},
+		{process: "scheduler", appName: "customer-portal", target: "host.docker.internal:10021"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
-func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByTargetComponents(t *testing.T) {
+func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByAppComponents(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
-	writeObservabilityTargetMarker(t, projectDir, "billing")
-	writeObservabilityTargetMarker(t, projectDir, "reporting")
+	writeObservabilityAppMarker(t, projectDir, "billing")
+	writeObservabilityAppMarker(t, projectDir, "reporting")
 	config := []byte(strings.Join([]string{
 		"project_name: Observability Test App",
 		"render:",
@@ -136,7 +136,7 @@ func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByTargetComponents(t 
 		"    metrics: true",
 		"    scheduler: true",
 		"    jobs: true",
-		"app_targets:",
+		"apps:",
 		"  billing:",
 		"    components:",
 		"      web_api: true",
@@ -164,12 +164,12 @@ func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByTargetComponents(t 
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "api", appTarget: "app", target: "host.docker.internal:10000"},
-		{process: "jobs", appTarget: "app", target: "host.docker.internal:10002"},
-		{process: "scheduler", appTarget: "app", target: "host.docker.internal:10001"},
-		{process: "api", appTarget: "billing", target: "host.docker.internal:10010"},
-		{process: "api", appTarget: "reporting", target: "host.docker.internal:10020"},
-		{process: "jobs", appTarget: "reporting", target: "host.docker.internal:10022"},
+		{process: "api", appName: "app", target: "host.docker.internal:10000"},
+		{process: "jobs", appName: "app", target: "host.docker.internal:10002"},
+		{process: "scheduler", appName: "app", target: "host.docker.internal:10001"},
+		{process: "api", appName: "billing", target: "host.docker.internal:10010"},
+		{process: "api", appName: "reporting", target: "host.docker.internal:10020"},
+		{process: "jobs", appName: "reporting", target: "host.docker.internal:10022"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
@@ -299,14 +299,14 @@ func observabilityTestProjectDir(t *testing.T, roles ...string) string {
 	return projectDir
 }
 
-func writeObservabilityTargetMarker(t *testing.T, projectDir string, target string) {
+func writeObservabilityAppMarker(t *testing.T, projectDir string, appName string) {
 	t.Helper()
-	path := filepath.Join(projectDir, "cmd", target, "main.go")
+	path := filepath.Join(projectDir, "cmd", appName, "main.go")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir target marker %s: %v", path, err)
+		t.Fatalf("mkdir app marker %s: %v", path, err)
 	}
 	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write target marker %s: %v", path, err)
+		t.Fatalf("write app marker %s: %v", path, err)
 	}
 }
 
@@ -329,9 +329,9 @@ func assertMetricsTargets(t *testing.T, targets []metricsTargetEntry, service st
 		t.Fatalf("target count = %d, want %d", len(targets), len(want))
 	}
 	for i, entry := range targets {
-		wantAppTarget := want[i].appTarget
-		if wantAppTarget == "" {
-			wantAppTarget = "app"
+		wantApp := want[i].appName
+		if wantApp == "" {
+			wantApp = "app"
 		}
 		if len(entry.Targets) != 1 || entry.Targets[0] != want[i].target {
 			t.Fatalf("targets[%d] = %#v, want %q", i, entry.Targets, want[i].target)
@@ -345,8 +345,8 @@ func assertMetricsTargets(t *testing.T, targets []metricsTargetEntry, service st
 		if entry.Labels["environment"] != environment {
 			t.Fatalf("environment label = %q, want %q", entry.Labels["environment"], environment)
 		}
-		if entry.Labels["app_target"] != wantAppTarget {
-			t.Fatalf("app_target label = %q, want %q", entry.Labels["app_target"], wantAppTarget)
+		if entry.Labels["app"] != wantApp {
+			t.Fatalf("app label = %q, want %q", entry.Labels["app"], wantApp)
 		}
 	}
 }

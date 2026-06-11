@@ -77,7 +77,7 @@ render:
 	}
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppTargetWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, bool, error) {
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, bool, error) {
 		return project.Components{}, project.StarterKitNone, true, nil
 	})
 	defer restoreWizard()
@@ -97,17 +97,17 @@ func TestCmdRunTreatsExistingTargetAsNormalExit(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.MkdirAll(filepath.Join("cmd", "billing"), 0o755); err != nil {
-		t.Fatalf("mkdir target: %v", err)
+		t.Fatalf("mkdir app: %v", err)
 	}
 	renderer := &recordingRenderer{}
 	cmd := NewCmd(logger.NewSilentLogger(), renderer)
 	cmd.Name = "billing"
 
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("expected existing target to return nil, got %v", err)
+		t.Fatalf("expected existing app to return nil, got %v", err)
 	}
 	if renderer.called {
-		t.Fatalf("expected existing target not to render")
+		t.Fatalf("expected existing app not to render")
 	}
 }
 
@@ -115,7 +115,7 @@ func TestCmdRunRemovesTarget(t *testing.T) {
 	renderer := &recordingRenderer{
 		removeResult: RemoveResult{
 			Removed: []string{filepath.Join("app", "billing")},
-			Updated: []string{filepath.Join("internal", "runtime", "targets.go")},
+			Updated: []string{filepath.Join("internal", "runtime", "apps.go")},
 		},
 	}
 	cmd := NewCmd(logger.NewSilentLogger(), renderer)
@@ -126,13 +126,13 @@ func TestCmdRunRemovesTarget(t *testing.T) {
 		t.Fatalf("expected remove to return nil, got %v", err)
 	}
 	if renderer.called {
-		t.Fatalf("expected remove not to render a new target")
+		t.Fatalf("expected remove not to render a new app")
 	}
 	if !renderer.removeCalled {
 		t.Fatalf("expected remove to call renderer")
 	}
-	if renderer.removeTarget.Name != "billing" {
-		t.Fatalf("remove target = %q, want billing", renderer.removeTarget.Name)
+	if renderer.removeApp.Name != "billing" {
+		t.Fatalf("remove app = %q, want billing", renderer.removeApp.Name)
 	}
 }
 
@@ -143,23 +143,23 @@ func TestCmdRunTreatsMissingRemoveTargetAsNormalExit(t *testing.T) {
 	cmd.Remove = true
 
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("expected missing remove target to return nil, got %v", err)
+		t.Fatalf("expected missing remove app to return nil, got %v", err)
 	}
 	if !renderer.removeCalled {
 		t.Fatalf("expected remove to call renderer")
 	}
 }
 
-func TestTargetSelectionReturnsCancellationSentinel(t *testing.T) {
+func TestAppSelectionReturnsCancellationSentinel(t *testing.T) {
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppTargetWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, bool, error) {
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, bool, error) {
 		return project.Components{}, project.StarterKitNone, true, nil
 	})
 	defer restoreWizard()
 
 	cmd := &Cmd{Name: "reporting"}
-	_, _, err := cmd.targetSelection(&project.Config{
+	_, _, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -167,13 +167,13 @@ func TestTargetSelectionReturnsCancellationSentinel(t *testing.T) {
 			},
 		},
 	})
-	if !errors.Is(err, errAppTargetCreationCancelled) {
+	if !errors.Is(err, errAppCreationCancelled) {
 		t.Fatalf("expected cancellation sentinel, got %v", err)
 	}
 }
 
 func TestWizardShowsAllDatabaseDrivers(t *testing.T) {
-	model := initialAppTargetWizardModel("reporting", &project.Config{
+	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI:        true,
@@ -193,13 +193,13 @@ func TestWizardShowsAllDatabaseDrivers(t *testing.T) {
 		project.ComponentDatabaseSQLite,
 	} {
 		if !seen[key] {
-			t.Fatalf("expected target wizard to include %s", key)
+			t.Fatalf("expected app wizard to include %s", key)
 		}
 	}
 }
 
 func TestWizardShowsAuthComponents(t *testing.T) {
-	model := initialAppTargetWizardModel("reporting", &project.Config{
+	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI:        true,
@@ -217,13 +217,13 @@ func TestWizardShowsAuthComponents(t *testing.T) {
 	}
 	for _, key := range []project.ComponentKey{project.ComponentAuth, project.ComponentOAuth} {
 		if !seen[key] {
-			t.Fatalf("expected target wizard to include auth component %s", key)
+			t.Fatalf("expected app wizard to include auth component %s", key)
 		}
 	}
 }
 
 func TestWizardMarksDefaultStarterKitSelected(t *testing.T) {
-	model := initialAppTargetWizardModel("reporting", &project.Config{
+	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -248,7 +248,7 @@ func TestWizardMarksDefaultStarterKitSelected(t *testing.T) {
 }
 
 func TestWizardUpdatesStarterKitSelectionFromCursor(t *testing.T) {
-	model := initialAppTargetWizardModel("reporting", &project.Config{
+	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -276,7 +276,7 @@ func TestWizardUpdatesStarterKitSelectionFromCursor(t *testing.T) {
 }
 
 func TestWizardViewKeepsLeadingSpacingWithoutTrailingBlankLine(t *testing.T) {
-	model := initialAppTargetWizardModel("reporting", &project.Config{
+	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -316,32 +316,32 @@ func stubInteractiveTerminal(t *testing.T, interactive bool) func() {
 	}
 }
 
-func stubAppTargetWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, bool, error)) func() {
+func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, bool, error)) func() {
 	t.Helper()
-	original := appTargetWizardRunner
-	appTargetWizardRunner = runner
+	original := appWizardRunner
+	appWizardRunner = runner
 	return func() {
-		appTargetWizardRunner = original
+		appWizardRunner = original
 	}
 }
 
 type recordingRenderer struct {
 	called       bool
 	removeCalled bool
-	removeTarget project.AppTarget
+	removeApp    project.App
 	removeResult RemoveResult
 	removeErr    error
 }
 
-// RenderAppTargetOnly records render attempts so cancellation tests can assert no files were written.
-func (r *recordingRenderer) RenderAppTargetOnly(project.AppTarget, RenderOptions) error {
+// RenderAppOnly records render attempts so cancellation tests can assert no files were written.
+func (r *recordingRenderer) RenderAppOnly(project.App, RenderOptions) error {
 	r.called = true
 	return nil
 }
 
-// RemoveAppTarget records removal attempts so command tests can verify the remove branch.
-func (r *recordingRenderer) RemoveAppTarget(target project.AppTarget) (RemoveResult, error) {
+// RemoveApp records removal attempts so command tests can verify the remove branch.
+func (r *recordingRenderer) RemoveApp(target project.App) (RemoveResult, error) {
 	r.removeCalled = true
-	r.removeTarget = target
+	r.removeApp = target
 	return r.removeResult, r.removeErr
 }

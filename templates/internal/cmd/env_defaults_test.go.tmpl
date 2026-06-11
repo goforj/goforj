@@ -141,30 +141,29 @@ func TestCompiledEnvOverridesCanForceAppEnvAcrossEnvLoad(t *testing.T) {
 	}
 }
 
-func TestApplyTargetEnvOverlayPromotesAnyTargetPrefixedKey(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "customer-portal")
-	t.Setenv("APP_TARGET", "customer-portal")
+func TestApplyAppEnvOverlayPromotesAnyAppPrefixedKey(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
 	t.Setenv("CUSTOMER_PORTAL_APP_URL", "http://localhost:3007")
 	t.Setenv("CUSTOMER_PORTAL_DB_AUTH_DATABASE", "customer_auth")
-	t.Setenv("CUSTOMER_PORTAL_FORJ_APP_TARGET", "wrong")
+	t.Setenv("CUSTOMER_PORTAL_FORJ_APP", "wrong")
 
-	if err := ApplyTargetEnvOverlay(); err != nil {
-		t.Fatalf("ApplyTargetEnvOverlay() error = %v", err)
+	if err := ApplyAppEnvOverlay(); err != nil {
+		t.Fatalf("ApplyAppEnvOverlay() error = %v", err)
 	}
 	if got := os.Getenv("APP_URL"); got != "http://localhost:3007" {
-		t.Fatalf("APP_URL = %q, want target overlay", got)
+		t.Fatalf("APP_URL = %q, want app overlay", got)
 	}
 	if got := os.Getenv("DB_AUTH_DATABASE"); got != "customer_auth" {
-		t.Fatalf("DB_AUTH_DATABASE = %q, want target overlay", got)
+		t.Fatalf("DB_AUTH_DATABASE = %q, want app overlay", got)
 	}
-	if got := os.Getenv("FORJ_APP_TARGET"); got != "customer-portal" {
-		t.Fatalf("FORJ_APP_TARGET = %q, want original target identity", got)
+	if got := os.Getenv("FORJ_APP"); got != "customer-portal" {
+		t.Fatalf("FORJ_APP = %q, want original app identity", got)
 	}
 }
 
-func TestTargetEnvOverlayCanSelectAppEnvFile(t *testing.T) {
-	if os.Getenv("GO_WANT_TARGET_APP_ENV_HELPER") == "1" {
-		runTargetAppEnvHelper()
+func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
+	if os.Getenv("GO_WANT_APP_ENV_HELPER") == "1" {
+		runAppEnvHelper()
 		return
 	}
 
@@ -173,23 +172,22 @@ func TestTargetEnvOverlayCanSelectAppEnvFile(t *testing.T) {
 		"APP_ENV=local",
 		"MARKER=base",
 		"BILLING_APP_ENV=staging",
-		"BILLING_MARKER=target-base",
+		"BILLING_MARKER=app-base",
 	}, "\n")+"\n")
 	writeTestEnvFile(t, filepath.Join(dir, ".env.staging"), strings.Join([]string{
 		"MARKER=staging",
-		"BILLING_MARKER=target-staging",
+		"BILLING_MARKER=app-staging",
 	}, "\n")+"\n")
 
-	output := runEnvDefaultsHelperProcess(t, "TestTargetEnvOverlayCanSelectAppEnvFile", dir, map[string]string{
-		"FORJ_APP_TARGET": "billing",
-		"APP_TARGET":      "billing",
+	output := runEnvDefaultsHelperProcess(t, "TestAppEnvOverlayCanSelectAppEnvFile", dir, map[string]string{
+		"FORJ_APP": "billing",
 	})
 	got := parseEnvDefaultsOutput(t, output)
 	if got["APP_ENV"] != "staging" {
 		t.Fatalf("expected APP_ENV to come from billing overlay, got %q", got["APP_ENV"])
 	}
-	if got["MARKER"] != "target-staging" {
-		t.Fatalf("expected target overlay to reapply after .env.staging, got %q", got["MARKER"])
+	if got["MARKER"] != "app-staging" {
+		t.Fatalf("expected app overlay to reapply after .env.staging, got %q", got["MARKER"])
 	}
 }
 
@@ -283,7 +281,7 @@ func runAppEnvOverrideHelper() {
 	os.Exit(0)
 }
 
-func runTargetAppEnvHelper() {
+func runAppEnvHelper() {
 	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
 	if err := os.Chdir(dir); err != nil {
 		fmt.Printf("CHDIR_ERROR=%v\n", err)
@@ -318,8 +316,8 @@ func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extr
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_LAYER_HELPER=1")
 	case "TestCompiledEnvOverridesCanForceAppEnvAcrossEnvLoad":
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_APP_ENV_HELPER=1")
-	case "TestTargetEnvOverlayCanSelectAppEnvFile":
-		cmd.Env = append(cmd.Env, "GO_WANT_TARGET_APP_ENV_HELPER=1")
+	case "TestAppEnvOverlayCanSelectAppEnvFile":
+		cmd.Env = append(cmd.Env, "GO_WANT_APP_ENV_HELPER=1")
 	}
 	for key, value := range extraEnv {
 		cmd.Env = append(cmd.Env, key+"="+value)

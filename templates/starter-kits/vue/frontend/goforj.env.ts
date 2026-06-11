@@ -8,29 +8,29 @@ type FrontendEnvOptions = {
 }
 
 type FrontendEnv = {
-  appTarget: string
+  appName: string
   backendTarget: string
   define: Record<string, string>
 }
 
-const defaultAppTarget = 'app'
+const defaultApp = 'app'
 
 export function resolveGoForjFrontendEnv(options: FrontendEnvOptions): FrontendEnv {
-  const appTarget = resolveAppTarget(options.frontendDir)
-  const targetPrefix = envPrefix(appTarget)
+  const appName = resolveApp(options.frontendDir)
+  const targetPrefix = envPrefix(appName)
   const define = collectFrontendDefines(options.env, targetPrefix)
 
   defineMissing(define, 'VITE_APP_ENV', options.env[`${targetPrefix}_APP_ENV`] || options.env.APP_ENV || 'local')
 
   return {
-    appTarget,
+    appName,
     define,
-    backendTarget: resolveBackendTarget(options.env, options.projectRoot, appTarget, targetPrefix),
+    backendTarget: resolveBackendTarget(options.env, options.projectRoot, appName, targetPrefix),
   }
 }
 
-function resolveAppTarget(frontendDir: string): string {
-  return path.basename(path.dirname(frontendDir)) || defaultAppTarget
+function resolveApp(frontendDir: string): string {
+  return path.basename(path.dirname(frontendDir)) || defaultApp
 }
 
 function collectFrontendDefines(env: Record<string, string>, targetPrefix: string): Record<string, string> {
@@ -56,14 +56,14 @@ function collectFrontendDefines(env: Record<string, string>, targetPrefix: strin
 function resolveBackendTarget(
   env: Record<string, string>,
   projectRoot: string,
-  appTarget: string,
+  appName: string,
   targetPrefix: string,
 ): string {
   return (
     frontendEnvValue(env, targetPrefix, 'BACKEND_URL') ||
     env[`${targetPrefix}_APP_URL`] ||
     env.APP_URL ||
-    `http://localhost:${targetHTTPPort(projectRoot, appTarget)}`
+    `http://localhost:${targetHTTPPort(projectRoot, appName)}`
   )
 }
 
@@ -71,19 +71,19 @@ function frontendEnvValue(env: Record<string, string>, targetPrefix: string, key
   return env[`${targetPrefix}_FRONTEND_${key}`] || env[`FRONTEND_${key}`] || env[`VITE_${key}`] || ''
 }
 
-function targetHTTPPort(projectRoot: string, appTarget: string): number {
-  const targets = discoverAppTargets(projectRoot)
-  const index = targets.indexOf(appTarget)
+function targetHTTPPort(projectRoot: string, appName: string): number {
+  const targets = discoverApps(projectRoot)
+  const index = targets.indexOf(appName)
   return 3000 + Math.max(index, 0)
 }
 
-function discoverAppTargets(projectRoot: string): string[] {
+function discoverApps(projectRoot: string): string[] {
   const cmdDir = path.join(projectRoot, 'cmd')
   let entries: fs.Dirent[]
   try {
     entries = fs.readdirSync(cmdDir, { withFileTypes: true })
   } catch {
-    return [defaultAppTarget]
+    return [defaultApp]
   }
 
   const targets = entries
@@ -91,8 +91,8 @@ function discoverAppTargets(projectRoot: string): string[] {
     .map((entry) => entry.name)
     .filter((name) => fs.existsSync(path.join(cmdDir, name, 'main.go')))
 
-  const named = Array.from(new Set(targets.filter((name) => name !== defaultAppTarget))).sort()
-  return [defaultAppTarget, ...named]
+  const named = Array.from(new Set(targets.filter((name) => name !== defaultApp))).sort()
+  return [defaultApp, ...named]
 }
 
 function defineMissing(define: Record<string, string>, key: string, value: string) {
@@ -103,5 +103,5 @@ function defineMissing(define: Record<string, string>, key: string, value: strin
 }
 
 function envPrefix(value: string): string {
-  return value.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase() || defaultAppTarget.toUpperCase()
+  return value.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase() || defaultApp.toUpperCase()
 }

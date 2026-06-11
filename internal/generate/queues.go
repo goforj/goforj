@@ -777,7 +777,7 @@ func queuePhysicalName(name string) string {
 	if name == "" {
 		name = string(defaultQueueName)
 	}
-	target := strings.TrimSpace(runtime.CurrentAppTarget().Name)
+	target := strings.TrimSpace(runtime.CurrentApp().Name)
 	if target == "" || target == "app" {
 		return name
 	}

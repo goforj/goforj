@@ -21,13 +21,13 @@ func TestScheduleCmdGeneratesAndWiresSchedule(t *testing.T) {
 
 import (
 	"github.com/goforj/wire"
-	targetapp "example.com/testapp/app"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
-	targetapp.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 )
 `), 0644); err != nil {
 		t.Fatalf("write inject_schedules_app.go: %v", err)
@@ -94,13 +94,13 @@ func TestScheduleCmdRemoveDeletesFileAndWiring(t *testing.T) {
 
 import (
 	"github.com/goforj/wire"
-	targetapp "example.com/testapp/app"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
-	targetapp.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 )
 `)
 	writeMakeCmdTestFile(t, filepath.Join("app", "schedules.go"), `package app
@@ -159,23 +159,23 @@ func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
 	})
 }
 
-func TestScheduleCmdUsesActiveAppTarget(t *testing.T) {
+func TestScheduleCmdUsesActiveApp(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("FORJ_APP_TARGET", "reporting")
+	t.Setenv("FORJ_APP", "reporting")
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
 	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_schedules_app.go"), `package wire
 
 import (
 	"github.com/goforj/wire"
-	targetapp "example.com/testapp/app"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
-	targetapp.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 )
 `)
 	writeMakeCmdTestFile(t, filepath.Join("app", "schedules.go"), `package app
@@ -198,13 +198,13 @@ func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
 
 import (
 	"github.com/goforj/wire"
-	targetapp "example.com/testapp/app/reporting"
+	compositionapp "example.com/testapp/app/reporting"
 	"example.com/testapp/internal/schedules"
 )
 
 var appScheduleSet = wire.NewSet(
-	targetapp.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 )
 `)
 	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "schedules.go"), `package reporting

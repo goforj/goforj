@@ -13,17 +13,17 @@ import (
 	"golang.org/x/term"
 )
 
-var errAppTargetCreationCancelled = errors.New("app target creation cancelled")
-var errAppTargetNameRequired = errors.New("app target name is required")
+var errAppCreationCancelled = errors.New("app creation cancelled")
+var errAppNameRequired = errors.New("app name is required")
 
-// appTargetExistsError carries the colliding path so Run can print useful no-op guidance.
-type appTargetExistsError struct {
-	target project.AppTarget
-	path   string
+// appExistsError carries the colliding path so Run can print useful no-op guidance.
+type appExistsError struct {
+	app  project.App
+	path string
 }
 
-func (e appTargetExistsError) Error() string {
-	return fmt.Sprintf("app target %q already has files at %s", e.target.Name, e.path)
+func (e appExistsError) Error() string {
+	return fmt.Sprintf("app %q already has files at %s", e.app.Name, e.path)
 }
 
 // isInteractiveTerminal is replaceable in tests because wizard behavior depends on TTY state.
@@ -31,8 +31,8 @@ var isInteractiveTerminal = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// appTargetWizardRunner is replaceable in tests so cancellation and selection paths do not need a real TUI.
-var appTargetWizardRunner = runAppTargetWizard
+// appWizardRunner is replaceable in tests so cancellation and selection paths do not need a real TUI.
+var appWizardRunner = runAppWizard
 
 // RenderOptions controls the narrow render used by make:app.
 type RenderOptions struct {
@@ -54,26 +54,26 @@ func (r RemoveResult) Changed() bool {
 
 // Renderer is the small project renderer surface needed by make:app.
 type Renderer interface {
-	RenderAppTargetOnly(project.AppTarget, RenderOptions) error
-	RemoveAppTarget(project.AppTarget) (RemoveResult, error)
+	RenderAppOnly(project.App, RenderOptions) error
+	RemoveApp(project.App) (RemoveResult, error)
 }
 
-// Cmd creates an additional conventional app target in an existing project.
+// Cmd creates an additional conventional app in an existing project.
 type Cmd struct {
 	logger   *logger.AppLogger
 	renderer Renderer
 
-	Name       string `arg:"" optional:"" help:"App target name, such as billing or customer-portal"`
-	Components string `name:"components" help:"Comma-separated target components, such as web-api,jobs"`
-	Without    string `name:"without" help:"Comma-separated target components to remove from the default app-slice selection"`
-	StarterKit string `name:"starter-kit" help:"Frontend starter kit for targets with Web UI"`
+	Name       string `arg:"" optional:"" help:"App name, such as billing or customer-portal"`
+	Components string `name:"components" help:"Comma-separated app components, such as web-api,jobs"`
+	Without    string `name:"without" help:"Comma-separated app components to remove from the default app selection"`
+	StarterKit string `name:"starter-kit" help:"Frontend starter kit for apps with Web UI"`
 	SkipWire   bool   `name:"skip-wire" help:"Render files without running Wire generation"`
-	Remove     bool   `name:"remove" help:"Remove the conventional files and metadata for an app target"`
+	Remove     bool   `name:"remove" help:"Remove the conventional files and metadata for an app"`
 }
 
-// Signature exposes make:app as a framework-owned target creation command.
+// Signature exposes make:app as a framework-owned app creation command.
 func (*Cmd) Signature() string {
-	return `name:"make:app" help:"Create a new app target"`
+	return `name:"make:app" help:"Create a new app"`
 }
 
 // NewCmd creates a new Cmd.
@@ -81,7 +81,7 @@ func NewCmd(logger *logger.AppLogger, renderer Renderer) *Cmd {
 	return &Cmd{logger: logger, renderer: renderer}
 }
 
-// Help shows the target creation flow.
+// Help shows the app creation flow.
 func (*Cmd) Help() string {
 	return strings.Join([]string{
 		"Examples:",
@@ -94,23 +94,23 @@ func (*Cmd) Help() string {
 	}, "\n")
 }
 
-// Run validates the target name and renders only the files required for the new target.
+// Run validates the app name and renders only the files required for the new app.
 func (c *Cmd) Run() error {
-	target, err := c.target()
+	app, err := c.app()
 	if err != nil {
-		if errors.Is(err, errAppTargetNameRequired) {
+		if errors.Is(err, errAppNameRequired) {
 			c.printMissingNameHelp()
 			return nil
 		}
 		return err
 	}
 	if c.Remove {
-		return c.removeTarget(target)
+		return c.removeApp(app)
 	}
-	if err := c.ensureTargetDoesNotExist(target); err != nil {
-		var exists appTargetExistsError
+	if err := c.ensureAppDoesNotExist(app); err != nil {
+		var exists appExistsError
 		if errors.As(err, &exists) {
-			c.printExistingTargetHelp(exists)
+			c.printExistingAppHelp(exists)
 			return nil
 		}
 		return err
@@ -120,18 +120,18 @@ func (c *Cmd) Run() error {
 	if err != nil {
 		return err
 	}
-	components, starterKit, err := c.targetSelection(config)
+	components, starterKit, err := c.appSelection(config)
 	if err != nil {
-		if errors.Is(err, errAppTargetCreationCancelled) {
+		if errors.Is(err, errAppCreationCancelled) {
 			return nil
 		}
 		return err
 	}
 
 	if c.logger != nil {
-		c.logger.Info().Str("target", target.Name).Msg("Creating app target")
+		c.logger.Info().Str("app", app.Name).Msg("Creating app")
 	}
-	if err := c.renderer.RenderAppTargetOnly(target, RenderOptions{
+	if err := c.renderer.RenderAppOnly(app, RenderOptions{
 		Components: components,
 		StarterKit: starterKit,
 		SkipWire:   c.SkipWire,
@@ -139,28 +139,28 @@ func (c *Cmd) Run() error {
 		return err
 	}
 
-	console.Successf("Created app target: %s", target.Name)
-	console.Infof("Entrypoint: %s", target.Entrypoint)
-	console.Infof("Composition: %s", target.AppDir)
+	console.Successf("Created app: %s", app.Name)
+	console.Infof("Entrypoint: %s", app.Entrypoint)
+	console.Infof("Composition: %s", app.AppDir)
 	if c.SkipWire {
-		console.Infof("Run forj render or wire after reviewing the generated target.")
+		console.Infof("Run forj render or wire after reviewing the generated app.")
 	}
 	return nil
 }
 
-// removeTarget removes the target through the renderer so config and runtime metadata stay in sync.
-func (c *Cmd) removeTarget(target project.AppTarget) error {
-	result, err := c.renderer.RemoveAppTarget(target)
+// removeApp removes the app through the renderer so config and runtime metadata stay in sync.
+func (c *Cmd) removeApp(app project.App) error {
+	result, err := c.renderer.RemoveApp(app)
 	if err != nil {
 		return err
 	}
 	if !result.Changed() {
-		console.Infof("App target not found: %s", target.Name)
+		console.Infof("App not found: %s", app.Name)
 		console.Infof("Nothing removed.")
 		return nil
 	}
 
-	console.Successf("Removed app target: %s", target.Name)
+	console.Successf("Removed app: %s", app.Name)
 	for _, path := range result.Removed {
 		console.Infof("Removed: %s", path)
 	}
@@ -170,29 +170,29 @@ func (c *Cmd) removeTarget(target project.AppTarget) error {
 	return nil
 }
 
-// targetSelection resolves the per-target component and starter-kit choices.
-func (c *Cmd) targetSelection(config *project.Config) (project.Components, project.StarterKit, error) {
+// appSelection resolves the per-app component and starter-kit choices.
+func (c *Cmd) appSelection(config *project.Config) (project.Components, project.StarterKit, error) {
 	available := config.Render.Components
 	if c.shouldRunWizard() {
 		if !isInteractiveTerminal() {
-			return project.Components{}, project.StarterKitNone, fmt.Errorf("app target wizard requires an interactive terminal")
+			return project.Components{}, project.StarterKitNone, fmt.Errorf("app wizard requires an interactive terminal")
 		}
-		components, starterKit, cancelled, err := appTargetWizardRunner(c.Name, config)
+		components, starterKit, cancelled, err := appWizardRunner(c.Name, config)
 		if err != nil {
 			return project.Components{}, project.StarterKitNone, err
 		}
 		if cancelled {
-			return project.Components{}, project.StarterKitNone, errAppTargetCreationCancelled
+			return project.Components{}, project.StarterKitNone, errAppCreationCancelled
 		}
 		return components, starterKit, nil
 	}
-	components := project.TargetDefaultComponents(available)
+	components := project.AppDefaultComponents(available)
 	if strings.TrimSpace(c.Components) != "" {
 		keys, err := project.ParseComponentKeys(c.Components)
 		if err != nil {
 			return project.Components{}, project.StarterKitNone, err
 		}
-		components, err = project.TargetComponentsFromKeys(available, keys)
+		components, err = project.AppComponentsFromKeys(available, keys)
 		if err != nil {
 			return project.Components{}, project.StarterKitNone, err
 		}
@@ -203,13 +203,13 @@ func (c *Cmd) targetSelection(config *project.Config) (project.Components, proje
 			return project.Components{}, project.StarterKitNone, err
 		}
 		for _, key := range keys {
-			if !project.IsTargetComponentKey(key) {
+			if !project.IsAppComponentKey(key) {
 				definition, _ := project.ComponentDefinitionByKey(key)
-				return project.Components{}, project.StarterKitNone, fmt.Errorf("%s is project-level only and cannot be removed per app target", definition.Label)
+				return project.Components{}, project.StarterKitNone, fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
 			}
 			components.SetEnabled(key, false)
 		}
-		components = project.NormalizeTargetComponents(available, components)
+		components = project.NormalizeAppComponents(available, components)
 	}
 
 	starterKit := project.NormalizeStarterKit(project.StarterKit(c.StarterKit))
@@ -245,49 +245,49 @@ func (c *Cmd) hasExplicitSelection() bool {
 
 // printMissingNameHelp keeps the no-arg command path instructional instead of error-styled.
 func (c *Cmd) printMissingNameHelp() {
-	console.Infof("App target name is required")
+	console.Infof("App name is required")
 	console.Infof("Usage: forj make:app <name>")
 	console.Infof("Example: forj make:app billing")
 }
 
-// printExistingTargetHelp explains the no-op when the conventional target files already exist.
-func (c *Cmd) printExistingTargetHelp(err appTargetExistsError) {
-	console.Infof("App target already exists: %s", err.target.Name)
+// printExistingAppHelp explains the no-op when the conventional app files already exist.
+func (c *Cmd) printExistingAppHelp(err appExistsError) {
+	console.Infof("App already exists: %s", err.app.Name)
 	console.Infof("Existing path: %s", err.path)
-	console.Infof("Run forj render to refresh an existing target.")
+	console.Infof("Run forj render to refresh an existing app.")
 }
 
-// target resolves the command input into the conventional target paths used by render and dev.
-func (c *Cmd) target() (project.AppTarget, error) {
+// app resolves the command input into the conventional app paths used by render and dev.
+func (c *Cmd) app() (project.App, error) {
 	name := strings.TrimSpace(c.Name)
 	if name == "" {
-		return project.AppTarget{}, errAppTargetNameRequired
+		return project.App{}, errAppNameRequired
 	}
-	if name == project.DefaultAppTargetName {
-		return project.AppTarget{}, fmt.Errorf("app target %q already exists as the default target", name)
+	if name == project.DefaultAppName {
+		return project.App{}, fmt.Errorf("app %q already exists as the default app", name)
 	}
-	if !project.IsSafeAppTargetName(name) {
-		return project.AppTarget{}, fmt.Errorf("invalid app target name %q; use a path-safe slug such as billing or customer-portal", name)
+	if !project.IsSafeAppName(name) {
+		return project.App{}, fmt.Errorf("invalid app name %q; use a path-safe slug such as billing or customer-portal", name)
 	}
-	if project.IsReservedAppTargetName(name) {
-		return project.AppTarget{}, fmt.Errorf("app target name %q is reserved by the app layout", name)
+	if project.IsReservedAppName(name) {
+		return project.App{}, fmt.Errorf("app name %q is reserved by the app layout", name)
 	}
 	if project.IsNativeFrameworkCommandName(name) {
-		return project.AppTarget{}, fmt.Errorf("app target name %q conflicts with a native forj command", name)
+		return project.App{}, fmt.Errorf("app name %q conflicts with a native forj command", name)
 	}
-	return project.DefaultNamedAppTarget(name), nil
+	return project.DefaultNamedApp(name), nil
 }
 
-// ensureTargetDoesNotExist prevents make:app from overwriting an app owner-created target.
-func (c *Cmd) ensureTargetDoesNotExist(target project.AppTarget) error {
+// ensureAppDoesNotExist prevents make:app from overwriting an app owner-created app.
+func (c *Cmd) ensureAppDoesNotExist(app project.App) error {
 	for _, path := range []string{
-		target.Entrypoint,
-		target.AppDir,
-		target.WireDir,
-		filepath.Dir(target.Entrypoint),
+		app.Entrypoint,
+		app.AppDir,
+		app.WireDir,
+		filepath.Dir(app.Entrypoint),
 	} {
 		if _, err := os.Stat(path); err == nil {
-			return appTargetExistsError{target: target, path: path}
+			return appExistsError{app: app, path: path}
 		} else if !os.IsNotExist(err) {
 			return err
 		}

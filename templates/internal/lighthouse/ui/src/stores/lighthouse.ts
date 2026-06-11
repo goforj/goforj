@@ -8,7 +8,8 @@ type AgentInfo = {
   instance_key?: string;
   source: string;
   runtime_source?: string;
-  app_target?: string;
+  app?: string;
+  project?: string;
   env: string;
   capabilities: string[];
   last_seen?: string;
@@ -17,7 +18,6 @@ type AgentInfo = {
   host?: string;
   instance_id?: string;
   instance_kind?: string;
-  app?: string;
   version?: string;
 };
 
@@ -634,8 +634,8 @@ const syncAgents = (agents: AgentInfo[]) => {
 
 const normalizeAgent = (agent: AgentInfo): AgentInfo => {
   const runtimeSource = (agent.runtime_source || agent.source || "app").trim();
-  const appTarget = (agent.app_target || "app").trim();
-  const groupKey = (agent.group_key || agentGroupKey(appTarget, runtimeSource)).trim();
+  const appName = (agent.app || "app").trim();
+  const groupKey = (agent.group_key || agentGroupKey(appName, runtimeSource)).trim();
   const instanceKey = (agent.instance_key || agent.instance_id || agent.host || "").trim();
   const key = (agent.key || agentKey(groupKey, instanceKey)).trim();
   return {
@@ -645,13 +645,13 @@ const normalizeAgent = (agent: AgentInfo): AgentInfo => {
     group_key: groupKey,
     instance_key: instanceKey,
     runtime_source: runtimeSource,
-    app_target: appTarget,
+    app: appName,
   };
 };
 
-const agentGroupKey = (appTarget: string, source: string) => {
-  if (!appTarget || appTarget === "app") return source || "app";
-  return `${appTarget}/${source || "app"}`;
+const agentGroupKey = (appName: string, source: string) => {
+  if (!appName || appName === "app") return source || "app";
+  return `${appName}/${source || "app"}`;
 };
 
 const agentKey = (groupKey: string, instanceKey: string) => {
@@ -660,8 +660,8 @@ const agentKey = (groupKey: string, instanceKey: string) => {
 };
 
 const compareAgents = (a: AgentInfo, b: AgentInfo) => {
-  const targetCompare = (a.app_target || "app").localeCompare(b.app_target || "app");
-  if (targetCompare !== 0) return targetCompare;
+  const appCompare = (a.app || "app").localeCompare(b.app || "app");
+  if (appCompare !== 0) return appCompare;
   const sourceCompare = (a.runtime_source || a.source).localeCompare(b.runtime_source || b.source);
   if (sourceCompare !== 0) return sourceCompare;
   return (a.instance_key || "").localeCompare(b.instance_key || "");
@@ -699,7 +699,7 @@ const requestLogHistory = () => {
     JSON.stringify({
       type: "command",
       id,
-      target: "control",
+      destination: "control",
       payload: { name: "logs:history", params: { limit: state.logLimit } },
     })
   );
@@ -725,7 +725,7 @@ const sendCommand = (target: string, name: string, params: Record<string, any>) 
     JSON.stringify({
       type: "command",
       id,
-      target,
+      destination: target,
       payload: { name, params },
     })
   );

@@ -34,7 +34,7 @@ type metricsTargetRole struct {
 	HostEnv string
 }
 
-type observabilityAppTarget struct {
+type observabilityApp struct {
 	Name        string
 	Index       int
 	EnvPrefix   string
@@ -95,7 +95,7 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 	if len(activeRoles) == 0 {
 		return observabilityTargetPlan{Manage: true}, nil
 	}
-	appTargets := discoverObservabilityAppTargets(projectDir, activeRoles)
+	appNames := discoverObservabilityApps(projectDir, activeRoles)
 
 	mode, err := resolveObservabilityMetricsMode(activeRoles)
 	if err != nil {
@@ -116,7 +116,7 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 		if !ok {
 			return observabilityTargetPlan{Manage: false}, nil
 		}
-		entries, err := buildStandaloneTargets(service, environment, host, activeRoles, appTargets)
+		entries, err := buildStandaloneTargets(service, environment, host, activeRoles, appNames)
 		if err != nil {
 			return observabilityTargetPlan{}, err
 		}
@@ -126,7 +126,7 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 		if !ok {
 			return observabilityTargetPlan{Manage: false}, nil
 		}
-		entries, err := buildAppRoleTargets(service, environment, host, activeRoles, appTargets)
+		entries, err := buildAppRoleTargets(service, environment, host, activeRoles, appNames)
 		if err != nil {
 			return observabilityTargetPlan{}, err
 		}
@@ -151,46 +151,46 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 	}
 }
 
-// buildStandaloneTargets mirrors app run/dev mode where each target owns one host process.
+// buildStandaloneTargets mirrors app run/dev mode where each app owns one host process.
 func buildStandaloneTargets(
 	service string,
 	environment string,
 	host string,
 	activeRoles []metricsTargetRole,
-	appTargets []observabilityAppTarget,
+	appNames []observabilityApp,
 ) ([]metricsTargetEntry, error) {
-	entries := make([]metricsTargetEntry, 0, len(appTargets))
-	for _, target := range appTargets {
-		port, err := resolveStandaloneMetricsPort(target, activeRoles)
+	entries := make([]metricsTargetEntry, 0, len(appNames))
+	for _, app := range appNames {
+		port, err := resolveStandaloneMetricsPort(app, activeRoles)
 		if err != nil {
 			return nil, err
 		}
 		entries = append(entries, metricsTargetEntry{
 			Targets: []string{host + ":" + port},
-			Labels:  observabilityTargetLabels(service, environment, "app", target.Name),
+			Labels:  observabilityTargetLabels(service, environment, "app", app.Name),
 		})
 	}
 	return entries, nil
 }
 
-// buildAppRoleTargets mirrors distributed local mode where each target/source pair can expose metrics independently.
+// buildAppRoleTargets mirrors distributed local mode where each app/runtime pair can expose metrics independently.
 func buildAppRoleTargets(
 	service string,
 	environment string,
 	host string,
 	activeRoles []metricsTargetRole,
-	appTargets []observabilityAppTarget,
+	appNames []observabilityApp,
 ) ([]metricsTargetEntry, error) {
-	entries := make([]metricsTargetEntry, 0, len(activeRoles)*len(appTargets))
-	for _, target := range appTargets {
-		for _, role := range filterTargetMetricRoles(activeRoles, target) {
-			port, err := resolveTargetRolePort(role, target)
+	entries := make([]metricsTargetEntry, 0, len(activeRoles)*len(appNames))
+	for _, app := range appNames {
+		for _, role := range filterAppMetricRoles(activeRoles, app) {
+			port, err := resolveAppRolePort(role, app)
 			if err != nil {
 				return nil, err
 			}
 			entries = append(entries, metricsTargetEntry{
 				Targets: []string{host + ":" + port},
-				Labels:  observabilityTargetLabels(service, environment, role.Name, target.Name),
+				Labels:  observabilityTargetLabels(service, environment, role.Name, app.Name),
 			})
 		}
 	}
@@ -212,39 +212,39 @@ func discoverObservabilityMetricRoles(projectDir string) ([]metricsTargetRole, e
 	return roles, nil
 }
 
-// discoverObservabilityAppTargets derives target identity from layout conventions so generation does not depend on dev config.
-func discoverObservabilityAppTargets(projectDir string, activeRoles []metricsTargetRole) []observabilityAppTarget {
+// discoverObservabilityApps derives app identity from layout conventions so generation does not depend on dev config.
+func discoverObservabilityApps(projectDir string, activeRoles []metricsTargetRole) []observabilityApp {
 	cfg := loadObservabilityProjectConfig(projectDir)
-	names := map[string]bool{project.DefaultAppTargetName: true}
-	for _, target := range discoverConventionalObservabilityAppTargets(projectDir) {
-		names[target.Name] = true
+	names := map[string]bool{project.DefaultAppName: true}
+	for _, app := range discoverConventionalObservabilityApps(projectDir) {
+		names[app.Name] = true
 	}
 
 	orderedNames := make([]string, 0, len(names))
 	for name := range names {
-		if name != project.DefaultAppTargetName {
+		if name != project.DefaultAppName {
 			orderedNames = append(orderedNames, name)
 		}
 	}
 	sort.Strings(orderedNames)
-	orderedNames = append([]string{project.DefaultAppTargetName}, orderedNames...)
+	orderedNames = append([]string{project.DefaultAppName}, orderedNames...)
 
-	targets := make([]observabilityAppTarget, 0, len(orderedNames))
+	apps := make([]observabilityApp, 0, len(orderedNames))
 	for index, name := range orderedNames {
-		targets = append(targets, observabilityAppTarget{
+		apps = append(apps, observabilityApp{
 			Name:        name,
 			Index:       index,
-			EnvPrefix:   observabilityTargetEnvPrefix(name),
+			EnvPrefix:   observabilityAppEnvPrefix(name),
 			HTTPPort:    3000 + index,
 			RuntimeBase: 10000 + index*10,
-			Components:  observabilityTargetComponents(cfg, name, activeRoles),
+			Components:  observabilityAppComponents(cfg, name, activeRoles),
 		})
 	}
-	return targets
+	return apps
 }
 
-// discoverConventionalObservabilityAppTargets treats cmd/<target> and app/<target> as target ownership markers.
-func discoverConventionalObservabilityAppTargets(projectDir string) []project.AppTarget {
+// discoverConventionalObservabilityApps treats cmd/<app> and app/<app> as app ownership markers.
+func discoverConventionalObservabilityApps(projectDir string) []project.App {
 	names := make(map[string]bool)
 	if entries, err := os.ReadDir(filepath.Join(projectDir, "cmd")); err == nil {
 		for _, entry := range entries {
@@ -252,7 +252,7 @@ func discoverConventionalObservabilityAppTargets(projectDir string) []project.Ap
 				continue
 			}
 			name := entry.Name()
-			if name == project.DefaultAppTargetName || !project.IsSafeAppTargetName(name) {
+			if name == project.DefaultAppName || !project.IsSafeAppName(name) {
 				continue
 			}
 			if _, err := os.Stat(filepath.Join(projectDir, "cmd", name, "main.go")); err == nil {
@@ -266,27 +266,27 @@ func discoverConventionalObservabilityAppTargets(projectDir string) []project.Ap
 				continue
 			}
 			name := entry.Name()
-			if name == project.DefaultAppTargetName || !project.IsSafeAppTargetName(name) || project.IsReservedAppTargetName(name) {
+			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
 				continue
 			}
-			if hasConventionalObservabilityAppTargetFiles(filepath.Join(projectDir, "app", name)) {
+			if hasConventionalObservabilityAppFiles(filepath.Join(projectDir, "app", name)) {
 				names[name] = true
 			}
 		}
 	}
 
-	targets := make([]project.AppTarget, 0, len(names))
+	apps := make([]project.App, 0, len(names))
 	for name := range names {
-		targets = append(targets, project.DefaultNamedAppTarget(name))
+		apps = append(apps, project.DefaultNamedApp(name))
 	}
-	sort.Slice(targets, func(i, j int) bool {
-		return targets[i].Name < targets[j].Name
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].Name < apps[j].Name
 	})
-	return targets
+	return apps
 }
 
-// hasConventionalObservabilityAppTargetFiles avoids treating arbitrary app subpackages as app targets.
-func hasConventionalObservabilityAppTargetFiles(appDir string) bool {
+// hasConventionalObservabilityAppFiles avoids treating arbitrary app subpackages as apps.
+func hasConventionalObservabilityAppFiles(appDir string) bool {
 	for _, path := range []string{
 		filepath.Join(appDir, "wire"),
 		filepath.Join(appDir, "commands.go"),
@@ -302,7 +302,7 @@ func hasConventionalObservabilityAppTargetFiles(appDir string) bool {
 	return false
 }
 
-// loadObservabilityProjectConfig is best-effort because target existence must remain convention-driven.
+// loadObservabilityProjectConfig is best-effort because app existence must remain convention-driven.
 func loadObservabilityProjectConfig(projectDir string) *project.Config {
 	data, err := os.ReadFile(filepath.Join(projectDir, ".goforj.yml"))
 	if err != nil {
@@ -315,17 +315,17 @@ func loadObservabilityProjectConfig(projectDir string) *project.Config {
 	return &cfg
 }
 
-// observabilityTargetComponents uses config only to filter roles for a known conventional target.
-func observabilityTargetComponents(cfg *project.Config, targetName string, activeRoles []metricsTargetRole) project.Components {
+// observabilityAppComponents uses config only to filter roles for a known conventional app.
+func observabilityAppComponents(cfg *project.Config, appName string, activeRoles []metricsTargetRole) project.Components {
 	if cfg == nil {
 		return componentsFromMetricRoles(activeRoles)
 	}
-	if targetName == "" || targetName == project.DefaultAppTargetName {
+	if appName == "" || appName == project.DefaultAppName {
 		return cfg.Render.Components
 	}
 	components := cfg.Render.Components
-	if targetConfig, ok := cfg.AppTargets[targetName]; ok {
-		components = project.NormalizeTargetComponents(cfg.Render.Components, targetConfig.Components)
+	if appConfig, ok := cfg.Apps[appName]; ok {
+		components = project.NormalizeAppComponents(cfg.Render.Components, appConfig.Components)
 	}
 	return components
 }
@@ -390,9 +390,9 @@ func resolveRolePort(role metricsTargetRole, basePort int) (string, error) {
 	return strconv.Itoa(basePort + role.Offset), nil
 }
 
-// resolveTargetRolePort applies the same target-scoped override order used by generated runtime helpers.
-func resolveTargetRolePort(role metricsTargetRole, target observabilityAppTarget) (string, error) {
-	envKeys := targetRolePortEnvKeys(role, target)
+// resolveAppRolePort applies the same app-scoped override order used by generated runtime helpers.
+func resolveAppRolePort(role metricsTargetRole, app observabilityApp) (string, error) {
+	envKeys := appRolePortEnvKeys(role, app)
 	if value, key, ok := firstEnvTrimmed(envKeys); ok {
 		port, err := strconv.Atoi(value)
 		if err != nil {
@@ -400,32 +400,32 @@ func resolveTargetRolePort(role metricsTargetRole, target observabilityAppTarget
 		}
 		return strconv.Itoa(port), nil
 	}
-	return strconv.Itoa(target.RuntimeBase + role.Offset), nil
+	return strconv.Itoa(app.RuntimeBase + role.Offset), nil
 }
 
-// targetRolePortEnvKeys lists the accepted env aliases for one metrics source.
-func targetRolePortEnvKeys(role metricsTargetRole, target observabilityAppTarget) []string {
+// appRolePortEnvKeys lists the accepted env aliases for one metrics source.
+func appRolePortEnvKeys(role metricsTargetRole, app observabilityApp) []string {
 	switch role.Name {
 	case "api":
-		return observabilityTargetEnvKeys(target, "METRICS_PORT", "API_METRICS_PORT", "METRICS_API_PORT")
+		return observabilityAppEnvKeys(app, "METRICS_PORT", "API_METRICS_PORT", "METRICS_API_PORT")
 	case "scheduler":
-		return observabilityTargetEnvKeys(target, "SCHEDULER_METRICS_PORT", "METRICS_SCHEDULER_PORT", "METRICS_PORT")
+		return observabilityAppEnvKeys(app, "SCHEDULER_METRICS_PORT", "METRICS_SCHEDULER_PORT", "METRICS_PORT")
 	case "jobs":
-		return observabilityTargetEnvKeys(target, "WORKER_METRICS_PORT", "JOBS_METRICS_PORT", "METRICS_JOBS_PORT", "METRICS_PORT")
+		return observabilityAppEnvKeys(app, "WORKER_METRICS_PORT", "JOBS_METRICS_PORT", "METRICS_JOBS_PORT", "METRICS_PORT")
 	default:
-		return observabilityTargetEnvKeys(target, role.PortEnv)
+		return observabilityAppEnvKeys(app, role.PortEnv)
 	}
 }
 
-// observabilityTargetEnvKeys prevents named targets from consuming default-target globals.
-func observabilityTargetEnvKeys(target observabilityAppTarget, suffixes ...string) []string {
-	if target.Name == project.DefaultAppTargetName || target.EnvPrefix == "" {
+// observabilityAppEnvKeys prevents named apps from consuming default app globals.
+func observabilityAppEnvKeys(app observabilityApp, suffixes ...string) []string {
+	if app.Name == project.DefaultAppName || app.EnvPrefix == "" {
 		return suffixes
 	}
 	keys := make([]string, 0, len(suffixes))
 	for _, suffix := range suffixes {
 		if suffix = strings.TrimSpace(suffix); suffix != "" {
-			keys = append(keys, target.EnvPrefix+"_"+suffix)
+			keys = append(keys, app.EnvPrefix+"_"+suffix)
 		}
 	}
 	return keys
@@ -452,18 +452,18 @@ func resolveComposeMetricsHost(role metricsTargetRole) (string, bool) {
 }
 
 // resolveStandaloneMetricsPort prefers the HTTP listener because app run exposes /metrics there when HTTP is present.
-func resolveStandaloneMetricsPort(target observabilityAppTarget, activeRoles []metricsTargetRole) (string, error) {
+func resolveStandaloneMetricsPort(app observabilityApp, activeRoles []metricsTargetRole) (string, error) {
 	if containsObservabilityRole(activeRoles, "api") {
-		if value, key, ok := firstEnvTrimmed(observabilityTargetEnvKeys(target, "PORT", "API_HTTP_PORT")); ok {
+		if value, key, ok := firstEnvTrimmed(observabilityAppEnvKeys(app, "PORT", "API_HTTP_PORT")); ok {
 			port, err := strconv.Atoi(value)
 			if err != nil {
 				return "", fmt.Errorf("invalid %s %q: %w", key, value, err)
 			}
 			return strconv.Itoa(port), nil
 		}
-		return strconv.Itoa(target.HTTPPort), nil
+		return strconv.Itoa(app.HTTPPort), nil
 	}
-	return resolveTargetRolePort(metricsTargetRole{Name: "api", Offset: 0}, target)
+	return resolveAppRolePort(metricsTargetRole{Name: "api", Offset: 0}, app)
 }
 
 func buildRoleTargets(
@@ -483,51 +483,51 @@ func buildRoleTargets(
 		}
 		entries = append(entries, metricsTargetEntry{
 			Targets: []string{host + ":" + port},
-			Labels:  observabilityTargetLabels(service, environment, role.Name, project.DefaultAppTargetName),
+			Labels:  observabilityTargetLabels(service, environment, role.Name, project.DefaultAppName),
 		})
 	}
 	return entries, nil
 }
 
-// filterTargetMetricRoles keeps local-multi scraping aligned to the target's selected runtime surfaces.
-func filterTargetMetricRoles(activeRoles []metricsTargetRole, target observabilityAppTarget) []metricsTargetRole {
+// filterAppMetricRoles keeps local-multi scraping aligned to the app's selected runtime surfaces.
+func filterAppMetricRoles(activeRoles []metricsTargetRole, app observabilityApp) []metricsTargetRole {
 	out := make([]metricsTargetRole, 0, len(activeRoles))
 	for _, role := range activeRoles {
-		if targetHasMetricRole(target, role) {
+		if appHasMetricRole(app, role) {
 			out = append(out, role)
 		}
 	}
 	return out
 }
 
-// targetHasMetricRole maps source roles onto target component participation.
-func targetHasMetricRole(target observabilityAppTarget, role metricsTargetRole) bool {
+// appHasMetricRole maps source roles onto app component participation.
+func appHasMetricRole(app observabilityApp, role metricsTargetRole) bool {
 	switch role.Name {
 	case "api":
-		return target.Components.WebAPI || target.Components.WebUI
+		return app.Components.WebAPI || app.Components.WebUI
 	case "jobs":
-		return target.Components.Jobs
+		return app.Components.Jobs
 	case "scheduler":
-		return target.Components.Scheduler
+		return app.Components.Scheduler
 	default:
 		return true
 	}
 }
 
 // observabilityTargetLabels keeps vmagent labels consistent with emitted framework metric labels.
-func observabilityTargetLabels(service string, environment string, process string, appTarget string) map[string]string {
+func observabilityTargetLabels(service string, environment string, process string, appName string) map[string]string {
 	return map[string]string{
-		"app_target":  appTarget,
+		"app":         appName,
 		"environment": environment,
 		"process":     process,
 		"service":     service,
 	}
 }
 
-// observabilityTargetEnvPrefix matches the generated runtime env prefix convention.
-func observabilityTargetEnvPrefix(name string) string {
+// observabilityAppEnvPrefix matches the generated runtime env prefix convention.
+func observabilityAppEnvPrefix(name string) string {
 	name = strings.TrimSpace(name)
-	if name == "" || name == project.DefaultAppTargetName {
+	if name == "" || name == project.DefaultAppName {
 		return ""
 	}
 	var builder strings.Builder

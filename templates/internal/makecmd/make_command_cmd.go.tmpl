@@ -196,7 +196,7 @@ func (c *CommandCmd) writeCommandFile(target commandTarget) error {
 
 // injectIntoWireFile registers the command constructor with the app command wire set.
 func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
-	injectPath := targetAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
+	injectPath := activeAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -241,7 +241,7 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 }
 
 func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
-	injectPath := targetAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
+	injectPath := activeAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -284,7 +284,7 @@ func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
 	return nil
 }
 
-// usesAppCommandWirePath detects target-owned command wiring across current and transitional app layouts.
+// usesAppCommandWirePath detects app-owned command wiring across current and transitional app layouts.
 func usesAppCommandWirePath(path string) bool {
 	normalized := filepath.ToSlash(path)
 	return strings.HasPrefix(normalized, "app/") && (strings.HasSuffix(normalized, "/wire/inject_cmd_app.go") || strings.HasSuffix(normalized, "/wire/inject_cmd.go") || strings.HasSuffix(normalized, "/providers.go"))
@@ -302,7 +302,7 @@ func commandWireSetDeclaration(path string) string {
 	return "var AppCommandSet = wire.NewSet("
 }
 
-// isAppCommandsPath detects command registration files for both default and named app targets.
+// isAppCommandsPath detects command registration files for both default and named apps.
 func isAppCommandsPath(path string) bool {
 	normalized := filepath.ToSlash(path)
 	return strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/commands.go")
@@ -310,7 +310,7 @@ func isAppCommandsPath(path string) bool {
 
 // injectIntoRootCmd registers the command on Commands so Kong can expose it.
 func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
-	rootPath := targetAppFile("commands.go", "./internal/cmd/app_commands.go")
+	rootPath := activeAppFile("commands.go", "./internal/cmd/app_commands.go")
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)
@@ -396,7 +396,7 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 }
 
 func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
-	rootPath := targetAppFile("commands.go", "./internal/cmd/app_commands.go")
+	rootPath := activeAppFile("commands.go", "./internal/cmd/app_commands.go")
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)

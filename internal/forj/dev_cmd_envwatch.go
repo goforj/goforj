@@ -15,7 +15,7 @@ type devEnvFileFingerprint struct {
 	size            int64
 }
 
-type devAppTargetFingerprint struct {
+type devAppFingerprint struct {
 	names []string
 }
 
@@ -75,7 +75,7 @@ func startDevEnvFileWatcher(ctx context.Context, trigger func(), interval time.D
 	}
 }
 
-func startDevAppTargetWatcher(ctx context.Context, trigger func(), interval time.Duration) func() {
+func startDevAppWatcher(ctx context.Context, trigger func(), interval time.Duration) func() {
 	if trigger == nil {
 		return func() {}
 	}
@@ -83,11 +83,11 @@ func startDevAppTargetWatcher(ctx context.Context, trigger func(), interval time
 		interval = 500 * time.Millisecond
 	}
 	stopCh := make(chan struct{})
-	prev := snapshotDevAppTargets()
+	prev := snapshotDevApps()
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		pending := devAppTargetFingerprint{}
+		pending := devAppFingerprint{}
 		pendingTicks := 0
 		for {
 			select {
@@ -96,13 +96,13 @@ func startDevAppTargetWatcher(ctx context.Context, trigger func(), interval time
 			case <-stopCh:
 				return
 			case <-ticker.C:
-				current := snapshotDevAppTargets()
-				if !devAppTargetsChanged(prev, current) {
-					pending = devAppTargetFingerprint{}
+				current := snapshotDevApps()
+				if !devAppsChanged(prev, current) {
+					pending = devAppFingerprint{}
 					pendingTicks = 0
 					continue
 				}
-				if !devAppTargetsChanged(pending, current) {
+				if !devAppsChanged(pending, current) {
 					pendingTicks++
 				} else {
 					pending = current
@@ -112,7 +112,7 @@ func startDevAppTargetWatcher(ctx context.Context, trigger func(), interval time
 					continue
 				}
 				prev = current
-				pending = devAppTargetFingerprint{}
+				pending = devAppFingerprint{}
 				pendingTicks = 0
 				trigger()
 			}
@@ -172,10 +172,10 @@ func devEnvFilesChanged(prev, current map[string]devEnvFileFingerprint) bool {
 	return false
 }
 
-func snapshotDevAppTargets() devAppTargetFingerprint {
-	return devAppTargetFingerprint{names: devTargetNames(activeDevTargets())}
+func snapshotDevApps() devAppFingerprint {
+	return devAppFingerprint{names: devAppBuildNames(activeDevApps())}
 }
 
-func devAppTargetsChanged(prev, current devAppTargetFingerprint) bool {
+func devAppsChanged(prev, current devAppFingerprint) bool {
 	return !slices.Equal(prev.names, current.names)
 }

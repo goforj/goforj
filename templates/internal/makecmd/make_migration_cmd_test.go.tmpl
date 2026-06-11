@@ -27,15 +27,15 @@ func TestMigrationCmdRemoveDeletesMatchingMigrationFiles(t *testing.T) {
 	assertMakeCmdTestContains(t, filepath.Join("migrations", "2026_01_01_000003_create_accounts.up.sql"), []string{"-- up"})
 }
 
-func TestMigrationCmdUsesActiveAppTarget(t *testing.T) {
+func TestMigrationCmdUsesActiveApp(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("FORJ_APP_TARGET", "billing")
+	t.Setenv("FORJ_APP", "billing")
 	t.Setenv("DB_DRIVER", "sqlite")
 
 	cmd := &MigrationCmd{Name: "create_invoices", Connection: "ledger", NoOpen: true}
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("create target migration: %v", err)
+		t.Fatalf("create app migration: %v", err)
 	}
 
 	assertMakeCmdTestGlob(t, filepath.Join("migrations", "billing", "ledger", "*create_invoices.up.sql"))

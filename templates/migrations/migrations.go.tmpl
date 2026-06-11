@@ -19,7 +19,7 @@ var registry []Migration
 // Migration defines a registered SQL migration and the stream that owns it.
 type Migration interface {
 	Name() string
-	Target() string
+	App() string
 	Connection() string
 	DatabaseConnection() string
 	SourcePath() string
@@ -72,14 +72,14 @@ func AutoRegisterMigrations() error {
 	}
 
 	for path := range migrationPaths {
-		target, connection, name, pathBase, driver := parseMigrationPath(path)
+		app, connection, name, pathBase, driver := parseMigrationPath(path)
 
 		downFilename := pathBase + ".down.sql"
 		if _, err := migrationFS.Open(downFilename); err != nil {
 			console.Warnf("migration %s is missing Down file (%s)", pathBase, downFilename)
 		}
 
-		registerSQLMigration(target, connection, name, pathBase, driver)
+		registerSQLMigration(app, connection, name, pathBase, driver)
 	}
 
 	return nil
@@ -94,14 +94,14 @@ func GetMigrationSQL(filename string) (string, error) {
 	return string(data), nil
 }
 
-// registerSQLMigration registers a SQL migration with the target and connection identity needed for orchestration.
-func registerSQLMigration(target, connection, name, pathBase, driver string) {
-	RegisterMigration(&migration{target: target, connection: connection, pathBase: pathBase, driver: driver, name: name})
+// registerSQLMigration registers a SQL migration with the app and connection identity needed for orchestration.
+func registerSQLMigration(app, connection, name, pathBase, driver string) {
+	RegisterMigration(&migration{app: app, connection: connection, pathBase: pathBase, driver: driver, name: name})
 }
 
 // migration represents a SQL migration.
 type migration struct {
-	target    string
+	app       string
 	name      string
 	connection string
 	pathBase  string
@@ -113,9 +113,9 @@ func (m *migration) Name() string {
 	return m.name
 }
 
-// Target returns the App target that owns this migration stream.
-func (m *migration) Target() string {
-	return m.target
+// App returns the app that owns this migration stream.
+func (m *migration) App() string {
+	return m.app
 }
 
 // Connection returns the connection name for this migration.
@@ -125,7 +125,7 @@ func (m *migration) Connection() string {
 
 // DatabaseConnection returns the flat database connection name used by the generated database registry.
 func (m *migration) DatabaseConnection() string {
-	return databaseConnectionName(m.target, m.connection)
+	return databaseConnectionName(m.app, m.connection)
 }
 
 // SourcePath returns the embedded migration path without its direction suffix.
@@ -201,7 +201,7 @@ func stripLeadingSQLComments(stmt string) string {
 	return s
 }
 
-// parseMigrationPath returns target, connection, migration name, path base, and driver.
+// parseMigrationPath returns app, connection, migration name, path base, and driver.
 func parseMigrationPath(path string) (string, string, string, string, string) {
 	basePath := strings.TrimSuffix(path, ".up.sql")
 	safe := str.Of(filepath.ToSlash(basePath)).ChopStart("./").String()
@@ -217,7 +217,7 @@ func parseMigrationPath(path string) (string, string, string, string, string) {
 		}
 	}
 	if len(parts) >= 3 {
-		return normalizeTargetName(parts[0]), normalizeConnectionName(parts[1]), namePart, safe, driver
+		return normalizeAppName(parts[0]), normalizeConnectionName(parts[1]), namePart, safe, driver
 	}
 	if len(parts) < 2 {
 		return "app", "default", namePart, safe, driver
@@ -225,8 +225,8 @@ func parseMigrationPath(path string) (string, string, string, string, string) {
 	return "app", normalizeConnectionName(parts[0]), namePart, safe, driver
 }
 
-// normalizeTargetName returns the target name used for migration ownership.
-func normalizeTargetName(value string) string {
+// normalizeAppName returns the app name used for migration ownership.
+func normalizeAppName(value string) string {
 	name := str.Of(value).TrimSpace().ToLower()
 	if name.IsEmpty() {
 		return "app"
@@ -243,27 +243,24 @@ func normalizeConnectionName(value string) string {
 	return name.String()
 }
 
-// databaseConnectionName maps target-scoped migration connections onto the generated flat database registry.
-func databaseConnectionName(target, connection string) string {
-	target = normalizeTargetName(target)
+// databaseConnectionName maps app-scoped migration connections onto the generated flat database registry.
+func databaseConnectionName(app, connection string) string {
+	app = normalizeAppName(app)
 	connection = normalizeConnectionName(connection)
-	if target == "app" {
+	if app == "app" {
 		return connection
 	}
 	if connection == "default" {
-		return str.Of(target).Snake("_").String()
+		return str.Of(app).Snake("_").String()
 	}
-	return str.Of(target + "_" + connection).Snake("_").String()
+	return str.Of(app + "_" + connection).Snake("_").String()
 }
 
-// activeMigrationTarget resolves the App target selected for this command.
-func activeMigrationTarget() string {
-	for _, key := range []string{"FORJ_APP_TARGET", "APP_TARGET"} {
-		target := str.Of(env.Get(key, "")).TrimSpace()
-		if target.IsBlank() {
-			continue
-		}
-		return normalizeTargetName(target.String())
+// activeMigrationApp resolves the app selected for this command.
+func activeMigrationApp() string {
+	app := str.Of(env.Get("FORJ_APP", "")).TrimSpace()
+	if !app.IsBlank() {
+		return normalizeAppName(app.String())
 	}
 	return "app"
 }
@@ -303,13 +300,13 @@ func migrationMatchesDriver(m Migration, activeDriver string) bool {
 	return driver == activeDriver
 }
 
-// selectMigrations returns one driver-compatible migration per migration name for one target stream.
-func selectMigrations(target, connection, activeDriver string) []Migration {
-	target = normalizeTargetName(target)
+// selectMigrations returns one driver-compatible migration per migration name for one app stream.
+func selectMigrations(app, connection, activeDriver string) []Migration {
+	app = normalizeAppName(app)
 	connection = normalizeConnectionName(connection)
 	preferred := make(map[string]Migration)
 	for _, m := range GetMigrations() {
-		if m.Target() != target {
+		if m.App() != app {
 			continue
 		}
 		if m.Connection() != connection {
@@ -342,21 +339,21 @@ func selectMigrations(target, connection, activeDriver string) []Migration {
 }
 
 type migrationStream struct {
-	Target             string
+	App                string
 	Connection         string
 	DatabaseConnection string
 }
 
-// knownMigrationStreams derives target/connection streams from the registered migration files.
+// knownMigrationStreams derives app/connection streams from the registered migration files.
 func knownMigrationStreams() []migrationStream {
 	seen := map[string]migrationStream{}
 	for _, m := range GetMigrations() {
 		stream := migrationStream{
-			Target:             normalizeTargetName(m.Target()),
+			App:                normalizeAppName(m.App()),
 			Connection:         normalizeConnectionName(m.Connection()),
-			DatabaseConnection: databaseConnectionName(m.Target(), m.Connection()),
+			DatabaseConnection: databaseConnectionName(m.App(), m.Connection()),
 		}
-		seen[stream.Target+"/"+stream.Connection] = stream
+		seen[stream.App+"/"+stream.Connection] = stream
 	}
 
 	streams := make([]migrationStream, 0, len(seen))
@@ -364,14 +361,14 @@ func knownMigrationStreams() []migrationStream {
 		streams = append(streams, stream)
 	}
 	sort.Slice(streams, func(i, j int) bool {
-		if streams[i].Target != streams[j].Target {
-			if streams[i].Target == "app" {
+		if streams[i].App != streams[j].App {
+			if streams[i].App == "app" {
 				return true
 			}
-			if streams[j].Target == "app" {
+			if streams[j].App == "app" {
 				return false
 			}
-			return streams[i].Target < streams[j].Target
+			return streams[i].App < streams[j].App
 		}
 		if streams[i].Connection == "default" {
 			return true
@@ -384,22 +381,22 @@ func knownMigrationStreams() []migrationStream {
 	return streams
 }
 
-// hasMultiTargetMigrationLayout reports whether any migration stream belongs to a named target.
-func hasMultiTargetMigrationLayout() bool {
+// hasMultiAppMigrationLayout reports whether any migration stream belongs to a named app.
+func hasMultiAppMigrationLayout() bool {
 	for _, stream := range knownMigrationStreams() {
-		if stream.Target != "app" {
+		if stream.App != "app" {
 			return true
 		}
 	}
 	return false
 }
 
-// migrationStreamsForTarget returns every registered connection stream for one target.
-func migrationStreamsForTarget(target string) []migrationStream {
-	target = normalizeTargetName(target)
+// migrationStreamsForApp returns every registered connection stream for one app.
+func migrationStreamsForApp(app string) []migrationStream {
+	app = normalizeAppName(app)
 	var streams []migrationStream
 	for _, stream := range knownMigrationStreams() {
-		if stream.Target == target {
+		if stream.App == app {
 			streams = append(streams, stream)
 		}
 	}
@@ -407,23 +404,23 @@ func migrationStreamsForTarget(target string) []migrationStream {
 }
 
 // migrationPlan chooses the streams a migrate command should run for the active invocation.
-func migrationPlan(activeTarget, connection string) []migrationStream {
-	activeTarget = normalizeTargetName(activeTarget)
+func migrationPlan(activeApp, connection string) []migrationStream {
+	activeApp = normalizeAppName(activeApp)
 	connection = str.Of(connection).TrimSpace().ToLower().String()
 	if connection != "" {
 		return []migrationStream{
 			{
-				Target:             activeTarget,
+				App:                activeApp,
 				Connection:         normalizeConnectionName(connection),
-				DatabaseConnection: databaseConnectionName(activeTarget, connection),
+				DatabaseConnection: databaseConnectionName(activeApp, connection),
 			},
 		}
 	}
-	if hasMultiTargetMigrationLayout() && activeTarget == "app" && unqualifiedForjCommand() {
+	if hasMultiAppMigrationLayout() && activeApp == "app" && unqualifiedForjCommand() {
 		return knownMigrationStreams()
 	}
-	if hasMultiTargetMigrationLayout() {
-		streams := migrationStreamsForTarget(activeTarget)
+	if hasMultiAppMigrationLayout() {
+		streams := migrationStreamsForApp(activeApp)
 		if len(streams) > 0 {
 			return streams
 		}
@@ -431,9 +428,9 @@ func migrationPlan(activeTarget, connection string) []migrationStream {
 	}
 	return []migrationStream{
 		{
-			Target:             activeTarget,
+			App:                activeApp,
 			Connection:         "default",
-			DatabaseConnection: databaseConnectionName(activeTarget, "default"),
+			DatabaseConnection: databaseConnectionName(activeApp, "default"),
 		},
 	}
 }

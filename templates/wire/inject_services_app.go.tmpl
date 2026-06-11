@@ -1,12 +1,12 @@
 // App-owned Wire injector. EDIT THIS FILE.
-// Add target-wide application service providers here when they do not belong to a narrower injector.
+// Add app-wide application service providers here when they do not belong to a narrower injector.
 
 package wire
 
 import (
 	"github.com/goforj/wire"
 
-	targetapp "{{.GoModuleName}}/{{.TargetAppImportPath}}"
+	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
@@ -24,7 +24,7 @@ import (
 
 // appSet is a wire set that provides application-level services and dependencies.
 var appSet = wire.NewSet(
-	targetapp.NewLifecycleRegistry,
+	compositionapp.NewLifecycleRegistry,
 	runtime.NewTimeouts,
 	makecmd.NewEventCmd,
 	makecmd.NewSubscriberCmd,
