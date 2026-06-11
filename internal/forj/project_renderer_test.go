@@ -36,6 +36,78 @@ func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
 	}
 }
 
+func TestCoreModulesNeedingSyncSkipsPinnedAndReplacedModules(t *testing.T) {
+	root := t.TempDir()
+	goModPath := filepath.Join(root, "go.mod")
+	body := `module example.test/app
+
+go 1.25
+
+require (
+	github.com/goforj/web v0.5.2
+	github.com/goforj/queue v0.1.0
+	github.com/goforj/cache v0.1.0
+)
+
+replace github.com/goforj/cache => ../cache
+`
+	if err := os.WriteFile(goModPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	pending, skipped, err := coreModulesNeedingSync(goModPath, []string{
+		"github.com/goforj/web@v0.5.2",
+		"github.com/goforj/queue@v0.2.1",
+		"github.com/goforj/cache@v0.3.0",
+		"github.com/goforj/storage@v0.4.6",
+	})
+	if err != nil {
+		t.Fatalf("coreModulesNeedingSync returned error: %v", err)
+	}
+
+	want := []string{
+		"github.com/goforj/queue@v0.2.1",
+		"github.com/goforj/storage@v0.4.6",
+	}
+	if !reflect.DeepEqual(pending, want) {
+		t.Fatalf("pending modules = %#v, want %#v", pending, want)
+	}
+	if skipped != 2 {
+		t.Fatalf("skipped modules = %d, want 2", skipped)
+	}
+}
+
+func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
+	root := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.syncCoreLibrariesInDir(root); err != nil {
+		t.Fatalf("syncCoreLibraries returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"github.com/goforj/web v0.5.2",
+		"github.com/goforj/queue v0.2.1",
+		"github.com/goforj/cache v0.3.0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected go.mod to contain %q:\n%s", want, text)
+		}
+	}
+	if len(renderer.lines) != 1 || !strings.Contains(renderer.lines[0], "sync core libs") {
+		t.Fatalf("expected sync core libs render line, got %#v", renderer.lines)
+	}
+}
+
 func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
 	data, err := os.ReadFile("project_renderer.go")
 	if err != nil {

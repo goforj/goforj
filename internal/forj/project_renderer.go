@@ -3163,9 +3163,27 @@ func (p *ProjectRenderer) goModTidy() error {
 // syncCoreLibraries updates core goforj dependencies so generated templates and
 // module APIs stay aligned.
 func (p *ProjectRenderer) syncCoreLibraries() error {
+	return p.syncCoreLibrariesInDir(".")
+}
+
+// syncCoreLibrariesInDir updates core goforj dependencies in a specific module without forcing callers to change process cwd.
+func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 	modules := coredeps.SyncCoreLibraries()
-	cmd := exec.Command("go", append([]string{"get"}, modules...)...)
-	cmd.Dir = "."
+	modules, skipped, err := coreModulesNeedingSync(filepath.Join(dir, "go.mod"), modules)
+	if err != nil {
+		return err
+	}
+	if len(modules) == 0 {
+		p.lines = append(p.lines, renderCountsLine("sync core libs", 0, skipped, "modules"))
+		return nil
+	}
+
+	args := []string{"mod", "edit"}
+	for _, module := range modules {
+		args = append(args, "-require="+module)
+	}
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
 	cmd.Env = os.Environ()
 
 	var stdout, stderr bytes.Buffer
@@ -3178,13 +3196,120 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if detail != "" {
-			return fmt.Errorf("go get %w (%s)", err, detail)
+			return fmt.Errorf("go mod edit core libs: %w (%s)", err, detail)
 		}
-		return fmt.Errorf("go get %w", err)
+		return fmt.Errorf("go mod edit core libs: %w", err)
 	}
 
-	p.lines = append(p.lines, renderCountsLine("go get core libs", len(modules), 0, "modules"))
+	p.lines = append(p.lines, renderCountsLine("sync core libs", len(modules), skipped, "modules"))
 	return nil
+}
+
+// coreModulesNeedingSync keeps render fast by avoiding go command work when go.mod already has the desired core dependencies.
+func coreModulesNeedingSync(path string, desired []string) ([]string, int, error) {
+	state, err := readGoModModuleState(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return desired, 0, nil
+		}
+		return nil, 0, err
+	}
+
+	pending := make([]string, 0, len(desired))
+	skipped := 0
+	for _, spec := range desired {
+		module, version, ok := strings.Cut(spec, "@")
+		if !ok || module == "" || version == "" {
+			pending = append(pending, spec)
+			continue
+		}
+		current, required := state.requires[module]
+		if state.replaces[module] && required {
+			skipped++
+			continue
+		}
+		if required && current == version {
+			skipped++
+			continue
+		}
+		pending = append(pending, spec)
+	}
+	return pending, skipped, nil
+}
+
+type goModModuleState struct {
+	requires map[string]string
+	replaces map[string]bool
+}
+
+// readGoModModuleState reads only the directives needed for dependency sync so render does not pay module graph resolution cost.
+func readGoModModuleState(path string) (goModModuleState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return goModModuleState{}, err
+	}
+	state := goModModuleState{
+		requires: map[string]string{},
+		replaces: map[string]bool{},
+	}
+	mode := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(stripGoModLineComment(line))
+		if trimmed == "" {
+			continue
+		}
+		if mode != "" {
+			if trimmed == ")" {
+				mode = ""
+				continue
+			}
+			recordGoModDirective(&state, mode, trimmed)
+			continue
+		}
+		switch {
+		case trimmed == "require (":
+			mode = "require"
+		case trimmed == "replace (":
+			mode = "replace"
+		case strings.HasPrefix(trimmed, "require "):
+			recordGoModDirective(&state, "require", strings.TrimSpace(strings.TrimPrefix(trimmed, "require ")))
+		case strings.HasPrefix(trimmed, "replace "):
+			recordGoModDirective(&state, "replace", strings.TrimSpace(strings.TrimPrefix(trimmed, "replace ")))
+		}
+	}
+	return state, nil
+}
+
+// recordGoModDirective stores minimal require and replace metadata because local replaces intentionally override pinned versions.
+func recordGoModDirective(state *goModModuleState, directive string, line string) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	switch directive {
+	case "require":
+		if len(fields) >= 2 {
+			state.requires[fields[0]] = fields[1]
+		}
+	case "replace":
+		before, _, ok := strings.Cut(line, "=>")
+		if !ok {
+			return
+		}
+		fields = strings.Fields(before)
+		if len(fields) > 0 {
+			state.replaces[fields[0]] = true
+		}
+	}
+}
+
+// stripGoModLineComment lets the lightweight parser ignore inline comments without pulling in a module-file parser dependency.
+func stripGoModLineComment(line string) string {
+	before, _, ok := strings.Cut(line, "//")
+	if !ok {
+		return line
+	}
+	return before
 }
 
 // runWireGenerate refreshes Wire output for the default target and every discovered named target.
