@@ -112,7 +112,7 @@ func TestHealthCmdDefaultsToAppURL(t *testing.T) {
 		t.Fatalf("probeURL returned error: %v", err)
 	}
 	if got != "http://localhost:3015/-/ready" {
-		t.Fatalf("probeURL = %q, want target app URL", got)
+		t.Fatalf("probeURL = %q, want app URL", got)
 	}
 }
 

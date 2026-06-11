@@ -109,14 +109,14 @@ func TestRollbackUsesConnection(t *testing.T) {
 	}
 }
 
-func TestMigrateRunsTargetScopedConnections(t *testing.T) {
+func TestMigrateRunsAppScopedConnections(t *testing.T) {
 	dir := t.TempDir()
 	writeSQL(t, filepath.Join(dir, "billing", "default"), "2026_01_20_billing", "CREATE TABLE billing_rows (id INTEGER);", "DROP TABLE billing_rows;")
 	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_01_21_ledger", "CREATE TABLE ledger_rows (id INTEGER);", "DROP TABLE ledger_rows;")
 
 	setMigrationFS(t, dir)
 
-	t.Setenv("FORJ_APP_TARGET", "billing")
+	t.Setenv("FORJ_APP", "billing")
 	t.Setenv("DB_BILLING_DRIVER", "sqlite")
 	t.Setenv("DB_BILLING_DATABASE", ":memory:")
 	t.Setenv("DB_BILLING_LEDGER_DRIVER", "sqlite")
@@ -155,7 +155,7 @@ func TestMigrateRunsTargetScopedConnections(t *testing.T) {
 	}
 }
 
-func TestMigrateRunsAllTargetStreamsWhenUnqualified(t *testing.T) {
+func TestMigrateRunsAllAppStreamsWhenUnqualified(t *testing.T) {
 	dir := t.TempDir()
 	writeSQL(t, filepath.Join(dir, "app", "default"), "2026_01_30_app", "CREATE TABLE app_rows (id INTEGER);", "DROP TABLE app_rows;")
 	writeSQL(t, filepath.Join(dir, "billing", "default"), "2026_01_31_billing", "CREATE TABLE billing_rows (id INTEGER);", "DROP TABLE billing_rows;")
@@ -163,7 +163,7 @@ func TestMigrateRunsAllTargetStreamsWhenUnqualified(t *testing.T) {
 
 	setMigrationFS(t, dir)
 
-	t.Setenv("FORJ_APP_TARGET", "app")
+	t.Setenv("FORJ_APP", "app")
 	t.Setenv("FORJ_COMMAND_PREFIX", "forj")
 	t.Setenv("DB_DRIVER", "sqlite")
 	t.Setenv("DB_DATABASE", ":memory:")
@@ -177,7 +177,7 @@ func TestMigrateRunsAllTargetStreamsWhenUnqualified(t *testing.T) {
 
 	cmd := NewMigrateCmd(log, conns)
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("migrate all targets failed: %v", err)
+		t.Fatalf("migrate all apps failed: %v", err)
 	}
 
 	assertMigrationCount(t, conns, "default", 1)
@@ -185,14 +185,14 @@ func TestMigrateRunsAllTargetStreamsWhenUnqualified(t *testing.T) {
 	assertMigrationCount(t, conns, "billing_ledger", 1)
 }
 
-func TestRollbackUsesTargetScopedConnection(t *testing.T) {
+func TestRollbackUsesAppScopedConnection(t *testing.T) {
 	dir := t.TempDir()
 	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_02_10_first", "CREATE TABLE ledger_first (id INTEGER);", "DROP TABLE ledger_first;")
 	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_02_11_second", "CREATE TABLE ledger_second (id INTEGER);", "DROP TABLE ledger_second;")
 
 	setMigrationFS(t, dir)
 
-	t.Setenv("FORJ_APP_TARGET", "billing")
+	t.Setenv("FORJ_APP", "billing")
 	t.Setenv("DB_BILLING_LEDGER_DRIVER", "sqlite")
 	t.Setenv("DB_BILLING_LEDGER_DATABASE", ":memory:")
 

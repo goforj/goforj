@@ -55,14 +55,14 @@ func LoadEnv() error {
 		}
 	}
 
-	if err := ApplyTargetEnvOverlay(); err != nil {
+	if err := ApplyAppEnvOverlay(); err != nil {
 		return err
 	}
 	if appEnvAfterTargetOverlay := os.Getenv("APP_ENV"); appEnvAfterTargetOverlay != "" && appEnvAfterTargetOverlay != appEnvBeforeTargetOverlay {
 		if err := loadCompiledAppEnvFile(appEnvAfterTargetOverlay); err != nil {
 			return err
 		}
-		if err := ApplyTargetEnvOverlay(); err != nil {
+		if err := ApplyAppEnvOverlay(); err != nil {
 			return err
 		}
 	}
@@ -85,9 +85,9 @@ func ApplyCompiledEnvOverrides() error {
 	return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)
 }
 
-// ApplyTargetEnvOverlay promotes active target-prefixed env values over base keys.
-func ApplyTargetEnvOverlay() error {
-	prefix := activeTargetEnvPrefix()
+// ApplyAppEnvOverlay promotes active app-prefixed env values over base keys.
+func ApplyAppEnvOverlay() error {
+	prefix := activeAppEnvPrefix()
 	if prefix == "" {
 		return nil
 	}
@@ -98,26 +98,22 @@ func ApplyTargetEnvOverlay() error {
 			continue
 		}
 		baseKey := strings.TrimPrefix(key, prefix)
-		if !targetOverlayKeyAllowed(baseKey) {
+		if !appOverlayKeyAllowed(baseKey) {
 			continue
 		}
 		if err := os.Setenv(baseKey, value); err != nil {
-			return fmt.Errorf("set target env overlay %s from %s: %w", baseKey, key, err)
+			return fmt.Errorf("set app env overlay %s from %s: %w", baseKey, key, err)
 		}
 	}
 	return nil
 }
 
-func activeTargetEnvPrefix() string {
-	target := strings.TrimSpace(os.Getenv("FORJ_APP_TARGET"))
-	if target == "" {
-		target = strings.TrimSpace(os.Getenv("APP_TARGET"))
-	}
-	target = strings.TrimSpace(target)
-	if target == "" || target == "app" {
+func activeAppEnvPrefix() string {
+	app := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	if app == "" || app == "app" {
 		return ""
 	}
-	parts := strings.FieldsFunc(target, func(r rune) bool {
+	parts := strings.FieldsFunc(app, func(r rune) bool {
 		return r == '-' || r == '_' || r == ' ' || r == '.'
 	})
 	for i, part := range parts {
@@ -126,13 +122,13 @@ func activeTargetEnvPrefix() string {
 	return strings.Join(parts, "_")
 }
 
-func targetOverlayKeyAllowed(key string) bool {
+func appOverlayKeyAllowed(key string) bool {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return false
 	}
 	switch key {
-	case "FORJ_APP_TARGET", "APP_TARGET":
+	case "FORJ_APP":
 		return false
 	default:
 		return true

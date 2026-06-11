@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var targetComponentKeys = []ComponentKey{
+var appComponentKeys = []ComponentKey{
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -17,7 +17,7 @@ var targetComponentKeys = []ComponentKey{
 	ComponentJobs,
 }
 
-var targetWizardComponentKeys = []ComponentKey{
+var appWizardComponentKeys = []ComponentKey{
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -29,18 +29,18 @@ var targetWizardComponentKeys = []ComponentKey{
 	ComponentJobs,
 }
 
-// TargetComponentDefinitions returns catalog entries that can participate in an app target graph.
-func TargetComponentDefinitions(available Components) []ComponentDefinition {
-	return targetDefinitionsForKeys(targetComponentKeys)
+// AppComponentDefinitions returns catalog entries that can participate in an app graph.
+func AppComponentDefinitions(available Components) []ComponentDefinition {
+	return appDefinitionsForKeys(appComponentKeys)
 }
 
-// TargetWizardComponentDefinitions returns target entries that belong in the interactive target wizard.
-func TargetWizardComponentDefinitions(available Components) []ComponentDefinition {
-	return targetDefinitionsForKeys(targetWizardComponentKeys)
+// AppWizardComponentDefinitions returns app entries that belong in the interactive app wizard.
+func AppWizardComponentDefinitions(available Components) []ComponentDefinition {
+	return appDefinitionsForKeys(appWizardComponentKeys)
 }
 
-// targetDefinitionsForKeys keeps target ordering stable while ignoring catalog entries that no longer exist.
-func targetDefinitionsForKeys(keys []ComponentKey) []ComponentDefinition {
+// appDefinitionsForKeys keeps app component ordering stable while ignoring catalog entries that no longer exist.
+func appDefinitionsForKeys(keys []ComponentKey) []ComponentDefinition {
 	definitions := make([]ComponentDefinition, 0, len(keys))
 	for _, key := range keys {
 		definition, ok := ComponentDefinitionByKey(key)
@@ -52,38 +52,38 @@ func targetDefinitionsForKeys(keys []ComponentKey) []ComponentDefinition {
 	return definitions
 }
 
-// TargetDefaultComponents mirrors the project app-surface components while excluding project-level tooling.
-func TargetDefaultComponents(available Components) Components {
+// AppDefaultComponents mirrors the project app-surface components while excluding project-level tooling.
+func AppDefaultComponents(available Components) Components {
 	var selected Components
-	for _, definition := range TargetComponentDefinitions(available) {
+	for _, definition := range AppComponentDefinitions(available) {
 		if available.Enabled(definition.Key) {
 			selected.SetEnabled(definition.Key, true)
 		}
 	}
-	return NormalizeTargetComponents(available, selected)
+	return NormalizeAppComponents(available, selected)
 }
 
-// TargetComponentsFromKeys builds a target component selection from CLI or wizard keys.
-func TargetComponentsFromKeys(available Components, keys []ComponentKey) (Components, error) {
+// AppComponentsFromKeys builds an app component selection from CLI or wizard keys.
+func AppComponentsFromKeys(available Components, keys []ComponentKey) (Components, error) {
 	var selected Components
 	for _, key := range keys {
 		definition, ok := ComponentDefinitionByKey(key)
 		if !ok {
 			return Components{}, fmt.Errorf("unknown component %q", key)
 		}
-		if !IsTargetComponentKey(key) {
-			return Components{}, fmt.Errorf("%s is project-level only and cannot be selected per app target", definition.Label)
+		if !IsAppComponentKey(key) {
+			return Components{}, fmt.Errorf("%s is project-level only and cannot be selected per app", definition.Label)
 		}
 		if definition.ExclusiveGroup != "" {
-			clearTargetExclusiveGroup(&selected, definition.ExclusiveGroup)
+			clearAppExclusiveGroup(&selected, definition.ExclusiveGroup)
 		}
 		selected.SetEnabled(key, true)
 	}
-	return NormalizeTargetComponents(available, selected), nil
+	return NormalizeAppComponents(available, selected), nil
 }
 
-// NormalizeTargetComponents adds target-local dependencies that are already available at project level.
-func NormalizeTargetComponents(available Components, selected Components) Components {
+// NormalizeAppComponents adds app-local dependencies that are already available at project level.
+func NormalizeAppComponents(available Components, selected Components) Components {
 	selected.CLI = true
 	selected.DemoApp = false
 	selected.Docker = false
@@ -102,7 +102,7 @@ func NormalizeTargetComponents(available Components, selected Components) Compon
 			selected.Mail = true
 		}
 		if !selected.HasDatabase() && available.HasDatabase() {
-			setTargetDatabaseDriver(&selected, available.DatabaseDriver())
+			setAppDatabaseDriver(&selected, available.DatabaseDriver())
 		}
 		if !selected.HasDatabase() {
 			selected.DatabaseMySQL = true
@@ -119,10 +119,10 @@ func NormalizeTargetComponents(available Components, selected Components) Compon
 	return selected
 }
 
-// PromoteTargetComponents adds selected target capabilities to the project-level render set.
-func PromoteTargetComponents(available Components, selected Components) Components {
+// PromoteAppComponents adds selected app capabilities to the project-level render set.
+func PromoteAppComponents(available Components, selected Components) Components {
 	promoted := available
-	for _, key := range targetComponentKeys {
+	for _, key := range appComponentKeys {
 		if selected.Enabled(key) {
 			promoted.SetEnabled(key, true)
 		}
@@ -177,9 +177,9 @@ func ParseComponentKey(raw string) (ComponentKey, error) {
 	return "", fmt.Errorf("unknown component %q", raw)
 }
 
-// IsTargetComponentKey reports whether a component can be selected at app-target scope.
-func IsTargetComponentKey(key ComponentKey) bool {
-	for _, candidate := range targetComponentKeys {
+// IsAppComponentKey reports whether a component can be selected at app scope.
+func IsAppComponentKey(key ComponentKey) bool {
+	for _, candidate := range appComponentKeys {
 		if candidate == key {
 			return true
 		}
@@ -187,8 +187,8 @@ func IsTargetComponentKey(key ComponentKey) bool {
 	return false
 }
 
-// setTargetDatabaseDriver applies the target-local database exclusivity rule in one place.
-func setTargetDatabaseDriver(components *Components, driver string) {
+// setAppDatabaseDriver applies the app-local database exclusivity rule in one place.
+func setAppDatabaseDriver(components *Components, driver string) {
 	components.DatabaseMySQL = false
 	components.DatabasePostgres = false
 	components.DatabaseSQLite = false
@@ -202,9 +202,9 @@ func setTargetDatabaseDriver(components *Components, driver string) {
 	}
 }
 
-// clearTargetExclusiveGroup removes visible peers before enabling a new exclusive choice.
-func clearTargetExclusiveGroup(components *Components, group string) {
-	for _, key := range targetComponentKeys {
+// clearAppExclusiveGroup removes visible peers before enabling a new exclusive choice.
+func clearAppExclusiveGroup(components *Components, group string) {
+	for _, key := range appComponentKeys {
 		definition, ok := ComponentDefinitionByKey(key)
 		if !ok || definition.ExclusiveGroup != group {
 			continue

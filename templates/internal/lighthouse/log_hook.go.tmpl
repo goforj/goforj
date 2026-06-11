@@ -17,7 +17,7 @@ type LogEntry struct {
 	Level     string         `json:"level"`
 	Message   string         `json:"message"`
 	Source    string         `json:"source"`
-	AppTarget string         `json:"app_target,omitempty"`
+	App       string         `json:"app,omitempty"`
 	Time      string         `json:"time"`
 	Fields    map[string]any `json:"fields,omitempty"`
 }
@@ -213,7 +213,7 @@ func NewLogSink(agent *Agent) logger.LogSink {
 				Level:     summary.Level,
 				Message:   summary.Message,
 				Source:    agent.config.Source,
-				AppTarget: agent.config.AppTarget,
+				App:       agent.config.App,
 				Time:      summary.Time,
 				Fields:    summary.Fields,
 			})
@@ -225,7 +225,7 @@ func NewLogSink(agent *Agent) logger.LogSink {
 			Level:     entry.Level,
 			Message:   entry.Message,
 			Source:    agent.config.Source,
-			AppTarget: agent.config.AppTarget,
+			App:       agent.config.App,
 			Time:      entry.Time,
 			Fields:    entry.Fields,
 		})

@@ -11,7 +11,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-func TestMakeAppCmdCreatesNamedTarget(t *testing.T) {
+func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -48,7 +48,7 @@ func TestMakeAppCmdCreatesNamedTarget(t *testing.T) {
 		filepath.Join("app", "billing", "wire", "wire.go"),
 		filepath.Join("app", "billing", "wire", "inject_cmd.go"),
 		filepath.Join("app", "billing", "wire", "inject_http_controllers_app.go"),
-		filepath.Join("internal", "runtime", "targets.go"),
+		filepath.Join("internal", "runtime", "apps.go"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s: %v", path, err)
@@ -56,27 +56,27 @@ func TestMakeAppCmdCreatesNamedTarget(t *testing.T) {
 	}
 
 	mainSrc := readMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"))
-	if !strings.Contains(mainSrc, `cmd.ApplyLaunchTarget("billing")`) {
-		t.Fatalf("expected billing target identity in cmd/billing/main.go")
+	if !strings.Contains(mainSrc, `cmd.ApplyLaunchApp("billing")`) {
+		t.Fatalf("expected billing app identity in cmd/billing/main.go")
 	}
-	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "targets.go"))
+	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))
 	if !strings.Contains(runtimeSrc, `Name: "billing"`) || !strings.Contains(runtimeSrc, `HTTPPort: 3001`) {
-		t.Fatalf("expected billing runtime target metadata, got:\n%s", runtimeSrc)
+		t.Fatalf("expected billing runtime app metadata, got:\n%s", runtimeSrc)
 	}
 	cfg, err := project.LoadProjectConfig()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	targetConfig, ok := cfg.AppTargets["billing"]
+	appConfig, ok := cfg.Apps["billing"]
 	if !ok {
-		t.Fatalf("expected billing app target config")
+		t.Fatalf("expected billing app config")
 	}
-	if !targetConfig.Components.WebAPI {
-		t.Fatalf("expected billing target to persist web api component")
+	if !appConfig.Components.WebAPI {
+		t.Fatalf("expected billing app to persist web api component")
 	}
 }
 
-func TestMakeAppCmdCreatesAPIOnlyTargetInWebUIProject(t *testing.T) {
+func TestMakeAppCmdCreatesAPIOnlyAppInWebUIProject(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -110,23 +110,23 @@ func TestMakeAppCmdCreatesAPIOnlyTargetInWebUIProject(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join("cmd", "billing", "frontend", "dist", "index.html")); !os.IsNotExist(err) {
-		t.Fatalf("expected api-only target not to render frontend placeholder, stat err = %v", err)
+		t.Fatalf("expected api-only app not to render frontend placeholder, stat err = %v", err)
 	}
 	mainSrc := readMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"))
 	if strings.Contains(mainSrc, `"embed"`) || strings.Contains(mainSrc, "RegisterSpa") {
-		t.Fatalf("expected api-only target main.go not to embed frontend:\n%s", mainSrc)
+		t.Fatalf("expected api-only app main.go not to embed frontend:\n%s", mainSrc)
 	}
 
 	cfg, err := project.LoadProjectConfig()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	targetConfig := cfg.AppTargets["billing"]
-	if !targetConfig.Components.WebAPI || targetConfig.Components.WebUI {
-		t.Fatalf("unexpected target components: %#v", targetConfig.Components)
+	appConfig := cfg.Apps["billing"]
+	if !appConfig.Components.WebAPI || appConfig.Components.WebUI {
+		t.Fatalf("unexpected app components: %#v", appConfig.Components)
 	}
-	if targetConfig.StarterKit != project.StarterKitNone {
-		t.Fatalf("api-only target starter kit = %q, want none", targetConfig.StarterKit)
+	if appConfig.StarterKit != project.StarterKitNone {
+		t.Fatalf("api-only app starter kit = %q, want none", appConfig.StarterKit)
 	}
 }
 
@@ -173,7 +173,7 @@ func TestMakeAppCmdWiresMetricsRunCommandDependency(t *testing.T) {
 	}
 }
 
-func TestMakeAppCmdDoesNotCreateDemoJobProvidersForNamedTarget(t *testing.T) {
+func TestMakeAppCmdDoesNotCreateDemoJobProvidersForNamedApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -214,7 +214,7 @@ func TestMakeAppCmdDoesNotCreateDemoJobProvidersForNamedTarget(t *testing.T) {
 		"monitoring.NewMonitorCheckJob",
 	} {
 		if strings.Contains(jobInjectSrc, unwanted) {
-			t.Fatalf("did not expect demo job provider %q in named target inject_jobs_app.go:\n%s", unwanted, jobInjectSrc)
+			t.Fatalf("did not expect demo job provider %q in named app inject_jobs_app.go:\n%s", unwanted, jobInjectSrc)
 		}
 	}
 
@@ -222,9 +222,9 @@ func TestMakeAppCmdDoesNotCreateDemoJobProvidersForNamedTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	targetConfig := cfg.AppTargets["billing"]
-	if targetConfig.Components.DemoApp {
-		t.Fatalf("did not expect Demo App to persist as a target-selectable component")
+	appConfig := cfg.Apps["billing"]
+	if appConfig.Components.DemoApp {
+		t.Fatalf("did not expect Demo App to persist as an app-selectable component")
 	}
 }
 
@@ -307,7 +307,7 @@ func NewWorker(
 	}
 }
 
-func TestMakeAppCmdCreatesTargetVueStarterKit(t *testing.T) {
+func TestMakeAppCmdCreatesAppVueStarterKit(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -355,13 +355,13 @@ func TestMakeAppCmdCreatesTargetVueStarterKit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	targetConfig := cfg.AppTargets["portal"]
-	if !targetConfig.Components.WebUI || targetConfig.StarterKit != project.StarterKitVue {
-		t.Fatalf("unexpected portal target config: %#v", targetConfig)
+	appConfig := cfg.Apps["portal"]
+	if !appConfig.Components.WebUI || appConfig.StarterKit != project.StarterKitVue {
+		t.Fatalf("unexpected portal app config: %#v", appConfig)
 	}
 }
 
-func TestMakeAppCmdTreatsExistingTargetPathsAsNoOp(t *testing.T) {
+func TestMakeAppCmdTreatsExistingAppPathsAsNoOp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -373,17 +373,17 @@ func TestMakeAppCmdTreatsExistingTargetPathsAsNoOp(t *testing.T) {
 	}
 
 	if err := os.MkdirAll(filepath.Join("cmd", "billing"), 0o755); err != nil {
-		t.Fatalf("mkdir target: %v", err)
+		t.Fatalf("mkdir app: %v", err)
 	}
 	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("expected existing target to return nil, got %v", err)
+		t.Fatalf("expected existing app to return nil, got %v", err)
 	}
 }
 
-func TestMakeAppCmdRemovesNamedTarget(t *testing.T) {
+func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -402,7 +402,7 @@ func TestMakeAppCmdRemovesNamedTarget(t *testing.T) {
 				WebAPI: true,
 			},
 		},
-		AppTargets: map[string]project.AppTargetConfig{
+		Apps: map[string]project.AppConfig{
 			"billing": {
 				Components: project.Components{WebAPI: true},
 			},
@@ -440,7 +440,7 @@ func TestMakeAppCmdRemovesNamedTarget(t *testing.T) {
 	cmd.Name = "billing"
 	cmd.Remove = true
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("remove app target: %v", err)
+		t.Fatalf("remove app: %v", err)
 	}
 
 	for _, path := range []string{
@@ -466,10 +466,10 @@ func TestMakeAppCmdRemovesNamedTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if _, ok := cfg.AppTargets["billing"]; ok {
-		t.Fatalf("expected billing app target config to be removed")
+	if _, ok := cfg.Apps["billing"]; ok {
+		t.Fatalf("expected billing app config to be removed")
 	}
-	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "targets.go"))
+	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))
 	if strings.Contains(runtimeSrc, `Name: "billing"`) {
 		t.Fatalf("expected billing runtime metadata to be removed, got:\n%s", runtimeSrc)
 	}
@@ -499,7 +499,7 @@ func TestMakeAppCmdRejectsNativeCommandName(t *testing.T) {
 	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
 	cmd.Name = "render"
 	if err := cmd.Run(); err == nil {
-		t.Fatal("expected native command target name error")
+		t.Fatal("expected native command app name error")
 	}
 }
 

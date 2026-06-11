@@ -184,7 +184,7 @@ func NewCommands(
 	}
 }
 `)
-	runForjWithEnv(t, map[string]string{"FORJ_APP_TARGET": "reporting"}, "make:command", "Reports:Sync")
+	runForjWithEnv(t, map[string]string{"FORJ_APP": "reporting"}, "make:command", "Reports:Sync")
 	assertFileContains(t, filepath.Join(projectDir, "app", "reporting", "wire", "inject_cmd_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewSyncCmd",
@@ -289,14 +289,14 @@ func NewCommands(
 
 import (
 	"github.com/goforj/wire"
-	targetapp "example.com/testapp/app"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/reports"
 	"example.com/testapp/internal/scheduler"
 )
 
 var appScheduleSet = wire.NewSet(
-	targetapp.NewScheduleRegistry,
-	wire.Bind(new(scheduler.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(scheduler.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 	reports.NewDailySchedule,
 )
 `
@@ -336,12 +336,12 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 	renderAppAtDir(t, projectDir)
 	assertFileContains(t, scheduleInjectorPath, []string{
-		`targetapp "example.com/testapp/app"`,
+		`compositionapp "example.com/testapp/app"`,
 		`"example.com/testapp/internal/schedules"`,
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
-		"targetapp.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry))",
+		"compositionapp.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
 	})
 	assertFileContains(t, scheduleRegistryPath, []string{
 		`"example.com/testapp/internal/schedules"`,
@@ -432,7 +432,7 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 }
 
-func TestMakeFlowsTargetIsolationIntegration(t *testing.T) {
+func TestMakeFlowsAppIsolationIntegration(t *testing.T) {
 	projectDir := t.TempDir()
 	renderAppAtDir(t, projectDir)
 	binPath := testkit.EnsureIntegrationForjBinary(t)
@@ -454,15 +454,15 @@ func TestMakeFlowsTargetIsolationIntegration(t *testing.T) {
 		return out.String()
 	}
 
-	buildTarget := func(tb testing.TB, target string) {
+	buildApp := func(tb testing.TB, appName string) {
 		tb.Helper()
-		args := []string{"build", "-o", "./bin/" + target}
-		if target != project.DefaultAppTargetName {
-			args = append([]string{target}, args...)
+		args := []string{"build", "-o", "./bin/" + appName}
+		if appName != project.DefaultAppName {
+			args = append([]string{appName}, args...)
 		}
 		runForj(tb, args...)
-		if _, err := os.Stat(filepath.Join(projectDir, "bin", target)); err != nil {
-			tb.Fatalf("expected built %s binary: %v", target, err)
+		if _, err := os.Stat(filepath.Join(projectDir, "bin", appName)); err != nil {
+			tb.Fatalf("expected built %s binary: %v", appName, err)
 		}
 	}
 
@@ -546,11 +546,11 @@ func TestMakeFlowsTargetIsolationIntegration(t *testing.T) {
 		"nightlySchedule *reports.NightlySchedule",
 	})
 
-	buildTarget(t, project.DefaultAppTargetName)
-	buildTarget(t, "billing")
+	buildApp(t, project.DefaultAppName)
+	buildApp(t, "billing")
 }
 
-func TestMakeAppBuildsNamedTargetAfterFullRender(t *testing.T) {
+func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
 		Config: project.Config{
@@ -604,8 +604,8 @@ func TestMakeAppBuildsNamedTargetAfterFullRender(t *testing.T) {
 			t.Fatalf("expected root help to include %q, got:\n%s", want, rootHelp)
 		}
 	}
-	if strings.Contains(rootHelp, "App target:") {
-		t.Fatalf("expected root help to omit app target labels, got:\n%s", rootHelp)
+	if strings.Contains(rootHelp, "App:") {
+		t.Fatalf("expected root help to omit app labels, got:\n%s", rootHelp)
 	}
 	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
 

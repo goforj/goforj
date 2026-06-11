@@ -167,8 +167,8 @@ func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outp
 
 // injectIntoWireFile registers the generated schedule with the app schedule registry.
 func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
-	injectPath := targetAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
-	registryPath := targetAppFile("schedules.go")
+	injectPath := activeAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
+	registryPath := activeAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -250,8 +250,8 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 }
 
 func (c *ScheduleCmd) removeFromWireFile(structName string) error {
-	injectPath := targetAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
-	registryPath := targetAppFile("schedules.go")
+	injectPath := activeAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
+	registryPath := activeAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {

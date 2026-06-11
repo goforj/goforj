@@ -94,12 +94,12 @@ const groupAgents = (agents: any[]) => {
 };
 
 const groupLabel = (agent: any, fallback: string) => {
-  const appTarget = String(agent?.app_target || "app").trim();
+  const appName = String(agent?.app || "app").trim();
   const runtimeSource = String(agent?.runtime_source || agent?.source || fallback || "app").trim();
-  if (!appTarget || appTarget === "app") {
+  if (!appName || appName === "app") {
     return runtimeSource.split("/")[0] || "app";
   }
-  return `${appTarget}/${runtimeSource}`;
+  return `${appName}/${runtimeSource}`;
 };
 
 const timestampValue = (value?: string) => {

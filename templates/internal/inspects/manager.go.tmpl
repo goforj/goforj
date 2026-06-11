@@ -183,7 +183,7 @@ type Config struct {
 type InspectSummary struct {
 	TraceID     string            `json:"trace_id"`
 	Source      string            `json:"source"`
-	AppTarget   string            `json:"app_target,omitempty"`
+	App   string            `json:"app,omitempty"`
 	AgentKey    string            `json:"agent_key,omitempty"`
 	GroupKey    string            `json:"group_key,omitempty"`
 	InstanceKey string            `json:"instance_key,omitempty"`
@@ -1322,7 +1322,7 @@ func (m *Manager) loadRecordWithCache(cache *goforjcache.Cache, inspectID string
 func normalizeRecord(record Record) Record {
 	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
 	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
-	record.Summary.AppTarget = strings.TrimSpace(record.Summary.AppTarget)
+	record.Summary.App = strings.TrimSpace(record.Summary.App)
 	record.Summary.AgentKey = strings.TrimSpace(record.Summary.AgentKey)
 	record.Summary.GroupKey = strings.TrimSpace(record.Summary.GroupKey)
 	record.Summary.InstanceKey = strings.TrimSpace(record.Summary.InstanceKey)
@@ -1386,7 +1386,7 @@ func materializeInflightRecord(state *inflightInspect) Record {
 	record := state.record
 	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
 	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
-	record.Summary.AppTarget = strings.TrimSpace(record.Summary.AppTarget)
+	record.Summary.App = strings.TrimSpace(record.Summary.App)
 	record.Summary.AgentKey = strings.TrimSpace(record.Summary.AgentKey)
 	record.Summary.GroupKey = strings.TrimSpace(record.Summary.GroupKey)
 	record.Summary.InstanceKey = strings.TrimSpace(record.Summary.InstanceKey)

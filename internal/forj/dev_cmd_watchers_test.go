@@ -29,8 +29,8 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 	}
 }
 
-func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
-	withConventionalTarget(t, "customer-portal")
+func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
+	withConventionalApp(t, "customer-portal")
 
 	watches := []project.DevWatch{
 		{
@@ -48,7 +48,7 @@ func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
 			Exec: "echo ok",
 		},
 	}
-	got := devWatchesForTargets(&project.Config{}, watches)
+	got := devWatchesForApps(&project.Config{}, watches)
 	if len(got) != 5 {
 		t.Fatalf("expected expanded watchers, got %#v", got)
 	}
@@ -59,13 +59,13 @@ func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
 		t.Fatalf("expected named build watcher, got %#v", got[1])
 	}
 	if !strings.Contains(got[1].Watch, "app/customer-portal/wire/wire_gen\\.go$") {
-		t.Fatalf("expected target wire exclusion, got %q", got[1].Watch)
+		t.Fatalf("expected app wire exclusion, got %q", got[1].Watch)
 	}
 	if got[3].Name != "Run customer-portal" || got[3].Watch != "-file ./bin/customer-portal -file .env" || got[3].Exec != "./bin/customer-portal run" {
 		t.Fatalf("expected named run watcher, got %#v", got[3])
 	}
-	if got[3].Env["FORJ_APP_TARGET"] != "customer-portal" || got[3].Env["FORJ_COMMAND_PREFIX"] != "forj customer-portal" {
-		t.Fatalf("expected target env, got %#v", got[3].Env)
+	if got[3].Env["FORJ_APP"] != "customer-portal" || got[3].Env["FORJ_COMMAND_PREFIX"] != "forj customer-portal" {
+		t.Fatalf("expected app env, got %#v", got[3].Env)
 	}
 	if got[4].Name != "Custom" {
 		t.Fatalf("expected custom watcher to be preserved, got %#v", got[4])
@@ -75,34 +75,34 @@ func TestDevWatchesForTargetsExpandsDefaultWatchers(t *testing.T) {
 	}
 }
 
-func TestDevWatchesForTargetsCanScopeToExplicitTarget(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "customer-portal")
-	got := devWatchesForTargets(nil, []project.DevWatch{
+func TestDevWatchesForAppsCanScopeToExplicitApp(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
+	got := devWatchesForApps(nil, []project.DevWatch{
 		{Name: "Build App", Watch: "-file .go -xfile app/wire/wire_gen\\.go$", Exec: "forj build -o ./bin/app"},
 		{Name: "Run App", Watch: "-file ./bin/app -file .env", Exec: "./bin/app run"},
 	})
 	if len(got) != 2 {
-		t.Fatalf("expected target-scoped watchers, got %#v", got)
+		t.Fatalf("expected app-scoped watchers, got %#v", got)
 	}
 	if got[0].Name != "Build customer-portal" || got[1].Name != "Run customer-portal" {
-		t.Fatalf("expected target-scoped watcher names, got %#v", got)
+		t.Fatalf("expected app-scoped watcher names, got %#v", got)
 	}
 }
 
-func TestDevWatchesForTargetsDropsRemovedConventionalTarget(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestDevWatchesForAppsDropsRemovedConventionalApp(t *testing.T) {
+	withConventionalApp(t, "billing")
 	base := []project.DevWatch{
 		{Name: "Build App", Watch: "-file .go", Exec: "forj build -o ./bin/app"},
 		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
 	}
-	if got := devWatchesForTargets(&project.Config{}, base); len(got) != 4 {
+	if got := devWatchesForApps(&project.Config{}, base); len(got) != 4 {
 		t.Fatalf("expected billing watchers before removal, got %#v", got)
 	}
 	if err := os.RemoveAll(filepath.Join("cmd", "billing")); err != nil {
-		t.Fatalf("remove billing target: %v", err)
+		t.Fatalf("remove billing app: %v", err)
 	}
 
-	got := devWatchesForTargets(&project.Config{}, base)
+	got := devWatchesForApps(&project.Config{}, base)
 	if len(got) != 2 {
 		t.Fatalf("expected only default watchers after removal, got %#v", got)
 	}
@@ -113,8 +113,8 @@ func TestDevWatchesForTargetsDropsRemovedConventionalTarget(t *testing.T) {
 	}
 }
 
-func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
-	withConventionalTarget(t, "customer-portal")
+func TestDevBuildCommandsBuildEveryApp(t *testing.T) {
+	withConventionalApp(t, "customer-portal")
 
 	got := devBuildCommands(&project.Config{
 		Dev: project.DevConfig{
@@ -129,8 +129,8 @@ func TestDevBuildCommandsBuildEveryTarget(t *testing.T) {
 	}
 }
 
-func TestDevInitialBuildCommandsBuildEveryTarget(t *testing.T) {
-	withConventionalTarget(t, "customer-portal")
+func TestDevInitialBuildCommandsBuildEveryApp(t *testing.T) {
+	withConventionalApp(t, "customer-portal")
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
 	}
@@ -145,124 +145,124 @@ func TestDevInitialBuildCommandsBuildEveryTarget(t *testing.T) {
 	}
 }
 
-func TestDevBuildCommandForTargetRewritesExistingPackageArgument(t *testing.T) {
-	target := project.DefaultNamedAppTarget("billing")
-	got := devBuildCommandForTarget("forj build --tags dev -o ./bin/app ./cmd/app", target)
+func TestDevBuildCommandForAppRewritesExistingPackageArgument(t *testing.T) {
+	app := project.DefaultNamedApp("billing")
+	got := devBuildCommandForApp("forj build --tags dev -o ./bin/app ./cmd/app", app)
 	want := "forj billing build --tags dev -o ./bin/billing"
 	if got != want {
-		t.Fatalf("target build command = %q, want %q", got, want)
+		t.Fatalf("app build command = %q, want %q", got, want)
 	}
 }
 
-func TestDevBuildJobsKeepTargetLabels(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestDevBuildJobsKeepAppLabels(t *testing.T) {
+	withConventionalApp(t, "billing")
 
 	got := devBuildJobs(&project.Config{}, false)
 	if len(got) != 2 {
 		t.Fatalf("expected default and billing build jobs, got %#v", got)
 	}
-	if got[0].target.Name != "app" || got[1].target.Name != "billing" {
-		t.Fatalf("unexpected build job targets: %#v", got)
+	if got[0].app.Name != "app" || got[1].app.Name != "billing" {
+		t.Fatalf("unexpected build job apps: %#v", got)
 	}
 }
 
-func TestDevDatabasesForTargetsIncludesNamedTargetDatabase(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestDevDatabasesForAppsIncludesNamedAppDatabase(t *testing.T) {
+	withConventionalApp(t, "billing")
 	t.Setenv("DB_DRIVER", "mysql")
 	t.Setenv("DB_DATABASE", "db")
 	t.Setenv("BILLING_DB_DATABASE", "billing")
 
-	got, err := devDatabasesForTargets(&project.Config{
+	got, err := devDatabasesForApps(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{DatabaseMySQL: true},
 		},
-		AppTargets: map[string]project.AppTargetConfig{
+		Apps: map[string]project.AppConfig{
 			"billing": {
 				Components: project.Components{DatabaseMySQL: true},
 			},
 		},
-	}, activeDevTargets())
+	}, activeDevApps())
 	if err != nil {
-		t.Fatalf("devDatabasesForTargets returned error: %v", err)
+		t.Fatalf("devDatabasesForApps returned error: %v", err)
 	}
 	want := []devDatabase{
-		{Target: "billing", Driver: "mysql", Name: "billing"},
-		{Target: "app", Driver: "mysql", Name: "db"},
+		{App: "billing", Driver: "mysql", Name: "billing"},
+		{App: "app", Driver: "mysql", Name: "db"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dev databases = %#v, want %#v", got, want)
 	}
 }
 
-func TestDevDatabasesForTargetsSupportsMixedDrivers(t *testing.T) {
-	withConventionalTarget(t, "reporting")
+func TestDevDatabasesForAppsSupportsMixedDrivers(t *testing.T) {
+	withConventionalApp(t, "reporting")
 	t.Setenv("DB_DRIVER", "mysql")
 	t.Setenv("DB_DATABASE", "db")
 	t.Setenv("REPORTING_DB_DRIVER", "postgres")
 	t.Setenv("REPORTING_DB_DATABASE", "reporting")
 
-	got, err := devDatabasesForTargets(&project.Config{
+	got, err := devDatabasesForApps(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{DatabaseMySQL: true, DatabasePostgres: true},
 		},
-		AppTargets: map[string]project.AppTargetConfig{
+		Apps: map[string]project.AppConfig{
 			"reporting": {
 				Components: project.Components{DatabasePostgres: true},
 			},
 		},
-	}, activeDevTargets())
+	}, activeDevApps())
 	if err != nil {
-		t.Fatalf("devDatabasesForTargets returned error: %v", err)
+		t.Fatalf("devDatabasesForApps returned error: %v", err)
 	}
 	want := []devDatabase{
-		{Target: "app", Driver: "mysql", Name: "db"},
-		{Target: "reporting", Driver: "postgres", Name: "reporting"},
+		{App: "app", Driver: "mysql", Name: "db"},
+		{App: "reporting", Driver: "postgres", Name: "reporting"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dev databases = %#v, want %#v", got, want)
 	}
 }
 
-func TestDevDatabasesForTargetsRejectsUnsafeDatabaseNames(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestDevDatabasesForAppsRejectsUnsafeDatabaseNames(t *testing.T) {
+	withConventionalApp(t, "billing")
 	t.Setenv("DB_DRIVER", "mysql")
 	t.Setenv("DB_DATABASE", "db")
 	t.Setenv("BILLING_DB_DATABASE", "billing-prod")
 
-	_, err := devDatabasesForTargets(&project.Config{
+	_, err := devDatabasesForApps(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{DatabaseMySQL: true},
 		},
-		AppTargets: map[string]project.AppTargetConfig{
+		Apps: map[string]project.AppConfig{
 			"billing": {
 				Components: project.Components{DatabaseMySQL: true},
 			},
 		},
-	}, activeDevTargets())
+	}, activeDevApps())
 	if err == nil {
 		t.Fatal("expected unsafe database name to return an error")
 	}
 	if !strings.Contains(err.Error(), "BILLING_DB_DATABASE") {
-		t.Fatalf("expected target env key in error, got %v", err)
+		t.Fatalf("expected app env key in error, got %v", err)
 	}
 }
 
-func TestShouldRunDevAutoMigrateUsesNamedTargetDatabase(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestShouldRunDevAutoMigrateUsesNamedAppDatabase(t *testing.T) {
+	withConventionalApp(t, "billing")
 
 	if !shouldRunDevAutoMigrate(&project.Config{
 		Dev: project.DevConfig{AutoMigrate: true},
-		AppTargets: map[string]project.AppTargetConfig{
+		Apps: map[string]project.AppConfig{
 			"billing": {
 				Components: project.Components{DatabaseMySQL: true},
 			},
 		},
 	}) {
-		t.Fatal("expected named target database component to require auto-migrate")
+		t.Fatal("expected named app database component to require auto-migrate")
 	}
 }
 
-func TestDevAppTargetWatcherDetectsNewConventionalTarget(t *testing.T) {
+func TestDevAppWatcherDetectsNewConventionalApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -276,7 +276,7 @@ func TestDevAppTargetWatcherDetectsNewConventionalTarget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	triggered := make(chan struct{}, 1)
-	stop := startDevAppTargetWatcher(ctx, func() {
+	stop := startDevAppWatcher(ctx, func() {
 		select {
 		case triggered <- struct{}{}:
 		default:
@@ -284,29 +284,29 @@ func TestDevAppTargetWatcherDetectsNewConventionalTarget(t *testing.T) {
 	}, 10*time.Millisecond)
 	defer stop()
 
-	targetMain := filepath.Join("cmd", "billing", "main.go")
-	if err := os.MkdirAll(filepath.Dir(targetMain), 0o755); err != nil {
-		t.Fatalf("mkdir target: %v", err)
+	appMain := filepath.Join("cmd", "billing", "main.go")
+	if err := os.MkdirAll(filepath.Dir(appMain), 0o755); err != nil {
+		t.Fatalf("mkdir app: %v", err)
 	}
-	if err := os.WriteFile(targetMain, []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write target main: %v", err)
+	if err := os.WriteFile(appMain, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write app main: %v", err)
 	}
 
 	select {
 	case <-triggered:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected target watcher to trigger after new target appears")
+		t.Fatal("expected app watcher to trigger after new app appears")
 	}
 }
 
-func TestDevAppTargetsChangedComparesTargetNames(t *testing.T) {
-	prev := devAppTargetFingerprint{names: []string{"app"}}
-	current := devAppTargetFingerprint{names: []string{"app", "billing"}}
-	if !devAppTargetsChanged(prev, current) {
-		t.Fatal("expected added target to be detected")
+func TestDevAppsChangedComparesAppNames(t *testing.T) {
+	prev := devAppFingerprint{names: []string{"app"}}
+	current := devAppFingerprint{names: []string{"app", "billing"}}
+	if !devAppsChanged(prev, current) {
+		t.Fatal("expected added app to be detected")
 	}
-	if devAppTargetsChanged(current, devAppTargetFingerprint{names: []string{"app", "billing"}}) {
-		t.Fatal("expected matching target snapshots to be unchanged")
+	if devAppsChanged(current, devAppFingerprint{names: []string{"app", "billing"}}) {
+		t.Fatal("expected matching app snapshots to be unchanged")
 	}
 }
 
@@ -345,8 +345,8 @@ func TestDevAutoMigrateUsesUnqualifiedFrameworkPrefix(t *testing.T) {
 	}
 }
 
-func TestDevAutoMigrateKeepsExplicitTargetBinary(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "billing")
+func TestDevAutoMigrateKeepsExplicitAppBinary(t *testing.T) {
+	t.Setenv("FORJ_APP", "billing")
 
 	if got := devAutoMigrateShellCommand(); got != "./bin/billing migrate" {
 		t.Fatalf("auto-migrate command = %q, want ./bin/billing migrate", got)
@@ -412,8 +412,8 @@ func TestRenderTimingLinesStreamInsideDevCommand(t *testing.T) {
 	}
 }
 
-func TestRunDevBuildRunsTargetsInParallel(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestRunDevBuildRunsAppsInParallel(t *testing.T) {
+	withConventionalApp(t, "billing")
 
 	config := &project.Config{
 		Dev: project.DevConfig{
@@ -430,7 +430,7 @@ func TestRunDevBuildRunsTargetsInParallel(t *testing.T) {
 		t.Fatalf("runDevBuild returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
 	}
 	if elapsed := time.Since(start); elapsed > 900*time.Millisecond {
-		t.Fatalf("expected target builds to run in parallel, elapsed %s", elapsed)
+		t.Fatalf("expected app builds to run in parallel, elapsed %s", elapsed)
 	}
 	if _, err := os.Stat(filepath.Join("bin", "app")); err != nil {
 		t.Fatalf("expected app binary marker: %v", err)
@@ -472,8 +472,8 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(data)
 }
 
-func TestRunDevBuildBuffersFailureOutputByTarget(t *testing.T) {
-	withConventionalTarget(t, "billing")
+func TestRunDevBuildBuffersFailureOutputByApp(t *testing.T) {
+	withConventionalApp(t, "billing")
 
 	config := &project.Config{
 		Dev: project.DevConfig{
@@ -490,10 +490,10 @@ func TestRunDevBuildBuffersFailureOutputByTarget(t *testing.T) {
 		t.Fatal("expected runDevBuild to fail")
 	}
 	if !strings.Contains(err.Error(), "billing") {
-		t.Fatalf("expected target name in error, got %v", err)
+		t.Fatalf("expected app name in error, got %v", err)
 	}
 	if !strings.Contains(out.String(), "Build failed for billing") {
-		t.Fatalf("expected target failure heading, got stdout %q", out.String())
+		t.Fatalf("expected app failure heading, got stdout %q", out.String())
 	}
 	if !strings.Contains(errOut.String(), "billing failed") {
 		t.Fatalf("expected buffered stderr, got %q", errOut.String())
@@ -501,7 +501,7 @@ func TestRunDevBuildBuffersFailureOutputByTarget(t *testing.T) {
 }
 
 func TestRunDevBuildDoesNotReplayProgressMarkersOnFailure(t *testing.T) {
-	withConventionalTarget(t, "billing")
+	withConventionalApp(t, "billing")
 
 	config := &project.Config{
 		Dev: project.DevConfig{
@@ -525,27 +525,27 @@ func TestRunDevBuildDoesNotReplayProgressMarkersOnFailure(t *testing.T) {
 	}
 }
 
-func TestWriteDevTargetBuildLineSkipsSingleDefaultTarget(t *testing.T) {
+func TestWriteDevAppBuildLineSkipsSingleDefaultApp(t *testing.T) {
 	var out bytes.Buffer
-	writeDevTargetBuildLine(&out, []project.AppTarget{project.DefaultAppTarget()})
+	writeDevAppBuildLine(&out, []project.App{project.DefaultApp()})
 	if out.Len() != 0 {
-		t.Fatalf("expected no target line for default-only dev, got %q", out.String())
+		t.Fatalf("expected no app line for default-only dev, got %q", out.String())
 	}
 }
 
-func TestWriteDevTargetBuildLineShowsExpandedTargets(t *testing.T) {
+func TestWriteDevAppBuildLineShowsExpandedApps(t *testing.T) {
 	var out bytes.Buffer
-	writeDevTargetBuildLine(&out, []project.AppTarget{
-		project.DefaultAppTarget(),
-		project.DefaultNamedAppTarget("billing"),
+	writeDevAppBuildLine(&out, []project.App{
+		project.DefaultApp(),
+		project.DefaultNamedApp("billing"),
 	})
-	if !contains(out.String(), "Building app targets: app, billing") {
-		t.Fatalf("expected target build note, got %q", out.String())
+	if !contains(out.String(), "Building apps: app, billing") {
+		t.Fatalf("expected app build note, got %q", out.String())
 	}
 }
 
-func TestDevRuntimeWatcherTargetsReturnsRunTargets(t *testing.T) {
-	got := devRuntimeWatcherTargets([]project.DevWatch{
+func TestDevRuntimeWatcherAppsReturnsRunApps(t *testing.T) {
+	got := devRuntimeWatcherApps([]project.DevWatch{
 		{Name: "Build App"},
 		{Name: "Run App"},
 		{Name: "Build billing"},
@@ -553,51 +553,51 @@ func TestDevRuntimeWatcherTargetsReturnsRunTargets(t *testing.T) {
 	})
 	want := []string{"app", "billing"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("runtime watcher targets = %#v, want %#v", got, want)
+		t.Fatalf("runtime watcher apps = %#v, want %#v", got, want)
 	}
 }
 
-func TestDevAppTargetNamesUsesActiveTargetsOnly(t *testing.T) {
-	got := devAppTargetNames([]project.AppTarget{project.DefaultAppTarget(), project.DefaultAppTarget()})
+func TestDevAppNamesUsesActiveAppsOnly(t *testing.T) {
+	got := devAppNames([]project.App{project.DefaultApp(), project.DefaultApp()})
 	want := []string{"app"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("active target names = %#v, want %#v", got, want)
+		t.Fatalf("active app names = %#v, want %#v", got, want)
 	}
 }
 
-func TestDecorateDevAppLogTargetColumnAddsTargetAfterTimestamp(t *testing.T) {
+func TestDecorateDevAppLogAppColumnAddsAppAfterTimestamp(t *testing.T) {
 	line := "23:35:28.370 HTTP         Starting HTTP server"
-	got := stripANSI(decorateDevAppLogTargetColumn(line, "billing", len("billing"), true))
+	got := stripANSI(decorateDevAppLogAppColumn(line, "billing", len("billing"), true))
 	want := "23:35:28.370 billing HTTP         Starting HTTP server"
 	if got != want {
 		t.Fatalf("decorated log line = %q, want %q", got, want)
 	}
 }
 
-func TestDecorateDevAppLogTargetColumnSkipsSingleAppMode(t *testing.T) {
+func TestDecorateDevAppLogAppColumnSkipsSingleAppMode(t *testing.T) {
 	line := "23:35:28.370 HTTP         Starting HTTP server"
-	got := decorateDevAppLogTargetColumn(line, "app", len("app"), false)
+	got := decorateDevAppLogAppColumn(line, "app", len("app"), false)
 	if got != line {
 		t.Fatalf("expected single-app log line to remain unchanged, got %q", got)
 	}
 }
 
-func TestDecorateDevAppLogTargetColumnHandlesColoredTimestamp(t *testing.T) {
+func TestDecorateDevAppLogAppColumnHandlesColoredTimestamp(t *testing.T) {
 	line := "\x1b[90m23:35:28.370\x1b[0m HTTP         Starting HTTP server"
-	got := stripANSI(decorateDevAppLogTargetColumn(line, "app", len("billing"), true))
+	got := stripANSI(decorateDevAppLogAppColumn(line, "app", len("billing"), true))
 	want := "23:35:28.370 app     HTTP         Starting HTTP server"
 	if got != want {
 		t.Fatalf("decorated colored log line = %q, want %q", got, want)
 	}
 }
 
-func TestDefaultDevAppTargetColorDiffersFromTimestampGray(t *testing.T) {
-	if devDefaultAppTargetColor == console.ColorGray {
-		t.Fatal("expected default app target color to differ from timestamp gray")
+func TestDefaultDevAppColorDiffersFromTimestampGray(t *testing.T) {
+	if devDefaultAppColor == console.ColorGray {
+		t.Fatal("expected default app color to differ from timestamp gray")
 	}
 }
 
-func withConventionalTarget(t *testing.T, name string) {
+func withConventionalApp(t *testing.T, name string) {
 	t.Helper()
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -609,12 +609,12 @@ func withConventionalTarget(t *testing.T, name string) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(originalWD) })
 
-	targetMain := filepath.Join("cmd", name, "main.go")
-	if err := os.MkdirAll(filepath.Dir(targetMain), 0o755); err != nil {
-		t.Fatalf("mkdir target: %v", err)
+	appMain := filepath.Join("cmd", name, "main.go")
+	if err := os.MkdirAll(filepath.Dir(appMain), 0o755); err != nil {
+		t.Fatalf("mkdir app: %v", err)
 	}
-	if err := os.WriteFile(targetMain, []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write target main: %v", err)
+	if err := os.WriteFile(appMain, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write app main: %v", err)
 	}
 }
 
@@ -974,13 +974,13 @@ func TestConsumeSuppressedDevEnvTrigger(t *testing.T) {
 	}
 }
 
-func TestDevwatchLifecycleStateBuildsRestartTargets(t *testing.T) {
+func TestDevwatchLifecycleStateBuildsRestartApps(t *testing.T) {
 	state := newDevwatchLifecycleState(0, []string{"Run App"})
 	if state == nil {
 		t.Fatal("expected lifecycle state")
 	}
 	if _, ok := state.restartExpected["Run App"]; !ok {
-		t.Fatal("expected restart target to include Run App")
+		t.Fatal("expected restart app to include Run App")
 	}
 }
 
@@ -1039,10 +1039,10 @@ func TestFormatBuildProgressStatus(t *testing.T) {
 	}
 }
 
-func TestHandleBuildProgressLineConsumesNamedTargetBuildMarkers(t *testing.T) {
+func TestHandleBuildProgressLineConsumesNamedAppBuildMarkers(t *testing.T) {
 	var out bytes.Buffer
 	if !handleBuildProgressLine(&out, "Build billing", "__FORJ_BUILD_PROGRESS__ step 2/4 wire") {
-		t.Fatal("expected named target build progress marker to be handled")
+		t.Fatal("expected named app build progress marker to be handled")
 	}
 	if strings.Contains(out.String(), buildProgressMarker) {
 		t.Fatalf("did not expect raw progress marker in output: %q", out.String())

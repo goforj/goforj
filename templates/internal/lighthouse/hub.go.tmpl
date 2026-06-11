@@ -15,8 +15,8 @@ type AgentInfo struct {
 	GroupKey     string    `json:"group_key"`
 	InstanceKey  string    `json:"instance_key"`
 	Source       string    `json:"source"`
+	Project      string    `json:"project,omitempty"`
 	App          string    `json:"app"`
-	AppTarget    string    `json:"app_target"`
 	Version      string    `json:"version"`
 	Env          string    `json:"env"`
 	Capabilities []string  `json:"capabilities"`
@@ -251,20 +251,20 @@ func (h *Hub) RemoveAgent(source string) {
 	h.BroadcastAgents()
 }
 
-// RouteCommand sends a command to the target agent and tracks the response.
+// RouteCommand sends a command to the destination agent and tracks the response.
 func (h *Hub) RouteCommand(conn *wsConn, msg Message) error {
 	h.mu.Lock()
-	agent := h.agents[msg.Target]
+	agent := h.agents[msg.Destination]
 	if agent == nil {
 		var ambiguous bool
-		agent, ambiguous = h.resolveAgentLocked(msg.Target)
+		agent, ambiguous = h.resolveAgentLocked(msg.Destination)
 		if ambiguous {
 			h.mu.Unlock()
-			return fmt.Errorf("agent target is ambiguous: %s", msg.Target)
+			return fmt.Errorf("agent is ambiguous: %s", msg.Destination)
 		}
 		if agent == nil {
 			h.mu.Unlock()
-			return fmt.Errorf("agent not connected: %s", msg.Target)
+			return fmt.Errorf("agent not connected: %s", msg.Destination)
 		}
 	}
 	var consoleConn *wsConn
@@ -500,15 +500,16 @@ func parseAgentInfo(raw json.RawMessage) (AgentInfo, error) {
 func normalizeAgentInfo(info AgentInfo) AgentInfo {
 	info.ID = strings.TrimSpace(info.ID)
 	info.Source = strings.TrimSpace(info.Source)
-	info.AppTarget = strings.TrimSpace(info.AppTarget)
+	info.Project = strings.TrimSpace(info.Project)
+	info.App = strings.TrimSpace(info.App)
 	info.Host = strings.TrimSpace(info.Host)
 	info.InstanceID = strings.TrimSpace(info.InstanceID)
-	if info.AppTarget == "" {
-		info.AppTarget = "app"
+	if info.App == "" {
+		info.App = "app"
 	}
 	info.GroupKey = strings.TrimSpace(info.GroupKey)
 	if info.GroupKey == "" {
-		info.GroupKey = agentGroupKey(info.AppTarget, info.Source)
+		info.GroupKey = agentGroupKey(info.App, info.Source)
 	}
 	info.InstanceKey = strings.TrimSpace(info.InstanceKey)
 	if info.InstanceKey == "" {
@@ -521,16 +522,16 @@ func normalizeAgentInfo(info AgentInfo) AgentInfo {
 	return info
 }
 
-func agentGroupKey(appTarget string, source string) string {
-	appTarget = agentKeyPart(appTarget)
+func agentGroupKey(appName string, source string) string {
+	appName = agentKeyPart(appName)
 	source = agentKeyPart(source)
 	if source == "" {
 		source = "app"
 	}
-	if appTarget == "" || appTarget == "app" {
+	if appName == "" || appName == "app" {
 		return source
 	}
-	return appTarget + "/" + source
+	return appName + "/" + source
 }
 
 func agentKey(groupKey string, instanceKey string) string {

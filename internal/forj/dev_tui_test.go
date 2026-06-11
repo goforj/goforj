@@ -80,13 +80,13 @@ func TestBuildDevCommandModalBox(t *testing.T) {
 	}
 }
 
-func TestBuildDevCommandModalBoxUsesActiveTarget(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "customer-portal")
+func TestBuildDevCommandModalBoxUsesActiveApp(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
 	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
 		{Name: "route:list", Help: "List HTTP routes"},
 	}, 0, "", false, ""))
 	if !strings.Contains(box, "App commands from ./bin/customer-portal --help") {
-		t.Fatalf("expected target command source in command modal box:\n%s", box)
+		t.Fatalf("expected app command source in command modal box:\n%s", box)
 	}
 }
 
@@ -544,8 +544,8 @@ func TestDevBubbleModelCommandEnterExecutesSelection(t *testing.T) {
 	}
 }
 
-func TestDevBubbleModelCommandEnterUsesActiveTarget(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "customer-portal")
+func TestDevBubbleModelCommandEnterUsesActiveApp(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
 	requests := []devShellCommandRequest{}
 	m := devBubbleModel{
 		commandVisible: true,

@@ -396,11 +396,11 @@ func (p Pipeline) runAPIIndex() (string, error) {
 
 // loadWirePaths reads project-configured Wire roots and falls back to the generated app layout.
 func loadWirePaths() []string {
-	if targetName := requestedAppTargetName(); targetName != "" {
-		if !project.IsSafeAppTargetName(targetName) {
+	if targetName := requestedAppName(); targetName != "" {
+		if !project.IsSafeAppName(targetName) {
 			return defaultWirePaths()
 		}
-		target := project.DefaultNamedAppTarget(targetName)
+		target := project.DefaultNamedApp(targetName)
 		if hasDir(target.WireDir) {
 			return []string{target.WireDir}
 		}

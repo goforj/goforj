@@ -53,9 +53,9 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{}}`, rec.Body.String())
 }
 
-func TestSwaggerSpecUsesTargetDefaultPath(t *testing.T) {
+func TestSwaggerSpecUsesAppDefaultPath(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "true")
-	t.Setenv("APP_TARGET", "customer-portal")
+	t.Setenv("FORJ_APP", "customer-portal")
 
 	root := t.TempDir()
 	buildDir := filepath.Join(root, "build", "customer-portal")

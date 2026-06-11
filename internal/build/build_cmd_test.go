@@ -202,7 +202,7 @@ func TestBuildArgsUseActiveConventionalTarget(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "reporting"), 0o755); err != nil {
 		t.Fatalf("mkdir cmd/reporting: %v", err)
 	}
-	t.Setenv("FORJ_APP_TARGET", "reporting")
+	t.Setenv("FORJ_APP", "reporting")
 
 	cmd := &Cmd{Root: root}
 	got := cmd.buildArgs()
@@ -227,7 +227,7 @@ func TestLoadWirePathsUsesActiveConventionalTarget(t *testing.T) {
 	if err := os.MkdirAll(wireDir, 0o755); err != nil {
 		t.Fatalf("mkdir target wire dir: %v", err)
 	}
-	t.Setenv("FORJ_APP_TARGET", "reporting")
+	t.Setenv("FORJ_APP", "reporting")
 
 	got := loadWirePaths()
 	want := []string{wireDir}

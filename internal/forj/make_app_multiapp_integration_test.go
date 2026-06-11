@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestMakeAppMultiAppRuntimeSmoke proves make:app-created targets can run together without port conflicts.
+// TestMakeAppMultiAppRuntimeSmoke proves make:app-created apps can run together without port conflicts.
 func TestMakeAppMultiAppRuntimeSmoke(t *testing.T) {
 	requirePortsAvailable(t, []string{
 		"127.0.0.1:3000",
@@ -39,48 +39,48 @@ func TestMakeAppMultiAppRuntimeSmoke(t *testing.T) {
 	renderMakeAppSmokeProject(t, projectDir)
 	runMakeAppSmokeForj(t, projectDir, "make:app", "billing", "--components", "web-api,scheduler,jobs")
 	runMakeAppSmokeForj(t, projectDir, "make:app", "reporting", "--components", "web-api,scheduler,jobs")
-	buildMultiTargetRuntimeBinaries(t, projectDir, []multiTargetRuntimeSpec{
+	buildMultiAppRuntimeBinaries(t, projectDir, []multiAppRuntimeSpec{
 		{name: "app", packagePath: "./cmd/app"},
 		{name: "billing", packagePath: "./cmd/billing"},
 		{name: "reporting", packagePath: "./cmd/reporting"},
 	})
 
-	targets := []multiTargetRuntimeSpec{
+	apps := []multiAppRuntimeSpec{
 		{name: "app", httpPort: "3000", metricsPort: "10000", schedulerMetricsPort: "10001", workerMetricsPort: "10002"},
 		{name: "billing", httpPort: "3001", metricsPort: "10010", schedulerMetricsPort: "10011", workerMetricsPort: "10012"},
 		{name: "reporting", httpPort: "3002", metricsPort: "10020", schedulerMetricsPort: "10021", workerMetricsPort: "10022"},
 	}
-	procs := make([]*procHandle, 0, len(targets))
-	for _, target := range targets {
-		procs = append(procs, startTargetHTTPRuntime(t, projectDir, target))
-		procs = append(procs, startTargetSchedulerRuntime(t, projectDir, target))
-		procs = append(procs, startTargetWorkerRuntime(t, projectDir, target))
+	procs := make([]*procHandle, 0, len(apps))
+	for _, app := range apps {
+		procs = append(procs, startAppHTTPRuntime(t, projectDir, app))
+		procs = append(procs, startAppSchedulerRuntime(t, projectDir, app))
+		procs = append(procs, startAppWorkerRuntime(t, projectDir, app))
 	}
 	defer stopMakeAppSmokeRuntimes(t, procs)
 
-	checks := make([]runtimeReadinessCheck, 0, len(targets)*3)
-	for _, target := range targets {
-		target := target
-		httpProc := findRuntimeProc(t, procs, target.name+" http")
-		schedulerProc := findRuntimeProc(t, procs, target.name+" scheduler")
-		workerProc := findRuntimeProc(t, procs, target.name+" worker")
+	checks := make([]runtimeReadinessCheck, 0, len(apps)*3)
+	for _, app := range apps {
+		app := app
+		httpProc := findRuntimeProc(t, procs, app.name+" http")
+		schedulerProc := findRuntimeProc(t, procs, app.name+" scheduler")
+		workerProc := findRuntimeProc(t, procs, app.name+" worker")
 		checks = append(checks,
 			runtimeReadinessCheck{
-				name: target.name + " http",
+				name: app.name + " http",
 				run: func() error {
-					return assertTargetHTTPRuntimeReady(target, httpProc)
+					return assertAppHTTPRuntimeReady(app, httpProc)
 				},
 			},
 			runtimeReadinessCheck{
-				name: target.name + " scheduler metrics",
+				name: app.name + " scheduler metrics",
 				run: func() error {
-					return assertTargetMetricsRuntimeReady(target.name+" scheduler", target.schedulerMetricsPort, schedulerProc)
+					return assertAppMetricsRuntimeReady(app.name+" scheduler", app.schedulerMetricsPort, schedulerProc)
 				},
 			},
 			runtimeReadinessCheck{
-				name: target.name + " worker metrics",
+				name: app.name + " worker metrics",
 				run: func() error {
-					return assertTargetMetricsRuntimeReady(target.name+" worker", target.workerMetricsPort, workerProc)
+					return assertAppMetricsRuntimeReady(app.name+" worker", app.workerMetricsPort, workerProc)
 				},
 			},
 		)
@@ -88,7 +88,7 @@ func TestMakeAppMultiAppRuntimeSmoke(t *testing.T) {
 	assertRuntimeReadiness(t, checks)
 }
 
-// TestMakeAppMultiAppSQLiteMigrationsSmoke proves make:app-created targets own independent SQLite migration streams.
+// TestMakeAppMultiAppSQLiteMigrationsSmoke proves make:app-created apps own independent SQLite migration streams.
 func TestMakeAppMultiAppSQLiteMigrationsSmoke(t *testing.T) {
 	projectDir := t.TempDir()
 	renderMakeAppMigrationSmokeProject(t, projectDir)
@@ -97,7 +97,7 @@ func TestMakeAppMultiAppSQLiteMigrationsSmoke(t *testing.T) {
 	writeMakeAppSmokeMigration(t, projectDir, "app", "app_widgets")
 	writeMakeAppSmokeMigration(t, projectDir, "billing", "billing_widgets")
 	writeMakeAppSmokeMigration(t, projectDir, "reporting", "reporting_widgets")
-	buildMultiTargetRuntimeBinaries(t, projectDir, []multiTargetRuntimeSpec{
+	buildMultiAppRuntimeBinaries(t, projectDir, []multiAppRuntimeSpec{
 		{name: "app", packagePath: "./cmd/app"},
 		{name: "billing", packagePath: "./cmd/billing"},
 		{name: "reporting", packagePath: "./cmd/reporting"},
@@ -134,7 +134,7 @@ func renderMakeAppSmokeProject(t *testing.T, dir string) {
 	})
 }
 
-// renderMakeAppMigrationSmokeProject enables SQLite so target migrations can run without external services.
+// renderMakeAppMigrationSmokeProject enables SQLite so app migrations can run without external services.
 func renderMakeAppMigrationSmokeProject(t *testing.T, dir string) {
 	t.Helper()
 	testkit.RenderProjectWithForj(t, dir, testkit.RenderProjectRequest{
@@ -172,26 +172,26 @@ func runMakeAppSmokeForj(t *testing.T, projectDir string, args ...string) string
 }
 
 // runMakeAppSmokeBinary exercises generated app binaries instead of renderer internals.
-func runMakeAppSmokeBinary(t *testing.T, projectDir string, target string, args ...string) string {
+func runMakeAppSmokeBinary(t *testing.T, projectDir string, appName string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, filepath.Join(projectDir, "bin", target), args...)
+	cmd := exec.CommandContext(ctx, filepath.Join(projectDir, "bin", appName), args...)
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("%s %s failed: %v\n%s", target, strings.Join(args, " "), err, out.String())
+		t.Fatalf("%s %s failed: %v\n%s", appName, strings.Join(args, " "), err, out.String())
 	}
 	return out.String()
 }
 
-// writeMakeAppSmokeMigration writes real SQL into the target migration layout that generated apps embed.
-func writeMakeAppSmokeMigration(t *testing.T, projectDir string, target string, table string) {
+// writeMakeAppSmokeMigration writes real SQL into the app migration layout that generated apps embed.
+func writeMakeAppSmokeMigration(t *testing.T, projectDir string, appName string, table string) {
 	t.Helper()
-	dir := filepath.Join(projectDir, "migrations", target, "default")
+	dir := filepath.Join(projectDir, "migrations", appName, "default")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create migration dir %s: %v", dir, err)
 	}
@@ -206,7 +206,7 @@ func writeMakeAppSmokeMigration(t *testing.T, projectDir string, target string, 
 	}
 }
 
-// assertMakeAppSmokeSQLiteTables verifies each target migrated only its own SQLite database.
+// assertMakeAppSmokeSQLiteTables verifies each app migrated only its own SQLite database.
 func assertMakeAppSmokeSQLiteTables(t *testing.T, dbPath string, present []string, absent []string) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
@@ -232,7 +232,7 @@ func assertMakeAppSmokeSQLiteTables(t *testing.T, dbPath string, present []strin
 	}
 }
 
-// stopMakeAppSmokeRuntimes stops all target processes concurrently to keep failed CI runs short.
+// stopMakeAppSmokeRuntimes stops all app processes concurrently to keep failed CI runs short.
 func stopMakeAppSmokeRuntimes(t *testing.T, procs []*procHandle) {
 	t.Helper()
 	done := make(chan struct{}, len(procs))

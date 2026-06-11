@@ -50,7 +50,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__range])) or vector(0)",
           "legendFormat": "sends",
           "range": true,
           "refId": "A"
@@ -91,7 +91,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\", status=~\"error|timeout\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\", status=~\"error|timeout\"}[$__range])) or vector(0)",
           "legendFormat": "failed",
           "range": true,
           "refId": "A"
@@ -132,7 +132,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\", status=~\"invalid|canceled\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\", status=~\"invalid|canceled\"}[$__range])) or vector(0)",
           "legendFormat": "rejected",
           "range": true,
           "refId": "A"
@@ -173,7 +173,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * sum(rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\", status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum(rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])), 0.001)",
+          "expr": "100 * sum(rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\", status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum(rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])), 0.001)",
           "legendFormat": "failure rate",
           "range": true,
           "refId": "A"
@@ -214,7 +214,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "count(sum by (mailer) (rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])) > 0) or vector(0)",
+          "expr": "count(sum by (mailer) (rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])) > 0) or vector(0)",
           "legendFormat": "mailers",
           "range": true,
           "refId": "A"
@@ -254,7 +254,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(mail_send_duration_seconds_bucket{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mail_send_duration_seconds_bucket{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "A"
@@ -269,7 +269,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 4 },
       "id": 7,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (source, mailer) (rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (source, mailer) (rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Throughput By Mailer",
       "type": "timeseries"
     },
@@ -279,7 +279,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
       "id": 8,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (source, driver) (rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (source, driver) (rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Throughput By Driver",
       "type": "timeseries"
     },
@@ -289,7 +289,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
       "id": 9,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (source, mailer, status) (rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (source, mailer, status) (rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Outcomes By Mailer",
       "type": "timeseries"
     },
@@ -299,7 +299,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
       "id": 10,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, 100 * sum by (source, mailer) (rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\", status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum by (source, mailer) (rate(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval])), 0.001))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, 100 * sum by (source, mailer) (rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\", status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum by (source, mailer) (rate(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval])), 0.001))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
       "title": "Failure Rate By Mailer",
       "type": "timeseries"
     },
@@ -309,7 +309,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
       "id": 11,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, source, mailer, driver) (rate(mail_send_duration_seconds_bucket{app_target=~\"$app_target\", mailer=~\"$mailer\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, source, mailer, driver) (rate(mail_send_duration_seconds_bucket{app=~\"$app\", mailer=~\"$mailer\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
       "title": "Mailer P95 Latency",
       "type": "timeseries"
     },
@@ -319,7 +319,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
       "id": 12,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (source, mailer, driver, reason) (increase(mail_sends_total{app_target=~\"$app_target\", mailer=~\"$mailer\", status!=\"ok\"}[$__range])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (source, mailer, driver, reason) (increase(mail_sends_total{app=~\"$app\", mailer=~\"$mailer\", status!=\"ok\"}[$__range])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
       "title": "Failure Reasons In Range",
       "type": "timeseries"
     }
@@ -341,15 +341,15 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(app_target)",
+        "definition": "label_values(app)",
         "hide": 0,
         "includeAll": true,
-        "label": "App Target",
+        "label": "App",
         "multi": false,
-        "name": "app_target",
+        "name": "app",
         "options": [],
         "query": {
-          "query": "label_values(app_target)",
+          "query": "label_values(app)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -366,7 +366,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(mail_sends_total{app_target=~\"$app_target\"}, mailer)",
+        "definition": "label_values(mail_sends_total{app=~\"$app\"}, mailer)",
         "hide": 0,
         "includeAll": true,
         "label": "Mailer",
@@ -374,7 +374,7 @@
         "name": "mailer",
         "options": [],
         "query": {
-          "query": "label_values(mail_sends_total{app_target=~\"$app_target\"}, mailer)",
+          "query": "label_values(mail_sends_total{app=~\"$app\"}, mailer)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

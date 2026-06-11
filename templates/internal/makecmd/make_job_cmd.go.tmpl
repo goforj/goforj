@@ -149,7 +149,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 
 // injectIntoWireFile registers the generated job provider with the jobs wire set.
 func (c *JobCmd) injectIntoWireFile(structName string) error {
-	injectPath := targetAppWireFile("inject_jobs_app.go", "./wire/inject_jobs_app.go")
+	injectPath := activeAppWireFile("inject_jobs_app.go", "./wire/inject_jobs_app.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -202,7 +202,7 @@ func (c *JobCmd) injectIntoWireFile(structName string) error {
 }
 
 func (c *JobCmd) removeFromWireFile(structName string) error {
-	injectPath := targetAppWireFile("inject_jobs_app.go", "./wire/inject_jobs_app.go")
+	injectPath := activeAppWireFile("inject_jobs_app.go", "./wire/inject_jobs_app.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {

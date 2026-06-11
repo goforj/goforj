@@ -1005,7 +1005,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 type InspectSummary = {
   trace_id: string;
   source: string;
-  app_target?: string;
+  app?: string;
   agent_key?: string;
   group_key?: string;
   instance_key?: string;
@@ -2135,7 +2135,7 @@ const inspectSearchFields = (inspect: InspectSummary) => {
   };
   add(inspect.trace_id);
   add(inspect.source);
-  add(inspect.app_target);
+  add(inspect.app);
   add(inspect.agent_key);
   add(inspect.group_key);
   add(inspect.instance_key);

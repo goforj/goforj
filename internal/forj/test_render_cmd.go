@@ -72,7 +72,7 @@ func (cmd *TestRenderCmd) Run() error {
 	if err := WriteYAML(ymlPath, cfg); err != nil {
 		return err
 	}
-	if err := writeConventionalAppTargetMarker(dir, "customer-portal"); err != nil {
+	if err := writeConventionalAppMarker(dir, "customer-portal"); err != nil {
 		return err
 	}
 
@@ -118,7 +118,7 @@ func (cmd *TestRenderCmd) Run() error {
 	return nil
 }
 
-func writeConventionalAppTargetMarker(root string, name string) error {
+func writeConventionalAppMarker(root string, name string) error {
 	mainPath := filepath.Join(root, "cmd", name, "main.go")
 	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {
 		return err

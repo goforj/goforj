@@ -27,9 +27,9 @@ func (*MigrateRollbackCmd) Signature() string {
 	return `name:"migrate:rollback" help:"Rollback database migration"`
 }
 
-// Run executes rollback for one or more target-scoped migration streams.
+// Run executes rollback for one or more app-scoped migration streams.
 func (c *MigrateRollbackCmd) Run() error {
-	streams := migrationPlan(activeMigrationTarget(), c.Connection)
+	streams := migrationPlan(activeMigrationApp(), c.Connection)
 	if len(streams) == 0 {
 		console.Infof("no migrations rolled back")
 		console.Successf("rollback complete (0)")
@@ -54,7 +54,7 @@ func (c *MigrateRollbackCmd) Run() error {
 	return nil
 }
 
-// rollbackStream rolls back the newest applied migrations for one target-scoped connection stream.
+// rollbackStream rolls back the newest applied migrations for one app-scoped connection stream.
 func (c *MigrateRollbackCmd) rollbackStream(stream migrationStream) (int, error) {
 	dbConn, err := c.db.Connection(stream.DatabaseConnection)
 	if err != nil {
@@ -76,7 +76,7 @@ func (c *MigrateRollbackCmd) rollbackStream(stream migrationStream) (int, error)
 	}
 
 	activeDriver := normalizeDriverName(dbConn.Dialector.Name())
-	all := selectMigrations(stream.Target, stream.Connection, activeDriver)
+	all := selectMigrations(stream.App, stream.Connection, activeDriver)
 
 	rollbackCount := 0
 	for i := len(all) - 1; i >= 0; i-- {
@@ -96,7 +96,7 @@ func (c *MigrateRollbackCmd) rollbackStream(stream migrationStream) (int, error)
 			return rollbackCount, err
 		}
 
-		console.Successf("reverted %s → target=%s connection=%s database=%s", m.Name(), stream.Target, stream.Connection, stream.DatabaseConnection)
+		console.Successf("reverted %s → app=%s connection=%s database=%s", m.Name(), stream.App, stream.Connection, stream.DatabaseConnection)
 		rollbackCount++
 	}
 

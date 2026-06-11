@@ -126,14 +126,14 @@ func QueueDefaultQueue(name string) string {
 	return QueuePhysicalName(value)
 }
 
-// QueuePhysicalName returns the physical backend queue name for the current app target.
+// QueuePhysicalName returns the physical backend queue name for the current app.
 func QueuePhysicalName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "default"
 	}
-	target := strings.TrimSpace(CurrentAppTarget().Name)
-	if target == "" || target == defaultAppTargetName {
+	target := strings.TrimSpace(CurrentApp().Name)
+	if target == "" || target == defaultAppName {
 		return name
 	}
 	prefix := target + "_"

@@ -52,7 +52,7 @@ func TestScaffoldVueStarterKitOverwritesFrontend(t *testing.T) {
 	}
 }
 
-func TestFrontendDistPlaceholderUsesNamedTargets(t *testing.T) {
+func TestFrontendDistPlaceholderUsesNamedApps(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)
@@ -64,10 +64,10 @@ func TestFrontendDistPlaceholderUsesNamedTargets(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join("cmd", "customer-portal"), 0o755); err != nil {
-		t.Fatalf("mkdir named target entrypoint: %v", err)
+		t.Fatalf("mkdir named app entrypoint: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join("cmd", "customer-portal", "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write named target entrypoint: %v", err)
+		t.Fatalf("write named app entrypoint: %v", err)
 	}
 
 	renderer := &ProjectRenderer{

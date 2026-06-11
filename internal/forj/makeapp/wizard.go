@@ -49,18 +49,18 @@ func (i starterKitItem) Description() string { return i.Desc }
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i starterKitItem) FilterValue() string { return i.Label }
 
-type appTargetWizardStage int
+type appWizardStage int
 
 const (
-	appTargetWizardComponents appTargetWizardStage = iota
-	appTargetWizardStarterKit
-	appTargetWizardConfirm
-	appTargetWizardDone
+	appWizardComponents appWizardStage = iota
+	appWizardStarterKit
+	appWizardConfirm
+	appWizardDone
 )
 
-type appTargetWizardModel struct {
-	targetName     string
-	stage          appTargetWizardStage
+type appWizardModel struct {
+	appName        string
+	stage          appWizardStage
 	componentList  list.Model
 	starterKitList list.Model
 	available      project.Components
@@ -70,27 +70,27 @@ type appTargetWizardModel struct {
 	termWidth      int
 }
 
-// runAppTargetWizard selects components and starter kit for a new app target.
-func runAppTargetWizard(targetName string, config *project.Config) (project.Components, project.StarterKit, bool, error) {
-	initial := initialAppTargetWizardModel(targetName, config)
+// runAppWizard selects components and starter kit for a new app.
+func runAppWizard(appName string, config *project.Config) (project.Components, project.StarterKit, bool, error) {
+	initial := initialAppWizardModel(appName, config)
 	result, err := tea.NewProgram(initial).Run()
 	if err != nil {
 		return project.Components{}, project.StarterKitNone, false, err
 	}
-	model, ok := result.(appTargetWizardModel)
+	model, ok := result.(appWizardModel)
 	if !ok || model.cancelled {
 		return project.Components{}, project.StarterKitNone, true, nil
 	}
 	return model.components, model.starterKit, false, nil
 }
 
-// initialAppTargetWizardModel builds the initial wizard state from project defaults.
-func initialAppTargetWizardModel(targetName string, config *project.Config) appTargetWizardModel {
+// initialAppWizardModel builds the initial wizard state from project defaults.
+func initialAppWizardModel(appName string, config *project.Config) appWizardModel {
 	available := config.Render.Components
-	components := project.TargetDefaultComponents(available)
+	components := project.AppDefaultComponents(available)
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = false
-	componentList := list.New(makeTargetComponentItems(available, components), delegate, 42, 10)
+	componentList := list.New(makeAppComponentItems(available, components), delegate, 42, 10)
 	componentList.Title = "App Components"
 	componentList.SetShowFilter(false)
 	componentList.SetShowHelp(false)
@@ -106,9 +106,9 @@ func initialAppTargetWizardModel(targetName string, config *project.Config) appT
 	starterKitList.SetShowHelp(false)
 	starterKitList.SetShowStatusBar(false)
 	starterKitList.SetShowPagination(false)
-	return appTargetWizardModel{
-		targetName:     targetName,
-		stage:          appTargetWizardComponents,
+	return appWizardModel{
+		appName:        appName,
+		stage:          appWizardComponents,
 		componentList:  componentList,
 		starterKitList: starterKitList,
 		available:      available,
@@ -119,10 +119,10 @@ func initialAppTargetWizardModel(targetName string, config *project.Config) appT
 }
 
 // Init satisfies tea.Model; make:app does not need an initial asynchronous command.
-func (m appTargetWizardModel) Init() tea.Cmd { return nil }
+func (m appWizardModel) Init() tea.Cmd { return nil }
 
 // Update advances wizard state while keeping selected components and starter kits synchronized.
-func (m appTargetWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth = 90
@@ -137,15 +137,15 @@ func (m appTargetWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		switch m.stage {
-		case appTargetWizardComponents:
+		case appWizardComponents:
 			switch msg.String() {
 			case "enter":
 				m.applyComponentSelection()
 				if m.components.WebUI {
-					m.stage = appTargetWizardStarterKit
+					m.stage = appWizardStarterKit
 				} else {
 					m.starterKit = project.StarterKitNone
-					m.stage = appTargetWizardConfirm
+					m.stage = appWizardConfirm
 				}
 				return m, nil
 			case " ":
@@ -163,33 +163,33 @@ func (m appTargetWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
-		case appTargetWizardStarterKit:
+		case appWizardStarterKit:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				m.stage = appTargetWizardComponents
+				m.stage = appWizardComponents
 				return m, nil
 			}
 			if msg.String() == "enter" {
 				m.applyStarterKitSelection()
-				m.stage = appTargetWizardConfirm
+				m.stage = appWizardConfirm
 				return m, nil
 			}
 			var cmd tea.Cmd
 			m.starterKitList, cmd = m.starterKitList.Update(msg)
 			m.syncStarterKitSelectionFromCursor()
 			return m, cmd
-		case appTargetWizardConfirm:
+		case appWizardConfirm:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				if m.components.WebUI {
-					m.stage = appTargetWizardStarterKit
+					m.stage = appWizardStarterKit
 				} else {
-					m.stage = appTargetWizardComponents
+					m.stage = appWizardComponents
 				}
 				return m, nil
 			}
 			if msg.String() == "enter" {
-				m.stage = appTargetWizardDone
+				m.stage = appWizardDone
 				return m, tea.Quit
 			}
 		}
@@ -198,7 +198,7 @@ func (m appTargetWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the current wizard stage with enough padding to keep terminal redraws stable.
-func (m appTargetWizardModel) View() string {
+func (m appWizardModel) View() string {
 	componentNames := strings.Join(selectedComponentNamesFromItems(m.componentList.Items()), ", ")
 	if strings.TrimSpace(componentNames) == "" {
 		componentNames = "None"
@@ -206,17 +206,17 @@ func (m appTargetWizardModel) View() string {
 	var panels []string
 	var actions []string
 	switch m.stage {
-	case appTargetWizardComponents:
-		panels = append(panels, wizardPanel("App Target", wizardPrimaryStyle.Render(m.targetName), m.termWidth, false))
+	case appWizardComponents:
+		panels = append(panels, wizardPanel("App", wizardPrimaryStyle.Render(m.appName), m.termWidth, false))
 		panels = append(panels, wizardPanel("Components", m.renderComponentList(), m.termWidth, true))
 		actions = []string{"Space to toggle", "Enter to continue", "Esc to cancel"}
-	case appTargetWizardStarterKit:
+	case appWizardStarterKit:
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
 		panels = append(panels, wizardPanel("Starter Kit", m.renderStarterKitList(), m.termWidth, true))
 		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
-	case appTargetWizardConfirm:
-		panels = append(panels, wizardPanel("Confirm app target", renderKeyValueTable([]keyValue{
-			{"Target", m.targetName},
+	case appWizardConfirm:
+		panels = append(panels, wizardPanel("Confirm app", renderKeyValueTable([]keyValue{
+			{"App", m.appName},
 			{"Components", componentNames},
 			{"Starter kit", m.selectedStarterKitSummary()},
 		}), m.termWidth, true))
@@ -229,8 +229,8 @@ func (m appTargetWizardModel) View() string {
 	return "\n" + view
 }
 
-// applyComponentSelection normalizes visible choices into the target component contract.
-func (m *appTargetWizardModel) applyComponentSelection() {
+// applyComponentSelection normalizes visible choices into the app component contract.
+func (m *appWizardModel) applyComponentSelection() {
 	var keys []project.ComponentKey
 	for _, item := range m.componentList.Items() {
 		component := item.(componentItem)
@@ -238,7 +238,7 @@ func (m *appTargetWizardModel) applyComponentSelection() {
 			keys = append(keys, component.Key)
 		}
 	}
-	components, err := project.TargetComponentsFromKeys(m.available, keys)
+	components, err := project.AppComponentsFromKeys(m.available, keys)
 	if err == nil {
 		m.components = components
 	}
@@ -249,8 +249,8 @@ func (m *appTargetWizardModel) applyComponentSelection() {
 }
 
 // deselectExclusiveComponents enforces one visible choice per exclusive component group.
-func (m *appTargetWizardModel) deselectExclusiveComponents(selectedKey project.ComponentKey, group string) {
-	for _, definition := range project.TargetWizardComponentDefinitions(m.available) {
+func (m *appWizardModel) deselectExclusiveComponents(selectedKey project.ComponentKey, group string) {
+	for _, definition := range project.AppWizardComponentDefinitions(m.available) {
 		if definition.Key == selectedKey || definition.ExclusiveGroup != group {
 			continue
 		}
@@ -259,7 +259,7 @@ func (m *appTargetWizardModel) deselectExclusiveComponents(selectedKey project.C
 }
 
 // setComponentSelected updates list state without rebuilding the cursor position.
-func (m *appTargetWizardModel) setComponentSelected(key project.ComponentKey, selected bool) {
+func (m *appWizardModel) setComponentSelected(key project.ComponentKey, selected bool) {
 	for idx, raw := range m.componentList.Items() {
 		item := raw.(componentItem)
 		if item.Key != key {
@@ -272,7 +272,7 @@ func (m *appTargetWizardModel) setComponentSelected(key project.ComponentKey, se
 }
 
 // normalizeComponentSelections keeps dependent wizard rows selected after a toggle.
-func (m *appTargetWizardModel) normalizeComponentSelections() {
+func (m *appWizardModel) normalizeComponentSelections() {
 	var keys []project.ComponentKey
 	for _, raw := range m.componentList.Items() {
 		item := raw.(componentItem)
@@ -280,7 +280,7 @@ func (m *appTargetWizardModel) normalizeComponentSelections() {
 			keys = append(keys, item.Key)
 		}
 	}
-	components, err := project.TargetComponentsFromKeys(m.available, keys)
+	components, err := project.AppComponentsFromKeys(m.available, keys)
 	if err != nil {
 		return
 	}
@@ -292,7 +292,7 @@ func (m *appTargetWizardModel) normalizeComponentSelections() {
 }
 
 // applyStarterKitSelection commits the highlighted starter kit before confirmation.
-func (m *appTargetWizardModel) applyStarterKitSelection() {
+func (m *appWizardModel) applyStarterKitSelection() {
 	index := m.starterKitList.Index()
 	if index < 0 || index >= len(m.starterKitList.Items()) {
 		m.starterKit = project.StarterKitNone
@@ -308,7 +308,7 @@ func (m *appTargetWizardModel) applyStarterKitSelection() {
 }
 
 // renderComponentList renders component rows manually because the default list chrome is hidden.
-func (m appTargetWizardModel) renderComponentList() string {
+func (m appWizardModel) renderComponentList() string {
 	var rows []string
 	for i, raw := range m.componentList.Items() {
 		item := raw.(componentItem)
@@ -334,7 +334,7 @@ func (m appTargetWizardModel) renderComponentList() string {
 }
 
 // renderStarterKitList renders starter-kit rows manually so selected state is visible.
-func (m appTargetWizardModel) renderStarterKitList() string {
+func (m appWizardModel) renderStarterKitList() string {
 	var rows []string
 	for i, raw := range m.starterKitList.Items() {
 		item := raw.(starterKitItem)
@@ -360,7 +360,7 @@ func (m appTargetWizardModel) renderStarterKitList() string {
 }
 
 // syncStarterKitSelectionFromCursor makes cursor movement behave like a radio selection.
-func (m *appTargetWizardModel) syncStarterKitSelectionFromCursor() {
+func (m *appWizardModel) syncStarterKitSelectionFromCursor() {
 	index := m.starterKitList.Index()
 	if index < 0 || index >= len(m.starterKitList.Items()) {
 		return
@@ -374,7 +374,7 @@ func (m *appTargetWizardModel) syncStarterKitSelectionFromCursor() {
 }
 
 // setStarterKitSelected keeps only one starter kit marked as selected.
-func (m *appTargetWizardModel) setStarterKitSelected(selected project.StarterKit) {
+func (m *appWizardModel) setStarterKitSelected(selected project.StarterKit) {
 	selected = project.NormalizeStarterKit(selected)
 	for idx, raw := range m.starterKitList.Items() {
 		item := raw.(starterKitItem)
@@ -384,12 +384,12 @@ func (m *appTargetWizardModel) setStarterKitSelected(selected project.StarterKit
 }
 
 // selectedStarterKitSummary reports the effective starter kit for the confirmation panel.
-func (m appTargetWizardModel) selectedStarterKitSummary() string {
+func (m appWizardModel) selectedStarterKitSummary() string {
 	if !m.components.WebUI {
 		return "None"
 	}
 	starterKit := m.starterKit
-	if m.stage == appTargetWizardStarterKit {
+	if m.stage == appWizardStarterKit {
 		index := m.starterKitList.Index()
 		if index >= 0 && index < len(m.starterKitList.Items()) {
 			if item, ok := m.starterKitList.Items()[index].(starterKitItem); ok {
@@ -403,9 +403,9 @@ func (m appTargetWizardModel) selectedStarterKitSummary() string {
 	return "None"
 }
 
-// makeTargetComponentItems converts component definitions into list rows with current selection state.
-func makeTargetComponentItems(available project.Components, selected project.Components) []list.Item {
-	definitions := project.TargetWizardComponentDefinitions(available)
+// makeAppComponentItems converts component definitions into list rows with current selection state.
+func makeAppComponentItems(available project.Components, selected project.Components) []list.Item {
+	definitions := project.AppWizardComponentDefinitions(available)
 	items := make([]list.Item, 0, len(definitions))
 	for _, definition := range definitions {
 		items = append(items, componentItem{

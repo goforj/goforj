@@ -25,16 +25,16 @@ type sourceKey struct{}
 
 const SourceJobs = "jobs"
 
-type AppTargetInfo struct {
+type AppInfo struct {
 	Name string
 }
 
-func CurrentAppTarget() AppTargetInfo {
-	name := strings.TrimSpace(os.Getenv("FORJ_APP_TARGET"))
+func CurrentApp() AppInfo {
+	name := strings.TrimSpace(os.Getenv("FORJ_APP"))
 	if name == "" {
 		name = "app"
 	}
-	return AppTargetInfo{Name: name}
+	return AppInfo{Name: name}
 }
 
 func WithSource(ctx context.Context, source string) context.Context {
@@ -199,8 +199,8 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
-func TestGeneratedQueueNamesUseCurrentAppTarget(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "billing")
+func TestGeneratedQueueNamesUseCurrentApp(t *testing.T) {
+	t.Setenv("FORJ_APP", "billing")
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
 	t.Setenv("QUEUE_CRITICAL_NAME", "critical")

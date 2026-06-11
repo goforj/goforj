@@ -55,12 +55,12 @@ render:
 	}
 }
 
-func TestDefaultNamedAppTargetUsesConvention(t *testing.T) {
-	target := DefaultNamedAppTarget("reporting")
-	if target.Entrypoint != filepath.Join("cmd", "reporting", "main.go") ||
-		target.AppDir != filepath.Join("app", "reporting") ||
-		target.WireDir != filepath.Join("app", "reporting", "wire") {
-		t.Fatalf("expected conventional reporting paths, got %#v", target)
+func TestDefaultNamedAppUsesConvention(t *testing.T) {
+	app := DefaultNamedApp("reporting")
+	if app.Entrypoint != filepath.Join("cmd", "reporting", "main.go") ||
+		app.AppDir != filepath.Join("app", "reporting") ||
+		app.WireDir != filepath.Join("app", "reporting", "wire") {
+		t.Fatalf("expected conventional reporting paths, got %#v", app)
 	}
 }
 
@@ -79,24 +79,24 @@ func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
 	}
 }
 
-func TestIsSafeAppTargetName(t *testing.T) {
+func TestIsSafeAppName(t *testing.T) {
 	for _, name := range []string{"app", "reporting", "customer-portal", "ops_api", "v2"} {
-		if !IsSafeAppTargetName(name) {
+		if !IsSafeAppName(name) {
 			t.Fatalf("expected %q to be safe", name)
 		}
 	}
 	for _, name := range []string{"", ".", "..", "../reporting", "reporting/api", "reporting api"} {
-		if IsSafeAppTargetName(name) {
+		if IsSafeAppName(name) {
 			t.Fatalf("expected %q to be unsafe", name)
 		}
 	}
 }
 
-func TestIsReservedAppTargetName(t *testing.T) {
-	if !IsReservedAppTargetName("wire") {
+func TestIsReservedAppName(t *testing.T) {
+	if !IsReservedAppName("wire") {
 		t.Fatal("expected wire to be reserved")
 	}
-	if IsReservedAppTargetName("reporting") {
+	if IsReservedAppName("reporting") {
 		t.Fatal("expected reporting not to be reserved")
 	}
 }
@@ -114,7 +114,7 @@ func TestIsNativeFrameworkCommandName(t *testing.T) {
 	}
 }
 
-func TestAppTargetPackageName(t *testing.T) {
+func TestAppPackageName(t *testing.T) {
 	tests := map[string]string{
 		"app":             "app",
 		"reporting":       "reporting",
@@ -123,8 +123,8 @@ func TestAppTargetPackageName(t *testing.T) {
 		"2fa":             "app2fa",
 	}
 	for input, want := range tests {
-		if got := AppTargetPackageName(input); got != want {
-			t.Fatalf("AppTargetPackageName(%q) = %q, want %q", input, got, want)
+		if got := AppPackageName(input); got != want {
+			t.Fatalf("AppPackageName(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
@@ -178,7 +178,7 @@ func TestValidateStarterKitContractRequiresWebUI(t *testing.T) {
 	}
 }
 
-func TestTargetComponentsFromKeysUsesProjectCapabilities(t *testing.T) {
+func TestAppComponentsFromKeysUsesProjectCapabilities(t *testing.T) {
 	available := Components{
 		WebAPI:        true,
 		WebUI:         true,
@@ -189,47 +189,47 @@ func TestTargetComponentsFromKeysUsesProjectCapabilities(t *testing.T) {
 		Jobs:          true,
 	}
 
-	components, err := TargetComponentsFromKeys(available, []ComponentKey{ComponentAuth, ComponentJobs})
+	components, err := AppComponentsFromKeys(available, []ComponentKey{ComponentAuth, ComponentJobs})
 	if err != nil {
-		t.Fatalf("TargetComponentsFromKeys returned error: %v", err)
+		t.Fatalf("AppComponentsFromKeys returned error: %v", err)
 	}
 	if !components.Auth || !components.WebAPI || !components.DatabaseMySQL || !components.Mail || !components.Jobs || !components.Metrics {
-		t.Fatalf("target components missing expected dependencies: %#v", components)
+		t.Fatalf("app components missing expected dependencies: %#v", components)
 	}
 	if components.WebUI || components.Docker || components.Observability || components.Grafana || components.DemoApp {
-		t.Fatalf("target components included non-selected project-level components: %#v", components)
+		t.Fatalf("app components included non-selected project-level components: %#v", components)
 	}
 }
 
-func TestTargetComponentsAllowNewDatabaseDriver(t *testing.T) {
+func TestAppComponentsAllowNewDatabaseDriver(t *testing.T) {
 	available := Components{
 		WebAPI:        true,
 		DatabaseMySQL: true,
 	}
 
-	components, err := TargetComponentsFromKeys(available, []ComponentKey{ComponentWebAPI, ComponentDatabasePostgres})
+	components, err := AppComponentsFromKeys(available, []ComponentKey{ComponentWebAPI, ComponentDatabasePostgres})
 	if err != nil {
-		t.Fatalf("TargetComponentsFromKeys returned error: %v", err)
+		t.Fatalf("AppComponentsFromKeys returned error: %v", err)
 	}
 	if !components.WebAPI || !components.DatabasePostgres {
-		t.Fatalf("target components missing selected postgres driver: %#v", components)
+		t.Fatalf("app components missing selected postgres driver: %#v", components)
 	}
 	if components.DatabaseMySQL || components.DatabaseSQLite {
-		t.Fatalf("expected target database selection to be exclusive: %#v", components)
+		t.Fatalf("expected app database selection to be exclusive: %#v", components)
 	}
 }
 
-func TestTargetComponentsKeepLastDatabaseDriver(t *testing.T) {
-	components, err := TargetComponentsFromKeys(Components{}, []ComponentKey{ComponentDatabaseMySQL, ComponentDatabasePostgres})
+func TestAppComponentsKeepLastDatabaseDriver(t *testing.T) {
+	components, err := AppComponentsFromKeys(Components{}, []ComponentKey{ComponentDatabaseMySQL, ComponentDatabasePostgres})
 	if err != nil {
-		t.Fatalf("TargetComponentsFromKeys returned error: %v", err)
+		t.Fatalf("AppComponentsFromKeys returned error: %v", err)
 	}
 	if !components.DatabasePostgres || components.DatabaseMySQL || components.DatabaseSQLite {
 		t.Fatalf("expected last database driver to win: %#v", components)
 	}
 }
 
-func TestPromoteTargetComponentsAddsProjectCapabilities(t *testing.T) {
+func TestPromoteAppComponentsAddsProjectCapabilities(t *testing.T) {
 	available := Components{
 		WebAPI:        true,
 		DatabaseMySQL: true,
@@ -242,7 +242,7 @@ func TestPromoteTargetComponentsAddsProjectCapabilities(t *testing.T) {
 		Jobs:             true,
 	}
 
-	promoted := PromoteTargetComponents(available, selected)
+	promoted := PromoteAppComponents(available, selected)
 	if !promoted.WebAPI || !promoted.Auth || !promoted.Mail || !promoted.DatabaseMySQL || !promoted.DatabasePostgres || !promoted.Jobs {
 		t.Fatalf("promoted components missing expected capabilities: %#v", promoted)
 	}
@@ -251,8 +251,8 @@ func TestPromoteTargetComponentsAddsProjectCapabilities(t *testing.T) {
 	}
 }
 
-func TestTargetComponentsRejectProjectOnlyComponent(t *testing.T) {
-	_, err := TargetComponentsFromKeys(Components{Docker: true}, []ComponentKey{ComponentDocker})
+func TestAppComponentsRejectProjectOnlyComponent(t *testing.T) {
+	_, err := AppComponentsFromKeys(Components{Docker: true}, []ComponentKey{ComponentDocker})
 	if err == nil {
 		t.Fatal("expected project-only component to be rejected")
 	}

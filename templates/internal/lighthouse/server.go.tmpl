@@ -574,7 +574,7 @@ func handleConsoleWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 			})
 			continue
 		}
-		if msg.Target == "control" && cmd.Name == "logs:history" {
+		if msg.Destination == "control" && cmd.Name == "logs:history" {
 			limit := 5000
 			if len(cmd.Params) > 0 {
 				var params map[string]any
@@ -646,8 +646,8 @@ func handleDevwatchWS(r web.Context, conn web.WebSocketConn, hub *Hub) error {
 			ID:           uuid.NewString(),
 			Key:          devwatchAgentSource,
 			Source:       devwatchAgentSource,
-			App:          appName,
-			AppTarget:    "app",
+			Project:      appName,
+			App:          "app",
 			Version:      os.Getenv("APP_VERSION"),
 			Env:          os.Getenv("APP_ENV"),
 			Capabilities: []string{"devwatch"},

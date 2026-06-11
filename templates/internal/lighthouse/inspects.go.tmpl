@@ -179,12 +179,12 @@ func (p *InspectPublisher) identityRecord(record inspects.Record) inspects.Recor
 	record = inspects.CloneRecord(record)
 	agentInfo := normalizeAgentInfo(AgentInfo{
 		Source:     p.agent.config.Source,
-		AppTarget:  p.agent.config.AppTarget,
+		App:        p.agent.config.App,
 		InstanceID: p.agent.config.InstanceID,
 		Host:       p.agent.config.Host,
 	})
-	if strings.TrimSpace(record.Summary.AppTarget) == "" {
-		record.Summary.AppTarget = agentInfo.AppTarget
+	if strings.TrimSpace(record.Summary.App) == "" {
+		record.Summary.App = agentInfo.App
 	}
 	if strings.TrimSpace(record.Summary.AgentKey) == "" {
 		record.Summary.AgentKey = agentInfo.Key

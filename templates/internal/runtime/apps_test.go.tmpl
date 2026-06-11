@@ -2,21 +2,21 @@ package runtime
 
 import "testing"
 
-func TestAppTargetMetadataUsesDeterministicDefaults(t *testing.T) {
-	app := AppTarget("app")
+func TestAppMetadataUsesDeterministicDefaults(t *testing.T) {
+	app := App("app")
 	if app.Index != 0 || app.HTTPPort != 3000 || app.RuntimeBase != 10000 {
 		t.Fatalf("app defaults = index %d http %d runtime %d", app.Index, app.HTTPPort, app.RuntimeBase)
 	}
-{{- if gt (len .RuntimeTargets) 1 }}
-	named := AppTargets[1]
+{{- if gt (len .RuntimeApps) 1 }}
+	named := Apps[1]
 	if named.Index != 1 || named.HTTPPort != 3001 || named.RuntimeBase != 10010 {
 		t.Fatalf("first named defaults = index %d http %d runtime %d", named.Index, named.HTTPPort, named.RuntimeBase)
 	}
 {{- end }}
 }
 
-func TestTargetPortResolutionUsesTargetScopedOverrides(t *testing.T) {
-	t.Setenv("FORJ_APP_TARGET", "app")
+func TestAppPortResolutionUsesAppScopedOverrides(t *testing.T) {
+	t.Setenv("FORJ_APP", "app")
 	t.Setenv("PORT", "3100")
 	t.Setenv("METRICS_PORT", "11000")
 	t.Setenv("SCHEDULER_METRICS_PORT", "11001")
@@ -50,20 +50,20 @@ func TestDatabaseDiscoveryIgnoresDriverHelperDatabaseKeys(t *testing.T) {
 	}
 }
 
-{{- if gt (len .RuntimeTargets) 1 }}
-func TestNamedTargetIgnoresDefaultTargetPortOverrides(t *testing.T) {
+{{- if gt (len .RuntimeApps) 1 }}
+func TestNamedAppIgnoresDefaultAppPortOverrides(t *testing.T) {
 	t.Setenv("PORT", "3100")
 	t.Setenv("API_HTTP_PORT", "3200")
 	t.Setenv("METRICS_PORT", "11000")
 
-	target := AppTargets[1].Name
+	app := Apps[1].Name
 	wantHTTP := "3001"
 	wantMetrics := "10010"
-	if got := HTTPPortForTarget(target); got != wantHTTP {
-		t.Fatalf("named target HTTP port = %q, want %q", got, wantHTTP)
+	if got := HTTPPortForApp(app); got != wantHTTP {
+		t.Fatalf("named app HTTP port = %q, want %q", got, wantHTTP)
 	}
-	if got := MetricsPortForTarget(target); got != wantMetrics {
-		t.Fatalf("named target metrics port = %q, want %q", got, wantMetrics)
+	if got := MetricsPortForApp(app); got != wantMetrics {
+		t.Fatalf("named app metrics port = %q, want %q", got, wantMetrics)
 	}
 }
 {{- end }}

@@ -25,8 +25,8 @@ type AgentConfig struct {
 	URL          string
 	Secret       string
 	Source       string
+	Project      string
 	App          string
-	AppTarget    string
 	Version      string
 	Env          string
 	Capabilities []string
@@ -85,8 +85,8 @@ func (a *Agent) Start(ctx context.Context) error {
 	if host := strings.TrimSpace(a.config.Host); host != "" {
 		header.Set("X-Forj-Agent-Host", host)
 	}
-	if target := strings.TrimSpace(a.config.AppTarget); target != "" {
-		header.Set("X-Forj-App-Target", target)
+	if app := strings.TrimSpace(a.config.App); app != "" {
+		header.Set("X-Forj-App", app)
 	}
 	header.Set("X-Forj-Agent-Pid", fmt.Sprintf("%d", os.Getpid()))
 	authWarned := false
@@ -229,8 +229,8 @@ func (a *Agent) register() error {
 	info := normalizeAgentInfo(AgentInfo{
 		ID:           uuid.NewString(),
 		Source:       a.config.Source,
+		Project:      a.config.Project,
 		App:          a.config.App,
-		AppTarget:    a.config.AppTarget,
 		Version:      a.config.Version,
 		Env:          a.config.Env,
 		Capabilities: a.config.Capabilities,
@@ -404,8 +404,8 @@ func LoadAgentConfig(source string) AgentConfig {
 		URL:          url,
 		Secret:       SharedSecretFromEnv(),
 		Source:       source,
-		App:          os.Getenv("APP_NAME"),
-		AppTarget:    appTargetFromEnv(),
+		Project:      os.Getenv("APP_NAME"),
+		App:          appNameFromEnv(),
 		Version:      os.Getenv("APP_VERSION"),
 		Env:          os.Getenv("APP_ENV"),
 		InstanceID:   os.Getenv("APP_INSTANCE_ID"),
@@ -414,13 +414,10 @@ func LoadAgentConfig(source string) AgentConfig {
 	}
 }
 
-// appTargetFromEnv identifies the generated app target for Lighthouse agent registration.
-func appTargetFromEnv() string {
-	if target := strings.TrimSpace(os.Getenv("APP_TARGET")); target != "" {
-		return target
-	}
-	if target := strings.TrimSpace(os.Getenv("FORJ_APP_TARGET")); target != "" {
-		return target
+// appNameFromEnv identifies the generated app for Lighthouse agent registration.
+func appNameFromEnv() string {
+	if app := strings.TrimSpace(os.Getenv("FORJ_APP")); app != "" {
+		return app
 	}
 	return "app"
 }
