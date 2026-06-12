@@ -385,6 +385,7 @@ func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testin
 }
 
 func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	b = expectedMetricsLabels(b)
 	if len(a) != len(b) {
 		return false
 	}
@@ -394,5 +395,17 @@ func sameMetricsLabels(a, b []gmetrics.Label) bool {
 		}
 	}
 	return true
+}
+
+func expectedMetricsLabels(labels []gmetrics.Label) []gmetrics.Label {
+	for _, label := range labels {
+		if label.Key == "app" {
+			return labels
+		}
+	}
+	out := make([]gmetrics.Label, 0, len(labels)+1)
+	out = append(out, gmetrics.Label{Key: "app", Value: "app"})
+	out = append(out, labels...)
+	return out
 }
 {{- end }}

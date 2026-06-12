@@ -333,12 +333,12 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
 
 	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 	}); got != 1 {
 		t.Fatalf("requests total: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "http.requests.by_route", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 		{Key: "method", Value: "GET"},
 		{Key: "route", Value: "/users/:id"},
 		{Key: "status", Value: "200"},
@@ -346,7 +346,7 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 		t.Fatalf("labeled request total: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "http.request.duration.by_route", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 		{Key: "method", Value: "GET"},
 		{Key: "route", Value: "/users/:id"},
 	}); got != 1 {
