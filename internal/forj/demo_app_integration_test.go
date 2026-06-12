@@ -216,17 +216,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		t.Fatalf("generate app failed: %v\n%s", err, generateOut.String())
 	}
 
-	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer buildCancel()
-	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
-	build.Dir = projectDir
-	build.Env = testkit.ProcessGoEnv("", nil)
-	var buildOut bytes.Buffer
-	build.Stdout = &buildOut
-	build.Stderr = &buildOut
-	if err := build.Run(); err != nil {
-		t.Fatalf("build app failed: %v\n%s", err, buildOut.String())
-	}
+	buildRenderedDefaultAppTo(t, projectDir, filepath.Join(projectDir, "bin", "app"), nil, "build app")
 
 	for _, driver := range []string{"sync", "workerpool"} {
 		t.Run(driver, func(t *testing.T) {

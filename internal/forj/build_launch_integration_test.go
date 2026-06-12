@@ -77,7 +77,7 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 	})
 
 	t.Run("explicit args bypass auto-run", func(t *testing.T) {
-		cmd := exec.Command(appPath, "--help")
+		cmd := exec.Command(appPath, "custom")
 		cmd.Dir = projectDir
 		cmd.Env = os.Environ()
 		var out bytes.Buffer
@@ -87,7 +87,7 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 			t.Fatalf("run explicit command: %v\n%s", err, out.String())
 		}
 		got := strings.TrimSpace(out.String())
-		if got != "args=[--help]" {
+		if got != "args=[custom]" {
 			t.Fatalf("expected explicit args to bypass auto-run, got %q", got)
 		}
 	})

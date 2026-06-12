@@ -393,7 +393,7 @@ jobs:
       - name: Run demo frontend monitoring tests
         run: |
           set -euo pipefail
-          cd "${UPTIME_GOPHER_DEMO_DIR}/frontend"
+          cd "${UPTIME_GOPHER_DEMO_DIR}/cmd/app/frontend"
           npm install
           npm run test:monitoring-ui
 

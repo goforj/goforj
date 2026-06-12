@@ -50,7 +50,7 @@ func TestCompiledEnvDefaultsLayerWithEnvLoad(t *testing.T) {
 	}, "\n")+"\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestCompiledEnvDefaultsLayerWithEnvLoad", dir, map[string]string{
-		"FEATURE_FROM_OS":  "from-os",
+		"FEATURE_FROM_OS":   "from-os",
 		"FEATURE_COLLISION": "from-os",
 	})
 
@@ -71,7 +71,7 @@ func TestCompiledEnvDefaultsLayerWithEnvLoad(t *testing.T) {
 
 func TestCompiledEnvDefaultsCanSeedAppEnvBeforeEnvLoad(t *testing.T) {
 	if os.Getenv("GO_WANT_ENV_DEFAULTS_APP_ENV_HELPER") == "1" {
-		runAppEnvHelper()
+		runAppEnvDefaultsHelper()
 		return
 	}
 
@@ -101,7 +101,7 @@ func TestCompiledEnvOverridesBeatEnvAndOS(t *testing.T) {
 	}, "\n")+"\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestCompiledEnvOverridesBeatEnvAndOS", dir, map[string]string{
-		"FEATURE_FROM_OS":  "from-os",
+		"FEATURE_FROM_OS":   "from-os",
 		"FEATURE_COLLISION": "from-os",
 	})
 
@@ -163,7 +163,7 @@ func TestApplyAppEnvOverlayPromotesAnyAppPrefixedKey(t *testing.T) {
 
 func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
 	if os.Getenv("GO_WANT_APP_ENV_HELPER") == "1" {
-		runAppEnvHelper()
+		runAppEnvOverlayHelper()
 		return
 	}
 
@@ -215,7 +215,7 @@ func runEnvDefaultsLayerHelper() {
 	os.Exit(0)
 }
 
-func runAppEnvHelper() {
+func runAppEnvDefaultsHelper() {
 	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
 	if err := os.Chdir(dir); err != nil {
 		fmt.Printf("CHDIR_ERROR=%v\n", err)
@@ -281,7 +281,7 @@ func runAppEnvOverrideHelper() {
 	os.Exit(0)
 }
 
-func runAppEnvHelper() {
+func runAppEnvOverlayHelper() {
 	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
 	if err := os.Chdir(dir); err != nil {
 		fmt.Printf("CHDIR_ERROR=%v\n", err)
