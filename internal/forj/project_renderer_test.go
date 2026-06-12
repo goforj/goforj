@@ -125,6 +125,27 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 		t.Fatalf("read docker compose template: %v", err)
 	}
 	template := string(data)
+	for _, token := range []string{
+		"grafana-data-init:",
+		"chown -R",
+		"chmod -R a+rwX /var/lib/grafana",
+		"service_completed_successfully",
+		"./_data/grafana:/var/lib/grafana",
+	} {
+		if strings.Contains(template, token) {
+			t.Fatalf("expected docker compose template not to contain %q\n%s", token, template)
+		}
+	}
+	for _, token := range []string{
+		"grafana:\n    driver: local",
+		"grafana:/var/lib/grafana",
+		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
+		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
+	} {
+		if !strings.Contains(template, token) {
+			t.Fatalf("expected docker compose template to contain %q\n%s", token, template)
+		}
+	}
 	seedIndex := strings.Index(template, "  grafana-seed:")
 	if seedIndex < 0 {
 		t.Fatal("expected docker compose template to include grafana-seed")
@@ -135,6 +156,66 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	}
 	if !strings.Contains(seedBlock, "stop_grace_period: 1s") {
 		t.Fatalf("expected grafana-seed to stop quickly during dev shutdown:\n%s", seedBlock)
+	}
+}
+
+func TestDatabaseComposeDataUsesNamedVolumes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "docker-compose.yml.tmpl"))
+	if err != nil {
+		t.Fatalf("read docker compose template: %v", err)
+	}
+	template := string(data)
+	for _, token := range []string{
+		"mariadb:\n    driver: local",
+		"postgres:\n    driver: local",
+		"grafana:\n    driver: local",
+		"mariadb:/var/lib/mysql",
+		"postgres:/var/lib/postgresql/data",
+		"grafana:/var/lib/grafana",
+	} {
+		if !strings.Contains(template, token) {
+			t.Fatalf("expected docker compose template to contain %q\n%s", token, template)
+		}
+	}
+	for _, token := range []string{
+		"./_data/mariadb:/var/lib/mysql",
+		"./_data/postgres:/var/lib/postgresql/data",
+		"./_data/grafana:/var/lib/grafana",
+	} {
+		if strings.Contains(template, token) {
+			t.Fatalf("expected docker compose template not to contain %q\n%s", token, template)
+		}
+	}
+}
+
+func TestNextStepsIncludeVueAuthLoginHint(t *testing.T) {
+	renderer := &ProjectRenderer{config: &project.Config{
+		Render: project.RenderConfig{
+			StarterKit: project.StarterKitVue,
+			Components: project.Components{
+				WebUI:          true,
+				Auth:           true,
+				DatabaseSQLite: true,
+			},
+		},
+	}}
+
+	steps := strings.Join(renderer.nextSteps(), "\n")
+	for _, want := range []string{
+		"Sign into the Vue app locally",
+		"Create another auth user",
+		"admin",
+		"auth:create-user",
+	} {
+		if !strings.Contains(steps, want) {
+			t.Fatalf("expected next steps to contain %q:\n%s", want, steps)
+		}
+	}
+
+	renderer.config.Render.Components.Auth = false
+	steps = strings.Join(renderer.nextSteps(), "\n")
+	if strings.Contains(steps, "auth:create-user") {
+		t.Fatalf("expected auth login hint to be omitted without auth:\n%s", steps)
 	}
 }
 

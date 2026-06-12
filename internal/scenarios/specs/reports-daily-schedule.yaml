@@ -11,6 +11,9 @@ app:
     jobs: true
     scheduler: true
 markdown:
+  path_position: 6
+  path_total: 7
+  estimated_minutes: 15
   intro: |
     This scenario adds a `reports:daily` schedule that dispatches the existing `reports:generate` job.
 

@@ -4238,6 +4238,11 @@ func (p *ProjectRenderer) nextSteps() []string {
 			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install"
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render(cmd)))
 		}
+		if p.config.Render.StarterKit == project.StarterKitVue && p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {
+			createUserCmd := "bin/app auth:create-user --username <username> --email <email> --password <password>"
+			steps = append(steps, fmt.Sprintf("Sign into the Vue app locally with %s / %s", commandStyle.Render("admin"), commandStyle.Render("admin")))
+			steps = append(steps, fmt.Sprintf("Create another auth user: %s", commandStyle.Render(createUserCmd)))
+		}
 		if p.config.Render.Components.Mail && p.config.Render.Components.Docker {
 			steps = append(steps, fmt.Sprintf("Open Mailpit inbox at %s", commandStyle.Render("http://localhost:8025")))
 		}

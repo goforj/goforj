@@ -63,21 +63,15 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	for _, token := range []string{
 		"victoriametrics:",
 		"vmagent:",
-		"grafana-data-init:",
 		"grafana:",
 		"grafana-seed:",
 		"stop_grace_period: 1s",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
-		`condition: service_completed_successfully`,
-		`mkdir -p /var/lib/grafana/plugins`,
-		`uid="$(id -u grafana 2>/dev/null || echo 472)"`,
-		`gid="$(id -g grafana 2>/dev/null || echo 0)"`,
-		`chown -R "$${uid}:$${gid}" /var/lib/grafana 2>/dev/null || true`,
-		`chmod -R a+rwX /var/lib/grafana`,
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
-		"./_data/grafana:/var/lib/grafana",
+		"grafana:/var/lib/grafana",
 		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		"mariadb:/var/lib/mysql",
 	} {
 		if !strings.Contains(composeText, token) {
 			t.Fatalf("docker-compose.yml missing %q\n%s", token, composeText)
@@ -85,6 +79,17 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	}
 	if strings.Contains(composeText, "/var/lib/grafana/dashboards") {
 		t.Fatalf("docker-compose.yml should not mount dashboards under Grafana data path\n%s", composeText)
+	}
+	for _, token := range []string{
+		"grafana-data-init:",
+		`condition: service_completed_successfully`,
+		`chown -R "$${uid}:$${gid}" /var/lib/grafana`,
+		"./_data/grafana:/var/lib/grafana",
+		"./_data/mariadb:/var/lib/mysql",
+	} {
+		if strings.Contains(composeText, token) {
+			t.Fatalf("docker-compose.yml should not contain %q\n%s", token, composeText)
+		}
 	}
 
 	prometheusYAML := readRenderedFile(t, projectDir, "containers/observability/vmagent/prometheus.yml")

@@ -9,6 +9,9 @@ app:
   components:
     web_api: true
 markdown:
+  path_position: 3
+  path_total: 7
+  estimated_minutes: 20
   intro: |
     This scenario adds a `POST /api/v1/uploads` endpoint that writes a file to a named `uploads` storage disk.
 
