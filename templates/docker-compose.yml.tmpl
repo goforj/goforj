@@ -5,6 +5,18 @@ networks:
 volumes:
   noop:
     driver: local
+{{- if .Components.DatabaseMySQL }}
+  mariadb:
+    driver: local
+{{ end }}
+{{- if .Components.DatabasePostgres }}
+  postgres:
+    driver: local
+{{ end }}
+{{- if .Components.Grafana }}
+  grafana:
+    driver: local
+{{ end }}
 {{- if .Components.Jobs }}
   redis:
     driver: local
@@ -44,33 +56,11 @@ services:
 {{- end }}
 
 {{- if .Components.Grafana }}
-  grafana-data-init:
-    restart: "no"
-    image: grafana/grafana:12.0.2
-    user: "0:0"
-    volumes:
-      - ./_data/grafana:/var/lib/grafana
-    entrypoint:
-      - sh
-      - -lc
-    command:
-      - |
-        mkdir -p /var/lib/grafana/plugins
-        uid="$(id -u grafana 2>/dev/null || echo 472)"
-        gid="$(id -g grafana 2>/dev/null || echo 0)"
-        chown -R "$${uid}:$${gid}" /var/lib/grafana 2>/dev/null || true
-        chmod -R a+rwX /var/lib/grafana
-    networks:
-      - backend
-
   grafana:
     restart: unless-stopped
     image: grafana/grafana:12.0.2
     depends_on:
-      victoriametrics:
-        condition: service_started
-      grafana-data-init:
-        condition: service_completed_successfully
+      - victoriametrics
     ports:
       - ${IP_ADDRESS:-0.0.0.0}:${GRAFANA_PORT:-13001}:3000
     environment:
@@ -78,7 +68,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
-      - ./_data/grafana:/var/lib/grafana
+      - grafana:/var/lib/grafana
       - ./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro
     networks:
@@ -122,7 +112,7 @@ services:
     ports:
       - ${IP_ADDRESS:-0.0.0.0}:{{- if .Components.DatabasePostgres }}${DB_MYSQL_PORT:-3306}{{- else }}${DB_MYSQL_PORT:-${DB_PORT:-3306}}{{- end }}:3306
     volumes:
-      - ./_data/mariadb:/var/lib/mysql
+      - mariadb:/var/lib/mysql
     environment:
       - MARIADB_DATABASE=${DB_DATABASE}
       - MARIADB_USER=${DB_USERNAME}
@@ -141,7 +131,7 @@ services:
     ports:
       - ${IP_ADDRESS:-0.0.0.0}:{{- if .Components.DatabaseMySQL }}${DB_POSTGRES_PORT:-5432}{{- else }}${DB_POSTGRES_PORT:-${DB_PORT:-5432}}{{- end }}:5432
     volumes:
-      - ./_data/postgres:/var/lib/postgresql/data
+      - postgres:/var/lib/postgresql/data
     environment:
       - POSTGRES_DB=${DB_DATABASE}
       - POSTGRES_USER=${DB_USERNAME}

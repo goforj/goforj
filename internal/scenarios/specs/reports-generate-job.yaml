@@ -10,6 +10,9 @@ app:
     web_api: true
     jobs: true
 markdown:
+  path_position: 5
+  path_total: 7
+  estimated_minutes: 25
   intro: |
     This scenario turns the `users.created` subscriber into a durable work dispatcher.
 

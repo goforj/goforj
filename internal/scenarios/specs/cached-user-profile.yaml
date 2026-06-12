@@ -9,6 +9,9 @@ app:
   components:
     web_api: true
 markdown:
+  path_position: 2
+  path_total: 7
+  estimated_minutes: 15
   intro: |
     This scenario extends the JSON API route with a repository and a named cache resource.
 

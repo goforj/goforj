@@ -11,6 +11,9 @@ app:
     jobs: true
     scheduler: true
 markdown:
+  path_position: 7
+  path_total: 7
+  estimated_minutes: 15
   intro: |
     This scenario follows the same application behavior through the surfaces operators use to trust a running App.
 
@@ -100,14 +103,14 @@ markdown:
         Check the shared local metrics endpoint:
 
         ```bash
-        curl http://localhost:9100/metrics
+        curl http://localhost:10000/metrics
         ```
 
         When split runtime commands expose source-specific listeners, also check:
 
         ```bash
-        curl http://localhost:9101/metrics
-        curl http://localhost:9102/metrics
+        curl http://localhost:10001/metrics
+        curl http://localhost:10002/metrics
         ```
 
         Look for bounded labels such as route name or pattern, queue name, job name, schedule name, source, and status. Do not expect user IDs, emails, raw URLs, or storage filenames to appear as labels.

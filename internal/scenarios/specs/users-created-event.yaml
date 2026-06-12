@@ -9,6 +9,9 @@ app:
   components:
     web_api: true
 markdown:
+  path_position: 4
+  path_total: 7
+  estimated_minutes: 25
   intro: |
     This scenario extends the user profile flow with a `POST /api/v1/users` endpoint that publishes a typed `users.created` event after a user is saved.
 
