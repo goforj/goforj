@@ -132,10 +132,10 @@ func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string,
 		"params": params,
 	})
 	if err := conn.WriteJSON(map[string]any{
-		"type":    "command",
-		"id":      id,
-		"target":  target,
-		"payload": json.RawMessage(payload),
+		"type":        "command",
+		"id":          id,
+		"destination": target,
+		"payload":     json.RawMessage(payload),
 	}); err != nil {
 		return nil, fmt.Errorf("send command: %w", err)
 	}
