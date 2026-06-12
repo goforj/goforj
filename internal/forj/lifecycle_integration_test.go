@@ -107,17 +107,7 @@ func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
 		t.Fatalf("write lifecycle registry: %v", err)
 	}
 
-	buildCtx, buildCancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer buildCancel()
-	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
-	build.Dir = projectDir
-	build.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	var buildOut bytes.Buffer
-	build.Stdout = &buildOut
-	build.Stderr = &buildOut
-	if err := build.Run(); err != nil {
-		t.Fatalf("build app failed: %v\n%s", err, buildOut.String())
-	}
+	buildRenderedDefaultAppTo(t, projectDir, filepath.Join(projectDir, "bin", "app"), nil, "build app")
 
 	t.Run("runs hooks in expected order on success", func(t *testing.T) {
 		traceFile := filepath.Join(projectDir, "lifecycle.trace")

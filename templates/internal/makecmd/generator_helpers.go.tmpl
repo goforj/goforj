@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -149,7 +150,36 @@ func writeGeneratorGoFile(path string, src []byte) error {
 	if err != nil {
 		return fmt.Errorf("gofmt error: %w", err)
 	}
-	return os.WriteFile(path, formatted, 0644)
+	if err := os.WriteFile(path, formatted, 0644); err != nil {
+		return err
+	}
+	return refreshWireGeneratedFile(path)
+}
+
+func refreshWireGeneratedFile(path string) error {
+	cleanPath := filepath.Clean(path)
+	if filepath.Base(cleanPath) == "wire_gen.go" || filepath.Base(filepath.Dir(cleanPath)) != "wire" {
+		return nil
+	}
+
+	wireDir := filepath.Dir(cleanPath)
+	if _, err := os.Stat(filepath.Join(wireDir, "wire.go")); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	cmd := exec.Command("go", "run", "github.com/goforj/wire/cmd/wire@v1.2.0")
+	if wirePath, err := exec.LookPath("wire"); err == nil {
+		cmd = exec.Command(wirePath)
+	}
+	cmd.Dir = wireDir
+	cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("wire generate %s: %w\n%s", wireDir, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func writeGeneratorGoLines(path string, lines []string) error {

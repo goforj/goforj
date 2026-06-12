@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -25,13 +24,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	projectDir := t.TempDir()
 	renderMetricsTestApp(t, projectDir)
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered app")
 
 	httpAddr := findFreeAddr(t)
 	_, httpPort, err := net.SplitHostPort(httpAddr)
@@ -145,13 +138,7 @@ func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 		},
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered demo app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered demo app")
 
 	httpAddr := findFreeAddr(t)
 	_, httpPort, err := net.SplitHostPort(httpAddr)
@@ -223,13 +210,7 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 		},
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered monitoring metrics app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered monitoring metrics app")
 
 	runCommandSuccess(t, projectDir, binPath, nil, "migrate")
 
@@ -364,13 +345,7 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 		EnvOverrides: queueEnv,
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered jobs app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered jobs app")
 
 	runCommandSuccess(t, projectDir, binPath, queueEnv, "migrate")
 	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed")
@@ -455,13 +430,7 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 		EnvOverrides: validQueueEnv,
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered scheduler app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered scheduler app")
 
 	runCommandSuccess(t, projectDir, binPath, validQueueEnv, "migrate")
 	runCommandSuccess(t, projectDir, binPath, validQueueEnv, "monitor:seed")

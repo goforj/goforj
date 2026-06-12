@@ -5,7 +5,6 @@ package forj
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,12 +40,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		},
 	})
 
-	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered app: %v\n%s", err, out)
-	}
+	buildRenderedDefaultApp(t, projectDir, nil, "build rendered app")
 
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "local")
@@ -404,8 +398,8 @@ func assertRenderedMetricsTargets(t *testing.T, entries []renderedMetricsTargetE
 		t.Fatalf("metrics target count = %d, want %d\n%#v", len(entries), len(want), entries)
 	}
 	for i, entry := range entries {
-		if len(entry.Targets) != 1 || entry.Targets[0] != want[i].App {
-			t.Fatalf("metrics target[%d] = %#v, want %q", i, entry.Targets, want[i].App)
+		if len(entry.Targets) != 1 || entry.Targets[0] != want[i].Target {
+			t.Fatalf("metrics target[%d] = %#v, want %q", i, entry.Targets, want[i].Target)
 		}
 		if entry.Labels["app"] != want[i].App {
 			t.Fatalf("metrics target[%d] app = %q, want %q", i, entry.Labels["app"], want[i].App)

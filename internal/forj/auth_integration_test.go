@@ -133,7 +133,7 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 	if err != nil {
 		t.Fatalf("read %s: %v", injectPath, err)
 	}
-	hasMailProvider := strings.Contains(string(injectSource), "observability.NewMailManager")
+	hasMailProvider := strings.Contains(string(injectSource), "provideMailManager")
 	if enabled && !hasMailProvider {
 		t.Fatalf("expected %s to include mail manager provider", injectPath)
 	}
@@ -304,13 +304,7 @@ func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, envOve
 func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string) {
 	t.Helper()
 
-	runRenderedAuthCommand(
-		t,
-		projectDir,
-		"go build",
-		[]string{"go", "build", "-o", "./bin/app", "."},
-		testkit.IntegrationGoProcessEnv(t, nil),
-	)
+	buildRenderedDefaultAppTo(t, projectDir, filepath.Join(projectDir, "bin", "app"), nil, "go build")
 	runRenderedAuthCommand(
 		t,
 		projectDir,
