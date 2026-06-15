@@ -273,8 +273,15 @@ func interpolateComposeService(service composeService, env map[string]string) co
 }
 
 func interpolateComposeValue(input string, env map[string]string) string {
+	return interpolateComposeValueDepth(input, env, 0)
+}
+
+func interpolateComposeValueDepth(input string, env map[string]string, depth int) string {
 	if input == "" {
 		return ""
+	}
+	if depth > 8 {
+		return input
 	}
 	var out strings.Builder
 	for i := 0; i < len(input); {
@@ -295,7 +302,11 @@ func interpolateComposeValue(input string, env map[string]string) string {
 		out.WriteByte(input[i])
 		i++
 	}
-	return out.String()
+	resolved := out.String()
+	if strings.Contains(resolved, "${") && resolved != input {
+		return interpolateComposeValueDepth(resolved, env, depth+1)
+	}
+	return resolved
 }
 
 func startComposeService(logf Logf, projectDir, name string, service composeService) (*StartedContainer, error) {

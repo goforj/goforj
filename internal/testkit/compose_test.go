@@ -61,6 +61,35 @@ services:
 	}
 }
 
+func TestLoadRenderedComposeInterpolatesNestedDefaultPorts(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("IP_ADDRESS=0.0.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  mysql:
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:${DB_MYSQL_PORT:-${DB_PORT:-3306}}:3306
+  postgres:
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:${DB_POSTGRES_PORT:-${DB_PORT:-5432}}:5432
+`), 0o644); err != nil {
+		t.Fatalf("write docker-compose.yml: %v", err)
+	}
+
+	model, err := loadRenderedCompose(projectDir)
+	if err != nil {
+		t.Fatalf("load rendered compose: %v", err)
+	}
+	if got := model.Services["mysql"].Ports[0]; got != "0.0.0.0:3306:3306" {
+		t.Fatalf("mysql port mapping = %q, want %q", got, "0.0.0.0:3306:3306")
+	}
+	if got := model.Services["postgres"].Ports[0]; got != "0.0.0.0:5432:5432" {
+		t.Fatalf("postgres port mapping = %q, want %q", got, "0.0.0.0:5432:5432")
+	}
+}
+
 func TestRenderedComposeStackEnvOverrides(t *testing.T) {
 	stack := &RenderedComposeStack{
 		services: map[string]*StartedContainer{
