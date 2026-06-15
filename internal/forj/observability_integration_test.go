@@ -158,7 +158,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"HTTP Overview",
 		"http_requests_by_route_total",
 		"http_request_duration_by_route_seconds_bucket",
-		"label_values(http_requests_by_route_total, route)",
+		`label_values(http_requests_by_route_total{app=~\"$app\"}, route)`,
 	} {
 		if !strings.Contains(httpDashboardJSON, token) {
 			t.Fatalf("http dashboard missing %q\n%s", token, httpDashboardJSON)
@@ -209,7 +209,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"database_query_fingerprint_info",
 		"database_slow_queries_total",
 		"database_slow_query_duration_seconds_bucket",
-		"label_values(database_queries_by_fingerprint_total, fingerprint)",
+		`label_values(database_queries_by_fingerprint_total{app=~\"$app\"}, fingerprint)`,
 		"Queries / sec",
 		"Top Query Fingerprints By Volume",
 		"P95 Slow Query Latency By Fingerprint",

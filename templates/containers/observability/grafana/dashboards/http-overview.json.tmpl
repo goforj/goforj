@@ -90,7 +90,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\", status=~\"4..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\"}[$__rate_interval])), 0.001)",
+          "expr": "100 * sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"4..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\"}[$__rate_interval])), 0.001)",
           "legendFormat": "4xx",
           "range": true,
           "refId": "A"
@@ -131,7 +131,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\", status=~\"5..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\"}[$__rate_interval])), 0.001)",
+          "expr": "100 * sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"5..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\"}[$__rate_interval])), 0.001)",
           "legendFormat": "5xx",
           "range": true,
           "refId": "A"
@@ -416,7 +416,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (route, status) (rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\", status=~\"4..|5..\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (route, status) (rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"4..|5..\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ route }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
@@ -465,7 +465,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (route) (rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"$status\", status=~\"401|403\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (route) (rate(http_requests_by_route_total{app=~\"$app\", method=~\"$method\", route=~\"$route\", status=~\"401|403\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ route }}" }}",
           "range": true,
           "refId": "A"

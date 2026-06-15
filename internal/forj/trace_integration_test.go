@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/testkit"
+	"github.com/gorilla/websocket"
 )
 
 type renderedTraceSummary struct {
@@ -76,7 +77,10 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort)
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationProcessEnv(t, map[string]string{
-		"LIGHTHOUSE_AGENT_RETRY_MS": "100",
+		"LIGHTHOUSE_AGENT_RETRY_MS":           "100",
+		"LIGHTHOUSE_INSPECT_ENABLED":          "true",
+		"LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE": "1",
+		"LIGHTHOUSE_INSPECT_FLUSH_INTERVAL":   "100ms",
 	})
 	handle := &procHandle{
 		name:   "http",
@@ -102,6 +106,9 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	if err := waitForRenderedAgents(ctx, baseURL, token, []string{"http"}, 5*time.Second); err != nil {
 		t.Fatalf("http lighthouse agent did not register: %v\n%s", err, handle.Output())
 	}
+	consoleConn := dialRenderedConsoleWS(t, baseURL, token)
+	defer consoleConn.Close()
+	time.Sleep(200 * time.Millisecond)
 
 	helloResp, err := http.Get(baseURL + "/api/v1/hello")
 	if err != nil {
@@ -154,6 +161,19 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	}
 
 	t.Fatalf("recent trace list missing GET /api/v1/hello http trace\nsummaries=%+v\n%s", summaries, handle.Output())
+}
+
+func dialRenderedConsoleWS(t *testing.T, baseURL, token string) *websocket.Conn {
+	t.Helper()
+
+	wsURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/lighthouse/ws/console"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+token)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial rendered console websocket %s: %v", wsURL, err)
+	}
+	return conn
 }
 
 func findRenderedTraceEvent(events []renderedTraceEvent, kind, name string) *renderedTraceEvent {
