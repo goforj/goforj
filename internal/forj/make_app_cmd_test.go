@@ -76,6 +76,54 @@ func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 	}
 }
 
+func TestMakeAppCmdUsesNextAvailableEnvPortForSequentialApps(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := writeProjectConfig(".goforj.yml", &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render: project.RenderConfig{
+			Components: project.Components{
+				WebAPI: true,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	for _, name := range []string{"workshop", "backstage"} {
+		cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+		cmd.Name = name
+		cmd.SkipWire = true
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("make app %s: %v", name, err)
+		}
+	}
+
+	envSrc := readMakeAppTestFile(t, ".env")
+	for _, want := range []string{
+		"WORKSHOP_APP_URL=http://localhost:3001",
+		"WORKSHOP_API_HTTP_PORT=3001",
+		"BACKSTAGE_APP_URL=http://localhost:3002",
+		"BACKSTAGE_API_HTTP_PORT=3002",
+	} {
+		if !strings.Contains(envSrc, want) {
+			t.Fatalf("expected env entry %q, got:\n%s", want, envSrc)
+		}
+	}
+	if strings.Count(envSrc, "API_HTTP_PORT=3001") != 1 {
+		t.Fatalf("expected only one app to use HTTP port 3001, got:\n%s", envSrc)
+	}
+}
+
 func TestMakeAppCmdCreatesAPIOnlyAppInWebUIProject(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()

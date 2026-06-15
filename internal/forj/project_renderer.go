@@ -1306,7 +1306,8 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 		return nil
 	}
 
-	metadata := runtimeAppMetadataForApp(app)
+	metadata := runtimeAppMetadataForConfiguredApp(p.config, app)
+	metadata.HTTPPort = nextAvailableAppHTTPPort(".env", prefix, metadata.HTTPPort)
 	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)
 	if driver := components.DatabaseDriver(); driver != "" {
 		baseDriver := ""
@@ -1379,6 +1380,58 @@ func appRuntimeEnvDefaults(prefix string, metadata runtimeAppMetadata, component
 		values[prefix+"_API_HTTP_PORT"] = strconv.Itoa(metadata.HTTPPort)
 	}
 	return values
+}
+
+// nextAvailableAppHTTPPort keeps sequential make:app runs from reusing a port
+// that was already written for another named app in the local env defaults.
+func nextAvailableAppHTTPPort(path string, prefix string, preferred int) int {
+	if preferred <= 0 {
+		preferred = 3001
+	}
+	used := appHTTPPortsFromEnv(path, prefix)
+	if _, exists := used[preferred]; !exists {
+		return preferred
+	}
+	for port := 3001; port < 4000; port++ {
+		if _, exists := used[port]; !exists {
+			return port
+		}
+	}
+	return preferred
+}
+
+func appHTTPPortsFromEnv(path string, currentPrefix string) map[int]struct{} {
+	used := map[int]struct{}{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return used
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := parseEnvLine(line)
+		if !ok || !isNamedAppHTTPPortKey(key, currentPrefix) {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || port <= 0 {
+			continue
+		}
+		used[port] = struct{}{}
+	}
+	return used
+}
+
+func isNamedAppHTTPPortKey(key string, currentPrefix string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || currentPrefix == "" {
+		return false
+	}
+	if strings.HasPrefix(key, currentPrefix+"_") {
+		return false
+	}
+	if key == "PORT" || key == "API_HTTP_PORT" {
+		return false
+	}
+	return strings.HasSuffix(key, "_API_HTTP_PORT") || strings.HasSuffix(key, "_PORT")
 }
 
 // appDatabaseEnvDefaults creates conventional env keys for one app database driver.
@@ -3846,8 +3899,24 @@ func runtimeAppMetadataForRender() []runtimeAppMetadata {
 
 // runtimeAppMetadataForApp resolves deterministic ports even before a new app exists on disk.
 func runtimeAppMetadataForApp(app project.App) runtimeAppMetadata {
+	return runtimeAppMetadataForAppFromApps(app, append(renderApps(), app))
+}
+
+// runtimeAppMetadataForConfiguredApp includes persisted app config so make:app can
+// assign env defaults before the new conventional files are fully discoverable.
+func runtimeAppMetadataForConfiguredApp(config *project.Config, app project.App) runtimeAppMetadata {
+	apps := renderApps()
+	if config != nil {
+		for name := range config.Apps {
+			apps = append(apps, project.DefaultNamedApp(name))
+		}
+	}
+	apps = append(apps, app)
+	return runtimeAppMetadataForAppFromApps(app, apps)
+}
+
+func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runtimeAppMetadata {
 	app = normalizeRenderApp(app)
-	apps := append(renderApps(), app)
 	seen := map[string]project.App{}
 	for _, candidate := range apps {
 		candidate = normalizeRenderApp(candidate)
