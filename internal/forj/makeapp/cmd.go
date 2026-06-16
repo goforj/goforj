@@ -267,7 +267,7 @@ func (c *Cmd) app() (project.App, error) {
 		return project.App{}, fmt.Errorf("app %q already exists as the default app", name)
 	}
 	if !project.IsSafeAppName(name) {
-		return project.App{}, fmt.Errorf("invalid app name %q; use a path-safe slug such as billing or customer-portal", name)
+		return project.App{}, fmt.Errorf("invalid app name %q; use a lowercase kebab-case slug such as marketplace or customer-portal", name)
 	}
 	if project.IsReservedAppName(name) {
 		return project.App{}, fmt.Errorf("app name %q is reserved by the app layout", name)

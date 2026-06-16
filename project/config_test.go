@@ -80,12 +80,12 @@ func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
 }
 
 func TestIsSafeAppName(t *testing.T) {
-	for _, name := range []string{"app", "reporting", "customer-portal", "ops_api", "v2"} {
+	for _, name := range []string{"app", "reporting", "customer-portal", "v2"} {
 		if !IsSafeAppName(name) {
 			t.Fatalf("expected %q to be safe", name)
 		}
 	}
-	for _, name := range []string{"", ".", "..", "../reporting", "reporting/api", "reporting api"} {
+	for _, name := range []string{"", ".", "..", "../reporting", "reporting/api", "reporting api", "ops_api", "CustomerPortal", "2fa", "-admin", "admin-", "admin--api"} {
 		if IsSafeAppName(name) {
 			t.Fatalf("expected %q to be unsafe", name)
 		}
@@ -119,7 +119,6 @@ func TestAppPackageName(t *testing.T) {
 		"app":             "app",
 		"reporting":       "reportingapp",
 		"customer-portal": "customerportalapp",
-		"ops_api":         "opsapiapp",
 		"2fa":             "app2faapp",
 	}
 	for input, want := range tests {

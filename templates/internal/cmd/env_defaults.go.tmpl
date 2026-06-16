@@ -40,7 +40,7 @@ func LoadEnv() error {
 		return err
 	}
 
-	appEnvBeforeTargetOverlay := os.Getenv("APP_ENV")
+	appEnvBeforeAppOverlay := os.Getenv("APP_ENV")
 	switch {
 	case hasOverride:
 		if err := os.Setenv("APP_ENV", overrideAppEnv); err != nil {
@@ -58,8 +58,8 @@ func LoadEnv() error {
 	if err := ApplyAppEnvOverlay(); err != nil {
 		return err
 	}
-	if appEnvAfterTargetOverlay := os.Getenv("APP_ENV"); appEnvAfterTargetOverlay != "" && appEnvAfterTargetOverlay != appEnvBeforeTargetOverlay {
-		if err := loadCompiledAppEnvFile(appEnvAfterTargetOverlay); err != nil {
+	if appEnvAfterAppOverlay := os.Getenv("APP_ENV"); appEnvAfterAppOverlay != "" && appEnvAfterAppOverlay != appEnvBeforeAppOverlay {
+		if err := loadCompiledAppEnvFile(appEnvAfterAppOverlay); err != nil {
 			return err
 		}
 		if err := ApplyAppEnvOverlay(); err != nil {

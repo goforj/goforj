@@ -61,6 +61,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"grafana-seed:",
 		"stop_grace_period: 1s",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
+		"victoriametrics:/victoria-metrics-data",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
 		"grafana:/var/lib/grafana",
 		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
@@ -78,6 +79,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"grafana-data-init:",
 		`condition: service_completed_successfully`,
 		`chown -R "$${uid}:$${gid}" /var/lib/grafana`,
+		"./_data/victoriametrics:/victoria-metrics-data",
 		"./_data/grafana:/var/lib/grafana",
 		"./_data/mariadb:/var/lib/mysql",
 	} {
