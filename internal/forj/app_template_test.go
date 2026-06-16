@@ -23,20 +23,21 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	for _, snippet := range []string{
 		"func (a *App) Cache() *cache.Cache",
 		"return a.cache.Default()",
-		"func (a *App) Topology() app.RuntimeTopology",
+		"func (a *App) Topology() runtime.RuntimeTopology",
 		"return a.topology.Normalized()",
-		`Mode: app.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
+		`Mode: runtime.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
 		"func (a *App) Caches() *caches.Manager",
 		"func (a *App) Storage() *storages.Manager",
-		"func (a *App) Bus() eventcore.Bus",
+		"func (a *App) Bus() events.Bus",
 		"return a.events.Default()",
-		"func (a *App) Events() *eventcore.Manager",
+		"func (a *App) Events() *events.Manager",
 		"func (a *App) Queue() *queue.Queue",
 		"return a.queues.Default()",
 		"func (a *App) Queues() *queues.Manager",
-		`app.NewLifecycle(appTimeouts)`,
+		`runtime.NewLifecycle(appTimeouts)`,
 		`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
+		`kong.Name(cmd.AppHelpName())`,
 		`cmd.CommandParseError(parser, command, err)`,
 	} {
 		if !strings.Contains(source, snippet) {
@@ -54,7 +55,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 
 	files := map[string][]string{
 		filepath.Join(base, "about_cmd.go.tmpl"): {
-			`name:"about" help:"Show environment and configured services for this app" goforj:"skip_boot"`,
+			`name:"about" help:"Show environment and configured services for this app" goforj:"preboot"`,
 			`type AboutCmd struct {`,
 			`JSON`,
 			`NoColor`,
@@ -72,8 +73,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func aboutConnectionInventoryRows(`,
 			`func aboutComponentGridRows(`,
 			`func aboutValueColor(`,
-			`appinfo "{{.GoModuleName}}/internal/app"`,
-			`func (c *AboutCmd) aboutService() *appinfo.AboutService`,
+			`"{{.GoModuleName}}/internal/runtime"`,
+			`func (c *AboutCmd) aboutService() *runtime.AboutService`,
 		},
 		filepath.Join(base, "about_cmd_test.go.tmpl"): {
 			`func TestAboutConnectionInventoryRendersOneRowPerResource(`,
@@ -84,7 +85,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`report_processing  redis   report-processing`,
 		},
 		filepath.Join(base, "health_cmd.go.tmpl"): {
-			`name:"health" help:"Query a live app readiness or liveness endpoint" goforj:"skip_boot"`,
+			`name:"health" help:"Query a live app readiness or liveness endpoint" goforj:"preboot"`,
 			`type HealthCmd struct {`,
 			`Probe`,
 			`TimeoutMs`,
@@ -99,7 +100,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`return printJSON(map[string]any{`,
 		},
 		filepath.Join(base, "db_shell_cmd.go.tmpl"): {
-			`name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"skip_boot"`,
+			`name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"preboot"`,
 			`type DBShellCmd struct {`,
 			`RawArgs       []string`,
 			`passthrough:""`,
@@ -111,10 +112,10 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func NewDBShellCmd() *DBShellCmd`,
 			`func (c *DBShellCmd) resolveLaunch(conn dbShellConnection)`,
 			`exec.Command(launch.Command, launch.Args...)`,
-			`appinfo "{{.GoModuleName}}/internal/app"`,
+			`"{{.GoModuleName}}/internal/runtime"`,
 		},
 		filepath.Join(base, "cache_shell_cmd.go.tmpl"): {
-			`name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"skip_boot"`,
+			`name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"preboot"`,
 			`type CacheShellCmd struct {`,
 			`RawArgs  []string`,
 			`passthrough:""`,
@@ -126,30 +127,28 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func NewCacheShellCmd() *CacheShellCmd`,
 			`func (c *CacheShellCmd) resolveLaunch(store cacheShellStore)`,
 			`exec.Command(launch.Command, launch.Args...)`,
-			`appinfo "{{.GoModuleName}}/internal/app"`,
+			`"{{.GoModuleName}}/internal/runtime"`,
 		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutTerminalWidth() int`,
 			`term.GetSize`,
 		},
-		filepath.Join(base, "skip_boot.go.tmpl"): {
-			`var skipBootFactories = []skipBootFactory{`,
-			`func() interface{} { return NewAboutCmd() },`,
-			`func() interface{} { return NewCacheShellCmd() },`,
-			`func() interface{} { return NewDBShellCmd() },`,
-			`func() interface{} { return makecmd.NewCommandCmd() },`,
-			`func() interface{} { return makecmd.NewControllerCmd() },`,
-			`func() interface{} { return makecmd.NewMigrationCmd() },`,
-			`{{- if or .Components.WebAPI .Components.WebUI }}`,
-			`func() interface{} { return NewHealthCmd() },`,
-			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
-			`func() interface{} { return makecmd.NewQueueCmd() },`,
-			`func skipBootCommandMetadata(command interface{}) (string, []string, bool)`,
-			`func skipBootCommandNameMatches(arg string, name string, aliases []string) bool`,
-			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
-			`func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand)`,
+		filepath.Join(base, "preboot.go.tmpl"): {
+			`func DispatchPrebootCommand(args []string, root interface{}) (bool, error)`,
+			`func rootHelpRequested(args []string) bool`,
+			`func AppHelpName() string`,
+			`os.Getenv("FORJ_MULTI_APP_HELP") == "1"`,
+			`return name + " · " + appName`,
+			`func printRootPrebootHelp(root interface{}) error`,
+			`func findPrebootCommand(root interface{}, commandName string) interface{}`,
+			`func findPrebootCommandValue(value reflect.Value, commandName string) interface{}`,
+			`func prebootCommandMatches(command interface{}, commandName string) bool`,
+			`marker != "preboot" && marker != "skip_boot"`,
+			`func prebootCommandNameMatches(arg string, name string, aliases []string) bool`,
+			`func applyStandalonePrebootSignature(node *kong.Node, command standaloneCommand)`,
 		},
-		filepath.Join(base, "skip_boot_test.go.tmpl"): {
+		filepath.Join(base, "preboot_test.go.tmpl"): {
+			`func TestDispatchPrebootCommandHandlesRootHelpBeforeBoot(`,
 			`func TestCommandHelpRequestedAllowsPositionalArgs(`,
 			`args: []string{"Wow", "--help"}, want: true`,
 			`args: []string{"Wow", "--", "--help"}, want: false`,
@@ -168,16 +167,16 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`base64.StdEncoding.DecodeString`,
 			`return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)`,
 		},
-		filepath.Join(filepath.Dir(base), "app", "about.go.tmpl"): {
-			`package app`,
+		filepath.Join(filepath.Dir(base), "runtime", "about.go.tmpl"): {
+			`package runtime`,
 			`type AboutService struct{}`,
 			`func (s *AboutService) Build() AboutReport`,
 			`type AboutSectionData struct {`,
 			`type AboutConnectionData struct {`,
 			`func aboutDatabaseDetails(name string) []AboutField`,
 		},
-		filepath.Join(filepath.Dir(base), "app", "discovery.go.tmpl"): {
-			`package app`,
+		filepath.Join(filepath.Dir(base), "runtime", "discovery.go.tmpl"): {
+			`package runtime`,
 			`type PrimitiveInstance struct {`,
 			`func DiscoverCacheInstances() []PrimitiveInstance`,
 			`func DiscoverQueueInstances() []PrimitiveInstance`,
@@ -195,30 +194,44 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`for _, check := range db.ReadinessChecks() {`,
 			`Check: check.Check,`,
 		},
-		filepath.Join(base, "app_commands.go.tmpl"): {
-			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
-			`CacheShellCmd CacheShellCmd ` + "`cmd:\"\"`",
-			`DBShellCmd DBShellCmd ` + "`cmd:\"\"`",
+		filepath.Join(filepath.Dir(base), "..", "app", "commands.go.tmpl"): {
+			`AboutCmd cmd.AboutCmd ` + "`cmd:\"\"`",
+			`CacheShellCmd cmd.CacheShellCmd ` + "`cmd:\"\"`",
+			`DBShellCmd cmd.DBShellCmd ` + "`cmd:\"\"`",
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
-			`HealthCmd HealthCmd ` + "`cmd:\"\"`",
-			`aboutCmd *AboutCmd,`,
-			`cacheShellCmd *CacheShellCmd,`,
-			`dbShellCmd *DBShellCmd,`,
-			`healthCmd *HealthCmd,`,
+			`HealthCmd cmd.HealthCmd ` + "`cmd:\"\"`",
+			`aboutCmd *cmd.AboutCmd,`,
+			`cacheShellCmd *cmd.CacheShellCmd,`,
+			`dbShellCmd *cmd.DBShellCmd,`,
+			`healthCmd *cmd.HealthCmd,`,
 			`AboutCmd: *aboutCmd,`,
 			`CacheShellCmd: *cacheShellCmd,`,
 			`DBShellCmd: *dbShellCmd,`,
 			`HealthCmd: *healthCmd,`,
 		},
-		filepath.Join(base, "wire.go.tmpl"): {
-			`NewAboutCmd,`,
-			`NewCacheShellCmd,`,
-			`NewDBShellCmd,`,
+		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd.go.tmpl"): {
+			`appCommandSet,`,
+			`{{.AppPackageName}}.NewCommands,`,
+			`{{.AppPackageName}}.NewRootCmd,`,
+			`cmd.NewAboutCmd,`,
+			`cmd.NewCacheShellCmd,`,
+			`cmd.NewDBShellCmd,`,
 			`makecmd.NewCommandCmd,`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
-			`NewHealthCmd,`,
+			`cmd.NewHealthCmd,`,
 			`makecmd.NewControllerCmd,`,
 			`makecmd.NewMigrationCmd,`,
+		},
+		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd_app.go.tmpl"): {
+			`var appCommandSet = wire.NewSet(`,
+			`cmd.NewHelloWorldCmd,`,
+			`cmd.NewTestEventPipelineCmd,`,
+			`monitoring.NewPollCmd,`,
+			`monitoring.NewPushTriggerCmd,`,
+			`monitoring.NewResetCmd,`,
+			`monitoring.NewRetentionCmd,`,
+			`monitoring.NewSeedCmd,`,
+			`monitoring.NewTestPollLoopCmd,`,
 		},
 	}
 
@@ -234,6 +247,196 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestWireInjectorTemplatesDeclareOwnership(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	base := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "wire")
+
+	appOwned := []string{
+		"inject_services_app.go.tmpl",
+		"inject_cmd_app.go.tmpl",
+		"inject_subscribers_app.go.tmpl",
+		"inject_http_controllers_app.go.tmpl",
+		"inject_jobs_app.go.tmpl",
+		"inject_repositories_app.go.tmpl",
+		"inject_schedules_app.go.tmpl",
+	}
+	for _, name := range appOwned {
+		path := filepath.Join(base, name)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		if !strings.Contains(source, "// App-owned Wire injector. EDIT THIS FILE.") {
+			t.Fatalf("expected %s to declare app-owned editability", path)
+		}
+		if strings.Contains(source, "DO NOT EDIT") {
+			t.Fatalf("expected %s not to include DO NOT EDIT", path)
+		}
+	}
+
+	frameworkOwned := []string{
+		"inject_auth.go.tmpl",
+		"inject_cmd.go.tmpl",
+		"inject_db.go.tmpl",
+		"inject_http.go.tmpl",
+		"inject_jobs.go.tmpl",
+		"inject_managers.go.tmpl",
+		"inject_scheduler.go.tmpl",
+	}
+	for _, name := range frameworkOwned {
+		path := filepath.Join(base, name)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		if !strings.Contains(source, "// Code generated by GoForj CLI. DO NOT EDIT.") {
+			t.Fatalf("expected %s to declare framework ownership", path)
+		}
+	}
+
+	wireHarnessPath := filepath.Join(base, "wire.go.tmpl")
+	content, err := os.ReadFile(wireHarnessPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", wireHarnessPath, err)
+	}
+	source := string(content)
+	for _, snippet := range []string{
+		"// GoForj Wire harness. Edit this file when customizing root assembly.",
+		"// Re-rendering can overwrite this file; review local changes before rendering over them.",
+	} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected %s to contain %q", wireHarnessPath, snippet)
+		}
+	}
+	if strings.Contains(source, "DO NOT EDIT") {
+		t.Fatalf("expected %s not to include DO NOT EDIT", wireHarnessPath)
+	}
+}
+
+func TestRepositoryInjectorTemplatesOnlyWireRepositories(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	root := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+
+	for _, path := range []string{
+		filepath.Join(root, "wire", "inject_repositories_app.go.tmpl"),
+		filepath.Join(root, "demo", "wire", "inject_repositories.go.tmpl"),
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		if strings.Contains(source, "NewRetentionService") || strings.Contains(source, "NewIncidentTransitionService") {
+			t.Fatalf("expected %s to contain repository providers only", path)
+		}
+	}
+}
+
+func TestWireInjectorRendererOwnershipMatchesHeaders(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	root := filepath.Join(filepath.Dir(currentFile), "..", "..")
+	rendererPath := filepath.Join(root, "internal", "forj", "project_renderer.go")
+	content, err := os.ReadFile(rendererPath)
+	if err != nil {
+		t.Fatalf("read renderer: %v", err)
+	}
+	source := string(content)
+
+	appOwned := []string{
+		"wire/inject_cmd_app.go.tmpl",
+		"wire/inject_http_controllers_app.go.tmpl",
+		"wire/inject_jobs_app.go.tmpl",
+		"wire/inject_repositories_app.go.tmpl",
+		"wire/inject_schedules_app.go.tmpl",
+		"wire/inject_services_app.go.tmpl",
+		"wire/inject_subscribers_app.go.tmpl",
+	}
+	for _, tmpl := range appOwned {
+		assertRendererTemplateOwnership(t, source, tmpl, true)
+	}
+
+	frameworkOwned := []string{
+		"wire/app.go.tmpl",
+		"wire/app_test.go.tmpl",
+		"wire/inject_auth.go.tmpl",
+		"wire/inject_cmd.go.tmpl",
+		"wire/inject_db.go.tmpl",
+		"wire/inject_http.go.tmpl",
+		"wire/inject_jobs.go.tmpl",
+		"wire/inject_managers.go.tmpl",
+		"wire/inject_scheduler.go.tmpl",
+		"wire/wire.go.tmpl",
+	}
+	for _, tmpl := range frameworkOwned {
+		assertRendererTemplateOwnership(t, source, tmpl, false)
+	}
+}
+
+// assertRendererTemplateOwnership verifies framework-owned templates are rerendered and app-owned templates are preserved.
+func assertRendererTemplateOwnership(t *testing.T, source string, tmpl string, wantOnce bool) {
+	t.Helper()
+	searchFrom := 0
+	found := false
+	for {
+		idx := strings.Index(source[searchFrom:], tmpl)
+		if idx == -1 {
+			break
+		}
+		found = true
+		absoluteIdx := searchFrom + idx
+		callName := nearestRendererWriteCall(source[:absoluteIdx])
+		if wantOnce && !strings.Contains(callName, "Once") {
+			t.Fatalf("expected %s to render once, got %s", tmpl, callName)
+		}
+		if !wantOnce && (callName == "" || strings.Contains(callName, "Once")) {
+			t.Fatalf("expected %s to render overwrite, got %s", tmpl, callName)
+		}
+		searchFrom = absoluteIdx + len(tmpl)
+	}
+	if !found {
+		t.Fatalf("expected renderer to map %s", tmpl)
+	}
+}
+
+// nearestRendererWriteCall finds the render helper surrounding a template mapping assertion.
+func nearestRendererWriteCall(prefix string) string {
+	candidates := []string{
+		"writeTemplateMappingsOnceForApp(",
+		"writeTemplateMappingsForApp(",
+		"writeTemplateMappingsOnce(",
+		"writeTemplateMappings(",
+	}
+	lastName := ""
+	lastIdx := -1
+	for _, name := range candidates {
+		idx := strings.LastIndex(prefix, name)
+		if idx > lastIdx {
+			lastIdx = idx
+			lastName = strings.TrimSuffix(name, "(")
+		}
+	}
+	frameworkMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appFrameworkMappings")
+	appOwnedMappingIdx := strings.LastIndex(prefix, "func (p *ProjectRenderer) appOwnedMappings")
+	if appOwnedMappingIdx > frameworkMappingIdx && appOwnedMappingIdx > lastIdx {
+		return "writeTemplateMappingsOnceForApp"
+	}
+	if frameworkMappingIdx > lastIdx {
+		return "writeTemplateMappingsForApp"
+	}
+	return lastName
 }
 
 func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
@@ -387,7 +590,7 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`app.NewRuntimeHost(runtimes...).Run(ctx)`,
+		`runtime.NewRuntimeHost(runtimes...).Run(ctx)`,
 		`DisableMetricsEndpoint: true,`,
 		`type RunCmd struct {`,
 		`func NewRunCmd(`,
@@ -419,22 +622,22 @@ func TestSourcePropagationTemplates(t *testing.T) {
 
 	files := map[string][]string{
 		filepath.Join(root, "wire", "app.go.tmpl"): {
-			`ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
+			`ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
 			`parseCtx.BindTo(ctx, (*context.Context)(nil))`,
 		},
 		filepath.Join(root, "internal", "http", "server.go.tmpl"): {
-			`router.Use(s.sourceContextMiddleware(app.SourceHTTP))`,
+			`router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))`,
 			`carrier.SetAppSourceName(sourceName)`,
 		},
 		filepath.Join(root, "internal", "schedules", "scheduler.go.tmpl"): {
 			`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
-			`return app.WithSource(ctx, app.SourceScheduler)`,
+			`return runtime.WithSource(ctx, runtime.SourceScheduler)`,
 		},
-		filepath.Join(root, "wire", "inject_app_services.go.tmpl"): {
-			`setupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+		filepath.Join(root, "wire", "inject_services_app.go.tmpl"): {
+			`setupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)`,
 		},
 		filepath.Join(root, "demo", "internal", "monitoring", "controller.go.tmpl"): {
-			`startupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+			`startupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)`,
 		},
 	}
 
@@ -457,7 +660,7 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	if !ok {
 		t.Fatal("unable to resolve current file path")
 	}
-	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "main.go.tmpl")
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "cmd", "app", "main.go.tmpl")
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("read main.go template: %v", err)
@@ -466,11 +669,15 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
+		`cmd.ApplyLaunchApp("{{.App.Name}}")`,
+		`"{{.GoModuleName}}/{{.AppImportPath}}"`,
+		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
 		`"{{.GoModuleName}}/internal/console"`,
 		`if err := cmd.LoadEnv(); err != nil {`,
 		`console.Fatalf("%v", err)`,
-		`cmd.MaybeRunSkipBootCommand(args)`,
-		`app.Run(nil, args)`,
+		`handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})`,
+		`application, err := wire.InitializeApplication()`,
+		`application.Run(nil, args)`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected main template to contain %q", snippet)
@@ -483,7 +690,7 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	if !ok {
 		t.Fatal("unable to resolve current file path")
 	}
-	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "root_cmd.go.tmpl")
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "app", "root_cmd.go.tmpl")
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("read root_cmd template: %v", err)
@@ -493,14 +700,19 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	for _, snippet := range []string{
 		`MakeCommandCmd    makecmd.CommandCmd    ` + "`cmd:\"\"`",
 		`MakeControllerCmd makecmd.ControllerCmd ` + "`cmd:\"\"`",
-		`MakeEventCmd      makecmd.EventCmd      ` + "`cmd:\"\"`",
-		`MakeMigrationCmd  makecmd.MigrationCmd  ` + "`cmd:\"\"`",
+		`MakeEventCmd     makecmd.EventCmd     ` + "`cmd:\"\"`",
+		`MakeJobCmd       makecmd.JobCmd       ` + "`cmd:\"\"`",
+		`MakeMigrationCmd makecmd.MigrationCmd ` + "`cmd:\"\"`",
+		`MakeQueueCmd makecmd.QueueCmd ` + "`cmd:\"\"`",
+		`MakeScheduleCmd makecmd.ScheduleCmd ` + "`cmd:\"\"`",
 		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
-		`RunCmd            RunCmd                      ` + "`cmd:\"\"`",
-		`HttpServeCmd       http.ServeCmd                ` + "`cmd:\"\"`",
-		`SchedulerCmd       schedules.Cmd                ` + "`cmd:\"\"`",
-		`QueueWorkerCmd     jobs.WorkerCmd               ` + "`cmd:\"\"`",
-		`MakeQueueCmd       makecmd.QueueCmd             ` + "`cmd:\"\"`",
+		`BenchmarkRunCmd    jobs.BenchmarkRunCmd    ` + "`cmd:\"\"`",
+		`ExampleHelloJobCmd jobs.ExampleHelloJobCmd ` + "`cmd:\"\"`",
+		`HttpServeCmd http.ServeCmd ` + "`cmd:\"\"`",
+		`QueueWorkerCmd jobs.WorkerCmd ` + "`cmd:\"\"`",
+		`RoutesListCmd http.RouteListCmd ` + "`cmd:\"\"`",
+		`RunCmd cmd.RunCmd ` + "`cmd:\"\"`",
+		`SchedulerCmd schedules.Cmd ` + "`cmd:\"\"`",
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected root command template to contain %q", snippet)
@@ -529,6 +741,18 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "jobs", "worker_cmd.go.tmpl"): {
 			`name:"queue:work" aliases:"worker" help:"Runs queue workers indefinitely"`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl"): {
+			`fmt.Printf("App: %s\n\n", routeListApp())`,
+			`func routeListApp() string`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "swagger.go.tmpl"): {
+			`func defaultOpenAPISpecPathForApp() string`,
+			`filepath.Join("build", app, "openapi.json")`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "app_identity.go.tmpl"): {
+			`func ApplyLaunchApp(app string)`,
+			`os.Setenv("FORJ_APP", app)`,
 		},
 	}
 	for file, snippets := range files {

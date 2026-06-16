@@ -3,7 +3,13 @@ import { lighthousePath, lighthouseWSURL } from "../lib/base-path";
 
 type AgentInfo = {
   id: string;
+  key?: string;
+  group_key?: string;
+  instance_key?: string;
   source: string;
+  runtime_source?: string;
+  app?: string;
+  project?: string;
   env: string;
   capabilities: string[];
   last_seen?: string;
@@ -12,7 +18,6 @@ type AgentInfo = {
   host?: string;
   instance_id?: string;
   instance_kind?: string;
-  app?: string;
   version?: string;
 };
 
@@ -616,7 +621,7 @@ const scheduleReconnect = () => {
 };
 
 const syncAgents = (agents: AgentInfo[]) => {
-  state.agents = agents.sort((a, b) => a.source.localeCompare(b.source));
+  state.agents = agents.map(normalizeAgent).sort(compareAgents);
   if (state.agents.length > 0) {
     const hasSelected = state.agents.some((agent) => agent.source === state.selectedAgent);
     if (!hasSelected) {
@@ -625,6 +630,41 @@ const syncAgents = (agents: AgentInfo[]) => {
   } else {
     state.selectedAgent = "";
   }
+};
+
+const normalizeAgent = (agent: AgentInfo): AgentInfo => {
+  const runtimeSource = (agent.runtime_source || agent.source || "app").trim();
+  const appName = (agent.app || "app").trim();
+  const groupKey = (agent.group_key || agentGroupKey(appName, runtimeSource)).trim();
+  const instanceKey = (agent.instance_key || agent.instance_id || agent.host || "").trim();
+  const key = (agent.key || agentKey(groupKey, instanceKey)).trim();
+  return {
+    ...agent,
+    key,
+    source: key,
+    group_key: groupKey,
+    instance_key: instanceKey,
+    runtime_source: runtimeSource,
+    app: appName,
+  };
+};
+
+const agentGroupKey = (appName: string, source: string) => {
+  if (!appName || appName === "app") return source || "app";
+  return `${appName}/${source || "app"}`;
+};
+
+const agentKey = (groupKey: string, instanceKey: string) => {
+  if (!instanceKey) return groupKey || "app";
+  return `${groupKey || "app"}/${instanceKey.replaceAll("/", "_")}`;
+};
+
+const compareAgents = (a: AgentInfo, b: AgentInfo) => {
+  const appCompare = (a.app || "app").localeCompare(b.app || "app");
+  if (appCompare !== 0) return appCompare;
+  const sourceCompare = (a.runtime_source || a.source).localeCompare(b.runtime_source || b.source);
+  if (sourceCompare !== 0) return sourceCompare;
+  return (a.instance_key || "").localeCompare(b.instance_key || "");
 };
 
 const waitForSocket = async () => {
@@ -659,7 +699,7 @@ const requestLogHistory = () => {
     JSON.stringify({
       type: "command",
       id,
-      target: "control",
+      destination: "control",
       payload: { name: "logs:history", params: { limit: state.logLimit } },
     })
   );
@@ -685,7 +725,7 @@ const sendCommand = (target: string, name: string, params: Record<string, any>) 
     JSON.stringify({
       type: "command",
       id,
-      target,
+      destination: target,
       payload: { name, params },
     })
   );

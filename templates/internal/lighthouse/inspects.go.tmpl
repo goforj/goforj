@@ -143,7 +143,7 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) bool {
 	records := make([]inspects.Record, 0, len(batch))
 	for _, record := range batch {
 		if record != nil {
-			records = append(records, *record)
+			records = append(records, p.identityRecord(*record))
 		}
 	}
 	if len(records) == 0 {
@@ -173,6 +173,29 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) bool {
 	p.recordDepth()
 	p.recordFlush(len(records), time.Since(startedAt), nil)
 	return true
+}
+
+func (p *InspectPublisher) identityRecord(record inspects.Record) inspects.Record {
+	record = inspects.CloneRecord(record)
+	agentInfo := normalizeAgentInfo(AgentInfo{
+		Source:     p.agent.config.Source,
+		App:        p.agent.config.App,
+		InstanceID: p.agent.config.InstanceID,
+		Host:       p.agent.config.Host,
+	})
+	if strings.TrimSpace(record.Summary.App) == "" {
+		record.Summary.App = agentInfo.App
+	}
+	if strings.TrimSpace(record.Summary.AgentKey) == "" {
+		record.Summary.AgentKey = agentInfo.Key
+	}
+	if strings.TrimSpace(record.Summary.GroupKey) == "" {
+		record.Summary.GroupKey = agentInfo.GroupKey
+	}
+	if strings.TrimSpace(record.Summary.InstanceKey) == "" {
+		record.Summary.InstanceKey = agentInfo.InstanceKey
+	}
+	return record
 }
 
 func (p *InspectPublisher) logDrop(reason string) {

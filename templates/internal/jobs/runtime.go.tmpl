@@ -4,10 +4,7 @@ import (
 	"context"
 	"strings"
 
-{{- if .Components.Metrics }}
-	"github.com/goforj/env/v2"
-{{- end }}
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -52,8 +49,8 @@ func NewRuntime(
 }
 
 // Identity returns the logical runtime identity for the jobs runtime.
-func (*Runtime) Identity() app.RuntimeIdentity {
-	return app.RuntimeIdentity{Name: "jobs", Label: "jobs"}
+func (*Runtime) Identity() runtime.RuntimeIdentity {
+	return runtime.RuntimeIdentity{Name: "jobs", Label: "jobs"}
 }
 
 // Run executes the jobs runtime with its default config.
@@ -66,7 +63,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = app.WithSource(ctx, app.SourceJobs)
+	ctx = runtime.WithSource(ctx, runtime.SourceJobs)
 	cfg = normalizeRuntimeConfig(cfg)
 
 {{- if .Components.Metrics }}
@@ -82,7 +79,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 {{- if .Components.Metrics }}
-		MetricsPort: env.Get("METRICS_JOBS_PORT", "9101"),
+		MetricsPort: runtime.WorkerMetricsPort(),
 {{- end }}
 	})
 }
@@ -91,7 +88,7 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 {{- if .Components.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
-		cfg.MetricsPort = "9101"
+		cfg.MetricsPort = runtime.WorkerMetricsPort()
 	}
 {{- else }}
 	_ = strings.TrimSpace("")

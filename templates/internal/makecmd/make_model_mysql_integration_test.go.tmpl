@@ -822,7 +822,7 @@ func TestMakeModelMySQLPackageOutput(t *testing.T) {
 		t.Fatalf("expected package accounts, got %s", got)
 	}
 
-	repoWirePath := filepath.Join(tempDir, "wire", "inject_repositories.go")
+	repoWirePath := filepath.Join(tempDir, "app", "wire", "inject_repositories_app.go")
 	data, err := os.ReadFile(repoWirePath)
 	if err != nil {
 		t.Fatalf("read wire file: %v", err)

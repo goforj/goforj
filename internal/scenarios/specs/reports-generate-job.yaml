@@ -10,6 +10,9 @@ app:
     web_api: true
     jobs: true
 markdown:
+  path_position: 5
+  path_total: 7
+  estimated_minutes: 25
   intro: |
     This scenario turns the `users.created` subscriber into a durable work dispatcher.
 
@@ -35,8 +38,8 @@ markdown:
     - internal/reports/service_test.go
     - internal/jobs/generate_job.go
     - internal/notifications/service.go
-    - wire/inject_app_services.go
-    - wire/inject_jobs_app.go
+    - app/wire/inject_services_app.go
+    - app/wire/inject_jobs_app.go
   file_groups:
     - title: Configuration
       files:
@@ -48,13 +51,13 @@ markdown:
     - title: Jobs
       files:
         - internal/jobs/generate_job.go
-        - wire/inject_jobs_app.go
+        - app/wire/inject_jobs_app.go
     - title: Notifications
       files:
         - internal/notifications/service.go
     - title: App wiring
       files:
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   generated_files:
     intro: "The queue and storage generators update generated manager and accessor files."
     files:
@@ -66,7 +69,7 @@ markdown:
     Start a worker in one terminal:
 
     ```bash
-    forj run worker
+    forj worker
     ```
 
     Start the API in another terminal:
@@ -106,7 +109,7 @@ markdown:
     forj build
     ```
 
-    Business code does not change. `GenerateJob` still dispatches `reports:generate`, and workers still run with `forj run worker` or `./bin/app worker`.
+    Business code does not change. `GenerateJob` still dispatches `reports:generate`, and workers still run with `forj worker` or `./bin/app worker`.
   common_mistakes:
     - "Do not use an in-process queue when API and worker run as separate processes."
     - "Do not put report generation logic directly inside the event subscriber."
@@ -319,7 +322,7 @@ steps:
     explain: |
       Register the job constructor from `internal/jobs`.
     replace:
-      path: wire/inject_jobs_app.go
+      path: app/wire/inject_jobs_app.go
       language: go
       old: |
                 "{{module}}/internal/reports"
@@ -329,7 +332,7 @@ steps:
     explain: |
       The App service set owns this job because notifications depend on its queueing interface.
     replace:
-      path: wire/inject_jobs_app.go
+      path: app/wire/inject_jobs_app.go
       language: go
       old: |
                 reports.NewGenerateJob,
@@ -367,11 +370,11 @@ steps:
 
   - title: Keep Lifecycle Subscriber Registration
     explain: |
-      Update `internal/app/lifecycle_registry.go`.
+      Update `app/lifecycle.go`.
 
       The lifecycle still owns subscriber registration. The subscriber dispatches durable work through the notification service.
     write:
-      path: internal/app/lifecycle_registry.go
+      path: app/lifecycle.go
       language: go
       content: |
         package app
@@ -380,6 +383,7 @@ steps:
                 "context"
 
                 "{{module}}/internal/events"
+                "{{module}}/internal/runtime"
                 "{{module}}/internal/notifications"
         )
 
@@ -399,8 +403,8 @@ steps:
                 }
         }
 
-        func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
-                lifecycle.On(Startup, func(ctx context.Context) error {
+        func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
+                lifecycle.On(runtime.Startup, func(ctx context.Context) error {
                         subscription, err := r.notificationSubscribers.Register(ctx, r.eventManager.Default())
                         if err != nil {
                                 return err
@@ -414,11 +418,11 @@ steps:
                 })
         }
 
-  - title: Wire Reports And The Job
+  - title: Wire Reports and the Job
     explain: |
       Add the report storage provider and report service constructor.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         import (
@@ -430,7 +434,7 @@ steps:
     explain: |
       Add imports for the report service and generated storage manager.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 "{{module}}/internal/notifications"
@@ -444,7 +448,7 @@ steps:
     explain: |
       The report service receives the named `reports` storage disk.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 provideEventBus,
@@ -459,7 +463,7 @@ steps:
     explain: |
       `provideReportStorage` selects the generated named storage resource.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         func provideEventBus(manager *events.Manager) events.Bus {

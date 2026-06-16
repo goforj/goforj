@@ -69,7 +69,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_SECRET":          token,
+			"LIGHTHOUSE_SECRET":         token,
 			"LIGHTHOUSE_URL":            "ws://127.0.0.1:" + port + "/lighthouse/ws/agent",
 			"LIGHTHOUSE_AGENT_RETRY_MS": "100",
 		},
@@ -97,7 +97,7 @@ func buildAgentEnv(t *testing.T, baseURL, token string) []string {
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_SECRET":          token,
+			"LIGHTHOUSE_SECRET":         token,
 			"LIGHTHOUSE_URL":            agentURL,
 			"LIGHTHOUSE_AGENT_RETRY_MS": "50",
 		},
@@ -132,10 +132,10 @@ func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string,
 		"params": params,
 	})
 	if err := conn.WriteJSON(map[string]any{
-		"type":    "command",
-		"id":      id,
-		"target":  target,
-		"payload": json.RawMessage(payload),
+		"type":        "command",
+		"id":          id,
+		"destination": target,
+		"payload":     json.RawMessage(payload),
 	}); err != nil {
 		return nil, fmt.Errorf("send command: %w", err)
 	}
@@ -643,7 +643,7 @@ func getSharedApp(t *testing.T) (string, string) {
 		}
 		binPath := filepath.Join(binDir, "app")
 		modCache, buildCache := testkit.GoCachePaths()
-		cmd := exec.Command("go", "build", "-o", binPath, ".")
+		cmd := exec.Command("go", "build", "-o", binPath, "./cmd/app")
 		cmd.Dir = projectDir
 		cmd.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
@@ -778,7 +778,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	token := "test-token"
 	envs := map[string]string{
 		"LIGHTHOUSE_ENABLED": "true",
-		"LIGHTHOUSE_SECRET":   token,
+		"LIGHTHOUSE_SECRET":  token,
 	}
 	for key, value := range envs {
 		t.Setenv(key, value)
@@ -1363,7 +1363,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"source":  "http",
 		"payload": json.RawMessage(registerPayload),
 	})
-	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 1*time.Second); err != nil {
+	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 3*time.Second); err != nil {
 		t.Fatalf("agent did not register: %v", err)
 	}
 
@@ -1375,26 +1375,26 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"params": map[string]any{},
 	})
 	if err := consoleConn.WriteJSON(map[string]any{
-		"type":    "command",
-		"id":      "cmd-1",
-		"target":  "http",
-		"payload": json.RawMessage(commandPayload),
+		"type":        "command",
+		"id":          "cmd-1",
+		"destination": "http",
+		"payload":     json.RawMessage(commandPayload),
 	}); err != nil {
 		t.Fatalf("send command: %v", err)
 	}
 
-	readDeadline := time.Now().Add(1 * time.Second)
+	readDeadline := time.Now().Add(3 * time.Second)
 	var gotCommand bool
 	for time.Now().Before(readDeadline) {
 		agentConn.SetReadDeadline(readDeadline)
 		var msg struct {
-			Type    string          `json:"type"`
-			ID      string          `json:"id"`
-			Target  string          `json:"target"`
-			Payload json.RawMessage `json:"payload"`
+			Type        string          `json:"type"`
+			ID          string          `json:"id"`
+			Destination string          `json:"destination"`
+			Payload     json.RawMessage `json:"payload"`
 		}
 		readEncryptedAgentJSON(t, agentConn, token, &msg)
-		if msg.Type != "command" || msg.Target != "http" {
+		if msg.Type != "command" || msg.Destination != "http" {
 			continue
 		}
 		gotCommand = true
@@ -1415,7 +1415,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		t.Fatal("agent did not receive command")
 	}
 
-	deadline := time.Now().Add(1 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		consoleConn.SetReadDeadline(deadline)
 		var msg struct {

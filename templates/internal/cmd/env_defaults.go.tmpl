@@ -40,6 +40,7 @@ func LoadEnv() error {
 		return err
 	}
 
+	appEnvBeforeAppOverlay := os.Getenv("APP_ENV")
 	switch {
 	case hasOverride:
 		if err := os.Setenv("APP_ENV", overrideAppEnv); err != nil {
@@ -52,6 +53,21 @@ func LoadEnv() error {
 		if err := loadCompiledAppEnvFile(defaultAppEnv); err != nil {
 			return err
 		}
+	}
+
+	if err := ApplyAppEnvOverlay(); err != nil {
+		return err
+	}
+	if appEnvAfterAppOverlay := os.Getenv("APP_ENV"); appEnvAfterAppOverlay != "" && appEnvAfterAppOverlay != appEnvBeforeAppOverlay {
+		if err := loadCompiledAppEnvFile(appEnvAfterAppOverlay); err != nil {
+			return err
+		}
+		if err := ApplyAppEnvOverlay(); err != nil {
+			return err
+		}
+	}
+	if err := ApplyCompiledEnvOverrides(); err != nil {
+		return err
 	}
 
 	return nil
@@ -67,6 +83,56 @@ func ApplyCompiledEnvDefaults() error {
 // existing OS or .env-provided values.
 func ApplyCompiledEnvOverrides() error {
 	return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)
+}
+
+// ApplyAppEnvOverlay promotes active app-prefixed env values over base keys.
+func ApplyAppEnvOverlay() error {
+	prefix := activeAppEnvPrefix()
+	if prefix == "" {
+		return nil
+	}
+	prefix += "_"
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		baseKey := strings.TrimPrefix(key, prefix)
+		if !appOverlayKeyAllowed(baseKey) {
+			continue
+		}
+		if err := os.Setenv(baseKey, value); err != nil {
+			return fmt.Errorf("set app env overlay %s from %s: %w", baseKey, key, err)
+		}
+	}
+	return nil
+}
+
+func activeAppEnvPrefix() string {
+	app := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	if app == "" || app == "app" {
+		return ""
+	}
+	parts := strings.FieldsFunc(app, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' ' || r == '.'
+	})
+	for i, part := range parts {
+		parts[i] = strings.ToUpper(part)
+	}
+	return strings.Join(parts, "_")
+}
+
+func appOverlayKeyAllowed(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	switch key {
+	case "FORJ_APP":
+		return false
+	default:
+		return true
+	}
 }
 
 func applyCompiledEnvMap(raw string, force bool) error {

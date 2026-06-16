@@ -1101,7 +1101,7 @@ func TestControllerLoginMeLogoutIntegration(t *testing.T) {
 		t.Fatalf("expected auth cookies after login, got %#v", loginRec.Result().Cookies())
 	}
 
-	meHandler := h.service.RequireAuth()(h.controller.Me)
+	meHandler := h.service.RequireAuth(h.controller.Me)
 	meRec := h.doJSON(http.MethodGet, "/auth/me", nil, meHandler, nil, loginRec.Result().Cookies())
 	if meRec.Code != http.StatusOK {
 		t.Fatalf("me status = %d, want %d\nbody:\n%s", meRec.Code, http.StatusOK, meRec.Body.String())
@@ -1165,7 +1165,7 @@ func TestControllerLogoutAllRevokesEverySessionIntegration(t *testing.T) {
 		t.Fatalf("prime second session cache: %v", err)
 	}
 
-	logoutAllHandler := h.service.RequireAuth()(h.controller.LogoutAll)
+	logoutAllHandler := h.service.RequireAuth(h.controller.LogoutAll)
 	logoutAllRec := h.doJSON(
 		http.MethodPost,
 		"/auth/logout-all",
@@ -1234,7 +1234,7 @@ func TestControllerSessionsListsOnlyCurrentUsersActiveSessionsIntegration(t *tes
 		t.Fatalf("revoke alice other session: %v", err)
 	}
 
-	sessionsHandler := h.service.RequireAuth()(h.controller.Sessions)
+	sessionsHandler := h.service.RequireAuth(h.controller.Sessions)
 	rec := h.doJSON(
 		http.MethodGet,
 		"/auth/sessions",
@@ -1398,7 +1398,7 @@ func TestControllerEmailVerificationRequestAndConfirmIntegration(t *testing.T) {
 		t.Fatalf("authenticate current session: %v", err)
 	}
 
-	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	requestHandler := h.service.RequireAuth(h.controller.RequestEmailVerification)
 	requestRec := h.doJSON(
 		http.MethodPost,
 		"/auth/email-verification/request",
@@ -1464,7 +1464,7 @@ func TestControllerEmailVerificationRequestDoesNotExposeTokenOutsideLocalByDefau
 		t.Fatalf("authenticate current session: %v", err)
 	}
 
-	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	requestHandler := h.service.RequireAuth(h.controller.RequestEmailVerification)
 	requestRec := h.doJSON(
 		http.MethodPost,
 		"/auth/email-verification/request",
@@ -1497,7 +1497,7 @@ func TestControllerEmailVerificationInvalidatesPriorTokenIntegration(t *testing.
 	if err != nil {
 		t.Fatalf("authenticate current session: %v", err)
 	}
-	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	requestHandler := h.service.RequireAuth(h.controller.RequestEmailVerification)
 	cookies := []*http.Cookie{
 		{Name: AccessCookieName, Value: tokens.AccessToken},
 		{Name: RefreshCookieName, Value: tokens.RefreshToken},
@@ -1555,7 +1555,7 @@ func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegra
 	if err != nil {
 		t.Fatalf("authenticate current session: %v", err)
 	}
-	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	requestHandler := h.service.RequireAuth(h.controller.RequestEmailVerification)
 	cookies := []*http.Cookie{
 		{Name: AccessCookieName, Value: tokens.AccessToken},
 		{Name: RefreshCookieName, Value: tokens.RefreshToken},
@@ -1948,7 +1948,7 @@ func TestControllerRevokeSessionRevokesOnlyRequestedOwnedSessionIntegration(t *t
 		t.Fatalf("authenticate other session: %v", err)
 	}
 
-	revokeHandler := h.service.RequireAuth()(h.controller.RevokeSession)
+	revokeHandler := h.service.RequireAuth(h.controller.RevokeSession)
 	rec := h.doJSON(
 		http.MethodPost,
 		"/auth/sessions/:id/revoke",
@@ -2005,7 +2005,7 @@ func TestControllerChangePasswordRevokesOtherSessionsIntegration(t *testing.T) {
 		t.Fatalf("prime other session cache: %v", err)
 	}
 
-	changePasswordHandler := h.service.RequireAuth()(h.controller.ChangePassword)
+	changePasswordHandler := h.service.RequireAuth(h.controller.ChangePassword)
 	rec := h.doJSON(
 		http.MethodPost,
 		"/auth/change-password",
@@ -2062,7 +2062,7 @@ func TestControllerChangePasswordRejectsWeakPasswordIntegration(t *testing.T) {
 		t.Fatalf("authenticate current session: %v", err)
 	}
 
-	changePasswordHandler := h.service.RequireAuth()(h.controller.ChangePassword)
+	changePasswordHandler := h.service.RequireAuth(h.controller.ChangePassword)
 	rec := h.doJSON(
 		http.MethodPost,
 		"/auth/change-password",
@@ -2101,7 +2101,7 @@ func TestControllerUpdateProfileIntegration(t *testing.T) {
 		t.Fatalf("authenticate current session: %v", err)
 	}
 
-	updateProfileHandler := h.service.RequireAuth()(h.controller.UpdateProfile)
+	updateProfileHandler := h.service.RequireAuth(h.controller.UpdateProfile)
 	rec := h.doJSON(
 		http.MethodPost,
 		"/auth/profile",
@@ -2172,7 +2172,7 @@ func TestControllerUpdateProfileRejectsDuplicateEmailIntegration(t *testing.T) {
 		t.Fatalf("authenticate current session: %v", err)
 	}
 
-	updateProfileHandler := h.service.RequireAuth()(h.controller.UpdateProfile)
+	updateProfileHandler := h.service.RequireAuth(h.controller.UpdateProfile)
 	rec := h.doJSON(
 		http.MethodPost,
 		"/auth/profile",
@@ -2420,7 +2420,7 @@ func TestRequireAuthRejectsTamperedRefreshCookieIntegration(t *testing.T) {
 
 	time.Sleep(25 * time.Millisecond)
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	rec := h.doJSON(
@@ -2466,7 +2466,7 @@ func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
 
 	time.Sleep(25 * time.Millisecond)
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	rec := h.doJSON(
@@ -2510,7 +2510,7 @@ func TestRequireAuthRejectsIdleExpiredSessionIntegration(t *testing.T) {
 
 	time.Sleep(2500 * time.Millisecond)
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	rec := h.doJSON(
@@ -2555,7 +2555,7 @@ func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 		t.Fatal("expected last_seen_at to be set after login")
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	rec := h.doJSON(
@@ -2626,7 +2626,7 @@ func TestRequireAuthUsesCachedSessionForFreshAccessIntegration(t *testing.T) {
 		t.Fatalf("expire session row: %v", err)
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		current := CurrentUser(r)
 		if current == nil {
 			t.Fatal("expected current user in auth middleware")
@@ -2696,7 +2696,7 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 		t.Fatalf("persist stale user: %v", err)
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	before := time.Now().UTC()
@@ -2753,7 +2753,7 @@ func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T)
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
@@ -2855,7 +2855,7 @@ func TestRequireAuthRejectsInactiveUserWithValidSessionIntegration(t *testing.T)
 		t.Fatalf("deactivate user: %v", err)
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	rec := h.doJSON(
@@ -3006,7 +3006,7 @@ func TestRequireAuthUsesCachedUserForAccessCookieIntegration(t *testing.T) {
 		t.Fatalf("update user directly: %v", err)
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		current := CurrentUser(r)
 		if current == nil {
 			t.Fatal("expected current user in auth middleware")
@@ -3074,7 +3074,7 @@ func TestRequireAuthRefreshFallbackUsesCachedUserIntegration(t *testing.T) {
 
 	time.Sleep(1200 * time.Millisecond)
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		current := CurrentUser(r)
 		if current == nil {
 			t.Fatal("expected current user in auth middleware")
@@ -3132,7 +3132,7 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 
 	time.Sleep(1200 * time.Millisecond)
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		user := CurrentUser(r)
 		if user == nil {
 			t.Fatal("expected current user in auth middleware")
@@ -3223,7 +3223,7 @@ func TestRequireAuthAllowsProtectedRequestsAfterConcurrentRefreshRotationIntegra
 		t.Fatal("expected explicit refresh to set refresh_rotated_at")
 	}
 
-	protected := h.service.RequireAuth()(func(r web.Context) error {
+	protected := h.service.RequireAuth(func(r web.Context) error {
 		user := CurrentUser(r)
 		if user == nil {
 			t.Fatal("expected current user in protected handler")
@@ -3300,7 +3300,7 @@ func TestRequireAuthAllowsRepeatedExpiredAccessCyclesIntegration(t *testing.T) {
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	protected := h.service.RequireAuth()(func(r web.Context) error {
+	protected := h.service.RequireAuth(func(r web.Context) error {
 		user := CurrentUser(r)
 		if user == nil {
 			t.Fatal("expected current user in protected handler")
@@ -3368,7 +3368,7 @@ func TestRequireAuthAllowsProtectedRequestsWithStaleBrowserRefreshCookieIntegrat
 		t.Fatalf("refresh status = %d, want %d\nbody:\n%s", refreshRec.Code, http.StatusOK, refreshRec.Body.String())
 	}
 
-	protected := h.service.RequireAuth()(func(r web.Context) error {
+	protected := h.service.RequireAuth(func(r web.Context) error {
 		user := CurrentUser(r)
 		if user == nil {
 			t.Fatal("expected current user in protected handler")
@@ -3459,7 +3459,7 @@ func TestRequireAuthStaleRefreshRecoveryDoesNotOverwriteRotatedRefreshCookieInte
 		t.Fatal("expected rotated refresh cookie")
 	}
 
-	protected := h.service.RequireAuth()(func(r web.Context) error {
+	protected := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
@@ -3518,7 +3518,7 @@ func TestRequireAuthUnauthorizedDoesNotClearCookiesIntegration(t *testing.T) {
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	handler := h.service.RequireAuth()(func(r web.Context) error {
+	handler := h.service.RequireAuth(func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 	rec := h.doJSON(

@@ -79,3 +79,33 @@ func TestGenerateDBFilesUsesSupportedDrivers(t *testing.T) {
 		t.Fatal("expected generated db source to include mysql from DB_SUPPORTED_DRIVERS")
 	}
 }
+
+func TestGenerateDBFilesIgnoresDriverHelperDatabaseKeys(t *testing.T) {
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_SQLITE_DATABASE", "./_data/sqlite/app.db")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "database"), 0o755); err != nil {
+		t.Fatalf("mkdir database package: %v", err)
+	}
+
+	if _, err := GenerateDBFiles(root); err != nil {
+		t.Fatalf("GenerateDBFiles returned error: %v", err)
+	}
+
+	src, err := os.ReadFile(filepath.Join(root, "internal", "database", "connections_gen.go"))
+	if err != nil {
+		t.Fatalf("read connections_gen.go: %v", err)
+	}
+	content := string(src)
+	for _, unwanted := range []string{
+		`func (c *Connections) GetSqlite()`,
+		`Name: "db_sqlite"`,
+		`readinessCheck(ctx, "sqlite")`,
+	} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("generated db source should not contain helper connection %q:\n%s", unwanted, content)
+		}
+	}
+}

@@ -1,0 +1,296 @@
+package makeapp
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
+	"golang.org/x/term"
+)
+
+var errAppCreationCancelled = errors.New("app creation cancelled")
+var errAppNameRequired = errors.New("app name is required")
+
+// appExistsError carries the colliding path so Run can print useful no-op guidance.
+type appExistsError struct {
+	app  project.App
+	path string
+}
+
+func (e appExistsError) Error() string {
+	return fmt.Sprintf("app %q already has files at %s", e.app.Name, e.path)
+}
+
+// isInteractiveTerminal is replaceable in tests because wizard behavior depends on TTY state.
+var isInteractiveTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// appWizardRunner is replaceable in tests so cancellation and selection paths do not need a real TUI.
+var appWizardRunner = runAppWizard
+
+// RenderOptions controls the narrow render used by make:app.
+type RenderOptions struct {
+	Components project.Components
+	StarterKit project.StarterKit
+	SkipWire   bool
+}
+
+// RemoveResult describes what changed during a make:app removal.
+type RemoveResult struct {
+	Removed []string
+	Updated []string
+}
+
+// Changed reports whether the removal touched files or project metadata.
+func (r RemoveResult) Changed() bool {
+	return len(r.Removed) > 0 || len(r.Updated) > 0
+}
+
+// Renderer is the small project renderer surface needed by make:app.
+type Renderer interface {
+	RenderAppOnly(project.App, RenderOptions) error
+	RemoveApp(project.App) (RemoveResult, error)
+}
+
+// Cmd creates an additional conventional app in an existing project.
+type Cmd struct {
+	logger   *logger.AppLogger
+	renderer Renderer
+
+	Name       string `arg:"" optional:"" help:"App name, such as billing or customer-portal"`
+	Components string `name:"components" help:"Comma-separated app components, such as web-api,jobs"`
+	Without    string `name:"without" help:"Comma-separated app components to remove from the default app selection"`
+	StarterKit string `name:"starter-kit" help:"Frontend starter kit for apps with Web UI"`
+	SkipWire   bool   `name:"skip-wire" help:"Render files without running Wire generation"`
+	Remove     bool   `name:"remove" help:"Remove the conventional files and metadata for an app"`
+}
+
+// Signature exposes make:app as a framework-owned app creation command.
+func (*Cmd) Signature() string {
+	return `name:"make:app" help:"Create a new app"`
+}
+
+// NewCmd creates a new Cmd.
+func NewCmd(logger *logger.AppLogger, renderer Renderer) *Cmd {
+	return &Cmd{logger: logger, renderer: renderer}
+}
+
+// Help shows the app creation flow.
+func (*Cmd) Help() string {
+	return strings.Join([]string{
+		"Examples:",
+		"  forj make:app billing",
+		"  forj make:app billing --components web-api,jobs",
+		"  forj make:app portal --components web-api,web-ui --starter-kit vue",
+		"  forj make:app customer-portal --without web-ui --skip-wire",
+		"  forj make:app billing --remove",
+		"",
+	}, "\n")
+}
+
+// Run validates the app name and renders only the files required for the new app.
+func (c *Cmd) Run() error {
+	app, err := c.app()
+	if err != nil {
+		if errors.Is(err, errAppNameRequired) {
+			c.printMissingNameHelp()
+			return nil
+		}
+		return err
+	}
+	if c.Remove {
+		return c.removeApp(app)
+	}
+	if err := c.ensureAppDoesNotExist(app); err != nil {
+		var exists appExistsError
+		if errors.As(err, &exists) {
+			c.printExistingAppHelp(exists)
+			return nil
+		}
+		return err
+	}
+
+	config, err := project.LoadProjectConfig()
+	if err != nil {
+		return err
+	}
+	components, starterKit, err := c.appSelection(config)
+	if err != nil {
+		if errors.Is(err, errAppCreationCancelled) {
+			return nil
+		}
+		return err
+	}
+
+	if c.logger != nil {
+		c.logger.Info().Str("app", app.Name).Msg("Creating app")
+	}
+	if err := c.renderer.RenderAppOnly(app, RenderOptions{
+		Components: components,
+		StarterKit: starterKit,
+		SkipWire:   c.SkipWire,
+	}); err != nil {
+		return err
+	}
+
+	console.Successf("Created app: %s", app.Name)
+	console.Infof("Entrypoint: %s", app.Entrypoint)
+	console.Infof("Composition: %s", app.AppDir)
+	if c.SkipWire {
+		console.Infof("Run forj render or wire after reviewing the generated app.")
+	}
+	return nil
+}
+
+// removeApp removes the app through the renderer so config and runtime metadata stay in sync.
+func (c *Cmd) removeApp(app project.App) error {
+	result, err := c.renderer.RemoveApp(app)
+	if err != nil {
+		return err
+	}
+	if !result.Changed() {
+		console.Infof("App not found: %s", app.Name)
+		console.Infof("Nothing removed.")
+		return nil
+	}
+
+	console.Successf("Removed app: %s", app.Name)
+	for _, path := range result.Removed {
+		console.Infof("Removed: %s", path)
+	}
+	for _, path := range result.Updated {
+		console.Infof("Updated: %s", path)
+	}
+	return nil
+}
+
+// appSelection resolves the per-app component and starter-kit choices.
+func (c *Cmd) appSelection(config *project.Config) (project.Components, project.StarterKit, error) {
+	available := config.Render.Components
+	if c.shouldRunWizard() {
+		if !isInteractiveTerminal() {
+			return project.Components{}, project.StarterKitNone, fmt.Errorf("app wizard requires an interactive terminal")
+		}
+		components, starterKit, cancelled, err := appWizardRunner(c.Name, config)
+		if err != nil {
+			return project.Components{}, project.StarterKitNone, err
+		}
+		if cancelled {
+			return project.Components{}, project.StarterKitNone, errAppCreationCancelled
+		}
+		return components, starterKit, nil
+	}
+	components := project.AppDefaultComponents(available)
+	if strings.TrimSpace(c.Components) != "" {
+		keys, err := project.ParseComponentKeys(c.Components)
+		if err != nil {
+			return project.Components{}, project.StarterKitNone, err
+		}
+		components, err = project.AppComponentsFromKeys(available, keys)
+		if err != nil {
+			return project.Components{}, project.StarterKitNone, err
+		}
+	}
+	if strings.TrimSpace(c.Without) != "" {
+		keys, err := project.ParseComponentKeys(c.Without)
+		if err != nil {
+			return project.Components{}, project.StarterKitNone, err
+		}
+		for _, key := range keys {
+			if !project.IsAppComponentKey(key) {
+				definition, _ := project.ComponentDefinitionByKey(key)
+				return project.Components{}, project.StarterKitNone, fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
+			}
+			components.SetEnabled(key, false)
+		}
+		components = project.NormalizeAppComponents(available, components)
+	}
+
+	starterKit := project.NormalizeStarterKit(project.StarterKit(c.StarterKit))
+	if strings.TrimSpace(c.StarterKit) == "" {
+		starterKit = config.Render.StarterKit
+	}
+	if !components.WebUI {
+		starterKit = project.StarterKitNone
+	}
+	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
+		return project.Components{}, project.StarterKitNone, err
+	}
+	if err := components.ValidateRenderContract(); err != nil {
+		return project.Components{}, project.StarterKitNone, err
+	}
+	return components, starterKit, nil
+}
+
+// shouldRunWizard keeps the default flow interactive while allowing explicit flags to stay scriptable.
+func (c *Cmd) shouldRunWizard() bool {
+	if c.hasExplicitSelection() {
+		return false
+	}
+	return isInteractiveTerminal()
+}
+
+// hasExplicitSelection reports whether the caller has already provided enough input to skip the TUI.
+func (c *Cmd) hasExplicitSelection() bool {
+	return strings.TrimSpace(c.Components) != "" ||
+		strings.TrimSpace(c.Without) != "" ||
+		strings.TrimSpace(c.StarterKit) != ""
+}
+
+// printMissingNameHelp keeps the no-arg command path instructional instead of error-styled.
+func (c *Cmd) printMissingNameHelp() {
+	console.Infof("App name is required")
+	console.Infof("Usage: forj make:app <name>")
+	console.Infof("Example: forj make:app billing")
+}
+
+// printExistingAppHelp explains the no-op when the conventional app files already exist.
+func (c *Cmd) printExistingAppHelp(err appExistsError) {
+	console.Infof("App already exists: %s", err.app.Name)
+	console.Infof("Existing path: %s", err.path)
+	console.Infof("Run forj render to refresh an existing app.")
+}
+
+// app resolves the command input into the conventional app paths used by render and dev.
+func (c *Cmd) app() (project.App, error) {
+	name := strings.TrimSpace(c.Name)
+	if name == "" {
+		return project.App{}, errAppNameRequired
+	}
+	if name == project.DefaultAppName {
+		return project.App{}, fmt.Errorf("app %q already exists as the default app", name)
+	}
+	if !project.IsSafeAppName(name) {
+		return project.App{}, fmt.Errorf("invalid app name %q; use a lowercase kebab-case slug such as marketplace or customer-portal", name)
+	}
+	if project.IsReservedAppName(name) {
+		return project.App{}, fmt.Errorf("app name %q is reserved by the app layout", name)
+	}
+	if project.IsNativeFrameworkCommandName(name) {
+		return project.App{}, fmt.Errorf("app name %q conflicts with a native forj command", name)
+	}
+	return project.DefaultNamedApp(name), nil
+}
+
+// ensureAppDoesNotExist prevents make:app from overwriting an app owner-created app.
+func (c *Cmd) ensureAppDoesNotExist(app project.App) error {
+	for _, path := range []string{
+		app.Entrypoint,
+		app.AppDir,
+		app.WireDir,
+		filepath.Dir(app.Entrypoint),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return appExistsError{app: app, path: path}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}

@@ -1,0 +1,44 @@
+package main
+
+import (
+	{{if .Components.WebUI}}"embed"{{end}}
+	"{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.WireImportPath}}"
+	"{{.GoModuleName}}/internal/cmd"
+	"{{.GoModuleName}}/internal/console"
+	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
+	"os"
+)
+
+{{if .Components.WebUI}}
+//go:embed all:frontend/dist/*
+var spa embed.FS
+
+{{end}}
+func main() {
+	args := cmd.EffectiveLaunchArgs(os.Args[1:])
+	cmd.ApplyLaunchApp("{{.App.Name}}")
+
+	if err := cmd.LoadEnv(); err != nil {
+		console.Fatalf("loading env: %v", err)
+	}
+
+	handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})
+	if err != nil {
+		console.Fatalf("%v", err)
+	} else if handled {
+		return
+	}
+{{- if .Components.WebUI}}
+
+	http.RegisterSpa("/*", "frontend/dist", &spa)
+{{end}}
+	application, err := wire.InitializeApplication()
+	if err != nil {
+		console.Fatalf("initializing application: %v", err)
+	}
+
+	if err := application.Run(nil, args); err != nil {
+		console.Fatalf("%v", err)
+	}
+}

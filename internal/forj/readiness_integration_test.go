@@ -36,13 +36,7 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 	}
 	writeReadinessTestEnv(t, projectDir, dbPort)
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered app")
 
 	httpAddr := findFreeAddr(t)
 	_, httpPort, err := net.SplitHostPort(httpAddr)

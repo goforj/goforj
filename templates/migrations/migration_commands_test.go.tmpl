@@ -109,6 +109,128 @@ func TestRollbackUsesConnection(t *testing.T) {
 	}
 }
 
+func TestMigrateRunsAppScopedConnections(t *testing.T) {
+	dir := t.TempDir()
+	writeSQL(t, filepath.Join(dir, "billing", "default"), "2026_01_20_billing", "CREATE TABLE billing_rows (id INTEGER);", "DROP TABLE billing_rows;")
+	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_01_21_ledger", "CREATE TABLE ledger_rows (id INTEGER);", "DROP TABLE ledger_rows;")
+
+	setMigrationFS(t, dir)
+
+	t.Setenv("FORJ_APP", "billing")
+	t.Setenv("DB_BILLING_DRIVER", "sqlite")
+	t.Setenv("DB_BILLING_DATABASE", ":memory:")
+	t.Setenv("DB_BILLING_LEDGER_DRIVER", "sqlite")
+	t.Setenv("DB_BILLING_LEDGER_DATABASE", ":memory:")
+
+	conns := database.NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}(*inspects.Manager)(nil))
+	log := logger.NewSilentLogger()
+
+	cmd := NewMigrateCmd(log, conns)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("migrate billing failed: %v", err)
+	}
+
+	billingConn, err := conns.Connection("billing")
+	if err != nil {
+		t.Fatalf("billing connection failed: %v", err)
+	}
+	var count int
+	if err := billingConn.Raw("SELECT COUNT(*) FROM migrations").Scan(&count).Error; err != nil {
+		t.Fatalf("billing count failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 billing migration applied, got %d", count)
+	}
+
+	ledgerConn, err := conns.Connection("billing_ledger")
+	if err != nil {
+		t.Fatalf("billing ledger connection failed: %v", err)
+	}
+	count = 0
+	if err := ledgerConn.Raw("SELECT COUNT(*) FROM migrations").Scan(&count).Error; err != nil {
+		t.Fatalf("billing ledger count failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 billing ledger migration applied, got %d", count)
+	}
+}
+
+func TestMigrateRunsAllAppStreamsWhenUnqualified(t *testing.T) {
+	dir := t.TempDir()
+	writeSQL(t, filepath.Join(dir, "app", "default"), "2026_01_30_app", "CREATE TABLE app_rows (id INTEGER);", "DROP TABLE app_rows;")
+	writeSQL(t, filepath.Join(dir, "billing", "default"), "2026_01_31_billing", "CREATE TABLE billing_rows (id INTEGER);", "DROP TABLE billing_rows;")
+	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_02_01_ledger", "CREATE TABLE ledger_rows (id INTEGER);", "DROP TABLE ledger_rows;")
+
+	setMigrationFS(t, dir)
+
+	t.Setenv("FORJ_APP", "app")
+	t.Setenv("FORJ_COMMAND_PREFIX", "forj")
+	t.Setenv("DB_DRIVER", "sqlite")
+	t.Setenv("DB_DATABASE", ":memory:")
+	t.Setenv("DB_BILLING_DRIVER", "sqlite")
+	t.Setenv("DB_BILLING_DATABASE", ":memory:")
+	t.Setenv("DB_BILLING_LEDGER_DRIVER", "sqlite")
+	t.Setenv("DB_BILLING_LEDGER_DATABASE", ":memory:")
+
+	conns := database.NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}(*inspects.Manager)(nil))
+	log := logger.NewSilentLogger()
+
+	cmd := NewMigrateCmd(log, conns)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("migrate all apps failed: %v", err)
+	}
+
+	assertMigrationCount(t, conns, "default", 1)
+	assertMigrationCount(t, conns, "billing", 1)
+	assertMigrationCount(t, conns, "billing_ledger", 1)
+}
+
+func TestRollbackUsesAppScopedConnection(t *testing.T) {
+	dir := t.TempDir()
+	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_02_10_first", "CREATE TABLE ledger_first (id INTEGER);", "DROP TABLE ledger_first;")
+	writeSQL(t, filepath.Join(dir, "billing", "ledger"), "2026_02_11_second", "CREATE TABLE ledger_second (id INTEGER);", "DROP TABLE ledger_second;")
+
+	setMigrationFS(t, dir)
+
+	t.Setenv("FORJ_APP", "billing")
+	t.Setenv("DB_BILLING_LEDGER_DRIVER", "sqlite")
+	t.Setenv("DB_BILLING_LEDGER_DATABASE", ":memory:")
+
+	conns := database.NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}(*inspects.Manager)(nil))
+	log := logger.NewSilentLogger()
+
+	migrate := NewMigrateCmd(log, conns)
+	migrate.Connection = "ledger"
+	if err := migrate.Run(); err != nil {
+		t.Fatalf("migrate billing ledger failed: %v", err)
+	}
+
+	rollback := NewMigrateRollbackCmd(log, conns)
+	rollback.Connection = "ledger"
+	rollback.Step = 1
+	if err := rollback.Run(); err != nil {
+		t.Fatalf("rollback billing ledger failed: %v", err)
+	}
+
+	assertMigrationCount(t, conns, "billing_ledger", 1)
+}
+
+func assertMigrationCount(t *testing.T, conns *database.Connections, connection string, want int) {
+	t.Helper()
+
+	dbConn, err := conns.Connection(connection)
+	if err != nil {
+		t.Fatalf("%s connection failed: %v", connection, err)
+	}
+	var count int
+	if err := dbConn.Raw("SELECT COUNT(*) FROM migrations").Scan(&count).Error; err != nil {
+		t.Fatalf("%s count failed: %v", connection, err)
+	}
+	if count != want {
+		t.Fatalf("expected %d migrations for %s, got %d", want, connection, count)
+	}
+}
+
 func setMigrationFS(t *testing.T, dir string) {
 	t.Helper()
 

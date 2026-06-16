@@ -130,8 +130,8 @@ Generated `wire.App` already owns a shared lifecycle:
 Sources:
 
 - [`templates/wire/app.go.tmpl`](../../../templates/wire/app.go.tmpl)
-- [`templates/internal/app/lifecycle.go.tmpl`](../../../templates/internal/app/lifecycle.go.tmpl)
-- [`templates/internal/app/lifecycle_registry.go.tmpl`](../../../templates/internal/app/lifecycle_registry.go.tmpl)
+- [`templates/internal/runtime/lifecycle.go.tmpl`](../../../templates/internal/runtime/lifecycle.go.tmpl)
+- [`templates/app/lifecycle.go.tmpl`](../../../templates/app/lifecycle.go.tmpl)
 
 This is good news: the codebase already has a root runtime coordination layer. We should extend that pattern rather than invent a parallel one.
 
@@ -248,7 +248,7 @@ Introduce a generated internal abstraction that hosts multiple logical runtimes 
 
 Suggested package ownership:
 
-- `internal/app`
+- `internal/runtime`
 
 Suggested types:
 
@@ -386,7 +386,7 @@ But they should stop being the only place where runtime startup semantics live.
 
 Concrete likely additions:
 
-- new files under `templates/internal/app/` for:
+- new files under `templates/internal/runtime/` for:
   - runtime identity
   - runtime host
   - runtime registration / assembly helpers
@@ -540,7 +540,7 @@ Likely touched files:
 
 Need:
 
-- hostable runtime abstraction in `internal/app`
+- hostable runtime abstraction in `internal/runtime`
 - `RunCmd` rewrite
 - leaf commands become wrappers over reusable runtime services
 - lifecycle skip policy rewrite in `wire.App.Run`
@@ -549,9 +549,9 @@ Need:
 Likely touched files:
 
 - [`templates/internal/cmd/run_cmd.go.tmpl`](../../../templates/internal/cmd/run_cmd.go.tmpl)
-- [`templates/internal/cmd/root_cmd.go.tmpl`](../../../templates/internal/cmd/root_cmd.go.tmpl)
+- [`templates/app/root_cmd.go.tmpl`](../../../templates/app/root_cmd.go.tmpl)
 - [`templates/wire/app.go.tmpl`](../../../templates/wire/app.go.tmpl)
-- new files in `templates/internal/app/`
+- new files in `templates/internal/runtime/`
 
 ### Docs
 
@@ -643,7 +643,7 @@ The cleanest version is:
 
 ## Implementation Plan
 
-- [ ] Define runtime identity and host abstractions in `internal/app`
+- [ ] Define runtime identity and host abstractions in `internal/runtime`
   - [ ] add explicit runtime identity for `api`, `scheduler`, and `jobs`
   - [ ] add a runtime host that can run enabled logical runtimes concurrently in one process
   - [ ] make host cancellation and sibling shutdown behavior explicit

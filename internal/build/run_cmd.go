@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +24,7 @@ type RunCmd struct {
 	pipeline          Pipeline
 	Timings           bool     `help:"Print per-step timings for generate, api index, and go run"`
 	Root              string   `help:"Project root to run" default:"."`
-	Args              []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to the app after go run ."`
+	Args              []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to the app after go run ./cmd/app"`
 	Env               []string `kong:"-"`
 	PreserveTTY       bool     `kong:"-"`
 	waitCh            chan error
@@ -42,7 +43,7 @@ func NewRunCmd(logger *logger.AppLogger, apiIndex *APIIndexRunner) *RunCmd {
 
 // Signature returns CLI metadata for the source-run command.
 func (*RunCmd) Signature() string {
-	return `name:"run" help:"Run generate, API indexing, then go run ."`
+	return `name:"run" help:"Run generate, API indexing, then go run ./cmd/app"`
 }
 
 // Run executes generation, API indexing, and the generated app command.
@@ -215,7 +216,7 @@ func exitCodeFromError(err error) (int, bool) {
 // runArgs returns the full go run argument list for the app command.
 func (c *RunCmd) runArgs() []string {
 	args := make([]string, 0, len(c.Args)+1)
-	args = append(args, ".")
+	args = append(args, defaultRunPackage(c.Root))
 	args = append(args, c.Args...)
 	return args
 }
@@ -238,6 +239,23 @@ func clearInterruptEcho() {
 	if term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprint(os.Stderr, "\r\x1b[2K")
 	}
+}
+
+// defaultRunPackage keeps `forj run` pointed at the generated app entrypoint when one exists.
+func defaultRunPackage(root string) string {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	target := activeApp()
+	if packagePath := appPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
+		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
+			return packagePath
+		}
+	}
+	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
+		return "./cmd/app"
+	}
+	return "."
 }
 
 // firstOutputGate holds app output until transient pipeline progress can be cleared.

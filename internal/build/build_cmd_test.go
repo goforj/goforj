@@ -30,8 +30,8 @@ func (s stubAPIIndexer) RunQuiet() error {
 func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)
@@ -65,11 +65,62 @@ func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 	}
 }
 
+func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
+	}
+	for rel, contents := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	binPath := filepath.Join(root, "bin", "app")
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(binPath, []byte("not executable"), 0o644); err != nil {
+		t.Fatalf("write stale binary: %v", err)
+	}
+
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousWD) })
+
+	cmd := &Cmd{Root: "."}
+	if _, err := cmd.runPlainGoBuild([]string{"-o", "./bin/app", "./cmd/app"}); err != nil {
+		t.Fatalf("runPlainGoBuild returned error: %v", err)
+	}
+	info, err := os.Stat(binPath)
+	if err != nil {
+		t.Fatalf("stat built binary: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("expected built binary to be executable, mode %s", info.Mode())
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", ".app.publish")); !os.IsNotExist(err) {
+		t.Fatalf("expected publish temporary build output to be cleaned up, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", ".forj-build-cache", "app")); err != nil {
+		t.Fatalf("expected persistent build cache output: %v", err)
+	}
+}
+
 func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)
@@ -130,6 +181,58 @@ func TestShouldRetryWire(t *testing.T) {
 	nonRetryable := `wire: /private/tmp/test/wire/app.go:181:14: queue.DriverSync undefined`
 	if shouldRetryWire(nonRetryable) {
 		t.Fatalf("expected direct symbol error not to be retryable")
+	}
+}
+
+func TestBuildArgsAppendDefaultPackageWhenOnlyFlagsProvided(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/app: %v", err)
+	}
+	cmd := &Cmd{Root: root, Args: []string{"-o", "./bin/app"}}
+	got := cmd.buildArgs()
+	want := []string{"-o", "./bin/app", "./cmd/app"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("build args = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildArgsUseActiveConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "reporting"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/reporting: %v", err)
+	}
+	t.Setenv("FORJ_APP", "reporting")
+
+	cmd := &Cmd{Root: root}
+	got := cmd.buildArgs()
+	want := []string{"-o", "bin/reporting", "./cmd/reporting"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("build args = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadWirePathsUsesActiveConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(previous) }()
+
+	wireDir := filepath.Join("app", "reporting", "wire")
+	if err := os.MkdirAll(wireDir, 0o755); err != nil {
+		t.Fatalf("mkdir target wire dir: %v", err)
+	}
+	t.Setenv("FORJ_APP", "reporting")
+
+	got := loadWirePaths()
+	want := []string{wireDir}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("wire paths = %#v, want %#v", got, want)
 	}
 }
 
@@ -236,8 +339,8 @@ go get github.com/goforj/storage/driver/redisstorage`)
 func TestBuildProgressMarkers(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)

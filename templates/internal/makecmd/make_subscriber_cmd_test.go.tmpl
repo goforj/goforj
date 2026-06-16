@@ -10,14 +10,14 @@ func TestSubscriberCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	t.Chdir(root)
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
-	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_event_subscribers.go"), `package wire
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_subscribers_app.go"), `package wire
 
 import (
 	"example.com/testapp/internal/events"
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 )
 
-var eventSubscriberSet = wire.NewSet(
+var appSubscriberSet = wire.NewSet(
 	ProvideEventSubscribers,
 )
 
@@ -40,7 +40,7 @@ func ProvideEventSubscribers(
 		"package billing",
 		"type InvoicePaidSubscriber struct",
 	})
-	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_event_subscribers.go"), []string{
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_subscribers_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,
 		"billing.NewInvoicePaidSubscriber",
 		"billingInvoicePaidSubscriber *billing.InvoicePaidSubscriber",
@@ -54,11 +54,75 @@ func ProvideEventSubscribers(
 	}
 
 	assertMakeCmdTestFileMissing(t, outputPath)
-	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_event_subscribers.go"), []string{
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_subscribers_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,
 		"billing.NewInvoicePaidSubscriber",
 		"billingInvoicePaidSubscriber *billing.InvoicePaidSubscriber",
 		`billingInvoicePaidSubscriberBus := eventManager.Named("default")`,
 		"billingInvoicePaidSubscriber.Handle",
+	})
+}
+
+func TestSubscriberCmdUsesActiveApp(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP", "reporting")
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_subscribers_app.go"), `package wire
+
+import (
+	"example.com/testapp/internal/events"
+	"github.com/goforj/wire"
+)
+
+var appSubscriberSet = wire.NewSet(
+	ProvideEventSubscribers,
+)
+
+type EventSubscribersReady struct{}
+
+func ProvideEventSubscribers(
+	eventManager *events.Manager,
+) (*EventSubscribersReady, error) {
+	return &EventSubscribersReady{}, nil
+}
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_subscribers_app.go"), `package wire
+
+import (
+	"example.com/testapp/internal/events"
+	"github.com/goforj/wire"
+)
+
+var appSubscriberSet = wire.NewSet(
+	ProvideEventSubscribers,
+)
+
+type EventSubscribersReady struct{}
+
+func ProvideEventSubscribers(
+	eventManager *events.Manager,
+) (*EventSubscribersReady, error) {
+	return &EventSubscribersReady{}, nil
+}
+`)
+
+	cmd := &SubscriberCmd{Name: "Billing:InvoicePaid", OutputDir: defaultSubscriberOutputDir}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create targeted subscriber: %v", err)
+	}
+
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_subscribers_app.go"), []string{
+		`"example.com/testapp/internal/billing"`,
+		"billing.NewInvoicePaidSubscriber",
+		"billingInvoicePaidSubscriber *billing.InvoicePaidSubscriber",
+		`billingInvoicePaidSubscriberBus := eventManager.Named("default")`,
+		"billingInvoicePaidSubscriber.Handle",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_subscribers_app.go"), []string{
+		`"example.com/testapp/internal/billing"`,
+		"billing.NewInvoicePaidSubscriber",
+		"billingInvoicePaidSubscriber *billing.InvoicePaidSubscriber",
 	})
 }

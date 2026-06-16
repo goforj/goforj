@@ -50,7 +50,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(storage_operations_total{disk=~\"$disk\", category=~\"read|list\",status=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(storage_operations_total{app=~\"$app\", disk=~\"$disk\", category=~\"read|list\",status=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "reads",
           "range": true,
           "refId": "A"
@@ -91,7 +91,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(storage_operations_total{disk=~\"$disk\", category=~\"write|delete|transfer|access\",status=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(storage_operations_total{app=~\"$app\", disk=~\"$disk\", category=~\"write|delete|transfer|access\",status=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "writes",
           "range": true,
           "refId": "A"
@@ -132,7 +132,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(storage_operations_total{disk=~\"$disk\", status=\"not_found\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(storage_operations_total{app=~\"$app\", disk=~\"$disk\", status=\"not_found\"}[$__range])) or vector(0)",
           "legendFormat": "misses",
           "range": true,
           "refId": "A"
@@ -173,7 +173,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(storage_operations_total{disk=~\"$disk\", status=~\"forbidden|unsupported|timeout|canceled|error\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(storage_operations_total{app=~\"$app\", disk=~\"$disk\", status=~\"forbidden|unsupported|timeout|canceled|error\"}[$__range])) or vector(0)",
           "legendFormat": "failures",
           "range": true,
           "refId": "A"
@@ -214,7 +214,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (sum(increase(storage_operations_total{disk=~\"$disk\", status=\"not_found\"}[$__range])) or vector(0)) / clamp_min(sum(increase(storage_operations_total{disk=~\"$disk\", category=~\"read|list\"}[$__range])) or vector(0), 1)",
+          "expr": "100 * (sum(increase(storage_operations_total{app=~\"$app\", disk=~\"$disk\", status=\"not_found\"}[$__range])) or vector(0)) / clamp_min(sum(increase(storage_operations_total{app=~\"$app\", disk=~\"$disk\", category=~\"read|list\"}[$__range])) or vector(0), 1)",
           "legendFormat": "not found rate",
           "range": true,
           "refId": "A"
@@ -255,7 +255,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(storage_operation_duration_seconds_bucket{disk=~\"$disk\"}[$__rate_interval]))) or vector(0)",
+          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(storage_operation_duration_seconds_bucket{app=~\"$app\", disk=~\"$disk\"}[$__rate_interval]))) or vector(0)",
           "legendFormat": "overall",
           "range": true,
           "refId": "A"
@@ -304,7 +304,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, disk, operation) (rate(storage_operations_total{disk=~\"$disk\", category=~\"read|list\",status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, disk, operation) (rate(storage_operations_total{app=~\"$app\", disk=~\"$disk\", category=~\"read|list\",status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }} · {{ "{{ operation }}" }}",
           "range": true,
           "refId": "A"
@@ -353,7 +353,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, disk, operation, category) (rate(storage_operations_total{disk=~\"$disk\", category=~\"write|delete|transfer|access\",status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, disk, operation, category) (rate(storage_operations_total{app=~\"$app\", disk=~\"$disk\", category=~\"write|delete|transfer|access\",status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}",
           "range": true,
           "refId": "A"
@@ -402,7 +402,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, disk, operation) (rate(storage_operations_total{disk=~\"$disk\", status=\"not_found\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, disk, operation) (rate(storage_operations_total{app=~\"$app\", disk=~\"$disk\", status=\"not_found\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }} · {{ "{{ operation }}" }}",
           "range": true,
           "refId": "A"
@@ -451,7 +451,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, disk, operation, status) (rate(storage_operations_total{disk=~\"$disk\", status=~\"forbidden|unsupported|timeout|canceled|error\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, disk, operation, status) (rate(storage_operations_total{app=~\"$app\", disk=~\"$disk\", status=~\"forbidden|unsupported|timeout|canceled|error\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
@@ -500,7 +500,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, disk, operation) (rate(storage_operation_duration_seconds_bucket{disk=~\"$disk\", category=~\"read|list\"}[$__rate_interval]))))",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, disk, operation) (rate(storage_operation_duration_seconds_bucket{app=~\"$app\", disk=~\"$disk\", category=~\"read|list\"}[$__rate_interval]))))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }} · {{ "{{ operation }}" }}",
           "range": true,
           "refId": "A"
@@ -549,7 +549,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, disk, operation, category) (rate(storage_operation_duration_seconds_bucket{disk=~\"$disk\", category=~\"write|delete|transfer|access\"}[$__rate_interval]))))",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, disk, operation, category) (rate(storage_operation_duration_seconds_bucket{app=~\"$app\", disk=~\"$disk\", category=~\"write|delete|transfer|access\"}[$__rate_interval]))))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}",
           "range": true,
           "refId": "A"
@@ -598,7 +598,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 100 * (sum by (source, disk) (rate(storage_operations_total{disk=~\"$disk\", status=~\"forbidden|unsupported|timeout|canceled|error\"}[$__rate_interval])) or vector(0)) / clamp_min(sum by (source, disk) (rate(storage_operations_total{disk=~\"$disk\"}[$__rate_interval])) or vector(0), 0.001))",
+          "expr": "topk(12, 100 * (sum by (source, disk) (rate(storage_operations_total{app=~\"$app\", disk=~\"$disk\", status=~\"forbidden|unsupported|timeout|canceled|error\"}[$__rate_interval])) or vector(0)) / clamp_min(sum by (source, disk) (rate(storage_operations_total{app=~\"$app\", disk=~\"$disk\"}[$__rate_interval])) or vector(0), 0.001))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ disk }}" }}",
           "range": true,
           "refId": "A"
@@ -625,7 +625,32 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(storage_operations_total, disk)",
+        "definition": "label_values(app)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "App",
+        "multi": false,
+        "name": "app",
+        "options": [],
+        "query": {
+          "query": "label_values(app)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+        "definition": "label_values(storage_operations_total{app=~\"$app\"}, disk)",
         "hide": 0,
         "includeAll": true,
         "label": "Disk",
@@ -633,7 +658,7 @@
         "name": "disk",
         "options": [],
         "query": {
-          "query": "label_values(storage_operations_total, disk)",
+          "query": "label_values(storage_operations_total{app=~\"$app\"}, disk)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

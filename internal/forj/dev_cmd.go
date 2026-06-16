@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,9 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
+	"path/filepath"
+	goruntime "runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -45,6 +49,7 @@ type devShellCommandRequest struct {
 
 type devWatchSession struct {
 	config        *project.Config
+	baseWatches   []project.DevWatch
 	streamer      *devwatchStreamer
 	restartCh     chan struct{}
 	buildCh       chan struct{}
@@ -112,10 +117,23 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
+	shutdownWriters := func() {}
+	var cleanupOnce sync.Once
+	cleanupDevTerminal := func() {
+		cleanupOnce.Do(func() {
+			shutdownWriters()
+			shutdownWriters = func() {}
+			restoreDevTerminalState(nil, nil)
+		})
+	}
+	defer cleanupDevTerminal()
+
 	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return err
 	}
+	baseWatches := copyDevWatches(config.Dev.Watches)
+	config.Dev.Watches = devWatchesForApps(config, baseWatches)
 
 	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -162,15 +180,19 @@ func (c *DevCmd) Run() error {
 	}
 	stopEnvWatch := startDevEnvFileWatcher(runCtx, requestBuild, 250*time.Millisecond)
 	defer stopEnvWatch()
+	stopTargetWatch := startDevAppWatcher(runCtx, requestBuild, 500*time.Millisecond)
+	defer stopTargetWatch()
 	var outWriter io.Writer
 	var errWriter io.Writer
-	shutdownWriters := func() {}
-	defer shutdownWriters()
 	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
 	currentStreamer, err := runtimeState.Sync()
 	if err != nil {
+		return err
+	}
+	writeDevAppBuildLine(os.Stdout, activeDevApps())
+	if err := runDevInitialBuild(config, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
 	if err := runPreDevSetup(config); err != nil {
@@ -183,6 +205,7 @@ func (c *DevCmd) Run() error {
 
 	session := &devWatchSession{
 		config:        config,
+		baseWatches:   baseWatches,
 		streamer:      currentStreamer,
 		restartCh:     restartCh,
 		buildCh:       buildCh,
@@ -196,8 +219,7 @@ func (c *DevCmd) Run() error {
 
 	if err := c.runWatchersLoop(session); err != nil {
 		if errors.Is(err, errDevInterrupted) {
-			shutdownWriters()
-			shutdownWriters = func() {}
+			cleanupDevTerminal()
 			outWriter = nil
 			errWriter = nil
 			if config != nil && config.Dev.DownOnExit {
@@ -210,6 +232,7 @@ func (c *DevCmd) Run() error {
 			}
 			return nil
 		}
+		cleanupDevTerminal()
 		return err
 	}
 
@@ -217,17 +240,27 @@ func (c *DevCmd) Run() error {
 }
 
 func ensureDevDatabaseExists(config *project.Config) error {
+	return ensureDevDatabaseExistsWithWriters(config, os.Stdout, os.Stderr)
+}
+
+func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
 	if config == nil {
 		return nil
 	}
-	components := config.Render.Components
-	switch {
-	case components.DatabaseMySQL:
-		res, err := execx.Command("bash", "-c", "docker-compose exec -T mysql sh -c 'mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'").
+	databases, err := devDatabasesForApps(config, activeDevApps())
+	if err != nil {
+		return err
+	}
+	databasesByDriver := map[string][]string{}
+	for _, database := range databases {
+		databasesByDriver[database.Driver] = append(databasesByDriver[database.Driver], database.Name)
+	}
+	if names := databasesByDriver["mysql"]; len(names) > 0 {
+		res, err := execx.Command("docker-compose", "exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
-			StdoutWriter(os.Stdout).
-			StderrWriter(os.Stderr).
+			StdoutWriter(outWriter).
+			StderrWriter(errWriter).
 			Run()
 		if err != nil {
 			return fmt.Errorf("ensure mysql database failed: %v", err)
@@ -235,12 +268,13 @@ func ensureDevDatabaseExists(config *project.Config) error {
 		if !res.OK() {
 			return fmt.Errorf("ensure mysql database failed with exit code %d", res.ExitCode)
 		}
-	case components.DatabasePostgres:
-		res, err := execx.Command("bash", "-c", "docker-compose exec -T postgres sh -c 'psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'").
+	}
+	if names := databasesByDriver["postgres"]; len(names) > 0 {
+		res, err := execx.Command("docker-compose", "exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
-			StdoutWriter(os.Stdout).
-			StderrWriter(os.Stderr).
+			StdoutWriter(outWriter).
+			StderrWriter(errWriter).
 			Run()
 		if err != nil {
 			return fmt.Errorf("ensure postgres database failed: %v", err)
@@ -250,6 +284,115 @@ func ensureDevDatabaseExists(config *project.Config) error {
 		}
 	}
 	return nil
+}
+
+type devDatabase struct {
+	App    string
+	Driver string
+	Name   string
+}
+
+// devDatabasesForApps discovers every server database the current dev session must create.
+func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatabase, error) {
+	if config == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	databases := make([]devDatabase, 0, len(apps))
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		components := appRenderComponents(config, app)
+		if !components.HasDatabase() {
+			continue
+		}
+		driver := normalizeDevDatabaseDriver(appScopedEnvValue(app, "DB_DRIVER"))
+		if driver == "" {
+			driver = normalizeDevDatabaseDriver(components.DatabaseDriver())
+		}
+		if driver == "" || driver == "sqlite" {
+			continue
+		}
+		name := appScopedEnvValue(app, "DB_DATABASE")
+		if name == "" {
+			return nil, fmt.Errorf("missing %s for %s database app %s", appScopedEnvKey(app, "DB_DATABASE"), driver, app.Name)
+		}
+		if err := validateDevDatabaseName(name); err != nil {
+			return nil, fmt.Errorf("%s for app %s: %w", appScopedEnvKey(app, "DB_DATABASE"), app.Name, err)
+		}
+		key := driver + "\x00" + name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		databases = append(databases, devDatabase{App: app.Name, Driver: driver, Name: name})
+	}
+	sort.Slice(databases, func(left, right int) bool {
+		if databases[left].Driver != databases[right].Driver {
+			return databases[left].Driver < databases[right].Driver
+		}
+		return databases[left].Name < databases[right].Name
+	})
+	return databases, nil
+}
+
+// normalizeDevDatabaseDriver maps common aliases to the compose service driver names.
+func normalizeDevDatabaseDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "mysql", "mariadb":
+		return "mysql"
+	case "postgres", "postgresql":
+		return "postgres"
+	case "sqlite", "sqlite3":
+		return "sqlite"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
+}
+
+// appScopedEnvValue reads app-specific env with the same fallback shape used by app runtime.
+func appScopedEnvValue(app project.App, key string) string {
+	if app.Name != "" && app.Name != project.DefaultAppName {
+		if value := strings.TrimSpace(os.Getenv(appScopedEnvKey(app, key))); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+// appScopedEnvKey returns the app-prefixed env key that overrides a base env value.
+func appScopedEnvKey(app project.App, key string) string {
+	if app.Name == "" || app.Name == project.DefaultAppName {
+		return key
+	}
+	prefix := strEnvPrefix(app.Name)
+	if prefix == "" {
+		return key
+	}
+	return prefix + "_" + key
+}
+
+// validateDevDatabaseName keeps local database creation scripts simple and injection-safe.
+func validateDevDatabaseName(name string) error {
+	if name == "" {
+		return fmt.Errorf("database name is empty")
+	}
+	for _, char := range name {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_' {
+			continue
+		}
+		return fmt.Errorf("database name %q must contain only letters, numbers, and underscores", name)
+	}
+	return nil
+}
+
+// mysqlCreateDatabasesScript creates every needed MySQL database after the service is ready.
+func mysqlCreateDatabasesScript(names []string) string {
+	return `while ! mysqladmin ping -h "mysql" --silent; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do mysql -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mysql -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
+}
+
+// postgresCreateDatabasesScript creates every needed Postgres database after the service is ready.
+func postgresCreateDatabasesScript(names []string) string {
+	return `until pg_isready -h "postgres" -p 5432; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$db\";"; done`
 }
 
 func runDevTasks(heading string, tasks []project.DevTask) error {
@@ -284,10 +427,9 @@ func runPreDevSetup(config *project.Config) error {
 	if config == nil {
 		return nil
 	}
-	components := config.Render.Components
 	preTasks := config.Dev.Pre
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
-	if config.Dev.AutoMigrate && components.HasDatabase() {
+	if shouldRunDevAutoMigrate(config) {
 		preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
 		for _, task := range config.Dev.Pre {
 			if shouldRunAfterMigrate(task) {
@@ -300,30 +442,314 @@ func runPreDevSetup(config *project.Config) error {
 	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
 		return err
 	}
-	if config.Dev.AutoMigrate && components.HasDatabase() && components.Docker {
-		if err := ensureDevDatabaseExists(config); err != nil {
-			return err
-		}
-	}
-	if config.Dev.AutoMigrate && components.HasDatabase() {
-		console.Actionf("Running auto-migrate")
-		res, err := execx.Command("bash", "-c", "./bin/app migrate").
-			EnvInherit().
-			StdinReader(os.Stdin).
-			StdoutWriter(os.Stdout).
-			StderrWriter(os.Stderr).
-			Run()
-		if err != nil {
-			return fmt.Errorf("auto-migrate failed: %v", err)
-		}
-		if !res.OK() {
-			return fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
-		}
+	if err := runDevAppSetup(config, os.Stdout, os.Stderr); err != nil {
+		return err
 	}
 	if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
 		return err
 	}
 	return nil
+}
+
+// runDevAppSetup catches databases and migrations up before dev starts or restarts app processes.
+func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	if !shouldRunDevAutoMigrate(config) {
+		return nil
+	}
+	if config.Render.Components.Docker {
+		start := time.Now()
+		writeDevActionLine(outWriter, "Ensuring dev databases")
+		if err := ensureDevDatabaseExistsWithWriters(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		writeDevTimingLine(outWriter, "Dev databases ready in "+formatDevElapsed(time.Since(start)))
+	}
+	start := time.Now()
+	writeDevActionLine(outWriter, "Running auto-migrate")
+	res, err := execx.Command("bash", "-c", devAutoMigrateShellCommand()).
+		EnvInherit().
+		Env(devAutoMigrateEnv()).
+		StdinReader(os.Stdin).
+		StdoutWriter(outWriter).
+		StderrWriter(errWriter).
+		Run()
+	if err != nil {
+		return fmt.Errorf("auto-migrate failed: %v", err)
+	}
+	if !res.OK() {
+		return fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
+	}
+	writeDevTimingLine(outWriter, "Auto-migrate finished in "+formatDevElapsed(time.Since(start)))
+	return nil
+}
+
+// shouldRunDevAutoMigrate checks app-local components, not only the root app selection.
+func shouldRunDevAutoMigrate(config *project.Config) bool {
+	if config == nil || !config.Dev.AutoMigrate {
+		return false
+	}
+	for _, target := range activeDevApps() {
+		if appRenderComponents(config, target).HasDatabase() {
+			return true
+		}
+	}
+	return false
+}
+
+// devAutoMigrateShellCommand runs migrations through the active binary so dev stays aligned with generated app commands.
+func devAutoMigrateShellCommand() string {
+	return activeDevAppBinaryPath() + " migrate"
+}
+
+// devAutoMigrateEnv marks auto-migrate as an unqualified framework command so the generated migration planner can fan out across Apps.
+func devAutoMigrateEnv() map[string]string {
+	return map[string]string{
+		"FORJ_COMMAND_PREFIX": "forj",
+	}
+}
+
+// activeDevApp returns the app selected for this dev session.
+func activeDevApp() project.App {
+	appName := requestedDevAppName()
+	if appName == "" {
+		appName = project.DefaultAppName
+	}
+	return project.DefaultNamedApp(appName)
+}
+
+// activeDevAppBinaryPath points dev helpers at the active app binary.
+func activeDevAppBinaryPath() string {
+	return "./bin/" + activeDevApp().Name
+}
+
+// devWatchesForApps expands the single-app default watchers across every discovered app.
+func devWatchesForApps(config *project.Config, watches []project.DevWatch) []project.DevWatch {
+	apps := activeDevApps()
+	if len(apps) == 1 && apps[0].Name == project.DefaultAppName {
+		return watches
+	}
+	rewritten := make([]project.DevWatch, 0, len(watches)*len(apps))
+	for _, watch := range watches {
+		switch watch.Name {
+		case "Build App", "Run App":
+			for _, app := range apps {
+				rewritten = append(rewritten, devWatchForApp(watch, app))
+			}
+		default:
+			rewritten = append(rewritten, watch)
+		}
+	}
+	return rewritten
+}
+
+// copyDevWatches preserves the configured watcher template before dev expands app watchers.
+func copyDevWatches(watches []project.DevWatch) []project.DevWatch {
+	copied := make([]project.DevWatch, len(watches))
+	for index, watch := range watches {
+		watch.Env = copyDevWatchEnv(watch.Env)
+		copied[index] = watch
+	}
+	return copied
+}
+
+// activeDevApps returns one explicit app or every conventional app for all-app dev.
+func activeDevApps() []project.App {
+	if appName := requestedDevAppName(); appName != "" {
+		return []project.App{project.DefaultNamedApp(appName)}
+	}
+	apps := configuredDevApps()
+	if len(apps) == 0 {
+		return []project.App{project.DefaultApp()}
+	}
+	return apps
+}
+
+// requestedDevAppName reports whether the CLI selected a single app for this dev session.
+func requestedDevAppName() string {
+	appName := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	if appName == "" || !project.IsSafeAppName(appName) || project.IsReservedAppName(appName) {
+		return ""
+	}
+	return appName
+}
+
+// configuredDevApps discovers all-app dev apps from conventional project layout only.
+func configuredDevApps() []project.App {
+	seen := map[string]project.App{}
+	add := func(app project.App) {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
+			return
+		}
+		seen[app.Name] = app
+	}
+	add(project.DefaultApp())
+	for _, app := range discoverConventionalApps() {
+		add(app)
+	}
+
+	apps := make([]project.App, 0, len(seen))
+	if app, ok := seen[project.DefaultAppName]; ok {
+		apps = append(apps, app)
+		delete(seen, project.DefaultAppName)
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		apps = append(apps, seen[name])
+	}
+	return apps
+}
+
+// devWatchForApp rewrites one default watcher for a specific app without editing config.
+func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
+	app = normalizeRenderApp(app)
+	baseName := watch.Name
+	if app.Name != project.DefaultAppName {
+		watch.Name = strings.ReplaceAll(watch.Name, "App", app.Name)
+	}
+	appBinary := "./bin/" + app.Name
+	appWireGen := filepath.ToSlash(filepath.Join(app.WireDir, "wire_gen\\.go$"))
+	if isDevBuildWatcher(baseName) {
+		watch.Exec = devBuildCommandForApp(watch.Exec, app)
+	} else {
+		watch.Exec = strings.ReplaceAll(watch.Exec, "./bin/app", appBinary)
+	}
+	watch.Watch = strings.ReplaceAll(watch.Watch, "./bin/app", appBinary)
+	watch.Watch = strings.ReplaceAll(watch.Watch, "app/wire/wire_gen\\.go$", appWireGen)
+	watch.Env = copyDevWatchEnv(watch.Env)
+	watch.Env["FORJ_APP"] = app.Name
+	if app.Name == project.DefaultAppName {
+		watch.Env["FORJ_COMMAND_PREFIX"] = "forj"
+	} else {
+		watch.Env["FORJ_COMMAND_PREFIX"] = "forj " + app.Name
+	}
+	return watch
+}
+
+// copyDevWatchEnv prevents synthesized app watchers from sharing mutable env maps.
+func copyDevWatchEnv(env map[string]string) map[string]string {
+	cloned := make(map[string]string, len(env)+3)
+	for key, value := range env {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+type devBuildJob struct {
+	app     project.App
+	command string
+}
+
+// devBuildCommands returns the build commands needed for the active dev app set.
+func devBuildCommands(config *project.Config) []string {
+	jobs := devBuildJobs(config, false)
+	commands := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		commands = append(commands, job.command)
+	}
+	return commands
+}
+
+// devInitialBuildCommands returns bootstrap builds for every active app so dev never starts from a stale binary.
+func devInitialBuildCommands(config *project.Config) []string {
+	jobs := devBuildJobs(config, false)
+	commands := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		commands = append(commands, job.command)
+	}
+	return commands
+}
+
+// devBuildJobs resolves app build commands while preserving the app label for compact output.
+func devBuildJobs(config *project.Config, missingOnly bool) []devBuildJob {
+	apps := activeDevApps()
+	jobs := make([]devBuildJob, 0, len(apps))
+	baseCommand := devBaseBuildCommand(config)
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		if missingOnly {
+			if _, err := os.Stat(filepath.Join("bin", app.Name)); err == nil {
+				continue
+			}
+		}
+		command := devBuildCommandForApp(baseCommand, app)
+		if strings.TrimSpace(command) == "" {
+			continue
+		}
+		jobs = append(jobs, devBuildJob{app: app, command: command})
+	}
+	return jobs
+}
+
+// devBaseBuildCommand uses the configured default build watcher as the template for app builds.
+func devBaseBuildCommand(config *project.Config) string {
+	if config != nil {
+		for _, watch := range config.Dev.Watches {
+			if watch.Name == "Build App" && strings.TrimSpace(watch.Exec) != "" {
+				return watch.Exec
+			}
+		}
+		for _, watch := range config.Dev.Watches {
+			if isDevBuildWatcher(watch.Name) && strings.TrimSpace(watch.Exec) != "" {
+				return watch.Exec
+			}
+		}
+	}
+	return "forj build -o ./bin/app"
+}
+
+// devBuildCommandForApp derives app builds from the configured default build command.
+func devBuildCommandForApp(baseCommand string, app project.App) string {
+	app = normalizeRenderApp(app)
+	command := strings.TrimSpace(baseCommand)
+	if command == "" {
+		command = "forj build -o ./bin/app"
+	}
+
+	defaultApp := project.DefaultApp()
+	defaultBinary := "./bin/" + defaultApp.Name
+	appBinary := "./bin/" + app.Name
+	defaultPackage := "./" + filepath.ToSlash(filepath.Dir(defaultApp.Entrypoint))
+	appPackage := "./" + filepath.ToSlash(filepath.Dir(app.Entrypoint))
+
+	command = replaceBuildToken(command, defaultBinary, appBinary)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultBinary, "./"), strings.TrimPrefix(appBinary, "./"))
+	command = replaceBuildToken(command, defaultPackage, appPackage)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultPackage, "./"), strings.TrimPrefix(appPackage, "./"))
+	command = removeBuildPackageToken(command, appPackage)
+	if app.Name != project.DefaultAppName {
+		command = prefixForjBuildCommandForApp(command, app.Name)
+	}
+	return strings.TrimSpace(command)
+}
+
+// replaceBuildToken preserves the configured command shape while rewriting conventional app paths.
+func replaceBuildToken(command string, from string, to string) string {
+	return strings.ReplaceAll(command, from, to)
+}
+
+// removeBuildPackageToken lets the app-aware build command infer its own entrypoint package.
+func removeBuildPackageToken(command string, targetPackage string) string {
+	targetPackage = strings.TrimSpace(targetPackage)
+	if targetPackage == "" {
+		return strings.TrimSpace(command)
+	}
+	command = strings.ReplaceAll(command, " "+targetPackage, "")
+	command = strings.ReplaceAll(command, " "+strings.TrimPrefix(targetPackage, "./"), "")
+	return strings.TrimSpace(command)
+}
+
+// prefixForjBuildCommandForApp uses the same app command shape users run by hand.
+func prefixForjBuildCommandForApp(command string, appName string) string {
+	appName = strings.TrimSpace(appName)
+	if appName == "" || appName == project.DefaultAppName {
+		return command
+	}
+	return strings.Replace(command, "forj build", "forj "+appName+" build", 1)
 }
 
 func shouldRunAfterMigrate(task project.DevTask) bool {
@@ -360,6 +786,10 @@ const (
 func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
 watcherLoop:
 	for {
+		if err := reloadDevWatchSessionConfig(session); err != nil {
+			return err
+		}
+		session.config.Dev.Watches = devWatchesForApps(session.config, session.baseWatches)
 		watchers, exitCh := startWatchers(
 			session.config.ProjectName,
 			session.config.Dev.Watches,
@@ -393,17 +823,27 @@ watcherLoop:
 				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
 				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
 				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				if err := reloadDevWatchSessionConfig(session); err != nil {
+					return err
+				}
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
 					return err
 				}
 				session.streamer = refreshedStreamer
-				if err := runDevBuild(session.outWriter, session.errWriter); err != nil {
+				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
 					disableDevFooter(session.outWriter)
 					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
 					console.Errorf("forj build failed: %v", err)
 					return fmt.Errorf("forj build failed: %w", err)
+				}
+				if err := runDevAppSetup(session.config, session.outWriter, session.errWriter); err != nil {
+					disableDevFooter(session.outWriter)
+					disableDevFooter(session.errWriter)
+					fmt.Println(buildDevFooterSeparatorLine())
+					console.Errorf("dev app setup failed: %v", err)
+					return fmt.Errorf("dev app setup failed: %w", err)
 				}
 				refreshedStreamer, err = session.reloadRuntime()
 				if err != nil {
@@ -418,19 +858,38 @@ watcherLoop:
 				continue watcherLoop
 			case <-session.renderCh:
 				writeDevActionLine(session.outWriter, "Rendering app and restarting watchers")
-				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
-				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				waitForStop := beginStopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				if err := reloadDevWatchSessionConfig(session); err != nil {
+					waitForStop()
+					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+					return err
+				}
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
+					waitForStop()
+					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
 					return err
 				}
 				session.streamer = refreshedStreamer
-				if err := runDevRender(session.outWriter, session.errWriter); err != nil {
+				renderErr := runDevRender(session.config, session.outWriter, session.errWriter)
+				waitForStop()
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				if renderErr != nil {
 					disableDevFooter(session.outWriter)
 					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
-					console.Errorf("forj render failed: %v", err)
-					return fmt.Errorf("forj render failed: %w", err)
+					console.Errorf("forj render failed: %v", renderErr)
+					return fmt.Errorf("forj render failed: %w", renderErr)
+				}
+				if err := reloadDevWatchSessionConfig(session); err != nil {
+					return err
+				}
+				if err := runDevAppSetup(session.config, session.outWriter, session.errWriter); err != nil {
+					disableDevFooter(session.outWriter)
+					disableDevFooter(session.errWriter)
+					fmt.Println(buildDevFooterSeparatorLine())
+					console.Errorf("dev app setup failed: %v", err)
+					return fmt.Errorf("dev app setup failed: %w", err)
 				}
 				refreshedStreamer, err = session.reloadRuntime()
 				if err != nil {
@@ -466,6 +925,20 @@ watcherLoop:
 	}
 }
 
+// reloadDevWatchSessionConfig keeps long-running dev sessions aligned with make:app and render metadata changes.
+func reloadDevWatchSessionConfig(session *devWatchSession) error {
+	if session == nil {
+		return nil
+	}
+	config, err := project.LoadProjectConfig()
+	if err != nil {
+		return err
+	}
+	session.config = config
+	session.baseWatches = copyDevWatches(config.Dev.Watches)
+	return nil
+}
+
 func snapshotProcessEnv() map[string]string {
 	envMap := map[string]string{}
 	for _, entry := range os.Environ() {
@@ -478,41 +951,171 @@ func snapshotProcessEnv() map[string]string {
 	return envMap
 }
 
-func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
-	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render"); err != nil {
+func runDevRender(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render --timings"); err != nil {
 		return fmt.Errorf("forj render failed: %w", err)
 	}
-	if err := runDevBuild(outWriter, errWriter); err != nil {
+	if err := runDevBuild(config, outWriter, errWriter); err != nil {
 		return err
 	}
 	return nil
 }
 
-func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
-	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj build", "forj build"); err != nil {
-		return fmt.Errorf("forj build failed: %w", err)
+func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	return runDevBuildJobs(config, outWriter, errWriter, false, "forj build failed")
+}
+
+// runDevInitialBuild builds every active app before pre-dev tasks can call generated app commands.
+func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	return runDevBuildJobs(config, outWriter, errWriter, false, "initial forj build failed")
+}
+
+type devBuildResult struct {
+	job     devBuildJob
+	stdout  string
+	stderr  string
+	elapsed time.Duration
+	err     error
+}
+
+// runDevBuildJobs runs app builds together so multi-app dev startup scales with the slowest build.
+func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, missingOnly bool, failurePrefix string) error {
+	jobs := devBuildJobs(config, missingOnly)
+	switch len(jobs) {
+	case 0:
+		return nil
+	case 1:
+		start := time.Now()
+		if err := runDevBuildCommand(outWriter, errWriter, jobs[0]); err != nil {
+			return fmt.Errorf("%s: %w", failurePrefix, err)
+		}
+		writeDevTimingLine(outWriter, "Built "+jobs[0].app.Name+" in "+formatDevElapsed(time.Since(start)))
+		return nil
 	}
+
+	heading := "Building apps"
+	start := time.Now()
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
+
+	results := make([]devBuildResult, len(jobs))
+	var wg sync.WaitGroup
+	for index, job := range jobs {
+		writeDevActionLine(outWriter, "Building "+job.app.Name)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[index] = runDevBuildJobBuffered(job)
+		}()
+	}
+	wg.Wait()
+
+	failures := make([]string, 0)
+	for _, result := range results {
+		if result.err == nil {
+			writeDevTimingLine(outWriter, "Built "+result.job.app.Name+" in "+formatDevElapsed(result.elapsed))
+			continue
+		}
+		writeDevBuildFailureOutput(outWriter, errWriter, result)
+		failures = append(failures, fmt.Sprintf("%s: %v", result.job.app.Name, result.err))
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s: %s", failurePrefix, strings.Join(failures, "; "))
+	}
+	writeDevTimingLine(outWriter, "Built apps in "+formatDevElapsed(time.Since(start)))
 	return nil
 }
 
-func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	writeDevCommandLine(outWriter, heading)
+// runDevBuildJobBuffered keeps concurrent build output grouped by app instead of interleaving lines.
+func runDevBuildJobBuffered(job devBuildJob) devBuildResult {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	start := time.Now()
+	err := runDevSubprocessCommand(&stdout, &stderr, job.command, true)
+	return devBuildResult{
+		job:     job,
+		stdout:  stripBuildProgressMarkerLines(stdout.String()),
+		stderr:  stripBuildProgressMarkerLines(stderr.String()),
+		elapsed: time.Since(start),
+		err:     err,
+	}
+}
+
+// stripBuildProgressMarkerLines keeps the subprocess progress protocol out of replayed build logs.
+func stripBuildProgressMarkerLines(output string) string {
+	if !strings.Contains(output, buildProgressMarker) {
+		return output
+	}
+	lines := strings.SplitAfter(output, "\n")
+	var filtered strings.Builder
+	for _, line := range lines {
+		normalized := strings.ReplaceAll(line, "\r", "")
+		normalized = ansiCSI.ReplaceAllString(normalized, "")
+		if strings.HasPrefix(strings.TrimSpace(normalized), buildProgressMarker) {
+			continue
+		}
+		filtered.WriteString(line)
+	}
+	return filtered.String()
+}
+
+// writeDevBuildFailureOutput prints a failed app's buffered transcript only when it is useful.
+func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
+	writeDevActionLine(outWriter, "Build failed for "+result.job.app.Name)
+	if strings.TrimSpace(result.stdout) != "" {
+		_, _ = io.WriteString(outWriter, result.stdout)
+		if !strings.HasSuffix(result.stdout, "\n") {
+			_, _ = io.WriteString(outWriter, "\n")
+		}
+	}
+	if strings.TrimSpace(result.stderr) != "" {
+		_, _ = io.WriteString(errWriter, result.stderr)
+		if !strings.HasSuffix(result.stderr, "\n") {
+			_, _ = io.WriteString(errWriter, "\n")
+		}
+	}
+}
+
+// runDevBuildCommand keeps app builds compact in the dev transcript.
+func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJob) error {
+	heading := "Building " + job.app.Name
+	writeDevActionLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
-	devNull, err := os.Open(os.DevNull)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", os.DevNull, err)
+
+	if _, ok := outWriter.(*devBubbleWriter); ok {
+		return runDevSubprocessCommand(outWriter, errWriter, job.command, true)
 	}
-	defer devNull.Close()
+	if _, ok := errWriter.(*devBubbleWriter); ok {
+		return runDevSubprocessCommand(outWriter, errWriter, job.command, true)
+	}
+
+	disableDevFooter(outWriter)
+	disableDevFooter(errWriter)
+	defer enableDevFooter(outWriter)
+	defer enableDevFooter(errWriter)
+	return runDevSubprocessCommand(os.Stdout, os.Stderr, job.command, false)
+}
+
+// runDevSubprocessCommand centralizes dev subprocess environment and exit handling.
+func runDevSubprocessCommand(outWriter io.Writer, errWriter io.Writer, command string, transcript bool) error {
+	stdin := io.Reader(os.Stdin)
+	env := map[string]string{"CLICOLOR_FORCE": "1"}
+	if transcript {
+		devNull, err := os.Open(os.DevNull)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", os.DevNull, err)
+		}
+		defer devNull.Close()
+		stdin = devNull
+		env["FORJ_SUBPROCESS"] = "1"
+		env["FORJ_COMMAND_ORIGIN"] = "dev_command"
+		env["TERM"] = "dumb"
+	}
 	cmd := execx.Command("bash", "-c", command).
 		EnvInherit().
-		EnvAppend(map[string]string{
-			"CLICOLOR_FORCE":     "1",
-			"FORJ_SUBPROCESS":    "1",
-			"FORJ_COMMAND_ORIGIN": "dev_command",
-			"TERM":               "dumb",
-		}).
-		StdinReader(devNull).
+		EnvAppend(env).
+		StdinReader(stdin).
 		StdoutWriter(outWriter).
 		StderrWriter(errWriter)
 	res, err := cmd.Run()
@@ -521,6 +1124,16 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	}
 	if !res.OK() {
 		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
+	}
+	return nil
+}
+
+func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
+	writeDevCommandLine(outWriter, heading)
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
+	if err := runDevSubprocessCommand(outWriter, errWriter, command, true); err != nil {
+		return err
 	}
 	writeDevCommandBoundary(outWriter)
 	return nil
@@ -543,23 +1156,7 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 	defer enableDevFooter(outWriter)
 	defer enableDevFooter(errWriter)
 
-	cmd := execx.Command("bash", "-c", command).
-		EnvInherit().
-		EnvAppend(map[string]string{"CLICOLOR_FORCE": "1"}).
-		StdinReader(os.Stdin).
-		StdoutWriter(os.Stdout).
-		StderrWriter(os.Stderr)
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-		cmd = cmd.WithPTY().StderrWriter(nil)
-	}
-	res, err := cmd.Run()
-	if err != nil {
-		return err
-	}
-	if !res.OK() {
-		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
-	}
-	return nil
+	return runDevSubprocessCommand(os.Stdout, os.Stderr, command, false)
 }
 
 func writeDevActionLine(out io.Writer, message string) {
@@ -568,6 +1165,48 @@ func writeDevActionLine(out io.Writer, message string) {
 		return
 	}
 	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
+}
+
+func writeDevTimingLine(out io.Writer, message string) {
+	line := console.Colorize(console.ColorGray, "  "+strings.TrimSpace(message))
+	if out == nil {
+		_, _ = io.WriteString(os.Stdout, line+"\n")
+		return
+	}
+	_, _ = io.WriteString(out, line+"\n")
+}
+
+func formatDevElapsed(elapsed time.Duration) string {
+	if elapsed < time.Second {
+		return elapsed.Round(time.Millisecond).String()
+	}
+	return elapsed.Round(100 * time.Millisecond).String()
+}
+
+// writeDevAppBuildLine makes convention-expanded apps visible without adding a large startup block.
+func writeDevAppBuildLine(out io.Writer, apps []project.App) {
+	names := devAppBuildNames(apps)
+	if len(names) == 0 || len(names) == 1 && names[0] == project.DefaultAppName {
+		return
+	}
+	label := "Building app"
+	if len(names) > 1 {
+		label = "Building apps"
+	}
+	writeDevActionLine(out, label+": "+strings.Join(names, ", "))
+}
+
+// devAppBuildNames formats app names in runtime order for user-facing dev output.
+func devAppBuildNames(apps []project.App) []string {
+	names := make([]string, 0, len(apps))
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		if app.Name == "" {
+			continue
+		}
+		names = append(names, app.Name)
+	}
+	return names
 }
 
 func writeDevCommandLine(out io.Writer, message string) {
@@ -658,7 +1297,7 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 		tools = append(tools, devToolLink{
 			Label:  "Grafana",
 			Detail: fmt.Sprintf("(%s / admin)", adminUser),
-			URL:    resolveURLWithPort(env, "http", "localhost", "GRAFANA_PORT", "3001"),
+			URL:    resolveURLWithPort(env, "http", "localhost", "GRAFANA_PORT", "13001"),
 		})
 	}
 
@@ -741,48 +1380,149 @@ func startWatchers(
 	errWriter io.Writer,
 	soundOnError bool,
 ) ([]runningWatcher, <-chan watcherExit) {
+	return startWatchersWithStarter(projectName, watches, streamer, outWriter, errWriter, soundOnError, func(cmd *execx.Cmd) *execx.Process {
+		return cmd.Start()
+	})
+}
+
+func startWatchersWithStarter(
+	projectName string,
+	watches []project.DevWatch,
+	streamer *devwatchStreamer,
+	outWriter io.Writer,
+	errWriter io.Writer,
+	soundOnError bool,
+	start func(*execx.Cmd) *execx.Process,
+) ([]runningWatcher, <-chan watcherExit) {
 	exitCh := make(chan watcherExit, len(watches))
-	watchers := make([]runningWatcher, 0, len(watches))
+	watchers := make([]runningWatcher, len(watches))
 	// Only non-postponed watchers emit an initial trigger during boot, so the
 	// startup block should close after those watchers have reported "starting".
 	// The single runtime supervisor watcher restarts after a fresh binary lands,
 	// so we bracket that restart with explicit shutdown/start section separators.
-	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), []string{"Run App"})
+	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), devRuntimeWatcherNames(watches))
+	runtimeTargets := devAppNames(activeDevApps())
+	showAppColumn := len(runtimeTargets) > 1
+	appNameWidth := devAppColumnWidth(runtimeTargets)
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
+	var wg sync.WaitGroup
+	for i, watch := range watches {
+		wg.Add(1)
+		go func(i int, watch project.DevWatch) {
+			defer wg.Done()
+			watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
+			watchExec := buildWatcherExec(watchExecCmd)
+			triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
+			wgoArgs := buildWatcherCommandArgs(watch.Watch, watchExec)
+			cmdEnv := snapshotProcessEnv()
+			for key, value := range watch.Env {
+				cmdEnv[key] = value
+			}
+			for key, value := range watchEnv {
+				cmdEnv[key] = value
+			}
+			if isDevBuildWatcher(watch.Name) {
+				cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
+			}
+			appName := devRuntimeWatcherApp(watch.Name)
+			cmd := execx.Command("wgo").
+				Arg(wgoArgs).
+				EnvOnly(cmdEnv).
+				StdoutWriter(newDevwatchWriterForApp(outWriter, streamer, "stdout", watch.Name, triggerCmd, appName, appNameWidth, showAppColumn, lifecycleState)).
+				StderrWriter(newDevwatchWriterForApp(errWriter, streamer, "stderr", watch.Name, triggerCmd, appName, appNameWidth, showAppColumn, lifecycleState))
+			cmd = configureWatcherPTY(cmd, soundOnError)
+			proc := start(cmd)
+			watchers[i] = runningWatcher{name: watch.Name, proc: proc}
+			go func(name string, proc *execx.Process) {
+				res, err := proc.Wait()
+				exitCh <- watcherExit{name: name, result: res, err: err}
+			}(watch.Name, proc)
+		}(i, watch)
+	}
+	wg.Wait()
 	startedNames := make([]string, 0, len(watches))
 	for _, watch := range watches {
-		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
-		watchExec := buildWatcherExec(watchExecCmd)
-		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
-		wgoArgs := buildWatcherCommandArgs(watch.Watch, watchExec)
-		cmdEnv := snapshotProcessEnv()
-		for key, value := range watch.Env {
-			cmdEnv[key] = value
-		}
-		for key, value := range watchEnv {
-			cmdEnv[key] = value
-		}
-		if watch.Name == "Build App" {
-			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
-		}
-		cmd := execx.Command("wgo").
-			Arg(wgoArgs).
-			EnvOnly(cmdEnv).
-			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, lifecycleState)).
-			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, lifecycleState))
-		cmd = configureWatcherPTY(cmd, soundOnError)
-		proc := cmd.Start()
-		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
 		startedNames = append(startedNames, watch.Name)
-		go func(name string, proc *execx.Process) {
-			res, err := proc.Wait()
-			exitCh <- watcherExit{name: name, result: res, err: err}
-		}(watch.Name, proc)
 	}
 	emitWatcherLifecycleSummary(outWriter, streamer, startedNames, watcherStateStarted)
 	return watchers, exitCh
+}
+
+// devAppNames returns app names in the same order used by active dev.
+func devAppNames(apps []project.App) []string {
+	names := make([]string, 0, len(apps))
+	seen := map[string]bool{}
+	for _, app := range apps {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || seen[app.Name] {
+			continue
+		}
+		seen[app.Name] = true
+		names = append(names, app.Name)
+	}
+	return names
+}
+
+// devRuntimeWatcherApps returns runtime app names in watcher order.
+func devRuntimeWatcherApps(watches []project.DevWatch) []string {
+	apps := make([]string, 0)
+	seen := map[string]bool{}
+	for _, watch := range watches {
+		app := devRuntimeWatcherApp(watch.Name)
+		if app == "" || seen[app] {
+			continue
+		}
+		seen[app] = true
+		apps = append(apps, app)
+	}
+	return apps
+}
+
+// devRuntimeWatcherApp derives the app from generated runtime watcher names.
+func devRuntimeWatcherApp(watcher string) string {
+	watcher = str.Of(watcher).TrimSpace().String()
+	switch {
+	case watcher == "Run App":
+		return project.DefaultAppName
+	case strings.HasPrefix(watcher, "Run "):
+		return strings.TrimSpace(strings.TrimPrefix(watcher, "Run "))
+	default:
+		return ""
+	}
+}
+
+// devAppColumnWidth keeps app log columns aligned without letting long slugs dominate output.
+func devAppColumnWidth(apps []string) int {
+	const maxWidth = 18
+	width := len(project.DefaultAppName)
+	for _, app := range apps {
+		app = str.Of(app).TrimSpace().String()
+		if len(app) > width {
+			width = len(app)
+		}
+	}
+	if width > maxWidth {
+		return maxWidth
+	}
+	return width
+}
+
+// devRuntimeWatcherNames identifies app runtime watchers that should bracket restart output.
+func devRuntimeWatcherNames(watches []project.DevWatch) []string {
+	names := make([]string, 0)
+	for _, watch := range watches {
+		if watch.Name == "Run App" || strings.HasPrefix(watch.Name, "Run ") {
+			names = append(names, watch.Name)
+		}
+	}
+	return names
+}
+
+// isDevBuildWatcher reports whether a watcher executes app build work.
+func isDevBuildWatcher(name string) bool {
+	return name == "Build App" || strings.HasPrefix(name, "Build ")
 }
 
 func buildWatcherExec(execCmd string) string {
@@ -802,6 +1542,11 @@ func buildWatcherCommandArgs(watchExpr string, execCmd string) []string {
 // Coordinated shutdowns (restart/render/Ctrl+C) collapse the in-progress signal
 // into one summary line; single watcher failures still emit per-watcher stops.
 func stopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer, collapse bool) {
+	wait := beginStopWatchers(watchers, timeout, out, streamer, collapse)
+	wait()
+}
+
+func beginStopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer, collapse bool) func() {
 	if collapse {
 		names := make([]string, 0, len(watchers))
 		for _, watcher := range watchers {
@@ -819,8 +1564,19 @@ func stopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Write
 		if !collapse {
 			emitWatcherLifecycleLine(out, streamer, watcher.name, watcherStateStopping)
 		}
-		_ = watcher.proc.GracefulShutdown(os.Interrupt, timeout)
 	}
+	var wg sync.WaitGroup
+	for _, watcher := range watchers {
+		if watcher.proc == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(proc *execx.Process) {
+			defer wg.Done()
+			_ = proc.GracefulShutdown(os.Interrupt, timeout)
+		}(watcher.proc)
+	}
+	return wg.Wait
 }
 
 // drainWatcherExits drains a fixed number of exit events to ensure goroutines finish cleanly.
@@ -1047,7 +1803,7 @@ func runDevDownTasks(tasks []project.DevTask) error {
 // PTY preserves native TTY behavior (colors, cursor control) but merges stdout/stderr.
 // On PTY platforms, we avoid attaching stderr writers to prevent duplicate output.
 func configureWatcherPTY(cmd *execx.Cmd, soundEnabled bool) *execx.Cmd {
-	switch runtime.GOOS {
+	switch goruntime.GOOS {
 	case "linux", "darwin":
 		// PTY merges stdout/stderr into a single stream.
 		cmd = cmd.WithPTY()
@@ -1136,7 +1892,7 @@ func containsErrorWord(line string) bool {
 
 // playErrorSound plays a macOS alert sound when available.
 func playErrorSound() {
-	if runtime.GOOS != "darwin" {
+	if goruntime.GOOS != "darwin" {
 		return
 	}
 	_ = execx.Command("afplay", "/System/Library/Sounds/Submarine.aiff").Start()
@@ -1144,7 +1900,7 @@ func playErrorSound() {
 
 // playRecoverySound plays a macOS recovery sound when available.
 func playRecoverySound() {
-	if runtime.GOOS != "darwin" {
+	if goruntime.GOOS != "darwin" {
 		return
 	}
 	_ = execx.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()

@@ -35,20 +35,22 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 		},
 	})
 
-	registryPath := filepath.Join("internal", "app", "lifecycle_registry.go")
+	registryPath := filepath.Join("app", "lifecycle.go")
 	registryCode := `package app
 
 import (
 	"context"
 	"errors"
 	"os"
+
+	"example.com/lifecycleapp/internal/runtime"
 )
 
 type LifecycleRegistry struct{}
 
 func NewLifecycleRegistry() *LifecycleRegistry { return &LifecycleRegistry{} }
 
-func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
+func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
 	appendTrace := func(entry string) {
 		tracePath := os.Getenv("LIFECYCLE_TRACE_FILE")
 		if tracePath == "" {
@@ -62,40 +64,40 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 		_, _ = f.WriteString(entry + "\n")
 	}
 
-	lifecycle.On(BeforeStartup, func(context.Context) error {
+	lifecycle.On(runtime.BeforeStartup, func(context.Context) error {
 		appendTrace("before_startup")
 		return nil
 	})
-	lifecycle.On(Startup, func(context.Context) error {
+	lifecycle.On(runtime.Startup, func(context.Context) error {
 		appendTrace("startup")
 		if os.Getenv("LIFECYCLE_FAIL_STARTUP") == "1" {
 			return errors.New("startup hook failed")
 		}
 		return nil
 	})
-	lifecycle.On(AfterStartup, func(context.Context) error {
+	lifecycle.On(runtime.AfterStartup, func(context.Context) error {
 		appendTrace("after_startup")
 		return nil
 	})
-	lifecycle.On(BeforeShutdown, func(context.Context) error {
+	lifecycle.On(runtime.BeforeShutdown, func(context.Context) error {
 		appendTrace("before_shutdown")
 		return nil
 	})
-	lifecycle.On(Shutdown, func(context.Context) error {
+	lifecycle.On(runtime.Shutdown, func(context.Context) error {
 		appendTrace("shutdown_one")
 		if os.Getenv("LIFECYCLE_FAIL_SHUTDOWN") == "1" {
 			return errors.New("shutdown err one")
 		}
 		return nil
 	})
-	lifecycle.On(Shutdown, func(context.Context) error {
+	lifecycle.On(runtime.Shutdown, func(context.Context) error {
 		appendTrace("shutdown_two")
 		if os.Getenv("LIFECYCLE_FAIL_SHUTDOWN") == "1" {
 			return errors.New("shutdown err two")
 		}
 		return nil
 	})
-	lifecycle.On(AfterShutdown, func(context.Context) error {
+	lifecycle.On(runtime.AfterShutdown, func(context.Context) error {
 		appendTrace("after_shutdown")
 		return nil
 	})
@@ -105,17 +107,7 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 		t.Fatalf("write lifecycle registry: %v", err)
 	}
 
-	buildCtx, buildCancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer buildCancel()
-	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
-	build.Dir = projectDir
-	build.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	var buildOut bytes.Buffer
-	build.Stdout = &buildOut
-	build.Stderr = &buildOut
-	if err := build.Run(); err != nil {
-		t.Fatalf("build app failed: %v\n%s", err, buildOut.String())
-	}
+	buildRenderedDefaultAppTo(t, projectDir, filepath.Join(projectDir, "bin", "app"), nil, "build app")
 
 	t.Run("runs hooks in expected order on success", func(t *testing.T) {
 		traceFile := filepath.Join(projectDir, "lifecycle.trace")

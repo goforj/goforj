@@ -22,17 +22,27 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// WizardStage identifies the current step in the project creation wizard.
 type WizardStage int
 
 const (
+	// StageProjectName collects the display name for the generated project.
 	StageProjectName WizardStage = iota
+	// StageModuleName collects the Go module path.
 	StageModuleName
+	// StageSelectComponents collects the project-level component selection.
 	StageSelectComponents
+	// StageStarterKit collects the frontend starter kit when Web UI is enabled.
 	StageStarterKit
+	// StageExtras collects optional project profiles that expand component selection.
 	StageExtras
+	// StageRuntime collects runtime driver choices that depend on selected components.
 	StageRuntime
+	// StageProjectPath collects the destination directory.
 	StageProjectPath
+	// StageConfirm shows the final project creation summary.
 	StageConfirm
+	// StageDone marks the wizard as ready to quit.
 	StageDone
 )
 
@@ -73,6 +83,7 @@ var (
 	statusErrorStyle      = lipgloss.NewStyle().Foreground(errorColor)
 )
 
+// ListItem adapts a project component definition to the Bubbles list model.
 type ListItem struct {
 	Key      project.ComponentKey
 	Name     string
@@ -80,29 +91,74 @@ type ListItem struct {
 	Selected bool
 }
 
-func (i ListItem) Title() string       { return i.Name }
+// Title satisfies the Bubbles list item contract for project component rows.
+func (i ListItem) Title() string { return i.Name }
+
+// Description satisfies the Bubbles list item contract for project component rows.
 func (i ListItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i ListItem) FilterValue() string { return i.Name }
 
+// QueueDriverItem adapts a queue driver option to the Bubbles list model.
 type QueueDriverItem struct {
 	Driver string
 	Label  string
 	Desc   string
 }
 
-func (i QueueDriverItem) Title() string       { return i.Label }
+// Title satisfies the Bubbles list item contract for queue driver rows.
+func (i QueueDriverItem) Title() string { return i.Label }
+
+// Description satisfies the Bubbles list item contract for queue driver rows.
 func (i QueueDriverItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i QueueDriverItem) FilterValue() string { return i.Label }
 
+// StarterKitItem adapts a starter-kit definition to the Bubbles list model.
 type StarterKitItem struct {
 	Key   project.StarterKit
 	Label string
 	Desc  string
 }
 
-func (i StarterKitItem) Title() string       { return i.Label }
+// Title satisfies the Bubbles list item contract for starter-kit rows.
+func (i StarterKitItem) Title() string { return i.Label }
+
+// Description satisfies the Bubbles list item contract for starter-kit rows.
 func (i StarterKitItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i StarterKitItem) FilterValue() string { return i.Label }
+
+// makeProjectComponentItems converts the shared component catalog into wizard rows.
+func makeProjectComponentItems() []list.Item {
+	items := make([]list.Item, 0, len(project.ComponentCatalog()))
+	for _, component := range project.ComponentCatalog() {
+		items = append(items, ListItem{
+			Key:      component.Key,
+			Name:     component.Label,
+			Desc:     component.Description,
+			Selected: component.DefaultSelected,
+		})
+	}
+	return items
+}
+
+// makeStarterKitItems converts the shared starter-kit catalog into wizard rows.
+func makeStarterKitItems() []list.Item {
+	definitions := project.StarterKitCatalog()
+	items := make([]list.Item, 0, len(definitions))
+	for _, definition := range definitions {
+		items = append(items, StarterKitItem{
+			Key:   definition.Key,
+			Label: definition.Label,
+			Desc:  definition.Description,
+		})
+	}
+	return items
+}
 
 type queueDriverOption struct {
 	Name  string
@@ -176,18 +232,12 @@ func (m *model) finalizeConfig() {
 
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
-		Pre: []project.DevTask{
-			{
-				Name: "Initial build",
-				Cmd:  "forj build -o ./bin/app",
-			},
-		},
+		Pre:               []project.DevTask{},
 		SoundOnWatchError: true,
 		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
-		WirePaths:         []string{"wire"},
+		WirePaths:         []string{project.DefaultApp().WireDir},
 	}
-
 	if components.Docker {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Run Docker Compose",
@@ -213,7 +263,7 @@ func (m *model) finalizeConfig() {
 	if components.WebUI && m.config.Render.StarterKit == project.StarterKitVue {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Install Frontend Dependencies",
-			Cmd:  "cd frontend && npm install",
+			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
 		})
 	}
 
@@ -221,7 +271,7 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile wire/wire_gen\\.go$ -postpone",
+			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
 			Exec:  "forj build -o ./bin/app",
 		})
 	}
@@ -237,7 +287,7 @@ func (m *model) finalizeConfig() {
 	if components.WebUI && (m.config.Render.StarterKit == project.StarterKitVue || packageJSONHasNpmDev()) {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
-			Watch: "-cd ./frontend -xdir _data -xdir .",
+			Watch: "-cd ./" + filepath.ToSlash(defaultFrontendDir()) + " -xdir _data -xdir .",
 			Exec:  "npm run dev",
 		})
 	}
@@ -261,7 +311,7 @@ func initialModel() model {
 	delegate.Styles.DimmedDesc = helpStyle
 	delegate.ShowDescription = false
 
-	li := list.New(makeComponentItems(), delegate, 42, 12)
+	li := list.New(makeProjectComponentItems(), delegate, 42, 12)
 	li.Title = "Select Components"
 	li.SetShowFilter(false)
 	li.SetShowHelp(false)
@@ -313,19 +363,7 @@ func initialModel() model {
 	}
 }
 
-func makeComponentItems() []list.Item {
-	items := make([]list.Item, 0, len(project.ComponentCatalog()))
-	for _, component := range project.ComponentCatalog() {
-		items = append(items, ListItem{
-			Key:      component.Key,
-			Name:     component.Label,
-			Desc:     component.Description,
-			Selected: component.DefaultSelected,
-		})
-	}
-	return items
-}
-
+// makeQueueDriverItems converts queue driver options into wizard rows.
 func makeQueueDriverItems() []list.Item {
 	options := queueDriverOptions()
 	items := make([]list.Item, 0, len(options))
@@ -339,19 +377,7 @@ func makeQueueDriverItems() []list.Item {
 	return items
 }
 
-func makeStarterKitItems() []list.Item {
-	definitions := project.StarterKitCatalog()
-	items := make([]list.Item, 0, len(definitions))
-	for _, definition := range definitions {
-		items = append(items, StarterKitItem{
-			Key:   definition.Key,
-			Label: definition.Label,
-			Desc:  definition.Description,
-		})
-	}
-	return items
-}
-
+// Init satisfies tea.Model and starts cursor blinking for text inputs.
 func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
@@ -403,6 +429,7 @@ func (m *model) applyExtrasSelection() {
 	components.ResolveDependencies()
 }
 
+// Update advances the project wizard state in response to terminal input.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -558,14 +585,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.extrasIndex = 1
 				}
 				return m, nil
-				case "enter":
-					m.applyExtrasSelection()
-					m.stage = StageProjectPath
-					if m.pathInput.Value() == "" {
-						m.pathInput.SetValue(m.defaultTargetPath())
-					}
-					m.pathInput.Focus()
-					return m, nil
+			case "enter":
+				m.applyExtrasSelection()
+				m.stage = StageProjectPath
+				if m.pathInput.Value() == "" {
+					m.pathInput.SetValue(m.defaultTargetPath())
+				}
+				m.pathInput.Focus()
+				return m, nil
 			}
 
 		case StageRuntime:
@@ -595,12 +622,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queueDriverList, cmd = m.queueDriverList.Update(msg)
 			return m, cmd
 
-			case StageProjectPath:
-				switch msg.Type {
-				case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-					m.stage = StageExtras
-					return m, nil
-				}
+		case StageProjectPath:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageExtras
+				return m, nil
+			}
 
 			switch msg.String() {
 			case "enter":
@@ -647,6 +674,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View renders the project wizard with stable panel widths for terminal redraws.
 func (m model) View() string {
 	var panels []string
 	var actions []string
@@ -1570,9 +1598,9 @@ func renderFooter(actions []string, termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, bar, panelBorderStyle.Render(line))
 }
 
-// packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
+// packageJSONHasNpmDev checks whether the target-local frontend defines an npm dev script.
 func packageJSONHasNpmDev() bool {
-	path := filepath.Join("frontend", "package.json")
+	path := filepath.Join(defaultFrontendDir(), "package.json")
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return false
@@ -1592,15 +1620,18 @@ func packageJSONHasNpmDev() bool {
 	return exists
 }
 
+// NewProjectCmd owns the interactive project creation flow.
 type NewProjectCmd struct {
 	logger   *logger.AppLogger
 	renderer *ProjectRenderer
 }
 
+// Signature exposes the project wizard as the `forj new` command.
 func (*NewProjectCmd) Signature() string {
 	return `name:"new" help:"New project command"`
 }
 
+// NewNewProjectCmd creates a project creation command.
 func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewProjectCmd {
 	return &NewProjectCmd{
 		logger:   logger,
@@ -1619,7 +1650,6 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	if m, ok := resultModel.(model); ok && m.cancelled {
-		c.logger.Info().Msg("Project creation cancelled")
 		return nil
 	}
 

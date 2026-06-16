@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -164,4 +165,30 @@ func renderAppAtDir(t *testing.T, dir string) {
 			},
 		},
 	})
+}
+
+func buildRenderedDefaultApp(t *testing.T, projectDir string, env map[string]string, label string) string {
+	t.Helper()
+	binPath := filepath.Join(t.TempDir(), "app")
+	buildRenderedDefaultAppTo(t, projectDir, binPath, env, label)
+	return binPath
+}
+
+func buildRenderedDefaultAppTo(t *testing.T, projectDir string, binPath string, env map[string]string, label string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/app")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationGoProcessEnv(t, env)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		if label == "" {
+			label = "build rendered app"
+		}
+		t.Fatalf("%s: %v\n%s", label, err, out.String())
+	}
 }

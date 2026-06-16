@@ -4,6 +4,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
+	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 )
 
@@ -14,6 +15,7 @@ type RootCmd struct {
 	BuildCmd                  build.Cmd                       `cmd:""`
 	GenerateCmd               generate.Cmd                    `cmd:""`
 	NewProjectCmd             NewProjectCmd                   `cmd:""`
+	MakeAppCmd                makeapp.Cmd                     `cmd:""`
 	DevCmd                    DevCmd                          `cmd:""`
 	DownCmd                   DownCmd                         `cmd:""`
 	BuildBinaryCmd            BuildBinaryCmd                  `cmd:""`
@@ -39,6 +41,7 @@ func NewRootCmd(
 	buildCmd *build.Cmd,
 	generateCmd *generate.Cmd,
 	newProjectCmd *NewProjectCmd,
+	makeAppCmd *makeapp.Cmd,
 	devCmd *DevCmd,
 	downCmd *DownCmd,
 	buildBinaryCmd *BuildBinaryCmd,
@@ -62,6 +65,7 @@ func NewRootCmd(
 		BuildCmd:                  *buildCmd,
 		GenerateCmd:               *generateCmd,
 		NewProjectCmd:             *newProjectCmd,
+		MakeAppCmd:                *makeAppCmd,
 		DevCmd:                    *devCmd,
 		DownCmd:                   *downCmd,
 		BuildBinaryCmd:            *buildBinaryCmd,

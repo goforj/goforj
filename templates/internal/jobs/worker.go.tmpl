@@ -10,11 +10,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	"{{.GoModuleName}}/internal/alerts"
-	"{{.GoModuleName}}/internal/monitoring"
-	{{- end }}
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
@@ -26,14 +22,9 @@ import (
 type Worker struct {
 	logger      *logger.AppLogger
 	lighthouse  *LighthouseRuntime
-	appTimeouts *app.Timeouts
+	appTimeouts *runtime.Timeouts
 	{{- if .Components.Jobs }}
 	queues      *queues.Manager
-	{{- end }}
-	hello  *ExampleHelloJob
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheck  *monitoring.MonitorCheckJob
-	alertDispatch *alerts.DispatchJob
 	{{- end }}
 }
 
@@ -41,14 +32,9 @@ type Worker struct {
 func NewWorker(
 	logger *logger.AppLogger,
 	lighthouse *LighthouseRuntime,
-	appTimeouts *app.Timeouts,
+	appTimeouts *runtime.Timeouts,
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
-	{{- end }}
-	hello *ExampleHelloJob,
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheck *monitoring.MonitorCheckJob,
-	alertDispatch *alerts.DispatchJob,
 	{{- end }}
 ) *Worker {
 	componentLogger := logger
@@ -61,11 +47,6 @@ func NewWorker(
 		appTimeouts: appTimeouts,
 		{{- if .Components.Jobs }}
 		queues: queues,
-		{{- end }}
-		hello:  hello,
-		{{- if and .Components.DemoApp .Components.Jobs }}
-		monitorCheck:  monitorCheck,
-		alertDispatch: alertDispatch,
 		{{- end }}
 	}
 }

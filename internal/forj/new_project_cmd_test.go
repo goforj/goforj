@@ -472,6 +472,12 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 
 	m.finalizeConfig()
 
+	for _, task := range m.config.Dev.Pre {
+		if task.Name == "Initial build" && task.Cmd == "forj build -o ./bin/app" {
+			t.Fatalf("expected initial build to be owned by forj dev, got pre task %#v", task)
+		}
+	}
+
 	var buildWatch *string
 	for _, watch := range m.config.Dev.Watches {
 		switch watch.Name {
@@ -489,7 +495,7 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	if buildWatch == nil {
 		t.Fatalf("expected Build App watcher to be configured")
 	}
-	if !strings.Contains(*buildWatch, "-xfile wire/wire_gen\\.go$") {
+	if !strings.Contains(*buildWatch, "-xfile app/wire/wire_gen\\.go$") {
 		t.Fatalf("expected Build App watcher to exclude wire_gen.go, got %q", *buildWatch)
 	}
 
@@ -516,7 +522,7 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	m.finalizeConfig()
 
 	for _, task := range m.config.Dev.Pre {
-		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd frontend && npm install" {
+		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd cmd/app/frontend && npm install" {
 			return
 		}
 	}

@@ -31,7 +31,7 @@ var (
 	sharedRedisStop func()
 )
 
-const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@d591989"
+const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@v1.2.0"
 
 type RenderProjectRequest struct {
 	Config         project.Config

@@ -50,7 +50,7 @@ func TestCompiledEnvDefaultsLayerWithEnvLoad(t *testing.T) {
 	}, "\n")+"\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestCompiledEnvDefaultsLayerWithEnvLoad", dir, map[string]string{
-		"FEATURE_FROM_OS":  "from-os",
+		"FEATURE_FROM_OS":   "from-os",
 		"FEATURE_COLLISION": "from-os",
 	})
 
@@ -71,7 +71,7 @@ func TestCompiledEnvDefaultsLayerWithEnvLoad(t *testing.T) {
 
 func TestCompiledEnvDefaultsCanSeedAppEnvBeforeEnvLoad(t *testing.T) {
 	if os.Getenv("GO_WANT_ENV_DEFAULTS_APP_ENV_HELPER") == "1" {
-		runAppEnvHelper()
+		runAppEnvDefaultsHelper()
 		return
 	}
 
@@ -101,7 +101,7 @@ func TestCompiledEnvOverridesBeatEnvAndOS(t *testing.T) {
 	}, "\n")+"\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestCompiledEnvOverridesBeatEnvAndOS", dir, map[string]string{
-		"FEATURE_FROM_OS":  "from-os",
+		"FEATURE_FROM_OS":   "from-os",
 		"FEATURE_COLLISION": "from-os",
 	})
 
@@ -141,6 +141,56 @@ func TestCompiledEnvOverridesCanForceAppEnvAcrossEnvLoad(t *testing.T) {
 	}
 }
 
+func TestApplyAppEnvOverlayPromotesAnyAppPrefixedKey(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
+	t.Setenv("CUSTOMER_PORTAL_APP_URL", "http://localhost:3007")
+	t.Setenv("CUSTOMER_PORTAL_DB_AUTH_DATABASE", "customer_auth")
+	t.Setenv("CUSTOMER_PORTAL_FORJ_APP", "wrong")
+
+	if err := ApplyAppEnvOverlay(); err != nil {
+		t.Fatalf("ApplyAppEnvOverlay() error = %v", err)
+	}
+	if got := os.Getenv("APP_URL"); got != "http://localhost:3007" {
+		t.Fatalf("APP_URL = %q, want app overlay", got)
+	}
+	if got := os.Getenv("DB_AUTH_DATABASE"); got != "customer_auth" {
+		t.Fatalf("DB_AUTH_DATABASE = %q, want app overlay", got)
+	}
+	if got := os.Getenv("FORJ_APP"); got != "customer-portal" {
+		t.Fatalf("FORJ_APP = %q, want original app identity", got)
+	}
+}
+
+func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
+	if os.Getenv("GO_WANT_APP_ENV_HELPER") == "1" {
+		runAppEnvOverlayHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	writeTestEnvFile(t, filepath.Join(dir, ".env"), strings.Join([]string{
+		"APP_ENV=local",
+		"MARKER=base",
+		"BILLING_APP_ENV=staging",
+		"BILLING_MARKER=app-base",
+	}, "\n")+"\n")
+	writeTestEnvFile(t, filepath.Join(dir, ".env.staging"), strings.Join([]string{
+		"MARKER=staging",
+		"BILLING_MARKER=app-staging",
+	}, "\n")+"\n")
+
+	output := runEnvDefaultsHelperProcess(t, "TestAppEnvOverlayCanSelectAppEnvFile", dir, map[string]string{
+		"FORJ_APP": "billing",
+	})
+	got := parseEnvDefaultsOutput(t, output)
+	if got["APP_ENV"] != "staging" {
+		t.Fatalf("expected APP_ENV to come from billing overlay, got %q", got["APP_ENV"])
+	}
+	if got["MARKER"] != "app-staging" {
+		t.Fatalf("expected app overlay to reapply after .env.staging, got %q", got["MARKER"])
+	}
+}
+
 func runEnvDefaultsLayerHelper() {
 	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
 	if err := os.Chdir(dir); err != nil {
@@ -165,7 +215,7 @@ func runEnvDefaultsLayerHelper() {
 	os.Exit(0)
 }
 
-func runAppEnvHelper() {
+func runAppEnvDefaultsHelper() {
 	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
 	if err := os.Chdir(dir); err != nil {
 		fmt.Printf("CHDIR_ERROR=%v\n", err)
@@ -231,6 +281,20 @@ func runAppEnvOverrideHelper() {
 	os.Exit(0)
 }
 
+func runAppEnvOverlayHelper() {
+	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
+	if err := os.Chdir(dir); err != nil {
+		fmt.Printf("CHDIR_ERROR=%v\n", err)
+		os.Exit(1)
+	}
+	if err := LoadEnv(); err != nil {
+		fmt.Printf("LOAD_ERROR=%v\n", err)
+		os.Exit(1)
+	}
+	printEnvDefaultsOutput("APP_ENV", "MARKER")
+	os.Exit(0)
+}
+
 func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extraEnv map[string]string) string {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
@@ -252,6 +316,8 @@ func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extr
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_LAYER_HELPER=1")
 	case "TestCompiledEnvOverridesCanForceAppEnvAcrossEnvLoad":
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_APP_ENV_HELPER=1")
+	case "TestAppEnvOverlayCanSelectAppEnvFile":
+		cmd.Env = append(cmd.Env, "GO_WANT_APP_ENV_HELPER=1")
 	}
 	for key, value := range extraEnv {
 		cmd.Env = append(cmd.Env, key+"="+value)

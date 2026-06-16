@@ -1,0 +1,245 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"{{.GoModuleName}}/internal/runtime"
+	"github.com/alecthomas/kong"
+	"os"
+	"reflect"
+	"strings"
+)
+
+// standaloneCommand is implemented by commands that expose CLI metadata through Signature.
+type standaloneCommand interface {
+	Signature() string
+}
+
+// DispatchPrebootCommand runs commands marked to bypass full app bootstrap.
+func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
+	if rootHelpRequested(args) {
+		return true, printRootPrebootHelp(root)
+	}
+	if len(args) == 0 {
+		return false, nil
+	}
+	command := findPrebootCommand(root, args[0])
+	if command == nil {
+		return false, nil
+	}
+
+	parser, err := kong.New(
+		command,
+		kong.Name(AppHelpName()),
+		kong.Help(KongHelpFormatter),
+	)
+	if err != nil {
+		return true, err
+	}
+	signed, _ := command.(standaloneCommand)
+	applyStandalonePrebootSignature(parser.Model.Node, signed)
+	if commandHelpRequested(args[1:]) {
+		printCommandHelp(os.Stdout, parser.Model.Node)
+		return true, nil
+	}
+	parseCtx, err := parser.Parse(args[1:])
+	if err != nil {
+		if helper, ok := command.(interface{ Help() string }); ok {
+			if example := firstExampleFromDetail(helper.Help()); example != "" {
+				return true, fmt.Errorf("%w\nexample: %s", err, example)
+			}
+		}
+		return true, CommandParseError(parser, args[0], err)
+	}
+	parseCtx.BindTo(runtime.CLIContext(), (*context.Context)(nil))
+	return true, parseCtx.Run()
+}
+
+// rootHelpRequested keeps root app help available before dependency wiring starts.
+func rootHelpRequested(args []string) bool {
+	return len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help")
+}
+
+// AppHelpName qualifies generated app help only when the project has multiple app binaries.
+func AppHelpName() string {
+	name := strings.ToLower(strings.TrimSpace(os.Getenv("APP_NAME")))
+	if name == "" {
+		name = "app"
+	}
+	appName := runtime.CurrentApp().Name
+	if appName == "" {
+		appName = "app"
+	}
+	if appName != "app" || os.Getenv("FORJ_MULTI_APP_HELP") == "1" || len(runtime.Apps) > 1 {
+		return name + " · " + appName
+	}
+	return name
+}
+
+// printRootPrebootHelp prints the generated app command surface without constructing injected services.
+func printRootPrebootHelp(root interface{}) error {
+	parser, err := kong.New(
+		root,
+		kong.Name(AppHelpName()),
+		kong.Help(KongHelpFormatter),
+	)
+	if err != nil {
+		return err
+	}
+	ctx, _ := kong.Trace(parser, []string{})
+	ctx.PrintUsage(false)
+	return nil
+}
+
+// applyStandalonePrebootSignature copies Signature metadata onto a single-command parser root.
+func applyStandalonePrebootSignature(node *kong.Node, command standaloneCommand) {
+	if node == nil || command == nil {
+		return
+	}
+	signature := command.Signature()
+	if name := strings.TrimSpace(commandSignatureValue(signature, "name")); name != "" {
+		node.Name = name
+		if node.Tag != nil {
+			node.Tag.Name = name
+		}
+	}
+	if help := strings.TrimSpace(commandSignatureValue(signature, "help")); help != "" {
+		node.Help = help
+		if node.Tag != nil {
+			node.Tag.Help = help
+		}
+	}
+	if aliases := commandSignatureList(commandSignatureValue(signature, "aliases")); len(aliases) > 0 {
+		node.Aliases = aliases
+		if node.Tag != nil {
+			node.Tag.Aliases = aliases
+		}
+	}
+}
+
+// commandHelpRequested reports whether args request help for a standalone command.
+func commandHelpRequested(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "--":
+			return false
+		case "--help", "-h":
+			return true
+		}
+	}
+	return len(args) == 1 && args[0] == "help"
+}
+
+// findPrebootCommand returns the first command on the generated root surface that can run before Wire boot.
+func findPrebootCommand(root interface{}, commandName string) interface{} {
+	return findPrebootCommandValue(reflect.ValueOf(root), strings.TrimSpace(commandName))
+}
+
+// findPrebootCommandValue walks embedded command structs so Commands and RootCmd can both expose preboot commands.
+func findPrebootCommandValue(value reflect.Value, commandName string) interface{} {
+	value = indirectValue(value)
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return nil
+	}
+
+	valueType := value.Type()
+	for i := 0; i < value.NumField(); i++ {
+		field := value.Field(i)
+		fieldType := valueType.Field(i)
+		if fieldType.PkgPath != "" {
+			continue
+		}
+		if _, ok := fieldType.Tag.Lookup("cmd"); ok {
+			command := commandFromField(field)
+			if prebootCommandMatches(command, commandName) {
+				return command
+			}
+			continue
+		}
+		if command := findPrebootCommandValue(field, commandName); command != nil {
+			return command
+		}
+	}
+	return nil
+}
+
+// commandFromField returns an addressable command instance because Signature methods are conventionally defined on pointers.
+func commandFromField(value reflect.Value) interface{} {
+	value = indirectValue(value)
+	if !value.IsValid() || value.Kind() != reflect.Struct || !value.CanAddr() {
+		return nil
+	}
+	return value.Addr().Interface()
+}
+
+// indirectValue normalizes pointer fields without requiring full dependency construction.
+func indirectValue(value reflect.Value) reflect.Value {
+	for value.IsValid() && value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			value = reflect.New(value.Type().Elem())
+		}
+		value = value.Elem()
+	}
+	return value
+}
+
+// prebootCommandMatches keeps the preboot marker colocated with the command's Signature declaration.
+// The legacy skip_boot marker is accepted so existing generated apps can rerender cleanly.
+func prebootCommandMatches(command interface{}, commandName string) bool {
+	signed, ok := command.(standaloneCommand)
+	if !ok {
+		return false
+	}
+	signature := signed.Signature()
+	marker := commandSignatureValue(signature, "goforj")
+	if marker != "preboot" && marker != "skip_boot" {
+		return false
+	}
+	name := commandSignatureValue(signature, "name")
+	if name == "" {
+		return false
+	}
+	aliases := commandSignatureList(commandSignatureValue(signature, "aliases"))
+	return prebootCommandNameMatches(commandName, name, aliases)
+}
+
+// prebootCommandNameMatches honors aliases so commands such as db:shell can also be reached by db.
+func prebootCommandNameMatches(arg string, name string, aliases []string) bool {
+	arg = strings.TrimSpace(arg)
+	if arg == name {
+		return true
+	}
+	for _, alias := range aliases {
+		if arg == alias {
+			return true
+		}
+	}
+	return false
+}
+
+// commandSignatureList splits comma-separated Signature values.
+func commandSignatureList(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if clean := strings.TrimSpace(part); clean != "" {
+			out = append(out, clean)
+		}
+	}
+	return out
+}
+
+// commandSignatureValue extracts a quoted Signature value by key.
+func commandSignatureValue(signature string, key string) string {
+	pattern := key + ":\""
+	start := strings.Index(signature, pattern)
+	if start == -1 {
+		return ""
+	}
+	start += len(pattern)
+	end := strings.Index(signature[start:], "\"")
+	if end == -1 {
+		return ""
+	}
+	return signature[start : start+end]
+}

@@ -33,7 +33,7 @@ func loadDevAppCommandAcceptsArgs(name string) bool {
 }
 
 func runDevAppHelp(args ...string) (string, error) {
-	cmd := exec.Command("./bin/app", args...)
+	cmd := exec.Command(activeDevAppBinaryPath(), args...)
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
 	return string(output), err

@@ -33,42 +33,52 @@ func ProvideReadinessChecks(
 {{- end }}
 ) []ReadinessCheck {
 	checks := make([]ReadinessCheck, 0)
-	for _, check := range caches.ReadinessChecks() {
-		checks = append(checks, ReadinessCheck{
-			Name:  check.Name,
-			Check: check.Check,
-		})
+	if caches != nil {
+		for _, check := range caches.ReadinessChecks() {
+			checks = append(checks, ReadinessCheck{
+				Name:  check.Name,
+				Check: check.Check,
+			})
+		}
 	}
 
 {{- if .Components.HasDatabase }}
-	for _, check := range db.ReadinessChecks() {
-		checks = append(checks, ReadinessCheck{
-			Name:  check.Name,
-			Check: check.Check,
-		})
+	if db != nil {
+		for _, check := range db.ReadinessChecks() {
+			checks = append(checks, ReadinessCheck{
+				Name:  check.Name,
+				Check: check.Check,
+			})
+		}
 	}
 {{- end }}
 
-	for _, check := range storage.ReadinessChecks() {
-		checks = append(checks, ReadinessCheck{
-			Name:  check.Name,
-			Check: check.Check,
-		})
+	if storage != nil {
+		for _, check := range storage.ReadinessChecks() {
+			checks = append(checks, ReadinessCheck{
+				Name:  check.Name,
+				Check: check.Check,
+			})
+		}
 	}
 
-	for _, check := range events.ReadinessChecks() {
-		checks = append(checks, ReadinessCheck{
-			Name:  check.Name,
-			Check: check.Check,
-		})
+	if events != nil {
+		for _, check := range events.ReadinessChecks() {
+			checks = append(checks, ReadinessCheck{
+				Name:  check.Name,
+				Check: check.Check,
+			})
+		}
 	}
 
 {{- if .Components.Jobs }}
-	for _, check := range queues.ReadinessChecks() {
-		checks = append(checks, ReadinessCheck{
-			Name:  check.Name,
-			Check: check.Check,
-		})
+	if queues != nil {
+		for _, check := range queues.ReadinessChecks() {
+			checks = append(checks, ReadinessCheck{
+				Name:  check.Name,
+				Check: check.Check,
+			})
+		}
 	}
 {{- end }}
 

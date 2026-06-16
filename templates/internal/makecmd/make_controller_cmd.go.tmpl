@@ -27,9 +27,9 @@ type ControllerCmd struct {
 // defaultControllerOutputDir is the fallback root for grouped controllers.
 const defaultControllerOutputDir = "./internal"
 
-// Signature exposes make:controller as skip-boot metadata because route generation should not require app startup.
+// Signature exposes make:controller as preboot metadata because route generation should not require app startup.
 func (*ControllerCmd) Signature() string {
-	return `name:"make:controller" help:"Create a new controller" goforj:"skip_boot"`
+	return `name:"make:controller" help:"Create a new controller" goforj:"preboot"`
 }
 
 // NewControllerCmd creates the generator without runtime dependencies so it can run before Wire bootstrap.
@@ -193,7 +193,7 @@ func (c *ControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	packageName := generatedPackageName(outputDir, "cmd")
 	packageRef := generatedPackageRef(outputDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
-	injectPath := "./wire/inject_http_controllers.go"
+	injectPath := activeAppWireFile("inject_http_controllers_app.go", "./app/wire/inject_controllers_app.go", "./app/wire/inject_http_controllers.go", "./wire/inject_http_controllers_app.go", "./wire/inject_controllers_app.go", "./wire/inject_http_controllers.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -204,7 +204,7 @@ func (c *ControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
 
 	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(packageName, packageRef))
-	lines = insertIntoCallBlock(lines, "var httpAppControllerSet = wire.NewSet(", constructorLine)
+	lines = insertIntoCallBlock(lines, "var appHttpControllerSet = wire.NewSet(", constructorLine)
 
 	if err := writeGeneratorGoLines(injectPath, lines); err != nil {
 		return err
@@ -221,7 +221,7 @@ func (c *ControllerCmd) removeFromInjectHttp(target controllerTarget) error {
 
 	packageRef := generatedPackageRef(target.packageDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(target.packageDir))
-	injectPath := "./wire/inject_http_controllers.go"
+	injectPath := activeAppWireFile("inject_http_controllers_app.go", "./app/wire/inject_controllers_app.go", "./app/wire/inject_http_controllers.go", "./wire/inject_http_controllers_app.go", "./wire/inject_controllers_app.go", "./wire/inject_http_controllers.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -258,7 +258,7 @@ func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error
 	packageName := generatedPackageName(outputDir, "cmd")
 	packageRef := generatedPackageRef(outputDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
-	injectPath := "./internal/router/routes_registry.go"
+	injectPath := activeAppFile("routes.go", "./internal/router/routes_registry.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -267,15 +267,22 @@ func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error
 
 	paramName := str.Of(packageRef).Camel().String() + "Controller"
 	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageRef)
-	appendLine := fmt.Sprintf("\tpublicRoutes = append(publicRoutes, %s.Routes()...)", paramName)
 
 	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(packageName, packageRef))
 
-	if !containsLine(lines, paramDecl) {
-		lines = insertIntoFuncParams(lines, "ProvideAppRoutes", paramDecl)
+	if strings.Contains(strings.Join(lines, "\n"), "func ProvideAppRoutes(") {
+		appendLine := fmt.Sprintf("\tpublicRoutes = append(publicRoutes, %s.Routes()...)", paramName)
+		if !containsLine(lines, paramDecl) {
+			lines = insertIntoFuncParams(lines, "ProvideAppRoutes", paramDecl)
+		}
+		lines = insertAfterMarkerIfMissing(lines, "var publicRoutes []web.Route", appendLine)
+	} else {
+		routeLine := fmt.Sprintf("\t\t%s.Routes(),", paramName)
+		if !containsLine(lines, paramDecl) {
+			lines = insertIntoFuncParams(lines, "ProvideRoutes", paramDecl)
+		}
+		lines = insertAfterMarkerIfMissing(lines, "publicRoutes := slices.Concat(", routeLine)
 	}
-
-	lines = insertAfterMarkerIfMissing(lines, "var publicRoutes []web.Route", appendLine)
 
 	if err := writeGeneratorGoLines(injectPath, lines); err != nil {
 		return err
@@ -292,7 +299,7 @@ func (c *ControllerCmd) removeFromAppRoutes(target controllerTarget) error {
 
 	packageRef := generatedPackageRef(target.packageDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(target.packageDir))
-	injectPath := "./internal/router/routes_registry.go"
+	injectPath := activeAppFile("routes.go", "./internal/router/routes_registry.go")
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
@@ -301,12 +308,14 @@ func (c *ControllerCmd) removeFromAppRoutes(target controllerTarget) error {
 	original := append([]string{}, lines...)
 	paramName := str.Of(packageRef).Camel().String() + "Controller"
 	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageRef)
-	appendLine := fmt.Sprintf("\tpublicRoutes = append(publicRoutes, %s.Routes()...)", paramName)
+	legacyAppendLine := fmt.Sprintf("\tpublicRoutes = append(publicRoutes, %s.Routes()...)", paramName)
+	routeLine := fmt.Sprintf("\t\t%s.Routes(),", paramName)
 
 	var removed bool
 	lines, removedParam := removeExactLine(lines, paramDecl)
-	lines, removedAppend := removeExactLine(lines, appendLine)
-	removed = removedParam || removedAppend
+	lines, removedLegacyAppend := removeExactLine(lines, legacyAppendLine)
+	lines, removedRoute := removeExactLine(lines, routeLine)
+	removed = removedParam || removedLegacyAppend || removedRoute
 	lines = removeGoImportIfUnused(lines, importPath, packageRef+".")
 
 	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)

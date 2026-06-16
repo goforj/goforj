@@ -130,10 +130,115 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 
 func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 	c.lastBuildStatus = ""
+	if atomicArgs, output, cleanup, ok, err := atomicGoBuildArgs(args); ok || err != nil {
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, err := c.runGoBuild(atomicArgs, goBuildOptions{allowRecovery: true}); err != nil {
+			return "", err
+		}
+		if err := os.Chmod(output.cache, 0o755); err != nil {
+			return "", fmt.Errorf("prepare built binary permissions: %w", err)
+		}
+		if err := copyFile(output.cache, output.publish); err != nil {
+			return "", fmt.Errorf("stage built binary: %w", err)
+		}
+		if err := os.Chmod(output.publish, 0o755); err != nil {
+			return "", fmt.Errorf("prepare published binary permissions: %w", err)
+		}
+		if err := os.Rename(output.publish, output.final); err != nil {
+			return "", fmt.Errorf("publish built binary: %w", err)
+		}
+		return c.lastBuildStatus, nil
+	}
 	if _, err := c.runGoBuild(args, goBuildOptions{allowRecovery: true}); err != nil {
 		return "", err
 	}
 	return c.lastBuildStatus, nil
+}
+
+type atomicBuildOutput struct {
+	final   string
+	cache   string
+	publish string
+}
+
+// atomicGoBuildArgs builds watched binaries away from their final path so dev never executes a partial file.
+func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool, error) {
+	outIndex := outputArgIndex(args)
+	if outIndex < 0 {
+		return args, atomicBuildOutput{}, nil, false, nil
+	}
+	final := outputPath(args[outIndex])
+	if !atomicBuildOutputPath(final) {
+		return args, atomicBuildOutput{}, nil, false, nil
+	}
+	dir := filepath.Dir(final)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	cacheDir := filepath.Join(dir, ".forj-build-cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	cache := filepath.Join(cacheDir, filepath.Base(final))
+	publish := filepath.Join(dir, "."+filepath.Base(final)+".publish")
+	if err := os.Remove(publish); err != nil && !os.IsNotExist(err) {
+		return nil, atomicBuildOutput{}, nil, true, err
+	}
+	atomicArgs := replaceBuildOutputArg(args, outIndex, cache)
+	cleanup := func() { _ = os.Remove(publish) }
+	return atomicArgs, atomicBuildOutput{final: final, cache: cache, publish: publish}, cleanup, true, nil
+}
+
+// copyFile stages the cached build output onto a separate inode before the atomic publish rename.
+func copyFile(from string, to string) error {
+	src, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// atomicBuildOutputPath avoids rewriting cases where go build expects -o to be a directory.
+func atomicBuildOutputPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "." {
+		return false
+	}
+	if strings.HasSuffix(path, string(os.PathSeparator)) || strings.HasSuffix(path, "/") {
+		return false
+	}
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return false
+	}
+	return true
+}
+
+func replaceBuildOutputArg(args []string, outIndex int, output string) []string {
+	out := append([]string(nil), args...)
+	if strings.HasPrefix(out[outIndex], "-o=") {
+		out[outIndex] = "-o=" + output
+		return out
+	}
+	out[outIndex] = output
+	return out
 }
 
 func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
@@ -513,6 +618,9 @@ func defaultAnalyzePatterns(root string) []string {
 	var resolved []string
 	if dirExists(filepath.Join(root, "internal")) {
 		resolved = append(resolved, "./internal/...")
+	}
+	if dirExists(filepath.Join(root, "app")) {
+		resolved = append(resolved, "./app/...")
 	}
 	if dirExists(filepath.Join(root, "wire")) {
 		resolved = append(resolved, "./wire")

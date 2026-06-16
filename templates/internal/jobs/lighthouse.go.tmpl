@@ -25,7 +25,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 	"github.com/goforj/storage"
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
@@ -110,6 +110,7 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .Components.Metrics }}, c.metrics{{- end }})
 	c.inspects.SetPublisher(publisher)
 	c.inspects.SetPublishOnly(true)
+	c.inspects.SetCaptureGate(c.agent.InspectActive)
 	go publisher.Start(ctx)
 	c.agent.RegisterCapability("inspects")
 	c.agent.RegisterCapability("cli")
@@ -455,11 +456,11 @@ func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
 		if candidate == "" {
 			continue
 		}
-		if normalized := appinfo.NormalizeCacheDriver(candidate); normalized != "" {
+		if normalized := runtime.NormalizeCacheDriver(candidate); normalized != "" {
 			return normalized
 		}
 	}
-	if normalized := appinfo.NormalizeCacheDriver(configured); normalized != "" {
+	if normalized := runtime.NormalizeCacheDriver(configured); normalized != "" {
 		return normalized
 	}
 	return string(cachecore.DriverMemory)
@@ -471,15 +472,15 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 	}
 	switch report.Suite {
 	case "cache":
-		driver := appinfo.NormalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
+		driver := runtime.NormalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {
-			driver = appinfo.NormalizeCacheDriver(fmt.Sprint(report.Extra["driver"]))
+			driver = runtime.NormalizeCacheDriver(fmt.Sprint(report.Extra["driver"]))
 		}
 		if driver == "" {
-			driver = appinfo.NormalizeCacheDriver(report.Driver)
+			driver = runtime.NormalizeCacheDriver(report.Driver)
 		}
 		if driver == "" {
-			driver = appinfo.NormalizeCacheDriver(env.Get("CACHE_DRIVER", "memory"))
+			driver = runtime.NormalizeCacheDriver(env.Get("CACHE_DRIVER", "memory"))
 		}
 		if driver == "" {
 			driver = string(cachecore.DriverMemory)
@@ -488,12 +489,12 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 		report.Extra["driver"] = driver
 		report.Extra["configured_driver"] = driver
 	case "queue":
-		driver := appinfo.NormalizeQueueDriver(fmt.Sprint(report.Extra["configured_driver"]))
+		driver := runtime.NormalizeQueueDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {
-			driver = appinfo.NormalizeQueueDriver(fmt.Sprint(report.Extra["driver"]))
+			driver = runtime.NormalizeQueueDriver(fmt.Sprint(report.Extra["driver"]))
 		}
 		if driver == "" {
-			driver = appinfo.NormalizeQueueDriver(report.Driver)
+			driver = runtime.NormalizeQueueDriver(report.Driver)
 		}
 		if driver != "" {
 			report.Driver = driver
@@ -501,21 +502,21 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 			report.Extra["configured_driver"] = driver
 		}
 	case "storage":
-		driver := appinfo.NormalizeStorageDriver(fmt.Sprint(report.Extra["driver"]))
+		driver := runtime.NormalizeStorageDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
-			driver = appinfo.NormalizeStorageDriver(report.Driver)
+			driver = runtime.NormalizeStorageDriver(report.Driver)
 		}
 		if driver != "" {
 			report.Driver = driver
 			report.Extra["driver"] = driver
 		}
 	case "db":
-		driver := appinfo.NormalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
+		driver := runtime.NormalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
-			driver = appinfo.NormalizeDBDriver(report.Driver)
+			driver = runtime.NormalizeDBDriver(report.Driver)
 		}
 		if driver == "" {
-			driver = appinfo.NormalizeDBDriver(env.Get("DB_DRIVER", ""))
+			driver = runtime.NormalizeDBDriver(env.Get("DB_DRIVER", ""))
 		}
 		if driver != "" {
 			report.Driver = driver
@@ -911,7 +912,7 @@ func runQueueBenchmarkInstance(ctx context.Context, queueInstance *queue.Queue, 
 	}
 	p50, p95, p99 := latencyPercentiles(dispatchLatencies)
 	configuredDriver := benchmarkQueueConfiguredDriver(instanceName)
-	driver := appinfo.NormalizeQueueDriver(string(queueInstance.Driver()))
+	driver := runtime.NormalizeQueueDriver(string(queueInstance.Driver()))
 	if driver == "" {
 		driver = configuredDriver
 	}
@@ -1018,19 +1019,19 @@ func cleanupQueueBenchmarkRun(ctx context.Context, queueInstance *queue.Queue, q
 }
 
 func benchmarkQueueConfiguredDriver(name string) string {
-	instances := appinfo.DiscoverQueueInstances()
+	instances := runtime.DiscoverQueueInstances()
 	normalizedName := normalizedBenchmarkName(name)
 	for _, instance := range instances {
 		if normalizedBenchmarkName(instance.Name) != normalizedName {
 			continue
 		}
-		return appinfo.NormalizeQueueDriver(instance.Driver)
+		return runtime.NormalizeQueueDriver(instance.Driver)
 	}
 	return ""
 }
 
 func benchmarkQueueDefaultQueue(name string) string {
-	return appinfo.QueueDefaultQueue(name)
+	return runtime.QueueDefaultQueue(name)
 }
 
 func benchmarkQueuePrefillCount(duration time.Duration, concurrency int) int64 {
@@ -1275,9 +1276,9 @@ func runStorageBenchmarkDisk(ctx context.Context, disk storage.Storage, diskName
 	}
 	p50, p95, p99 := latencyPercentiles(latencies)
 	driver := "-"
-	for _, instance := range appinfo.DiscoverStorageInstances() {
+	for _, instance := range runtime.DiscoverStorageInstances() {
 		if normalizedBenchmarkName(instance.Name) == normalizedBenchmarkName(diskName) {
-			driver = appinfo.NormalizeStorageDriver(instance.Driver)
+			driver = runtime.NormalizeStorageDriver(instance.Driver)
 			break
 		}
 	}
@@ -1444,8 +1445,8 @@ func runDBBenchmark(
 	payloadSize int,
 	started time.Time,
 ) (BenchmarkSuiteResult, error) {
-	connectionNames := make([]string, 0, len(appinfo.DiscoverDatabaseInstances()))
-	for _, instance := range appinfo.DiscoverDatabaseInstances() {
+	connectionNames := make([]string, 0, len(runtime.DiscoverDatabaseInstances()))
+	for _, instance := range runtime.DiscoverDatabaseInstances() {
 		connectionNames = append(connectionNames, normalizedBenchmarkName(instance.Name))
 	}
 	if len(connectionNames) == 0 {
@@ -1820,7 +1821,7 @@ func detectDBDriver(connectionName, dialect string) string {
 		dialect,
 	}
 	for _, candidate := range candidates {
-		if normalized := appinfo.NormalizeDBDriver(candidate); normalized != "" {
+		if normalized := runtime.NormalizeDBDriver(candidate); normalized != "" {
 			return normalized
 		}
 	}

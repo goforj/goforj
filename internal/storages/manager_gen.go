@@ -3,8 +3,14 @@
 package storages
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
@@ -57,16 +63,112 @@ var storageRootKeys = []string{
 }
 
 type Manager struct {
-	defaultDisk storage.Storage
+	defaultDisk   storage.Storage
+	observer      Observer
+	defaultDriver string
+	warnings      []OptionalDiskWarning
+}
+
+type Instance struct {
+	Name      string
+	Driver    string
+	Disk      storage.Storage
+	IsDefault bool
+}
+
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
+type OptionalDiskWarning struct {
+	Name   string
+	Driver string
+	Error  string
+}
+
+type Observer interface {
+	OnStorageOp(ctx context.Context, event StorageOpEvent)
+}
+
+type StorageOpEvent struct {
+	Operation string
+	Disk      string
+	Path      string
+	Driver    string
+	Err       error
+	Duration  time.Duration
+}
+
+type ObserverFunc func(ctx context.Context, event StorageOpEvent)
+
+func (f ObserverFunc) OnStorageOp(ctx context.Context, event StorageOpEvent) {
+	if f == nil {
+		return
+	}
+	f(ctx, event)
+}
+
+type observerChain []Observer
+
+func (c observerChain) OnStorageOp(ctx context.Context, event StorageOpEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnStorageOp(ctx, event)
+	}
 }
 
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
 }
 
-func (m *Manager) Default() storage.Storage {
-	return m.defaultDisk
+func (m *Manager) WithObserver(observer Observer) *Manager {
+	if m == nil || observer == nil {
+		return m
+	}
+	if m.observer == nil {
+		m.observer = observer
+	} else {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			m.observer = append(existing, observer)
+		default:
+			m.observer = observerChain{existing, observer}
+		}
+	}
+	combined := m.observer
+	if m.defaultDisk != nil {
+		m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, combined)
+	}
+	return m
 }
+
+func (m *Manager) Warnings() []OptionalDiskWarning {
+	if m == nil || len(m.warnings) == 0 {
+		return nil
+	}
+	out := make([]OptionalDiskWarning, len(m.warnings))
+	copy(out, m.warnings)
+	return out
+}
+
+func (m *Manager) ReadinessChecks() []ReadinessCheck {
+	if m == nil {
+		return nil
+	}
+	checks := []ReadinessCheck{
+		{
+			Name: "storage_default",
+			Check: func(ctx context.Context) error {
+				return storageReadinessCheck(ctx, m.defaultDisk)
+			},
+		},
+	}
+	return checks
+}
+
 func LoadConfigFromEnv() (storage.Config, error) {
 	storageScope := env.WithPrefix("STORAGE")
 	disks, err := loadDisksFromEnv(storageScope)
@@ -88,7 +190,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	}
 	disks[defaultDiskName] = defaultCfg
 
-	for _, child := range storageScope.ChildNames(storageRootKeys) {
+	for _, child := range storageChildNamesFromEnv() {
 		name := storage.DiskName(str.Of(child).TrimSpace().ToLower().String())
 		cfg, err := buildDiskConfig(name, storageScope.Child(child))
 		if err != nil {
@@ -100,24 +202,107 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	return disks, nil
 }
 
+func storageChildNamesFromEnv() []string {
+	rootKeyParts := make(map[string][]string, len(storageRootKeys))
+	for _, key := range storageRootKeys {
+		rootKeyParts[key] = strings.Split(key, "_")
+	}
+
+	seen := map[string]struct{}{}
+	names := make([]string, 0)
+	for _, kv := range os.Environ() {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(key, "STORAGE_") {
+			continue
+		}
+		suffix := strings.TrimPrefix(key, "STORAGE_")
+		if suffix == "" {
+			continue
+		}
+		parts := strings.Split(strings.ToUpper(suffix), "_")
+		for _, rootKey := range storageRootKeys {
+			rootParts := rootKeyParts[rootKey]
+			if len(parts) <= len(rootParts) || !slices.Equal(parts[len(parts)-len(rootParts):], rootParts) {
+				continue
+			}
+			child := strings.Join(parts[:len(parts)-len(rootParts)], "_")
+			if child == "" {
+				continue
+			}
+			if _, exists := seen[child]; exists {
+				continue
+			}
+			seen[child] = struct{}{}
+			names = append(names, child)
+			break
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 func newManagerFromEnv() (*Manager, error) {
-	cfg, err := LoadConfigFromEnv()
+	storageScope := env.WithPrefix("STORAGE")
+	defaultCfg, err := buildDiskConfig(defaultDiskName, storageScope)
 	if err != nil {
 		return nil, err
 	}
-	inner, err := storage.New(cfg)
+	defaultDisk, err := storage.Build(defaultCfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("storage: initialize disk %q: %w", defaultDiskName, err)
 	}
 	manager := &Manager{
-		defaultDisk: inner.Default(),
+		defaultDisk:   defaultDisk,
+		defaultDriver: storageDriverNameFromScope(storageScope),
 	}
 	return manager, nil
 }
 
+func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {
+	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
+	cfg, err := buildDiskConfig(name, childScope)
+	if err != nil {
+		return nil, nil, err
+	}
+	disk, err := storage.Build(cfg)
+	if err == nil {
+		return disk, nil, nil
+	}
+	if isOptionalStorageDiskError(err) {
+		driver := storageDriverNameFromScope(childScope)
+		return nil, &OptionalDiskWarning{
+			Name:   string(name),
+			Driver: driver,
+			Error:  err.Error(),
+		}, nil
+	}
+	return nil, nil, err
+}
+
+func isOptionalStorageDiskError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.HasPrefix(err.Error(), "storage: disk \"") && strings.HasSuffix(err.Error(), "\" not found") {
+		return true
+	}
+	return strings.Contains(err.Error(), "connect: connection refused") ||
+		strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "i/o timeout") ||
+		strings.Contains(err.Error(), "network is unreachable")
+}
+
+func storageDriverNameFromScope(scope env.Scope) string {
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	if driver == "" {
+		return driverLocal
+	}
+	return driver
+}
+
 // buildDiskConfig is generated from the storage disks currently defined in env.
 // The supported driver cases and imports in this file are derived from
-// STORAGE_* and STORAGE_<NAME>_* values at generate time.
+// STORAGE_SUPPORTED_DRIVERS, or from active STORAGE_* and STORAGE_<NAME>_* values when unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
 	if driver == "" {
@@ -131,11 +316,187 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 
 	switch driver {
 	case driverLocal:
+		root := scope.Get("ROOT", localRoot)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, err
+		}
 		return localstorage.Config{
-			Root:   scope.Get("ROOT", localRoot),
+			Root:   root,
 			Prefix: scope.Get("PREFIX", ""),
 		}, nil
 	default:
 		return nil, fmt.Errorf("storage: unsupported driver %q", driver)
 	}
+}
+
+func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
+	if disk == nil {
+		return nil
+	}
+	if ready, ok := any(disk).(interface{ Ready(context.Context) error }); ok {
+		return ready.Ready(ctx)
+	}
+	if ready, ok := any(disk).(interface{ Ready() error }); ok {
+		return ready.Ready()
+	}
+	_, err := disk.WithContext(ctx).List("")
+	return err
+}
+
+type observedStorage struct {
+	inner    storage.Storage
+	name     string
+	driver   string
+	observer Observer
+	ctx      context.Context
+}
+
+func wrapObservedStorage(inner storage.Storage, name string, driver string, observer Observer) storage.Storage {
+	if inner == nil || observer == nil {
+		return inner
+	}
+	if wrapped, ok := inner.(*observedStorage); ok {
+		wrapped.name = name
+		wrapped.driver = driver
+		wrapped.observer = observer
+		return wrapped
+	}
+	return &observedStorage{
+		inner:    inner,
+		name:     name,
+		driver:   driver,
+		observer: observer,
+	}
+}
+
+func (s *observedStorage) observe(ctx context.Context, op string, path string, start time.Time, err error) {
+	if s == nil || s.observer == nil {
+		return
+	}
+	s.observer.OnStorageOp(ctx, StorageOpEvent{
+		Operation: op,
+		Disk:      s.name,
+		Path:      path,
+		Driver:    s.driver,
+		Err:       err,
+		Duration:  time.Since(start),
+	})
+}
+
+func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
+	clone := *s
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	clone.ctx = ctx
+	return &clone
+}
+
+func (s *observedStorage) context() context.Context {
+	if s == nil || s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
+func (s *observedStorage) Get(p string) ([]byte, error) {
+	start := time.Now()
+	ctx := s.context()
+	body, err := s.inner.WithContext(ctx).Get(p)
+	s.observe(ctx, "get", p, start, err)
+	return body, err
+}
+
+func (s *observedStorage) Put(p string, contents []byte) error {
+	start := time.Now()
+	ctx := s.context()
+	err := s.inner.WithContext(ctx).Put(p, contents)
+	s.observe(ctx, "put", p, start, err)
+	return err
+}
+
+func (s *observedStorage) MakeDir(p string) error {
+	start := time.Now()
+	ctx := s.context()
+	err := s.inner.WithContext(ctx).MakeDir(p)
+	s.observe(ctx, "make_dir", p, start, err)
+	return err
+}
+
+func (s *observedStorage) Delete(p string) error {
+	start := time.Now()
+	ctx := s.context()
+	err := s.inner.WithContext(ctx).Delete(p)
+	s.observe(ctx, "delete", p, start, err)
+	return err
+}
+
+func (s *observedStorage) Stat(p string) (storage.Entry, error) {
+	start := time.Now()
+	ctx := s.context()
+	entry, err := s.inner.WithContext(ctx).Stat(p)
+	s.observe(ctx, "stat", p, start, err)
+	return entry, err
+}
+
+func (s *observedStorage) Exists(p string) (bool, error) {
+	start := time.Now()
+	ctx := s.context()
+	exists, err := s.inner.WithContext(ctx).Exists(p)
+	s.observe(ctx, "exists", p, start, err)
+	return exists, err
+}
+
+func (s *observedStorage) List(p string) ([]storage.Entry, error) {
+	start := time.Now()
+	ctx := s.context()
+	entries, err := s.inner.WithContext(ctx).List(p)
+	s.observe(ctx, "list", p, start, err)
+	return entries, err
+}
+
+func (s *observedStorage) Walk(p string, fn func(storage.Entry) error) error {
+	start := time.Now()
+	ctx := s.context()
+	err := s.inner.WithContext(ctx).Walk(p, fn)
+	s.observe(ctx, "walk", p, start, err)
+	return err
+}
+
+func (s *observedStorage) Copy(src, dst string) error {
+	start := time.Now()
+	ctx := s.context()
+	err := s.inner.WithContext(ctx).Copy(src, dst)
+	s.observe(ctx, "copy", src+" -> "+dst, start, err)
+	return err
+}
+
+func (s *observedStorage) Move(src, dst string) error {
+	start := time.Now()
+	ctx := s.context()
+	err := s.inner.WithContext(ctx).Move(src, dst)
+	s.observe(ctx, "move", src+" -> "+dst, start, err)
+	return err
+}
+
+func (s *observedStorage) URL(p string) (string, error) {
+	start := time.Now()
+	ctx := s.context()
+	url, err := s.inner.WithContext(ctx).URL(p)
+	s.observe(ctx, "url", p, start, err)
+	return url, err
+}
+
+func (s *observedStorage) ListPage(p string, offset, limit int) (storage.ListPageResult, error) {
+	start := time.Now()
+	ctx := s.context()
+	paged, ok := s.inner.WithContext(ctx).(storage.PagedStorage)
+	if !ok {
+		err := storage.ErrUnsupported
+		s.observe(ctx, "list_page", p, start, err)
+		return storage.ListPageResult{}, err
+	}
+	result, err := paged.ListPage(p, offset, limit)
+	s.observe(ctx, "list_page", p, start, err)
+	return result, err
 }

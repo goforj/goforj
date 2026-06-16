@@ -37,7 +37,7 @@ func NewSubscriberCmd() *SubscriberCmd {
 
 // Signature defines CLI metadata for this command.
 func (*SubscriberCmd) Signature() string {
-	return `name:"make:subscriber" help:"Create a new event subscriber" goforj:"skip_boot"`
+	return `name:"make:subscriber" help:"Create a new event subscriber" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.
@@ -95,7 +95,7 @@ type subscriberTarget struct {
 
 // target resolves grouped subscriber names into colocated package output.
 func (c *SubscriberCmd) target() subscriberTarget {
-	if strings.TrimSpace(c.OutputDir) == "" {
+	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
 		c.OutputDir = defaultSubscriberOutputDir
 	}
 
@@ -113,9 +113,9 @@ func (c *SubscriberCmd) target() subscriberTarget {
 	}
 
 	baseName := str.Of(structBase).Pascal().String()
-	baseName = strings.TrimSuffix(baseName, "Subscriber")
+	baseName = str.Of(baseName).ChopEnd("Subscriber").String()
 	eventName := ensureEventSuffix(baseName)
-	subscriberName := ensureSubscriberSuffix(strings.TrimSuffix(baseName, "Event"))
+	subscriberName := ensureSubscriberSuffix(str.Of(baseName).ChopEnd("Event").String())
 	fileName := str.Of(subscriberName).Snake("_").String() + ".go"
 
 	return subscriberTarget{
@@ -152,7 +152,7 @@ func (c *SubscriberCmd) writeSubscriberFile(target subscriberTarget) error {
 
 // injectIntoWireFile registers the subscriber constructor and event bus subscription.
 func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName string) error {
-	injectPath := "./wire/inject_event_subscribers.go"
+	injectPath := activeAppWireFile("inject_subscribers_app.go", "./app/wire/inject_event_subscribers.go", "./wire/inject_subscribers_app.go", "./wire/inject_event_subscribers.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -182,11 +182,11 @@ func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName stri
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_event_subscribers.go: %w", err)
+		return fmt.Errorf("reading inject_subscribers_app.go: %w", err)
 	}
 	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(packageName, packageRef))
 	lines = insertImportIfMissing(lines, "fmt")
-	lines = insertIntoCallBlock(lines, "var eventSubscriberSet = wire.NewSet(", constructorLine)
+	lines = insertIntoCallBlock(lines, "var appSubscriberSet = wire.NewSet(", constructorLine)
 	if !containsLine(lines, paramLine) {
 		lines = insertIntoFuncParams(lines, "ProvideEventSubscribers", paramLine)
 	}
@@ -195,7 +195,7 @@ func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName stri
 	}
 
 	if err := writeGeneratorGoLines(injectPath, lines); err != nil {
-		return fmt.Errorf("writing inject_event_subscribers.go: %w", err)
+		return fmt.Errorf("writing inject_subscribers_app.go: %w", err)
 	}
 
 	console.Successf("injected into %s: %s", injectPath, constructor)
@@ -203,7 +203,7 @@ func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName stri
 }
 
 func (c *SubscriberCmd) removeFromWireFile(target subscriberTarget, busName string) error {
-	injectPath := "./wire/inject_event_subscribers.go"
+	injectPath := activeAppWireFile("inject_subscribers_app.go", "./app/wire/inject_event_subscribers.go", "./wire/inject_subscribers_app.go", "./wire/inject_event_subscribers.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -232,7 +232,7 @@ func (c *SubscriberCmd) removeFromWireFile(target subscriberTarget, busName stri
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_event_subscribers.go: %w", err)
+		return fmt.Errorf("reading inject_subscribers_app.go: %w", err)
 	}
 	original := append([]string{}, lines...)
 	var removed bool
@@ -261,14 +261,14 @@ func (c *SubscriberCmd) removeFromWireFile(target subscriberTarget, busName stri
 
 // ensureSubscriberSuffix appends Subscriber when name does not already use that suffix.
 func ensureSubscriberSuffix(name string) string {
-	clean := strings.TrimSpace(name)
-	if clean == "" {
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
 		return "ExampleSubscriber"
 	}
-	if strings.HasSuffix(clean, "Subscriber") {
-		return clean
+	if clean.EndsWith("Subscriber") {
+		return clean.String()
 	}
-	return clean + "Subscriber"
+	return clean.String() + "Subscriber"
 }
 
 // isDefaultSubscriberOutputDir reports whether the user left the subscriber output at its default.
@@ -278,8 +278,8 @@ func isDefaultSubscriberOutputDir(outputDir string) bool {
 
 // subscriberBusName returns the event bus selected for subscriber registration.
 func subscriberBusName(busName string) string {
-	if clean := strings.ToLower(strings.TrimSpace(busName)); clean != "" {
-		return clean
+	if clean := str.Of(busName).TrimSpace().ToLower(); !clean.IsBlank() {
+		return clean.String()
 	}
 	return "default"
 }

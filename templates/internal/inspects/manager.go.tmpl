@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 	goforjcache "github.com/goforj/cache"
@@ -90,11 +90,11 @@ type internalContextKey struct{}
 
 type inspectContext struct {
 	context.Context
-	source   app.Source
+	source   runtime.Source
 	recorder Recorder
 }
 
-func (c *inspectContext) AppSource() app.Source {
+func (c *inspectContext) AppSource() runtime.Source {
 	return c.source
 }
 
@@ -181,16 +181,20 @@ type Config struct {
 
 // InspectSummary is the list-friendly view of an inspect record.
 type InspectSummary struct {
-	TraceID    string            `json:"trace_id"`
-	Source     string            `json:"source"`
-	Name       string            `json:"name"`
-	Status     string            `json:"status"`
-	StartedAt  time.Time         `json:"started_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-	EndedAt    time.Time         `json:"ended_at,omitempty"`
-	DurationMS int64             `json:"duration_ms,omitempty"`
-	EventCount int               `json:"event_count"`
-	Labels     map[string]string `json:"labels,omitempty"`
+	TraceID     string            `json:"trace_id"`
+	Source      string            `json:"source"`
+	App   string            `json:"app,omitempty"`
+	AgentKey    string            `json:"agent_key,omitempty"`
+	GroupKey    string            `json:"group_key,omitempty"`
+	InstanceKey string            `json:"instance_key,omitempty"`
+	Name        string            `json:"name"`
+	Status      string            `json:"status"`
+	StartedAt   time.Time         `json:"started_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	EndedAt     time.Time         `json:"ended_at,omitempty"`
+	DurationMS  int64             `json:"duration_ms,omitempty"`
+	EventCount  int               `json:"event_count"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 // InspectEvent is a normalized event captured within an inspect.
@@ -234,7 +238,7 @@ type Record struct {
 
 // RecentQuery controls recent-inspect lookup.
 type RecentQuery struct {
-	Source app.Source
+	Source runtime.Source
 	Limit  int
 }
 
@@ -252,6 +256,7 @@ type Manager struct {
 	publisherMu sync.RWMutex
 	publisher Publisher
 	publishOnly bool
+	captureGate atomic.Value
 	inflightMu sync.RWMutex
 	inflight   map[string]*inflightInspect
 	inflightCount atomic.Int64
@@ -292,7 +297,7 @@ type Recorder struct {
 	manager *Manager
 	inspectID string
 	state   *inflightInspect
-	source  app.Source
+	source  runtime.Source
 	name    string
 	labels  map[string]string
 	once    sync.Once
@@ -370,6 +375,14 @@ func (m *Manager) SetPublishOnly(enabled bool) {
 	m.publisherMu.Unlock()
 }
 
+// SetCaptureGate configures a fast predicate for starting new inspect captures.
+func (m *Manager) SetCaptureGate(gate func() bool) {
+	if m == nil || gate == nil {
+		return
+	}
+	m.captureGate.Store(gate)
+}
+
 func (m *Manager) publisherSnapshot() Publisher {
 	if m == nil {
 		return nil
@@ -386,6 +399,26 @@ func (m *Manager) publishModeSnapshot() (Publisher, bool) {
 	m.publisherMu.RLock()
 	defer m.publisherMu.RUnlock()
 	return m.publisher, m.publishOnly
+}
+
+func (m *Manager) captureAllowed() bool {
+	if m == nil {
+		return false
+	}
+	raw := m.captureGate.Load()
+	if raw == nil {
+		return true
+	}
+	gate, ok := raw.(func() bool)
+	if !ok || gate == nil {
+		return true
+	}
+	return gate()
+}
+
+// CaptureAllowed reports whether the manager would start a new inspect capture now.
+func (m *Manager) CaptureAllowed() bool {
+	return m.Enabled() && m.captureAllowed()
 }
 
 // WithInspectID annotates ctx with inspectID.
@@ -453,7 +486,7 @@ func IsInternalContext(ctx context.Context) bool {
 }
 
 // Begin starts an inspect for the current execution boundary and returns a derived context.
-func (m *Manager) Begin(ctx context.Context, source app.Source, name string, labels map[string]string) context.Context {
+func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string, labels map[string]string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -463,6 +496,9 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return ctx
 	}
+	if !m.captureAllowed() {
+		return ctx
+	}
 	if !m.shouldSample() {
 		return ctx
 	}
@@ -470,10 +506,10 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 		return ctx
 	}
 	if source == "" {
-		source = app.SourceFromContext(ctx)
+		source = runtime.SourceFromContext(ctx)
 	}
 	if source == "" {
-		source = app.SourceApp
+		source = runtime.SourceApp
 	}
 	inspectID := newInspectID()
 	inspectCtx := acquireInspectContext()
@@ -515,6 +551,9 @@ func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder 
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return existing
 	}
+	if !m.captureAllowed() {
+		return nil
+	}
 	if !m.shouldSample() {
 		return nil
 	}
@@ -524,12 +563,12 @@ func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder 
 	inspectID := newInspectID()
 	inspectCtx := acquireInspectContext()
 	inspectCtx.Context = ctx
-	inspectCtx.source = app.SourceHTTP
+	inspectCtx.source = runtime.SourceHTTP
 	inspectCtx.recorder = Recorder{
 		manager:   m,
 		inspectID: inspectID,
 		state:     nil,
-		source:    app.SourceHTTP,
+		source:    runtime.SourceHTTP,
 		name:      normalizeInspectName(name),
 		owner:     inspectCtx,
 	}
@@ -1007,7 +1046,7 @@ func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
 	state.eventLen = 0
 	state.maxEvents = m.config.MaxEvents
 	state.finished = false
-	state.indexed = recorder.source != app.SourceHTTP
+	state.indexed = recorder.source != runtime.SourceHTTP
 	if state.indexed {
 		m.inflightMu.Lock()
 		m.inflight[recorder.inspectID] = state
@@ -1174,7 +1213,7 @@ func (m *Manager) withCacheIndexLock(cache *goforjcache.Cache, fn func(*goforjca
 }
 
 func (m *Manager) internalCache(ctx context.Context) *goforjcache.Cache {
-	return m.cache.WithContext(WithInternalContext(ctx))
+	return m.cache.WithContext(WithInternalContext(runtime.WithSource(ctx, runtime.SourceLighthouse)))
 }
 
 func inspectRecordKey(inspectID string) string {
@@ -1283,6 +1322,10 @@ func (m *Manager) loadRecordWithCache(cache *goforjcache.Cache, inspectID string
 func normalizeRecord(record Record) Record {
 	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
 	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.App = strings.TrimSpace(record.Summary.App)
+	record.Summary.AgentKey = strings.TrimSpace(record.Summary.AgentKey)
+	record.Summary.GroupKey = strings.TrimSpace(record.Summary.GroupKey)
+	record.Summary.InstanceKey = strings.TrimSpace(record.Summary.InstanceKey)
 	record.Summary.Name = normalizeInspectName(record.Summary.Name)
 	if record.Summary.Status == "" {
 		record.Summary.Status = statusOK
@@ -1343,6 +1386,10 @@ func materializeInflightRecord(state *inflightInspect) Record {
 	record := state.record
 	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
 	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.App = strings.TrimSpace(record.Summary.App)
+	record.Summary.AgentKey = strings.TrimSpace(record.Summary.AgentKey)
+	record.Summary.GroupKey = strings.TrimSpace(record.Summary.GroupKey)
+	record.Summary.InstanceKey = strings.TrimSpace(record.Summary.InstanceKey)
 	record.Summary.Name = normalizeInspectName(record.Summary.Name)
 	if record.Summary.Status == "" {
 		record.Summary.Status = statusOK

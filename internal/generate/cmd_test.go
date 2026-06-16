@@ -13,17 +13,17 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	}
 
 	for _, dir := range []string{
-		filepath.Join(projectDir, "internal", "app"),
 		filepath.Join(projectDir, "internal", "caches"),
 		filepath.Join(projectDir, "internal", "mail"),
 		filepath.Join(projectDir, "internal", "queues"),
+		filepath.Join(projectDir, "internal", "runtime"),
 		filepath.Join(projectDir, "internal", "storages"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
-	writeQueueAppFixture(t, projectDir)
+	writeQueueRuntimeFixture(t, projectDir)
 
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("MAIL_DRIVER", "log")

@@ -17,12 +17,12 @@ require (
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
 	github.com/goforj/httpx/v2 v2.0.1
-	github.com/goforj/queue v0.1.16
+	github.com/goforj/queue v0.2.1
 	github.com/goforj/storage v0.4.6
 	github.com/goforj/storage/driver/localstorage v0.4.6
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.4.1
-	github.com/google/wire v0.6.0
+	github.com/goforj/web v0.5.2
+	github.com/goforj/wire v1.2.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/imroc/req/v3 v3.57.0
 	github.com/rs/zerolog v1.34.0

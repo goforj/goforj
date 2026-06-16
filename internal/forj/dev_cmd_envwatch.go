@@ -15,6 +15,10 @@ type devEnvFileFingerprint struct {
 	size            int64
 }
 
+type devAppFingerprint struct {
+	names []string
+}
+
 var suppressedDevEnvTriggerCount atomic.Int32
 
 func suppressNextDevEnvTrigger() {
@@ -71,6 +75,54 @@ func startDevEnvFileWatcher(ctx context.Context, trigger func(), interval time.D
 	}
 }
 
+func startDevAppWatcher(ctx context.Context, trigger func(), interval time.Duration) func() {
+	if trigger == nil {
+		return func() {}
+	}
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+	stopCh := make(chan struct{})
+	prev := snapshotDevApps()
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		pending := devAppFingerprint{}
+		pendingTicks := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				current := snapshotDevApps()
+				if !devAppsChanged(prev, current) {
+					pending = devAppFingerprint{}
+					pendingTicks = 0
+					continue
+				}
+				if !devAppsChanged(pending, current) {
+					pendingTicks++
+				} else {
+					pending = current
+					pendingTicks = 1
+				}
+				if pendingTicks < 2 {
+					continue
+				}
+				prev = current
+				pending = devAppFingerprint{}
+				pendingTicks = 0
+				trigger()
+			}
+		}
+	}()
+	return func() {
+		close(stopCh)
+	}
+}
+
 func snapshotDevEnvFiles() (map[string]devEnvFileFingerprint, error) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -118,4 +170,12 @@ func devEnvFilesChanged(prev, current map[string]devEnvFileFingerprint) bool {
 		}
 	}
 	return false
+}
+
+func snapshotDevApps() devAppFingerprint {
+	return devAppFingerprint{names: devAppBuildNames(activeDevApps())}
+}
+
+func devAppsChanged(prev, current devAppFingerprint) bool {
+	return !slices.Equal(prev.names, current.names)
 }

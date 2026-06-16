@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"{{ .GoModuleName }}/internal/app"
+	"{{ .GoModuleName }}/internal/runtime"
 	"{{ .GoModuleName }}/internal/inspects"
 	"{{ .GoModuleName }}/internal/logger"
 )
@@ -296,7 +296,7 @@ func TestAppLoggerWithContextAddsInspectFieldsToSinkEntries(t *testing.T) {
 		entries = append(entries, entry)
 	})
 
-	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 	ctx = inspects.WithInspectID(ctx, "inspect-123")
 	appLogger.WithContext(ctx).Info().Str("route", "/api/v1/monitors/42").Msg("loaded")
 
@@ -323,7 +323,7 @@ func TestAppLoggerHTTPAccessAddsInspectFieldsToSinkEntries(t *testing.T) {
 		entries = append(entries, entry)
 	})
 
-	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 	ctx = inspects.WithInspectID(ctx, "inspect-123")
 	appLogger.WithContext(ctx).HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
 

@@ -276,21 +276,19 @@ func CurrentUser(r web.Context) *User {
 }
 
 // RequireAuth ensures the request is authenticated before running the next handler.
-func (s *Service) RequireAuth() web.Middleware {
-	return func(next web.Handler) web.Handler {
-		return func(r web.Context) error {
-			user, err := s.authenticateRequest(r)
-			if err != nil {
-				// Do not clear cookies here. Protected requests can race with a
-				// concurrent refresh flow, especially when a tab resumes and many
-				// requests fan out together. Let the dedicated refresh/logout paths
-				// own cookie invalidation instead of having arbitrary 401 responses
-				// wipe browser auth state.
-				return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
-			}
-			r.Set(string(currentUserKey), user)
-			return next(r)
+func (s *Service) RequireAuth(next web.Handler) web.Handler {
+	return func(r web.Context) error {
+		user, err := s.authenticateRequest(r)
+		if err != nil {
+			// Do not clear cookies here. Protected requests can race with a
+			// concurrent refresh flow, especially when a tab resumes and many
+			// requests fan out together. Let the dedicated refresh/logout paths
+			// own cookie invalidation instead of having arbitrary 401 responses
+			// wipe browser auth state.
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 		}
+		r.Set(string(currentUserKey), user)
+		return next(r)
 	}
 }
 

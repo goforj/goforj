@@ -8,18 +8,18 @@ Metrics are emitted by the generated framework wiring, not by ad-hoc application
 
 Standalone host mode (`app run`) prefers one shared metrics endpoint:
 
-- Host metrics: `http://localhost:9100/metrics`
+- Host metrics: `http://localhost:10000/metrics`
 
 Direct source commands keep their dedicated listeners:
 
 {{- if or .Components.WebAPI .Components.WebUI }}
-- HTTP metrics: `http://localhost:9100/metrics`
+- HTTP metrics: `http://localhost:10000/metrics`
 {{- end }}
 {{- if .Components.Jobs }}
-- Jobs metrics: `http://localhost:9101/metrics`
+- Jobs metrics: `http://localhost:10002/metrics`
 {{- end }}
 {{- if .Components.Scheduler }}
-- Scheduler metrics: `http://localhost:9102/metrics`
+- Scheduler metrics: `http://localhost:10001/metrics`
 {{- end }}
 {{- if .Components.WebAPI }}
 - App HTTP route: `GET /metrics`
@@ -70,24 +70,26 @@ Prometheus names use underscores and suffixes. For example, the GoForj metric `h
 
 | Area | Metric families | Key labels |
 | --- | --- | --- |
-| HTTP | `http_requests_total`, `http_requests_by_route_total`, `http_request_duration_seconds`, `http_request_duration_by_route_seconds`, `http_requests_inflight`, `http_responses_client_errors_total`, `http_responses_server_errors_total` | `source`, `method`, `route`, `status` |
-| Auth | `auth_flows_total`, `auth_flow_duration_seconds` | `flow`, `status`, `reason`, `provider` |
-| Cache | `cache_operations_total`, `cache_operation_duration_seconds` | `source`, `cache`, `driver`, `operation`, `category`, `status`, `hit` |
-| Storage | `storage_operations_total`, `storage_operation_duration_seconds` | `source`, `disk`, `driver`, `operation`, `category`, `status` |
-| Events | `events_publishes_total`, `events_publish_duration_seconds`, `events_subscriptions_total`, `events_subscribers_active`, `events_deliveries_total`, `events_deliveries_inflight`, `events_delivery_duration_seconds` | `source`, `bus`, `driver`, `topic`, `handler`, `status`, `reason` |
-| Mail | `mail_sends_total`, `mail_send_duration_seconds` | `source`, `mailer`, `driver`, `status`, `reason` |
-| Queue | `queue_jobs_enqueued_total`, `queue_jobs_scheduled_total`, `queue_jobs_processed_total`, `queue_jobs_failed_total`, `queue_jobs_retried_total`, `queue_jobs_archived_total`, `queue_jobs_by_job_total`, `queue_jobs_inflight`, `queue_jobs_inflight_by_job`, `queue_events_by_queue_total`, `queue_job_duration_by_queue_seconds`, `queue_job_duration_by_job_seconds` | `source`, `queue`, `job_name`, `driver`, `status`, `kind` |
-| Scheduler | `scheduler_started_total`, `scheduler_runs_total`, `scheduler_failures_total`, `scheduler_skips_total`, `scheduler_runs_by_job_total`, `scheduler_events_by_job_total`, `scheduler_jobs_inflight`, `scheduler_job_duration_by_job_seconds` | `source`, `job_name`, `target_kind`, `status`, `reason` |
-| Database | `database_operations_total`, `database_operation_duration_seconds`, `database_queries_by_fingerprint_total`, `database_query_fingerprint_info`, `database_slow_queries_total`, `database_slow_query_duration_seconds`, `database_pool_open`, `database_pool_in_use`, `database_pool_idle`, `database_pool_wait_count_total`, `database_pool_wait_duration_total`, `database_pool_closed_max_idle_total`, `database_pool_closed_max_idle_time_total`, `database_pool_closed_max_lifetime_total` | `connection`, `driver`, `operation`, `target`, `status`, `fingerprint`, `query_shape` |
+| HTTP | `http_requests_total`, `http_requests_by_route_total`, `http_request_duration_seconds`, `http_request_duration_by_route_seconds`, `http_requests_inflight`, `http_responses_client_errors_total`, `http_responses_server_errors_total` | `app`, `source`, `method`, `route`, `status` |
+| Auth | `auth_flows_total`, `auth_flow_duration_seconds` | `app`, `flow`, `status`, `reason`, `provider` |
+| Cache | `cache_operations_total`, `cache_operation_duration_seconds` | `app`, `source`, `cache`, `driver`, `operation`, `category`, `status`, `hit` |
+| Storage | `storage_operations_total`, `storage_operation_duration_seconds` | `app`, `source`, `disk`, `driver`, `operation`, `category`, `status` |
+| Events | `events_publishes_total`, `events_publish_duration_seconds`, `events_subscriptions_total`, `events_subscribers_active`, `events_deliveries_total`, `events_deliveries_inflight`, `events_delivery_duration_seconds` | `app`, `source`, `bus`, `driver`, `topic`, `handler`, `status`, `reason` |
+| Mail | `mail_sends_total`, `mail_send_duration_seconds` | `app`, `source`, `mailer`, `driver`, `status`, `reason` |
+| Queue | `queue_jobs_enqueued_total`, `queue_jobs_scheduled_total`, `queue_jobs_processed_total`, `queue_jobs_failed_total`, `queue_jobs_retried_total`, `queue_jobs_archived_total`, `queue_jobs_by_job_total`, `queue_jobs_inflight`, `queue_jobs_inflight_by_job`, `queue_events_by_queue_total`, `queue_job_duration_by_queue_seconds`, `queue_job_duration_by_job_seconds` | `app`, `source`, `queue`, `job_name`, `driver`, `status`, `kind` |
+| Scheduler | `scheduler_started_total`, `scheduler_runs_total`, `scheduler_failures_total`, `scheduler_skips_total`, `scheduler_runs_by_job_total`, `scheduler_events_by_job_total`, `scheduler_jobs_inflight`, `scheduler_job_duration_by_job_seconds` | `app`, `source`, `job_name`, `target_kind`, `status`, `reason` |
+| Database | `database_operations_total`, `database_operation_duration_seconds`, `database_queries_by_fingerprint_total`, `database_query_fingerprint_info`, `database_slow_queries_total`, `database_slow_query_duration_seconds`, `database_pool_open`, `database_pool_in_use`, `database_pool_idle`, `database_pool_wait_count_total`, `database_pool_wait_duration_total`, `database_pool_closed_max_idle_total`, `database_pool_closed_max_idle_time_total`, `database_pool_closed_max_lifetime_total` | `app`, `connection`, `driver`, `operation`, `target`, `status`, `fingerprint`, `query_shape` |
 
 The local observability stack adds a `process` label at scrape time. Typical values are:
 
 - `app` for standalone host mode
 - `http`, `jobs`, and `scheduler` for direct source mode
 
-Some framework-owned metric families also emit a `source` label directly when the logical source is known at emission time. Today that includes HTTP, queue, scheduler, cache, storage, events, and mail metrics. Prefer `source` for logical attribution and `process` for scrape-target topology.
+Every framework-owned metric family emits `app` directly. Use it as the top-level app selector in dashboards and alerts.
 
-When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards.
+Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache, storage, events, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
+
+When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards. HTTP request metrics fall back to `source="http"` because route traffic is always attributable to the HTTP runtime surface. Inspect-store cache operations use `source="lighthouse"` because that cache traffic is Lighthouse persistence, not app business cache traffic.
 
 Component-specific metric families are emitted when the corresponding component is enabled. Core primitive metrics such as cache, storage, and events are available for generated sources that wire those primitives.
 
@@ -95,6 +97,8 @@ Component-specific metric families are emitted when the corresponding component 
 
 Labels are intentionally low-cardinality:
 
+- `app` is the generated app identity, such as `app`, `marketplace`, or `backstage`.
+- `source` is the runtime surface, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, `startup`, or `app`.
 - `route` uses the registered route pattern, such as `/api/users/:id`, not the raw URL.
 - `cache`, `disk`, `mailer`, `queue`, `connection`, and `bus` use named accessors or configured primitive names.
 - `target` for database metrics is the normalized table or query target when available.

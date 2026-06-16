@@ -1,0 +1,111 @@
+package observability
+
+{{- if .Components.Jobs }}
+import (
+	"context"
+	"time"
+
+	"github.com/goforj/queue"
+
+	"{{.GoModuleName}}/internal/runtime"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+// QueueObserver records queue runtime events through the configured observability sinks and job workflow logs.
+func QueueObserver(
+	appLogger *logger.AppLogger,
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) queue.Observer {
+	return queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+		inspectManager.RecordQueueEvent(ctx, event)
+{{- if .Components.Metrics }}
+		metricsManager.RecordQueueEvent(ctx, event)
+{{- end }}
+		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
+	})
+}
+
+// logQueueWorkflowEvent records terminal queue workflow outcomes in both logs and inspect timelines.
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects.Manager, ctx context.Context, event queue.Event) {
+	switch event.Kind {
+	case queue.EventProcessSucceeded, queue.EventProcessFailed, queue.EventDispatchFailed:
+	default:
+		return
+	}
+	source := runtime.SourceFromContext(ctx)
+	if source == "" {
+		source = runtime.SourceApp
+	}
+	retried := event.Attempt > 0
+	inspectFields := map[string]any{
+		"source":      source.String(),
+		"queue_event": string(event.Kind),
+		"job_name":    event.JobType,
+		"queue":       event.Queue,
+		"attempt":     event.Attempt,
+		"retried":     retried,
+		"duration":    humanDuration(event.Duration),
+	}
+	if event.Err != nil {
+		inspectFields["error"] = event.Err.Error()
+	}
+	level := "info"
+	if event.Err != nil {
+		level = "warn"
+	}
+	inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+		Level:   level,
+		Message: "Job processed",
+		Fields:  inspectFields,
+	})
+
+	log := appLogger.Info()
+	if event.Err != nil {
+		log = appLogger.Warn()
+	}
+	log.
+		Str("event", queueWorkflowEventLabel(event.Kind)).
+		Str("name", event.JobType).
+		Str("queue", event.Queue).
+		Int("attempt", event.Attempt).
+		Bool("retried", retried).
+		Str("duration", humanDuration(event.Duration)).
+		Err(event.Err).
+		Msg("Job processed")
+}
+
+// humanDuration keeps queue workflow durations compact for log and inspect fields.
+func humanDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	if d < time.Millisecond {
+		return d.Round(time.Microsecond).String()
+	}
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(10 * time.Millisecond).String()
+}
+
+// queueWorkflowEventLabel maps queue event kinds to stable log labels.
+func queueWorkflowEventLabel(kind queue.EventKind) string {
+	switch kind {
+	case queue.EventProcessSucceeded:
+		return "success"
+	case queue.EventProcessFailed:
+		return "failure"
+	case queue.EventDispatchFailed:
+		return "dispatch_failed"
+	default:
+		return string(kind)
+	}
+}
+{{- end }}

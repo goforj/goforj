@@ -80,6 +80,16 @@ func TestBuildDevCommandModalBox(t *testing.T) {
 	}
 }
 
+func TestBuildDevCommandModalBoxUsesActiveApp(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
+	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
+		{Name: "route:list", Help: "List HTTP routes"},
+	}, 0, "", false, ""))
+	if !strings.Contains(box, "App commands from ./bin/customer-portal --help") {
+		t.Fatalf("expected app command source in command modal box:\n%s", box)
+	}
+}
+
 func TestBuildDevCommandModalBoxWithoutArgs(t *testing.T) {
 	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
 		{Name: "route:list", Help: "List HTTP routes"},
@@ -321,6 +331,10 @@ func TestDevTranscriptComponent(t *testing.T) {
 	if got := devTranscriptComponent(line); got != "HTTP" {
 		t.Fatalf("expected HTTP component, got %q", got)
 	}
+	multiAppLine := "19:27:32.402 billing HTTP HTTP Request"
+	if got := devTranscriptComponent(multiAppLine); got != "HTTP" {
+		t.Fatalf("expected HTTP component from multi-app line, got %q", got)
+	}
 	if got := devTranscriptComponent("Starting Run App - ./bin/app run"); got != "" {
 		t.Fatalf("expected no component for orchestration line, got %q", got)
 	}
@@ -526,6 +540,31 @@ func TestDevBubbleModelCommandEnterExecutesSelection(t *testing.T) {
 		t.Fatalf("expected one command request, got %#v", requests)
 	}
 	if requests[0].ShellCommand != "./bin/app route:list --json" {
+		t.Fatalf("unexpected shell command: %#v", requests[0])
+	}
+}
+
+func TestDevBubbleModelCommandEnterUsesActiveApp(t *testing.T) {
+	t.Setenv("FORJ_APP", "customer-portal")
+	requests := []devShellCommandRequest{}
+	m := devBubbleModel{
+		commandVisible: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
+		},
+		requestCommand: func(req devShellCommandRequest) {
+			requests = append(requests, req)
+		},
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next.(devBubbleModel).commandVisible {
+		t.Fatal("expected command palette to close after executing")
+	}
+	if len(requests) != 1 {
+		t.Fatalf("expected one command request, got %#v", requests)
+	}
+	if requests[0].ShellCommand != "./bin/customer-portal route:list" {
 		t.Fatalf("unexpected shell command: %#v", requests[0])
 	}
 }

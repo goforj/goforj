@@ -9,6 +9,9 @@ app:
   components:
     web_api: true
 markdown:
+  path_position: 2
+  path_total: 7
+  estimated_minutes: 15
   intro: |
     This scenario extends the JSON API route with a repository and a named cache resource.
 
@@ -37,7 +40,7 @@ markdown:
     - internal/users/repository_test.go
     - internal/users/service.go
     - internal/users/service_test.go
-    - wire/inject_app_services.go
+    - app/wire/inject_services_app.go
   file_groups:
     - title: Configuration
       files:
@@ -50,7 +53,7 @@ markdown:
         - internal/users/service_test.go
     - title: App wiring
       files:
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   generated_files:
     intro: "The cache generator updates:"
     files:
@@ -251,13 +254,13 @@ steps:
                 return s.repo.Find(ctx, id)
         }
 
-  - title: Wire The Repository And Cache
+  - title: Wire the Repository and Cache
     explain: |
-      Open `wire/inject_app_services.go`.
+      Open `app/wire/inject_services_app.go`.
 
       The service depends only on `users.UserRepository`. The provider composes the source repository with the cached repository. The cached repository depends on `*cache.Cache`, not a Redis, file, or memory driver. Driver choice stays in configuration.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         import (
@@ -269,7 +272,7 @@ steps:
     explain: |
       Add the source repository, cached repository provider, and named cache provider.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 users.NewService,
@@ -283,7 +286,7 @@ steps:
     explain: |
       `provideUserProfileCache` selects the named resource. `provideUserRepository` keeps the service wired to the repository interface.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         func provideInspectManager(caches *caches.Manager) *inspects.Manager {

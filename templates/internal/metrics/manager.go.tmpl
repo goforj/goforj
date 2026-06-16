@@ -2,7 +2,7 @@ package metrics
 
 import (
 	"context"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
@@ -38,90 +38,90 @@ type Manager struct {
 	mu       sync.Mutex
 	httpMu   sync.RWMutex
 
-	httpRequests        *gmetrics.CounterVec
-	httpInflight        *gmetrics.GaugeVec
-	httpClientErrors    *gmetrics.CounterVec
-	httpServerErrors    *gmetrics.CounterVec
-	httpDuration        *gmetrics.HistogramVec
-	httpRequestsByRoute *gmetrics.CounterVec
-	httpDurationByRoute *gmetrics.HistogramVec
+	httpRequests        *metricCounterVec
+	httpInflight        *metricGaugeVec
+	httpClientErrors    *metricCounterVec
+	httpServerErrors    *metricCounterVec
+	httpDuration        *metricHistogramVec
+	httpRequestsByRoute *metricCounterVec
+	httpDurationByRoute *metricHistogramVec
 	httpSourceSeries    map[string]httpSourceMetrics
 	httpRouteSeries     map[httpRouteMetricKey]httpRouteMetrics
 	httpRouteStatusSeries map[httpRouteStatusMetricKey]*gmetrics.Counter
 {{- if and .Components.DemoApp .Components.HasDatabase }}
-	monitoringSidebarRequests           *gmetrics.CounterVec
-	monitoringSidebarReturned           *gmetrics.HistogramVec
-	monitoringSidebarNextOffset         *gmetrics.HistogramVec
-	monitoringHeartbeatRequests         *gmetrics.CounterVec
-	monitoringHeartbeatRequestedIDs     *gmetrics.HistogramVec
-	monitoringHeartbeatReturnedRows     *gmetrics.HistogramVec
-	monitoringHeartbeatReturnedPointSets *gmetrics.HistogramVec
+	monitoringSidebarRequests           *metricCounterVec
+	monitoringSidebarReturned           *metricHistogramVec
+	monitoringSidebarNextOffset         *metricHistogramVec
+	monitoringHeartbeatRequests         *metricCounterVec
+	monitoringHeartbeatRequestedIDs     *metricHistogramVec
+	monitoringHeartbeatReturnedRows     *metricHistogramVec
+	monitoringHeartbeatReturnedPointSets *metricHistogramVec
 {{- end }}
 {{- if .Components.Auth }}
-	authFlows           *gmetrics.CounterVec
-	authFlowLatency     *gmetrics.HistogramVec
+	authFlows           *metricCounterVec
+	authFlowLatency     *metricHistogramVec
 {{- end }}
 {{- if .Components.Jobs }}
-	queueJobsEnqueued    *gmetrics.CounterVec
-	queueJobsScheduled   *gmetrics.CounterVec
-	queueJobsProcessed   *gmetrics.CounterVec
-	queueJobsFailed      *gmetrics.CounterVec
-	queueJobsRetried     *gmetrics.CounterVec
-	queueJobsArchived    *gmetrics.CounterVec
-	queueJobsInflight    *gmetrics.GaugeVec
-	queueJobsByJob       *gmetrics.CounterVec
-	queueJobsInflightByJob *gmetrics.GaugeVec
-	queueEventsByQueue   *gmetrics.CounterVec
-	queueDurationByQueue *gmetrics.HistogramVec
-	queueDurationByJob   *gmetrics.HistogramVec
+	queueJobsEnqueued    *metricCounterVec
+	queueJobsScheduled   *metricCounterVec
+	queueJobsProcessed   *metricCounterVec
+	queueJobsFailed      *metricCounterVec
+	queueJobsRetried     *metricCounterVec
+	queueJobsArchived    *metricCounterVec
+	queueJobsInflight    *metricGaugeVec
+	queueJobsByJob       *metricCounterVec
+	queueJobsInflightByJob *metricGaugeVec
+	queueEventsByQueue   *metricCounterVec
+	queueDurationByQueue *metricHistogramVec
+	queueDurationByJob   *metricHistogramVec
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerStarted       *gmetrics.CounterVec
-	schedulerRuns          *gmetrics.CounterVec
-	schedulerFailures      *gmetrics.CounterVec
-	schedulerSkips         *gmetrics.CounterVec
-	schedulerInflight      *gmetrics.GaugeVec
-	schedulerRunsByJob     *gmetrics.CounterVec
-	schedulerEventsByJob   *gmetrics.CounterVec
-	schedulerDurationByJob *gmetrics.HistogramVec
+	schedulerStarted       *metricCounterVec
+	schedulerRuns          *metricCounterVec
+	schedulerFailures      *metricCounterVec
+	schedulerSkips         *metricCounterVec
+	schedulerInflight      *metricGaugeVec
+	schedulerRunsByJob     *metricCounterVec
+	schedulerEventsByJob   *metricCounterVec
+	schedulerDurationByJob *metricHistogramVec
 {{- end }}
 {{- if .Components.HasDatabase }}
-	databaseOperations            *gmetrics.CounterVec
-	databaseOperationLatency      *gmetrics.HistogramVec
-	databaseQueriesByFingerprint *gmetrics.CounterVec
-	databaseQueryFingerprintInfo *gmetrics.GaugeVec
-	databaseSlowQueries           *gmetrics.CounterVec
-	databaseSlowQueryLatency      *gmetrics.HistogramVec
-	databasePoolOpen              *gmetrics.GaugeVec
-	databasePoolInUse             *gmetrics.GaugeVec
-	databasePoolIdle              *gmetrics.GaugeVec
-	databasePoolWaitCount         *gmetrics.CounterVec
-	databasePoolWaitDuration      *gmetrics.CounterVec
-	databasePoolMaxIdleClosed     *gmetrics.CounterVec
-	databasePoolMaxIdleTimeClosed *gmetrics.CounterVec
-	databasePoolMaxLifetimeClosed *gmetrics.CounterVec
+	databaseOperations            *metricCounterVec
+	databaseOperationLatency      *metricHistogramVec
+	databaseQueriesByFingerprint *metricCounterVec
+	databaseQueryFingerprintInfo *metricGaugeVec
+	databaseSlowQueries           *metricCounterVec
+	databaseSlowQueryLatency      *metricHistogramVec
+	databasePoolOpen              *metricGaugeVec
+	databasePoolInUse             *metricGaugeVec
+	databasePoolIdle              *metricGaugeVec
+	databasePoolWaitCount         *metricCounterVec
+	databasePoolWaitDuration      *metricCounterVec
+	databasePoolMaxIdleClosed     *metricCounterVec
+	databasePoolMaxIdleTimeClosed *metricCounterVec
+	databasePoolMaxLifetimeClosed *metricCounterVec
 	databasePoolSnapshots         map[string]databasePoolSnapshot
 {{- end }}
-	cacheOperations         *gmetrics.CounterVec
-	cacheOperationLatency   *gmetrics.HistogramVec
-	storageOperations       *gmetrics.CounterVec
-	storageOperationLatency *gmetrics.HistogramVec
-	eventPublishes          *gmetrics.CounterVec
-	eventPublishLatency     *gmetrics.HistogramVec
-	eventSubscriptions      *gmetrics.CounterVec
-	eventSubscribersActive  *gmetrics.GaugeVec
-	eventDeliveries         *gmetrics.CounterVec
-	eventDeliveriesInflight *gmetrics.GaugeVec
-	eventDeliveryLatency    *gmetrics.HistogramVec
-	lighthouseInspectBufferDepth  *gmetrics.GaugeVec
-	lighthouseInspectDropped      *gmetrics.CounterVec
-	lighthouseInspectFlushes      *gmetrics.CounterVec
-	lighthouseInspectFlushErrors  *gmetrics.CounterVec
-	lighthouseInspectFlushSize    *gmetrics.HistogramVec
-	lighthouseInspectFlushLatency *gmetrics.HistogramVec
+	cacheOperations         *metricCounterVec
+	cacheOperationLatency   *metricHistogramVec
+	storageOperations       *metricCounterVec
+	storageOperationLatency *metricHistogramVec
+	eventPublishes          *metricCounterVec
+	eventPublishLatency     *metricHistogramVec
+	eventSubscriptions      *metricCounterVec
+	eventSubscribersActive  *metricGaugeVec
+	eventDeliveries         *metricCounterVec
+	eventDeliveriesInflight *metricGaugeVec
+	eventDeliveryLatency    *metricHistogramVec
+	lighthouseInspectBufferDepth  *metricGaugeVec
+	lighthouseInspectDropped      *metricCounterVec
+	lighthouseInspectFlushes      *metricCounterVec
+	lighthouseInspectFlushErrors  *metricCounterVec
+	lighthouseInspectFlushSize    *metricHistogramVec
+	lighthouseInspectFlushLatency *metricHistogramVec
 {{- if .Components.Mail }}
-	mailSends        *gmetrics.CounterVec
-	mailSendLatency  *gmetrics.HistogramVec
+	mailSends        *metricCounterVec
+	mailSendLatency  *metricHistogramVec
 {{- end }}
 }
 
@@ -180,6 +180,59 @@ type sourceNameRequestContext interface {
 	AppSourceName() string
 }
 
+type metricRegistry struct {
+	appName string
+	registry  *gmetrics.Registry
+}
+
+type metricCounterVec struct {
+	appName string
+	vec       *gmetrics.CounterVec
+}
+
+type metricGaugeVec struct {
+	appName string
+	vec       *gmetrics.GaugeVec
+}
+
+type metricHistogramVec struct {
+	appName string
+	vec       *gmetrics.HistogramVec
+}
+
+func (r metricRegistry) MustCounterVec(desc gmetrics.Descriptor, labelKeys []string) *metricCounterVec {
+	return &metricCounterVec{
+		appName: r.appName,
+		vec:       r.registry.MustCounterVec(desc, labelKeys),
+	}
+}
+
+func (r metricRegistry) MustGaugeVec(desc gmetrics.Descriptor, labelKeys []string) *metricGaugeVec {
+	return &metricGaugeVec{
+		appName: r.appName,
+		vec:       r.registry.MustGaugeVec(desc, labelKeys),
+	}
+}
+
+func (r metricRegistry) MustHistogramVec(desc gmetrics.Descriptor, labelKeys []string, bounds []int64) *metricHistogramVec {
+	return &metricHistogramVec{
+		appName: r.appName,
+		vec:       r.registry.MustHistogramVec(desc, labelKeys, bounds),
+	}
+}
+
+func (v *metricCounterVec) WithLabelValues(values ...string) *gmetrics.Counter {
+	return v.vec.WithLabelValues(metricLabelValues(v.appName, values...)...)
+}
+
+func (v *metricGaugeVec) WithLabelValues(values ...string) *gmetrics.Gauge {
+	return v.vec.WithLabelValues(metricLabelValues(v.appName, values...)...)
+}
+
+func (v *metricHistogramVec) WithLabelValues(values ...string) *gmetrics.Histogram {
+	return v.vec.WithLabelValues(metricLabelValues(v.appName, values...)...)
+}
+
 // NewConfig resolves framework metrics config from environment.
 func NewConfig() Config {
 	return Config{
@@ -215,48 +268,50 @@ func NewManager() *Manager {
 
 // NewManagerWithConfig creates a metrics manager with the provided config.
 func NewManagerWithConfig(config Config) *Manager {
-	registry := gmetrics.NewRegistry()
+	baseRegistry := gmetrics.NewRegistry()
+	appName := metricAppLabel(runtime.CurrentApp().Name)
+	registry := metricRegistry{appName: appName, registry: baseRegistry}
 
 	return &Manager{
-		registry: registry,
+		registry: baseRegistry,
 		config:   config,
 		httpRequests: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "http.requests",
 			Help: "Total HTTP requests served by the application.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		httpInflight: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "http.requests.inflight",
 			Help: "Current in-flight HTTP requests.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		httpClientErrors: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "http.responses.client_errors",
 			Help: "Total HTTP 4xx responses served by the application.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		httpServerErrors: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "http.responses.server_errors",
 			Help: "Total HTTP 5xx responses served by the application.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		httpDuration: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "http.request.duration",
 			Help: "HTTP request latency.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		}, metricLabelKeys("source"), gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
 		httpRequestsByRoute: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "http.requests.by_route",
 			Help: "Total HTTP requests served by the application by source, method, route, and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "method", "route", "status"}),
+		}, metricLabelKeys("source", "method", "route", "status")),
 		httpDurationByRoute: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "http.request.duration.by_route",
 			Help: "HTTP request latency by source, method, and route.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "method", "route"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		}, metricLabelKeys("source", "method", "route"), gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
 		httpSourceSeries:      make(map[string]httpSourceMetrics),
 		httpRouteSeries:       make(map[httpRouteMetricKey]httpRouteMetrics),
 		httpRouteStatusSeries: make(map[httpRouteStatusMetricKey]*gmetrics.Counter),
@@ -265,335 +320,335 @@ func NewManagerWithConfig(config Config) *Manager {
 			Name: "monitoring.sidebar.requests",
 			Help: "Total sidebar page requests by source, filtered state, and pagination state.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "filtered", "has_more"}),
+		}, metricLabelKeys("source", "filtered", "has_more")),
 		monitoringSidebarReturned: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "monitoring.sidebar.rows_returned",
 			Help: "Sidebar page row counts by source and filtered state.",
 			Kind: gmetrics.KindHistogram,
-		}, []string{"source", "filtered"}, []int64{1, 10, 25, 50, 100, 150, 200, 250}),
+		}, metricLabelKeys("source", "filtered"), []int64{1, 10, 25, 50, 100, 150, 200, 250}),
 		monitoringSidebarNextOffset: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "monitoring.sidebar.next_offset",
 			Help: "Sidebar pagination next-offset values by source and filtered state.",
 			Kind: gmetrics.KindHistogram,
-		}, []string{"source", "filtered"}, []int64{0, 50, 100, 200, 400, 800, 1200, 2000}),
+		}, metricLabelKeys("source", "filtered"), []int64{0, 50, 100, 200, 400, 800, 1200, 2000}),
 		monitoringHeartbeatRequests: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "monitoring.heartbeats.requests",
 			Help: "Total heartbeat payload requests by source and scope.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "scope"}),
+		}, metricLabelKeys("source", "scope")),
 		monitoringHeartbeatRequestedIDs: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "monitoring.heartbeats.requested_ids",
 			Help: "Requested monitor-id counts per heartbeat payload by source and scope.",
 			Kind: gmetrics.KindHistogram,
-		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		}, metricLabelKeys("source", "scope"), []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
 		monitoringHeartbeatReturnedRows: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "monitoring.heartbeats.rows_returned",
 			Help: "Returned heartbeat row counts by source and scope.",
 			Kind: gmetrics.KindHistogram,
-		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		}, metricLabelKeys("source", "scope"), []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
 		monitoringHeartbeatReturnedPointSets: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "monitoring.heartbeats.point_sets_returned",
 			Help: "Returned heartbeat point-set counts by source and scope.",
 			Kind: gmetrics.KindHistogram,
-		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		}, metricLabelKeys("source", "scope"), []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
 {{- end }}
 {{- if .Components.Auth }}
 		authFlows: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "auth.flows",
 			Help: "Total auth lifecycle flow outcomes by flow, status, reason, and provider.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"flow", "status", "reason", "provider"}),
+		}, metricLabelKeys("flow", "status", "reason", "provider")),
 		authFlowLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "auth.flow.duration",
 			Help: "Auth lifecycle flow latency by flow, status, and provider.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"flow", "status", "provider"}, gmetrics.DurationBounds(authDurationBounds())),
+		}, metricLabelKeys("flow", "status", "provider"), gmetrics.DurationBounds(authDurationBounds())),
 {{- end }}
 {{- if .Components.Jobs }}
 		queueJobsEnqueued: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.enqueued",
 			Help: "Total queue jobs accepted for enqueue by source.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		queueJobsScheduled: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.scheduled",
 			Help: "Total queue jobs accepted for delayed or scheduled execution by source.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		queueJobsProcessed: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.processed",
 			Help: "Total queue job handler attempts that completed successfully by source.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		queueJobsFailed: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.failed",
 			Help: "Total queue job handler attempts that returned an error by source.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		queueJobsRetried: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.retried",
 			Help: "Total queue job handler attempts that were scheduled for retry by source.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		queueJobsArchived: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.archived",
 			Help: "Total queue jobs that reached terminal archived failure state by source.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		queueJobsInflight: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "queue.jobs.inflight",
 			Help: "Current in-flight queue job attempts by source and queue.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source", "queue"}),
+		}, metricLabelKeys("source", "queue")),
 		queueJobsByJob: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.by_job",
 			Help: "Total queue job events by source, queue, job, driver, and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "queue", "job_name", "driver", "status"}),
+		}, metricLabelKeys("source", "queue", "job_name", "driver", "status")),
 		queueJobsInflightByJob: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "queue.jobs.inflight.by_job",
 			Help: "Current in-flight queue job attempts by source, queue, job, and driver.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source", "queue", "job_name", "driver"}),
+		}, metricLabelKeys("source", "queue", "job_name", "driver")),
 		queueEventsByQueue: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.events.by_queue",
 			Help: "Total queue events by source, queue, and event kind.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "queue", "kind"}),
+		}, metricLabelKeys("source", "queue", "kind")),
 		queueDurationByQueue: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "queue.job.duration.by_queue",
 			Help: "Queue job processing duration by source and queue.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "queue"}, gmetrics.DurationBounds(queueDurationBounds())),
+		}, metricLabelKeys("source", "queue"), gmetrics.DurationBounds(queueDurationBounds())),
 		queueDurationByJob: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "queue.job.duration.by_job",
 			Help: "Queue job processing duration by source, queue, job, and driver.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "queue", "job_name", "driver"}, gmetrics.DurationBounds(queueDurationBounds())),
+		}, metricLabelKeys("source", "queue", "job_name", "driver"), gmetrics.DurationBounds(queueDurationBounds())),
 {{- end }}
 {{- if .Components.Scheduler }}
 		schedulerStarted: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.started",
 			Help: "Total scheduler job attempts that started execution.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		schedulerRuns: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.runs",
 			Help: "Total scheduler jobs that completed successfully.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		schedulerFailures: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.failures",
 			Help: "Total scheduler jobs that failed.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		schedulerSkips: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.skips",
 			Help: "Total scheduler jobs that were skipped.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		schedulerInflight: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "scheduler.jobs.inflight",
 			Help: "Current in-flight scheduler job attempts by source, job name, and target kind.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source", "job_name", "target_kind"}),
+		}, metricLabelKeys("source", "job_name", "target_kind")),
 		schedulerRunsByJob: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.runs.by_job",
 			Help: "Total scheduler job outcomes by source, job name, and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "job_name", "status"}),
+		}, metricLabelKeys("source", "job_name", "status")),
 		schedulerEventsByJob: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.events.by_job",
 			Help: "Total scheduler job lifecycle events by source, job name, target kind, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "job_name", "target_kind", "status", "reason"}),
+		}, metricLabelKeys("source", "job_name", "target_kind", "status", "reason")),
 		schedulerDurationByJob: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "scheduler.job.duration.by_job",
 			Help: "Scheduler job duration by source, job name, target kind, and outcome status.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "job_name", "target_kind", "status"}, gmetrics.DurationBounds(schedulerDurationBounds())),
+		}, metricLabelKeys("source", "job_name", "target_kind", "status"), gmetrics.DurationBounds(schedulerDurationBounds())),
 {{- end }}
 {{- if .Components.HasDatabase }}
 		databaseOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.operations",
 			Help: "Total database statements by connection, driver, operation, target, and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver", "operation", "target", "status"}),
+		}, metricLabelKeys("connection", "driver", "operation", "target", "status")),
 		databaseOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "database.operation.duration",
 			Help: "Database statement latency by connection, driver, operation, and target.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"connection", "driver", "operation", "target"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		}, metricLabelKeys("connection", "driver", "operation", "target"), gmetrics.DurationBounds(databaseDurationBounds())),
 		databaseQueriesByFingerprint: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.queries.by_fingerprint",
 			Help: "Total database query statements by connection, driver, target, and fingerprint.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver", "target", "fingerprint"}),
+		}, metricLabelKeys("connection", "driver", "target", "fingerprint")),
 		databaseQueryFingerprintInfo: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "database.query_fingerprint.info",
 			Help: "Lookup metadata for database query fingerprints by connection, driver, target, fingerprint, and query shape.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"connection", "driver", "target", "fingerprint", "query_shape"}),
+		}, metricLabelKeys("connection", "driver", "target", "fingerprint", "query_shape")),
 		databaseSlowQueries: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.slow_queries",
 			Help: "Total slow database statements by connection, driver, operation, target, status, and fingerprint.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver", "operation", "target", "status", "fingerprint"}),
+		}, metricLabelKeys("connection", "driver", "operation", "target", "status", "fingerprint")),
 		databaseSlowQueryLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "database.slow_query.duration",
 			Help: "Slow database statement latency by connection, driver, operation, target, status, and fingerprint.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"connection", "driver", "operation", "target", "status", "fingerprint"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		}, metricLabelKeys("connection", "driver", "operation", "target", "status", "fingerprint"), gmetrics.DurationBounds(databaseDurationBounds())),
 		databasePoolOpen: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "database.pool.open",
 			Help: "Current number of open database connections by connection and driver.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolInUse: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "database.pool.in_use",
 			Help: "Current number of in-use database connections by connection and driver.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolIdle: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "database.pool.idle",
 			Help: "Current number of idle database connections by connection and driver.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolWaitCount: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.pool.wait_count",
 			Help: "Total waits for a free database connection by connection and driver.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolWaitDuration: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.pool.wait_duration",
 			Help: "Total wait time for a free database connection by connection and driver.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolMaxIdleClosed: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.pool.closed.max_idle",
 			Help: "Total database connections closed due to max idle by connection and driver.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolMaxIdleTimeClosed: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.pool.closed.max_idle_time",
 			Help: "Total database connections closed due to max idle time by connection and driver.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolMaxLifetimeClosed: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.pool.closed.max_lifetime",
 			Help: "Total database connections closed due to max lifetime by connection and driver.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver"}),
+		}, metricLabelKeys("connection", "driver")),
 		databasePoolSnapshots: make(map[string]databasePoolSnapshot),
 {{- end }}
 		cacheOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "cache.operations",
 			Help: "Total cache operations by source, cache, driver, operation, category, status, and hit result.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "cache", "driver", "operation", "category", "status", "hit"}),
+		}, metricLabelKeys("source", "cache", "driver", "operation", "category", "status", "hit")),
 		cacheOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "cache.operation.duration",
 			Help: "Cache operation latency by source, cache, driver, operation, and category.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "cache", "driver", "operation", "category"}, gmetrics.DurationBounds(cacheDurationBounds())),
+		}, metricLabelKeys("source", "cache", "driver", "operation", "category"), gmetrics.DurationBounds(cacheDurationBounds())),
 		storageOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "storage.operations",
 			Help: "Total storage operations by source, disk, driver, operation, category, and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "disk", "driver", "operation", "category", "status"}),
+		}, metricLabelKeys("source", "disk", "driver", "operation", "category", "status")),
 		storageOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "storage.operation.duration",
 			Help: "Storage operation latency by source, disk, driver, operation, and category.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "disk", "driver", "operation", "category"}, gmetrics.DurationBounds(storageDurationBounds())),
+		}, metricLabelKeys("source", "disk", "driver", "operation", "category"), gmetrics.DurationBounds(storageDurationBounds())),
 		eventPublishes: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "events.publishes",
 			Help: "Total published events by source, bus, driver, topic, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "bus", "driver", "topic", "status", "reason"}),
+		}, metricLabelKeys("source", "bus", "driver", "topic", "status", "reason")),
 		eventPublishLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "events.publish.duration",
 			Help: "Event publish latency by source, bus, driver, and topic.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "bus", "driver", "topic"}, gmetrics.DurationBounds(eventDurationBounds())),
+		}, metricLabelKeys("source", "bus", "driver", "topic"), gmetrics.DurationBounds(eventDurationBounds())),
 		eventSubscriptions: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "events.subscriptions",
 			Help: "Total event subscription registration attempts by source, bus, driver, topic, handler, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "bus", "driver", "topic", "handler", "status", "reason"}),
+		}, metricLabelKeys("source", "bus", "driver", "topic", "handler", "status", "reason")),
 		eventSubscribersActive: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "events.subscribers.active",
 			Help: "Current active event subscriptions by source, bus, driver, topic, and handler.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source", "bus", "driver", "topic", "handler"}),
+		}, metricLabelKeys("source", "bus", "driver", "topic", "handler")),
 		eventDeliveries: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "events.deliveries",
 			Help: "Total event handler delivery attempts by source, bus, driver, topic, handler, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "bus", "driver", "topic", "handler", "status", "reason"}),
+		}, metricLabelKeys("source", "bus", "driver", "topic", "handler", "status", "reason")),
 		eventDeliveriesInflight: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "events.deliveries.inflight",
 			Help: "Current in-flight event handler deliveries by source, bus, driver, topic, and handler.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source", "bus", "driver", "topic", "handler"}),
+		}, metricLabelKeys("source", "bus", "driver", "topic", "handler")),
 		eventDeliveryLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "events.delivery.duration",
 			Help: "Event handler delivery latency by source, bus, driver, topic, and handler.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "bus", "driver", "topic", "handler"}, gmetrics.DurationBounds(eventDurationBounds())),
+		}, metricLabelKeys("source", "bus", "driver", "topic", "handler"), gmetrics.DurationBounds(eventDurationBounds())),
 		lighthouseInspectBufferDepth: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "lighthouse.inspects.buffer.depth",
 			Help: "Current depth of the outbound Lighthouse inspect publish buffer by source.",
 			Kind: gmetrics.KindGauge,
-		}, []string{"source"}),
+		}, metricLabelKeys("source")),
 		lighthouseInspectDropped: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "lighthouse.inspects.dropped",
 			Help: "Total finished inspects dropped before reaching Lighthouse by source and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "reason"}),
+		}, metricLabelKeys("source", "reason")),
 		lighthouseInspectFlushes: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "lighthouse.inspects.flushes",
 			Help: "Total outbound Lighthouse inspect flush batches by source and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "status"}),
+		}, metricLabelKeys("source", "status")),
 		lighthouseInspectFlushErrors: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "lighthouse.inspects.flush.errors",
 			Help: "Total outbound Lighthouse inspect flush errors by source and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "reason"}),
+		}, metricLabelKeys("source", "reason")),
 		lighthouseInspectFlushSize: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "lighthouse.inspects.flush.batch_size",
 			Help: "Outbound Lighthouse inspect flush batch sizes by source.",
 			Kind: gmetrics.KindHistogram,
-		}, []string{"source"}, []int64{1, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500}),
+		}, metricLabelKeys("source"), []int64{1, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500}),
 		lighthouseInspectFlushLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "lighthouse.inspects.flush.duration",
 			Help: "Outbound Lighthouse inspect flush latency by source.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		}, metricLabelKeys("source"), gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
 {{- if .Components.Mail }}
 		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "mail.sends",
 			Help: "Total mail send attempts by source, mailer, driver, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"source", "mailer", "driver", "status", "reason"}),
+		}, metricLabelKeys("source", "mailer", "driver", "status", "reason")),
 		mailSendLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "mail.send.duration",
 			Help: "Mail send latency by source, mailer, and driver.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"source", "mailer", "driver"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		}, metricLabelKeys("source", "mailer", "driver"), gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
 {{- end }}
 	}
 }
@@ -1206,14 +1261,14 @@ func requestContext(r web.Context) context.Context {
 
 func requestMetricSource(r web.Context) string {
 	if r == nil {
-		return "app"
+		return "http"
 	}
 	if carrier, ok := r.(sourceNameRequestContext); ok {
 		if source := metricSourceLabel(carrier.AppSourceName()); source != "app" || strings.TrimSpace(carrier.AppSourceName()) != "" {
 			return source
 		}
 	}
-	return metricSourceContextLabel(requestContext(r))
+	return metricSourceContextLabel(requestContext(r), "http")
 }
 
 func (m *Manager) httpSourceMetrics(source string) httpSourceMetrics {
@@ -1292,10 +1347,10 @@ func (m *Manager) httpRouteStatusCounter(source string, method string, route str
 }
 
 func (m *Manager) metricSource(ctx context.Context) string {
-	return metricSourceContextLabel(ctx)
+	return metricSourceContextLabel(ctx, "app")
 }
 
-func (m *Manager) observeDuration(histogram *gmetrics.HistogramVec, duration time.Duration, labels ...string) {
+func (m *Manager) observeDuration(histogram *metricHistogramVec, duration time.Duration, labels ...string) {
 	if histogram == nil || duration <= 0 {
 		return
 	}
@@ -1359,10 +1414,10 @@ func (m *Manager) mailMetricLabels(ctx context.Context, event MailSendMetricEven
 }
 {{- end }}
 
-func metricSourceContextLabel(ctx context.Context) string {
-	source := app.SourceFromContext(ctx)
+func metricSourceContextLabel(ctx context.Context, fallback string) string {
+	source := runtime.SourceFromContext(ctx)
 	if strings.TrimSpace(string(source)) == "" {
-		return "app"
+		return metricSourceLabel(fallback)
 	}
 	return metricSourceLabel(string(source))
 }
@@ -1403,11 +1458,33 @@ func shouldTrackHTTPRequest(r web.Context) bool {
 func metricSourceLabel(source string) string {
 	source = strings.TrimSpace(strings.ToLower(source))
 	switch source {
-	case "http", "scheduler", "jobs", "cli", "startup", "app":
+	case "http", "scheduler", "jobs", "cli", "lighthouse", "startup", "app":
 		return source
 	default:
 		return "app"
 	}
+}
+
+func metricAppLabel(target string) string {
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" {
+		return "app"
+	}
+	return strings.ReplaceAll(target, " ", "_")
+}
+
+func metricLabelKeys(keys ...string) []string {
+	out := make([]string, 0, len(keys)+1)
+	out = append(out, "app")
+	out = append(out, keys...)
+	return out
+}
+
+func metricLabelValues(appName string, values ...string) []string {
+	out := make([]string, 0, len(values)+1)
+	out = append(out, metricAppLabel(appName))
+	out = append(out, values...)
+	return out
 }
 
 func httpMethodLabel(r web.Context) string {

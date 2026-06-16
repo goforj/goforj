@@ -1211,7 +1211,7 @@ func updateForjTag(existingLiteral, forjValue string) (string, bool) {
 		return "", false
 	}
 	clean := removeTagKey(raw, "forj")
-	if strings.TrimSpace(clean) == "" {
+	if str.Of(clean).TrimSpace().IsBlank() {
 		return fmt.Sprintf("forj:%q", forjValue), true
 	}
 	return clean + " " + fmt.Sprintf("forj:%q", forjValue), true
@@ -1438,7 +1438,7 @@ func (c *ModelCmd) renderModel(def ModelDefinition) (string, error) {
 	return sb.String(), nil
 }
 
-// ensureRepositoryProvider registers the repo constructor in wire/inject_repositories.go.
+// ensureRepositoryProvider registers the repo constructor in app/wire/inject_repositories_app.go.
 func (c *ModelCmd) ensureRepositoryProvider(modelName string) error {
 	repoCtor := "New" + modelName + "Repo"
 	repoPackage := c.packageName()
@@ -1446,7 +1446,7 @@ func (c *ModelCmd) ensureRepositoryProvider(modelName string) error {
 	if err != nil {
 		return err
 	}
-	wirePath := filepath.Join("wire", "inject_repositories.go")
+	wirePath := activeAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
 
 	_, err = updateRepositorySet(wirePath, repoImportPath, repoPackage, repoCtor)
 	return err
@@ -1459,7 +1459,7 @@ func (c *ModelCmd) removeRepositoryProvider(modelName string) error {
 	if err != nil {
 		return err
 	}
-	wirePath := filepath.Join("wire", "inject_repositories.go")
+	wirePath := activeAppWireFile("inject_repositories_app.go", filepath.Join("app", "wire", "inject_repositories.go"), filepath.Join("wire", "inject_repositories_app.go"), filepath.Join("wire", "inject_repositories.go"))
 
 	imports, providers, hasPlaceholder, err := readRepositorySet(wirePath)
 	if err != nil {
@@ -1518,8 +1518,8 @@ func updateRepositorySet(path, repoImportPath, repoPackage, repoCtor string) (bo
 	}
 
 	changed := false
-	if _, ok := imports["github.com/google/wire"]; !ok {
-		imports["github.com/google/wire"] = ""
+	if _, ok := imports["github.com/goforj/wire"]; !ok {
+		imports["github.com/goforj/wire"] = ""
 		changed = true
 	}
 	if _, ok := imports[repoImportPath]; !ok {
@@ -1683,19 +1683,21 @@ func writeRepositorySetFile(path string, imports map[string]string, providers []
 // renderRepositorySetFile renders the repository wire set content.
 func renderRepositorySetFile(imports map[string]string, providers []string, includePlaceholder bool) string {
 	var sb strings.Builder
+	sb.WriteString("// App-owned Wire injector. EDIT THIS FILE.\n")
+	sb.WriteString("// Add repository providers here, or use `forj make:model`.\n\n")
 	sb.WriteString("package wire\n\n")
 	sb.WriteString("import (\n")
 
 	importPaths := []string{}
 	for path := range imports {
-		if path == "github.com/google/wire" {
+		if path == "github.com/goforj/wire" {
 			continue
 		}
 		importPaths = append(importPaths, path)
 	}
 	sort.Strings(importPaths)
 
-	sb.WriteString("\t\"github.com/google/wire\"\n")
+	sb.WriteString("\t\"github.com/goforj/wire\"\n")
 	for _, path := range importPaths {
 		alias := imports[path]
 		if alias != "" && alias != filepath.Base(path) {
@@ -1707,7 +1709,6 @@ func renderRepositorySetFile(imports map[string]string, providers []string, incl
 	sb.WriteString(")\n\n")
 
 	sb.WriteString("// repositorySet is a wire set for generated repositories.\n")
-	sb.WriteString("// Add repository providers here as you generate them.\n")
 	sb.WriteString("var repositorySet = wire.NewSet(\n")
 	if includePlaceholder {
 		sb.WriteString("\twire.Value(repositorySetPlaceholder{}),\n")

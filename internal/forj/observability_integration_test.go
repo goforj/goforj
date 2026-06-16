@@ -3,8 +3,8 @@
 package forj
 
 import (
+	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,20 +40,15 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		},
 	})
 
-	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered app: %v\n%s", err, out)
-	}
+	buildRenderedDefaultApp(t, projectDir, nil, "build rendered app")
 
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "local")
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
 	t.Setenv("API_HTTP_PORT", "3000")
-	t.Setenv("METRICS_API_PORT", "9100")
-	t.Setenv("METRICS_JOBS_PORT", "9101")
-	t.Setenv("METRICS_SCHEDULER_PORT", "9102")
+	t.Setenv("METRICS_API_PORT", "10000")
+	t.Setenv("METRICS_JOBS_PORT", "10002")
+	t.Setenv("METRICS_SCHEDULER_PORT", "10001")
 	if _, err := generate.GenerateObservabilityFiles(projectDir); err != nil {
 		t.Fatalf("generate observability files: %v", err)
 	}
@@ -62,20 +57,16 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	for _, token := range []string{
 		"victoriametrics:",
 		"vmagent:",
-		"grafana-data-init:",
 		"grafana:",
 		"grafana-seed:",
+		"stop_grace_period: 1s",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
-		`condition: service_completed_successfully`,
-		`mkdir -p /var/lib/grafana/plugins`,
-		`uid="$(id -u grafana 2>/dev/null || echo 472)"`,
-		`gid="$(id -g grafana 2>/dev/null || echo 0)"`,
-		`chown -R "$${uid}:$${gid}" /var/lib/grafana 2>/dev/null || true`,
-		`chmod -R a+rwX /var/lib/grafana`,
+		"victoriametrics:/victoria-metrics-data",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
-		"./_data/grafana:/var/lib/grafana",
+		"grafana:/var/lib/grafana",
 		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		"mariadb:/var/lib/mysql",
 	} {
 		if !strings.Contains(composeText, token) {
 			t.Fatalf("docker-compose.yml missing %q\n%s", token, composeText)
@@ -83,6 +74,18 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	}
 	if strings.Contains(composeText, "/var/lib/grafana/dashboards") {
 		t.Fatalf("docker-compose.yml should not mount dashboards under Grafana data path\n%s", composeText)
+	}
+	for _, token := range []string{
+		"grafana-data-init:",
+		`condition: service_completed_successfully`,
+		`chown -R "$${uid}:$${gid}" /var/lib/grafana`,
+		"./_data/victoriametrics:/victoria-metrics-data",
+		"./_data/grafana:/var/lib/grafana",
+		"./_data/mariadb:/var/lib/mysql",
+	} {
+		if strings.Contains(composeText, token) {
+			t.Fatalf("docker-compose.yml should not contain %q\n%s", token, composeText)
+		}
 	}
 
 	prometheusYAML := readRenderedFile(t, projectDir, "containers/observability/vmagent/prometheus.yml")
@@ -109,12 +112,13 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	envText := readRenderedFile(t, projectDir, ".env")
 	for _, token := range []string{
-		"METRICS_PORT=9100",
-		"METRICS_API_PORT=9100",
-		"METRICS_JOBS_PORT=9101",
-		"METRICS_SCHEDULER_PORT=9102",
+		"METRICS_PORT=10000",
+		"METRICS_API_PORT=10000",
+		"METRICS_JOBS_PORT=10002",
+		"METRICS_SCHEDULER_PORT=10001",
 		"OBSERVABILITY_METRICS_TARGET_MODE=auto",
 		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
+		"GRAFANA_PORT=13001",
 	} {
 		if !strings.Contains(envText, token) {
 			t.Fatalf(".env missing %q\n%s", token, envText)
@@ -156,7 +160,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"HTTP Overview",
 		"http_requests_by_route_total",
 		"http_request_duration_by_route_seconds_bucket",
-		"label_values(http_requests_by_route_total, route)",
+		`label_values(http_requests_by_route_total{app=~\"$app\"}, route)`,
 	} {
 		if !strings.Contains(httpDashboardJSON, token) {
 			t.Fatalf("http dashboard missing %q\n%s", token, httpDashboardJSON)
@@ -207,7 +211,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"database_query_fingerprint_info",
 		"database_slow_queries_total",
 		"database_slow_query_duration_seconds_bucket",
-		"label_values(database_queries_by_fingerprint_total, fingerprint)",
+		`label_values(database_queries_by_fingerprint_total{app=~\"$app\"}, fingerprint)`,
 		"Queries / sec",
 		"Top Query Fingerprints By Volume",
 		"P95 Slow Query Latency By Fingerprint",
@@ -245,7 +249,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		}
 	}
 
-	schedulerRegistryGo := readRenderedFile(t, projectDir, "internal/schedules/scheduler_registry.go")
+	schedulerRegistryGo := readRenderedFile(t, projectDir, "internal/schedules/registration.go")
 	if !strings.Contains(schedulerRegistryGo, `s.metrics.RecordSchedulerJob(ctx, event)`) {
 		t.Fatalf("scheduler registry missing metrics observer hook\n%s", schedulerRegistryGo)
 	}
@@ -292,10 +296,69 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	observabilityReadme := readRenderedFile(t, projectDir, "internal/observability/README.md")
 	if !strings.Contains(observabilityReadme, "http://localhost:8428") ||
-		!strings.Contains(observabilityReadme, "http://localhost:3001") ||
+		!strings.Contains(observabilityReadme, "http://localhost:13001") ||
 		!strings.Contains(observabilityReadme, "grafana-seed") {
 		t.Fatalf("observability readme missing local URLs\n%s", observabilityReadme)
 	}
+}
+
+func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, target := range []string{"billing", "customer-portal"} {
+		if err := writeConventionalAppMarker(projectDir, target); err != nil {
+			t.Fatalf("write %s target marker: %v", target, err)
+		}
+	}
+
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Observability Target Test",
+			GoModuleName: "example.com/observabilitytargettest",
+			UpdatedAt:    "2026-06-07 00:00:00 UTC",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					CLI:           true,
+					WebAPI:        true,
+					Metrics:       true,
+					Docker:        true,
+					Scheduler:     true,
+					Jobs:          true,
+					Observability: true,
+				},
+				QueueDriver: "workerpool",
+			},
+		},
+	})
+
+	targets := readRenderedMetricsTargets(t, projectDir)
+	want := []renderedMetricsTarget{
+		{App: "app", Process: "app", Target: "host.docker.internal:3000"},
+		{App: "billing", Process: "app", Target: "host.docker.internal:3001"},
+		{App: "customer-portal", Process: "app", Target: "host.docker.internal:3002"},
+	}
+	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
+
+	t.Setenv("APP_NAME", "Observability Target Test")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "local-multi")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	if _, err := generate.GenerateObservabilityFiles(projectDir); err != nil {
+		t.Fatalf("generate local-multi observability targets: %v", err)
+	}
+
+	targets = readRenderedMetricsTargets(t, projectDir)
+	want = []renderedMetricsTarget{
+		{App: "app", Process: "api", Target: "host.docker.internal:10000"},
+		{App: "app", Process: "jobs", Target: "host.docker.internal:10002"},
+		{App: "app", Process: "scheduler", Target: "host.docker.internal:10001"},
+		{App: "billing", Process: "api", Target: "host.docker.internal:10010"},
+		{App: "billing", Process: "jobs", Target: "host.docker.internal:10012"},
+		{App: "billing", Process: "scheduler", Target: "host.docker.internal:10011"},
+		{App: "customer-portal", Process: "api", Target: "host.docker.internal:10020"},
+		{App: "customer-portal", Process: "jobs", Target: "host.docker.internal:10022"},
+		{App: "customer-portal", Process: "scheduler", Target: "host.docker.internal:10021"},
+	}
+	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
 }
 
 func readRenderedFile(t *testing.T, root string, rel string) string {
@@ -305,4 +368,52 @@ func readRenderedFile(t *testing.T, root string, rel string) string {
 		t.Fatalf("read rendered file %s: %v", rel, err)
 	}
 	return string(body)
+}
+
+type renderedMetricsTarget struct {
+	App     string
+	Process string
+	Target  string
+}
+
+type renderedMetricsTargetEntry struct {
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
+}
+
+func readRenderedMetricsTargets(t *testing.T, root string) []renderedMetricsTargetEntry {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, "containers", "observability", "vmagent", "metrics-targets.json"))
+	if err != nil {
+		t.Fatalf("read rendered metrics targets: %v", err)
+	}
+	var entries []renderedMetricsTargetEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		t.Fatalf("unmarshal rendered metrics targets: %v\n%s", err, body)
+	}
+	return entries
+}
+
+func assertRenderedMetricsTargets(t *testing.T, entries []renderedMetricsTargetEntry, service string, environment string, want []renderedMetricsTarget) {
+	t.Helper()
+	if len(entries) != len(want) {
+		t.Fatalf("metrics target count = %d, want %d\n%#v", len(entries), len(want), entries)
+	}
+	for i, entry := range entries {
+		if len(entry.Targets) != 1 || entry.Targets[0] != want[i].Target {
+			t.Fatalf("metrics target[%d] = %#v, want %q", i, entry.Targets, want[i].Target)
+		}
+		if entry.Labels["app"] != want[i].App {
+			t.Fatalf("metrics target[%d] app = %q, want %q", i, entry.Labels["app"], want[i].App)
+		}
+		if entry.Labels["process"] != want[i].Process {
+			t.Fatalf("metrics target[%d] process = %q, want %q", i, entry.Labels["process"], want[i].Process)
+		}
+		if entry.Labels["service"] != service {
+			t.Fatalf("metrics target[%d] service = %q, want %q", i, entry.Labels["service"], service)
+		}
+		if entry.Labels["environment"] != environment {
+			t.Fatalf("metrics target[%d] environment = %q, want %q", i, entry.Labels["environment"], environment)
+		}
+	}
 }

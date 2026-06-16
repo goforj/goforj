@@ -73,7 +73,7 @@ Related generated/runtime glue:
 - `templates/internal/jobs/lighthouse.go.tmpl`
 - `templates/internal/schedules/lighthouse.go.tmpl`
 - `templates/internal/lighthouse/inspects.go.tmpl`
-- `templates/wire/inject_app_services.go.tmpl`
+- `templates/wire/inject_services_app.go.tmpl`
 - `internal/generate/queues.go`
 
 ## Important Product Decisions

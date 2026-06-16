@@ -17,7 +17,11 @@ type CommandNameOwners func() map[string]string
 
 func (c *CommandCmd) validateCommandNameAvailable(name string) error {
 	owners := map[string]string{}
-	mergeCommandNameOwnerFunc(owners, c.ReservedCommandNames)
+	reserved := c.ReservedCommandNames
+	if reserved == nil {
+		reserved = delegatedNativeCommandNames
+	}
+	mergeCommandNameOwnerFunc(owners, reserved)
 	mergeCommandNameOwners(owners, discoverProjectCommandNames("."))
 	return validateCommandNameAvailable(name, owners)
 }

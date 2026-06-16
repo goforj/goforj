@@ -72,6 +72,9 @@ func (cmd *TestRenderCmd) Run() error {
 	if err := WriteYAML(ymlPath, cfg); err != nil {
 		return err
 	}
+	if err := writeConventionalAppMarker(dir, "customer-portal"); err != nil {
+		return err
+	}
 
 	if !cmd.Silent {
 		console.Actionf("Running test:render")
@@ -87,6 +90,21 @@ func (cmd *TestRenderCmd) Run() error {
 	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
 		return err
 	}
+	if err := runStep(cmd.logger, cmd.Silent, "build customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "build"}); err != nil {
+		return err
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "route list customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "route:list"}); err != nil {
+		return err
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "make customer-portal migration", dir, modCache, buildCache, []string{forjExec, "customer-portal", "make:migration", "create_sessions", "--connection", "archive", "--no-open"}); err != nil {
+		return err
+	}
+	if err := assertGlobExists(filepath.Join(dir, "migrations", "customer-portal", "archive", "*create_sessions.up.sql")); err != nil {
+		return err
+	}
+	if err := assertGlobExists(filepath.Join(dir, "migrations", "customer-portal", "archive", "*create_sessions.down.sql")); err != nil {
+		return err
+	}
 	if err := runStep(cmd.logger, cmd.Silent, "test", dir, modCache, buildCache, []string{"go", "test", "./..."}); err != nil {
 		return err
 	}
@@ -96,6 +114,25 @@ func (cmd *TestRenderCmd) Run() error {
 	}
 	if !cmd.Silent {
 		cmd.logger.Info().Str("path", dir).Msg("Render/build/test completed")
+	}
+	return nil
+}
+
+func writeConventionalAppMarker(root string, name string) error {
+	mainPath := filepath.Join(root, "cmd", name, "main.go")
+	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(mainPath, []byte("package main\n"), 0o644)
+}
+
+func assertGlobExists(pattern string) error {
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("glob %s: %w", pattern, err)
+	}
+	if len(matches) == 0 {
+		return fmt.Errorf("expected at least one file matching %s", pattern)
 	}
 	return nil
 }

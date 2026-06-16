@@ -4,10 +4,7 @@ import (
 	"context"
 	"strings"
 
-{{- if .Components.Metrics }}
-	"github.com/goforj/env/v2"
-{{- end }}
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -54,8 +51,8 @@ func NewRuntime(
 }
 
 // Identity returns the logical runtime identity for the scheduler runtime.
-func (*Runtime) Identity() app.RuntimeIdentity {
-	return app.RuntimeIdentity{Name: "scheduler", Label: "scheduler"}
+func (*Runtime) Identity() runtime.RuntimeIdentity {
+	return runtime.RuntimeIdentity{Name: "scheduler", Label: "scheduler"}
 }
 
 // Run executes the scheduler runtime with its default config.
@@ -68,7 +65,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = app.WithSource(ctx, app.SourceScheduler)
+	ctx = runtime.WithSource(ctx, runtime.SourceScheduler)
 	cfg = normalizeRuntimeConfig(cfg)
 
 {{- if .Components.Metrics }}
@@ -86,7 +83,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 {{- if .Components.Metrics }}
-		MetricsPort: env.Get("METRICS_SCHEDULER_PORT", "9102"),
+		MetricsPort: runtime.SchedulerMetricsPort(),
 {{- end }}
 	})
 }
@@ -96,7 +93,7 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 {{- if .Components.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
-		cfg.MetricsPort = "9102"
+		cfg.MetricsPort = runtime.SchedulerMetricsPort()
 	}
 {{- else }}
 	_ = strings.TrimSpace("")

@@ -6,7 +6,7 @@ This document explains the generated app runtime structure.
 
 The root runtime package is:
 
-- `internal/app`
+- `internal/runtime`
 
 This is where app-level runtime policy belongs.
 
@@ -36,7 +36,7 @@ This is where docs should point users when they need to run their own startup/sh
 
 ## Ownership Lines
 
-### `internal/app`
+### `internal/runtime`
 
 Owns:
 
@@ -64,7 +64,8 @@ Owns:
 
 - long-lived scheduler process behavior
 - scheduler runtime wiring
-- declarative schedule registration in `internal/schedules/scheduler_registry.go`
+- framework scheduler runtime registration in `internal/schedules/registration.go`
+- app-owned schedule registration in `app/schedules.go`
 
 Important boundary:
 
@@ -120,6 +121,6 @@ Primitive chatter should usually be debug-level or explicitly scoped.
 
 If a user wants custom lifecycle logic, the intended place is:
 
-- `internal/app/lifecycle_registry.go`
+- `app/lifecycle.go`
 
 Not ad hoc edits scattered through generated runtime files.

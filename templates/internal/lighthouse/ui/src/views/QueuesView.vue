@@ -519,10 +519,10 @@ const refreshIntervalModel = computed({
   },
 });
 
-const isQueueAgent = (agent: { source: string; capabilities: string[] }) =>
+const isQueueAgent = (agent: { source: string; runtime_source?: string; capabilities: string[] }) =>
   agent.capabilities.includes("queue") ||
   agent.capabilities.includes("jobs") ||
-  agent.source === "jobs";
+  (agent.runtime_source || agent.source) === "jobs";
 
 const queueAgents = computed(() =>
   state.agents.filter(isQueueAgent)

@@ -1,0 +1,112 @@
+package lighthouse
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestAgentGroupKeyPreservesDefaultAppSource(t *testing.T) {
+	if got := agentGroupKey("app", "http"); got != "http" {
+		t.Fatalf("agentGroupKey(app, http) = %q, want http", got)
+	}
+}
+
+func TestAgentGroupKeyIncludesNamedApp(t *testing.T) {
+	if got := agentGroupKey("billing", "http"); got != "billing/http" {
+		t.Fatalf("agentGroupKey(billing, http) = %q, want billing/http", got)
+	}
+}
+
+func TestAgentKeyIncludesInstanceIdentity(t *testing.T) {
+	if got := agentKey("billing/jobs", "worker-03"); got != "billing/jobs/worker-03" {
+		t.Fatalf("agentKey(billing/jobs, worker-03) = %q, want billing/jobs/worker-03", got)
+	}
+}
+
+func TestHubStoresSameRuntimeSourceAcrossApps(t *testing.T) {
+	hub := NewHub()
+
+	hub.RegisterAgent(nil, AgentInfo{Source: "http", App: "app", Host: "api-01"})
+	hub.RegisterAgent(nil, AgentInfo{Source: "http", App: "billing", Host: "billing-api-01"})
+
+	agents := hub.Agents()
+	if len(agents) != 2 {
+		t.Fatalf("Agents() returned %d agents, want 2", len(agents))
+	}
+
+	keys := map[string]bool{}
+	for _, agent := range agents {
+		keys[agent.Key] = true
+	}
+	if !keys["http/api-01"] || !keys["billing/http/billing-api-01"] {
+		t.Fatalf("expected default and billing HTTP agent keys, got %#v", keys)
+	}
+}
+
+func TestHubStoresReplicasForSameAppRuntime(t *testing.T) {
+	hub := NewHub()
+
+	hub.RegisterAgent(nil, AgentInfo{Source: "jobs", App: "billing", Host: "worker-01"})
+	hub.RegisterAgent(nil, AgentInfo{Source: "jobs", App: "billing", Host: "worker-02"})
+
+	agents := hub.Agents()
+	if len(agents) != 2 {
+		t.Fatalf("Agents() returned %d agents, want 2", len(agents))
+	}
+
+	keys := map[string]bool{}
+	for _, agent := range agents {
+		keys[agent.Key] = true
+	}
+	if !keys["billing/jobs/worker-01"] || !keys["billing/jobs/worker-02"] {
+		t.Fatalf("expected separate worker agent keys, got %#v", keys)
+	}
+}
+
+func TestHubTreatsReplicaGroupRoutingAsAmbiguous(t *testing.T) {
+	hub := NewHub()
+
+	hub.RegisterAgent(nil, AgentInfo{Source: "jobs", App: "billing", Host: "worker-01"})
+	hub.RegisterAgent(nil, AgentInfo{Source: "jobs", App: "billing", Host: "worker-02"})
+
+	if err := hub.RouteCommand(nil, Message{ID: "cmd-1", Destination: "billing/jobs"}); err == nil {
+		t.Fatal("expected ambiguous group command destination to fail")
+	}
+}
+
+func TestHubResolvesConcreteReplicaKey(t *testing.T) {
+	hub := NewHub()
+	conn := &captureWSConnection{}
+
+	hub.RegisterAgent(&wsConn{conn: conn}, AgentInfo{Source: "jobs", App: "billing", Host: "worker-01"})
+	hub.RegisterAgent(nil, AgentInfo{Source: "jobs", App: "billing", Host: "worker-02"})
+	conn.writes = nil
+
+	if err := hub.RouteCommand(nil, Message{ID: "cmd-1", Destination: "billing/jobs/worker-01"}); err != nil {
+		t.Fatalf("route concrete command destination: %v", err)
+	}
+	if len(conn.writes) != 1 {
+		t.Fatalf("expected command to route to worker-01 once, got %d writes", len(conn.writes))
+	}
+}
+
+func TestParseAgentInfoBackfillsKeyAndDefaultTarget(t *testing.T) {
+	raw, err := json.Marshal(AgentInfo{Source: "jobs"})
+	if err != nil {
+		t.Fatalf("marshal agent info: %v", err)
+	}
+
+	info, err := parseAgentInfo(raw)
+	if err != nil {
+		t.Fatalf("parseAgentInfo: %v", err)
+	}
+	if info.App != "app" {
+		t.Fatalf("App = %q, want app", info.App)
+	}
+	if info.GroupKey != "jobs" {
+		t.Fatalf("GroupKey = %q, want jobs", info.GroupKey)
+	}
+	if info.Key != "jobs" {
+		t.Fatalf("Key = %q, want jobs", info.Key)
+	}
+}

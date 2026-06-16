@@ -121,13 +121,24 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 		t.Fatalf("expected %s to be absent when mail is disabled", managerPath)
 	}
 
-	injectPath := filepath.Join(projectDir, "wire", "inject_mail.go")
+	injectPath := filepath.Join(projectDir, "app", "wire", "inject_managers.go")
 	_, injectErr := os.Stat(injectPath)
 	if enabled && injectErr != nil {
 		t.Fatalf("expected %s to be rendered: %v", injectPath, injectErr)
 	}
-	if !enabled && !os.IsNotExist(injectErr) {
-		t.Fatalf("expected %s to be absent when mail is disabled", injectPath)
+	if !enabled && injectErr != nil {
+		t.Fatalf("expected %s to be rendered for shared managers: %v", injectPath, injectErr)
+	}
+	injectSource, err := os.ReadFile(injectPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", injectPath, err)
+	}
+	hasMailProvider := strings.Contains(string(injectSource), "provideMailManager")
+	if enabled && !hasMailProvider {
+		t.Fatalf("expected %s to include mail manager provider", injectPath)
+	}
+	if !enabled && hasMailProvider {
+		t.Fatalf("expected %s not to include mail manager provider when mail is disabled", injectPath)
 	}
 }
 
@@ -171,7 +182,7 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 		t.Fatalf("expected oauth routes to be absent from %s", controllerPath)
 	}
 
-	injectPath := filepath.Join(projectDir, "wire", "inject_auth.go")
+	injectPath := filepath.Join(projectDir, "app", "wire", "inject_auth.go")
 	injectSrc, err := os.ReadFile(injectPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", injectPath, err)
@@ -203,7 +214,7 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	t.Helper()
 
-	schedulerRegistryPath := filepath.Join(projectDir, "internal", "schedules", "scheduler_registry.go")
+	schedulerRegistryPath := filepath.Join(projectDir, "app", "schedules.go")
 	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
@@ -211,7 +222,7 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	for _, token := range []string{
 		`DailyAt("04:11")`,
 		`Name("auth:sessions:cleanup")`,
-		`Do(s.inspectTask("auth:sessions:cleanup", s.authService.Cleanup))`,
+		`Do(s.InspectTask("auth:sessions:cleanup", r.authService.Cleanup))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -224,10 +235,9 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 		t.Fatalf("read %s: %v", schedulerPath, err)
 	}
 	for _, token := range []string{
-		`/internal/auth"`,
-		`authService *auth.Service`,
+		`registry ScheduleRegistry`,
 		`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
-		`return app.WithSource(ctx, app.SourceScheduler)`,
+		`return runtime.WithSource(ctx, runtime.SourceScheduler)`,
 	} {
 		if !strings.Contains(string(schedulerSrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerPath)
@@ -294,13 +304,7 @@ func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, envOve
 func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string) {
 	t.Helper()
 
-	runRenderedAuthCommand(
-		t,
-		projectDir,
-		"go build",
-		[]string{"go", "build", "-o", "./bin/app", "."},
-		testkit.IntegrationGoProcessEnv(t, nil),
-	)
+	buildRenderedDefaultAppTo(t, projectDir, filepath.Join(projectDir, "bin", "app"), nil, "go build")
 	runRenderedAuthCommand(
 		t,
 		projectDir,

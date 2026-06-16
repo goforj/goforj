@@ -32,6 +32,7 @@ func formatCommandFailure(command string, err error, stdout, stderr string) erro
 	return fmt.Errorf("%s", strings.Join(parts, "\n\n"))
 }
 
+// TestRendersCmd exercises generated project render combinations.
 type TestRendersCmd struct {
 	logger *logger.AppLogger
 
@@ -48,6 +49,7 @@ type TestRendersCmd struct {
 	List bool `help:"List selected render combinations without running them"`
 }
 
+// Signature exposes the render matrix command for framework validation.
 func (*TestRendersCmd) Signature() string {
 	return `name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
 }
@@ -88,10 +90,12 @@ func (t *stepTimer) Report(label string) {
 	fmt.Print(b.String())
 }
 
+// NewTestRendersCmd creates a render matrix command.
 func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 	return &TestRendersCmd{logger: logger}
 }
 
+// Run executes the selected render matrix profile.
 func (cmd *TestRendersCmd) Run() error {
 	profile := selectedRenderProfile(cmd.Profile, cmd.Full)
 	combos := buildRenderCombos(profile)
@@ -245,12 +249,11 @@ type renderCombo struct {
 
 // featureCombo captures toggles for non-database components.
 type featureCombo struct {
-	auth       bool
-	webAPI     bool
-	webUI      bool
-	scheduler  bool
-	jobs       bool
-	stressTest bool
+	auth      bool
+	webAPI    bool
+	webUI     bool
+	scheduler bool
+	jobs      bool
 }
 
 // featureID returns a stable, readable id for the feature set.
@@ -270,9 +273,6 @@ func featureID(feature featureCombo) string {
 	}
 	if feature.jobs {
 		parts = append(parts, "jobs")
-	}
-	if feature.stressTest {
-		parts = append(parts, "stresstest")
 	}
 	return strings.Join(parts, "_")
 }
@@ -313,7 +313,7 @@ func buildRenderCombos(profile string) []renderCombo {
 
 // buildFullRenderCombos returns the full component matrix.
 func buildFullRenderCombos() []renderCombo {
-	const numCombos = 1 << 9
+	const numCombos = 1 << 8
 	combos := make([]renderCombo, 0, numCombos)
 	for i := 0; i < numCombos; i++ {
 		cfg := project.Components{
@@ -327,7 +327,6 @@ func buildFullRenderCombos() []renderCombo {
 			DatabaseSQLite:   i&(1<<5) != 0,
 			Scheduler:        i&(1<<6) != 0,
 			Jobs:             i&(1<<7) != 0,
-			StressTest:       i&(1<<8) != 0,
 		}
 		cfg.ResolveDependencies()
 
@@ -395,7 +394,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Jobs: true, StressTest: true,
+				Scheduler: true, Jobs: true,
 			},
 		},
 		{
@@ -403,7 +402,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabasePostgres: true,
-				Scheduler: true, Jobs: true, StressTest: true,
+				Scheduler: true, Jobs: true,
 			},
 		},
 		{
@@ -461,8 +460,6 @@ func buildCuratedRenderCombos() []renderCombo {
 		{webUI: true, scheduler: true},
 		{webUI: true, jobs: true},
 		{scheduler: true, jobs: true},
-		{jobs: true, stressTest: true},
-		{scheduler: true, jobs: true, stressTest: true},
 	}
 
 	dbVariants := []struct {
@@ -477,14 +474,13 @@ func buildCuratedRenderCombos() []renderCombo {
 	var combos []renderCombo
 	for _, feature := range features {
 		cfg := project.Components{
-			CLI:        true,
-			Docker:     true,
-			Auth:       feature.auth,
-			WebAPI:     feature.webAPI,
-			WebUI:      feature.webUI,
-			Scheduler:  feature.scheduler,
-			Jobs:       feature.jobs,
-			StressTest: feature.stressTest && feature.jobs,
+			CLI:       true,
+			Docker:    true,
+			Auth:      feature.auth,
+			WebAPI:    feature.webAPI,
+			WebUI:     feature.webUI,
+			Scheduler: feature.scheduler,
+			Jobs:      feature.jobs,
 		}
 		if err := cfg.ValidateRenderContract(); err != nil {
 			continue
@@ -499,14 +495,13 @@ func buildCuratedRenderCombos() []renderCombo {
 	for _, variant := range dbVariants {
 		for idx, feature := range features {
 			cfg := project.Components{
-				CLI:        true,
-				Docker:     true,
-				Auth:       feature.auth,
-				WebAPI:     feature.webAPI,
-				WebUI:      feature.webUI,
-				Scheduler:  feature.scheduler,
-				Jobs:       feature.jobs,
-				StressTest: feature.stressTest && feature.jobs,
+				CLI:       true,
+				Docker:    true,
+				Auth:      feature.auth,
+				WebAPI:    feature.webAPI,
+				WebUI:     feature.webUI,
+				Scheduler: feature.scheduler,
+				Jobs:      feature.jobs,
 			}
 			variant.apply(&cfg)
 			if err := cfg.ValidateRenderContract(); err != nil {
@@ -568,9 +563,6 @@ func componentLabels(cfg project.Components) []string {
 	}
 	if cfg.Jobs {
 		enabled = append(enabled, "Jobs")
-	}
-	if cfg.StressTest {
-		enabled = append(enabled, "Stress Test")
 	}
 	return enabled
 }
@@ -648,7 +640,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 
 	if err := timer.Track("wire_gen", func() error {
 		wireCmd := exec.Command("wire")
-		wireCmd.Dir = filepath.Join(dir, "wire")
+		wireCmd.Dir = filepath.Join(dir, "app", "wire")
 		wireCmd.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
 			"GOCACHE="+buildCache,
@@ -671,7 +663,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		if renderBuildTraceEnabled() {
 			args = append(args, "-x")
 		}
-		args = append(args, "-o", filepath.Join(binDir, "app"))
+		args = append(args, "-o", filepath.Join(binDir, "app"), "./cmd/app")
 		build := exec.Command("go", args...)
 		build.Dir = dir
 		build.Env = append(os.Environ(),
@@ -725,6 +717,7 @@ func runRenderedGoTests(dir, modCache, buildCache string) error {
 	return nil
 }
 
+// WriteYAML writes a project config while preserving raw component selections.
 func WriteYAML(path string, cfg project.Config) error {
 	if cfg.Render.QueueDriver == "" {
 		cfg.Render.QueueDriver = "redis"

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +52,343 @@ func TestAppRootHelpArgsUsesAppHelp(t *testing.T) {
 	if len(args) != 1 || args[0] != "--help" {
 		t.Fatalf("expected app root help args to request app help, got %#v", args)
 	}
+}
+
+func TestResolveAppPrefixUsesConventionalSourceApp(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeMain := filepath.Join("cmd", "reporting", "main.go")
+	if err := os.MkdirAll(filepath.Dir(writeMain), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(writeMain, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	appName, remaining, ok := resolveAppPrefix([]string{"reporting", "build"}, true)
+	if !ok || appName != "reporting" || len(remaining) != 1 || remaining[0] != "build" {
+		t.Fatalf("app prefix = (%q, %#v, %t), want reporting, [build], true", appName, remaining, ok)
+	}
+}
+
+func TestAppPrefixedNativeCommandStaysInSourceMode(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceApp(t, "billing")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "billing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	appName, remaining, ok := resolveAppPrefix([]string{"billing", "build", "-o", "./bin/billing"}, true)
+	if !ok || appName != "billing" {
+		t.Fatalf("app prefix = (%q, %#v, %t), want billing app", appName, remaining, ok)
+	}
+	if !shouldRunAppNativeCommand(remaining) {
+		t.Fatalf("expected app-prefixed native command to stay source-scoped, got %#v", remaining)
+	}
+}
+
+func TestAppPrefixedSourceCommandWinsOverBuiltBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceApp(t, "billing")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "billing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	if !shouldRunAppThroughSource("billing", []string{"make:controller", "checkout"}, true) {
+		t.Fatal("expected source app commands to avoid stale built app binaries")
+	}
+}
+
+func TestAppPrefixedBinaryOnlyCommandUsesBuiltBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "billing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	if shouldRunAppThroughSource("billing", []string{"route:list"}, false) {
+		t.Fatal("expected binary-only app commands to delegate to the built app binary")
+	}
+}
+
+func TestResolveAppPrefixPreservesNativeCommandPrecedence(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeMain := filepath.Join("cmd", "build", "main.go")
+	if err := os.MkdirAll(filepath.Dir(writeMain), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(writeMain, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build"}
+
+	_, _, ok := resolveAppPrefix([]string{"build"}, true)
+	if ok {
+		t.Fatal("expected native build command to keep precedence over a conventional app")
+	}
+}
+
+func TestResolveAppPrefixPreservesNativeCommandPrecedenceOverBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "build"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build"}
+
+	_, _, ok := resolveAppPrefix([]string{"build"}, true)
+	if ok {
+		t.Fatal("expected native build command to keep precedence over a built app binary")
+	}
+}
+
+func TestConventionalAppHelpIncludesSourceAndBinaryApps(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceApp(t, "admin")
+	writeSourceApp(t, "billing")
+	writeSourceApp(t, "build")
+	writeSourceApp(t, "wire")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "reporting"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build"}
+
+	apps := conventionalAppHelpApps(true)
+	want := []string{"admin", "app", "billing", "reporting"}
+	if len(apps) != len(want) {
+		t.Fatalf("help apps = %#v, want %#v", apps, want)
+	}
+	for i := range want {
+		if apps[i] != want[i] {
+			t.Fatalf("help apps = %#v, want %#v", apps, want)
+		}
+	}
+}
+
+func TestConventionalAppHelpSkipsNonGeneratedProjects(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeSourceApp(t, "billing")
+
+	if apps := conventionalAppHelpApps(false); len(apps) != 0 {
+		t.Fatalf("expected no generated app help entries, got %#v", apps)
+	}
+}
+
+func TestRunAppHelpForAppShellsThroughRootBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	scriptPath, err := filepath.Abs("fake-forj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$1|$2|$FORJ_APP\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousArg0 := os.Args[0]
+	defer func() { os.Args[0] = previousArg0 }()
+	os.Args[0] = scriptPath
+
+	output, err := runAppHelpForApp("billing", true)
+	if err != nil {
+		t.Fatalf("run app help: %v\n%s", err, output)
+	}
+	if output != "billing|--help|billing\n" {
+		t.Fatalf("unexpected help command output: %q", output)
+	}
+}
+
+func TestRunAppHelpForAppMarksMultiAppHelp(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	scriptPath, err := filepath.Abs("fake-forj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$FORJ_MULTI_APP_HELP\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousArg0 := os.Args[0]
+	defer func() { os.Args[0] = previousArg0 }()
+	os.Args[0] = scriptPath
+
+	output, err := runAppHelpForApp("app", true)
+	if err != nil {
+		t.Fatalf("run app help: %v\n%s", err, output)
+	}
+	if output != "1\n" {
+		t.Fatalf("unexpected multi-app marker: %q", output)
+	}
+}
+
+func TestCompactGeneratedAppHelpDeduplicatesSharedCommands(t *testing.T) {
+	results := []appHelpResult{
+		{app: "app", output: strings.Join([]string{
+			"test · app",
+			"",
+			"app",
+			"  about    Show environment",
+			"  health   Query readiness",
+			"monitor",
+			"  seed     Seed monitors",
+			"",
+		}, "\n")},
+		{app: "billing", output: strings.Join([]string{
+			"test · billing",
+			"",
+			"app",
+			"  about    Show environment",
+			"  health   Query readiness",
+			"queue",
+			"  invoice  Process invoices",
+			"",
+		}, "\n")},
+		{app: "reporting", output: strings.Join([]string{
+			"test · reporting",
+			"",
+			"app",
+			"  about    Show environment",
+			"  health   Query readiness",
+			"",
+		}, "\n")},
+	}
+
+	output, ok := compactGeneratedAppHelp(results)
+	if !ok {
+		t.Fatal("expected compact help output")
+	}
+	for _, want := range []string{
+		"test · available in all apps",
+		"  about   Show environment",
+		"  health  Query readiness",
+		"test · app",
+		"  seed  Seed monitors",
+		"test · billing",
+		"  invoice  Process invoices",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected compact help to include %q, got:\n%s", want, output)
+		}
+	}
+	for _, unexpected := range []string{"app only", "billing only", "test · reporting"} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("expected compact help to omit %q, got:\n%s", unexpected, output)
+		}
+	}
+}
+
+func TestPrintAppUsageHelpOnlyForMultiApp(t *testing.T) {
+	single := captureStdout(t, func() {
+		printAppUsageHelp([]string{"app"})
+	})
+	if single != "" {
+		t.Fatalf("expected no app usage for single app, got:\n%s", single)
+	}
+
+	multi := captureStdout(t, func() {
+		printAppUsageHelp([]string{"app", "billing"})
+	})
+	for _, want := range []string{
+		"app usage",
+		"forj <app> <command>",
+		"Run a command for a specific app",
+		"forj <app> build",
+		"Build a specific app binary",
+		"forj dev",
+		"Build and run all apps in development",
+	} {
+		if !strings.Contains(multi, want) {
+			t.Fatalf("expected app usage help to include %q, got:\n%s", want, multi)
+		}
+	}
+}
+
+func TestWithAppEnvOverridesExistingAppIdentity(t *testing.T) {
+	env := withAppEnv([]string{
+		"FORJ_COMMAND_PREFIX=forj billing",
+		"FORJ_APP=billing",
+		"KEEP=value",
+	}, "reporting")
+
+	for _, want := range []string{
+		"FORJ_COMMAND_PREFIX=forj reporting",
+		"FORJ_APP=reporting",
+		"KEEP=value",
+	} {
+		if !envHasEntry(env, want) {
+			t.Fatalf("expected env to include %q, got %#v", want, env)
+		}
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	previous := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	defer func() {
+		os.Stdout = previous
+	}()
+
+	fn()
+
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, read); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
 }
 
 func TestDelegatedAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
@@ -153,6 +494,18 @@ func chdirTemp(t *testing.T) func() {
 		if err := os.Chdir(previous); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func writeSourceApp(t *testing.T, appName string) {
+	t.Helper()
+
+	writeMain := filepath.Join("cmd", appName, "main.go")
+	if err := os.MkdirAll(filepath.Dir(writeMain), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(writeMain, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -10,9 +10,9 @@ type ServeCmd struct {
 
 	// flags / args
 	Host string `help:"Host or interface to bind to" env:"API_HTTP_HOST" default:"0.0.0.0" optional:""`
-	Port string `help:"Port to listen on" env:"API_HTTP_PORT" default:"3000" optional:""`
+	Port string `help:"Port to listen on" optional:""`
 {{- if .Components.Metrics }}
-	MetricsPort string `help:"Port for the dedicated API metrics endpoint" env:"METRICS_API_PORT" default:"9100" optional:""`
+	MetricsPort string `help:"Port for the dedicated API metrics endpoint" optional:""`
 {{- end }}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,12 +36,150 @@ func readGeneratorGoFile(path string) ([]string, string, error) {
 	return strings.Split(content, "\n"), content, nil
 }
 
+// firstExistingGeneratedPath lets generators prefer the current app layout while still supporting older renders.
+func firstExistingGeneratedPath(paths ...string) string {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+// activeAppName lets delegated app commands scope app-owned registration without adding generator flags.
+func activeAppName() string {
+	app := str.Of(os.Getenv("FORJ_APP")).TrimSpace()
+	if !app.IsBlank() && appNameIsSafe(app.String()) {
+		return app.String()
+	}
+	return "app"
+}
+
+// activeAppDir maps the implicit default app to app/ and named apps to app/<app>/.
+func activeAppDir() string {
+	app := activeAppName()
+	if app == "app" {
+		return "app"
+	}
+	return filepath.Join("app", app)
+}
+
+// activeAppFile keeps legacy fallback paths available only for the default single-app.
+func activeAppFile(file string, legacyPaths ...string) string {
+	path := filepath.Join(activeAppDir(), file)
+	if activeAppName() != "app" {
+		return path
+	}
+	return firstExistingGeneratedPath(append([]string{path}, legacyPaths...)...)
+}
+
+// activeAppWireFile scopes app-owned Wire injector mutations to the active app composition root.
+func activeAppWireFile(file string, legacyPaths ...string) string {
+	return activeAppFile(filepath.Join("wire", file), legacyPaths...)
+}
+
+// appMigrationDir resolves where migration files belong for the active app.
+func appMigrationDir(connection string) string {
+	connection = str.Of(connection).TrimSpace().ToLower().String()
+	if connection == "" {
+		connection = "default"
+	}
+	app := activeAppName()
+	if app != "app" || hasNamedApps() || hasAppMigrationLayout() {
+		return filepath.Join("migrations", app, connection)
+	}
+	if connection == "default" {
+		return "migrations"
+	}
+	return filepath.Join("migrations", connection)
+}
+
+// hasNamedApps detects conventional app entrypoints without requiring project config.
+func hasNamedApps() bool {
+	entries, err := os.ReadDir("cmd")
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "app" || !appNameIsSafe(entry.Name()) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join("cmd", entry.Name(), "main.go")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAppMigrationLayout keeps generators in expanded layout after migrations have been moved.
+func hasAppMigrationLayout() bool {
+	if _, err := os.Stat(filepath.Join("migrations", "app")); err == nil {
+		return true
+	}
+	return false
+}
+
+// appNameIsSafe prevents environment-provided app names from escaping app/.
+func appNameIsSafe(app string) bool {
+	if app == "." || app == ".." {
+		return false
+	}
+	for _, r := range app {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func writeGeneratorGoFile(path string, src []byte) error {
 	formatted, err := format.Source(src)
 	if err != nil {
 		return fmt.Errorf("gofmt error: %w", err)
 	}
-	return os.WriteFile(path, formatted, 0644)
+	if err := os.WriteFile(path, formatted, 0644); err != nil {
+		return err
+	}
+	return refreshWireGeneratedFile(path)
+}
+
+func refreshWireGeneratedFile(path string) error {
+	cleanPath := filepath.Clean(path)
+	if filepath.Base(cleanPath) == "wire_gen.go" || filepath.Base(filepath.Dir(cleanPath)) != "wire" {
+		return nil
+	}
+
+	wireDir := filepath.Dir(cleanPath)
+	if _, err := os.Stat(filepath.Join(wireDir, "wire.go")); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	cmd := exec.Command("go", "run", "github.com/goforj/wire/cmd/wire@v1.2.0")
+	if wirePath, err := exec.LookPath("wire"); err == nil {
+		cmd = exec.Command(wirePath)
+	}
+	cmd.Dir = wireDir
+	cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("wire generate %s: %w\n%s", wireDir, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func writeGeneratorGoLines(path string, lines []string) error {
@@ -155,18 +294,23 @@ func getGoModuleName() (string, error) {
 		return "", err
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		line := str.Of(line).TrimSpace()
+		if line.StartsWith("module ") {
+			return line.ChopStart("module ").TrimSpace().String(), nil
 		}
 	}
 	return "", fmt.Errorf("module name not found")
 }
 
 func ensureCmdSuffix(name string) string {
-	if !strings.HasSuffix(name, "Cmd") {
-		return name + "Cmd"
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
+		return "ExampleCmd"
 	}
-	return name
+	if clean.EndsWith("Cmd") {
+		return clean.String()
+	}
+	return clean.String() + "Cmd"
 }
 
 func importAliasForPackageRef(packageName string, packageRef string) string {
@@ -510,6 +654,18 @@ func insertIntoCallBlock(lines []string, startMarker string, insert string) []st
 	for i, line := range lines {
 		if !strings.Contains(line, startMarker) {
 			continue
+		}
+		afterMarker := line[strings.Index(line, startMarker)+len(startMarker):]
+		if closeIndex := strings.Index(afterMarker, ")"); closeIndex >= 0 {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			before := line[:strings.Index(line, startMarker)+len(startMarker)]
+			afterClose := afterMarker[closeIndex+1:]
+			replacement := []string{
+				before,
+				insert,
+				indent + ")" + afterClose,
+			}
+			return append(lines[:i], append(replacement, lines[i+1:]...)...)
 		}
 		for j := i + 1; j < len(lines); j++ {
 			if strings.TrimSpace(lines[j]) == ")" {
