@@ -6,15 +6,15 @@ package wire
 import (
 	"github.com/goforj/wire"
 
-	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/schedules"
 )
 
 // appScheduleSet contains application-owned schedule providers.
 var appScheduleSet = wire.NewSet(
 	ProvideAppSchedules,
-	compositionapp.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
+	{{.AppPackageName}}.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*{{.AppPackageName}}.ScheduleRegistry)),
 )
 
 // ProvideAppSchedules creates the legacy AppSchedules container.

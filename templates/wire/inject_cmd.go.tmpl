@@ -5,7 +5,7 @@ package wire
 
 import (
 	"github.com/goforj/wire"
-	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
 {{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) (or .ProjectComponents.WebAPI .ProjectComponents.WebUI) }}
 	"{{.GoModuleName}}/internal/http"
@@ -28,8 +28,8 @@ import (
 // cmdSet is a wire set that provides framework command wiring.
 var cmdSet = wire.NewSet(
 	appCommandSet,
-	compositionapp.NewCommands,
-	compositionapp.NewRootCmd,
+	{{.AppPackageName}}.NewCommands,
+	{{.AppPackageName}}.NewRootCmd,
 	cmd.NewAboutCmd,
 	cmd.NewCacheShellCmd,
 	{{- if .Components.HasDatabase }}

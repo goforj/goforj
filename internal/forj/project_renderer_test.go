@@ -473,15 +473,15 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
-		`compositionapp "example.com/test/app/customer-portal"`,
+		`"example.com/test/app/customer-portal"`,
 		`"example.com/test/app/customer-portal/wire"`,
-		`&compositionapp.RootCmd{}`,
+		`&customerportal.RootCmd{}`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportal")
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportal")
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "wire", "inject_http.go"),
-		`compositionapp "example.com/test/app/customer-portal"`,
-		"compositionapp.ProvideRoutes",
+		`"example.com/test/app/customer-portal"`,
+		"customerportal.ProvideRoutes",
 	)
 
 	commandsPath := filepath.Join("app", "customer-portal", "commands.go")
@@ -990,9 +990,9 @@ var appSet = wire.NewSet(
 
 	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp", "app")
 	for _, want := range []string{
-		`compositionapp "example.com/testapp/app"`,
+		`"example.com/testapp/app"`,
 		`"example.com/testapp/internal/runtime"`,
-		"compositionapp.NewLifecycleRegistry",
+		"app.NewLifecycleRegistry",
 		"runtime.NewTimeouts",
 	} {
 		if !strings.Contains(updated, want) {
@@ -1001,9 +1001,8 @@ var appSet = wire.NewSet(
 	}
 	for _, unexpected := range []string{
 		"\t\"example.com/testapp/internal/app\"",
-		"\tapp.NewLifecycleRegistry",
 		"\tapp.NewTimeouts",
-		"compositioncompositionapp",
+		"compositionapp",
 		"runtimeruntime",
 		"runtimeapp",
 	} {
@@ -1034,8 +1033,8 @@ var appSet = wire.NewSet(
 
 	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp", "app/billing")
 	for _, want := range []string{
-		`compositionapp "example.com/testapp/app/billing"`,
-		"compositionapp.NewLifecycleRegistry",
+		`"example.com/testapp/app/billing"`,
+		"billing.NewLifecycleRegistry",
 	} {
 		if !strings.Contains(updated, want) {
 			t.Fatalf("expected migrated service injector to contain %q:\n%s", want, updated)
@@ -1125,10 +1124,10 @@ func ProvideAppSchedules(
 
 	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app")
 	for _, want := range []string{
-		`compositionapp "example.com/testapp/app"`,
+		`"example.com/testapp/app"`,
 		`"example.com/testapp/internal/schedules"`,
-		"compositionapp.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
+		"app.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*app.ScheduleRegistry))",
 		"ProvideAppSchedules",
 		"reports.NewDailySchedule",
 		"dailySchedule *reports.DailySchedule",
@@ -1168,24 +1167,21 @@ func ProvideAppSchedules() *schedules.AppSchedules {
 
 	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app")
 	for _, want := range []string{
-		`compositionapp "example.com/testapp/app"`,
-		"compositionapp.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
+		`"example.com/testapp/app"`,
+		"app.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*app.ScheduleRegistry))",
 	} {
 		if !strings.Contains(updated, want) {
 			t.Fatalf("expected migrated schedule injector to contain %q:\n%s", want, updated)
 		}
 	}
-	if strings.Contains(updated, "\t\"example.com/testapp/app\"") {
-		t.Fatalf("expected unaliased app import to be replaced:\n%s", updated)
-	}
 	if strings.Contains(updated, "targetapp.") {
 		t.Fatalf("expected targetapp references to be replaced:\n%s", updated)
 	}
-	if count := strings.Count(updated, "compositionapp.NewScheduleRegistry"); count != 1 {
+	if count := strings.Count(updated, "app.NewScheduleRegistry"); count != 1 {
 		t.Fatalf("expected one schedule registry provider, got %d:\n%s", count, updated)
 	}
-	if count := strings.Count(updated, "wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))"); count != 1 {
+	if count := strings.Count(updated, "wire.Bind(new(schedules.ScheduleRegistry), new(*app.ScheduleRegistry))"); count != 1 {
 		t.Fatalf("expected one schedule registry binding, got %d:\n%s", count, updated)
 	}
 }
@@ -1207,9 +1203,9 @@ var appScheduleSet = wire.NewSet(
 
 	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app/billing")
 	for _, want := range []string{
-		`compositionapp "example.com/testapp/app/billing"`,
-		"compositionapp.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
+		`"example.com/testapp/app/billing"`,
+		"billing.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*billing.ScheduleRegistry))",
 	} {
 		if !strings.Contains(updated, want) {
 			t.Fatalf("expected migrated schedule injector to contain %q:\n%s", want, updated)

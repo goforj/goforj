@@ -5,7 +5,7 @@ package wire
 
 import (
 	"github.com/goforj/wire"
-	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/caches"
 {{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
@@ -21,7 +21,7 @@ import (
 
 // httpServerSet is a wire set that provides the HTTP server and its routes.
 var httpServerSet = wire.NewSet(
-	compositionapp.ProvideRoutes,
+	{{.AppPackageName}}.ProvideRoutes,
 	http.NewLighthouseRuntime,
 	http.NewRouteListCmd,
 	http.NewRuntime,
