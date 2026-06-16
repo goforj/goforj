@@ -113,6 +113,11 @@ Add if the issue mentions dirty repo state, embedded assets, or inconsistent smo
 
 - [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
 
+Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose shutdown, or helper containers:
+
+- [Practical Workflows](practical-workflows.md)
+- [Observability](observability.md)
+
 ## File Guide
 
 - [Repo Boundaries And Ownership](repo-boundaries-and-ownership.md)

@@ -17,7 +17,7 @@ Use this stack when you want a local production-style view of the generated app 
 {{- if .Components.Grafana }}
 - `grafana`
   - preprovisioned datasource and first-party dashboards
-  - default local URL: `http://localhost:3001`
+  - default local URL: `http://localhost:13001`
   - default credentials: `admin` / `admin`
 
 - `grafana-seed`
@@ -29,26 +29,27 @@ Use this stack when you want a local production-style view of the generated app 
 
 | Service | Default | Purpose |
 | --- | --- | --- |
-| Shared metrics port | `9100` | Preferred shared metrics port for single-process and compose-style layouts |
+| Shared metrics port | `10000` | Preferred shared metrics port for single-process and compose-style layouts |
 {{- if or .Components.WebAPI .Components.WebUI }}
-| HTTP metrics | `9100` | Metrics emitted by the HTTP source |
+| HTTP metrics | `10000` | Metrics emitted by the HTTP source |
 {{- end }}
 {{- if .Components.Jobs }}
-| Jobs metrics | `9101` | Metrics emitted by the jobs source |
+| Jobs metrics | `10002` | Metrics emitted by the jobs source |
 {{- end }}
 {{- if .Components.Scheduler }}
-| Scheduler metrics | `9102` | Metrics emitted by the scheduler source |
+| Scheduler metrics | `10001` | Metrics emitted by the scheduler source |
 {{- end }}
 | VictoriaMetrics | `8428` | Local metrics storage and query API |
 {{- if .Components.Grafana }}
-| Grafana | `3001` | Local dashboard UI |
+| Grafana | `13001` | Local dashboard UI |
 {{- end }}
 
-`METRICS_PORT` is the primary shared-port default.
+`METRICS_PORT` is the primary shared-port default for the default app.
 
-- standalone host mode uses `METRICS_PORT`.
-- `local-single` and `compose` target generation use `METRICS_PORT`.
-- `local-multi` target generation uses `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT`, falling back to `METRICS_PORT`, `METRICS_PORT+1`, and `METRICS_PORT+2`.
+- standalone host mode scrapes each app's HTTP port when the HTTP source is present, and falls back to that app's shared metrics port otherwise.
+- `local-single` target generation emits one scrape target per app.
+- `local-multi` target generation emits one scrape target per app and source role.
+- named app metrics env vars are optional overrides; otherwise the generated app runtime block supplies deterministic non-conflicting ports.
 
 Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
 
@@ -64,7 +65,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 4. Open the stack:
    - VictoriaMetrics: `http://localhost:8428`
 {{- if .Components.Grafana }}
-   - Grafana: `http://localhost:3001`
+   - Grafana: `http://localhost:13001`
 {{- end }}
 
 ## Scraping Model
@@ -76,23 +77,25 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
     - chooses `local-single` when `RUNTIME_MODE` is unset or `standalone`
     - chooses `local-multi` when `RUNTIME_MODE=distributed` and multiple source roles are generated
   - `local-single`
-    - one generated target
+    - one generated target per app
     - intended for standalone host mode
-    - default target: `http://host.docker.internal:$API_HTTP_PORT/metrics` when the HTTP source is present
-    - otherwise defaults to `http://host.docker.internal:$METRICS_PORT/metrics`
-    - generated label: `process=app`
+    - default app for `app`: `http://host.docker.internal:3000/metrics` when the HTTP source is present
+    - default app for the first named app: `http://host.docker.internal:3001/metrics` when the HTTP source is present
+    - otherwise defaults to that app's shared metrics port, such as `10000` for `app` or `10010` for the first named app
+    - generated labels: `process=app` and `app=<app>`
   - `local-multi`
-    - one host, one target per source role
+    - one host, one target per app and source role
     - intended for direct source commands or multi-process local layouts
-    - default target host: `OBSERVABILITY_METRICS_TARGET_HOST`
-    - default targets:
-      - HTTP: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9100/metrics`
+    - default app host: `OBSERVABILITY_METRICS_TARGET_HOST`
+    - default apps for `app`:
+      - HTTP: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10000/metrics`
 {{- if .Components.Jobs }}
-      - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9101/metrics`
+      - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10002/metrics`
 {{- end }}
 {{- if .Components.Scheduler }}
-      - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9102/metrics`
+      - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10001/metrics`
 {{- end }}
+    - default apps for the first named app use the next runtime block, such as `10010`, `10011`, and `10012`
   - `compose`
     - one target per source role
     - same shared port by default
@@ -114,9 +117,10 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 - Escape hatch:
   - set `OBSERVABILITY_METRICS_TARGET_MODE=disabled` to fully opt out of target generation
   - or set `OBSERVABILITY_METRICS_TARGET_HOST=` empty in local modes to leave the existing `metrics-targets.json` untouched
-- Each generated target includes `service`, `environment`, and `process` labels.
+- Each generated target includes `service`, `environment`, `process`, and `app` labels.
 - In standalone host mode, `process=app` reflects the single host process.
 - In direct source mode, `process` reflects the direct source command being scraped, such as `http`, `jobs`, or `scheduler`.
+- Use `app` to filter a single app such as `app`, `billing`, or `customer-portal`.
 - Use `source` labels from the emitted metric families for logical source attribution when available.
 - Framework-owned transport endpoints like `/metrics` itself and Lighthouse source routes are excluded from application HTTP request metrics.
 
@@ -132,7 +136,7 @@ Grafana is provisioned with:
 
 The dashboards are authored against GoForj's metric contract rather than generic third-party dashboard imports.
 
-Most primitive dashboards include filters for named accessors. For example, the Cache Overview can be filtered to one named cache, the Storage Overview can be filtered to one disk, and the Database Overview can be filtered to one connection or table.
+Every generated dashboard includes an App filter backed by the emitted `app` metric label. Most primitive dashboards also include filters for named accessors. For example, the Cache Overview can be filtered to one named cache, the Storage Overview can be filtered to one disk, and the Database Overview can be filtered to one connection or table.
 
 If rendered dashboards do not refresh immediately:
 
@@ -148,7 +152,8 @@ Use Grafana Explore or the VictoriaMetrics query UI to inspect raw metrics. Comm
 
 The most useful query dimensions are:
 
-- `source`: which logical source emitted the metric, such as `http`, `jobs`, `scheduler`, `cli`, or `startup`.
+- `app`: which App composition app emitted the metric, such as `app`, `billing`, or `customer-portal`.
+- `source`: which logical source emitted the metric, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, or `startup`.
 - `process`: which scrape target exposed the metric, such as `app`, `http`, `jobs`, or `scheduler`.
 - `cache`, `disk`, `mailer`, `queue`, `connection`, `bus`: which named primitive handled the work.
 - `route`, `method`, `status`: which HTTP route and outcome generated traffic.

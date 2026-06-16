@@ -77,7 +77,7 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 	})
 
 	t.Run("explicit args bypass auto-run", func(t *testing.T) {
-		cmd := exec.Command(appPath, "--help")
+		cmd := exec.Command(appPath, "custom")
 		cmd.Dir = projectDir
 		cmd.Env = os.Environ()
 		var out bytes.Buffer
@@ -87,7 +87,7 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 			t.Fatalf("run explicit command: %v\n%s", err, out.String())
 		}
 		got := strings.TrimSpace(out.String())
-		if got != "args=[--help]" {
+		if got != "args=[custom]" {
 			t.Fatalf("expected explicit args to bypass auto-run, got %q", got)
 		}
 	})
@@ -95,11 +95,15 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 
 func writeIntegrationMain(t *testing.T, projectDir string) {
 	t.Helper()
-	mainPath := filepath.Join(projectDir, "main.go")
+	mainPath := filepath.Join(projectDir, "cmd", "app", "main.go")
+	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/app: %v", err)
+	}
 	source := `package main
 
 import (
 	"fmt"
+	"example.com/buildlaunch/app"
 	"github.com/goforj/env/v2"
 	"os"
 	"example.com/buildlaunch/internal/cmd"
@@ -135,9 +139,9 @@ func main() {
 		return
 	}
 
-	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
+	if handled, err := cmd.DispatchPrebootCommand(args, &app.RootCmd{}); handled {
 		if err != nil {
-			fmt.Println("skip_boot_err=" + err.Error())
+			fmt.Println("preboot_err=" + err.Error())
 		}
 		return
 	}

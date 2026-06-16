@@ -47,8 +47,8 @@ Typical loop:
 
 Recent regression note:
 
-- If `queue:hello-test` fails with `job queue is required`, do not "fix" it by adding `jobAppSet` to `jobSet`.
-- `wire.go.tmpl` already includes both `jobSet` and `jobAppSet`; duplicating `jobAppSet` inside `jobSet` causes Wire duplicate-provider failures.
+- If `queue:hello-test` fails with `job queue is required`, do not "fix" it by adding `appJobSet` to `jobSet`.
+- `wire.go.tmpl` already includes both `jobSet` and `appJobSet`; duplicating `appJobSet` inside `jobSet` causes Wire duplicate-provider failures.
 - The remaining issue is understood as a runtime/default-queue construction problem, not a command-registration or missing-example-job-provider problem.
 
 ## Working With The Rendered App
@@ -71,10 +71,10 @@ Useful generated files worth inspecting when behavior diverges:
 
 - generated `wire` files
 - `internal/storages/manager_gen.go`
-- `internal/app/discovery.go`
+- `internal/runtime/discovery.go`
 - generated `internal/jobs/lighthouse.go`
 - generated `internal/schedules/lighthouse.go`
-- generated `internal/schedules/scheduler_registry.go`
+- generated `app/schedules.go`
 
 ## Integration Test Reality
 
@@ -116,6 +116,13 @@ Examples:
 It should not own process naming policy or app log prefix semantics beyond watcher concerns.
 
 The child app/process topology belongs lower in `run` and runtime launch logic.
+
+For shutdown, `forj dev` owns watcher process orchestration:
+
+- Ctrl+C, restart, and render-triggered restarts should signal all watcher subprocesses in parallel.
+- Shutdown waits for the group after signaling, so one slow target does not delay other targets from receiving an interrupt.
+- Keep output collapsed into concise watcher lifecycle lines instead of per-process shutdown spam.
+- Do not make Docker Compose helper-container delays look like app runtime shutdown. If a one-shot helper is safe to interrupt, prefer a short service-level Compose grace period over shortening shutdown for the whole stack.
 
 ## Frequent Pitfalls
 

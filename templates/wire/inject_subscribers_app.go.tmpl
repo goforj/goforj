@@ -1,0 +1,25 @@
+// App-owned Wire injector. EDIT THIS FILE.
+// Add application event subscriber providers here, or use `forj make:subscriber`.
+
+package wire
+
+import (
+	"github.com/goforj/wire"
+	"{{.GoModuleName}}/internal/events"
+)
+
+// appSubscriberSet contains application-owned event subscriber providers.
+var appSubscriberSet = wire.NewSet(
+	ProvideEventSubscribers,
+)
+
+// EventSubscribersReady marks event subscriptions registered during app construction.
+type EventSubscribersReady struct{}
+
+// ProvideEventSubscribers registers application subscribers with configured event buses.
+func ProvideEventSubscribers(
+	eventManager *events.Manager,
+) (*EventSubscribersReady, error) {
+	_ = eventManager
+	return &EventSubscribersReady{}, nil
+}

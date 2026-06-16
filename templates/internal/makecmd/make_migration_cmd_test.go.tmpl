@@ -26,3 +26,33 @@ func TestMigrationCmdRemoveDeletesMatchingMigrationFiles(t *testing.T) {
 	assertMakeCmdTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000002_create_widgets.mysql.down.sql"))
 	assertMakeCmdTestContains(t, filepath.Join("migrations", "2026_01_01_000003_create_accounts.up.sql"), []string{"-- up"})
 }
+
+func TestMigrationCmdUsesActiveApp(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP", "billing")
+	t.Setenv("DB_DRIVER", "sqlite")
+
+	cmd := &MigrationCmd{Name: "create_invoices", Connection: "ledger", NoOpen: true}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create app migration: %v", err)
+	}
+
+	assertMakeCmdTestGlob(t, filepath.Join("migrations", "billing", "ledger", "*create_invoices.up.sql"))
+	assertMakeCmdTestGlob(t, filepath.Join("migrations", "billing", "ledger", "*create_invoices.down.sql"))
+}
+
+func TestMigrationCmdExpandedLayoutUsesAppDefault(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("DB_DRIVER", "sqlite")
+	writeMakeCmdTestFile(t, filepath.Join("migrations", "app", "default", ".keep"), "")
+
+	cmd := &MigrationCmd{Name: "create_widgets", NoOpen: true}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create app migration: %v", err)
+	}
+
+	assertMakeCmdTestGlob(t, filepath.Join("migrations", "app", "default", "*create_widgets.up.sql"))
+	assertMakeCmdTestGlob(t, filepath.Join("migrations", "app", "default", "*create_widgets.down.sql"))
+}

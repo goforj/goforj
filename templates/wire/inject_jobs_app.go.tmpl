@@ -1,26 +1,26 @@
+// App-owned Wire injector. EDIT THIS FILE.
+// Add application job providers here, or use `forj make:job`.
+
 package wire
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"{{.GoModuleName}}/internal/jobs"
-	{{- if and .Components.DemoApp .Components.Jobs }}
+{{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
-	"{{.GoModuleName}}/internal/notification"
-	{{- end }}
+{{- end }}
 )
 
-// jobAppSet is a wire set that contains application-level jobs.
-var jobAppSet = wire.NewSet(
+// appJobSet is a wire set that contains application-level jobs.
+var appJobSet = wire.NewSet(
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	alerts.NewDispatchJob,
+	{{- end }}
 	jobs.NewExampleHelloJob,
 	jobs.NewExampleHelloJobCmd,
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	notification.NewManager,
-	alerts.NewDispatchJob,
 	monitoring.NewCheckService,
 	monitoring.NewMonitorCheckJob,
-	{{- end }}
-	{{- if and .Components.Jobs .Components.StressTest }}
-	jobs.NewStressJob,
 	{{- end }}
 )

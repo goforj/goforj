@@ -2,20 +2,25 @@ package build
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/web/webindex"
 )
 
 const noChangesStatus = "no changes"
 
 type apiIndexPaths struct {
-	root        string
-	out         string
-	diagnostics string
-	openAPI     string
+	root             string
+	appName          string
+	out              string
+	diagnostics      string
+	openAPI          string
+	routeComposition string
 }
 
 type fileSnapshot struct {
@@ -33,7 +38,7 @@ func NewAPIIndexRunner(appLogger *logger.AppLogger) *APIIndexRunner {
 }
 
 func (r *APIIndexRunner) Run(root string, out string, diagnostics string, openAPI string, emitLog bool) error {
-	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI)
+	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI, "", "")
 	if err != nil {
 		return err
 	}
@@ -56,11 +61,22 @@ func (r *APIIndexRunner) RunDefaultWithStatus() (string, error) {
 		}
 		return "", nil
 	}
-	return r.runDefaultWithStatus(".", "build/api_index.json", "build/api_index.diagnostics.json", "build/openapi.json")
+	target := activeApp()
+	paths := defaultAPIIndexPaths(target)
+	routeComposition, err := existingRouteCompositionPath(target, paths.routeComposition)
+	if err != nil {
+		return "", err
+	}
+	paths.routeComposition = routeComposition
+	if paths.routeComposition == "" {
+		return apiIndexStatus(paths.appName, "no route composition"), nil
+	}
+	paths.root = "."
+	return r.runDefaultWithStatus(paths)
 }
 
-func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnostics string, openAPI string) (string, error) {
-	paths, err := resolveAPIIndexPaths(root, out, diagnostics, openAPI)
+func (r *APIIndexRunner) runDefaultWithStatus(paths apiIndexPaths) (string, error) {
+	paths, err := resolveAPIIndexPaths(paths.root, paths.out, paths.diagnostics, paths.openAPI, paths.routeComposition, paths.appName)
 	if err != nil {
 		return "", err
 	}
@@ -76,35 +92,180 @@ func (r *APIIndexRunner) runDefaultWithStatus(root string, out string, diagnosti
 		return "", err
 	}
 	if before.equal(after) {
-		return noChangesStatus, nil
+		return apiIndexStatus(paths.appName, noChangesStatus), nil
 	}
-	return "", nil
+	return apiIndexStatus(paths.appName, ""), nil
 }
 
-func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI string) (apiIndexPaths, error) {
+func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI string, routeComposition string, appName string) (apiIndexPaths, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return apiIndexPaths{}, err
 	}
+	if appName == "" {
+		appName = project.DefaultAppName
+	}
 	return apiIndexPaths{
-		root:        absRoot,
-		out:         out,
-		diagnostics: diagnostics,
-		openAPI:     openAPI,
+		root:             absRoot,
+		appName:          appName,
+		out:              out,
+		diagnostics:      diagnostics,
+		openAPI:          openAPI,
+		routeComposition: routeComposition,
 	}, nil
 }
 
 func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (webindex.Manifest, error) {
-	return webindex.Run(context.Background(), webindex.IndexOptions{
-		Root:            paths.root,
-		OutPath:         paths.out,
-		DiagnosticsPath: paths.diagnostics,
-		OpenAPIPath:     paths.openAPI,
+	sourceRoot, cleanup, err := stageAPIIndexSource(paths.root)
+	if err != nil {
+		return webindex.Manifest{}, err
+	}
+	defer cleanup()
+
+	options := webindex.IndexOptions{
+		Root:                 sourceRoot,
+		OutPath:              paths.out,
+		DiagnosticsPath:      paths.diagnostics,
+		OpenAPIPath:          paths.openAPI,
+		RouteCompositionPath: stagedRouteCompositionPath(paths.root, paths.routeComposition),
+	}
+	return webindex.Run(context.Background(), options)
+}
+
+// stageAPIIndexSource keeps runtime data outside webindex without teaching the web package GoForj layout.
+func stageAPIIndexSource(root string) (string, func(), error) {
+	stage, err := os.MkdirTemp("", "forj-api-index-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(stage) }
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			cleanup()
+			return walkErr
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if shouldSkipAPIIndexSourceDir(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !shouldStageAPIIndexFile(path, name) {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		return stageAPIIndexFile(path, filepath.Join(stage, rel))
 	})
+	if err != nil {
+		return "", func() {}, err
+	}
+	return stage, cleanup, nil
+}
+
+func shouldSkipAPIIndexSourceDir(name string) bool {
+	switch name {
+	case ".git", "vendor", "node_modules", ".cache", "tmp", "_data", "bin":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldStageAPIIndexFile(path string, name string) bool {
+	if name == ".env" {
+		return true
+	}
+	if !strings.HasSuffix(name, ".go") {
+		return false
+	}
+	return !strings.Contains(filepath.ToSlash(path), "/templates/")
+}
+
+func stageAPIIndexFile(src string, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func stagedRouteCompositionPath(root string, routeComposition string) string {
+	if routeComposition == "" || !filepath.IsAbs(routeComposition) {
+		return routeComposition
+	}
+	rel, err := filepath.Rel(root, routeComposition)
+	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return routeComposition
+	}
+	return rel
+}
+
+func defaultAPIIndexPaths(target project.App) apiIndexPaths {
+	if target.Name == "" || target.Name == project.DefaultAppName {
+		return apiIndexPaths{
+			appName:          project.DefaultAppName,
+			out:              "build/api_index.json",
+			diagnostics:      "build/api_index.diagnostics.json",
+			openAPI:          "build/openapi.json",
+			routeComposition: filepath.Join("app", "routes.go"),
+		}
+	}
+	buildDir := filepath.Join("build", target.Name)
+	return apiIndexPaths{
+		appName:          target.Name,
+		out:              filepath.Join(buildDir, "api_index.json"),
+		diagnostics:      filepath.Join(buildDir, "api_index.diagnostics.json"),
+		openAPI:          filepath.Join(buildDir, "openapi.json"),
+		routeComposition: filepath.Join(target.AppDir, "routes.go"),
+	}
+}
+
+// apiIndexStatus keeps timing output explicit about which App produced OpenAPI artifacts.
+func apiIndexStatus(appName string, status string) string {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		appName = project.DefaultAppName
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "app " + appName
+	}
+	return "app " + appName + ", " + status
+}
+
+func existingRouteCompositionPath(target project.App, routeComposition string) (string, error) {
+	if routeComposition == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(routeComposition); err != nil {
+		return "", nil
+	}
+	return routeComposition, nil
 }
 
 func (r *APIIndexRunner) logManifestSummary(manifest webindex.Manifest, paths apiIndexPaths) {
 	r.logger.Info().
+		Str("app", paths.appName).
 		Any("operations", len(manifest.Operations)).
 		Any("schemas", len(manifest.Schemas)).
 		Any("diagnostics", len(manifest.Diagnostics)).

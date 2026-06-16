@@ -110,7 +110,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { LoaderCircle } from 'lucide-vue-next'
 import { registerWithPassword } from '@/lib/auth'
 import { passwordRequirementsText } from '@/lib/password-policy'
-import logoMark from '@/assets/goforj-v7.png'
+import logoMark from '@/assets/goforj-logo.png'
 import Button from '@/components/ui/button/Button.vue'
 import Input from '@/components/ui/input/Input.vue'
 import Label from '@/components/ui/label/Label.vue'
@@ -140,7 +140,7 @@ async function submit() {
     const result = await registerWithPassword(displayName.value, email.value, password.value)
     if (result.requires_email_verification) {
       successMessage.value = 'Check your email to verify your account before logging in.'
-      if (result.verification_token && import.meta.env.APP_ENV === 'local') {
+      if (result.verification_token && import.meta.env.VITE_APP_ENV === 'local') {
         verificationLink.value = `/verify-email?token=${encodeURIComponent(result.verification_token)}`
       }
       displayName.value = ''

@@ -186,9 +186,6 @@ func TestPRRenderProfileIncludesCriticalInteractions(t *testing.T) {
 	requireRenderCombo(t, combos, "scheduler jobs", func(c project.Components) bool {
 		return c.Scheduler && c.Jobs
 	})
-	requireRenderCombo(t, combos, "jobs stress", func(c project.Components) bool {
-		return c.Jobs && c.StressTest
-	})
 	requireRenderCombo(t, combos, "metrics observability grafana", func(c project.Components) bool {
 		return c.Metrics && c.Observability && c.Grafana
 	})

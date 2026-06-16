@@ -8,7 +8,7 @@ import (
 type Cmd struct {
 	runtime *Runtime
 {{- if .Components.Metrics }}
-	MetricsPort    string `help:"Port for the dedicated scheduler metrics endpoint" env:"METRICS_SCHEDULER_PORT" default:"9102" optional:""`
+	MetricsPort    string `help:"Port for the dedicated scheduler metrics endpoint" optional:""`
 {{- end }}
 }
 

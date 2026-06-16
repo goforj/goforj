@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 var healthStatusOKJSON = []byte(`{"status":"ok"}`)
@@ -116,7 +117,8 @@ func readinessPayload(statusCode int, includeChecks bool, checks []readinessChec
 		status = "not_ready"
 	}
 	payload := map[string]any{
-		"status": status,
+		"status":     status,
+		"app": runtime.CurrentApp().Name,
 	}
 	if includeChecks {
 		if checks == nil {

@@ -74,7 +74,7 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { LoaderCircle } from 'lucide-vue-next'
 import { requestPasswordReset } from '@/lib/auth'
-import logoMark from '@/assets/goforj-v7.png'
+import logoMark from '@/assets/goforj-logo.png'
 import Button from '@/components/ui/button/Button.vue'
 import Input from '@/components/ui/input/Input.vue'
 import Label from '@/components/ui/label/Label.vue'
@@ -85,7 +85,7 @@ const submitted = ref(false)
 const successMessage = ref('')
 const errorMessage = ref('')
 const resetLink = ref('')
-const showLocalResetLink = computed(() => import.meta.env.APP_ENV === 'local' && Boolean(resetLink.value))
+const showLocalResetLink = computed(() => import.meta.env.VITE_APP_ENV === 'local' && Boolean(resetLink.value))
 
 async function submit() {
   submitting.value = true

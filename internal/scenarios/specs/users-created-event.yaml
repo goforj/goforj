@@ -9,6 +9,9 @@ app:
   components:
     web_api: true
 markdown:
+  path_position: 4
+  path_total: 7
+  estimated_minutes: 25
   intro: |
     This scenario extends the user profile flow with a `POST /api/v1/users` endpoint that publishes a typed `users.created` event after a user is saved.
 
@@ -18,7 +21,7 @@ markdown:
     - "`internal/events.UserCreated` defines the typed event."
     - "`UserService` publishes through a small application boundary."
     - "`notifications.Subscribers` reacts to `users.created`."
-    - "`internal/app/lifecycle_registry.go` registers and closes the subscription."
+    - "`app/lifecycle.go` registers and closes the subscription."
     - "A service test proves the event is published without starting the App runtime."
   prerequisites: |
     Complete [Cached User Profile](/scenarios/cached-user-profile) first.
@@ -42,8 +45,8 @@ markdown:
     - internal/users/controller.go
     - internal/notifications/service.go
     - internal/notifications/subscribers.go
-    - internal/app/lifecycle_registry.go
-    - wire/inject_app_services.go
+    - app/lifecycle.go
+    - app/wire/inject_services_app.go
   file_groups:
     - title: Configuration
       files:
@@ -64,8 +67,8 @@ markdown:
         - internal/notifications/subscribers.go
     - title: Lifecycle and wiring
       files:
-        - internal/app/lifecycle_registry.go
-        - wire/inject_app_services.go
+        - app/lifecycle.go
+        - app/wire/inject_services_app.go
   generated_files:
     intro: "The event generator may update generated event manager files."
     files:
@@ -451,11 +454,11 @@ steps:
 
   - title: Register Subscribers In The Lifecycle
     explain: |
-      Update `internal/app/lifecycle_registry.go`.
+      Update `app/lifecycle.go`.
 
       This keeps subscriber registration in the App lifecycle, not in `init`, package globals, or controller constructors.
     write:
-      path: internal/app/lifecycle_registry.go
+      path: app/lifecycle.go
       language: go
       content: |
         package app
@@ -464,6 +467,7 @@ steps:
                 "context"
 
                 "{{module}}/internal/events"
+                "{{module}}/internal/runtime"
                 "{{module}}/internal/notifications"
         )
 
@@ -483,8 +487,8 @@ steps:
                 }
         }
 
-        func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
-                lifecycle.On(Startup, func(ctx context.Context) error {
+        func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
+                lifecycle.On(runtime.Startup, func(ctx context.Context) error {
                         subscription, err := r.notificationSubscribers.Register(ctx, r.eventManager.Default())
                         if err != nil {
                                 return err
@@ -572,11 +576,11 @@ steps:
                 return ctx.JSON(http.StatusCreated, user)
         }
 
-  - title: Wire The Event Boundary And Subscriber
+  - title: Wire the Event Boundary and Subscriber
     explain: |
       Add the event publisher and notification subscriber providers.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 "{{module}}/internal/makecmd"
@@ -588,7 +592,7 @@ steps:
     explain: |
       `provideEventBus` exposes the generated default event bus to the application publisher.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 users.NewService,
@@ -604,7 +608,7 @@ steps:
     explain: |
       Wire can now satisfy `users.NewUserEventPublisher`.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {

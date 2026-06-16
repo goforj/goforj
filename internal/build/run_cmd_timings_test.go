@@ -13,8 +13,8 @@ import (
 func TestRunCmdWithTimingsPrintsStepDurations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":  "module example.com/test\n\ngo 1.24\n",
-		"main.go": "package main\nfunc main() {}\n",
+		"go.mod":          "module example.com/test\n\ngo 1.24\n",
+		"cmd/app/main.go": "package main\nfunc main() {}\n",
 	}
 	for rel, contents := range files {
 		abs := filepath.Join(root, rel)
@@ -58,7 +58,7 @@ func TestRunCmdWithTimingsPrintsStepDurations(t *testing.T) {
 		"forj run wire:",
 		"forj run generate:",
 		"forj run build:api-index:",
-		"forj run go run .:",
+		"forj run go run ./cmd/app:",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected timings output to contain %q, got %q", expected, output)

@@ -37,7 +37,7 @@ func NewQueueCmd() *QueueCmd {
 
 // Signature defines CLI metadata for this command.
 func (*QueueCmd) Signature() string {
-	return `name:"make:queue" help:"Create a named queue" goforj:"skip_boot"`
+	return `name:"make:queue" help:"Create a named queue" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.
@@ -212,7 +212,7 @@ func queueResourceEnvKey(name string) string {
 
 // validateQueueResourceName validates the App-facing queue resource name.
 func validateQueueResourceName(value string) error {
-	if strings.TrimSpace(value) == "" {
+	if str.Of(value).TrimSpace().IsBlank() {
 		return fmt.Errorf("queue name is required")
 	}
 	if queueResourceEnvKey(value) == "" {
@@ -223,7 +223,7 @@ func validateQueueResourceName(value string) error {
 
 // validateQueueBackendName validates the backend queue name.
 func validateQueueBackendName(value string) error {
-	if strings.TrimSpace(value) == "" {
+	if str.Of(value).TrimSpace().IsBlank() {
 		return fmt.Errorf("backend queue name is required")
 	}
 	return nil

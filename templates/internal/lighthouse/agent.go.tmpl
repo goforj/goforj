@@ -2,7 +2,6 @@ package lighthouse
 
 import (
 	"context"
-	"sync/atomic"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -11,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"encoding/json"
@@ -25,6 +25,7 @@ type AgentConfig struct {
 	URL          string
 	Secret       string
 	Source       string
+	Project      string
 	App          string
 	Version      string
 	Env          string
@@ -49,8 +50,8 @@ var errAgentNotConnected = errors.New("lighthouse agent not connected")
 // NewAgent creates a new agent instance.
 func NewAgent(config AgentConfig) *Agent {
 	return &Agent{
-		config:   config,
-		commands: map[string]CommandHandler{},
+		config:    config,
+		commands:  map[string]CommandHandler{},
 		startedAt: time.Now(),
 	}
 }
@@ -83,6 +84,9 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	if host := strings.TrimSpace(a.config.Host); host != "" {
 		header.Set("X-Forj-Agent-Host", host)
+	}
+	if app := strings.TrimSpace(a.config.App); app != "" {
+		header.Set("X-Forj-App", app)
 	}
 	header.Set("X-Forj-Agent-Pid", fmt.Sprintf("%d", os.Getpid()))
 	authWarned := false
@@ -222,9 +226,10 @@ func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
 
 // register sends the agent metadata to the control plane.
 func (a *Agent) register() error {
-	payload, err := json.Marshal(AgentInfo{
+	info := normalizeAgentInfo(AgentInfo{
 		ID:           uuid.NewString(),
 		Source:       a.config.Source,
+		Project:      a.config.Project,
 		App:          a.config.App,
 		Version:      a.config.Version,
 		Env:          a.config.Env,
@@ -234,6 +239,7 @@ func (a *Agent) register() error {
 		Host:         a.config.Host,
 		StartedAt:    a.startedAt,
 	})
+	payload, err := json.Marshal(info)
 	if err != nil {
 		return err
 	}
@@ -255,7 +261,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 			return
 		case <-ticker.C:
 			payload, _ := json.Marshal(map[string]any{
-				"uptime":    time.Now().Unix(),
+				"uptime":     time.Now().Unix(),
 				"started_at": a.startedAt,
 			})
 			_ = a.write(Message{
@@ -398,13 +404,22 @@ func LoadAgentConfig(source string) AgentConfig {
 		URL:          url,
 		Secret:       SharedSecretFromEnv(),
 		Source:       source,
-		App:          os.Getenv("APP_NAME"),
+		Project:      os.Getenv("APP_NAME"),
+		App:          appNameFromEnv(),
 		Version:      os.Getenv("APP_VERSION"),
 		Env:          os.Getenv("APP_ENV"),
 		InstanceID:   os.Getenv("APP_INSTANCE_ID"),
 		InstanceKind: os.Getenv("APP_INSTANCE_KIND"),
 		Host:         host,
 	}
+}
+
+// appNameFromEnv identifies the generated app for Lighthouse agent registration.
+func appNameFromEnv() string {
+	if app := strings.TrimSpace(os.Getenv("FORJ_APP")); app != "" {
+		return app
+	}
+	return "app"
 }
 
 func SharedSecretFromEnv() string {

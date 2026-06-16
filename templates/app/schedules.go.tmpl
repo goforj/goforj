@@ -1,0 +1,80 @@
+package {{.AppPackageName}}
+
+import (
+{{- if and .Components.DemoApp .Components.Jobs }}
+	"github.com/goforj/env/v2"
+{{- end }}
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+{{- end }}
+{{- if or (and .Components.DemoApp .Components.HasDatabase) (and .Components.DemoApp .Components.Jobs) }}
+	"{{.GoModuleName}}/internal/monitoring"
+{{- end }}
+	"{{.GoModuleName}}/internal/schedules"
+)
+
+// ScheduleRegistry registers scheduled work for this app.
+//
+// This file is render-once and intended for app customization.
+type ScheduleRegistry struct {
+	appSchedules *schedules.AppSchedules
+{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService
+{{- end }}
+{{- if and .Components.DemoApp .Components.Jobs }}
+	monitorCheckJob *monitoring.MonitorCheckJob
+{{- end }}
+}
+
+// NewScheduleRegistry constructs the schedule registry and can accept injected deps.
+func NewScheduleRegistry(
+	appSchedules *schedules.AppSchedules,
+{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service,
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService,
+{{- end }}
+{{- if and .Components.DemoApp .Components.Jobs }}
+	monitorCheckJob *monitoring.MonitorCheckJob,
+{{- end }}
+) *ScheduleRegistry {
+	return &ScheduleRegistry{
+		appSchedules: appSchedules,
+{{- if and .Components.Auth .Components.HasDatabase }}
+		authService: authService,
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+		retentionService: retentionService,
+{{- end }}
+{{- if and .Components.DemoApp .Components.Jobs }}
+		monitorCheckJob: monitorCheckJob,
+{{- end }}
+	}
+}
+
+// Register attaches app schedules to the scheduler.
+func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
+	if err := r.appSchedules.Register(s); err != nil {
+		return err
+	}
+{{- if and .Components.Auth .Components.HasDatabase }}
+	s.DailyAt("04:11").Name("auth:sessions:cleanup").Do(s.InspectTask("auth:sessions:cleanup", r.authService.Cleanup))
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.InspectTask("monitor:retention", r.retentionService.RunScheduled))
+{{- end }}
+{{- if and .Components.DemoApp .Components.Jobs }}
+	pollIntervalSeconds := env.GetInt("MONITOR_POLL_INTERVAL_SECONDS", "30")
+	if pollIntervalSeconds <= 0 {
+		pollIntervalSeconds = 30
+	}
+	s.Every(pollIntervalSeconds).Seconds().Name("monitor:poll").Do(s.InspectTask("monitor:poll", r.monitorCheckJob.RunScheduledPoll))
+	// This pings the synthetic push monitor trigger, useful for validating push checks.
+	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.InspectTask("monitor:push-test-trigger", r.monitorCheckJob.RunScheduledPushTrigger))
+{{- end }}
+	return nil
+}

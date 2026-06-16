@@ -1,0 +1,47 @@
+package {{.AppPackageName}}
+
+import (
+	"github.com/goforj/web"
+	{{if and .Components.Auth .Components.HasDatabase}}"{{.GoModuleName}}/internal/auth"{{end}}
+	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/appsettings"{{end}}
+	"{{.GoModuleName}}/internal/hello"
+	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/monitoring"{{end}}
+	"slices"
+)
+
+// ProvideRoutes provides route groups for the HTTP server.
+func ProvideRoutes(
+	{{if and .Components.Auth .Components.HasDatabase}}authController *auth.Controller,{{end}}
+	helloController *hello.Controller,
+	{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController *appsettings.Controller,{{end}}
+	{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController *monitoring.Controller,{{end}}
+	{{if and .Components.Auth .Components.HasDatabase}}authService *auth.Service,{{end}}
+) []web.RouteGroup {
+	{{- if and .Components.Auth .Components.HasDatabase}}
+	publicRoutes := slices.Concat(
+		authController.Routes(),
+		{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController.PublicRoutes(),{{end}}
+	)
+	protectedRoutes := slices.Concat(
+		helloController.Routes(),
+		{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController.Routes(),{{end}}
+		{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController.ProtectedRoutes(),{{end}}
+	)
+
+	return []web.RouteGroup{
+		web.NewRouteGroup("/api/v1", publicRoutes),
+		web.NewRouteGroup("/api/v1", protectedRoutes, authService.RequireAuth),
+	}
+	{{- else}}
+	publicRoutes := slices.Concat(
+		helloController.Routes(),
+		{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController.Routes(),{{end}}
+		{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController.PublicRoutes(),{{end}}
+		{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController.ProtectedRoutes(),{{end}}
+	)
+
+	return []web.RouteGroup{
+		web.NewRouteGroup("/api/v1", publicRoutes),
+	}
+	{{- end}}
+}

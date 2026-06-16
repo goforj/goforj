@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,10 +20,38 @@ func TestRunCmdRunArgsDefaultsToCurrentPackage(t *testing.T) {
 	}
 }
 
+func TestRunCmdRunArgsDefaultsToCmdAppWhenPresent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/app: %v", err)
+	}
+	cmd := &RunCmd{Root: root}
+	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/app"}) {
+		t.Fatalf("expected default run args to target cmd/app, got %#v", got)
+	}
+}
+
+func TestRunCmdRunArgsUseActiveConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "reporting"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/reporting: %v", err)
+	}
+	t.Setenv("FORJ_APP", "reporting")
+
+	cmd := &RunCmd{Root: root}
+	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {
+		t.Fatalf("expected run args to target cmd/reporting, got %#v", got)
+	}
+}
+
 func TestRunCmdRunArgsPassesAppArgsAfterCurrentPackage(t *testing.T) {
-	cmd := &RunCmd{Args: []string{"run", "--port", "4000"}}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{".", "run", "--port", "4000"}) {
-		t.Fatalf("expected app args after current package, got %#v", got)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/app: %v", err)
+	}
+	cmd := &RunCmd{Root: root, Args: []string{"run", "--port", "4000"}}
+	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/app", "run", "--port", "4000"}) {
+		t.Fatalf("expected app args after cmd/app package, got %#v", got)
 	}
 }
 

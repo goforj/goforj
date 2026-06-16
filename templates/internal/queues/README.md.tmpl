@@ -35,6 +35,17 @@ The default queue is available from app.Queue(). Named queues are available from
 
 Named generated accessors such as app.Queues().Critical() do not return errors. They represent generated configuration invariants from the env state present when forj generate --queue last ran. If one of those accessors is missing at runtime, the generated code and the current env configuration are out of sync, so the accessor fails fast.
 
+## Apps
+
+Queue names in app code and `.env` are logical names.
+
+The default `app` app keeps those names unchanged. Named Apps automatically prefix the physical backend queue name with the app name:
+
+- `default` in the `billing` app becomes `billing_default`
+- `reports` in the `billing` app becomes `billing_reports`
+
+This lets multiple Apps share the same Redis, RabbitMQ, NATS, SQS, or SQL queue backend without workers consuming each other's jobs. Do not add a separate queue namespace env var for normal app isolation; the App is the namespace.
+
 `QUEUE_SUPPORTED_DRIVERS` controls which queue drivers are generated into the app at compile time. `QUEUE_DRIVER` and `QUEUE_<NAME>_DRIVER` still choose which enabled driver each queue instance uses at runtime.
 
 This is useful when an app owner wants to build and distribute one app binary that can run in different environments. For example, you may want an in-process workerpool queue for development, but Redis in production. Enabling both in `QUEUE_SUPPORTED_DRIVERS` lets the generated app compile with both backends available, while deployment env still decides which one is active.

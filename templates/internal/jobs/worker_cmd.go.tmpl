@@ -9,7 +9,7 @@ type WorkerCmd struct {
 	runtime *Runtime
 	Queues  []string `name:"queue" short:"q" help:"Queue name to work; repeat to work multiple queues" optional:""`
 {{- if .Components.Metrics }}
-	MetricsPort    string `help:"Port for the dedicated jobs metrics endpoint" env:"METRICS_JOBS_PORT" default:"9101" optional:""`
+	MetricsPort    string `help:"Port for the dedicated jobs metrics endpoint" optional:""`
 {{- end }}
 }
 

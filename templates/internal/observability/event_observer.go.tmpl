@@ -1,0 +1,131 @@
+package observability
+
+import (
+	"context"
+
+	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/inspects"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+// EventObserver records event bus activity through the configured observability sinks.
+func EventObserver(
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) events.Observer {
+	return eventObserver{
+		inspects: inspectManager,
+{{- if .Components.Metrics }}
+		metrics: metricsManager,
+{{- end }}
+	}
+}
+
+type eventObserver struct {
+	inspects *inspects.Manager
+{{- if .Components.Metrics }}
+	metrics *metrics.Manager
+{{- end }}
+}
+
+// OnEventPublish records published event outcomes in inspect and metric sinks.
+func (o eventObserver) OnEventPublish(ctx context.Context, event events.EventPublishEvent) {
+	o.inspects.RecordEventPublish(ctx, inspects.EventPublishInspectEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
+{{- if .Components.Metrics }}
+	o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
+{{- end }}
+}
+
+// OnEventSubscribe records subscription registration outcomes in inspect and metric sinks.
+func (o eventObserver) OnEventSubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
+	o.inspects.RecordEventSubscribe(ctx, inspects.EventSubscriptionInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+		Err:     event.Err,
+	})
+{{- if .Components.Metrics }}
+	o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+		Err:     event.Err,
+	})
+{{- end }}
+}
+
+// OnEventUnsubscribe records subscription removal outcomes in inspect and metric sinks.
+func (o eventObserver) OnEventUnsubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
+	o.inspects.RecordEventUnsubscribe(ctx, inspects.EventSubscriptionInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
+{{- if .Components.Metrics }}
+	o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
+{{- end }}
+}
+
+// OnEventDeliveryStart records the start of event handler delivery.
+func (o eventObserver) OnEventDeliveryStart(ctx context.Context, event events.EventDeliveryEvent) {
+	o.inspects.RecordEventDeliveryStart(ctx, inspects.EventDeliveryInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
+{{- if .Components.Metrics }}
+	o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
+{{- end }}
+}
+
+// OnEventDeliveryFinish records completed event handler delivery.
+func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, event events.EventDeliveryEvent) {
+	o.inspects.RecordEventDeliveryFinish(ctx, inspects.EventDeliveryInspectEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Handler:  event.Handler,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
+{{- if .Components.Metrics }}
+	o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Handler:  event.Handler,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
+{{- end }}
+}

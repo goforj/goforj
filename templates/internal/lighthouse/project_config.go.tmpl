@@ -30,6 +30,9 @@ type DevConfig struct {
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
+// DefaultAppName is the implicit single-app name.
+const DefaultAppName = "app"
+
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
@@ -46,10 +49,10 @@ type ProjectConfig struct {
 	Render       RenderConfig `yaml:"render" json:"render"`
 
 	// temporary
-	AppKey          string `yaml:"-" json:"-"`
-	AppDiagToken    string `yaml:"-" json:"-"`
+	AppKey           string `yaml:"-" json:"-"`
+	AppDiagToken     string `yaml:"-" json:"-"`
 	LighthouseSecret string `yaml:"-" json:"-"`
-	JWTSecretKey    string `yaml:"-" json:"-"`
+	JWTSecretKey     string `yaml:"-" json:"-"`
 }
 
 // Config is the preferred name for project configuration.
@@ -70,7 +73,6 @@ type Components struct {
 	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
-	StressTest       bool `yaml:"stress_test" json:"stress_test"`
 }
 
 // HasDatabase reports whether any database component is enabled.
@@ -123,8 +125,16 @@ func LoadProjectConfig() (*Config, error) {
 		return nil, err
 	}
 	if len(config.Dev.WirePaths) == 0 {
-		config.Dev.WirePaths = []string{"wire"}
+		config.Dev.WirePaths = []string{defaultWireDir()}
 	}
 
 	return config, nil
+}
+
+// defaultWireDir keeps Lighthouse pointed at app/wire while old projects still use root wire.
+func defaultWireDir() string {
+	if info, err := os.Stat("app/wire"); err == nil && info.IsDir() {
+		return "app/wire"
+	}
+	return "wire"
 }

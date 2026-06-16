@@ -28,19 +28,19 @@ import (
 type HTTPLiveProfileCmd struct {
 	logger *logger.AppLogger
 
-	ServerStack string `help:"Server stack to benchmark: rendered, rawnethttp, rawdirect, or echonative" default:"rendered" enum:"rendered,rawnethttp,rawdirect,echonative"`
-	DurationMS  int    `help:"Measured benchmark duration in milliseconds" default:"15000"`
-	Concurrency int    `help:"HTTP benchmark concurrency" default:"8"`
-	Path        string `help:"Benchmark HTTP path" default:"/-/health"`
-	ProfileSecs int    `help:"CPU profile seconds; defaults to the full warmup+measure window" default:"0"`
-	Top         int    `help:"Top pprof entries to print per profile" default:"20"`
-	HTTPCORS    bool   `help:"Enable HTTP CORS middleware in the rendered server" default:"true"`
-	HTTPAccessLogs bool `help:"Enable HTTP access logs in the rendered server" default:"true"`
-	InspectEnabled bool `help:"Enable inspect capture in the rendered server" default:"true"`
-	MetricsEnabled bool `help:"Enable HTTP metrics middleware in the rendered server" default:"true"`
-	HealthMode  string `help:"Health response mode: json, text, or nocontent" default:"json" enum:"json,text,nocontent"`
-	Keep        bool   `help:"Keep the rendered temp project after completion" short:"k"`
-	Silent      bool   `help:"Suppress command progress output" short:"s"`
+	ServerStack    string `help:"Server stack to benchmark: rendered, rawnethttp, rawdirect, or echonative" default:"rendered" enum:"rendered,rawnethttp,rawdirect,echonative"`
+	DurationMS     int    `help:"Measured benchmark duration in milliseconds" default:"15000"`
+	Concurrency    int    `help:"HTTP benchmark concurrency" default:"8"`
+	Path           string `help:"Benchmark HTTP path" default:"/-/health"`
+	ProfileSecs    int    `help:"CPU profile seconds; defaults to the full warmup+measure window" default:"0"`
+	Top            int    `help:"Top pprof entries to print per profile" default:"20"`
+	HTTPCORS       bool   `help:"Enable HTTP CORS middleware in the rendered server" default:"true"`
+	HTTPAccessLogs bool   `help:"Enable HTTP access logs in the rendered server" default:"true"`
+	InspectEnabled bool   `help:"Enable inspect capture in the rendered server" default:"true"`
+	MetricsEnabled bool   `help:"Enable HTTP metrics middleware in the rendered server" default:"true"`
+	HealthMode     string `help:"Health response mode: json, text, or nocontent" default:"json" enum:"json,text,nocontent"`
+	Keep           bool   `help:"Keep the rendered temp project after completion" short:"k"`
+	Silent         bool   `help:"Suppress command progress output" short:"s"`
 }
 
 type httpLiveProfileResult struct {
@@ -95,7 +95,21 @@ func (cmd *HTTPLiveProfileCmd) Run() error {
 		defer os.RemoveAll(dir)
 	}
 
-	binPath := filepath.Join(dir, "app")
+	binDir := dir
+	if strings.HasPrefix(filepath.Clean(dir), string(filepath.Separator)+"tmp") {
+		cacheDir, cacheErr := os.UserCacheDir()
+		if cacheErr != nil {
+			return fmt.Errorf("resolve executable cache dir: %w", cacheErr)
+		}
+		binDir, err = os.MkdirTemp(cacheDir, "forj_http_live_profile_bin_")
+		if err != nil {
+			return fmt.Errorf("create executable temp dir: %w", err)
+		}
+		if !cmd.Keep {
+			defer os.RemoveAll(binDir)
+		}
+	}
+	binPath := filepath.Join(binDir, "app")
 	if err := cmd.prepareHTTPProfileTarget(dir, modCache, buildCache, binPath); err != nil {
 		return err
 	}
@@ -269,7 +283,7 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir, modCache, buildCach
 	if err := cmd.writePprofSupport(dir); err != nil {
 		return err
 	}
-	return runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "."})
+	return runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "./cmd/app"})
 }
 
 func (cmd *HTTPLiveProfileCmd) httpProfileExecCommand(ctx context.Context, dir, binPath, httpPort, metricsPort, pprofAddr, baseURL string) (*exec.Cmd, error) {

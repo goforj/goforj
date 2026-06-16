@@ -14,11 +14,12 @@ import (
 
 // LogEntry represents a streamed log entry from an agent.
 type LogEntry struct {
-	Level   string         `json:"level"`
-	Message string         `json:"message"`
-	Source  string         `json:"source"`
-	Time    string         `json:"time"`
-	Fields  map[string]any `json:"fields,omitempty"`
+	Level     string         `json:"level"`
+	Message   string         `json:"message"`
+	Source    string         `json:"source"`
+	App       string         `json:"app,omitempty"`
+	Time      string         `json:"time"`
+	Fields    map[string]any `json:"fields,omitempty"`
 }
 
 type wireLogDedupe struct {
@@ -209,22 +210,24 @@ func NewLogSink(agent *Agent) logger.LogSink {
 		emitEntry, summary := dedupe.filter(entry)
 		if summary != nil {
 			agent.EmitLog(LogEntry{
-				Level:   summary.Level,
-				Message: summary.Message,
-				Source:  agent.config.Source,
-				Time:    summary.Time,
-				Fields:  summary.Fields,
+				Level:     summary.Level,
+				Message:   summary.Message,
+				Source:    agent.config.Source,
+				App:       agent.config.App,
+				Time:      summary.Time,
+				Fields:    summary.Fields,
 			})
 		}
 		if !emitEntry {
 			return
 		}
 		agent.EmitLog(LogEntry{
-			Level:   entry.Level,
-			Message: entry.Message,
-			Source:  agent.config.Source,
-			Time:    entry.Time,
-			Fields:  entry.Fields,
+			Level:     entry.Level,
+			Message:   entry.Message,
+			Source:    agent.config.Source,
+			App:       agent.config.App,
+			Time:      entry.Time,
+			Fields:    entry.Fields,
 		})
 	}
 }

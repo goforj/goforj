@@ -1,0 +1,38 @@
+package observability
+
+{{- if .Components.Mail }}
+import (
+	"context"
+
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/mail"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+// MailObserver records mail sends through the configured observability sinks.
+func MailObserver(
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) mail.Observer {
+	return mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
+		inspectManager.RecordMailEvent(ctx, inspects.MailSendInspectEvent{
+			Name:     event.Name,
+			Driver:   event.Driver,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+{{- if .Components.Metrics }}
+		metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{
+			Name:     event.Name,
+			Driver:   event.Driver,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+{{- end }}
+	})
+}
+{{- end }}

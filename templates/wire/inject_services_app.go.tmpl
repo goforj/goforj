@@ -1,0 +1,63 @@
+// App-owned Wire injector. EDIT THIS FILE.
+// Add app-wide application service providers here when they do not belong to a narrower injector.
+
+package wire
+
+import (
+	"github.com/goforj/wire"
+
+	"{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/internal/runtime"
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/appsettings"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/monitoring"
+{{- end }}
+	"{{.GoModuleName}}/internal/makecmd"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/notification"
+{{- end }}
+)
+
+// appSet is a wire set that provides application-level services and dependencies.
+var appSet = wire.NewSet(
+	{{.AppPackageName}}.NewLifecycleRegistry,
+	runtime.NewTimeouts,
+	makecmd.NewEventCmd,
+	makecmd.NewSubscriberCmd,
+{{- if .Components.Metrics }}
+	metrics.NewManager,
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitoring.NewIncidentTransitionService,
+	monitoring.NewRetentionService,
+	notification.NewManager,
+	preseedDemoDefaults,
+{{- end }}
+)
+
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+type demoPreseedReady struct{}
+
+func preseedDemoDefaults(
+	logger *logger.AppLogger,
+	settingRepo *appsettings.AppSettingRepo,
+	channelRepo *notification.ChannelRepo,
+) (*demoPreseedReady, error) {
+	setupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)
+	if inserted, err := settingRepo.PreseedDefaults(setupCtx); err != nil {
+		return nil, err
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
+	}
+	if inserted, err := channelRepo.PreseedDefaults(setupCtx); err != nil {
+		return nil, err
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("notification channels preseeded")
+	}
+	return &demoPreseedReady{}, nil
+}
+{{- end }}

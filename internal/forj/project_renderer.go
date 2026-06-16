@@ -3,11 +3,13 @@ package forj
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/coredeps"
+	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -18,8 +20,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -34,6 +40,7 @@ var (
 	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Bold(true)
 	nextStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	timingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("·")
 	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	boxBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -45,21 +52,38 @@ var (
 
 var templatesFS = templates.FS
 
-// Components represents the components of the project
+type wireGenerateError struct {
+	dir    string
+	output string
+	err    error
+	stale  bool
+}
+
+func (e *wireGenerateError) Error() string {
+	return fmt.Sprintf("wire generate %s: %v (%s)", e.dir, e.err, e.output)
+}
+
+func (e *wireGenerateError) Unwrap() error {
+	return e.err
+}
+
+// ComponentRenderInput controls whether rendering uses explicit components or the stored project config.
 type ComponentRenderInput struct {
 	components project.Components
 	renderAll  bool
 }
 
-// ProjectRenderer is well, a project renderer :)
+// ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
-	logger *logger.AppLogger
-	config *project.Config
-	stats  *renderStats
-	lines  []string
+	logger  *logger.AppLogger
+	config  *project.Config
+	stats   *renderStats
+	lines   []string
+	timings bool
 }
 
 type renderStats struct {
+	mu      sync.Mutex
 	created []string
 	skipped []string
 }
@@ -68,6 +92,8 @@ func (s *renderStats) recordCreated(path string) {
 	if path == "" {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.created = append(s.created, path)
 }
 
@@ -75,6 +101,8 @@ func (s *renderStats) recordSkipped(path string) {
 	if path == "" {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.skipped = append(s.skipped, path)
 }
 
@@ -85,7 +113,23 @@ type renderCounts struct {
 
 type templateRenderConfig struct {
 	*project.Config
-	Components project.Components
+	Components        project.Components
+	ProjectComponents project.Components
+	App               project.App
+	AppPackageName    string
+	AppImportPath     string
+	WireImportPath    string
+	AppIsDefault      bool
+	HasNamedApps      bool
+	RuntimeApps       []runtimeAppMetadata
+}
+
+type runtimeAppMetadata struct {
+	Name        string
+	Index       int
+	EnvPrefix   string
+	HTTPPort    int
+	RuntimeBase int
 }
 
 type templateMapping struct {
@@ -108,6 +152,8 @@ func mapTemplateTo(tmpl, dest string) templateMapping {
 }
 
 func (s *renderStats) counts() renderCounts {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return renderCounts{
 		created: len(s.created),
 		skipped: len(s.skipped),
@@ -124,6 +170,22 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 		line += fmt.Sprintf(" %s %d skipped", markSkip, skipped)
 	}
 	return line
+}
+
+func renderCountsLineWithTiming(title string, created, skipped int, unit string, elapsed time.Duration) string {
+	line := renderCountsLine(title, created, skipped, unit)
+	return appendRenderTiming(line, elapsed)
+}
+
+func formatRenderElapsed(elapsed time.Duration) string {
+	return formatDevElapsed(elapsed)
+}
+
+func appendRenderTiming(line string, elapsed time.Duration) string {
+	if elapsed <= 0 {
+		return line
+	}
+	return line + " " + markSkip + " " + timingStyle.Render(formatRenderElapsed(elapsed))
 }
 
 func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
@@ -207,6 +269,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			return err
 		}
 	}
+	if err := p.migrateAppOwnedWireFilenames(); err != nil {
+		return err
+	}
 
 	steps := []struct {
 		title               string
@@ -222,9 +287,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			action:  p.createGoMod,
 		},
 		{
-			title:     "Main File Rendering",
-			enabled:   input.renderAll,
-			templates: []string{"main.go.tmpl"},
+			title:   "Default App Rendering",
+			enabled: input.renderAll,
+			action: func() error {
+				return p.renderApp(project.DefaultApp())
+			},
 		},
 		{
 			title:   "Environment Files Initialization",
@@ -250,6 +317,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsForjMakeOpen := path == ".env" && !strings.Contains(text, "FORJ_MAKE_OPEN=")
 					needsForjEditor := path == ".env" && !strings.Contains(text, "FORJ_EDITOR=")
+					needsGrafanaPortDefault := false
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					needsJWTSecret := false
 
@@ -297,7 +365,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
 						needsJWTSecret = true
 					}
-					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsForjMakeOpen || needsForjEditor || needsKey || needsJWTSecret) {
+					if path == ".env" && p.config.Render.Components.Grafana {
+						lines, needsGrafanaPortDefault = migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
+					}
+					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsForjMakeOpen || needsForjEditor || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
 						return nil
 					}
 					if needsAppDiagToken && appDiagToken == "" {
@@ -465,19 +536,27 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_migration_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
-				"internal/app/lifecycle.go.tmpl",
-				"internal/app/lifecycle_test.go.tmpl",
-				"internal/app/runtime.go.tmpl",
-				"internal/app/source.go.tmpl",
-				"internal/app/runtime_host.go.tmpl",
-				"internal/app/runtime_host_test.go.tmpl",
-				"internal/app/timeouts.go.tmpl",
-				"internal/app/README.md.tmpl",
+				"internal/runtime/lifecycle.go.tmpl",
+				"internal/runtime/lifecycle_test.go.tmpl",
+				"internal/runtime/runtime.go.tmpl",
+				"internal/runtime/source.go.tmpl",
+				"internal/runtime/apps.go.tmpl",
+				"internal/runtime/apps_test.go.tmpl",
+				"internal/runtime/runtime_host.go.tmpl",
+				"internal/runtime/runtime_host_test.go.tmpl",
+				"internal/runtime/timeouts.go.tmpl",
+				"internal/runtime/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
 				"internal/storages/README.md.tmpl",
+				"internal/observability/cache_observer.go.tmpl",
+				"internal/observability/event_observer.go.tmpl",
+				"internal/observability/mail_observer.go.tmpl",
+				"internal/observability/queue_observer.go.tmpl",
+				"internal/observability/queue_observer_test.go.tmpl",
+				"internal/observability/storage_observer.go.tmpl",
 				"internal/console/console.go.tmpl",
-				"internal/app/about.go.tmpl",
-				"internal/app/discovery.go.tmpl",
+				"internal/runtime/about.go.tmpl",
+				"internal/runtime/discovery.go.tmpl",
 				"internal/cmd/about_cmd.go.tmpl",
 				"internal/cmd/about_cmd_test.go.tmpl",
 				"internal/cmd/about_grid.go.tmpl",
@@ -497,10 +576,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/default_launch_test.go.tmpl",
 				"internal/cmd/env_defaults.go.tmpl",
 				"internal/cmd/env_defaults_test.go.tmpl",
-				"internal/cmd/skip_boot.go.tmpl",
-				"internal/cmd/skip_boot_test.go.tmpl",
+				"internal/cmd/preboot.go.tmpl",
+				"internal/cmd/preboot_test.go.tmpl",
+				"internal/cmd/app_identity.go.tmpl",
 				"internal/cmd/run_cmd.go.tmpl",
-				"internal/cmd/root_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
 				"internal/logger/bench_test.go.tmpl",
 				"internal/logger/app_test.go.tmpl",
@@ -513,21 +592,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
 				"internal/lighthouse/project_config.go.tmpl",
-				"wire/app.go.tmpl",
-				"wire/app_test.go.tmpl",
-				"wire/inject_cache.go.tmpl",
-				"wire/inject_app_services.go.tmpl",
-				"wire/inject_cmd.go.tmpl",
-				"wire/inject_storage.go.tmpl",
-				"wire/wire.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
 				".db-relationships.yaml.tmpl",
-				"internal/cmd/app_commands.go.tmpl",
-				"internal/cmd/wire.go.tmpl",
-				"internal/app/lifecycle_registry.go.tmpl",
-				"wire/inject_event_subscribers.go.tmpl",
 			},
 			raw: []string{
 				"internal/makecmd/event.tmpl",
@@ -566,6 +634,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/lighthouse/conn_test.go.tmpl",
 				"internal/lighthouse/enable.go.tmpl",
 				"internal/lighthouse/hub.go.tmpl",
+				"internal/lighthouse/hub_test.go.tmpl",
 				"internal/lighthouse/inspects.go.tmpl",
 				"internal/lighthouse/inspects_test.go.tmpl",
 				"internal/lighthouse/log_hook.go.tmpl",
@@ -582,13 +651,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Web API Components Rendering",
 			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI,
 			templates: []string{
-				"wire/inject_http.go.tmpl",
 				"internal/http/lighthouse.go.tmpl",
 				"internal/http/README.md.tmpl",
 				"internal/http/cors.go.tmpl",
 				"internal/http/routes_list_cmd.go.tmpl",
 				"internal/http/health.go.tmpl",
 				"internal/http/health_test.go.tmpl",
+				"internal/http/inspect_child_event_test.go.tmpl",
 				"internal/http/inspects_bench_test.go.tmpl",
 				"internal/http/runtime_bench_test.go.tmpl",
 				"internal/http/server_test.go.tmpl",
@@ -604,9 +673,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_controller_cmd.go.tmpl",
 				"internal/makecmd/make_controller_cmd_test.go.tmpl",
 			},
-			renderOnceTemplates: []string{
-				"internal/router/routes_registry.go.tmpl",
-				"wire/inject_http_controllers.go.tmpl",
+			action: func() error {
+				if input.renderAll {
+					return nil
+				}
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_http.go.tmpl", "app/wire/inject_http.go"),
+				}); err != nil {
+					return err
+				}
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
+				})
 			},
 		},
 		{
@@ -615,6 +693,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: []string{},
 			renderOnceTemplates: []string{
 				"frontend/dist/index.html.tmpl",
+			},
+			action: func() error {
+				if input.renderAll {
+					return nil
+				}
+				if err := p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("frontend/dist/index.html.tmpl", appFrontendDistIndex(project.DefaultApp())),
+				}); err != nil {
+					return err
+				}
+				return p.ensureFrontendPlaceholderAssets(project.DefaultApp())
 			},
 		},
 		{
@@ -683,7 +772,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Render.Components.Mail,
 			templates: []string{
 				"internal/mail/README.md.tmpl",
-				"wire/inject_mail.go.tmpl",
 			},
 		},
 		{
@@ -703,16 +791,22 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/auth/service.go.tmpl",
 				"internal/auth/session.go.tmpl",
 				"internal/auth/user.go.tmpl",
-				"wire/inject_auth.go.tmpl",
 			},
 			action: func() error {
-				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplate("internal/router/routes_registry.go.tmpl"),
-					mapTemplate("wire/inject_http_controllers.go.tmpl"),
-				}); err != nil {
-					return err
+				if !input.renderAll {
+					if err := p.writeTemplateMappings([]templateMapping{
+						mapTemplate("app/routes.go.tmpl"),
+						mapTemplateTo("wire/inject_auth.go.tmpl", "app/wire/inject_auth.go"),
+					}); err != nil {
+						return err
+					}
+					if err := p.writeTemplateMappingsOnce([]templateMapping{
+						mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
+					}); err != nil {
+						return err
+					}
 				}
-				if err := p.writeTemplateMappingsOnce([]templateMapping{
+				return p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl"),
@@ -743,10 +837,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.down.sql.tmpl"),
-				}); err != nil {
-					return err
-				}
-				return nil
+				})
 			},
 		},
 		{
@@ -812,16 +903,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err := p.writeTemplatesUnder("demo/internal/migrations", "migrations", nil); err != nil {
 					return err
 				}
-
-				// Demo app evolves routing/controller wiring; force refresh on render.
-				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplate("internal/router/routes_registry.go.tmpl"),
-					mapTemplate("wire/inject_http_controllers.go.tmpl"),
-					mapTemplate("internal/cmd/app_commands.go.tmpl"),
-					mapTemplate("internal/cmd/wire.go.tmpl"),
-				}); err != nil {
-					return err
-				}
 				return nil
 			},
 		},
@@ -834,8 +915,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Database Components Rendering",
 			enabled: p.config.Render.Components.HasDatabase(),
 			templates: append([]string{
-				"wire/inject_db.go.tmpl",
-				"wire/inject_repositories.go.tmpl",
 				"internal/database/connections.go.tmpl",
 				"internal/database/fingerprinting.go.tmpl",
 				"internal/database/gorm_log_writer.go.tmpl",
@@ -855,7 +934,19 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			}()...),
 			raw: []string{"internal/makecmd/model.tmpl"},
 			action: func() error {
-				if err := p.writeTemplateMappings([]templateMapping{
+				if !input.renderAll {
+					if err := p.writeTemplateMappings([]templateMapping{
+						mapTemplateTo("wire/inject_db.go.tmpl", "app/wire/inject_db.go"),
+					}); err != nil {
+						return err
+					}
+					if err := p.writeTemplateMappingsOnce([]templateMapping{
+						mapTemplateTo("wire/inject_repositories_app.go.tmpl", "app/wire/inject_repositories_app.go"),
+					}); err != nil {
+						return err
+					}
+				}
+				return p.writeTemplateMappings([]templateMapping{
 					mapTemplate("migrations/migrations.go.tmpl"),
 					mapTemplate("migrations/migrations_test.go.tmpl"),
 					mapTemplate("migrations/migration_connection_test.go.tmpl"),
@@ -863,10 +954,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mapTemplate("migrations/migrate_cmd.go.tmpl"),
 					mapTemplate("migrations/migrate_rollback_cmd.go.tmpl"),
 					mapTemplate("migrations/.goforj/placeholder.txt.tmpl"),
-				}); err != nil {
-					return err
-				}
-				return nil
+				})
 			},
 		},
 		{
@@ -878,20 +966,29 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/schedules/scheduler.go.tmpl",
 				"internal/schedules/app_schedules.go.tmpl",
 				"internal/schedules/cmd.go.tmpl",
-				"internal/schedules/scheduler_registry.go.tmpl",
+				"internal/schedules/registration.go.tmpl",
 				"internal/makecmd/make_schedule_cmd.go.tmpl",
 				"internal/makecmd/make_schedule_cmd_test.go.tmpl",
-				"wire/inject_scheduler.go.tmpl",
 			},
-			renderOnceTemplates: []string{
-				"wire/inject_scheduler_schedules.go.tmpl",
+			action: func() error {
+				if input.renderAll {
+					return nil
+				}
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_scheduler.go.tmpl", "app/wire/inject_scheduler.go"),
+				}); err != nil {
+					return err
+				}
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_schedules_app.go.tmpl", "app/wire/inject_schedules_app.go"),
+				})
 			},
 			raw: []string{"internal/makecmd/schedule.tmpl"},
 		},
 		{
 			title:   "Job Components Rendering",
 			enabled: p.config.Render.Components.Jobs,
-			templates: append([]string{
+			templates: []string{
 				"internal/queues/README.md.tmpl",
 				"internal/jobs/example_hello_job.go.tmpl",
 				"internal/jobs/example_hello_job_cmd.go.tmpl",
@@ -908,19 +1005,26 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
-				"wire/inject_queue.go.tmpl",
-				"wire/inject_jobs.go.tmpl",
-				"wire/inject_jobs_app.go.tmpl",
-			}, func() []string {
-				if !p.config.Render.Components.StressTest {
+			},
+			raw: []string{"internal/makecmd/job.tmpl"},
+			action: func() error {
+				if input.renderAll {
 					return nil
 				}
-				return []string{
-					"internal/jobs/stress_job.go.tmpl",
-					"internal/cmd/queue_stress_tick_cmd.go.tmpl",
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_jobs.go.tmpl", "app/wire/inject_jobs.go"),
+				}); err != nil {
+					return err
 				}
-			}()...),
-			raw: []string{"internal/makecmd/job.tmpl"},
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_jobs_app.go.tmpl", "app/wire/inject_jobs_app.go"),
+				})
+			},
+		},
+		{
+			title:   "Named App Rendering",
+			enabled: input.renderAll,
+			action:  p.renderNamedApps,
 		},
 	}
 
@@ -930,6 +1034,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 
 		before := p.stats.counts()
+		started := time.Now()
 
 		if len(step.templates) > 0 {
 			if err := p.writeTemplates(step.templates); err != nil {
@@ -954,7 +1059,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			}
 		}
 
-		p.printStepSummary(step.title, before)
+		p.printStepSummary(step.title, before, time.Since(started))
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
@@ -989,19 +1094,718 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	return nil
 }
 
+// RenderAppOnly renders one named app without replaying the full project scaffold.
+func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
+	p.stats = &renderStats{}
+	p.lines = nil
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		return err
+	}
+	p.config = cfg
+	if p.config.Render.Components.DemoApp {
+		p.config.Render.Components.Auth = true
+		p.config.Render.StarterKit = project.StarterKitNone
+	}
+	p.config.Render.Components.ResolveDependencies()
+	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
+		return err
+	}
+	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
+	if !p.config.Render.Components.WebUI {
+		p.config.Render.StarterKit = project.StarterKitNone
+	}
+	if err := project.ValidateStarterKitContract(p.config.Render.StarterKit, p.config.Render.Components); err != nil {
+		return err
+	}
+	if err := p.migrateAppOwnedWireFilenames(); err != nil {
+		return err
+	}
+	if err := p.syncLegacyGeneratedTemplates(); err != nil {
+		return err
+	}
+	promotedProjectComponents := false
+	if app.Name != "" && app.Name != project.DefaultAppName {
+		promoted, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit)
+		if err != nil {
+			return err
+		}
+		promotedProjectComponents = promoted
+		if err := p.writeAppEnvDefaults(app, appRenderComponents(p.config, app)); err != nil {
+			return err
+		}
+		if err := writeProjectConfig(".goforj.yml", p.config); err != nil {
+			return err
+		}
+	}
+
+	if err := p.renderApp(app); err != nil {
+		return err
+	}
+	if promotedProjectComponents {
+		return p.Render(ComponentRenderInput{renderAll: true})
+	}
+	if err := p.writeTemplates([]string{
+		"internal/runtime/apps.go.tmpl",
+		"internal/runtime/apps_test.go.tmpl",
+	}); err != nil {
+		return err
+	}
+	if p.config.Render.Components.HasDatabase() {
+		if err := p.expandDefaultMigrationsForNamedApps(); err != nil {
+			return err
+		}
+	}
+	if !opts.SkipWire {
+		if err := p.runWireGenerate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RemoveApp removes conventional app-owned files and refreshes generated app metadata.
+func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, error) {
+	p.stats = &renderStats{}
+	p.lines = nil
+
+	app = normalizeRenderApp(app)
+	if app.Name == "" || app.Name == project.DefaultAppName {
+		return makeapp.RemoveResult{}, fmt.Errorf("default app cannot be removed")
+	}
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		return makeapp.RemoveResult{}, err
+	}
+	p.config = cfg
+
+	var result makeapp.RemoveResult
+	for _, path := range []string{
+		app.AppDir,
+		appFrontendDir(app),
+	} {
+		removed, err := removeDirIfExists(path)
+		if err != nil {
+			return result, err
+		}
+		if removed {
+			result.Removed = append(result.Removed, path)
+		}
+	}
+	for _, path := range []string{
+		app.Entrypoint,
+		filepath.Join("bin", app.Name),
+	} {
+		removed, err := removeFileIfExists(path)
+		if err != nil {
+			return result, err
+		}
+		if removed {
+			result.Removed = append(result.Removed, path)
+		}
+	}
+
+	cmdDir := filepath.Dir(app.Entrypoint)
+	removed, err := removeEmptyDirIfEmpty(cmdDir)
+	if err != nil {
+		return result, err
+	}
+	if removed {
+		result.Removed = append(result.Removed, cmdDir)
+	}
+	for _, path := range []string{".env", ".env.host"} {
+		updated, err := removeAppEnvDefaults(path, app.Name)
+		if err != nil {
+			return result, err
+		}
+		if updated {
+			result.Updated = append(result.Updated, path)
+		}
+	}
+	if p.removeAppConfig(app.Name) {
+		if err := writeProjectConfig(".goforj.yml", p.config); err != nil {
+			return result, err
+		}
+		result.Updated = append(result.Updated, ".goforj.yml")
+	}
+	if !result.Changed() {
+		return result, nil
+	}
+	if err := p.writeTemplates([]string{
+		"internal/runtime/apps.go.tmpl",
+		"internal/runtime/apps_test.go.tmpl",
+	}); err != nil {
+		return result, err
+	}
+	result.Updated = append(result.Updated,
+		filepath.Join("internal", "runtime", "apps.go"),
+		filepath.Join("internal", "runtime", "apps_test.go"),
+	)
+	return result, nil
+}
+
+// removeAppConfig forgets app-local render choices without downgrading project capabilities.
+func (p *ProjectRenderer) removeAppConfig(name string) bool {
+	if p.config == nil || p.config.Apps == nil {
+		return false
+	}
+	if _, ok := p.config.Apps[name]; !ok {
+		return false
+	}
+	delete(p.config.Apps, name)
+	if len(p.config.Apps) == 0 {
+		p.config.Apps = nil
+	}
+	return true
+}
+
+// setAppConfig persists app participation so future full renders keep the same app shape.
+func (p *ProjectRenderer) setAppConfig(name string, components project.Components, starterKit project.StarterKit) (bool, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == project.DefaultAppName {
+		return false, nil
+	}
+	if p.config.Apps == nil {
+		p.config.Apps = map[string]project.AppConfig{}
+	}
+	if components == (project.Components{}) {
+		components = project.AppDefaultComponents(p.config.Render.Components)
+	}
+	components = project.NormalizeAppComponents(p.config.Render.Components, components)
+	if err := components.ValidateRenderContract(); err != nil {
+		return false, err
+	}
+	starterKit = project.NormalizeStarterKit(starterKit)
+	if !components.WebUI {
+		starterKit = project.StarterKitNone
+	}
+	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
+		return false, err
+	}
+	before := p.config.Render.Components
+	p.config.Render.Components = project.PromoteAppComponents(p.config.Render.Components, components)
+	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
+		return false, err
+	}
+	p.config.Apps[name] = project.AppConfig{
+		Components: components,
+		StarterKit: starterKit,
+	}
+	return p.config.Render.Components != before, nil
+}
+
+// writeAppEnvDefaults appends app-scoped env defaults without changing the default App values.
+func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components project.Components) error {
+	if app.Name == "" || app.Name == project.DefaultAppName {
+		return nil
+	}
+	prefix := strEnvPrefix(app.Name)
+	if prefix == "" {
+		return nil
+	}
+
+	metadata := runtimeAppMetadataForConfiguredApp(p.config, app)
+	metadata.HTTPPort = nextAvailableAppHTTPPort(".env", prefix, metadata.HTTPPort)
+	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)
+	if driver := components.DatabaseDriver(); driver != "" {
+		baseDriver := ""
+		if p.config != nil {
+			baseDriver = p.config.Render.Components.DatabaseDriver()
+		}
+		envDefaults = mergeEnvDefaults(envDefaults, appDatabaseEnvDefaults(prefix, driver, baseDriver, false))
+	}
+	envGlobals, envAppDefaults := splitEnvDefaultsByPrefix(envDefaults, prefix)
+	if err := upsertEnvDefaults(".env", envGlobals); err != nil {
+		return err
+	}
+	if err := upsertAppEnvDefaults(".env", app.Name, prefix, envAppDefaults); err != nil {
+		return err
+	}
+
+	hostDefaults := map[string]string{}
+	if driver := components.DatabaseDriver(); driver != "" {
+		baseDriver := ""
+		if p.config != nil {
+			baseDriver = p.config.Render.Components.DatabaseDriver()
+		}
+		hostDefaults = appDatabaseEnvDefaults(prefix, driver, baseDriver, true)
+	}
+	delete(hostDefaults, "DB_SUPPORTED_DRIVERS")
+	hostGlobals, hostAppDefaults := splitEnvDefaultsByPrefix(hostDefaults, prefix)
+	if err := upsertEnvDefaults(".env.host", hostGlobals); err != nil {
+		return err
+	}
+	if err := upsertAppEnvDefaults(".env.host", app.Name, prefix, hostAppDefaults); err != nil {
+		return err
+	}
+	return nil
+}
+
+// mergeEnvDefaults combines generated env defaults while letting later defaults win.
+func mergeEnvDefaults(base map[string]string, overlays ...map[string]string) map[string]string {
+	merged := make(map[string]string, len(base))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for _, overlay := range overlays {
+		for key, value := range overlay {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+// splitEnvDefaultsByPrefix keeps global defaults out of app-specific env sections.
+func splitEnvDefaultsByPrefix(defaults map[string]string, prefix string) (map[string]string, map[string]string) {
+	globals := map[string]string{}
+	appDefaults := map[string]string{}
+	appPrefix := prefix + "_"
+	for key, value := range defaults {
+		if strings.HasPrefix(key, appPrefix) {
+			appDefaults[key] = value
+			continue
+		}
+		globals[key] = value
+	}
+	return globals, appDefaults
+}
+
+// appRuntimeEnvDefaults writes only app values that app owners commonly edit.
+func appRuntimeEnvDefaults(prefix string, metadata runtimeAppMetadata, components project.Components) map[string]string {
+	values := map[string]string{}
+	if components.WebAPI || components.WebUI {
+		values[prefix+"_APP_URL"] = fmt.Sprintf("http://localhost:%d", metadata.HTTPPort)
+		values[prefix+"_API_HTTP_PORT"] = strconv.Itoa(metadata.HTTPPort)
+	}
+	return values
+}
+
+// nextAvailableAppHTTPPort keeps sequential make:app runs from reusing a port
+// that was already written for another named app in the local env defaults.
+func nextAvailableAppHTTPPort(path string, prefix string, preferred int) int {
+	if preferred <= 0 {
+		preferred = 3001
+	}
+	used := appHTTPPortsFromEnv(path, prefix)
+	if _, exists := used[preferred]; !exists {
+		return preferred
+	}
+	for port := 3001; port < 4000; port++ {
+		if _, exists := used[port]; !exists {
+			return port
+		}
+	}
+	return preferred
+}
+
+func appHTTPPortsFromEnv(path string, currentPrefix string) map[int]struct{} {
+	used := map[int]struct{}{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return used
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := parseEnvLine(line)
+		if !ok || !isNamedAppHTTPPortKey(key, currentPrefix) {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || port <= 0 {
+			continue
+		}
+		used[port] = struct{}{}
+	}
+	return used
+}
+
+func isNamedAppHTTPPortKey(key string, currentPrefix string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || currentPrefix == "" {
+		return false
+	}
+	if strings.HasPrefix(key, currentPrefix+"_") {
+		return false
+	}
+	if key == "PORT" || key == "API_HTTP_PORT" {
+		return false
+	}
+	return strings.HasSuffix(key, "_API_HTTP_PORT") || strings.HasSuffix(key, "_PORT")
+}
+
+// appDatabaseEnvDefaults creates conventional env keys for one app database driver.
+func appDatabaseEnvDefaults(prefix string, driver string, baseDriver string, host bool) map[string]string {
+	values := map[string]string{}
+	if !host {
+		values["DB_SUPPORTED_DRIVERS"] = driver
+		values[prefix+"_DB_DATABASE"] = appDatabaseName(prefix, driver)
+		if driver != "sqlite" {
+			values[prefix+"_DB_SQLITE_DATABASE"] = appDatabaseName(prefix, "sqlite")
+		}
+	}
+	if baseDriver != "" && driver == baseDriver {
+		return values
+	}
+	if !host {
+		values[prefix+"_DB_DRIVER"] = driver
+	}
+	switch driver {
+	case "mysql":
+		values[prefix+"_DB_HOST"] = appDatabaseHost("mysql", host)
+		if !host {
+			values[prefix+"_DB_USERNAME"] = "user"
+			values[prefix+"_DB_PASSWORD"] = "password"
+			values[prefix+"_DB_PORT"] = "3306"
+		}
+	case "postgres":
+		values[prefix+"_DB_HOST"] = appDatabaseHost("postgres", host)
+		if !host {
+			values[prefix+"_DB_USERNAME"] = "postgres"
+			values[prefix+"_DB_PASSWORD"] = "postgres"
+			values[prefix+"_DB_PORT"] = "5432"
+		}
+	case "sqlite":
+	}
+	return values
+}
+
+// appDatabaseName keeps app database names compact while preserving SQLite paths.
+func appDatabaseName(prefix string, driver string) string {
+	if driver == "sqlite" {
+		return "./_data/sqlite/" + strings.ToLower(prefix) + ".db"
+	}
+	return prefixDatabaseName(prefix, "db")
+}
+
+// appDatabaseHost maps container defaults to localhost when writing host override env.
+func appDatabaseHost(service string, host bool) string {
+	if host {
+		return "localhost"
+	}
+	return service
+}
+
+// prefixDatabaseName keeps generated app database names compact and deterministic.
+func prefixDatabaseName(prefix string, fallback string) string {
+	name := strings.ToLower(strings.ReplaceAll(prefix, "_", ""))
+	if name == "" {
+		return fallback
+	}
+	return name
+}
+
+// strEnvPrefix converts app slugs into env-safe prefixes without relying on config.
+func strEnvPrefix(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' ' || r == '.'
+	})
+	for i, part := range parts {
+		parts[i] = strings.ToUpper(part)
+	}
+	return strings.Join(parts, "_")
+}
+
+// upsertEnvDefaults preserves existing env files while filling missing app defaults.
+func upsertEnvDefaults(path string, defaults map[string]string) error {
+	if len(defaults) == 0 {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	text := string(data)
+	lines := strings.Split(text, "\n")
+	for key, value := range defaults {
+		if key == "DB_SUPPORTED_DRIVERS" {
+			lines = upsertSupportedDriver(lines, value)
+			continue
+		}
+		lines = upsertEnvLine(lines, key, value)
+	}
+	content := strings.Join(lines, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// upsertAppEnvDefaults groups app overrides so multi-app env files remain readable.
+func upsertAppEnvDefaults(path string, appName string, prefix string, defaults map[string]string) error {
+	if len(defaults) == 0 {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines = removeEnvKeys(lines, defaults)
+	lines = removeEnvSectionHeader(lines, appName)
+	lines = trimTrailingBlankLines(lines)
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, "# "+envSectionTitle(appName))
+	for _, key := range orderedEnvDefaultKeys(defaults, prefix) {
+		lines = append(lines, key+"="+defaults[key])
+	}
+	content := strings.Join(lines, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// removeEnvKeys prevents old loose app entries from surviving after sectioned rendering.
+func removeEnvKeys(lines []string, defaults map[string]string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		key, _, ok := parseEnvLine(line)
+		if ok {
+			if _, exists := defaults[key]; exists {
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// removeEnvSectionHeader avoids duplicating the generated heading on repeated renders.
+func removeEnvSectionHeader(lines []string, appName string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if isEnvSectionHeader(line, appName) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// removeAppEnvDefaults deletes app-prefixed overrides when an app is removed.
+func removeAppEnvDefaults(path string, appName string) (bool, error) {
+	prefix := strEnvPrefix(appName)
+	if prefix == "" {
+		return false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	original := string(data)
+	lines := strings.Split(original, "\n")
+	out := make([]string, 0, len(lines))
+	appPrefix := prefix + "_"
+	for _, line := range lines {
+		key, _, ok := parseEnvLine(line)
+		if ok && strings.HasPrefix(key, appPrefix) {
+			continue
+		}
+		if isEnvSectionHeader(line, appName) {
+			continue
+		}
+		out = append(out, line)
+	}
+	out = collapseBlankLines(trimTrailingBlankLines(out))
+	content := strings.Join(out, "\n")
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	if content == original {
+		return false, nil
+	}
+	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
+// isEnvSectionHeader recognizes generated app headings case-insensitively for cleanup.
+func isEnvSectionHeader(line string, appName string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	title := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+	return strings.EqualFold(title, envSectionTitle(appName)) || strings.EqualFold(title, appName)
+}
+
+// collapseBlankLines removes empty gaps left after deleting app env sections.
+func collapseBlankLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	previousBlank := false
+	for _, line := range lines {
+		blank := strings.TrimSpace(line) == ""
+		if blank && previousBlank {
+			continue
+		}
+		out = append(out, line)
+		previousBlank = blank
+	}
+	return out
+}
+
+// trimTrailingBlankLines keeps generated sections separated by one predictable blank line.
+func trimTrailingBlankLines(lines []string) []string {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+// orderedEnvDefaultKeys writes generated app env keys in the same order every render.
+func orderedEnvDefaultKeys(defaults map[string]string, prefix string) []string {
+	keys := make([]string, 0, len(defaults))
+	for key := range defaults {
+		keys = append(keys, key)
+	}
+	rank := map[string]int{
+		prefix + "_APP_URL":                10,
+		prefix + "_API_HTTP_PORT":          20,
+		prefix + "_METRICS_API_PORT":       30,
+		prefix + "_METRICS_SCHEDULER_PORT": 40,
+		prefix + "_METRICS_JOBS_PORT":      50,
+		prefix + "_DB_DRIVER":              60,
+		prefix + "_DB_DATABASE":            70,
+		prefix + "_DB_SQLITE_DATABASE":     75,
+		prefix + "_DB_HOST":                80,
+		prefix + "_DB_PORT":                90,
+		prefix + "_DB_USERNAME":            100,
+		prefix + "_DB_PASSWORD":            110,
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		leftRank, leftKnown := rank[keys[left]]
+		rightRank, rightKnown := rank[keys[right]]
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return keys[left] < keys[right]
+	})
+	return keys
+}
+
+// envSectionTitle formats app slugs as readable env section headings.
+func envSectionTitle(appName string) string {
+	parts := strings.FieldsFunc(appName, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' ' || r == '.'
+	})
+	for idx, part := range parts {
+		part = strings.ToLower(part)
+		if part == "" {
+			continue
+		}
+		parts[idx] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	title := strings.Join(parts, " ")
+	if title == "" {
+		return appName
+	}
+	return title
+}
+
+// upsertSupportedDriver appends a database driver while preserving existing driver order.
+func upsertSupportedDriver(lines []string, driver string) []string {
+	for idx, line := range lines {
+		key, value, ok := parseEnvLine(line)
+		if !ok || key != "DB_SUPPORTED_DRIVERS" {
+			continue
+		}
+		drivers := appendDriver(value, driver)
+		lines[idx] = key + "=" + strings.Join(drivers, ",")
+		return lines
+	}
+	return append(lines, "DB_SUPPORTED_DRIVERS="+driver)
+}
+
+// appendDriver normalizes a comma-separated driver list before adding a new driver.
+func appendDriver(value string, driver string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		normalized := strings.ToLower(strings.TrimSpace(part))
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		out = append(out, normalized)
+	}
+	driver = strings.ToLower(strings.TrimSpace(driver))
+	if driver != "" && !seen[driver] {
+		out = append(out, driver)
+	}
+	return out
+}
+
+// upsertEnvLine replaces an existing env key or appends it when missing.
+func upsertEnvLine(lines []string, key string, value string) []string {
+	for idx, line := range lines {
+		currentKey, _, ok := parseEnvLine(line)
+		if !ok || currentKey != key {
+			continue
+		}
+		lines[idx] = key + "=" + value
+		return lines
+	}
+	return append(lines, key+"="+value)
+}
+
+// parseEnvLine reads simple env assignments while ignoring comments and blank lines.
+func parseEnvLine(line string) (string, string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", "", false
+	}
+	key, value, ok := strings.Cut(trimmed, "=")
+	if !ok {
+		return "", "", false
+	}
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if comment := strings.Index(value, "#"); comment >= 0 {
+		value = strings.TrimSpace(value[:comment])
+	}
+	return key, value, key != ""
+}
+
+// SetTimings controls whether render summaries include elapsed phase timings.
+func (p *ProjectRenderer) SetTimings(enabled bool) {
+	p.timings = enabled
+}
+
 func (p *ProjectRenderer) timeRenderStage(name string, fn func() error) error {
-	if !renderStageTimingEnabled() {
+	timingEnabled := p.renderTimingEnabled()
+	if !timingEnabled {
 		return fn()
 	}
+	lineStart := len(p.lines)
 	started := time.Now()
 	err := fn()
-	console.Debugf("render stage %s: %s", name, time.Since(started))
+	elapsed := time.Since(started)
+	if err == nil {
+		for i := lineStart; i < len(p.lines); i++ {
+			p.lines[i] = appendRenderTiming(p.lines[i], elapsed)
+		}
+		p.flushRenderLines(lineStart)
+		if renderDebugEnabled() {
+			console.Debugf("render stage %s: %s", name, elapsed)
+		}
+	}
 	return err
 }
 
-func renderStageTimingEnabled() bool {
-	if !renderDebugEnabled() {
-		return false
+func (p *ProjectRenderer) renderTimingEnabled() bool {
+	if p != nil && p.timings {
+		return true
 	}
 	for _, key := range []string{"FORJ_RENDER_TIMINGS", "FORJ_RENDER_DEBUG_TIMINGS"} {
 		value := strings.TrimSpace(os.Getenv(key))
@@ -1010,6 +1814,45 @@ func renderStageTimingEnabled() bool {
 		}
 	}
 	return false
+}
+
+func (p *ProjectRenderer) streamRenderTimings() bool {
+	return runningInsideDevCommand() && p.renderTimingEnabled()
+}
+
+func (p *ProjectRenderer) appendRenderLine(line string) {
+	p.lines = append(p.lines, line)
+	p.flushRenderLines(len(p.lines) - 1)
+}
+
+func (p *ProjectRenderer) flushRenderLines(start int) {
+	if !p.streamRenderTimings() || start >= len(p.lines) {
+		return
+	}
+	for _, line := range p.lines[start:] {
+		fmt.Println(line)
+	}
+	p.lines = p.lines[:start]
+}
+
+// migrateGeneratedEnvDefault updates old generated defaults without overriding custom app owner values.
+func migrateGeneratedEnvDefault(lines []string, key string, oldValue string, newValue string) ([]string, bool) {
+	prefix := key + "="
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+		if value != oldValue {
+			return lines, false
+		}
+		updated := make([]string, len(lines))
+		copy(updated, lines)
+		updated[i] = key + "=" + newValue
+		return updated, true
+	}
+	return lines, false
 }
 
 func renderDebugEnabled() bool {
@@ -1027,10 +1870,25 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		return nil
 	}
 	changed := false
+	defaultApp := project.DefaultApp()
+	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
+		p.config.Dev.WirePaths = []string{defaultApp.WireDir}
+		changed = true
+	}
+	if removeLegacyInitialBuildTask(&p.config.Dev.Pre) {
+		changed = true
+	}
+	for i := range p.config.Dev.Watches {
+		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
+		if normalized != p.config.Dev.Watches[i].Watch {
+			p.config.Dev.Watches[i].Watch = normalized
+			changed = true
+		}
+	}
 	if p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp {
 		task := project.DevTask{
 			Name: "Install Frontend Dependencies",
-			Cmd:  "cd frontend && npm install",
+			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
 		}
 		if !hasDevTask(p.config.Dev.Pre, task) {
 			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
@@ -1043,13 +1901,482 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	return writeProjectConfig(".goforj.yml", p.config)
 }
 
-func hasDevTask(tasks []project.DevTask, target project.DevTask) bool {
+// normalizeDevWatchWireGenExclusion keeps the generated wire exclusion stable across repeated renders.
+func normalizeDevWatchWireGenExclusion(watch string) string {
+	normalized := strings.ReplaceAll(watch, "-xfile wire/wire_gen\\.go$", "-xfile app/wire/wire_gen\\.go$")
+	for strings.Contains(normalized, "app/app/") {
+		normalized = strings.ReplaceAll(normalized, "app/app/", "app/")
+	}
+	return normalized
+}
+
+// removeLegacyInitialBuildTask removes the old single-app bootstrap build now owned by forj dev.
+func removeLegacyInitialBuildTask(tasks *[]project.DevTask) bool {
+	if tasks == nil {
+		return false
+	}
+	filtered := (*tasks)[:0]
+	removed := false
+	for _, task := range *tasks {
+		if strings.TrimSpace(task.Name) == "Initial build" && strings.TrimSpace(task.Cmd) == "forj build -o ./bin/app" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	*tasks = filtered
+	return removed
+}
+
+func hasDevTask(tasks []project.DevTask, want project.DevTask) bool {
 	for _, task := range tasks {
-		if strings.TrimSpace(task.Name) == target.Name && strings.TrimSpace(task.Cmd) == target.Cmd {
+		if strings.TrimSpace(task.Name) == want.Name && strings.TrimSpace(task.Cmd) == want.Cmd {
 			return true
 		}
 	}
 	return false
+}
+
+// renderNamedApps renders every non-default app discovered from conventional project layout.
+func (p *ProjectRenderer) renderNamedApps() error {
+	apps, err := p.namedAppRenderApps()
+	if err != nil {
+		return err
+	}
+	if len(apps) == 1 {
+		app := apps[0]
+		if err := p.renderApp(app); err != nil {
+			return fmt.Errorf("render app %s: %w", app.Name, err)
+		}
+	} else if len(apps) > 1 {
+		errs := make([]error, len(apps))
+		var wg sync.WaitGroup
+		for i, app := range apps {
+			wg.Add(1)
+			go func(i int, app project.App) {
+				defer wg.Done()
+				if err := p.renderApp(app); err != nil {
+					errs[i] = fmt.Errorf("render app %s: %w", app.Name, err)
+				}
+			}(i, app)
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if len(apps) > 0 && p.config.Render.Components.HasDatabase() {
+		if err := p.expandDefaultMigrationsForNamedApps(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expandDefaultMigrationsForNamedApps moves single-app migration streams into the explicit default app layout.
+func (p *ProjectRenderer) expandDefaultMigrationsForNamedApps() error {
+	root := "migrations"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		source := filepath.Join(root, name)
+		if entry.IsDir() {
+			if shouldSkipMigrationExpansionDir(name) {
+				continue
+			}
+			if err := moveDirectMigrationSQLFiles(source, filepath.Join(root, "app", name)); err != nil {
+				return err
+			}
+			continue
+		}
+		if !isMigrationSQLFile(name) {
+			continue
+		}
+		if err := moveMigrationFile(source, filepath.Join(root, "app", "default", name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// shouldSkipMigrationExpansionDir preserves metadata and already-expanded app directories.
+func shouldSkipMigrationExpansionDir(name string) bool {
+	return name == ".goforj" || name == "app" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
+// moveDirectMigrationSQLFiles moves only legacy direct SQL files and leaves nested app layouts alone.
+func moveDirectMigrationSQLFiles(sourceDir, destDir string) error {
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return err
+	}
+	moved := false
+	for _, entry := range entries {
+		if entry.IsDir() || !isMigrationSQLFile(entry.Name()) {
+			continue
+		}
+		if err := moveMigrationFile(filepath.Join(sourceDir, entry.Name()), filepath.Join(destDir, entry.Name())); err != nil {
+			return err
+		}
+		moved = true
+	}
+	if !moved {
+		return nil
+	}
+
+	remaining, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
+		return os.Remove(sourceDir)
+	}
+	return nil
+}
+
+// moveMigrationFile moves one migration file unless a different destination already exists.
+func moveMigrationFile(source, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(dest); err == nil {
+		same, err := filesHaveSameContent(source, dest)
+		if err != nil {
+			return err
+		}
+		if same {
+			return os.Remove(source)
+		}
+		return fmt.Errorf("migration expansion destination already exists with different content: %s", dest)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(source, dest)
+}
+
+// filesHaveSameContent prevents migration expansion from overwriting user-edited migration files.
+func filesHaveSameContent(left, right string) (bool, error) {
+	leftBytes, err := os.ReadFile(left)
+	if err != nil {
+		return false, err
+	}
+	rightBytes, err := os.ReadFile(right)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(leftBytes, rightBytes), nil
+}
+
+// isMigrationSQLFile reports whether a file belongs to a generated SQL migration pair.
+func isMigrationSQLFile(name string) bool {
+	return strings.HasSuffix(name, ".up.sql") || strings.HasSuffix(name, ".down.sql")
+}
+
+// namedAppRenderApps discovers named apps from conventional project layout only.
+func (p *ProjectRenderer) namedAppRenderApps() ([]project.App, error) {
+	seen := map[string]bool{project.DefaultAppName: true}
+	apps := make([]project.App, 0)
+	add := func(app project.App) {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || seen[app.Name] || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
+			return
+		}
+		seen[app.Name] = true
+		apps = append(apps, app)
+	}
+
+	for _, app := range discoverConventionalApps() {
+		add(app)
+	}
+
+	return apps, nil
+}
+
+// discoverConventionalApps treats existing cmd/<app> and app/<app> layouts as source of truth.
+func discoverConventionalApps() []project.App {
+	names := make(map[string]bool)
+	if entries, err := os.ReadDir("cmd"); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == project.DefaultAppName || !project.IsSafeAppName(name) {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join("cmd", name, "main.go")); err == nil {
+				names[name] = true
+			}
+		}
+	}
+	if entries, err := os.ReadDir("app"); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
+				continue
+			}
+			if hasConventionalAppFiles(filepath.Join("app", name)) {
+				names[name] = true
+			}
+		}
+	}
+
+	apps := make([]project.App, 0, len(names))
+	for name := range names {
+		apps = append(apps, project.DefaultNamedApp(name))
+	}
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].Name < apps[j].Name
+	})
+	return apps
+}
+
+// hasConventionalAppFiles avoids treating arbitrary app subpackages as apps unless they look app-owned.
+func hasConventionalAppFiles(appDir string) bool {
+	for _, path := range []string{
+		filepath.Join(appDir, "wire"),
+		filepath.Join(appDir, "commands.go"),
+		filepath.Join(appDir, "root_cmd.go"),
+		filepath.Join(appDir, "routes.go"),
+		filepath.Join(appDir, "schedules.go"),
+		filepath.Join(appDir, "lifecycle.go"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeRenderApp fills missing paths from the framework app conventions.
+func normalizeRenderApp(app project.App) project.App {
+	if strings.TrimSpace(app.Name) == "" {
+		return project.DefaultApp()
+	}
+	namedDefault := project.DefaultNamedApp(app.Name)
+	if app.Entrypoint == "" {
+		app.Entrypoint = namedDefault.Entrypoint
+	}
+	if app.AppDir == "" {
+		app.AppDir = namedDefault.AppDir
+	}
+	if app.WireDir == "" {
+		app.WireDir = namedDefault.WireDir
+	}
+	return app
+}
+
+// defaultFrontendDir returns the editable frontend root for the conventional default app.
+func defaultFrontendDir() string {
+	return appFrontendDir(project.DefaultApp())
+}
+
+// appFrontendDir keeps frontend source next to the command package that embeds its build output.
+func appFrontendDir(app project.App) string {
+	app = normalizeRenderApp(app)
+	return filepath.Join(filepath.Dir(app.Entrypoint), "frontend")
+}
+
+// appFrontendDistIndex returns the app-local placeholder path required by go:embed.
+func appFrontendDistIndex(app project.App) string {
+	return filepath.Join(appFrontendDir(app), "dist", "index.html")
+}
+
+// renderApp writes the app entrypoint, composition files, and app-local Wire graph.
+func (p *ProjectRenderer) renderApp(app project.App) error {
+	app = normalizeRenderApp(app)
+	if err := p.writeTemplateMappingsForApp(app, p.appFrameworkMappings(app)); err != nil {
+		return err
+	}
+	if err := p.migrateFrontendDistPlaceholder(app); err != nil {
+		return err
+	}
+	if err := p.writeTemplateMappingsOnceForApp(app, p.appOwnedMappings(app)); err != nil {
+		return err
+	}
+	if err := p.ensureFrontendPlaceholderAssets(app); err != nil {
+		return err
+	}
+	if app.Name != project.DefaultAppName {
+		return p.scaffoldAppStarterKit(app)
+	}
+	return nil
+}
+
+// migrateFrontendDistPlaceholder updates the old generated "no frontend deployed" page without touching real SPA builds.
+func (p *ProjectRenderer) migrateFrontendDistPlaceholder(app project.App) error {
+	if p.config == nil || !appRenderComponents(p.config, app).WebUI {
+		return nil
+	}
+	app = normalizeRenderApp(app)
+	path := appFrontendDistIndex(app)
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !isGeneratedFrontendDistPlaceholderNeedingRefresh(string(content), p.config.ProjectName) {
+		return nil
+	}
+	if err := p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", templateDataForApp(p.config, app)); err != nil {
+		return err
+	}
+	return p.ensureFrontendPlaceholderAssets(app)
+}
+
+// ensureFrontendPlaceholderAssets copies static assets only when the generated fallback page references them.
+func (p *ProjectRenderer) ensureFrontendPlaceholderAssets(app project.App) error {
+	if p.config == nil || !appRenderComponents(p.config, app).WebUI {
+		return nil
+	}
+	app = normalizeRenderApp(app)
+	index := appFrontendDistIndex(app)
+	content, err := os.ReadFile(index)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	contentString := string(content)
+	if strings.Contains(contentString, frontendPlaceholderLogoName) {
+		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName), frontendPlaceholderLogoTemplate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isGeneratedFrontendDistPlaceholderNeedingRefresh recognizes generated fallback pages that predate the current placeholder.
+func isGeneratedFrontendDistPlaceholderNeedingRefresh(content string, projectName string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == strings.TrimSpace(oldFrontendDistPlaceholder(projectName)) {
+		return true
+	}
+	// These strings are kept only to refresh generated placeholders from pre-rename projects.
+	oldPlaceholderCopy := "This app " + "target is running, but no frontend " + "build has been deployed yet."
+	previousAppCopy := "This app is running, but no frontend build has been deployed yet."
+	oldSubtitle := "Application " + "target"
+	previousSubtitle := "Ready for your " + "frontend"
+	previousCopy := "Your app " + "is running. Add your " + "frontend to make this page yours."
+	previousPolishedCopy := "Your application is accepting requests and ready to go."
+	hasGeneratedPlaceholderCopy := strings.Contains(trimmed, oldPlaceholderCopy) ||
+		strings.Contains(trimmed, previousAppCopy) ||
+		strings.Contains(trimmed, previousCopy) ||
+		strings.Contains(trimmed, "Your app is live. Create the experience that belongs here.") ||
+		strings.Contains(trimmed, "Your app is live. Build the interface that belongs here.") ||
+		strings.Contains(trimmed, previousPolishedCopy)
+	if !hasGeneratedPlaceholderCopy || !strings.Contains(trimmed, "GoForj") {
+		return false
+	}
+	legacyLogoName := "goforj-" + "v7.png"
+	return strings.Contains(trimmed, `<span class="mark">G</span>`) ||
+		strings.Contains(trimmed, legacyLogoName) ||
+		!strings.Contains(trimmed, "brand-tagline") ||
+		strings.Contains(trimmed, oldSubtitle) ||
+		strings.Contains(trimmed, previousSubtitle) ||
+		!strings.Contains(trimmed, "Composable apps for Go") ||
+		!strings.Contains(trimmed, `class="app-meta"`) ||
+		!strings.Contains(trimmed, `class="core"`) ||
+		!strings.Contains(trimmed, `class="cube"`) ||
+		!strings.Contains(trimmed, "Read the docs") ||
+		!strings.Contains(trimmed, `class="visual"`) ||
+		!strings.Contains(trimmed, `class="status"`) ||
+		!strings.Contains(trimmed, `rel="icon"`)
+}
+
+// oldFrontendDistPlaceholder matches the previous generated placeholder so migrations do not overwrite custom HTML.
+func oldFrontendDistPlaceholder(projectName string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+
+    You've not deployed anything for %s yet.
+</head>
+<body>
+
+</body>
+</html>`, projectName)
+}
+
+// appFrameworkMappings returns files the CLI can safely refresh on every render.
+func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMapping {
+	components := appRenderComponents(p.config, app)
+	mappings := []templateMapping{
+		mapTemplateTo("cmd/app/main.go.tmpl", app.Entrypoint),
+		mapTemplateTo("app/root_cmd.go.tmpl", filepath.Join(app.AppDir, "root_cmd.go")),
+		mapTemplateTo("wire/app.go.tmpl", filepath.Join(app.WireDir, "app.go")),
+		mapTemplateTo("wire/app_test.go.tmpl", filepath.Join(app.WireDir, "app_test.go")),
+		mapTemplateTo("wire/inject_cmd.go.tmpl", filepath.Join(app.WireDir, "inject_cmd.go")),
+		mapTemplateTo("wire/inject_managers.go.tmpl", filepath.Join(app.WireDir, "inject_managers.go")),
+		mapTemplateTo("wire/wire.go.tmpl", filepath.Join(app.WireDir, "wire.go")),
+	}
+	if components.HasDatabase() {
+		mappings = append(mappings, mapTemplateTo("wire/inject_db.go.tmpl", filepath.Join(app.WireDir, "inject_db.go")))
+	}
+	if components.Auth && components.HasDatabase() {
+		mappings = append(mappings, mapTemplateTo("wire/inject_auth.go.tmpl", filepath.Join(app.WireDir, "inject_auth.go")))
+	}
+	if components.WebAPI || components.WebUI {
+		mappings = append(mappings, mapTemplateTo("wire/inject_http.go.tmpl", filepath.Join(app.WireDir, "inject_http.go")))
+	}
+	if components.Scheduler {
+		mappings = append(mappings, mapTemplateTo("wire/inject_scheduler.go.tmpl", filepath.Join(app.WireDir, "inject_scheduler.go")))
+	}
+	if components.Jobs {
+		mappings = append(mappings, mapTemplateTo("wire/inject_jobs.go.tmpl", filepath.Join(app.WireDir, "inject_jobs.go")))
+	}
+	return mappings
+}
+
+// appOwnedMappings returns customization files that should be created once and then preserved.
+func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
+	components := appRenderComponents(p.config, app)
+	mappings := []templateMapping{
+		mapTemplateTo("app/lifecycle.go.tmpl", filepath.Join(app.AppDir, "lifecycle.go")),
+		mapTemplateTo("app/commands.go.tmpl", filepath.Join(app.AppDir, "commands.go")),
+		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(app.WireDir, "inject_services_app.go")),
+		mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(app.WireDir, "inject_subscribers_app.go")),
+		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(app.WireDir, "inject_cmd_app.go")),
+	}
+	if components.WebUI {
+		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", appFrontendDistIndex(app)))
+	}
+	if components.WebAPI || components.WebUI {
+		mappings = append(mappings,
+			mapTemplateTo("app/routes.go.tmpl", filepath.Join(app.AppDir, "routes.go")),
+			mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", filepath.Join(app.WireDir, "inject_http_controllers_app.go")),
+		)
+	}
+	if components.HasDatabase() {
+		mappings = append(mappings, mapTemplateTo("wire/inject_repositories_app.go.tmpl", filepath.Join(app.WireDir, "inject_repositories_app.go")))
+	}
+	if components.Scheduler {
+		mappings = append(mappings,
+			mapTemplateTo("app/schedules.go.tmpl", filepath.Join(app.AppDir, "schedules.go")),
+			mapTemplateTo("wire/inject_schedules_app.go.tmpl", filepath.Join(app.WireDir, "inject_schedules_app.go")),
+		)
+	}
+	if components.Jobs {
+		mappings = append(mappings, mapTemplateTo("wire/inject_jobs_app.go.tmpl", filepath.Join(app.WireDir, "inject_jobs_app.go")))
+	}
+	return mappings
 }
 
 func writeProjectConfig(path string, cfg *project.Config) error {
@@ -1066,6 +2393,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
 		filepath.Join("internal", "cmd", "generate_cmd.go"),
+		"main.go",
+		filepath.Join("app", "providers.go"),
 		filepath.Join("internal", "storage", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd_test.go"),
@@ -1081,6 +2410,18 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "cmd", "about_service.go"),
 		filepath.Join("internal", "cmd", "standalone.go"),
 		filepath.Join("internal", "cmd", "signatures.go"),
+		filepath.Join("internal", "cmd", "app_commands.go"),
+		filepath.Join("internal", "cmd", "root_cmd.go"),
+		filepath.Join("internal", "cmd", "wire.go"),
+		filepath.Join("internal", "cmd", "skip_boot.go"),
+		filepath.Join("internal", "cmd", "skip_boot_test.go"),
+		// Old generated files from before app terminology replaced the app-target model.
+		filepath.Join("internal", "cmd", "target_identity.go"),
+		filepath.Join("internal", "runtime", "targets.go"),
+		filepath.Join("internal", "runtime", "targets_test.go"),
+		filepath.Join("internal", "observability", "observers.go"),
+		filepath.Join("internal", "observability", "observers_test.go"),
+		filepath.Join("internal", "router", "routes_registry.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
 		filepath.Join("internal", "http", "route.go"),
 		filepath.Join("internal", "http", "middleware_non_200.go"),
@@ -1091,9 +2432,20 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "lifecycle", "manager_test.go"),
 		filepath.Join("internal", "lifecycle", "settings.go"),
 		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "README.md"),
+		filepath.Join("internal", "app", "about.go"),
+		filepath.Join("internal", "app", "discovery.go"),
+		filepath.Join("internal", "app", "lifecycle.go"),
+		filepath.Join("internal", "app", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "lifecycle_test.go"),
 		filepath.Join("internal", "app", "manager.go"),
 		filepath.Join("internal", "app", "manager_test.go"),
 		filepath.Join("internal", "app", "registry.go"),
+		filepath.Join("internal", "app", "runtime.go"),
+		filepath.Join("internal", "app", "runtime_host.go"),
+		filepath.Join("internal", "app", "runtime_host_test.go"),
+		filepath.Join("internal", "app", "source.go"),
+		filepath.Join("internal", "app", "timeouts.go"),
 		filepath.Join("internal", "jobs", "devconsole.go"),
 		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
@@ -1103,8 +2455,46 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "scheduler", "runtime.go"),
 		filepath.Join("internal", "scheduler", "scheduler.go"),
 		filepath.Join("internal", "scheduler", "scheduler_registry.go"),
+		filepath.Join("internal", "schedules", "scheduler_registry.go"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
+		filepath.Join("wire", "app.go"),
+		filepath.Join("wire", "app_test.go"),
+		filepath.Join("wire", "inject_app_services.go"),
+		filepath.Join("wire", "inject_services_app.go"),
+		filepath.Join("wire", "inject_auth.go"),
+		filepath.Join("wire", "inject_cache.go"),
+		filepath.Join("wire", "inject_cmd.go"),
+		filepath.Join("wire", "inject_db.go"),
+		filepath.Join("wire", "inject_event_subscribers.go"),
+		filepath.Join("wire", "inject_subscribers_app.go"),
+		filepath.Join("wire", "inject_http.go"),
+		filepath.Join("wire", "inject_http_controllers.go"),
+		filepath.Join("wire", "inject_controllers_app.go"),
+		filepath.Join("wire", "inject_http_controllers_app.go"),
+		filepath.Join("wire", "inject_jobs.go"),
+		filepath.Join("wire", "inject_jobs_app.go"),
+		filepath.Join("wire", "inject_mail.go"),
+		filepath.Join("wire", "inject_queue.go"),
+		filepath.Join("wire", "inject_repositories.go"),
+		filepath.Join("wire", "inject_repositories_app.go"),
+		filepath.Join("wire", "inject_scheduler.go"),
+		filepath.Join("wire", "inject_scheduler_schedules.go"),
+		filepath.Join("wire", "inject_schedules_app.go"),
+		filepath.Join("wire", "inject_storage.go"),
+		filepath.Join("wire", "wire.go"),
+		filepath.Join("wire", "wire_gen.go"),
+		filepath.Join("app", "wire", "inject_app_services.go"),
+		filepath.Join("app", "wire", "inject_cache.go"),
+		filepath.Join("app", "wire", "inject_events.go"),
+		filepath.Join("app", "wire", "inject_event_subscribers.go"),
+		filepath.Join("app", "wire", "inject_http_controllers.go"),
+		filepath.Join("app", "wire", "inject_inspects.go"),
+		filepath.Join("app", "wire", "inject_mail.go"),
+		filepath.Join("app", "wire", "inject_queue.go"),
+		filepath.Join("app", "wire", "inject_repositories.go"),
+		filepath.Join("app", "wire", "inject_scheduler_schedules.go"),
+		filepath.Join("app", "wire", "inject_storage.go"),
 	}
 	for _, path := range legacyPaths {
 		if err := removeIfExists(path); err != nil {
@@ -1120,13 +2510,79 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	if err := os.RemoveAll(filepath.Join("internal", "lifecycle")); err != nil {
 		return err
 	}
+	if err := os.Remove(filepath.Join("wire")); err != nil && !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
+		return err
+	}
 	if err := p.syncLegacyGeneratedTemplates(); err != nil {
 		return err
 	}
 
-	scheduleInjectorPath := filepath.Join("wire", "inject_scheduler_schedules.go")
+	for _, app := range renderApps() {
+		components := appRenderComponents(p.config, app)
+		for _, path := range appOwnedWirePathsForApp(app) {
+			if data, err := os.ReadFile(path); err == nil {
+				updated := syncAppOwnedWireSetNames(string(data))
+				switch filepath.Base(path) {
+				case "inject_jobs_app.go":
+					updated = syncDemoAppJobInjector(updated, p.config.GoModuleName, components)
+				case "inject_repositories_app.go":
+					updated = syncDemoAppRepositoryInjector(updated, p.config.GoModuleName, components)
+				case "inject_services_app.go":
+					updated = syncLegacyAppServiceInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
+					updated = syncDemoAppServiceInjector(updated, p.config.GoModuleName, components)
+				case "inject_schedules_app.go":
+					updated = syncLegacyScheduleInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
+				}
+				if updated != string(data) {
+					formatted, err := format.Source([]byte(updated))
+					if err != nil {
+						return fmt.Errorf("gofmt %s: %w", path, err)
+					}
+					if err := os.WriteFile(path, formatted, 0o644); err != nil {
+						return err
+					}
+				}
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+
+	appServiceInjectorPath := filepath.Join("app", "wire", "inject_services_app.go")
+	if data, err := os.ReadFile(appServiceInjectorPath); err == nil {
+		updated := syncLegacyAppServiceInjector(string(data), p.config.GoModuleName, "app")
+		if updated != string(data) {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appServiceInjectorPath, err)
+			}
+			if err := os.WriteFile(appServiceInjectorPath, formatted, 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	appLifecyclePath := filepath.Join("app", "lifecycle.go")
+	if data, err := os.ReadFile(appLifecyclePath); err == nil {
+		updated := syncLegacyAppLifecycleRegistry(string(data), p.config.GoModuleName)
+		if updated != string(data) {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appLifecyclePath, err)
+			}
+			if err := os.WriteFile(appLifecyclePath, formatted, 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	scheduleInjectorPath := filepath.Join("app", "wire", "inject_schedules_app.go")
 	if data, err := os.ReadFile(scheduleInjectorPath); err == nil {
-		updated := syncLegacyScheduleInjectorPackage(string(data))
+		updated := syncLegacyScheduleInjector(string(data), p.config.GoModuleName, "app")
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
@@ -1140,13 +2596,18 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
-	// Migrate legacy scheduler command name when scheduler registry is render-once.
-	schedulerRegistryPath := filepath.Join("internal", "schedules", "scheduler_registry.go")
-	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
-		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "monitor:push-test-trigger")
+	// Migrate legacy scheduler command names in preserved app-owned schedules.
+	appSchedulesPath := filepath.Join("app", "schedules.go")
+	if data, err := os.ReadFile(appSchedulesPath); err == nil {
+		updated := syncLegacyScheduleInjectorPackage(string(data))
+		updated = strings.ReplaceAll(updated, "demo:push-monitor-trigger", "monitor:push-test-trigger")
 		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
 		if updated != string(data) {
-			if err := os.WriteFile(schedulerRegistryPath, []byte(updated), 0o644); err != nil {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appSchedulesPath, err)
+			}
+			if err := os.WriteFile(appSchedulesPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -1154,25 +2615,26 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
-	// Keep stress command wiring in sync for render-once command files.
-	stressEnabled := p.config.Render.Components.Jobs && p.config.Render.Components.StressTest
 	healthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
-	appCommandsPath := filepath.Join("internal", "cmd", "app_commands.go")
+	appCommandsPath := filepath.Join("app", "commands.go")
 	if data, err := os.ReadFile(appCommandsPath); err == nil {
-		updated := syncHealthAppCommands(string(data), healthEnabled)
-		updated = syncStressAppCommands(updated, stressEnabled)
+		updated := syncCommandsName(string(data))
+		updated = syncHealthCommands(updated, healthEnabled)
 		if updated != string(data) {
-			if err := os.WriteFile(appCommandsPath, []byte(updated), 0o644); err != nil {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appCommandsPath, err)
+			}
+			if err := os.WriteFile(appCommandsPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	cmdWirePath := filepath.Join("internal", "cmd", "wire.go")
+	cmdWirePath := filepath.Join("app", "wire", "inject_cmd.go")
 	if data, err := os.ReadFile(cmdWirePath); err == nil {
 		updated := syncHealthCommandWire(string(data), healthEnabled)
-		updated = syncStressCommandWire(updated, stressEnabled)
 		if updated != string(data) {
 			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
 				return err
@@ -1181,11 +2643,11 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	skipBootPath := filepath.Join("internal", "cmd", "skip_boot.go")
-	if data, err := os.ReadFile(skipBootPath); err == nil {
-		updated := syncHealthSkipBoot(string(data), healthEnabled)
+	prebootPath := filepath.Join("internal", "cmd", "preboot.go")
+	if data, err := os.ReadFile(prebootPath); err == nil {
+		updated := syncHealthPreboot(string(data), healthEnabled)
 		if updated != string(data) {
-			if err := os.WriteFile(skipBootPath, []byte(updated), 0o644); err != nil {
+			if err := os.WriteFile(prebootPath, []byte(updated), 0o644); err != nil {
 				return err
 			}
 		}
@@ -1220,8 +2682,8 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 
 	syncs := []templateSync{
 		{
-			dest: "wire/inject_app_services.go",
-			tmpl: "wire/inject_app_services.go.tmpl",
+			dest: filepath.Join("app", "wire", "inject_services_app.go"),
+			tmpl: "wire/inject_services_app.go.tmpl",
 			matches: []string{
 				"provideSharedRedisClient",
 				"events.NewBus(context.Background(), redisClient)",
@@ -1240,6 +2702,17 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 			requires: []string{
 				`"/auth/dev-session"`,
 				`group.GET("/*"`,
+			},
+		},
+		{
+			dest: filepath.Join("internal", "jobs", "worker.go"),
+			tmpl: "internal/jobs/worker.go.tmpl",
+			matches: []string{
+				"internal/alerts",
+				"internal/monitoring",
+				"hello *ExampleHelloJob,",
+				"monitorCheck *monitoring.MonitorCheckJob,",
+				"alertDispatch *alerts.DispatchJob,",
 			},
 		},
 	}
@@ -1291,71 +2764,415 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	return nil
 }
 
+// migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
+func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
+	return migratePreservedFile(
+		filepath.Join("app", "wire", "inject_controllers_app.go"),
+		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
+	)
+}
+
+// appOwnedWirePathsForApp lists render-once injectors that may need compatibility repairs.
+func appOwnedWirePathsForApp(app project.App) []string {
+	wireDir := app.WireDir
+	if wireDir == "" {
+		wireDir = project.DefaultApp().WireDir
+	}
+	return []string{
+		filepath.Join(wireDir, "inject_cmd_app.go"),
+		filepath.Join(wireDir, "inject_http_controllers_app.go"),
+		filepath.Join(wireDir, "inject_jobs_app.go"),
+		filepath.Join(wireDir, "inject_repositories_app.go"),
+		filepath.Join(wireDir, "inject_schedules_app.go"),
+		filepath.Join(wireDir, "inject_services_app.go"),
+		filepath.Join(wireDir, "inject_subscribers_app.go"),
+	}
+}
+
+// migratePreservedFile renames a render-once file only when the replacement does not already exist.
+func migratePreservedFile(oldPath string, newPath string) error {
+	if _, err := os.Stat(oldPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(oldPath, newPath)
+}
+
+// syncAppOwnedWireSetNames updates preserved app-owned injectors to the current set naming contract.
+func syncAppOwnedWireSetNames(content string) string {
+	updated := strings.ReplaceAll(content, "cmdAppSet", "appCommandSet")
+	updated = strings.ReplaceAll(updated, "httpAppControllerSet", "appHttpControllerSet")
+	updated = strings.ReplaceAll(updated, "appControllerSet", "appHttpControllerSet")
+	updated = strings.ReplaceAll(updated, "httpControllerSet provides all HTTP route controllers.", "appHttpControllerSet provides all HTTP route controllers.")
+	updated = strings.ReplaceAll(updated, "jobAppSet", "appJobSet")
+	updated = strings.ReplaceAll(updated, "schedulerScheduleSet", "appScheduleSet")
+	updated = strings.ReplaceAll(updated, "eventSubscriberSet", "appSubscriberSet")
+	return updated
+}
+
+// syncDemoAppJobInjector repairs early app job injectors that omitted demo job providers.
+func syncDemoAppJobInjector(content string, moduleName string, components project.Components) string {
+	if !components.DemoApp || !components.Jobs || strings.TrimSpace(moduleName) == "" {
+		return content
+	}
+	updated := content
+	updated = ensureGoImport(updated, moduleName+"/internal/alerts", "")
+	updated = ensureGoImport(updated, moduleName+"/internal/monitoring", "")
+	for _, provider := range []string{
+		"\talerts.NewDispatchJob,",
+		"\tmonitoring.NewCheckService,",
+		"\tmonitoring.NewMonitorCheckJob,",
+	} {
+		if !strings.Contains(updated, strings.TrimSpace(provider)) {
+			updated = insertIntoWireSet(updated, "appJobSet", provider)
+		}
+	}
+	return updated
+}
+
+// syncDemoAppRepositoryInjector repairs early app repository injectors that omitted demo repositories.
+func syncDemoAppRepositoryInjector(content string, moduleName string, components project.Components) string {
+	if !components.DemoApp || !components.HasDatabase() || strings.TrimSpace(moduleName) == "" {
+		return content
+	}
+	updated := content
+	for _, importPath := range []string{
+		moduleName + "/internal/appsettings",
+		moduleName + "/internal/models",
+		moduleName + "/internal/notification",
+	} {
+		updated = ensureGoImport(updated, importPath, "")
+	}
+	if strings.Contains(updated, "wire.Value(repositorySetPlaceholder{})") {
+		updated = strings.Replace(updated, "\twire.Value(repositorySetPlaceholder{}),\n", "", 1)
+	}
+	for _, provider := range []string{
+		"\tappsettings.NewAppSettingRepo,",
+		"\tmodels.NewAlertDispatchEventRepo,",
+		"\tmodels.NewIncidentRepo,",
+		"\tmodels.NewMonitorCheckRepo,",
+		"\tmodels.NewMonitorCheckRollupRepo,",
+		"\tmodels.NewMonitorRepo,",
+		"\tnotification.NewChannelRepo,",
+	} {
+		if !strings.Contains(updated, strings.TrimSpace(provider)) {
+			updated = insertIntoWireSet(updated, "repositorySet", provider)
+		}
+	}
+	return updated
+}
+
+// syncDemoAppServiceInjector repairs early app service injectors that omitted demo providers.
+func syncDemoAppServiceInjector(content string, moduleName string, components project.Components) string {
+	if !components.DemoApp || !components.HasDatabase() || strings.TrimSpace(moduleName) == "" {
+		return content
+	}
+	updated := content
+	for _, importPath := range []string{
+		moduleName + "/internal/appsettings",
+		moduleName + "/internal/logger",
+		moduleName + "/internal/monitoring",
+		moduleName + "/internal/notification",
+	} {
+		updated = ensureGoImport(updated, importPath, "")
+	}
+	for _, provider := range []string{
+		"\tmonitoring.NewIncidentTransitionService,",
+		"\tmonitoring.NewRetentionService,",
+		"\tnotification.NewManager,",
+		"\tpreseedDemoDefaults,",
+	} {
+		if !strings.Contains(updated, strings.TrimSpace(provider)) {
+			updated = insertIntoWireSet(updated, "appSet", provider)
+		}
+	}
+	if !strings.Contains(updated, "type demoPreseedReady struct{}") {
+		updated = strings.TrimRight(updated, "\n") + demoPreseedReadyBlock() + "\n"
+	}
+	return updated
+}
+
+// demoPreseedReadyBlock restores demo preseed wiring for apps rendered before the provider split.
+func demoPreseedReadyBlock() string {
+	return `
+
+type demoPreseedReady struct{}
+
+func preseedDemoDefaults(
+	logger *logger.AppLogger,
+	settingRepo *appsettings.AppSettingRepo,
+	channelRepo *notification.ChannelRepo,
+) (*demoPreseedReady, error) {
+	setupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)
+	if inserted, err := settingRepo.PreseedDefaults(setupCtx); err != nil {
+		return nil, err
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
+	}
+	if inserted, err := channelRepo.PreseedDefaults(setupCtx); err != nil {
+		return nil, err
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("notification channels preseeded")
+	}
+	return &demoPreseedReady{}, nil
+}
+`
+}
+
 // syncLegacyScheduleInjectorPackage updates preserved schedule wiring after the scheduler package rename.
 func syncLegacyScheduleInjectorPackage(content string) string {
 	updated := strings.ReplaceAll(content, "/internal/scheduler", "/internal/schedules")
 	updated = strings.ReplaceAll(updated, "scheduler.AppSchedules", "schedules.AppSchedules")
 	updated = strings.ReplaceAll(updated, "scheduler.NewAppSchedules", "schedules.NewAppSchedules")
+	updated = strings.ReplaceAll(updated, "scheduler.ScheduleRegistry", "schedules.ScheduleRegistry")
+	updated = strings.ReplaceAll(updated, "scheduler.RegisterRecurring", "schedules.RegisterRecurring")
+	updated = strings.ReplaceAll(updated, "*scheduler.Scheduler", "*schedules.Scheduler")
 	return updated
 }
 
-func syncStressCommandWire(content string, enabled bool) string {
-	const stressLine = "\tNewQueueStressTickCmd,\n"
-	if enabled {
-		if strings.Contains(content, stressLine) {
-			return content
-		}
-		anchor := "\tmonitoring.NewTestPollLoopCmd,\n"
-		if strings.Contains(content, anchor) {
-			return strings.Replace(content, anchor, anchor+stressLine, 1)
+// syncLegacyScheduleInjector updates preserved app schedule wiring after schedule registration moved to app/.
+func syncLegacyScheduleInjector(content string, moduleName string, appImportPath string) string {
+	moduleName = strings.TrimSpace(moduleName)
+	if moduleName == "" {
+		return syncLegacyScheduleInjectorPackage(content)
+	}
+
+	updated := syncLegacyScheduleInjectorPackage(content)
+	appImportPath = strings.Trim(filepath.ToSlash(strings.TrimSpace(appImportPath)), "/")
+	if appImportPath == "" {
+		appImportPath = "app"
+	}
+	schedulesPath := moduleName + "/internal/schedules"
+	compositionAppPath := moduleName + "/" + appImportPath
+	appPackageName := project.AppPackageName(filepath.Base(appImportPath))
+	updated = ensureGoImport(updated, schedulesPath, "")
+	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
+	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
+	updated = replaceQualifiedIdentifier(updated, "targetapp.NewScheduleRegistry", appPackageName+".NewScheduleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "targetapp.ScheduleRegistry", appPackageName+".ScheduleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "compositionapp.NewScheduleRegistry", appPackageName+".NewScheduleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "compositionapp.ScheduleRegistry", appPackageName+".ScheduleRegistry")
+	updated = ensureGoImport(updated, compositionAppPath, "")
+	updated = strings.ReplaceAll(updated, "\tschedules.NewAppSchedules,", "\tProvideAppSchedules,")
+
+	if !strings.Contains(updated, "func ProvideAppSchedules(") {
+		updated = appendProvideAppSchedules(updated)
+	}
+	if !strings.Contains(updated, appPackageName+".NewScheduleRegistry") {
+		updated = insertIntoWireSet(updated, "appScheduleSet", "\t"+appPackageName+".NewScheduleRegistry,")
+	}
+	scheduleBinding := "wire.Bind(new(schedules.ScheduleRegistry), new(*" + appPackageName + ".ScheduleRegistry))"
+	if !strings.Contains(updated, scheduleBinding) {
+		updated = insertIntoWireSet(updated, "appScheduleSet", "\t"+scheduleBinding+",")
+	}
+	return dedupeWireSetProviders(updated, "appScheduleSet")
+}
+
+// appendProvideAppSchedules adds the explicit zero-arg provider Wire needs for an empty legacy container.
+func appendProvideAppSchedules(content string) string {
+	content = strings.TrimRight(content, "\n")
+	return content + `
+
+// ProvideAppSchedules creates the legacy AppSchedules container.
+func ProvideAppSchedules() *schedules.AppSchedules {
+	return schedules.NewAppSchedules()
+}
+`
+}
+
+// syncLegacyAppServiceInjector updates preserved app service wiring after lifecycle moved to app/.
+func syncLegacyAppServiceInjector(content string, moduleName string, appImportPath string) string {
+	moduleName = strings.TrimSpace(moduleName)
+	if moduleName == "" {
+		return content
+	}
+
+	updated := content
+	updated = replaceQualifiedIdentifier(updated, "app.NewTimeouts", "runtime.NewTimeouts")
+	updated = replaceQualifiedIdentifier(updated, "app.BackgroundSourceContext", "runtime.BackgroundSourceContext")
+	updated = replaceQualifiedIdentifier(updated, "app.SourceStartup", "runtime.SourceStartup")
+	updated = replaceQualifiedIdentifier(updated, "runtimeapp.NewTimeouts", "runtime.NewTimeouts")
+	updated = replaceQualifiedIdentifier(updated, "runtimeapp.BackgroundSourceContext", "runtime.BackgroundSourceContext")
+	updated = replaceQualifiedIdentifier(updated, "runtimeapp.SourceStartup", "runtime.SourceStartup")
+
+	legacyRuntimePath := moduleName + "/internal/app"
+	runtimePath := moduleName + "/internal/runtime"
+	appImportPath = strings.Trim(filepath.ToSlash(strings.TrimSpace(appImportPath)), "/")
+	if appImportPath == "" {
+		appImportPath = "app"
+	}
+	compositionAppPath := moduleName + "/" + appImportPath
+	appPackageName := project.AppPackageName(filepath.Base(appImportPath))
+	updated = replaceQualifiedIdentifier(updated, "app.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
+	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
+	updated = replaceQualifiedIdentifier(updated, "targetapp.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "compositionapp.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
+	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
+	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
+	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
+	updated = ensureGoImport(updated, compositionAppPath, "")
+	return updated
+}
+
+// syncLegacyAppLifecycleRegistry updates preserved app lifecycle registration imports after the runtime package rename.
+func syncLegacyAppLifecycleRegistry(content string, moduleName string) string {
+	moduleName = strings.TrimSpace(moduleName)
+	if moduleName == "" {
+		return content
+	}
+
+	updated := content
+	for _, name := range []string{
+		"Lifecycle",
+		"BeforeStartup",
+		"Startup",
+		"AfterStartup",
+		"BeforeShutdown",
+		"Shutdown",
+		"AfterShutdown",
+	} {
+		updated = replaceQualifiedIdentifier(updated, "runtimeapp."+name, "runtime."+name)
+	}
+
+	legacyRuntimePath := moduleName + "/internal/app"
+	runtimePath := moduleName + "/internal/runtime"
+	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
+	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
+	return updated
+}
+
+// replaceQualifiedIdentifier rewrites an old qualifier without touching longer aliases.
+func replaceQualifiedIdentifier(content string, old string, replacement string) string {
+	re := regexp.MustCompile(`(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(old))
+	return re.ReplaceAllString(content, `${1}`+replacement)
+}
+
+// replaceGoImportPath rewrites an existing import to a new path and optional alias.
+func replaceGoImportPath(content string, oldPath string, newPath string, alias string) string {
+	oldQuotedPath := strconv.Quote(oldPath)
+	newQuotedPath := strconv.Quote(newPath)
+	replacement := "\t" + newQuotedPath
+	if alias != "" {
+		replacement = "\t" + alias + " " + newQuotedPath
+	}
+	replacements := map[string]string{
+		"\t" + oldQuotedPath:                replacement,
+		"\tapp " + oldQuotedPath:            replacement,
+		"\tcompositionapp " + oldQuotedPath: replacement,
+		"\truntimeapp " + oldQuotedPath:     replacement,
+		"\truntime " + oldQuotedPath:        replacement,
+		// targetapp is legacy-only compatibility for preserved render-once files.
+		"\ttargetapp " + oldQuotedPath: replacement,
+	}
+	for from, to := range replacements {
+		content = strings.ReplaceAll(content, from, to)
+	}
+	return content
+}
+
+// ensureGoImport inserts a named import into the first import block when missing.
+func ensureGoImport(content string, importPath string, alias string) string {
+	if strings.Contains(content, strconv.Quote(importPath)) {
+		if alias != "" {
+			return replaceGoImportPath(content, importPath, importPath, alias)
 		}
 		return content
 	}
-	return strings.Replace(content, stressLine, "", 1)
+	importStart := strings.Index(content, "import (\n")
+	if importStart == -1 {
+		return content
+	}
+	insertAt := importStart + len("import (\n")
+	importLine := "\t" + strconv.Quote(importPath) + "\n"
+	if alias != "" {
+		importLine = "\t" + alias + " " + strconv.Quote(importPath) + "\n"
+	}
+	return content[:insertAt] + importLine + content[insertAt:]
 }
 
-func syncStressAppCommands(content string, enabled bool) string {
-	const fieldLine = "\tQueueStressTickCmd     QueueStressTickCmd     `cmd:\"\"`\n"
-	const paramLine = "\tqueueStressTickCmd *QueueStressTickCmd,\n"
-	const assignLine = "\t\tQueueStressTickCmd:     *queueStressTickCmd,\n"
-	if enabled {
-		updated := content
-		fieldAnchor := "\tTestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:\"\"`\n"
-		paramAnchor := "\ttestMonitorPollLoopCmd *monitoring.TestPollLoopCmd,\n"
-		assignAnchor := "\t\tTestMonitorPollLoopCmd: *testMonitorPollLoopCmd,\n"
-		if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
-			updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)
+// insertIntoWireSet inserts a provider before the named wire set closes.
+func insertIntoWireSet(content string, setName string, provider string) string {
+	lines := strings.Split(content, "\n")
+	inSet := false
+	for i, line := range lines {
+		if !inSet && strings.Contains(line, "var "+setName+" = wire.NewSet(") {
+			inSet = true
+			continue
 		}
-		if !strings.Contains(updated, paramLine) && strings.Contains(updated, paramAnchor) {
-			updated = strings.Replace(updated, paramAnchor, paramAnchor+paramLine, 1)
+		if inSet && strings.TrimSpace(line) == ")" {
+			lines = append(lines[:i], append([]string{provider}, lines[i:]...)...)
+			return strings.Join(lines, "\n")
 		}
-		if !strings.Contains(updated, assignLine) && strings.Contains(updated, assignAnchor) {
-			updated = strings.Replace(updated, assignAnchor, assignAnchor+assignLine, 1)
-		}
-		return updated
 	}
-	updated := strings.Replace(content, fieldLine, "", 1)
-	updated = strings.Replace(updated, paramLine, "", 1)
-	updated = strings.Replace(updated, assignLine, "", 1)
+	return content
+}
+
+// dedupeWireSetProviders removes duplicate provider entries left by older compatibility migrations.
+func dedupeWireSetProviders(content string, setName string) string {
+	lines := strings.Split(content, "\n")
+	inSet := false
+	seen := map[string]bool{}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !inSet && strings.Contains(line, "var "+setName+" = wire.NewSet(") {
+			inSet = true
+			out = append(out, line)
+			continue
+		}
+		if inSet {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == ")" {
+				inSet = false
+				out = append(out, line)
+				continue
+			}
+			if trimmed != "" {
+				if seen[trimmed] {
+					continue
+				}
+				seen[trimmed] = true
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// syncCommandsName migrates preserved app command registration away from the legacy AppCommands name.
+func syncCommandsName(content string) string {
+	updated := strings.ReplaceAll(content, "// AppCommands wires application-specific commands into the CLI.", "// Commands wires application-specific commands into the CLI.")
+	updated = strings.ReplaceAll(updated, "type AppCommands struct {", "type Commands struct {")
+	updated = strings.ReplaceAll(updated, "// NewAppCommands creates a new AppCommands instance with the given commands.", "// NewCommands creates a new Commands instance with the given commands.")
+	updated = strings.ReplaceAll(updated, "func NewAppCommands(", "func NewCommands(")
+	updated = strings.ReplaceAll(updated, ") *AppCommands {", ") *Commands {")
+	updated = strings.ReplaceAll(updated, "return &AppCommands{", "return &Commands{")
 	return updated
 }
 
 func syncHealthCommandWire(content string, enabled bool) string {
-	const healthLine = "\tNewHealthCmd,\n"
+	const healthLine = "\tcmd.NewHealthCmd,\n"
 	if !enabled {
 		return strings.Replace(content, healthLine, "", 1)
 	}
 	if strings.Contains(content, healthLine) {
 		return content
 	}
-	anchor := "\tNewAboutCmd,\n"
+	anchor := "\tcmd.NewAboutCmd,\n"
 	if strings.Contains(content, anchor) {
 		return strings.Replace(content, anchor, anchor+healthLine, 1)
 	}
 	return content
 }
 
-func syncHealthSkipBoot(content string, enabled bool) string {
+// syncHealthPreboot keeps preserved preboot command dispatch aligned with HTTP component availability.
+func syncHealthPreboot(content string, enabled bool) string {
 	const healthLine = "\tfunc() interface{} { return NewHealthCmd() },\n"
 	if !enabled {
 		return strings.Replace(content, healthLine, "", 1)
@@ -1370,30 +3187,57 @@ func syncHealthSkipBoot(content string, enabled bool) string {
 	return content
 }
 
-func syncHealthAppCommands(content string, enabled bool) string {
-	const fieldLine = "\tHealthCmd HealthCmd `cmd:\"\"`\n"
-	const paramLine = "\thealthCmd *HealthCmd,\n"
+// syncHealthCommands keeps preserved command registration aligned with HTTP component availability.
+func syncHealthCommands(content string, enabled bool) string {
+	const fieldLine = "\tHealthCmd cmd.HealthCmd `cmd:\"\"`\n"
+	const paramLine = "\thealthCmd *cmd.HealthCmd,\n"
 	const assignLine = "\t\tHealthCmd: *healthCmd,\n"
 	if !enabled {
-		updated := strings.Replace(content, fieldLine, "", 1)
-		updated = strings.Replace(updated, paramLine, "", 1)
-		updated = strings.Replace(updated, assignLine, "", 1)
-		return updated
+		return removeLinesContaining(content, "HealthCmd", "healthCmd")
 	}
 	updated := content
-	fieldAnchor := "\tAboutCmd AboutCmd `cmd:\"\"`\n"
-	paramAnchor := "\taboutCmd *AboutCmd,\n"
-	assignAnchor := "\t\tAboutCmd: *aboutCmd,\n"
-	if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
-		updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)
+	if !strings.Contains(updated, "HealthCmd") {
+		updated = insertAfterLineContaining(updated, "AboutCmd", fieldLine)
 	}
-	if !strings.Contains(updated, paramLine) && strings.Contains(updated, paramAnchor) {
-		updated = strings.Replace(updated, paramAnchor, paramAnchor+paramLine, 1)
+	if !strings.Contains(updated, "healthCmd") {
+		updated = insertAfterLineContaining(updated, "aboutCmd", paramLine)
 	}
-	if !strings.Contains(updated, assignLine) && strings.Contains(updated, assignAnchor) {
-		updated = strings.Replace(updated, assignAnchor, assignAnchor+assignLine, 1)
+	if !strings.Contains(updated, "HealthCmd:") {
+		updated = insertAfterLineContaining(updated, "AboutCmd:", assignLine)
 	}
 	return updated
+}
+
+// insertAfterLineContaining performs narrow render-once migrations without reformatting whole files.
+func insertAfterLineContaining(content string, fragment string, insertedLine string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, fragment) {
+			continue
+		}
+		inserted := []string{insertedLine}
+		lines = append(lines[:i+1], append(inserted, lines[i+1:]...)...)
+		return strings.Join(lines, "")
+	}
+	return content
+}
+
+// removeLinesContaining removes component-specific lines from preserved files when a component is disabled.
+func removeLinesContaining(content string, fragments ...string) string {
+	var builder strings.Builder
+	for _, line := range strings.SplitAfter(content, "\n") {
+		remove := false
+		for _, fragment := range fragments {
+			if strings.Contains(line, fragment) {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			builder.WriteString(line)
+		}
+	}
+	return builder.String()
 }
 
 // createGoMod initializes the go.mod for the project
@@ -1440,9 +3284,27 @@ func (p *ProjectRenderer) goModTidy() error {
 // syncCoreLibraries updates core goforj dependencies so generated templates and
 // module APIs stay aligned.
 func (p *ProjectRenderer) syncCoreLibraries() error {
+	return p.syncCoreLibrariesInDir(".")
+}
+
+// syncCoreLibrariesInDir updates core goforj dependencies in a specific module without forcing callers to change process cwd.
+func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 	modules := coredeps.SyncCoreLibraries()
-	cmd := exec.Command("go", append([]string{"get"}, modules...)...)
-	cmd.Dir = "."
+	modules, skipped, err := coreModulesNeedingSync(filepath.Join(dir, "go.mod"), modules)
+	if err != nil {
+		return err
+	}
+	if len(modules) == 0 {
+		p.lines = append(p.lines, renderCountsLine("sync core libs", 0, skipped, "modules"))
+		return nil
+	}
+
+	args := []string{"mod", "edit"}
+	for _, module := range modules {
+		args = append(args, "-require="+module)
+	}
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
 	cmd.Env = os.Environ()
 
 	var stdout, stderr bytes.Buffer
@@ -1455,15 +3317,123 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if detail != "" {
-			return fmt.Errorf("go get %w (%s)", err, detail)
+			return fmt.Errorf("go mod edit core libs: %w (%s)", err, detail)
 		}
-		return fmt.Errorf("go get %w", err)
+		return fmt.Errorf("go mod edit core libs: %w", err)
 	}
 
-	p.lines = append(p.lines, renderCountsLine("go get core libs", len(modules), 0, "modules"))
+	p.lines = append(p.lines, renderCountsLine("sync core libs", len(modules), skipped, "modules"))
 	return nil
 }
 
+// coreModulesNeedingSync keeps render fast by avoiding go command work when go.mod already has the desired core dependencies.
+func coreModulesNeedingSync(path string, desired []string) ([]string, int, error) {
+	state, err := readGoModModuleState(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return desired, 0, nil
+		}
+		return nil, 0, err
+	}
+
+	pending := make([]string, 0, len(desired))
+	skipped := 0
+	for _, spec := range desired {
+		module, version, ok := strings.Cut(spec, "@")
+		if !ok || module == "" || version == "" {
+			pending = append(pending, spec)
+			continue
+		}
+		current, required := state.requires[module]
+		if state.replaces[module] && required {
+			skipped++
+			continue
+		}
+		if required && current == version {
+			skipped++
+			continue
+		}
+		pending = append(pending, spec)
+	}
+	return pending, skipped, nil
+}
+
+type goModModuleState struct {
+	requires map[string]string
+	replaces map[string]bool
+}
+
+// readGoModModuleState reads only the directives needed for dependency sync so render does not pay module graph resolution cost.
+func readGoModModuleState(path string) (goModModuleState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return goModModuleState{}, err
+	}
+	state := goModModuleState{
+		requires: map[string]string{},
+		replaces: map[string]bool{},
+	}
+	mode := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(stripGoModLineComment(line))
+		if trimmed == "" {
+			continue
+		}
+		if mode != "" {
+			if trimmed == ")" {
+				mode = ""
+				continue
+			}
+			recordGoModDirective(&state, mode, trimmed)
+			continue
+		}
+		switch {
+		case trimmed == "require (":
+			mode = "require"
+		case trimmed == "replace (":
+			mode = "replace"
+		case strings.HasPrefix(trimmed, "require "):
+			recordGoModDirective(&state, "require", strings.TrimSpace(strings.TrimPrefix(trimmed, "require ")))
+		case strings.HasPrefix(trimmed, "replace "):
+			recordGoModDirective(&state, "replace", strings.TrimSpace(strings.TrimPrefix(trimmed, "replace ")))
+		}
+	}
+	return state, nil
+}
+
+// recordGoModDirective stores minimal require and replace metadata because local replaces intentionally override pinned versions.
+func recordGoModDirective(state *goModModuleState, directive string, line string) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	switch directive {
+	case "require":
+		if len(fields) >= 2 {
+			state.requires[fields[0]] = fields[1]
+		}
+	case "replace":
+		before, _, ok := strings.Cut(line, "=>")
+		if !ok {
+			return
+		}
+		fields = strings.Fields(before)
+		if len(fields) > 0 {
+			state.replaces[fields[0]] = true
+		}
+	}
+}
+
+// stripGoModLineComment lets the lightweight parser ignore inline comments without pulling in a module-file parser dependency.
+func stripGoModLineComment(line string) string {
+	before, _, ok := strings.Cut(line, "//")
+	if !ok {
+		return line
+	}
+	return before
+}
+
+// runWireGenerate refreshes Wire output for the default app and every discovered named app.
 func (p *ProjectRenderer) runWireGenerate() error {
 	wireInstallOnce.Do(func() {
 		if path, err := exec.LookPath("wire"); err == nil {
@@ -1476,31 +3446,101 @@ func (p *ProjectRenderer) runWireGenerate() error {
 		return wireInstallErr
 	}
 
-	if out, err := runWireCommand(wireBinaryPath); err != nil {
-		trimmed := strings.TrimSpace(string(out))
+	wireDirs := p.wireGenerateDirs()
+	if err := firstWireGenerateError(runWireGenerateDirs(wireBinaryPath, wireDirs)); err != nil {
 		// If a stale wire binary was built with an older Go toolchain, reinstall
-		// wire with the current toolchain and retry once.
-		if strings.Contains(trimmed, "package requires newer Go version") {
+		// wire with the current toolchain and retry all app-local graphs once.
+		if wireGenerateErr, ok := err.(*wireGenerateError); ok && wireGenerateErr.stale {
 			path, installErr := installWire()
 			if installErr != nil {
 				return installErr
 			}
 			wireBinaryPath = path
-			if retryOut, retryErr := runWireCommand(wireBinaryPath); retryErr != nil {
-				return fmt.Errorf("wire generate: %w (%s)", retryErr, strings.TrimSpace(string(retryOut)))
+			if retryErr := firstWireGenerateError(runWireGenerateDirs(wireBinaryPath, wireDirs)); retryErr != nil {
+				return retryErr
 			}
 		} else {
-			return fmt.Errorf("wire generate: %w (%s)", err, trimmed)
+			return err
 		}
 	}
 
-	p.lines = append(p.lines, renderCountsLine("wire generate", 1, 0, "command"))
+	p.lines = append(p.lines, renderCountsLine("wire generate", len(wireDirs), 0, "commands"))
 	return nil
 }
 
-func runWireCommand(wirePath string) ([]byte, error) {
+func runWireGenerateDirs(wirePath string, wireDirs []string) []error {
+	errs := make([]error, len(wireDirs))
+	var wg sync.WaitGroup
+	for i, wireDir := range wireDirs {
+		wg.Add(1)
+		go func(i int, wireDir string) {
+			defer wg.Done()
+			errs[i] = runWireGenerateDir(wirePath, wireDir)
+		}(i, wireDir)
+	}
+	wg.Wait()
+	return errs
+}
+
+func runWireGenerateDir(wirePath string, wireDir string) error {
+	out, err := runWireCommand(wirePath, wireDir)
+	if err == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	return &wireGenerateError{
+		dir:    wireDir,
+		output: trimmed,
+		err:    err,
+		stale:  strings.Contains(trimmed, "package requires newer Go version"),
+	}
+}
+
+func firstWireGenerateError(errs []error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// wireGenerateDirs returns existing Wire directories in the order they should be generated.
+func (p *ProjectRenderer) wireGenerateDirs() []string {
+	seen := make(map[string]bool)
+	add := func(dir string, dirs *[]string) {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "." || dir == "" || seen[dir] {
+			return
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			seen[dir] = true
+			*dirs = append(*dirs, dir)
+		}
+	}
+
+	dirs := make([]string, 0)
+	add(project.DefaultApp().WireDir, &dirs)
+	if p.config != nil {
+		for _, configured := range p.config.Dev.WirePaths {
+			add(configured, &dirs)
+		}
+	}
+	if apps, err := p.namedAppRenderApps(); err == nil {
+		for _, app := range apps {
+			add(app.WireDir, &dirs)
+		}
+	}
+	if len(dirs) == 0 {
+		add("wire", &dirs)
+	}
+	return dirs
+}
+
+// runWireCommand executes the Wire binary from one app-local Wire package.
+func runWireCommand(wirePath string, dir string) ([]byte, error) {
 	cmd := exec.Command(wirePath)
-	cmd.Dir = "wire"
+	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	return cmd.CombinedOutput()
 }
@@ -1547,30 +3587,101 @@ func removeIfExists(path string) error {
 	return nil
 }
 
+// removeFileIfExists reports whether a conventional generated file was present.
+func removeFileIfExists(path string) (bool, error) {
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// removeDirIfExists reports whether a conventional generated directory was present.
+func removeDirIfExists(path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(path); err == nil {
+		return false, fmt.Errorf("remove directory %s: still exists after removal", path)
+	} else if os.IsNotExist(err) {
+		return true, nil
+	} else {
+		return false, err
+	}
+}
+
+// removeEmptyDirIfEmpty avoids deleting command-package files that are outside the generated app shape.
+func removeEmptyDirIfEmpty(path string) (bool, error) {
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) || errors.Is(err, syscall.ENOTEMPTY) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
 
 func (p *ProjectRenderer) scaffoldDemoFrontend() error {
-	if err := p.copyRawPathToDest("demo/frontend", "frontend"); err != nil {
+	frontendDir := defaultFrontendDir()
+	if err := p.copyRawPathToDest("demo/frontend", frontendDir); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
 		return p.ensureFrontendDistPlaceholder()
 	}
 	return nil
 }
 
 func (p *ProjectRenderer) scaffoldVueStarterKit() error {
-	if err := os.RemoveAll("frontend"); err != nil {
+	return p.scaffoldVueStarterKitForApp(project.DefaultApp(), true)
+}
+
+// scaffoldAppStarterKit creates an app-local frontend scaffold only on first app creation.
+func (p *ProjectRenderer) scaffoldAppStarterKit(app project.App) error {
+	starterKit := appRenderStarterKit(p.config, app)
+	if starterKit != project.StarterKitVue {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(appFrontendDir(app), "package.json")); err == nil {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := p.copyRawPathToDestFiltered("starter-kits/vue/frontend", "frontend", skipFrontendBuildArtifact); err != nil {
+	return p.scaffoldVueStarterKitForApp(app, false)
+}
+
+// scaffoldVueStarterKitForApp copies the shared Vue starter kit into an app frontend directory.
+func (p *ProjectRenderer) scaffoldVueStarterKitForApp(app project.App, overwrite bool) error {
+	frontendDir := appFrontendDir(app)
+	if overwrite {
+		if err := os.RemoveAll(frontendDir); err != nil {
+			return err
+		}
+	}
+	if err := p.copyRawPathToDestFiltered("starter-kits/vue/frontend", frontendDir, skipFrontendBuildArtifact); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
-		return p.ensureFrontendDistPlaceholder()
+	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
+		if p.config != nil {
+			if err := p.renderTemplateFile(appFrontendDistIndex(app), "frontend/dist/index.html.tmpl", templateDataForApp(p.config, app)); err != nil {
+				return err
+			}
+			return p.ensureFrontendPlaceholderAssets(app)
+		}
+		return p.writeFrontendDistPlaceholder(appFrontendDistIndex(app), defaultFrontendDistPlaceholderContent())
 	}
 	return nil
 }
@@ -1597,19 +3708,75 @@ func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 }
 
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
-	distDir := filepath.Join("frontend", "dist")
-	if err := os.MkdirAll(distDir, 0755); err != nil {
+	content := defaultFrontendDistPlaceholderContent()
+	paths := make([]string, 0)
+	for _, app := range renderApps() {
+		if !appRenderComponents(p.config, app).WebUI {
+			continue
+		}
+		paths = append(paths, appFrontendDistIndex(app))
+	}
+	for _, index := range paths {
+		if _, err := os.Stat(index); err == nil {
+			continue
+		}
+		if err := p.writeFrontendDistPlaceholder(index, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const (
+	frontendPlaceholderLogoName     = "goforj-logo.png"
+	frontendPlaceholderLogoTemplate = "starter-kits/vue/frontend/public/goforj-logo.png"
+)
+
+// defaultFrontendDistPlaceholderContent keeps no-SPA fallback pages consistent across apps.
+func defaultFrontendDistPlaceholderContent() string {
+	return "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Ready to build</title><link rel=\"icon\" href=\"./goforj-logo.png\" type=\"image/png\"><link rel=\"apple-touch-icon\" href=\"./goforj-logo.png\"></head><body><img src=\"./goforj-logo.png\" alt=\"GoForj logo\"></body></html>\n"
+}
+
+// writeFrontendDistPlaceholder writes a fallback SPA page and records it in render stats.
+func (p *ProjectRenderer) writeFrontendDistPlaceholder(index string, content string) error {
+	if err := os.MkdirAll(filepath.Dir(index), 0755); err != nil {
 		return err
 	}
-	index := filepath.Join(distDir, "index.html")
-	if _, err := os.Stat(index); err == nil {
-		return nil
-	}
-	content := "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in frontend to publish SPA assets.</body></html>\n"
 	if err := os.WriteFile(index, []byte(content), 0644); err != nil {
 		return err
 	}
-	p.stats.recordCreated(index)
+	if p.stats != nil {
+		p.stats.recordCreated(index)
+	}
+	if strings.Contains(content, frontendPlaceholderLogoName) {
+		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName), frontendPlaceholderLogoTemplate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// copyFrontendPlaceholderAsset keeps fallback pages self-contained without overwriting identical assets.
+func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath string) error {
+	content, err := templatesFS.ReadFile(templatePath)
+	if err != nil {
+		return err
+	}
+	if existing, err := os.ReadFile(dest); err == nil && bytes.Equal(existing, content) {
+		if p.stats != nil {
+			p.stats.recordSkipped(dest)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, content, 0644); err != nil {
+		return err
+	}
+	if p.stats != nil {
+		p.stats.recordCreated(dest)
+	}
 	return nil
 }
 
@@ -1621,7 +3788,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 	t, err := template.New("").Parse(string(tmplBytes))
 	if err != nil {
-		return err
+		return fmt.Errorf("parse template %s: %w", tmpl, err)
 	}
 
 	var buf bytes.Buffer
@@ -1653,19 +3820,196 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 func templateData(data any) any {
 	switch value := data.(type) {
 	case *project.Config:
-		return templateRenderConfig{
-			Config:     value,
-			Components: value.Render.Components,
-		}
+		return templateDataForApp(value, project.DefaultApp())
 	case project.Config:
 		cfg := value
-		return templateRenderConfig{
-			Config:     &cfg,
-			Components: cfg.Render.Components,
-		}
+		return templateDataForApp(&cfg, project.DefaultApp())
+	case templateRenderConfig:
+		return value
 	default:
 		return data
 	}
+}
+
+func templateDataForApp(config *project.Config, app project.App) templateRenderConfig {
+	if app.Name == "" {
+		app = project.DefaultApp()
+	}
+	appImportPath := filepath.ToSlash(app.AppDir)
+	wireImportPath := filepath.ToSlash(app.WireDir)
+	components := appRenderComponents(config, app)
+	runtimeApps := runtimeAppMetadataForRender()
+	return templateRenderConfig{
+		Config:            config,
+		Components:        components,
+		ProjectComponents: config.Render.Components,
+		App:               app,
+		AppPackageName:    project.AppPackageName(app.Name),
+		AppImportPath:     appImportPath,
+		WireImportPath:    wireImportPath,
+		AppIsDefault:      app.Name == project.DefaultAppName,
+		HasNamedApps:      app.Name != project.DefaultAppName || len(runtimeApps) > 1,
+		RuntimeApps:       runtimeApps,
+	}
+}
+
+// appRenderComponents resolves the app-slice component participation for an app render.
+func appRenderComponents(config *project.Config, app project.App) project.Components {
+	if config == nil {
+		return project.Components{}
+	}
+	if app.Name == "" || app.Name == project.DefaultAppName {
+		return config.Render.Components
+	}
+	components := config.Render.Components
+	appConfig, ok := config.Apps[app.Name]
+	if ok {
+		components = project.NormalizeAppComponents(config.Render.Components, appConfig.Components)
+	}
+	return components
+}
+
+// appRenderStarterKit resolves the app-specific starter kit selection.
+func appRenderStarterKit(config *project.Config, app project.App) project.StarterKit {
+	if config == nil {
+		return project.StarterKitNone
+	}
+	components := appRenderComponents(config, app)
+	starterKit := config.Render.StarterKit
+	if app.Name != "" && app.Name != project.DefaultAppName {
+		if appConfig, ok := config.Apps[app.Name]; ok {
+			starterKit = appConfig.StarterKit
+		}
+	}
+	starterKit = project.NormalizeStarterKit(starterKit)
+	if !components.WebUI {
+		return project.StarterKitNone
+	}
+	return starterKit
+}
+
+// runtimeAppMetadataForRender creates the compiled app table used by generated runtime defaults.
+func runtimeAppMetadataForRender() []runtimeAppMetadata {
+	apps := renderApps()
+	out := make([]runtimeAppMetadata, 0, len(apps))
+	for i, app := range apps {
+		out = append(out, runtimeAppMetadata{
+			Name:        app.Name,
+			Index:       i,
+			EnvPrefix:   appEnvPrefix(app.Name),
+			HTTPPort:    3000 + i,
+			RuntimeBase: 10000 + i*10,
+		})
+	}
+	return out
+}
+
+// runtimeAppMetadataForApp resolves deterministic ports even before a new app exists on disk.
+func runtimeAppMetadataForApp(app project.App) runtimeAppMetadata {
+	return runtimeAppMetadataForAppFromApps(app, append(renderApps(), app))
+}
+
+// runtimeAppMetadataForConfiguredApp includes persisted app config so make:app can
+// assign env defaults before the new conventional files are fully discoverable.
+func runtimeAppMetadataForConfiguredApp(config *project.Config, app project.App) runtimeAppMetadata {
+	apps := renderApps()
+	if config != nil {
+		for name := range config.Apps {
+			apps = append(apps, project.DefaultNamedApp(name))
+		}
+	}
+	apps = append(apps, app)
+	return runtimeAppMetadataForAppFromApps(app, apps)
+}
+
+func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runtimeAppMetadata {
+	app = normalizeRenderApp(app)
+	seen := map[string]project.App{}
+	for _, candidate := range apps {
+		candidate = normalizeRenderApp(candidate)
+		if candidate.Name == "" || !project.IsSafeAppName(candidate.Name) || project.IsReservedAppName(candidate.Name) {
+			continue
+		}
+		seen[candidate.Name] = candidate
+	}
+
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		if name != project.DefaultAppName {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	ordered := []string{project.DefaultAppName}
+	ordered = append(ordered, names...)
+	for index, name := range ordered {
+		if name != app.Name {
+			continue
+		}
+		return runtimeAppMetadata{
+			Name:        app.Name,
+			Index:       index,
+			EnvPrefix:   appEnvPrefix(app.Name),
+			HTTPPort:    3000 + index,
+			RuntimeBase: 10000 + index*10,
+		}
+	}
+	return runtimeAppMetadata{Name: app.Name, EnvPrefix: appEnvPrefix(app.Name), HTTPPort: 3000, RuntimeBase: 10000}
+}
+
+// renderApps returns the default app plus named apps in deterministic runtime order.
+func renderApps() []project.App {
+	seen := map[string]bool{}
+	apps := make([]project.App, 0)
+	add := func(app project.App) {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || seen[app.Name] || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
+			return
+		}
+		seen[app.Name] = true
+		apps = append(apps, app)
+	}
+
+	add(project.DefaultApp())
+	for _, app := range discoverConventionalApps() {
+		add(app)
+	}
+	if len(apps) <= 1 {
+		return apps
+	}
+	sort.SliceStable(apps[1:], func(i, j int) bool {
+		return apps[i+1].Name < apps[j+1].Name
+	})
+	return apps
+}
+
+// appEnvPrefix converts app slugs into the uppercase env prefix used by generated defaults.
+func appEnvPrefix(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || name == project.DefaultAppName {
+		return ""
+	}
+	var builder strings.Builder
+	lastWasSeparator := true
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r - 'a' + 'A')
+			lastWasSeparator = false
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+			lastWasSeparator = false
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastWasSeparator = false
+		default:
+			if !lastWasSeparator {
+				builder.WriteByte('_')
+				lastWasSeparator = true
+			}
+		}
+	}
+	return strings.Trim(builder.String(), "_")
 }
 
 // writeTemplates writes templates to the destination directory of the project
@@ -1684,6 +4028,17 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 func (p *ProjectRenderer) writeTemplateMappings(mappings []templateMapping) error {
 	for _, mapping := range mappings {
 		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeTemplateMappingsForApp renders mapped templates with app-specific package and import data.
+func (p *ProjectRenderer) writeTemplateMappingsForApp(app project.App, mappings []templateMapping) error {
+	data := templateDataForApp(p.config, normalizeRenderApp(app))
+	for _, mapping := range mappings {
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
 			return err
 		}
 	}
@@ -1819,6 +4174,21 @@ func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) 
 	return nil
 }
 
+// writeTemplateMappingsOnceForApp preserves app-owned files after their first render.
+func (p *ProjectRenderer) writeTemplateMappingsOnceForApp(app project.App, mappings []templateMapping) error {
+	data := templateDataForApp(p.config, normalizeRenderApp(app))
+	for _, mapping := range mappings {
+		if _, err := os.Stat(mapping.dest); err == nil {
+			p.stats.recordSkipped(mapping.dest)
+			continue
+		}
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func countTidyModules(stdout, stderr string) int {
 	combined := strings.Split(strings.TrimSpace(stdout+"\n"+stderr), "\n")
 	count := 0
@@ -1833,11 +4203,15 @@ func countTidyModules(stdout, stderr string) int {
 	return count
 }
 
-func (p *ProjectRenderer) printStepSummary(title string, before renderCounts) {
+func (p *ProjectRenderer) printStepSummary(title string, before renderCounts, elapsed time.Duration) {
 	after := p.stats.counts()
 	created := after.created - before.created
 	skipped := after.skipped - before.skipped
-	p.lines = append(p.lines, renderCountsLine(title, created, skipped, "files"))
+	if p.renderTimingEnabled() {
+		p.appendRenderLine(renderCountsLineWithTiming(title, created, skipped, "files", elapsed))
+		return
+	}
+	p.appendRenderLine(renderCountsLine(title, created, skipped, "files"))
 }
 
 func renderBox(title string, lines []string) string {
@@ -1937,7 +4311,13 @@ func (p *ProjectRenderer) nextSteps() []string {
 
 	if p.config != nil {
 		if p.config.Render.Components.WebUI {
-			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
+			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install"
+			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render(cmd)))
+		}
+		if p.config.Render.StarterKit == project.StarterKitVue && p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {
+			createUserCmd := "bin/app auth:create-user --username <username> --email <email> --password <password>"
+			steps = append(steps, fmt.Sprintf("Sign into the Vue app locally with %s / %s", commandStyle.Render("admin"), commandStyle.Render("admin")))
+			steps = append(steps, fmt.Sprintf("Create another auth user: %s", commandStyle.Render(createUserCmd)))
 		}
 		if p.config.Render.Components.Mail && p.config.Render.Components.Docker {
 			steps = append(steps, fmt.Sprintf("Open Mailpit inbox at %s", commandStyle.Render("http://localhost:8025")))
@@ -1954,7 +4334,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))
 		}
 		if p.config.Render.Components.Grafana {
-			steps = append(steps, fmt.Sprintf("Open Grafana at %s with %s / %s", commandStyle.Render("http://localhost:3001"), commandStyle.Render("admin"), commandStyle.Render("admin")))
+			steps = append(steps, fmt.Sprintf("Open Grafana at %s with %s / %s", commandStyle.Render("http://localhost:13001"), commandStyle.Render("admin"), commandStyle.Render("admin")))
 		}
 	}
 

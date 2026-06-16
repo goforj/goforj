@@ -1,0 +1,78 @@
+package runtime
+
+import (
+	"context"
+	"strings"
+)
+
+// RuntimeMode describes the runtime topology for the app host.
+type RuntimeMode string
+
+const (
+	// RuntimeModeStandalone hosts enabled runtimes together in one process.
+	RuntimeModeStandalone RuntimeMode = "standalone"
+	// RuntimeModeDistributed leaves runtime hosting to explicit runtime commands.
+	RuntimeModeDistributed RuntimeMode = "distributed"
+)
+
+// NormalizeRuntimeMode coerces an env/config value into a supported runtime mode.
+// Empty or unknown values default to standalone.
+func NormalizeRuntimeMode(value string) RuntimeMode {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(RuntimeModeDistributed):
+		return RuntimeModeDistributed
+	case "", string(RuntimeModeStandalone):
+		return RuntimeModeStandalone
+	default:
+		return RuntimeModeStandalone
+	}
+}
+
+// RuntimeTopology is the code-level source of truth for runtime hosting topology.
+type RuntimeTopology struct {
+	Mode RuntimeMode
+}
+
+// Normalize applies defaults to the topology in place.
+func (t *RuntimeTopology) Normalize() {
+	if t == nil {
+		return
+	}
+	t.Mode = NormalizeRuntimeMode(string(t.Mode))
+}
+
+// Normalized returns a topology copy with defaults applied.
+func (t RuntimeTopology) Normalized() RuntimeTopology {
+	t.Normalize()
+	return t
+}
+
+// DefaultRuntimeTopology returns the default topology for generated apps.
+func DefaultRuntimeTopology() RuntimeTopology {
+	return RuntimeTopology{Mode: RuntimeModeStandalone}
+}
+
+// RuntimeIdentity describes a logical source hosted by the app.
+type RuntimeIdentity struct {
+	Name  string // http, scheduler, jobs
+	Label string // http, scheduler, jobs
+}
+
+// RuntimeFunc adapts a runtime identity and function into a Runtime.
+type RuntimeFunc struct {
+	RuntimeIdentity RuntimeIdentity
+	RunFn           func(ctx context.Context) error
+}
+
+// Identity returns the logical runtime identity.
+func (r RuntimeFunc) Identity() RuntimeIdentity {
+	return r.RuntimeIdentity
+}
+
+// Run executes the adapted runtime function.
+func (r RuntimeFunc) Run(ctx context.Context) error {
+	if r.RunFn == nil {
+		return nil
+	}
+	return r.RunFn(ctx)
+}

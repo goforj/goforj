@@ -5,7 +5,6 @@ package forj
 import (
 	"bytes"
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -65,20 +64,7 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 func buildRenderedQueueSelectionApp(t *testing.T, projectDir string, env map[string]string) string {
 	t.Helper()
 	binPath := filepath.Join(projectDir, "bin", "app")
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		t.Fatalf("mkdir bin dir: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, ".")
-	cmd.Dir = projectDir
-	cmd.Env = testkit.IntegrationGoProcessEnv(t, env)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("build rendered app failed: %v\n%s", err, out.String())
-	}
+	buildRenderedDefaultAppTo(t, projectDir, binPath, env, "build rendered app")
 	return binPath
 }
 

@@ -1,0 +1,1238 @@
+package runtime
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	goruntime "runtime"
+	"strings"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+	"gopkg.in/yaml.v3"
+)
+
+var (
+	aboutCacheRootKeys = []string{
+		"DRIVER",
+		"DEFAULT_TTL_SECONDS",
+		"PREFIX",
+		"MEMORY_CLEANUP_SECONDS",
+		"FILE_DIR",
+		"ADDR",
+		"ADDRESSES",
+		"USERNAME",
+		"PASSWORD",
+		"DB",
+		"DSN",
+		"TABLE",
+		"ENDPOINT",
+		"REGION",
+		"TLS",
+		"INSECURE_SKIP_VERIFY",
+		"URL",
+		"BUCKET",
+		"BUCKET_TTL",
+		"BUCKET_TTL_SECONDS",
+		"DESCRIPTION",
+		"HISTORY",
+		"MAX_BYTES",
+		"MAX_VALUE_SIZE",
+		"REPLICAS",
+		"STORAGE",
+		"COMPRESSED",
+		"COMPRESSION",
+		"MAX_VALUE_BYTES",
+		"ENCRYPTION_KEY",
+	}
+	aboutQueueRootKeys = []string{
+		"DRIVER",
+		"WORKERS",
+		"NAME",
+		"DEFAULT_QUEUE",
+		"SHUTDOWN_TIMEOUT",
+		"ADDR",
+		"PASSWORD",
+		"DB",
+		"QUEUES",
+		"SERVER_LOG_LEVEL",
+		"URL",
+		"REGION",
+		"ENDPOINT",
+		"ACCESS_KEY",
+		"SECRET_KEY",
+		"DSN",
+		"WORKERPOOL_WORKERS",
+		"WORKERPOOL_BUFFER",
+		"WORKERPOOL_TASK_TIMEOUT_SECONDS",
+		"PROCESSING_RECOVERY_GRACE_SECONDS",
+		"PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
+	}
+	aboutStorageRootKeys = []string{
+		"DRIVER",
+		"ROOT",
+		"PREFIX",
+		"ADDR",
+		"USERNAME",
+		"PASSWORD",
+		"DB",
+		"HOST",
+		"PORT",
+		"USER",
+		"TLS",
+		"INSECURE_SKIP_VERIFY",
+		"KEY_PATH",
+		"KNOWN_HOSTS_PATH",
+		"INSECURE_IGNORE_HOST_KEY",
+		"BUCKET",
+		"ENDPOINT",
+		"REGION",
+		"ACCESS_KEY_ID",
+		"SECRET_ACCESS_KEY",
+		"USE_PATH_STYLE",
+		"UNSIGNED_PAYLOAD",
+		"CREDENTIALS_JSON",
+		"TOKEN",
+		"REMOTE",
+		"RCLONE_CONFIG_PATH",
+		"RCLONE_CONFIG_DATA",
+	}
+	aboutEventRootKeys = []string{
+		"DRIVER",
+		"ADDR",
+		"REDIS_CHANNEL_PREFIX",
+		"URL",
+		"BROKERS",
+		"PROJECT_ID",
+		"URI",
+		"REGION",
+		"ENDPOINT",
+		"TOPIC_NAME_PREFIX",
+		"QUEUE_NAME_PREFIX",
+		"WAIT_TIME_SECONDS",
+		"VISIBILITY_TIMEOUT_SECONDS",
+		"SUBJECT_PREFIX",
+		"STREAM_NAME_PREFIX",
+		"INACTIVE_THRESHOLD_SECONDS",
+		"ACK_WAIT_SECONDS",
+		"FETCH_MAX_WAIT_MS",
+		"STORAGE",
+		"INPROC_WORKERS",
+		"INPROC_BUFFER",
+	}
+	aboutDatabaseRootKeys = []string{
+		"DRIVER",
+		"DSN",
+		"HOST",
+		"PORT",
+		"DATABASE",
+		"USERNAME",
+		"PASSWORD",
+		"QUERY_LOGGING",
+		"MAX_IDLE_CONNECTIONS",
+		"MAX_OPEN_CONNECTIONS",
+		"CONN_MAX_LIFETIME_MINUTES",
+	}
+	aboutMailRootKeys = []string{
+		"DRIVER",
+		"FROM_ADDRESS",
+		"FROM_NAME",
+		"LOG_BODIES",
+		"SMTP_HOST",
+		"SMTP_PORT",
+		"SMTP_USERNAME",
+		"SMTP_PASSWORD",
+		"SMTP_IDENTITY",
+		"SMTP_FORCE_TLS",
+		"RESEND_API_KEY",
+		"RESEND_ENDPOINT",
+		"POSTMARK_SERVER_TOKEN",
+		"POSTMARK_ENDPOINT",
+		"POSTMARK_MESSAGE_STREAM",
+		"MAILGUN_DOMAIN",
+		"MAILGUN_API_KEY",
+		"MAILGUN_ENDPOINT",
+		"SENDGRID_API_KEY",
+		"SENDGRID_ENDPOINT",
+		"SES_REGION",
+		"SES_ACCESS_KEY_ID",
+		"SES_SECRET_ACCESS_KEY",
+		"SES_SESSION_TOKEN",
+		"SES_ENDPOINT",
+		"SES_CONFIGURATION_SET",
+	}
+)
+
+type AboutService struct{}
+
+type AboutField struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type AboutSectionRow struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type AboutConnectionData struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutSectionData struct {
+	Title       string                `json:"title"`
+	Rows        []AboutSectionRow     `json:"rows,omitempty"`
+	Connections []AboutConnectionData `json:"connections,omitempty"`
+}
+
+type AboutReport struct {
+	App         string             `json:"app"`
+	Environment AboutEnvironment   `json:"environment"`
+	Build       AboutBuild         `json:"build"`
+	Network     AboutNetwork       `json:"network"`
+	Databases   []AboutDatabase    `json:"databases,omitempty"`
+	Caches      []AboutCache       `json:"caches"`
+	Mails       []AboutMail        `json:"mails,omitempty"`
+	Queues      []AboutQueue       `json:"queues,omitempty"`
+	Storages    []AboutStorage     `json:"storages"`
+	Events      []AboutEvent       `json:"events"`
+	Sections    []AboutSectionData `json:"sections"`
+}
+
+type AboutEnvironment struct {
+	AppName       string `json:"app_name"`
+	Module        string `json:"module"`
+	Environment   string `json:"environment"`
+	Debug         bool   `json:"debug"`
+	GoVersion     string `json:"go_version"`
+	GoForjVersion string `json:"goforj_version"`
+}
+
+type AboutBuild struct {
+	Components     []string `json:"components"`
+	WireGenerated  string   `json:"wire_generated"`
+	FrontendDist   string   `json:"frontend_dist,omitempty"`
+	MigrationsPath string   `json:"migrations_path,omitempty"`
+}
+
+type AboutNetwork struct {
+	AppURL        string `json:"app_url,omitempty"`
+	APIURL        string `json:"api_url,omitempty"`
+	LighthouseURL string `json:"lighthouse_url,omitempty"`
+}
+
+type AboutDatabase struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	Host      string       `json:"host,omitempty"`
+	Port      string       `json:"port,omitempty"`
+	Database  string       `json:"database,omitempty"`
+	DSN       string       `json:"dsn,omitempty"`
+	URL       string       `json:"url,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutCache struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	URL       string       `json:"url,omitempty"`
+	FileDir   string       `json:"file_dir,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutMail struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	From      string       `json:"from,omitempty"`
+	Endpoint  string       `json:"endpoint,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutQueue struct {
+	Name         string       `json:"name"`
+	IsDefault    bool         `json:"is_default"`
+	Driver       string       `json:"driver"`
+	QueueName    string       `json:"queue_name,omitempty"`
+	Workers      string       `json:"workers,omitempty"`
+	URL          string       `json:"url,omitempty"`
+	Summary      string       `json:"summary"`
+	Details      []AboutField `json:"details,omitempty"`
+}
+
+type AboutStorage struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	Root      string       `json:"root,omitempty"`
+	URL       string       `json:"url,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutEvent struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	URL       string       `json:"url,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+func NewAboutService() *AboutService {
+	return &AboutService{}
+}
+
+func (s *AboutService) Build() AboutReport {
+	report := AboutReport{
+		App: strings.TrimSpace(env.Get("APP_NAME", "app")),
+		Environment: AboutEnvironment{
+			AppName:       env.Get("APP_NAME", "app"),
+			Module:        "{{.GoModuleName}}",
+			Environment:   env.Get("APP_ENV", "local"),
+			Debug:         env.Get("APP_DEBUG", "0") != "0",
+			GoVersion:     goruntime.Version(),
+			GoForjVersion: aboutForjVersion(),
+		},
+		Build: AboutBuild{
+			Components:    aboutComponents(),
+			WireGenerated: aboutPresence(filepath.Join("app", "wire", "wire_gen.go")),
+{{- if .Components.WebUI }}
+			FrontendDist: aboutPresence(filepath.Join("cmd", CurrentApp().Name, "frontend", "dist", "index.html")),
+{{- end }}
+{{- if .Components.HasDatabase }}
+			MigrationsPath: aboutPresence("migrations"),
+{{- end }}
+		},
+		Network: AboutNetwork{
+			AppURL: env.Get("APP_URL", "http://localhost:3000"),
+{{- if .Components.WebAPI }}
+			APIURL: strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api",
+{{- end }}
+		},
+		Caches:   aboutCacheReports(),
+		Mails:    aboutMailReports(),
+{{- if .Components.Jobs }}
+		Queues:   aboutQueueReports(),
+{{- end }}
+		Storages: aboutStorageReports(),
+		Events:   aboutEventReports(),
+	}
+	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_URL", "")); raw != "" {
+		if env.GetBool("LIGHTHOUSE_ENABLED", "true") {
+			report.Network.LighthouseURL = raw
+		} else {
+			report.Network.LighthouseURL = "disabled"
+		}
+	}
+{{- if .Components.HasDatabase }}
+	report.Databases = aboutDatabaseReports()
+{{- end }}
+	report.Sections = s.sections(report)
+	return report
+}
+
+func (s *AboutService) sections(report AboutReport) []AboutSectionData {
+	sections := []AboutSectionData{
+		{
+			Title: "Environment",
+			Rows: []AboutSectionRow{
+				{Key: "App", Value: report.Environment.AppName},
+				{Key: "Module", Value: report.Environment.Module},
+				{Key: "Environment", Value: report.Environment.Environment},
+				{Key: "Debug", Value: aboutEnabled(report.Environment.Debug)},
+				{Key: "Go", Value: report.Environment.GoVersion},
+				{Key: "GoForj Version", Value: report.Environment.GoForjVersion},
+			},
+		},
+		{
+			Title: "Build",
+			Rows:  aboutBuildRows(report.Build),
+		},
+	}
+
+	if rows := aboutNetworkRows(report.Network); len(rows) > 0 {
+		sections = append(sections, AboutSectionData{Title: "Network", Rows: rows})
+	}
+
+{{- if .Components.HasDatabase }}
+	sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
+{{- end }}
+	sections = append(sections,
+		AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)},
+		AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)},
+		AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)},
+{{- if .Components.Jobs }}
+		AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)},
+{{- end }}
+		AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)},
+	)
+
+	return sections
+}
+
+func aboutForjVersion() string {
+	data, err := os.ReadFile(".goforj.yml")
+	if err != nil {
+		return "-"
+	}
+	var cfg struct {
+		Render struct {
+			GoForjVersion string `yaml:"goforj_version"`
+		} `yaml:"render"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "-"
+	}
+	value := strings.TrimSpace(cfg.Render.GoForjVersion)
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func aboutBuildRows(build AboutBuild) []AboutSectionRow {
+	rows := []AboutSectionRow{
+		{Key: "Components", Value: strings.Join(build.Components, ", ")},
+		{Key: "Wire Generated", Value: build.WireGenerated},
+	}
+	if strings.TrimSpace(build.FrontendDist) != "" {
+		rows = append(rows, AboutSectionRow{Key: "Frontend Dist", Value: build.FrontendDist})
+	}
+	if strings.TrimSpace(build.MigrationsPath) != "" {
+		rows = append(rows, AboutSectionRow{Key: "Migrations Path", Value: build.MigrationsPath})
+	}
+	return rows
+}
+
+func aboutNetworkRows(network AboutNetwork) []AboutSectionRow {
+	rows := []AboutSectionRow{}
+	if strings.TrimSpace(network.AppURL) != "" {
+		rows = append(rows, AboutSectionRow{Key: "App URL", Value: network.AppURL})
+	}
+	if strings.TrimSpace(network.APIURL) != "" {
+		rows = append(rows, AboutSectionRow{Key: "API URL", Value: network.APIURL})
+	}
+	if strings.TrimSpace(network.LighthouseURL) != "" {
+		rows = append(rows, AboutSectionRow{Key: "Lighthouse URL", Value: network.LighthouseURL})
+	}
+	return rows
+}
+
+func aboutDatabaseConnections(databases []AboutDatabase) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(databases))
+	for _, database := range databases {
+		connections = append(connections, AboutConnectionData{
+			Name:      database.Name,
+			IsDefault: database.IsDefault,
+			Details:   database.Details,
+		})
+	}
+	return connections
+}
+
+func aboutCacheConnections(caches []AboutCache) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(caches))
+	for _, cache := range caches {
+		connections = append(connections, AboutConnectionData{
+			Name:      cache.Name,
+			IsDefault: cache.IsDefault,
+			Details:   cache.Details,
+		})
+	}
+	return connections
+}
+
+func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(queues))
+	for _, queue := range queues {
+		connections = append(connections, AboutConnectionData{
+			Name:      queue.Name,
+			IsDefault: queue.IsDefault,
+			Details:   queue.Details,
+		})
+	}
+	return connections
+}
+
+func aboutMailConnections(mails []AboutMail) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(mails))
+	for _, mail := range mails {
+		connections = append(connections, AboutConnectionData{
+			Name:      mail.Name,
+			IsDefault: mail.IsDefault,
+			Details:   mail.Details,
+		})
+	}
+	return connections
+}
+
+func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(storages))
+	for _, storage := range storages {
+		connections = append(connections, AboutConnectionData{
+			Name:      storage.Name,
+			IsDefault: storage.IsDefault,
+			Details:   storage.Details,
+		})
+	}
+	return connections
+}
+
+func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(events))
+	for _, event := range events {
+		connections = append(connections, AboutConnectionData{
+			Name:      event.Name,
+			IsDefault: event.IsDefault,
+			Details:   event.Details,
+		})
+	}
+	return connections
+}
+
+func aboutComponents() []string {
+	components := []string{"cache", "storage", "events", "lighthouse"}
+{{- if .Components.Metrics }}
+	components = append(components, "metrics")
+{{- end }}
+{{- if .Components.Observability }}
+	components = append(components, "observability")
+{{- end }}
+{{- if .Components.Grafana }}
+	components = append(components, "grafana")
+{{- end }}
+{{- if .Components.HasDatabase }}
+	components = append(components, "database")
+{{- end }}
+{{- if .Components.WebAPI }}
+	components = append(components, "http")
+{{- end }}
+{{- if .Components.WebUI }}
+	components = append(components, "ui")
+{{- end }}
+{{- if .Components.Scheduler }}
+	components = append(components, "scheduler")
+{{- end }}
+{{- if .Components.Jobs }}
+	components = append(components, "jobs")
+{{- end }}
+{{- if .Components.DemoApp }}
+	components = append(components, "demo")
+{{- end }}
+	return components
+}
+
+func aboutDatabaseReports() []AboutDatabase {
+	instances := DiscoverDatabaseInstances()
+	reports := make([]AboutDatabase, 0, len(instances))
+	for _, instance := range instances {
+		name := instance.Name
+		dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN"))
+		if dsn == "-" {
+			dsn = ""
+		}
+		host := ""
+		port := ""
+		database := ""
+		url := ""
+		switch instance.Driver {
+		case "postgres", "postgresql", "mysql", "mariadb":
+			host = strings.TrimSpace(aboutDatabaseEnv(name, "HOST"))
+			port = strings.TrimSpace(aboutDatabaseEnv(name, "PORT"))
+			database = strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE"))
+			if host != "" && port != "" && database != "" {
+				url = host + ":" + port + "/" + database
+			}
+		}
+		details := aboutDatabaseDetails(name)
+		reports = append(reports, AboutDatabase{
+			Name:      name,
+			IsDefault: instance.IsDefault,
+			Driver:    instance.Driver,
+			Host:      host,
+			Port:      port,
+			Database:  database,
+			DSN:       dsn,
+			URL:       url,
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutCacheReports() []AboutCache {
+	instances := DiscoverCacheInstances()
+	reports := make([]AboutCache, 0, len(instances))
+	for _, instance := range instances {
+		name := instance.Name
+		scope := aboutPrimitiveScope("CACHE", name)
+		driver := instance.Driver
+		url := ""
+		fileDir := ""
+		if driver == "redis" {
+			url = strings.TrimPrefix(aboutRedisSummary(scope, "CACHE"), "redis://")
+		}
+		if driver == "file" {
+			fileDir = strings.TrimSpace(scope.Get("FILE_DIR", ""))
+			if fileDir == "" {
+				fileDir = filepath.Join(os.TempDir(), "cache-file")
+				if name != "default" {
+					fileDir = filepath.Join(fileDir, name)
+				}
+			}
+		}
+		details := aboutCacheDetails(name)
+		reports = append(reports, AboutCache{
+			Name:      name,
+			IsDefault: instance.IsDefault,
+			Driver:    driver,
+			URL:       url,
+			FileDir:   fileDir,
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutQueueReports() []AboutQueue {
+	instances := DiscoverQueueInstances()
+	reports := make([]AboutQueue, 0, len(instances))
+	rootScope := env.WithPrefix("QUEUE")
+	for _, instance := range instances {
+		name := instance.Name
+		scope := aboutPrimitiveScope("QUEUE", name)
+		details := aboutQueueDetails(name)
+		reports = append(reports, AboutQueue{
+			Name:         name,
+			IsDefault:    instance.IsDefault,
+			Driver:       instance.Driver,
+			QueueName:    QueueDefaultQueue(name),
+			Workers:      aboutQueueWorkers(scope, rootScope),
+			URL:          aboutFieldValue(details, "Address", "URL", "DSN"),
+			Summary:      aboutDetailSummary(details),
+			Details:      details,
+		})
+	}
+	return reports
+}
+
+func aboutMailReports() []AboutMail {
+	names := aboutScopedNames("MAIL", aboutMailRootKeys)
+	reports := make([]AboutMail, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("MAIL", name)
+		driver := aboutMailDriver(scope.Get("DRIVER", "log"))
+		if driver == "" {
+			driver = "log"
+		}
+		details := aboutMailDetails(name)
+		reports = append(reports, AboutMail{
+			Name:      name,
+			IsDefault: name == "default",
+			Driver:    driver,
+			From:      aboutFieldValue(details, "From Address", "From Name"),
+			Endpoint:  aboutFieldValue(details, "Host", "Endpoint", "Domain", "Region"),
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutStorageReports() []AboutStorage {
+	instances := DiscoverStorageInstances()
+	reports := make([]AboutStorage, 0, len(instances))
+	for _, instance := range instances {
+		name := instance.Name
+		scope := aboutPrimitiveScope("STORAGE", name)
+		driver := instance.Driver
+		root := strings.TrimSpace(scope.Get("ROOT", ""))
+		if root == "" && driver == "local" {
+			root = filepath.Join("storage", "app", name)
+			if name == "default" {
+				root = filepath.Join("storage", "app", "private")
+			}
+		}
+		details := aboutStorageDetails(name)
+		reports = append(reports, AboutStorage{
+			Name:      name,
+			IsDefault: instance.IsDefault,
+			Driver:    driver,
+			Root:      root,
+			URL:       aboutFieldValue(details, "Address", "Endpoint", "Remote"),
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutEventReports() []AboutEvent {
+	instances := DiscoverEventInstances()
+	reports := make([]AboutEvent, 0, len(instances))
+	for _, instance := range instances {
+		details := aboutEventDetails(instance.Name)
+		reports = append(reports, AboutEvent{
+			Name:      instance.Name,
+			IsDefault: instance.IsDefault,
+			Driver:    instance.Driver,
+			URL:       aboutFieldValue(details, "Address", "URL", "Brokers", "Project ID", "Endpoint"),
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
+	switch prefix {
+	case "CACHE":
+		return aboutAnySet(scope, "DRIVER", "FILE_DIR", "ADDR", "URL", "DSN")
+	case "MAIL":
+		return aboutAnySet(scope, "DRIVER", "FROM_ADDRESS", "FROM_NAME", "SMTP_HOST", "RESEND_ENDPOINT", "POSTMARK_ENDPOINT", "MAILGUN_DOMAIN", "SENDGRID_ENDPOINT", "SES_REGION")
+	case "QUEUE":
+		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "NAME", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
+	case "STORAGE":
+		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
+	case "EVENTS":
+		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "BROKERS", "PROJECT_ID", "URI", "REGION", "ENDPOINT")
+	default:
+		return false
+	}
+}
+
+func aboutDatabaseChildDefined(scope env.Scope) bool {
+	return aboutAnySet(scope, "DRIVER", "DSN", "DATABASE", "HOST")
+}
+
+func aboutAnySet(scope env.Scope, keys ...string) bool {
+	for _, key := range keys {
+		if strings.TrimSpace(scope.Get(key, "")) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func aboutDatabaseDetails(name string) []AboutField {
+	driver := NormalizeDBDriver(aboutDatabaseEnv(name, "DRIVER"))
+	dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN"))
+	details := []AboutField{
+		{Key: "Driver", Value: fallbackAboutValue(driver, "-")},
+	}
+	switch driver {
+	case "postgres", "postgresql", "mysql", "mariadb":
+		if host := strings.TrimSpace(aboutDatabaseEnv(name, "HOST")); host != "" {
+			details = append(details, AboutField{Key: "Host", Value: host})
+		}
+		if port := strings.TrimSpace(aboutDatabaseEnv(name, "PORT")); port != "" {
+			details = append(details, AboutField{Key: "Port", Value: port})
+		}
+		if database := strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")); database != "" {
+			details = append(details, AboutField{Key: "Database", Value: database})
+		}
+		if dsn != "-" && len(details) == 1 {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	case "sqlite":
+		if dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	default:
+		if dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	}
+	details = aboutAppendIfTrue(details, "Query Logging", aboutDatabaseEnv(name, "QUERY_LOGGING"))
+	details = aboutAppendIfSet(details, "Max Idle", aboutDatabaseEnv(name, "MAX_IDLE_CONNECTIONS"))
+	details = aboutAppendIfSet(details, "Max Open", aboutDatabaseEnv(name, "MAX_OPEN_CONNECTIONS"))
+	details = aboutAppendIfSet(details, "Conn Max Lifetime Minutes", aboutDatabaseEnv(name, "CONN_MAX_LIFETIME_MINUTES"))
+	return details
+}
+
+func aboutCacheDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("CACHE", name)
+	driver := NormalizeCacheDriver(scope.Get("DRIVER", "memory"))
+	if driver == "" {
+		driver = "memory"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "null", "memory":
+		details = aboutAppendIfNot(details, "Cleanup Seconds", scope.Get("MEMORY_CLEANUP_SECONDS", ""), "600")
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "CACHE"), "redis://")})
+		details = aboutAppendIfSet(details, "Username", scope.Get("USERNAME", ""))
+		details = aboutAppendIfSet(details, "TLS", aboutTruthyField(scope.Get("TLS", "")))
+	case "file":
+		dir := strings.TrimSpace(scope.Get("FILE_DIR", ""))
+		if dir == "" {
+			dir = filepath.Join(os.TempDir(), "cache-file")
+			if name != "default" {
+				dir = filepath.Join(dir, name)
+			}
+		}
+		details = append(details, AboutField{Key: "Directory", Value: dir})
+	case "memcached":
+		if addresses := strings.TrimSpace(scope.Get("ADDRESSES", "")); addresses != "" {
+			details = append(details, AboutField{Key: "Addresses", Value: addresses})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, AboutField{Key: "Address", Value: addr})
+		}
+	case "dynamodb":
+		if table := strings.TrimSpace(scope.Get("TABLE", "")); table != "" {
+			details = append(details, AboutField{Key: "Table", Value: table})
+		}
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, AboutField{Key: "Region", Value: region})
+		}
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
+	case "nats":
+		details = aboutAppendIfSet(details, "URL", scope.Get("URL", ""))
+		details = aboutAppendIfSet(details, "Bucket", scope.Get("BUCKET", ""))
+		details = aboutAppendIfSet(details, "Bucket TTL Seconds", aboutFirstNonEmpty(scope.Get("BUCKET_TTL_SECONDS", ""), scope.Get("BUCKET_TTL", "")))
+		details = aboutAppendIfSet(details, "Description", scope.Get("DESCRIPTION", ""))
+		details = aboutAppendIfSet(details, "History", scope.Get("HISTORY", ""))
+		details = aboutAppendIfSet(details, "Max Bytes", scope.Get("MAX_BYTES", ""))
+		details = aboutAppendIfSet(details, "Max Value Size", scope.Get("MAX_VALUE_SIZE", ""))
+		details = aboutAppendIfSet(details, "Replicas", scope.Get("REPLICAS", ""))
+		details = aboutAppendIfSet(details, "Storage", scope.Get("STORAGE", ""))
+		details = aboutAppendIfSet(details, "Compressed", aboutTruthyField(scope.Get("COMPRESSED", "")))
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, AboutField{Key: "Address", Value: addr})
+		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		} else if table := strings.TrimSpace(scope.Get("TABLE", "")); table != "" {
+			details = append(details, AboutField{Key: "Table", Value: table})
+		}
+	}
+	details = aboutAppendIfNot(details, "Prefix", scope.Get("PREFIX", ""), "app")
+	details = aboutAppendIfNot(details, "Default TTL Seconds", scope.Get("DEFAULT_TTL_SECONDS", ""), "300")
+	details = aboutAppendIfNot(details, "Compression", scope.Get("COMPRESSION", ""), "none")
+	details = aboutAppendIfSet(details, "Max Value Bytes", scope.Get("MAX_VALUE_BYTES", ""))
+	return details
+}
+
+func aboutQueueDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("QUEUE", name)
+	rootScope := env.WithPrefix("QUEUE")
+	driver := NormalizeQueueDriver(scope.Get("DRIVER", rootScope.Get("DRIVER", "workerpool")))
+	if driver == "" {
+		driver = "workerpool"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+		{Key: "Queue Name", Value: QueueDefaultQueue(name)},
+		{Key: "Workers", Value: aboutQueueWorkers(scope, rootScope)},
+	}
+	switch driver {
+	case "sync", "null":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "QUEUE"), "redis://")})
+		details = aboutAppendIfNot(details, "Server Log Level", queueRedisLogLevelAbout(scope), "error")
+		details = aboutAppendIfSet(details, "Redis Queue Weights", strings.TrimSpace(scope.Get("QUEUES", scope.Get("REDIS_QUEUES", ""))))
+	case "nats", "sqs", "rabbitmq":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+		if driver == "sqs" {
+			details = aboutAppendIfSet(details, "Region", scope.Get("REGION", ""))
+			details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
+		}
+	case "workerpool":
+		details = aboutAppendIfSet(details, "Buffer", scope.Get("WORKERPOOL_BUFFER", ""))
+		details = aboutAppendIfSet(details, "Task Timeout Seconds", scope.Get("WORKERPOOL_TASK_TIMEOUT_SECONDS", ""))
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+		details = aboutAppendIfSet(details, "Recovery Grace Seconds", scope.Get("PROCESSING_RECOVERY_GRACE_SECONDS", ""))
+		details = aboutAppendIfSet(details, "Lease No Timeout Seconds", scope.Get("PROCESSING_LEASE_NO_TIMEOUT_SECONDS", ""))
+	}
+	details = aboutAppendIfNot(details, "Shutdown Timeout", env.Get("QUEUE_SHUTDOWN_TIMEOUT", ""), "10s")
+	return details
+}
+
+func aboutQueueWorkers(scope env.Scope, rootScope env.Scope) string {
+	workers := strings.TrimSpace(scope.Get("WORKERS", ""))
+	if workers == "" {
+		workers = strings.TrimSpace(rootScope.Get("WORKERS", ""))
+	}
+	if workers == "" {
+		workers = strings.TrimSpace(scope.Get("WORKERPOOL_WORKERS", ""))
+	}
+	if workers == "" {
+		workers = strings.TrimSpace(rootScope.Get("WORKERPOOL_WORKERS", ""))
+	}
+	if workers == "" {
+		return "30"
+	}
+	return workers
+}
+
+func aboutMailDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("MAIL", name)
+	driver := aboutMailDriver(scope.Get("DRIVER", "log"))
+	if driver == "" {
+		driver = "log"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	details = aboutAppendIfSet(details, "From Address", scope.Get("FROM_ADDRESS", ""))
+	details = aboutAppendIfSet(details, "From Name", scope.Get("FROM_NAME", ""))
+	switch driver {
+	case "log":
+		details = aboutAppendIfSet(details, "Log Bodies", aboutTruthyField(scope.Get("LOG_BODIES", "")))
+	case "smtp":
+		details = aboutAppendIfSet(details, "Host", scope.Get("SMTP_HOST", ""))
+		details = aboutAppendIfSet(details, "Port", scope.Get("SMTP_PORT", ""))
+		details = aboutAppendIfSet(details, "Username", scope.Get("SMTP_USERNAME", ""))
+		details = aboutAppendIfSet(details, "Identity", scope.Get("SMTP_IDENTITY", ""))
+		details = aboutAppendIfSet(details, "Force TLS", aboutTruthyField(scope.Get("SMTP_FORCE_TLS", "")))
+	case "resend":
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("RESEND_ENDPOINT", ""))
+	case "postmark":
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("POSTMARK_ENDPOINT", ""))
+		details = aboutAppendIfSet(details, "Message Stream", scope.Get("POSTMARK_MESSAGE_STREAM", ""))
+	case "mailgun":
+		details = aboutAppendIfSet(details, "Domain", scope.Get("MAILGUN_DOMAIN", ""))
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("MAILGUN_ENDPOINT", ""))
+	case "sendgrid":
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("SENDGRID_ENDPOINT", ""))
+	case "ses":
+		details = aboutAppendIfSet(details, "Region", scope.Get("SES_REGION", ""))
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("SES_ENDPOINT", ""))
+		details = aboutAppendIfSet(details, "Configuration Set", scope.Get("SES_CONFIGURATION_SET", ""))
+	}
+	return details
+}
+
+func aboutStorageDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("STORAGE", name)
+	driver := NormalizeStorageDriver(scope.Get("DRIVER", "local"))
+	if driver == "" {
+		driver = "local"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "local":
+		root := strings.TrimSpace(scope.Get("ROOT", ""))
+		if root == "" {
+			root = filepath.Join("storage", "app", name)
+			if name == "default" {
+				root = filepath.Join("storage", "app", "private")
+			}
+		}
+		details = append(details, AboutField{Key: "Root", Value: root})
+	case "memory":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "STORAGE"), "redis://")})
+		details = aboutAppendIfSet(details, "Username", scope.Get("USERNAME", ""))
+	case "s3":
+		if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
+			details = append(details, AboutField{Key: "Bucket", Value: bucket})
+		}
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, AboutField{Key: "Region", Value: region})
+		}
+		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
+			details = append(details, AboutField{Key: "Endpoint", Value: endpoint})
+		}
+		details = aboutAppendIfSet(details, "Use Path Style", aboutTruthyField(scope.Get("USE_PATH_STYLE", "")))
+		details = aboutAppendIfSet(details, "Unsigned Payload", aboutTruthyField(scope.Get("UNSIGNED_PAYLOAD", "")))
+	case "ftp":
+		details = aboutAppendIfSet(details, "Host", scope.Get("HOST", ""))
+		details = aboutAppendIfSet(details, "Port", scope.Get("PORT", ""))
+		details = aboutAppendIfSet(details, "User", scope.Get("USER", ""))
+		details = aboutAppendIfSet(details, "TLS", aboutTruthyField(scope.Get("TLS", "")))
+		details = aboutAppendIfSet(details, "Insecure Skip Verify", aboutTruthyField(scope.Get("INSECURE_SKIP_VERIFY", "")))
+	case "sftp":
+		details = aboutAppendIfSet(details, "Host", scope.Get("HOST", ""))
+		details = aboutAppendIfSet(details, "Port", scope.Get("PORT", ""))
+		details = aboutAppendIfSet(details, "User", scope.Get("USER", ""))
+		details = aboutAppendIfSet(details, "Key Path", scope.Get("KEY_PATH", ""))
+		details = aboutAppendIfSet(details, "Known Hosts Path", scope.Get("KNOWN_HOSTS_PATH", ""))
+		details = aboutAppendIfSet(details, "Insecure Ignore Host Key", aboutTruthyField(scope.Get("INSECURE_IGNORE_HOST_KEY", "")))
+	case "gcs":
+		details = aboutAppendIfSet(details, "Bucket", scope.Get("BUCKET", ""))
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
+	case "dropbox":
+		// Token is intentionally omitted.
+	case "rclone":
+		details = aboutAppendIfSet(details, "Remote", scope.Get("REMOTE", ""))
+		details = aboutAppendIfSet(details, "Config Path", scope.Get("RCLONE_CONFIG_PATH", ""))
+	default:
+		if root := strings.TrimSpace(scope.Get("ROOT", "")); root != "" {
+			details = append(details, AboutField{Key: "Root", Value: root})
+		} else if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
+			details = append(details, AboutField{Key: "Bucket", Value: bucket})
+		} else if remote := strings.TrimSpace(scope.Get("REMOTE", "")); remote != "" {
+			details = append(details, AboutField{Key: "Remote", Value: remote})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, AboutField{Key: "Address", Value: addr})
+		}
+	}
+	details = aboutAppendIfSet(details, "Prefix", scope.Get("PREFIX", ""))
+	return details
+}
+
+func aboutEventDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("EVENTS", name)
+	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "inproc"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "inproc":
+		details = aboutAppendIfNot(details, "Workers", scope.Get("INPROC_WORKERS", ""), "0")
+		details = aboutAppendIfNot(details, "Buffer", scope.Get("INPROC_BUFFER", ""), "1024")
+	case "null":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "EVENTS"), "redis://")})
+		details = aboutAppendIfSet(details, "Channel Prefix", scope.Get("REDIS_CHANNEL_PREFIX", ""))
+	case "nats", "natsjetstream":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+		if driver == "natsjetstream" {
+			details = aboutAppendIfSet(details, "Subject Prefix", scope.Get("SUBJECT_PREFIX", ""))
+			details = aboutAppendIfSet(details, "Stream Name Prefix", scope.Get("STREAM_NAME_PREFIX", ""))
+			details = aboutAppendIfSet(details, "Inactive Threshold Seconds", scope.Get("INACTIVE_THRESHOLD_SECONDS", ""))
+			details = aboutAppendIfSet(details, "Ack Wait Seconds", scope.Get("ACK_WAIT_SECONDS", ""))
+			details = aboutAppendIfSet(details, "Fetch Max Wait MS", scope.Get("FETCH_MAX_WAIT_MS", ""))
+			details = aboutAppendIfSet(details, "Storage", scope.Get("STORAGE", ""))
+		}
+	case "kafka":
+		if brokers := strings.TrimSpace(scope.Get("BROKERS", "")); brokers != "" {
+			details = append(details, AboutField{Key: "Brokers", Value: brokers})
+		}
+	case "gcppubsub":
+		if projectID := strings.TrimSpace(scope.Get("PROJECT_ID", "")); projectID != "" {
+			details = append(details, AboutField{Key: "Project ID", Value: projectID})
+		}
+	case "sns":
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, AboutField{Key: "Region", Value: region})
+		}
+		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
+			details = append(details, AboutField{Key: "Endpoint", Value: endpoint})
+		}
+		details = aboutAppendIfSet(details, "Topic Name Prefix", scope.Get("TOPIC_NAME_PREFIX", ""))
+		details = aboutAppendIfSet(details, "Queue Name Prefix", scope.Get("QUEUE_NAME_PREFIX", ""))
+		details = aboutAppendIfSet(details, "Wait Time Seconds", scope.Get("WAIT_TIME_SECONDS", ""))
+		details = aboutAppendIfSet(details, "Visibility Timeout Seconds", scope.Get("VISIBILITY_TIMEOUT_SECONDS", ""))
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+	}
+	return details
+}
+
+func aboutRedisSummary(scope env.Scope, prefix string) string {
+	host := strings.TrimSpace(scope.Get("HOST", env.Get("REDIS_HOST", "")))
+	if host == "" {
+		host = strings.TrimSpace(scope.Get("ADDR", ""))
+	}
+	port := strings.TrimSpace(scope.Get("PORT", env.Get("REDIS_PORT", "")))
+	db := strings.TrimSpace(scope.Get("DB", env.Get("REDIS_DB", "")))
+	if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" && !strings.Contains(addr, ":") {
+		host = addr
+	}
+	if addr := strings.TrimSpace(scope.Get("ADDR", "")); strings.Contains(addr, ":") {
+		if db == "" {
+			return "redis://" + addr
+		}
+		return "redis://" + addr + "/" + db
+	}
+	if host == "" {
+		return strings.ToLower(prefix)
+	}
+	if port == "" {
+		port = "6379"
+	}
+	if db == "" {
+		db = "0"
+	}
+	return fmt.Sprintf("redis://%s:%s/%s", host, port, db)
+}
+
+func aboutMaskDSN(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return "-"
+	}
+	if strings.Contains(dsn, "@") && strings.Contains(dsn, ":") {
+		parts := strings.SplitN(dsn, "@", 2)
+		if len(parts) == 2 {
+			creds := parts[0]
+			if idx := strings.Index(creds, ":"); idx != -1 {
+				return creds[:idx] + ":***@" + parts[1]
+			}
+		}
+	}
+	return dsn
+}
+
+func aboutMailDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
+		return ""
+	case strings.Contains(driver, "smtp"):
+		return "smtp"
+	case strings.Contains(driver, "resend"):
+		return "resend"
+	case strings.Contains(driver, "postmark"):
+		return "postmark"
+	case strings.Contains(driver, "mailgun"):
+		return "mailgun"
+	case strings.Contains(driver, "sendgrid"):
+		return "sendgrid"
+	case strings.Contains(driver, "ses"):
+		return "ses"
+	case strings.Contains(driver, "log"):
+		return "log"
+	default:
+		return driver
+	}
+}
+
+func aboutPresence(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return "present"
+	}
+	return "missing"
+}
+
+func aboutEnabled(enabled bool) string {
+	if enabled {
+		return "true"
+	}
+	return "false"
+}
+
+func aboutAppendIfSet(details []AboutField, key string, value string) []AboutField {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return details
+	}
+	return append(details, AboutField{Key: key, Value: value})
+}
+
+func aboutAppendIfNot(details []AboutField, key string, value string, defaultValue string) []AboutField {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, strings.TrimSpace(defaultValue)) {
+		return details
+	}
+	return append(details, AboutField{Key: key, Value: value})
+}
+
+func aboutAppendIfTrue(details []AboutField, key string, value string) []AboutField {
+	value = aboutTruthyField(value)
+	if value == "" {
+		return details
+	}
+	return append(details, AboutField{Key: key, Value: value})
+}
+
+func aboutTruthyField(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	switch value {
+	case "", "0", "false", "no", "off":
+		return ""
+	default:
+		return "true"
+	}
+}
+
+func aboutFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func queueRedisLogLevelAbout(scope env.Scope) string {
+	raw := strings.TrimSpace(scope.Get("SERVER_LOG_LEVEL", ""))
+	if raw == "" {
+		raw = strings.TrimSpace(scope.Get("REDIS_LOG_LEVEL", ""))
+	}
+	if raw == "" {
+		return ""
+	}
+	return strings.ToLower(raw)
+}
+
+func aboutDetailSummary(details []AboutField) string {
+	if len(details) == 0 {
+		return "-"
+	}
+	driver := ""
+	for _, detail := range details {
+		if detail.Key == "Driver" {
+			driver = detail.Value
+			break
+		}
+	}
+	parts := make([]string, 0, len(details)-1)
+	for _, detail := range details {
+		if detail.Key == "Driver" || strings.TrimSpace(detail.Value) == "" {
+			continue
+		}
+		parts = append(parts, detail.Value)
+	}
+	if driver == "" {
+		if len(parts) == 0 {
+			return "-"
+		}
+		return strings.Join(parts, " · ")
+	}
+	if len(parts) == 0 {
+		return driver
+	}
+	return driver + " · " + strings.Join(parts, " · ")
+}
+
+func aboutFieldValue(details []AboutField, keys ...string) string {
+	for _, key := range keys {
+		for _, detail := range details {
+			if detail.Key == key && strings.TrimSpace(detail.Value) != "" {
+				return detail.Value
+			}
+		}
+	}
+	return ""
+}
+
+func fallbackAboutValue(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}

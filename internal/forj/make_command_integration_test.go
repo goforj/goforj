@@ -158,15 +158,15 @@ func TestMakeCommandIntegration(t *testing.T) {
 					t.Fatalf("expected file %s: %v", path, err)
 				}
 			}
-			appCmds := filepath.Join(projectDir, "internal", "cmd", "app_commands.go")
+			appCmds := filepath.Join(projectDir, "app", "commands.go")
 			data, err := os.ReadFile(appCmds)
 			if err != nil {
-				t.Fatalf("read app_commands.go: %v", err)
+				t.Fatalf("read app/commands.go: %v", err)
 			}
 			content := string(data)
 			for _, marker := range tc.wantMarkers {
 				if !strings.Contains(normalizeWhitespace(content), normalizeWhitespace(marker)) {
-					t.Fatalf("missing %q in app_commands.go\n\n%s", marker, content)
+					t.Fatalf("missing %q in app/commands.go\n\n%s", marker, content)
 				}
 			}
 		})
@@ -180,7 +180,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 		}
 	}
 
-	assertImportBlock(t, filepath.Join(projectDir, "internal", "cmd", "app_commands.go"), []string{
+	assertImportBlock(t, filepath.Join(projectDir, "app", "commands.go"), []string{
 		"internal/hello",
 		"internal/something",
 		"internal/report",
@@ -188,12 +188,12 @@ func TestMakeCommandIntegration(t *testing.T) {
 		"internal/billing/sync",
 		"internal/accounts/sync",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "internal", "cmd", "app_commands.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "commands.go"), []string{
 		`billingReports "example.com/testapp/internal/billing/reports"`,
 		`billingSync "example.com/testapp/internal/billing/sync"`,
 		`accountsSync "example.com/testapp/internal/accounts/sync"`,
 	})
-	assertFileContains(t, filepath.Join(projectDir, "internal", "cmd", "wire.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_cmd_app.go"), []string{
 		`billingReports "example.com/testapp/internal/billing/reports"`,
 		`billingSync "example.com/testapp/internal/billing/sync"`,
 		`accountsSync "example.com/testapp/internal/accounts/sync"`,

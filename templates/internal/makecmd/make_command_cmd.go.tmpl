@@ -40,9 +40,9 @@ type commandTarget struct {
 // defaultCommandOutputDir is the fallback package for ungrouped commands.
 const defaultCommandOutputDir = "./internal/cmd"
 
-// Signature exposes make:command as skip-boot metadata so generation can run before full app startup.
+// Signature exposes make:command as preboot metadata so generation can run before full app startup.
 func (*CommandCmd) Signature() string {
-	return `name:"make:command" help:"Create a new CLI command" goforj:"skip_boot"`
+	return `name:"make:command" help:"Create a new CLI command" goforj:"preboot"`
 }
 
 // NewCommandCmd includes delegated native command names so generated commands cannot shadow forj commands.
@@ -196,7 +196,7 @@ func (c *CommandCmd) writeCommandFile(target commandTarget) error {
 
 // injectIntoWireFile registers the command constructor with the app command wire set.
 func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
-	injectPath := "./internal/cmd/wire.go"
+	injectPath := activeAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -210,6 +210,8 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 	constructor := fmt.Sprintf("New%s", target.structName)
 	if !isRootCommandOutputDir(target.outputDir) {
 		constructor = fmt.Sprintf("%s.New%s", packageRef, target.structName)
+	} else if usesAppCommandWirePath(injectPath) {
+		constructor = fmt.Sprintf("cmd.New%s", target.structName)
 	}
 
 	data, err := os.ReadFile(injectPath)
@@ -226,7 +228,7 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 
 	if !strings.Contains(content, constructor) {
 		lines := strings.Split(content, "\n")
-		lines = insertIntoCallBlock(lines, "var AppCommandSet = wire.NewSet(", fmt.Sprintf("\t%s,", constructor))
+		lines = insertIntoCallBlock(lines, commandWireSetDeclaration(injectPath), fmt.Sprintf("\t%s,", constructor))
 		content = strings.Join(lines, "\n")
 	}
 	if err := writeGeneratorGoFile(injectPath, []byte(content)); err != nil {
@@ -239,7 +241,7 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 }
 
 func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
-	injectPath := "./internal/cmd/wire.go"
+	injectPath := activeAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -252,6 +254,8 @@ func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
 	constructor := fmt.Sprintf("New%s", target.structName)
 	if !isRootCommandOutputDir(target.outputDir) {
 		constructor = fmt.Sprintf("%s.New%s", packageRef, target.structName)
+	} else if usesAppCommandWirePath(injectPath) {
+		constructor = fmt.Sprintf("cmd.New%s", target.structName)
 	}
 
 	lines, _, err := readGeneratorGoFile(injectPath)
@@ -280,9 +284,33 @@ func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
 	return nil
 }
 
-// injectIntoRootCmd registers the command on AppCommands so Kong can expose it.
+// usesAppCommandWirePath detects app-owned command wiring across current and transitional app layouts.
+func usesAppCommandWirePath(path string) bool {
+	normalized := filepath.ToSlash(path)
+	return strings.HasPrefix(normalized, "app/") && (strings.HasSuffix(normalized, "/wire/inject_cmd_app.go") || strings.HasSuffix(normalized, "/wire/inject_cmd.go") || strings.HasSuffix(normalized, "/providers.go"))
+}
+
+// commandWireSetDeclaration returns the provider set anchor expected by the selected command injector.
+func commandWireSetDeclaration(path string) string {
+	normalized := filepath.ToSlash(path)
+	if strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/wire/inject_cmd_app.go") {
+		return "var appCommandSet = wire.NewSet("
+	}
+	if strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/wire/inject_cmd.go") {
+		return "var cmdSet = wire.NewSet("
+	}
+	return "var AppCommandSet = wire.NewSet("
+}
+
+// isAppCommandsPath detects command registration files for both default and named apps.
+func isAppCommandsPath(path string) bool {
+	normalized := filepath.ToSlash(path)
+	return strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/commands.go")
+}
+
+// injectIntoRootCmd registers the command on Commands so Kong can expose it.
 func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
-	rootPath := "./internal/cmd/app_commands.go"
+	rootPath := activeAppFile("commands.go", "./internal/cmd/app_commands.go")
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)
@@ -294,10 +322,14 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 	}
 
 	lines := strings.Split(string(data), "\n")
+	commandsType := appCommandsTypeName(lines)
+	commandsConstructor := "New" + commandsType
+	commandsLiteral := fmt.Sprintf("return &%s{", commandsType)
 
 	outputPkg := generatedPackageName(target.outputDir, "cmd")
 	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	usePrefix := !isRootCommandOutputDir(target.outputDir)
+	useCmdPrefix := isRootCommandOutputDir(target.outputDir) && isAppCommandsPath(rootPath)
 
 	pkgPrefix := ""
 	if usePrefix {
@@ -317,30 +349,34 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 	var fieldType string
 	if usePrefix {
 		fieldType = fmt.Sprintf("%s.%s", packageRef, typeName)
+	} else if useCmdPrefix {
+		fieldType = fmt.Sprintf("cmd.%s", typeName)
 	} else {
 		fieldType = typeName
 	}
 	fieldLine := fmt.Sprintf("\t%s %s `cmd:\"\"`", fieldName, fieldType)
 	fieldExists := containsLine(lines, fieldLine)
 	if !fieldExists {
-		lines = insertBeforeClosingBrace(lines, "type AppCommands struct {", fieldLine)
+		lines = insertBeforeClosingBrace(lines, fmt.Sprintf("type %s struct {", commandsType), fieldLine)
 	}
 
 	var paramLine string
 	if usePrefix {
 		paramLine = fmt.Sprintf("\t%s *%s.%s,", paramName, packageRef, typeName)
+	} else if useCmdPrefix {
+		paramLine = fmt.Sprintf("\t%s *cmd.%s,", paramName, typeName)
 	} else {
 		paramLine = fmt.Sprintf("\t%s *%s,", paramName, typeName)
 	}
 	paramExists := containsLine(lines, paramLine)
 	if !paramExists {
-		lines = insertIntoFuncParams(lines, "NewAppCommands", paramLine)
+		lines = insertIntoFuncParams(lines, commandsConstructor, paramLine)
 	}
 
 	returnLine := fmt.Sprintf("\t\t%s: *%s,", fieldName, paramName)
 	returnExists := containsLine(lines, returnLine)
 	if !returnExists {
-		lines = insertBeforeClosingBrace(lines, "return &AppCommands{", returnLine)
+		lines = insertBeforeClosingBrace(lines, commandsLiteral, returnLine)
 	}
 
 	if fieldExists && paramExists && returnExists {
@@ -354,13 +390,13 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 		return fmt.Errorf("writing root_cmd.go: %w", err)
 	}
 
-	console.Successf("Injected into AppCommands: %s", fieldName)
+	console.Successf("Injected into %s: %s", commandsType, fieldName)
 
 	return nil
 }
 
 func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
-	rootPath := "./internal/cmd/app_commands.go"
+	rootPath := activeAppFile("commands.go", "./internal/cmd/app_commands.go")
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)
@@ -371,9 +407,11 @@ func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
 		return fmt.Errorf("reading root_cmd.go: %w", err)
 	}
 	original := append([]string{}, lines...)
+	commandsType := appCommandsTypeName(lines)
 
 	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	usePrefix := !isRootCommandOutputDir(target.outputDir)
+	useCmdPrefix := isRootCommandOutputDir(target.outputDir) && isAppCommandsPath(rootPath)
 
 	pkgPrefix := ""
 	if usePrefix {
@@ -387,6 +425,8 @@ func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
 	var fieldType string
 	if usePrefix {
 		fieldType = fmt.Sprintf("%s.%s", packageRef, typeName)
+	} else if useCmdPrefix {
+		fieldType = fmt.Sprintf("cmd.%s", typeName)
 	} else {
 		fieldType = typeName
 	}
@@ -394,6 +434,8 @@ func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
 	var paramLine string
 	if usePrefix {
 		paramLine = fmt.Sprintf("\t%s *%s.%s,", paramName, packageRef, typeName)
+	} else if useCmdPrefix {
+		paramLine = fmt.Sprintf("\t%s *cmd.%s,", paramName, typeName)
 	} else {
 		paramLine = fmt.Sprintf("\t%s *%s,", paramName, typeName)
 	}
@@ -416,14 +458,24 @@ func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
 	}
 	if removed {
 		if c.DryRun {
-			console.Infof("Would remove %s from AppCommands in %s", fieldName, rootPath)
+			console.Infof("Would remove %s from %s in %s", fieldName, commandsType, rootPath)
 		} else {
-			console.Successf("Removed %s from AppCommands in %s", fieldName, rootPath)
+			console.Successf("Removed %s from %s in %s", fieldName, commandsType, rootPath)
 		}
 	} else if !changed {
-		console.Infof("No matching AppCommands wiring found in %s", rootPath)
+		console.Infof("No matching %s wiring found in %s", commandsType, rootPath)
 	}
 	return nil
+}
+
+// appCommandsTypeName preserves compatibility with render-once files that still use AppCommands.
+func appCommandsTypeName(lines []string) string {
+	for _, line := range lines {
+		if strings.Contains(line, "type AppCommands struct {") {
+			return "AppCommands"
+		}
+	}
+	return "Commands"
 }
 
 // commandTemplate contains the generated command implementation template.

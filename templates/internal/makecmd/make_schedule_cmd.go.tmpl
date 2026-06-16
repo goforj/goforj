@@ -39,7 +39,7 @@ func NewScheduleCmd() *ScheduleCmd {
 
 // Signature defines CLI metadata for this command.
 func (*ScheduleCmd) Signature() string {
-	return `name:"make:schedule" help:"Create a new schedule" goforj:"skip_boot"`
+	return `name:"make:schedule" help:"Create a new schedule" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.
@@ -87,10 +87,10 @@ type scheduleTarget struct {
 }
 
 func (c *ScheduleCmd) target() (scheduleTarget, error) {
-	if strings.TrimSpace(c.OutputDir) == "" {
+	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
 		c.OutputDir = defaultScheduleOutputDir
 	}
-	interval := strings.TrimSpace(c.Every)
+	interval := str.Of(c.Every).TrimSpace().String()
 	if interval == "" {
 		interval = "1h"
 	}
@@ -165,9 +165,10 @@ func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outp
 	return nil
 }
 
-// injectIntoWireFile registers the generated schedule provider with the app scheduler wire set.
+// injectIntoWireFile registers the generated schedule with the app schedule registry.
 func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
-	injectPath := "./wire/inject_scheduler_schedules.go"
+	injectPath := activeAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
+	registryPath := activeAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -180,20 +181,26 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
-	paramName := str.Of(strings.TrimSuffix(structName, "Schedule")).Camel().String() + "Schedule"
+	paramName := str.Of(structName).ChopEnd("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
+	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
-	scheduleLine := fmt.Sprintf("\t\t%s,", paramName)
+	assignLine := fmt.Sprintf("\t\t%s: %s,", paramName, paramName)
+	registerBlock := []string{
+		fmt.Sprintf("\tif err := schedules.RegisterRecurring(s, r.%s); err != nil {", paramName),
+		"\t\treturn err",
+		"\t}",
+	}
 
 	data, err := os.ReadFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("reading inject_schedules_app.go: %w", err)
 	}
 	lines := strings.Split(string(data), "\n")
 	lines = scheduleInsertImportIfMissing(lines, importPath, importAliasForPackageRef(pkgName, pkgRef))
 
 	for i, line := range lines {
-		if strings.HasPrefix(line, "var schedulerScheduleSet = wire.NewSet(") {
+		if strings.HasPrefix(line, "var appScheduleSet = wire.NewSet(") {
 			closingIndex := -1
 			for j := i + 1; j < len(lines); j++ {
 				if strings.TrimSpace(lines[j]) == ")" {
@@ -207,27 +214,44 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 			break
 		}
 	}
-	if !scheduleContainsFuncParam(lines, "ProvideAppSchedules", paramName, typeRef) {
-		lines = scheduleInsertIntoFuncParams(lines, "ProvideAppSchedules", paramLine)
-	}
-	if !scheduleContainsLine(lines, scheduleLine) {
-		lines = scheduleInsertIntoCall(lines, "return schedules.NewAppSchedules(", scheduleLine)
-	}
 
 	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
 	if err != nil {
-		return fmt.Errorf("gofmt inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("gofmt inject_schedules_app.go: %w", err)
 	}
 	if err := os.WriteFile(injectPath, formatted, 0644); err != nil {
-		return fmt.Errorf("writing inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("writing inject_schedules_app.go: %w", err)
+	}
+
+	registryLines, _, err := readGeneratorGoFile(registryPath)
+	if err != nil {
+		return fmt.Errorf("reading app/schedules.go: %w", err)
+	}
+	registryLines = insertImportIfMissing(registryLines, importPath, importAliasForPackageRef(pkgName, pkgRef))
+	if !scheduleContainsLine(registryLines, fieldLine) {
+		registryLines = insertBeforeClosingBrace(registryLines, "type ScheduleRegistry struct {", fieldLine)
+	}
+	if !scheduleContainsFuncParam(registryLines, "NewScheduleRegistry", paramName, typeRef) {
+		registryLines = scheduleInsertIntoFuncParams(registryLines, "NewScheduleRegistry", paramLine)
+	}
+	if !scheduleContainsLine(registryLines, assignLine) {
+		registryLines = insertBeforeClosingBrace(registryLines, "return &ScheduleRegistry{", assignLine)
+	}
+	if !scheduleContainsLine(registryLines, registerBlock[0]) {
+		registryLines = insertScheduleRegisterBlock(registryLines, registerBlock)
+	}
+	if err := writeGeneratorGoLines(registryPath, registryLines); err != nil {
+		return fmt.Errorf("writing app/schedules.go: %w", err)
 	}
 
 	console.Successf("injected into %s: %s", injectPath, constructor)
+	console.Successf("registered in %s: %s", registryPath, paramName)
 	return nil
 }
 
 func (c *ScheduleCmd) removeFromWireFile(structName string) error {
-	injectPath := "./wire/inject_scheduler_schedules.go"
+	injectPath := activeAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
+	registryPath := activeAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -239,49 +263,68 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
-	paramName := str.Of(strings.TrimSuffix(structName, "Schedule")).Camel().String() + "Schedule"
+	paramName := str.Of(structName).ChopEnd("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
+	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
-	scheduleLine := fmt.Sprintf("\t\t%s,", paramName)
+	assignLine := fmt.Sprintf("\t\t%s: %s,", paramName, paramName)
+	registerBlock := []string{
+		fmt.Sprintf("\tif err := schedules.RegisterRecurring(s, r.%s); err != nil {", paramName),
+		"\t\treturn err",
+		"\t}",
+	}
 
 	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
+		return fmt.Errorf("reading inject_schedules_app.go: %w", err)
 	}
 	original := append([]string{}, lines...)
 	var removed bool
 	lines, removedConstructor := removeExactLine(lines, constructorLine)
-	lines, removedParam := removeExactLine(lines, paramLine)
-	lines, removedSchedule := removeExactLine(lines, scheduleLine)
-	removed = removedConstructor || removedParam || removedSchedule
+	removed = removedConstructor
 	lines = removeGoImportIfUnused(lines, importPath, pkgRef+".")
 
 	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
 	if err != nil {
 		return err
 	}
+	if registryLines, _, err := readGeneratorGoFile(registryPath); err == nil {
+		originalRegistry := append([]string{}, registryLines...)
+		var removedField, removedParam, removedAssign, removedRegistration bool
+		registryLines, removedField = removeExactLine(registryLines, fieldLine)
+		registryLines, removedParam = removeExactLine(registryLines, paramLine)
+		registryLines, removedAssign = removeExactLine(registryLines, assignLine)
+		registryLines, removedRegistration = removeExactBlock(registryLines, registerBlock)
+		registryLines = removeGoImportIfUnused(registryLines, importPath, pkgRef+".")
+		if _, err := writeGeneratorGoLinesIfChanged(registryPath, originalRegistry, registryLines, c.DryRun); err != nil {
+			return err
+		}
+		removed = removed || removedField || removedParam || removedAssign || removedRegistration
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("reading app/schedules.go: %w", err)
+	}
 	if removed {
 		if c.DryRun {
-			console.Infof("Would remove %s schedule wiring from %s", paramName, injectPath)
+			console.Infof("Would remove %s schedule wiring from %s and %s", paramName, injectPath, registryPath)
 		} else {
-			console.Successf("Removed %s schedule wiring from %s", paramName, injectPath)
+			console.Successf("Removed %s schedule wiring from %s and %s", paramName, injectPath, registryPath)
 		}
 	} else if !changed {
-		console.Infof("No matching schedule wiring found in %s", injectPath)
+		console.Infof("No matching schedule wiring found in %s or %s", injectPath, registryPath)
 	}
 	return nil
 }
 
 // ensureScheduleSuffix appends Schedule when name does not already use that suffix.
 func ensureScheduleSuffix(name string) string {
-	clean := strings.TrimSpace(name)
-	if clean == "" {
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
 		return "ExampleSchedule"
 	}
-	if strings.HasSuffix(clean, "Schedule") {
-		return clean
+	if clean.EndsWith("Schedule") {
+		return clean.String()
 	}
-	return clean + "Schedule"
+	return clean.String() + "Schedule"
 }
 
 // isDefaultScheduleOutputDir reports whether the user left the schedule output at its default.
@@ -292,7 +335,7 @@ func isDefaultScheduleOutputDir(outputDir string) bool {
 // scheduleNameFromParts converts a grouped generator name into the operational schedule name.
 func scheduleNameFromParts(parts []string, structName string) string {
 	if len(parts) == 0 {
-		return strings.ToLower(strings.TrimSuffix(structName, "Schedule"))
+		return str.Of(structName).ChopEnd("Schedule").ToLower().String()
 	}
 	names := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -303,7 +346,7 @@ func scheduleNameFromParts(parts []string, structName string) string {
 		names = append(names, clean)
 	}
 	if len(names) == 0 {
-		return strings.ToLower(strings.TrimSuffix(structName, "Schedule"))
+		return str.Of(structName).ChopEnd("Schedule").ToLower().String()
 	}
 	return strings.Join(names, ":")
 }
@@ -404,6 +447,23 @@ func scheduleInsertIntoCall(lines []string, callStart string, insert string) []s
 				}
 			}
 			break
+		}
+	}
+	return lines
+}
+
+// insertScheduleRegisterBlock inserts generated schedule registration before the registry returns.
+func insertScheduleRegisterBlock(lines []string, block []string) []string {
+	inRegister := false
+	for i, line := range lines {
+		if strings.Contains(line, "func (r *ScheduleRegistry) Register(") {
+			inRegister = true
+			continue
+		}
+		if inRegister && strings.TrimSpace(line) == "return nil" {
+			insert := append([]string{}, block...)
+			insert = append(insert, "")
+			return append(lines[:i], append(insert, lines[i:]...)...)
 		}
 	}
 	return lines

@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -25,13 +24,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	projectDir := t.TempDir()
 	renderMetricsTestApp(t, projectDir)
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered app")
 
 	httpAddr := findFreeAddr(t)
 	_, httpPort, err := net.SplitHostPort(httpAddr)
@@ -99,29 +92,29 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 		"# TYPE http_requests_total counter",
 		"# TYPE http_requests_inflight gauge",
 		"# TYPE http_request_duration_seconds histogram",
-		`http_requests_total{source="http"} 1`,
-		`http_requests_inflight{source="http"} 0`,
-		`http_request_duration_seconds_count{source="http"} 1`,
-		`http_requests_by_route_total{source="http",method="GET",route="/api/v1/hello",status="200"} 1`,
-		`http_request_duration_by_route_seconds_count{source="http",method="GET",route="/api/v1/hello"} 1`,
+		`http_requests_total{app="app",source="http"} 1`,
+		`http_requests_inflight{app="app",source="http"} 0`,
+		`http_request_duration_seconds_count{app="app",source="http"} 1`,
+		`http_requests_by_route_total{app="app",source="http",method="GET",route="/api/v1/hello",status="200"} 1`,
+		`http_request_duration_by_route_seconds_count{app="app",source="http",method="GET",route="/api/v1/hello"} 1`,
 	} {
 		if !strings.Contains(text, token) {
 			t.Fatalf("GET /metrics missing %q\nbody:\n%s", token, text)
 		}
 	}
-	if !strings.Contains(text, `http_requests_total{source="http"} 1`) {
+	if !strings.Contains(text, `http_requests_total{app="app",source="http"} 1`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from request count\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_requests_inflight{source="http"} 0`) {
+	if !strings.Contains(text, `http_requests_inflight{app="app",source="http"} 0`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from inflight gauge\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_request_duration_seconds_count{source="http"} 1`) {
+	if !strings.Contains(text, `http_request_duration_seconds_count{app="app",source="http"} 1`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from latency histogram\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_requests_by_route_total{source="http",method="GET",route="/api/v1/hello",status="200"} 1`) {
+	if !strings.Contains(text, `http_requests_by_route_total{app="app",source="http",method="GET",route="/api/v1/hello",status="200"} 1`) {
 		t.Fatalf("GET /metrics expected labeled route counter for /api/v1/hello\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_request_duration_by_route_seconds_count{source="http",method="GET",route="/api/v1/hello"} 1`) {
+	if !strings.Contains(text, `http_request_duration_by_route_seconds_count{app="app",source="http",method="GET",route="/api/v1/hello"} 1`) {
 		t.Fatalf("GET /metrics expected labeled route histogram for /api/v1/hello\nbody:\n%s", text)
 	}
 }
@@ -145,13 +138,7 @@ func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 		},
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered demo app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered demo app")
 
 	httpAddr := findFreeAddr(t)
 	_, httpPort, err := net.SplitHostPort(httpAddr)
@@ -223,13 +210,7 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 		},
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered monitoring metrics app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered monitoring metrics app")
 
 	runCommandSuccess(t, projectDir, binPath, nil, "migrate")
 
@@ -285,13 +266,13 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 
 	body := fetchMetricsText(t, baseURL+"/metrics")
 	for _, token := range []string{
-		`monitoring_sidebar_requests_total{source="app",filtered="false",has_more="false"} 1`,
-		`monitoring_sidebar_rows_returned_count{source="app",filtered="false"} 1`,
-		`monitoring_sidebar_next_offset_count{source="app",filtered="false"} 1`,
-		`monitoring_heartbeats_requests_total{source="app",scope="scoped"} 1`,
-		`monitoring_heartbeats_requested_ids_count{source="app",scope="scoped"} 1`,
-		`monitoring_heartbeats_rows_returned_count{source="app",scope="scoped"} 1`,
-		`monitoring_heartbeats_point_sets_returned_count{source="app",scope="scoped"} 1`,
+		`monitoring_sidebar_requests_total{app="app",source="app",filtered="false",has_more="false"} 1`,
+		`monitoring_sidebar_rows_returned_count{app="app",source="app",filtered="false"} 1`,
+		`monitoring_sidebar_next_offset_count{app="app",source="app",filtered="false"} 1`,
+		`monitoring_heartbeats_requests_total{app="app",source="app",scope="scoped"} 1`,
+		`monitoring_heartbeats_requested_ids_count{app="app",source="app",scope="scoped"} 1`,
+		`monitoring_heartbeats_rows_returned_count{app="app",source="app",scope="scoped"} 1`,
+		`monitoring_heartbeats_point_sets_returned_count{app="app",source="app",scope="scoped"} 1`,
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("GET /metrics missing %q\nbody:\n%s\n%s", token, body, handle.Output())
@@ -364,13 +345,7 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 		EnvOverrides: queueEnv,
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered jobs app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered jobs app")
 
 	runCommandSuccess(t, projectDir, binPath, queueEnv, "migrate")
 	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed")
@@ -455,13 +430,7 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 		EnvOverrides: validQueueEnv,
 	})
 
-	binPath := filepath.Join(t.TempDir(), "app")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	buildCmd.Dir = projectDir
-	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build rendered scheduler app: %v\n%s", err, out)
-	}
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered scheduler app")
 
 	runCommandSuccess(t, projectDir, binPath, validQueueEnv, "migrate")
 	runCommandSuccess(t, projectDir, binPath, validQueueEnv, "monitor:seed")

@@ -2,7 +2,7 @@ package metrics
 
 import (
 	"context"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
@@ -39,7 +39,7 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 
 	handler := manager.HTTPMiddleware()(func(c web.Context) error {
 		if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
-			{Key: "source", Value: "app"},
+			{Key: "source", Value: "http"},
 		}); got != 1 {
 			t.Fatalf("inflight during request: got %d want 1", got)
 		}
@@ -48,9 +48,24 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 
 	assert.NoError(t, handler(ctx))
 	if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 	}); got != 0 {
 		t.Fatalf("inflight after request: got %d want 0", got)
+	}
+}
+
+func TestHTTPMetricsIncludeAppAndRuntimeSource(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/hello")
+	ctx := webtest.NewContext(req, nil, "/hello", nil)
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, time.Millisecond)
+
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "app", Value: "app"},
+		{Key: "source", Value: "http"},
+	}); got != 1 {
+		t.Fatalf("request count with app/source labels: got %d want 1", got)
 	}
 }
 
@@ -216,7 +231,7 @@ func TestRecordHTTPRequestDisabledConfigSkipsMetrics(t *testing.T) {
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 func TestRecordMonitoringSidebarPageEmitsMetrics(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 
 	manager.RecordMonitoringSidebarPage(ctx, true, true, 37, 200)
 
@@ -243,7 +258,7 @@ func TestRecordMonitoringSidebarPageEmitsMetrics(t *testing.T) {
 
 func TestRecordMonitoringHeartbeatPayloadEmitsMetrics(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 
 	manager.RecordMonitoringHeartbeatPayload(ctx, true, 20, 20, 20)
 
@@ -318,12 +333,12 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
 
 	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 	}); got != 1 {
 		t.Fatalf("requests total: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "http.requests.by_route", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 		{Key: "method", Value: "GET"},
 		{Key: "route", Value: "/users/:id"},
 		{Key: "status", Value: "200"},
@@ -331,7 +346,7 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 		t.Fatalf("labeled request total: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "http.request.duration.by_route", []gmetrics.Label{
-		{Key: "source", Value: "app"},
+		{Key: "source", Value: "http"},
 		{Key: "method", Value: "GET"},
 		{Key: "route", Value: "/users/:id"},
 	}); got != 1 {
@@ -342,7 +357,7 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 func TestRecordHTTPRequestEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	req := httptestNewRequest(http.MethodGet, "/users/42")
-	req = req.WithContext(app.WithSource(req.Context(), app.SourceHTTP))
+	req = req.WithContext(runtime.WithSource(req.Context(), runtime.SourceHTTP))
 	ctx := webtest.NewContext(req, nil, "/users/:id", webtest.PathParams{"id": "42"})
 
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
@@ -591,7 +606,7 @@ func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 
 func TestRecordQueueEventEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceJobs)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
 
 	manager.RecordQueueEvent(ctx, queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
 
@@ -615,7 +630,7 @@ func TestRecordQueueEventEmitsSourceLabel(t *testing.T) {
 {{- if .Components.Scheduler }}
 func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceApp)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceApp)
 
 	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
 		Type:       scheduler.JobStarted,
@@ -723,7 +738,7 @@ func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 
 func TestRecordSchedulerJobUsesSourceLabelFromContext(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceScheduler)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceScheduler)
 
 	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
 		Type:       scheduler.JobStarted,
@@ -1214,7 +1229,7 @@ func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 
 func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 
 	manager.RecordCacheOperation(ctx, cacheOperationEvent("sessions", "get", true, nil, 0))
 
@@ -1233,7 +1248,7 @@ func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
 
 func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceJobs)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
 
 	manager.RecordStorageOperation(ctx, storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "put"})
 
@@ -1251,7 +1266,7 @@ func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 
 func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceScheduler)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceScheduler)
 
 	manager.RecordEventPublish(ctx, EventPublishMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created"})
 
@@ -1270,7 +1285,7 @@ func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 {{- if .Components.Mail }}
 func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
-	ctx := app.WithSource(context.Background(), app.SourceJobs)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
 
 	manager.RecordMailSend(ctx, MailSendMetricEvent{Name: "default", Driver: "smtp"})
 
@@ -1289,7 +1304,7 @@ func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 func TestSourceMetricsNormalizeUnknownSourceLabel(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordCacheOperation(app.WithSource(context.Background(), app.Source("weird")), cacheOperationEvent("settings", "get", true, nil, 0))
+	manager.RecordCacheOperation(runtime.WithSource(context.Background(), runtime.Source("weird")), cacheOperationEvent("settings", "get", true, nil, 0))
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1365,6 +1380,7 @@ func histogramCountByLabels(t *testing.T, manager *Manager, name string, labels 
 }
 
 func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	b = expectedMetricsLabels(b)
 	if len(a) != len(b) {
 		return false
 	}
@@ -1374,4 +1390,16 @@ func sameMetricsLabels(a, b []gmetrics.Label) bool {
 		}
 	}
 	return true
+}
+
+func expectedMetricsLabels(labels []gmetrics.Label) []gmetrics.Label {
+	for _, label := range labels {
+		if label.Key == "app" {
+			return labels
+		}
+	}
+	out := make([]gmetrics.Label, 0, len(labels)+1)
+	out = append(out, gmetrics.Label{Key: "app", Value: "app"})
+	out = append(out, labels...)
+	return out
 }

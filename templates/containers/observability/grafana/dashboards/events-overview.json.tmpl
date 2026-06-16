@@ -48,7 +48,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "publishes",
           "range": true,
           "refId": "A"
@@ -87,7 +87,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "deliveries",
           "range": true,
           "refId": "A"
@@ -126,7 +126,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}) or vector(0)",
+          "expr": "sum(events_subscribers_active{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}) or vector(0)",
           "legendFormat": "subscribers",
           "range": true,
           "refId": "A"
@@ -167,7 +167,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "(sum(increase(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__range])) or vector(0)) / clamp_min(sum(increase(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__range])) or vector(0), 1)",
+          "expr": "(sum(increase(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__range])) or vector(0)) / clamp_min(sum(increase(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__range])) or vector(0), 1)",
           "legendFormat": "deliveries / publish",
           "range": true,
           "refId": "A"
@@ -208,7 +208,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(events_publish_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\"}[$__rate_interval]))) or vector(0)",
+          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(events_publish_duration_seconds_bucket{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\"}[$__rate_interval]))) or vector(0)",
           "legendFormat": "publish",
           "range": true,
           "refId": "A"
@@ -249,7 +249,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(events_delivery_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}[$__rate_interval]))) or vector(0)",
+          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(events_delivery_duration_seconds_bucket{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}[$__rate_interval]))) or vector(0)",
           "legendFormat": "delivery",
           "range": true,
           "refId": "A"
@@ -298,7 +298,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, topic) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, topic) (rate(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
@@ -347,7 +347,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, topic) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, topic) (rate(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
@@ -396,14 +396,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, topic) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, topic) (rate(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "publish · {{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, topic) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, topic) (rate(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "deliver · {{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "B"
@@ -452,7 +452,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, handler) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, handler) (rate(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
@@ -501,7 +501,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, handler) (rate(events_delivery_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}[$__rate_interval]))))",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, handler) (rate(events_delivery_duration_seconds_bucket{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}[$__rate_interval]))))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
@@ -550,7 +550,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, topic) (events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
+          "expr": "topk(12, sum by (source, topic) (events_subscribers_active{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
@@ -599,7 +599,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, topic) (rate(events_publish_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\"}[$__rate_interval]))))",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, topic) (rate(events_publish_duration_seconds_bucket{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\"}[$__rate_interval]))))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
@@ -648,7 +648,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, handler) (events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
+          "expr": "topk(12, sum by (source, handler) (events_subscribers_active{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
@@ -689,7 +689,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status!=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status!=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "publish failures",
           "range": true,
           "refId": "A"
@@ -730,7 +730,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "delivery failures",
           "range": true,
           "refId": "A"
@@ -771,7 +771,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"invalid\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status=\"invalid\"}[$__range])) or vector(0)",
           "legendFormat": "invalid publishes",
           "range": true,
           "refId": "A"
@@ -812,7 +812,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_subscriptions{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_subscriptions{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "subscription errors",
           "range": true,
           "refId": "A"
@@ -861,7 +861,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, handler, reason) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, handler, reason) (rate(events_deliveries_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
@@ -910,7 +910,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, topic, reason) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status!=\"ok\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, topic, reason) (rate(events_publishes_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", status!=\"ok\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
@@ -937,7 +937,32 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(events_publishes_total, bus)",
+        "definition": "label_values(app)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "App",
+        "multi": false,
+        "name": "app",
+        "options": [],
+        "query": {
+          "query": "label_values(app)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+        "definition": "label_values(events_publishes_total{app=~\"$app\"}, bus)",
         "hide": 0,
         "includeAll": true,
         "label": "Bus",
@@ -945,7 +970,7 @@
         "name": "bus",
         "options": [],
         "query": {
-          "query": "label_values(events_publishes_total, bus)",
+          "query": "label_values(events_publishes_total{app=~\"$app\"}, bus)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -962,7 +987,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(events_publishes_total, topic)",
+        "definition": "label_values(events_publishes_total{app=~\"$app\"}, topic)",
         "hide": 0,
         "includeAll": true,
         "label": "Topic",
@@ -970,7 +995,7 @@
         "name": "topic",
         "options": [],
         "query": {
-          "query": "label_values(events_publishes_total, topic)",
+          "query": "label_values(events_publishes_total{app=~\"$app\"}, topic)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -987,7 +1012,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(events_deliveries_total, handler)",
+        "definition": "label_values(events_deliveries_total{app=~\"$app\"}, handler)",
         "hide": 0,
         "includeAll": true,
         "label": "Handler",
@@ -995,7 +1020,7 @@
         "name": "handler",
         "options": [],
         "query": {
-          "query": "label_values(events_deliveries_total, handler)",
+          "query": "label_values(events_deliveries_total{app=~\"$app\"}, handler)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

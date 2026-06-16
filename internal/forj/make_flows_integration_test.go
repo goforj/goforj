@@ -56,6 +56,22 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		return out.String()
 	}
 
+	runForjWithEnv := func(tb testing.TB, env map[string]string, args ...string) string {
+		tb.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationProcessEnv(t, env)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			tb.Fatalf("forj %s failed: %v\n%s", strings.Join(args, " "), err, out.String())
+		}
+		return out.String()
+	}
+
 	buildApp := func(tb testing.TB) {
 		tb.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -96,14 +112,14 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"package audit",
 		`web.NewRoute(http.MethodGet, "/audit", c.Get)`,
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_http_controllers.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_http_controllers_app.go"), []string{
 		`"example.com/testapp/internal/audit"`,
 		"audit.NewController",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "internal", "router", "routes_registry.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "routes.go"), []string{
 		`"example.com/testapp/internal/audit"`,
 		"auditController *audit.Controller",
-		"publicRoutes = append(publicRoutes, auditController.Routes()...)",
+		"auditController.Routes(),",
 	})
 
 	runForj(t, "make:controller", "Billing:Reports")
@@ -111,14 +127,14 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"package reports",
 		`web.NewRoute(http.MethodGet, "/billing/reports", c.Get)`,
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_http_controllers.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_http_controllers_app.go"), []string{
 		`billingReports "example.com/testapp/internal/billing/reports"`,
 		"billingReports.NewController",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "internal", "router", "routes_registry.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "routes.go"), []string{
 		`billingReports "example.com/testapp/internal/billing/reports"`,
 		"billingReportsController *billingReports.Controller",
-		"publicRoutes = append(publicRoutes, billingReportsController.Routes()...)",
+		"billingReportsController.Routes(),",
 	})
 
 	runForj(t, "make:event", "UserRegistered")
@@ -141,13 +157,48 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"func NewInvoicePaidSubscriber() *InvoicePaidSubscriber",
 		"func (s *InvoicePaidSubscriber) Handle(ctx context.Context, event InvoicePaidEvent) error",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_event_subscribers.go"), []string{
-		"// App-owned event subscriber wiring. This file is rendered once and preserved.",
-		"// Add application subscriber providers here, or use `forj make:subscriber`.",
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_subscribers_app.go"), []string{
+		"// App-owned Wire injector. EDIT THIS FILE.",
+		"// Add application event subscriber providers here, or use `forj make:subscriber`.",
 		`"example.com/testapp/internal/billing"`,
 		"billing.NewInvoicePaidSubscriber",
 		`eventManager.Named("default")`,
 		"billingInvoicePaidSubscriber.Handle",
+	})
+
+	writeMakeFlowFile(t, filepath.Join(projectDir, "app", "reporting", "wire", "inject_cmd_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appCommandSet = wire.NewSet(
+)
+`)
+	writeMakeFlowFile(t, filepath.Join(projectDir, "app", "reporting", "commands.go"), `package reportingapp
+
+type Commands struct {
+}
+
+func NewCommands(
+) *Commands {
+	return &Commands{
+	}
+}
+`)
+	runForjWithEnv(t, map[string]string{"FORJ_APP": "reporting"}, "make:command", "Reports:Sync")
+	assertFileContains(t, filepath.Join(projectDir, "app", "reporting", "wire", "inject_cmd_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewSyncCmd",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "reporting", "commands.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"ReportsSyncCmd reports.SyncCmd",
+		"reportsSyncCmd *reports.SyncCmd",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_cmd_app.go"), []string{
+		"reports.NewSyncCmd",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "commands.go"), []string{
+		"ReportsSyncCmd reports.SyncCmd",
 	})
 
 	runForj(t, "make:queue", "reports", "--workers", "2", "--name", "production-report-jobs")
@@ -175,7 +226,7 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"type SyncReportsJob struct",
 		`.OnQueue("reports")`,
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_jobs_app.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		"jobs.NewSyncReportsJob",
 	})
 	runForj(t, "make:job", "Billing:SyncReports")
@@ -184,7 +235,7 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"const SyncReportsJobTypeName",
 		"type SyncReportsJob struct",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_jobs_app.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,
 		"billing.NewSyncReportsJob",
 	})
@@ -209,67 +260,101 @@ func TestMakeFlowsIntegration(t *testing.T) {
 	})
 	assertFileContains(t, filepath.Join(projectDir, "internal", "schedules", "scheduler.go"), []string{
 		"// Code generated by GoForj CLI. DO NOT EDIT.",
-		"// App-owned schedule providers belong in wire/inject_scheduler_schedules.go.",
-		"appSchedules *AppSchedules",
-		"appSchedules:",
+		"// App-owned schedule registration belongs in app/schedules.go.",
+		"registry ScheduleRegistry",
+		"registry:",
 	})
 	assertFileNotContains(t, filepath.Join(projectDir, "internal", "schedules", "scheduler.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"dailySchedule *reports.DailySchedule",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "internal", "schedules", "scheduler_registry.go"), []string{
-		"if err := s.registerAppSchedules(); err != nil {",
-		"func (s *Scheduler) registerAppSchedules() error",
-		"s.EveryDuration(interval).Name(schedule.Name()).Do(s.inspectTask(schedule.Name(), schedule.Handle))",
+	assertFileContains(t, filepath.Join(projectDir, "internal", "schedules", "registration.go"), []string{
+		"return s.registry.Register(s)",
+		"func (s *Scheduler) registerJobObservers()",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_scheduler_schedules.go"), []string{
-		"// App-owned schedule wiring. This file is rendered once and preserved.",
-		"// Add application schedule providers here, or use `forj make:schedule`.",
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
+		"// App-owned Wire injector. EDIT THIS FILE.",
+		"// Add app schedule providers here, or use `forj make:schedule`.",
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
 		"dailySchedule *reports.DailySchedule",
-		"dailySchedule,",
+		"dailySchedule: dailySchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailySchedule); err != nil {",
 	})
 
 	legacyScheduleInjector := `package wire
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
+	compositionapp "example.com/testapp/app"
 	"example.com/testapp/internal/reports"
 	"example.com/testapp/internal/scheduler"
 )
 
-var schedulerScheduleSet = wire.NewSet(
-	ProvideAppSchedules,
+var appScheduleSet = wire.NewSet(
+	compositionapp.NewScheduleRegistry,
+	wire.Bind(new(scheduler.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),
 	reports.NewDailySchedule,
 )
+`
+	legacyScheduleRegistry := `package app
 
-func ProvideAppSchedules(
+import (
+	"example.com/testapp/internal/reports"
+	"example.com/testapp/internal/scheduler"
+)
+
+type ScheduleRegistry struct {
+	dailySchedule *reports.DailySchedule
+}
+
+func NewScheduleRegistry(
 	dailySchedule *reports.DailySchedule,
-) *scheduler.AppSchedules {
-	return scheduler.NewAppSchedules(
-		dailySchedule,
-	)
+) *ScheduleRegistry {
+	return &ScheduleRegistry{
+		dailySchedule: dailySchedule,
+	}
+}
+
+func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
+	if err := scheduler.RegisterRecurring(s, r.dailySchedule); err != nil {
+		return err
+	}
+	return nil
 }
 `
-	scheduleInjectorPath := filepath.Join(projectDir, "wire", "inject_scheduler_schedules.go")
+	scheduleInjectorPath := filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go")
 	if err := os.WriteFile(scheduleInjectorPath, []byte(legacyScheduleInjector), 0o644); err != nil {
 		t.Fatalf("write legacy schedule injector: %v", err)
 	}
+	scheduleRegistryPath := filepath.Join(projectDir, "app", "schedules.go")
+	if err := os.WriteFile(scheduleRegistryPath, []byte(legacyScheduleRegistry), 0o644); err != nil {
+		t.Fatalf("write legacy schedule registry: %v", err)
+	}
 	renderAppAtDir(t, projectDir)
 	assertFileContains(t, scheduleInjectorPath, []string{
+		`"example.com/testapp/app"`,
 		`"example.com/testapp/internal/schedules"`,
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
-		"*schedules.AppSchedules",
-		"return schedules.NewAppSchedules(",
+		"app.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*app.ScheduleRegistry))",
+	})
+	assertFileContains(t, scheduleRegistryPath, []string{
+		`"example.com/testapp/internal/schedules"`,
+		`"example.com/testapp/internal/reports"`,
 		"dailySchedule *reports.DailySchedule",
-		"dailySchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailySchedule); err != nil {",
 	})
 	assertFileNotContains(t, scheduleInjectorPath, []string{
 		`"example.com/testapp/internal/scheduler"`,
-		"scheduler.AppSchedules",
-		"scheduler.NewAppSchedules",
+	})
+	assertFileNotContains(t, scheduleRegistryPath, []string{
+		`"example.com/testapp/internal/scheduler"`,
+		"scheduler.RegisterRecurring",
 	})
 
 	scheduleHelp := runForj(t, "make:schedule", "--help")
@@ -344,6 +429,204 @@ func ProvideAppSchedules(
 	}
 	if !strings.Contains(routes, "/billing/reports") {
 		t.Fatalf("expected route:list to include generated billing reports route, got:\n%s", routes)
+	}
+}
+
+func TestMakeFlowsAppIsolationIntegration(t *testing.T) {
+	projectDir := t.TempDir()
+	renderAppAtDir(t, projectDir)
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+	_ = testkit.EnsureIntegrationToolsDir(t)
+
+	runForj := func(tb testing.TB, args ...string) string {
+		tb.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationProcessEnv(t, nil)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			tb.Fatalf("forj %s failed: %v\n%s", strings.Join(args, " "), err, out.String())
+		}
+		return out.String()
+	}
+
+	buildApp := func(tb testing.TB, appName string) {
+		tb.Helper()
+		args := []string{"build", "-o", "./bin/" + appName}
+		if appName != project.DefaultAppName {
+			args = append([]string{appName}, args...)
+		}
+		runForj(tb, args...)
+		if _, err := os.Stat(filepath.Join(projectDir, "bin", appName)); err != nil {
+			tb.Fatalf("expected built %s binary: %v", appName, err)
+		}
+	}
+
+	runForj(t, "make:app", "billing", "--components", "web-api,jobs,scheduler")
+
+	runForj(t, "billing", "make:controller", "Billing:Invoices")
+	runForj(t, "billing", "make:job", "Billing:SendInvoices", "--queue", "invoices")
+	runForj(t, "billing", "make:schedule", "Billing:DailyClose", "--every", "1h")
+
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "routes.go"), []string{
+		`billingInvoices "example.com/testapp/internal/billing/invoices"`,
+		"billingInvoicesController *billingInvoices.Controller",
+		"billingInvoicesController.Routes(),",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_http_controllers_app.go"), []string{
+		`billingInvoices "example.com/testapp/internal/billing/invoices"`,
+		"billingInvoices.NewController",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/billing"`,
+		"billing.NewSendInvoicesJob",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_schedules_app.go"), []string{
+		`"example.com/testapp/internal/billing"`,
+		"billing.NewDailyCloseSchedule",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "schedules.go"), []string{
+		"dailyCloseSchedule *billing.DailyCloseSchedule",
+		"dailyCloseSchedule: dailyCloseSchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailyCloseSchedule); err != nil {",
+	})
+
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "routes.go"), []string{
+		"billingInvoicesController",
+		"billingInvoices.Controller",
+		"billingInvoicesController.Routes(),",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
+		"billing.NewSendInvoicesJob",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
+		"billing.NewDailyCloseSchedule",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "schedules.go"), []string{
+		"dailyCloseSchedule *billing.DailyCloseSchedule",
+	})
+
+	runForj(t, "make:controller", "Reports:Overview")
+	runForj(t, "make:job", "Reports:BuildSummary", "--queue", "reports")
+	runForj(t, "make:schedule", "Reports:Nightly", "--every", "24h")
+
+	assertFileContains(t, filepath.Join(projectDir, "app", "routes.go"), []string{
+		`reportsOverview "example.com/testapp/internal/reports/overview"`,
+		"reportsOverviewController *reportsOverview.Controller",
+		"reportsOverviewController.Routes(),",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewBuildSummaryJob",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewNightlySchedule",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "app", "schedules.go"), []string{
+		"nightlySchedule *reports.NightlySchedule",
+		"nightlySchedule: nightlySchedule,",
+	})
+
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "routes.go"), []string{
+		"reportsOverviewController",
+		"reportsOverview.Controller",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_jobs_app.go"), []string{
+		"reports.NewBuildSummaryJob",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_schedules_app.go"), []string{
+		"reports.NewNightlySchedule",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "schedules.go"), []string{
+		"nightlySchedule *reports.NightlySchedule",
+	})
+
+	buildApp(t, project.DefaultAppName)
+	buildApp(t, "billing")
+}
+
+func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "TestApp",
+			GoModuleName: "example.com/testapp",
+			UpdatedAt:    "2026-06-07 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				StarterKit:  project.StarterKitVue,
+				Components: project.Components{
+					CLI:           true,
+					DemoApp:       true,
+					Mail:          true,
+					Auth:          true,
+					OAuth:         true,
+					WebAPI:        true,
+					WebUI:         true,
+					Metrics:       true,
+					Observability: true,
+					Grafana:       true,
+					Docker:        true,
+					DatabaseMySQL: true,
+					Scheduler:     true,
+					Jobs:          true,
+				},
+			},
+		},
+	})
+
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+	runForj := func(tb testing.TB, args ...string) string {
+		tb.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			tb.Fatalf("forj %s failed: %v\n%s", strings.Join(args, " "), err, out.String())
+		}
+		return out.String()
+	}
+
+	runForj(t, "make:app", "billing")
+	rootHelp := runForj(t, "--help")
+	for _, want := range []string{"GoForj CLI", "testapp · available in all apps", "testapp · app"} {
+		if !strings.Contains(rootHelp, want) {
+			t.Fatalf("expected root help to include %q, got:\n%s", want, rootHelp)
+		}
+	}
+	if strings.Contains(rootHelp, "App:") {
+		t.Fatalf("expected root help to omit app labels, got:\n%s", rootHelp)
+	}
+	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("chdir project: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("load project config: %v", err)
+	}
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := runDevBuild(cfg, &out, &errOut); err != nil {
+		t.Fatalf("runDevBuild failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
 	}
 }
 
@@ -422,7 +705,7 @@ func TestMakeModelFlowIntegration(t *testing.T) {
 		"type WidgetRepo struct",
 		"func NewWidgetRepo(",
 	})
-	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_repositories.go"), []string{
+	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_repositories_app.go"), []string{
 		"models.NewWidgetRepo",
 	})
 
@@ -439,6 +722,7 @@ func TestMakeModelFlowIntegration(t *testing.T) {
 	}
 }
 
+// seedSQLiteMakeModelTable creates a small schema that exercises make:model repository wiring.
 func seedSQLiteMakeModelTable(t *testing.T, dbPath string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -465,6 +749,7 @@ func seedSQLiteMakeModelTable(t *testing.T, dbPath string) {
 	}
 }
 
+// assertGlob verifies generators created at least one timestamped file for the requested pattern.
 func assertGlob(t *testing.T, pattern string) {
 	t.Helper()
 	matches, err := filepath.Glob(pattern)
@@ -473,6 +758,17 @@ func assertGlob(t *testing.T, pattern string) {
 	}
 	if len(matches) == 0 {
 		t.Fatalf("expected at least one match for %s", pattern)
+	}
+}
+
+// writeMakeFlowFile writes a fixture file for generator integration checks.
+func writeMakeFlowFile(t *testing.T, path string, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

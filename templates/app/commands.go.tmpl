@@ -1,0 +1,105 @@
+// App-owned command registration. EDIT THIS FILE.
+// Add command fields here, or use `forj make:command`.
+
+package {{.AppPackageName}}
+
+{{- if or (and .Components.Auth .Components.HasDatabase) (and .Components.DemoApp .Components.HasDatabase) }}
+import (
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+{{- end }}
+	"{{.GoModuleName}}/internal/cmd"
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/monitoring"
+{{- end }}
+)
+{{- else }}
+import "{{.GoModuleName}}/internal/cmd"
+{{- end }}
+
+// Commands wires application-specific commands into the CLI.
+// Keep command implementations in the package that owns the workflow.
+type Commands struct {
+	AboutCmd cmd.AboutCmd `cmd:""`
+	CacheShellCmd cmd.CacheShellCmd `cmd:""`
+	{{- if .Components.HasDatabase }}
+	DBShellCmd cmd.DBShellCmd `cmd:""`
+	{{- end }}
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	AuthCreateUserCmd auth.CreateUserCmd `cmd:""`
+	AuthSetPasswordCmd auth.SetPasswordCmd `cmd:""`
+	AuthBootstrapCmd auth.BootstrapCmd `cmd:""`
+	{{- end }}
+	{{- if or .Components.WebAPI .Components.WebUI }}
+	HealthCmd cmd.HealthCmd `cmd:""`
+	{{- end }}
+	HelloWorldCmd cmd.HelloWorldCmd `cmd:""`
+	TestEventPipelineCmd cmd.TestEventPipelineCmd `cmd:""`
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	MonitorSeedCmd monitoring.SeedCmd `cmd:""`
+	MonitorResetCmd monitoring.ResetCmd `cmd:""`
+	MonitorRetentionCmd monitoring.RetentionCmd `cmd:""`
+	{{- if .Components.Jobs }}
+	MonitorPollCmd monitoring.PollCmd `cmd:""`
+	PushMonitorTriggerCmd monitoring.PushTriggerCmd `cmd:""`
+	TestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:""`
+	{{- end }}
+	{{- end }}
+}
+
+// NewCommands creates a new Commands instance with the given commands.
+func NewCommands(
+	aboutCmd *cmd.AboutCmd,
+	cacheShellCmd *cmd.CacheShellCmd,
+	{{- if .Components.HasDatabase }}
+	dbShellCmd *cmd.DBShellCmd,
+	{{- end }}
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	authCreateUserCmd *auth.CreateUserCmd,
+	authSetPasswordCmd *auth.SetPasswordCmd,
+	authBootstrapCmd *auth.BootstrapCmd,
+	{{- end }}
+	{{- if or .Components.WebAPI .Components.WebUI }}
+	healthCmd *cmd.HealthCmd,
+	{{- end }}
+	helloWorldCmd *cmd.HelloWorldCmd,
+	testEventPipelineCmd *cmd.TestEventPipelineCmd,
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorSeedCmd *monitoring.SeedCmd,
+	monitorResetCmd *monitoring.ResetCmd,
+	monitorRetentionCmd *monitoring.RetentionCmd,
+	{{- if .Components.Jobs }}
+	monitorPollCmd *monitoring.PollCmd,
+	pushMonitorTriggerCmd *monitoring.PushTriggerCmd,
+	testMonitorPollLoopCmd *monitoring.TestPollLoopCmd,
+	{{- end }}
+	{{- end }}
+) *Commands {
+	return &Commands{
+		AboutCmd: *aboutCmd,
+		CacheShellCmd: *cacheShellCmd,
+		{{- if .Components.HasDatabase }}
+		DBShellCmd: *dbShellCmd,
+		{{- end }}
+		{{- if and .Components.Auth .Components.HasDatabase }}
+		AuthCreateUserCmd: *authCreateUserCmd,
+		AuthSetPasswordCmd: *authSetPasswordCmd,
+		AuthBootstrapCmd: *authBootstrapCmd,
+		{{- end }}
+		{{- if or .Components.WebAPI .Components.WebUI }}
+		HealthCmd: *healthCmd,
+		{{- end }}
+		HelloWorldCmd: *helloWorldCmd,
+		TestEventPipelineCmd: *testEventPipelineCmd,
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		MonitorSeedCmd: *monitorSeedCmd,
+		MonitorResetCmd: *monitorResetCmd,
+		MonitorRetentionCmd: *monitorRetentionCmd,
+		{{- if .Components.Jobs }}
+		MonitorPollCmd: *monitorPollCmd,
+		PushMonitorTriggerCmd: *pushMonitorTriggerCmd,
+		TestMonitorPollLoopCmd: *testMonitorPollLoopCmd,
+		{{- end }}
+		{{- end }}
+	}
+}

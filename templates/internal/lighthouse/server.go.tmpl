@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	appinfo "{{.GoModuleName}}/internal/app"
-	"{{.GoModuleName}}/internal/inspects"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/google/uuid"
@@ -20,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 // ServerConfig configures the dev console server.
@@ -152,20 +152,20 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		return r.JSON(http.StatusOK, agents)
 	})
 
-		apiGroup.GET("/local", func(r web.Context) error {
-			ip := r.RealIP()
-			local := ip == "127.0.0.1" || ip == "::1"
-			return r.JSON(http.StatusOK, map[string]any{"local": local})
-		})
-		apiGroup.GET("/storage/download", func(r web.Context) error {
-			if config.StorageDownload == nil {
-				return r.NoContent(http.StatusNotFound)
-			}
-			return config.StorageDownload(r, r.Query("disk"), r.Query("path"))
-		})
-		apiGroup.GET("/env", func(r web.Context) error {
-			name := strings.TrimSpace(r.Query("file"))
-			if name == "" {
+	apiGroup.GET("/local", func(r web.Context) error {
+		ip := r.RealIP()
+		local := ip == "127.0.0.1" || ip == "::1"
+		return r.JSON(http.StatusOK, map[string]any{"local": local})
+	})
+	apiGroup.GET("/storage/download", func(r web.Context) error {
+		if config.StorageDownload == nil {
+			return r.NoContent(http.StatusNotFound)
+		}
+		return config.StorageDownload(r, r.Query("disk"), r.Query("path"))
+	})
+	apiGroup.GET("/env", func(r web.Context) error {
+		name := strings.TrimSpace(r.Query("file"))
+		if name == "" {
 			return r.JSON(http.StatusOK, map[string]any{
 				"files": listEnvFiles(),
 			})
@@ -238,7 +238,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		return r.JSON(http.StatusOK, project)
 	})
 	apiGroup.GET("/about", func(r web.Context) error {
-		return r.JSON(http.StatusOK, appinfo.NewAboutService().Build())
+		return r.JSON(http.StatusOK, runtime.NewAboutService().Build())
 	})
 	listInspect := func(r web.Context) error {
 		if config.Inspects == nil {
@@ -251,7 +251,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			}
 		}
 		items, err := config.Inspects.Recent(r.Request().Context(), inspects.RecentQuery{
-			Source: appinfo.NormalizeSource(r.Query("source")),
+			Source: runtime.NormalizeSource(r.Query("source")),
 			Limit:  limit,
 		})
 		if err != nil {
@@ -496,7 +496,7 @@ func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub, secret strin
 			}
 			return nil
 		}
-		if msg.Source == "" && source != "" {
+		if source != "" {
 			msg.Source = source
 		}
 		switch msg.Type {
@@ -505,7 +505,7 @@ func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub, secret strin
 			if err != nil {
 				return err
 			}
-			source = info.Source
+			source = info.Key
 			hub.RegisterAgent(ws, info)
 		case "heartbeat":
 			var heartbeat struct {
@@ -574,7 +574,7 @@ func handleConsoleWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 			})
 			continue
 		}
-		if msg.Target == "control" && cmd.Name == "logs:history" {
+		if msg.Destination == "control" && cmd.Name == "logs:history" {
 			limit := 5000
 			if len(cmd.Params) > 0 {
 				var params map[string]any
@@ -644,8 +644,10 @@ func handleDevwatchWS(r web.Context, conn web.WebSocketConn, hub *Hub) error {
 		}
 		agentInfo := AgentInfo{
 			ID:           uuid.NewString(),
+			Key:          devwatchAgentSource,
 			Source:       devwatchAgentSource,
-			App:          appName,
+			Project:      appName,
+			App:          "app",
 			Version:      os.Getenv("APP_VERSION"),
 			Env:          os.Getenv("APP_ENV"),
 			Capabilities: []string{"devwatch"},

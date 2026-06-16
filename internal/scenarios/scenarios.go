@@ -210,6 +210,9 @@ type ScenarioApp struct {
 }
 
 type ScenarioMarkdown struct {
+	PathPosition      int               `yaml:"path_position"`
+	PathTotal         int               `yaml:"path_total"`
+	EstimatedMinutes  int               `yaml:"estimated_minutes"`
 	Intro             string            `yaml:"intro"`
 	WhatYouBuildTitle string            `yaml:"what_you_build_title"`
 	WhatYouBuild      []string          `yaml:"what_you_build"`
@@ -382,7 +385,7 @@ func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
 			DownOnExit:        false,
 			SoundOnWatchError: false,
 			Watches:           []project.DevWatch{},
-			WirePaths:         []string{"wire"},
+			WirePaths:         []string{project.DefaultApp().WireDir},
 		},
 	}
 	body, err := yaml.Marshal(cfg)
@@ -542,8 +545,15 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 	fmt.Fprintf(&b, "---\ntitle: %s\ndescription: %s\n---\n\n", spec.Title, spec.Description)
 	fmt.Fprintf(&b, "# %s\n\n", spec.Title)
 	b.WriteString("::: info Verified Scenario\n")
-	b.WriteString("We test this scenario against the current GoForj templates, including the generated files, wiring changes, commands, and verification steps.\n")
+	b.WriteString("This page is generated from an executable spec. An automated suite renders a fresh App from the current GoForj templates, applies every step below in order, and runs every verification command. If any step fails, the page does not ship.\n")
 	b.WriteString(":::\n\n")
+	if spec.Markdown.PathPosition > 0 && spec.Markdown.PathTotal > 0 {
+		fmt.Fprintf(&b, "Scenario %d of %d in the [verified path](/scenarios/).", spec.Markdown.PathPosition, spec.Markdown.PathTotal)
+		if spec.Markdown.EstimatedMinutes > 0 {
+			fmt.Fprintf(&b, " Plan on about %d minutes.", spec.Markdown.EstimatedMinutes)
+		}
+		b.WriteString("\n\n")
+	}
 	if strings.TrimSpace(spec.Markdown.Intro) != "" {
 		b.WriteString(strings.TrimSpace(spec.Markdown.Intro))
 		b.WriteString("\n\n")
@@ -647,8 +657,14 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 			writeCodeBlock(&b, step.Append.Language, expandScenarioMarkdownText(spec, step.Append.Content), false)
 		}
 		if step.Replace != nil {
-			fmt.Fprintf(&b, "Update `%s` so it includes:\n\n", step.Replace.Path)
-			writeCodeBlock(&b, step.Replace.Language, expandScenarioMarkdownText(spec, step.Replace.New), false)
+			newContent := expandScenarioMarkdownText(spec, step.Replace.New)
+			if strings.TrimSpace(newContent) == "" {
+				fmt.Fprintf(&b, "Remove from `%s`:\n\n", step.Replace.Path)
+				writeCodeBlock(&b, step.Replace.Language, expandScenarioMarkdownText(spec, step.Replace.Old), false)
+			} else {
+				fmt.Fprintf(&b, "Update `%s` so it includes:\n\n", step.Replace.Path)
+				writeCodeBlock(&b, step.Replace.Language, newContent, false)
+			}
 		}
 		if step.Run != nil && len(step.Run.Run) > 0 {
 			b.WriteString("```bash\n")
@@ -657,7 +673,7 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 		}
 	}
 	if len(spec.Verify.Commands) > 0 {
-		b.WriteString("## Build And Verify\n\n")
+		b.WriteString("## Build and Verify\n\n")
 		for _, command := range spec.Verify.Commands {
 			if len(command.Run) == 0 {
 				continue

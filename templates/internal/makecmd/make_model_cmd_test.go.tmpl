@@ -66,8 +66,8 @@ func NewWidgetRepo() *WidgetRepo {
 
 type WidgetRepo struct{}
 `)
-	if err := writeRepositorySetFile(filepath.Join("wire", "inject_repositories.go"), map[string]string{
-		"github.com/google/wire":              "",
+	if err := writeRepositorySetFile(filepath.Join("wire", "inject_repositories_app.go"), map[string]string{
+		"github.com/goforj/wire":              "",
 		"example.com/testapp/internal/models": "",
 	}, []string{"models.NewWidgetRepo"}, true); err != nil {
 		t.Fatalf("write repository set: %v", err)
@@ -79,7 +79,39 @@ type WidgetRepo struct{}
 	}
 
 	assertMakeCmdTestFileMissing(t, filepath.Join("internal", "models", "widget.go"))
-	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_repositories.go"), []string{
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_repositories_app.go"), []string{
+		`"example.com/testapp/internal/models"`,
+		"models.NewWidgetRepo",
+	})
+}
+
+func TestModelCmdUsesActiveAppForRepositoryWiring(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP", "reporting")
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	if err := writeRepositorySetFile(filepath.Join("app", "wire", "inject_repositories_app.go"), map[string]string{
+		"github.com/goforj/wire": "",
+	}, nil, true); err != nil {
+		t.Fatalf("write default repository set: %v", err)
+	}
+	if err := writeRepositorySetFile(filepath.Join("app", "reporting", "wire", "inject_repositories_app.go"), map[string]string{
+		"github.com/goforj/wire": "",
+	}, nil, true); err != nil {
+		t.Fatalf("write target repository set: %v", err)
+	}
+
+	cmd := &ModelCmd{Table: "widgets", Output: "./internal/models"}
+	if err := cmd.ensureRepositoryProvider("Widget"); err != nil {
+		t.Fatalf("ensure targeted repository provider: %v", err)
+	}
+
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_repositories_app.go"), []string{
+		`"example.com/testapp/internal/models"`,
+		"models.NewWidgetRepo",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_repositories_app.go"), []string{
 		`"example.com/testapp/internal/models"`,
 		"models.NewWidgetRepo",
 	})

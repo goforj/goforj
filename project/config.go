@@ -3,6 +3,8 @@ package project
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -32,6 +34,85 @@ type DevConfig struct {
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
+// DefaultAppName is the conventional app name used when no named app is selected.
+const DefaultAppName = "app"
+
+// App describes one executable app in the project.
+type App struct {
+	Name       string `yaml:"name" json:"name"`
+	Entrypoint string `yaml:"entrypoint" json:"entrypoint"`
+	AppDir     string `yaml:"app_dir" json:"app_dir"`
+	WireDir    string `yaml:"wire_dir" json:"wire_dir"`
+}
+
+// DefaultApp returns the conventional single-app project app.
+func DefaultApp() App {
+	return DefaultNamedApp(DefaultAppName)
+}
+
+// DefaultNamedApp returns conventional paths for a generated app name.
+func DefaultNamedApp(name string) App {
+	if name == "" || name == DefaultAppName {
+		return App{
+			Name:       DefaultAppName,
+			Entrypoint: "cmd/app/main.go",
+			AppDir:     "app",
+			WireDir:    "app/wire",
+		}
+	}
+	return App{
+		Name:       name,
+		Entrypoint: filepath.Join("cmd", name, "main.go"),
+		AppDir:     filepath.Join("app", name),
+		WireDir:    filepath.Join("app", name, "wire"),
+	}
+}
+
+// IsSafeAppName reports whether name is a lowercase app slug safe for app-owned paths.
+func IsSafeAppName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
+		return false
+	}
+	previousWasSeparator := false
+	for i, r := range name {
+		if r >= 'a' && r <= 'z' {
+			previousWasSeparator = false
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			previousWasSeparator = false
+			continue
+		}
+		if r == '-' && !previousWasSeparator {
+			previousWasSeparator = true
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// AppPackageName converts an app slug into a valid Go package name for app-owned composition.
+func AppPackageName(name string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			builder.WriteRune(r)
+		}
+	}
+	pkg := builder.String()
+	if pkg == "" {
+		return DefaultAppName
+	}
+	if pkg[0] >= '0' && pkg[0] <= '9' {
+		pkg = DefaultAppName + pkg
+	}
+	if pkg != DefaultAppName && !strings.HasSuffix(pkg, DefaultAppName) {
+		pkg += DefaultAppName
+	}
+	return pkg
+}
+
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
@@ -42,19 +123,26 @@ type RenderConfig struct {
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 }
 
+// AppConfig records optional per-app participation in project-level capabilities.
+type AppConfig struct {
+	Components Components `yaml:"components" json:"components"`
+	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
+}
+
 // ProjectConfig represents the configuration for a project.
 type ProjectConfig struct {
-	ProjectName  string       `yaml:"project_name" json:"project_name"`
-	GoModuleName string       `yaml:"module_name" json:"module_name"`
-	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
-	Dev          DevConfig    `yaml:"dev" json:"dev"`
-	Render       RenderConfig `yaml:"render" json:"render"`
+	ProjectName  string               `yaml:"project_name" json:"project_name"`
+	GoModuleName string               `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string               `yaml:"updated_at" json:"updated_at"`
+	Dev          DevConfig            `yaml:"dev" json:"dev"`
+	Render       RenderConfig         `yaml:"render" json:"render"`
+	Apps         map[string]AppConfig `yaml:"apps,omitempty" json:"apps,omitempty"`
 
 	// temporary
-	AppKey          string `yaml:"-" json:"-"`
-	AppDiagToken    string `yaml:"-" json:"-"`
+	AppKey           string `yaml:"-" json:"-"`
+	AppDiagToken     string `yaml:"-" json:"-"`
 	LighthouseSecret string `yaml:"-" json:"-"`
-	JWTSecretKey    string `yaml:"-" json:"-"`
+	JWTSecretKey     string `yaml:"-" json:"-"`
 }
 
 // Config is the preferred name for project configuration.
@@ -78,7 +166,6 @@ type Components struct {
 	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
-	StressTest       bool `yaml:"stress_test" json:"stress_test"`
 }
 
 // Enabled reports whether a component is enabled.
@@ -116,8 +203,6 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.Scheduler
 	case ComponentJobs:
 		return c.Jobs
-	case ComponentStressTest:
-		return c.StressTest
 	default:
 		return false
 	}
@@ -161,8 +246,6 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.Scheduler = enabled
 	case ComponentJobs:
 		c.Jobs = enabled
-	case ComponentStressTest:
-		c.StressTest = enabled
 	}
 }
 
@@ -216,9 +299,6 @@ func (c Components) ValidateRenderContract() error {
 	if c.OAuth && !c.HasDatabase() {
 		return fmt.Errorf("oauth component requires a database")
 	}
-	if c.StressTest && !c.Jobs {
-		return fmt.Errorf("stress_test component requires jobs")
-	}
 	return nil
 }
 
@@ -267,8 +347,32 @@ func LoadProjectConfig() (*Config, error) {
 		return nil, err
 	}
 	if len(config.Dev.WirePaths) == 0 {
-		config.Dev.WirePaths = []string{"wire"}
+		config.Dev.WirePaths = []string{DefaultApp().WireDir}
 	}
 
 	return config, nil
+}
+
+// IsReservedAppName reports whether name is owned by the app composition layout.
+func IsReservedAppName(name string) bool {
+	return name == "wire"
+}
+
+// IsNativeFrameworkCommandName reports whether name is owned by the framework CLI.
+func IsNativeFrameworkCommandName(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "build",
+		"dev",
+		"down",
+		"generate",
+		"help",
+		"new",
+		"render",
+		"run",
+		"version",
+		"x":
+		return true
+	default:
+		return false
+	}
 }

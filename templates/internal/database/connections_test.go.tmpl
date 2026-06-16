@@ -8,7 +8,9 @@ import (
 
 	"github.com/goforj/env/v2"
 {{- if .Components.Metrics }}
+	goforjcache "github.com/goforj/cache"
 	"{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/inspects"
 	gmetrics "github.com/goforj/metrics"
 	gormLogger "gorm.io/gorm/logger"
 {{- end }}
@@ -52,6 +54,33 @@ func TestEnvOr(t *testing.T) {
 	}
 	if got := envOr("missing", "HOST"); got != "main-db" {
 		t.Fatalf("expected fallback, got %q", got)
+	}
+}
+
+func TestDatabaseEnvOrUsesSQLiteSpecificPath(t *testing.T) {
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_SQLITE_DATABASE", "./_data/sqlite/app.db")
+	if got := databaseEnvOr("default", "sqlite"); got != "./_data/sqlite/app.db" {
+		t.Fatalf("expected sqlite database path, got %q", got)
+	}
+	if got := databaseEnvOr("default", "mysql"); got != "db" {
+		t.Fatalf("expected default database for mysql, got %q", got)
+	}
+}
+
+func TestDatabaseEnvOrFallsBackToDatabaseForSQLite(t *testing.T) {
+	t.Setenv("DB_DATABASE", "./_data/sqlite/app.db")
+	if got := databaseEnvOr("default", "sqlite"); got != "./_data/sqlite/app.db" {
+		t.Fatalf("expected sqlite fallback database path, got %q", got)
+	}
+}
+
+func TestDatabaseEnvOrUsesNamedSQLiteSpecificPath(t *testing.T) {
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_ANALYTICS_DATABASE", "analytics")
+	t.Setenv("DB_ANALYTICS_SQLITE_DATABASE", "./_data/sqlite/analytics.db")
+	if got := databaseEnvOr("analytics", "sqlite"); got != "./_data/sqlite/analytics.db" {
+		t.Fatalf("expected named sqlite database path, got %q", got)
 	}
 }
 
@@ -301,7 +330,9 @@ func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
 	}
 }
 
-func TestNewConnectionsKeepsPlainLoggerWhenDatabaseMetricsDisabled(t *testing.T) {
+func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
 	manager := metrics.NewManagerWithConfig(metrics.Config{
 		HTTP:     true,
 		Cache:    true,
@@ -321,16 +352,40 @@ func TestNewConnectionsKeepsPlainLoggerWhenDatabaseMetricsDisabled(t *testing.T)
 		Mail:     true,
 		{{- end }}
 	})
-	conns := NewConnections(manager, nil)
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	inspectManager := inspects.NewManager(store)
+	conns := NewConnections(manager, inspectManager)
 	if conns.metrics == nil {
 		t.Fatal("expected metrics manager to be stored on connections")
 	}
 	if conns.metrics.DatabaseEnabled() {
 		t.Fatal("expected database metrics to be disabled")
 	}
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), nil, conns.inspectManager, "default", "sqlite", 250*time.Millisecond)
+	ctx := inspectManager.Begin(context.Background(), "http", "GET /users", nil)
+	recorder := inspects.RecorderFromContext(ctx)
+	if recorder == nil {
+		t.Fatal("expected inspect recorder")
+	}
+	logger.Trace(ctx, time.Now().Add(-10*time.Millisecond), func() (string, int64) {
+		return "SELECT * FROM users", 1
+	}, nil)
+	inspectManager.Finish(ctx, "ok", nil)
+
+	record, ok, err := inspectManager.ByID(context.Background(), recorder.InspectID())
+	if err != nil {
+		t.Fatalf("lookup inspect record: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected inspect record")
+	}
+	if len(record.Events) != 1 || record.Events[0].Kind != inspects.EventKindQuery {
+		t.Fatalf("expected one query inspect event, got %#v", record.Events)
+	}
 }
 
 func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	b = expectedMetricsLabels(b)
 	if len(a) != len(b) {
 		return false
 	}
@@ -340,5 +395,17 @@ func sameMetricsLabels(a, b []gmetrics.Label) bool {
 		}
 	}
 	return true
+}
+
+func expectedMetricsLabels(labels []gmetrics.Label) []gmetrics.Label {
+	for _, label := range labels {
+		if label.Key == "app" {
+			return labels
+		}
+	}
+	out := make([]gmetrics.Label, 0, len(labels)+1)
+	out = append(out, gmetrics.Label{Key: "app", Value: "app"})
+	out = append(out, labels...)
+	return out
 }
 {{- end }}

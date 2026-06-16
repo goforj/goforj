@@ -1,10 +1,13 @@
 //go:build wireinject
 // +build wireinject
 
+// GoForj Wire harness. Edit this file when customizing root assembly.
+// Re-rendering can overwrite this file; review local changes before rendering over them.
+
 package wire
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -12,30 +15,31 @@ import (
 func InitializeApplication() (App, error) {
 	wire.Build(
 		appSet,
-		eventSubscriberSet,
-		cmdSet,
-{{- if .Components.HasDatabase }}		databaseSet,
-{{- end }}
-{{- if .Components.Mail }}
-		mailSet,
-{{- end }}
-{{- if and .Components.Auth .Components.HasDatabase }}
+{{ if and .Components.Auth .Components.HasDatabase -}}
 		authSet,
-{{- end }}
-{{- if or .Components.WebAPI .Components.WebUI }}
+{{ end -}}
+		cmdSet,
+{{ if .Components.HasDatabase -}}
+		databaseSet,
+{{ end -}}
+		appSubscriberSet,
+{{ if or .Components.WebAPI .Components.WebUI -}}
+		appHttpControllerSet,
+{{ end -}}
+{{ if or .Components.WebAPI .Components.WebUI -}}
 		httpServerSet,
-{{- end }}
-{{- if or .Components.WebAPI .Components.WebUI }}
-		httpAppControllerSet,
-{{- end }}
-{{- if .Components.Scheduler }}
-		schedulerSet,
-{{- end }}
-{{- if .Components.Jobs }}
+{{ end -}}
+{{ if .Components.Jobs -}}
+		appJobSet,
+{{ end -}}
+{{ if .Components.Jobs -}}
 		jobSet,
-		jobAppSet,
-{{- end }}
+{{ end -}}
 		logger.ProvideAppLogger,
+		managerSet,
+{{ if .Components.Scheduler -}}
+		schedulerSet,
+{{ end -}}
 		NewApplication,
 	)
 

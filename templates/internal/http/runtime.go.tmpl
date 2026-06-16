@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -50,8 +50,8 @@ func NewRuntime(
 }
 
 // Identity returns the logical runtime identity for the HTTP runtime.
-func (*Runtime) Identity() app.RuntimeIdentity {
-	return app.RuntimeIdentity{Name: "http", Label: "http"}
+func (*Runtime) Identity() runtime.RuntimeIdentity {
+	return runtime.RuntimeIdentity{Name: "http", Label: "http"}
 }
 
 // Run executes the HTTP runtime with its default config.
@@ -64,7 +64,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = app.WithSource(ctx, app.SourceHTTP)
+	ctx = runtime.WithSource(ctx, runtime.SourceHTTP)
 	cfg = normalizeRuntimeConfig(cfg)
 
 {{- if .Components.Metrics }}
@@ -81,9 +81,9 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 		Host: env.Get("API_HTTP_HOST", "0.0.0.0"),
-		Port: env.Get("API_HTTP_PORT", "3000"),
+		Port: runtime.HTTPPort(),
 {{- if .Components.Metrics }}
-		MetricsPort: env.Get("METRICS_API_PORT", "9100"),
+		MetricsPort: runtime.MetricsPort(),
 {{- end }}
 	})
 }
@@ -95,12 +95,12 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 	}
 	cfg.Port = strings.TrimSpace(cfg.Port)
 	if cfg.Port == "" {
-		cfg.Port = "3000"
+		cfg.Port = runtime.HTTPPort()
 	}
 {{- if .Components.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
-		cfg.MetricsPort = "9100"
+		cfg.MetricsPort = runtime.MetricsPort()
 	}
 {{- end }}
 	return cfg

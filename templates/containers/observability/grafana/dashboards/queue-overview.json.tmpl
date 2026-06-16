@@ -50,7 +50,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__range])) or vector(0)",
           "legendFormat": "completed",
           "range": true,
           "refId": "A"
@@ -91,7 +91,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=~\"failed|archived\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=~\"failed|archived\"}[$__range])) or vector(0)",
           "legendFormat": "failed",
           "range": true,
           "refId": "A"
@@ -132,7 +132,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=\"retried\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=\"retried\"}[$__range])) or vector(0)",
           "legendFormat": "retries",
           "range": true,
           "refId": "A"
@@ -172,7 +172,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(queue_jobs_inflight_by_job{queue=~\"$queue\", job_name=~\"$job\"}) or vector(0)",
+          "expr": "sum(queue_jobs_inflight_by_job{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\"}) or vector(0)",
           "legendFormat": "inflight",
           "range": true,
           "refId": "A"
@@ -221,7 +221,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, queue) (increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__interval])))",
+          "expr": "topk(12, sum by (source, queue) (increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ queue }}" }}",
           "range": true,
           "refId": "A"
@@ -270,7 +270,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (queue, job_name) (increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__interval])))",
+          "expr": "topk(12, sum by (queue, job_name) (increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__interval])))",
           "legendFormat": "{{ "{{ queue }}" }} · {{ "{{ job_name }}" }}",
           "range": true,
           "refId": "A"
@@ -319,7 +319,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (source, queue) (rate(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__rate_interval])))",
+          "expr": "topk(12, sum by (source, queue) (rate(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=\"succeeded\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ queue }}" }}",
           "range": true,
           "refId": "A"
@@ -368,7 +368,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, histogram_quantile(0.95, sum by (le, source, queue) (rate(queue_job_duration_by_queue_seconds_bucket{queue=~\"$queue\"}[$__rate_interval]))))",
+          "expr": "topk(12, histogram_quantile(0.95, sum by (le, source, queue) (rate(queue_job_duration_by_queue_seconds_bucket{app=~\"$app\", queue=~\"$queue\"}[$__rate_interval]))))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ queue }}" }}",
           "range": true,
           "refId": "A"
@@ -417,7 +417,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, histogram_quantile(0.95, sum by (le, queue, job_name) (rate(queue_job_duration_by_job_seconds_bucket{queue=~\"$queue\", job_name=~\"$job\"}[$__rate_interval]))))",
+          "expr": "topk(12, histogram_quantile(0.95, sum by (le, queue, job_name) (rate(queue_job_duration_by_job_seconds_bucket{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\"}[$__rate_interval]))))",
           "legendFormat": "{{ "{{ queue }}" }} · {{ "{{ job_name }}" }}",
           "range": true,
           "refId": "A"
@@ -466,7 +466,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(15, sum by (queue, job_name) (queue_jobs_inflight_by_job{queue=~\"$queue\", job_name=~\"$job\"}))",
+          "expr": "topk(15, sum by (queue, job_name) (queue_jobs_inflight_by_job{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\"}))",
           "legendFormat": "{{ "{{ queue }}" }} · {{ "{{ job_name }}" }}",
           "range": true,
           "refId": "A"
@@ -515,7 +515,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(15, sum by (queue, job_name, status) (increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=~\"enqueued|scheduled|retried\"}[$__interval])))",
+          "expr": "topk(15, sum by (queue, job_name, status) (increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=~\"enqueued|scheduled|retried\"}[$__interval])))",
           "legendFormat": "{{ "{{ queue }}" }} · {{ "{{ job_name }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
@@ -564,7 +564,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(15, sum by (queue, job_name, status) (increase(queue_jobs_by_job_total{queue=~\"$queue\", job_name=~\"$job\", status=~\"failed|archived\"}[$__interval])))",
+          "expr": "topk(15, sum by (queue, job_name, status) (increase(queue_jobs_by_job_total{app=~\"$app\", queue=~\"$queue\", job_name=~\"$job\", status=~\"failed|archived\"}[$__interval])))",
           "legendFormat": "{{ "{{ queue }}" }} · {{ "{{ job_name }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
@@ -591,15 +591,15 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(queue_jobs_by_job_total, queue)",
+        "definition": "label_values(app)",
         "hide": 0,
         "includeAll": true,
-        "label": "Queue",
+        "label": "App",
         "multi": false,
-        "name": "queue",
+        "name": "app",
         "options": [],
         "query": {
-          "query": "label_values(queue_jobs_by_job_total, queue)",
+          "query": "label_values(app)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -616,7 +616,32 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-        "definition": "label_values(queue_jobs_by_job_total, job_name)",
+        "definition": "label_values(queue_jobs_by_job_total{app=~\"$app\"}, queue)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Queue",
+        "multi": false,
+        "name": "queue",
+        "options": [],
+        "query": {
+          "query": "label_values(queue_jobs_by_job_total{app=~\"$app\"}, queue)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+        "definition": "label_values(queue_jobs_by_job_total{app=~\"$app\"}, job_name)",
         "hide": 0,
         "includeAll": true,
         "label": "Job",
@@ -624,7 +649,7 @@
         "name": "job",
         "options": [],
         "query": {
-          "query": "label_values(queue_jobs_by_job_total, job_name)",
+          "query": "label_values(queue_jobs_by_job_total{app=~\"$app\"}, job_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

@@ -1,0 +1,69 @@
+package runtime
+
+import "testing"
+
+func TestAppMetadataUsesDeterministicDefaults(t *testing.T) {
+	app := App("app")
+	if app.Index != 0 || app.HTTPPort != 3000 || app.RuntimeBase != 10000 {
+		t.Fatalf("app defaults = index %d http %d runtime %d", app.Index, app.HTTPPort, app.RuntimeBase)
+	}
+{{- if gt (len .RuntimeApps) 1 }}
+	named := Apps[1]
+	if named.Index != 1 || named.HTTPPort != 3001 || named.RuntimeBase != 10010 {
+		t.Fatalf("first named defaults = index %d http %d runtime %d", named.Index, named.HTTPPort, named.RuntimeBase)
+	}
+{{- end }}
+}
+
+func TestAppPortResolutionUsesAppScopedOverrides(t *testing.T) {
+	t.Setenv("FORJ_APP", "app")
+	t.Setenv("PORT", "3100")
+	t.Setenv("METRICS_PORT", "11000")
+	t.Setenv("SCHEDULER_METRICS_PORT", "11001")
+	t.Setenv("WORKER_METRICS_PORT", "11002")
+
+	if got := HTTPPort(); got != "3100" {
+		t.Fatalf("default HTTP port = %q", got)
+	}
+	if got := MetricsPort(); got != "11000" {
+		t.Fatalf("default metrics port = %q", got)
+	}
+	if got := SchedulerMetricsPort(); got != "11001" {
+		t.Fatalf("default scheduler metrics port = %q", got)
+	}
+	if got := WorkerMetricsPort(); got != "11002" {
+		t.Fatalf("default worker metrics port = %q", got)
+	}
+}
+
+func TestDatabaseDiscoveryIgnoresDriverHelperDatabaseKeys(t *testing.T) {
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_DATABASE", "db")
+	t.Setenv("DB_SQLITE_DATABASE", "./_data/sqlite/app.db")
+
+	instances := DiscoverDatabaseInstances()
+	if len(instances) != 1 {
+		t.Fatalf("database instances = %#v, want only default", instances)
+	}
+	if instances[0].Name != "default" || instances[0].Driver != "mysql" {
+		t.Fatalf("default database instance = %#v, want mysql default", instances[0])
+	}
+}
+
+{{- if gt (len .RuntimeApps) 1 }}
+func TestNamedAppIgnoresDefaultAppPortOverrides(t *testing.T) {
+	t.Setenv("PORT", "3100")
+	t.Setenv("API_HTTP_PORT", "3200")
+	t.Setenv("METRICS_PORT", "11000")
+
+	app := Apps[1].Name
+	wantHTTP := "3001"
+	wantMetrics := "10010"
+	if got := HTTPPortForApp(app); got != wantHTTP {
+		t.Fatalf("named app HTTP port = %q, want %q", got, wantHTTP)
+	}
+	if got := MetricsPortForApp(app); got != wantMetrics {
+		t.Fatalf("named app metrics port = %q, want %q", got, wantMetrics)
+	}
+}
+{{- end }}

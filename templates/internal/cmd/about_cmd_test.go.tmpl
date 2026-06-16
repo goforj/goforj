@@ -4,18 +4,18 @@ import (
 	"strings"
 	"testing"
 
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 func TestAboutConnectionInventoryRendersOneRowPerResource(t *testing.T) {
 	cmd := &AboutCmd{NoColor: true}
-	section := appinfo.AboutSectionData{
+	section := runtime.AboutSectionData{
 		Title: "Queues",
-		Connections: []appinfo.AboutConnectionData{
+		Connections: []runtime.AboutConnectionData{
 			{
 				Name:      "default",
 				IsDefault: true,
-				Details: []appinfo.AboutField{
+				Details: []runtime.AboutField{
 					{Key: "Driver", Value: "redis"},
 					{Key: "Address", Value: "localhost:6379/0"},
 					{Key: "Workers", Value: "30"},
@@ -25,7 +25,7 @@ func TestAboutConnectionInventoryRendersOneRowPerResource(t *testing.T) {
 			},
 			{
 				Name: "report_processing",
-				Details: []appinfo.AboutField{
+				Details: []runtime.AboutField{
 					{Key: "Driver", Value: "redis"},
 					{Key: "Address", Value: "localhost:6379/0"},
 					{Key: "Workers", Value: "2"},
@@ -57,9 +57,9 @@ func TestAboutConnectionInventoryRendersOneRowPerResource(t *testing.T) {
 
 func TestAboutSectionRowsWrapLongValues(t *testing.T) {
 	cmd := &AboutCmd{}
-	section := appinfo.AboutSectionData{
+	section := runtime.AboutSectionData{
 		Title: "Build",
-		Rows: []appinfo.AboutSectionRow{
+		Rows: []runtime.AboutSectionRow{
 			{Key: "Components", Value: "cache, storage, events, lighthouse, metrics, database, http, scheduler, jobs, mail"},
 			{Key: "Wire Generated", Value: "present"},
 		},
@@ -84,20 +84,20 @@ func TestAboutSectionRowsWrapLongValues(t *testing.T) {
 
 func TestAboutSectionsShareVisualGrid(t *testing.T) {
 	cmd := &AboutCmd{NoColor: true}
-	sections := []appinfo.AboutSectionData{
+	sections := []runtime.AboutSectionData{
 		{
 			Title: "Network",
-			Rows: []appinfo.AboutSectionRow{
+			Rows: []runtime.AboutSectionRow{
 				{Key: "App URL", Value: "http://localhost:3000"},
 				{Key: "API URL", Value: "http://localhost:3000/api"},
 			},
 		},
 		{
 			Title: "Storages",
-			Connections: []appinfo.AboutConnectionData{
+			Connections: []runtime.AboutConnectionData{
 				{
 					Name: "default",
-					Details: []appinfo.AboutField{
+					Details: []runtime.AboutField{
 						{Key: "Driver", Value: "local"},
 						{Key: "Root", Value: "storage/app/private"},
 					},
@@ -106,10 +106,10 @@ func TestAboutSectionsShareVisualGrid(t *testing.T) {
 		},
 		{
 			Title: "Queues",
-			Connections: []appinfo.AboutConnectionData{
+			Connections: []runtime.AboutConnectionData{
 				{
 					Name: "report_processing",
-					Details: []appinfo.AboutField{
+					Details: []runtime.AboutField{
 						{Key: "Driver", Value: "redis"},
 						{Key: "Address", Value: "localhost:6379/0"},
 						{Key: "Workers", Value: "2"},
@@ -137,25 +137,25 @@ func TestAboutSectionsShareVisualGrid(t *testing.T) {
 
 func TestAboutFirstColumnUsesWhiteAcrossSections(t *testing.T) {
 	cmd := &AboutCmd{}
-	sections := []appinfo.AboutSectionData{
+	sections := []runtime.AboutSectionData{
 		{
 			Title: "Environment",
-			Rows: []appinfo.AboutSectionRow{
+			Rows: []runtime.AboutSectionRow{
 				{Key: "App", Value: "Test"},
 			},
 		},
 		{
 			Title: "Network",
-			Rows: []appinfo.AboutSectionRow{
+			Rows: []runtime.AboutSectionRow{
 				{Key: "API URL", Value: "http://localhost:3000/api"},
 			},
 		},
 		{
 			Title: "Databases",
-			Connections: []appinfo.AboutConnectionData{
+			Connections: []runtime.AboutConnectionData{
 				{
 					Name: "default",
-					Details: []appinfo.AboutField{
+					Details: []runtime.AboutField{
 						{Key: "Driver", Value: "mysql"},
 					},
 				},
@@ -177,12 +177,12 @@ func TestAboutFirstColumnUsesWhiteAcrossSections(t *testing.T) {
 
 func TestAboutConnectionInventoryUsesRestrainedColorHierarchy(t *testing.T) {
 	cmd := &AboutCmd{}
-	section := appinfo.AboutSectionData{
+	section := runtime.AboutSectionData{
 		Title: "Databases",
-		Connections: []appinfo.AboutConnectionData{
+		Connections: []runtime.AboutConnectionData{
 			{
 				Name: "default",
-				Details: []appinfo.AboutField{
+				Details: []runtime.AboutField{
 					{Key: "Driver", Value: "mysql"},
 					{Key: "Host", Value: "localhost"},
 					{Key: "Port", Value: "3306"},

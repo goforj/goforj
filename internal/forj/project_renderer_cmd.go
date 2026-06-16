@@ -11,6 +11,7 @@ type RenderCmd struct {
 	renderer *ProjectRenderer
 
 	Components []string `help:"Components to render"`
+	Timings    bool     `help:"Print render phase timings"`
 }
 
 func (*RenderCmd) Signature() string {
@@ -27,6 +28,9 @@ func NewCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *RenderCmd {
 
 // Run executes the command.
 func (c *RenderCmd) Run() error {
+	c.renderer.SetTimings(c.Timings)
+	defer c.renderer.SetTimings(false)
+
 	i := ComponentRenderInput{}
 	cmp := &i.components
 	if len(c.Components) == 0 {
@@ -58,8 +62,6 @@ func (c *RenderCmd) Run() error {
 				cmp.Scheduler = true
 			case "jobs":
 				cmp.Jobs = true
-			case "stress_test":
-				cmp.StressTest = true
 			default:
 				return fmt.Errorf("unknown component: %s", name)
 			}

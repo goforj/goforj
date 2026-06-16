@@ -9,7 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 )
 
@@ -117,7 +117,7 @@ func newBenchmarkAppLogger(b *testing.B, bindContext bool) *AppLogger {
 	if !bindContext {
 		return log
 	}
-	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 	ctx = inspects.WithInspectID(ctx, "bench-inspect")
 	return log.WithContext(ctx)
 }
