@@ -24,7 +24,7 @@ render:
   components:
     cli: true
   queue_driver: redis
-  goforj_version: 0.9.1
+  goforj_version: 0.18.0
   module_replaces:
     github.com/goforj/web: /Users/cmiles/code/web
 `), 0o644); err != nil {

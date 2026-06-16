@@ -273,6 +273,7 @@ Suggested built-in skills:
 - `goforj-app-architecture`
 - `goforj-app-registration`
 - `goforj-make-commands`
+- `goforj-go-package-design`
 - `goforj-migrations`
 - `goforj-runtime-workflows`
 - `goforj-database-and-data-access`
@@ -298,6 +299,16 @@ goforj-make-commands
   files. This skill should explicitly discourage manually creating controllers,
   jobs, schedules, commands, models, repositories, or migrations when a matching
   make command exists.
+
+goforj-go-package-design
+  Teaches agents GoForj's Go package design style. Code should usually be
+  cohesive within package scope instead of deeply nested into Java/PHP-style
+  class folders. This skill should cover package-local interfaces, constructors,
+  services, controllers, repositories, jobs, schedules, tests, and how grouped
+  make-command names map to package boundaries. It should also teach that
+  package-scoped implementation code still registers through the selected app
+  composition files. Example workflows should include forj make:command
+  billing:reports:sync and forj marketplace make:command billing:reports:sync.
 
 goforj-migrations
   Teaches raw DDL migration conventions, app-scoped migration paths, connection
@@ -334,6 +345,7 @@ templates/atlas/skills/
   goforj-app-architecture/SKILL.md
   goforj-app-registration/SKILL.md
   goforj-make-commands/SKILL.md
+  goforj-go-package-design/SKILL.md
   goforj-migrations/SKILL.md
   goforj-runtime-workflows/SKILL.md
   goforj-database-and-data-access/SKILL.md
@@ -362,6 +374,7 @@ Suggested Copilot output:
 .github/instructions/goforj-app-architecture.instructions.md
 .github/instructions/goforj-app-registration.instructions.md
 .github/instructions/goforj-make-commands.instructions.md
+.github/instructions/goforj-go-package-design.instructions.md
 .github/instructions/goforj-migrations.instructions.md
 .github/instructions/goforj-runtime-workflows.instructions.md
 .github/instructions/goforj-database-and-data-access.instructions.md
@@ -373,6 +386,7 @@ Suggested Copilot output:
 .github/prompts/goforj-add-route.prompt.md
 .github/prompts/goforj-add-job.prompt.md
 .github/prompts/goforj-add-schedule.prompt.md
+.github/prompts/goforj-review-package-design.prompt.md
 .github/prompts/goforj-debug-runtime.prompt.md
 .github/prompts/goforj-review-change.prompt.md
 ```
@@ -726,6 +740,7 @@ Suggested shape:
   "skills": [
     "goforj-app-architecture",
     "goforj-make-commands",
+    "goforj-go-package-design",
     "goforj-migrations"
   ],
   "last_discovered": {
@@ -893,6 +908,17 @@ expected:
   - make command docs
   - multi-app command prefix docs
 
+query: "make command inside billing reports package"
+expected:
+  - Go package design docs
+  - make command docs
+  - app registration docs
+
+query: "where should billing report service files go"
+expected:
+  - Go package design docs
+  - app architecture docs
+
 query: "where does cmd marketplace main go"
 expected:
   - app architecture docs
@@ -932,6 +958,9 @@ Examples:
   behavior
 - `goforj-make-commands` says agents should prefer make-command scaffolding
   over raw file creation when a matching make command exists
+- `goforj-go-package-design` mentions Go package boundaries, package-local
+  code, avoiding Java/PHP-style nesting, grouped make-command names, and
+  selected-app registration
 - `goforj-migrations` mentions raw DDL and app-scoped migration paths
 - `goforj-testing-and-validation` mentions `/tmp` render locations and Go cache
   env vars
@@ -942,6 +971,7 @@ when credentials or local tooling are available.
 Example prompts:
 
 - "Add a checkout controller to the marketplace app."
+- "Create a billing reports sync command inside the marketplace app."
 - "Create a nightly cleanup schedule for backstage."
 - "Explain where the marketplace app's binary entrypoint lives."
 - "Find the docs for read-only database inspection."
@@ -951,6 +981,8 @@ Score:
 - did the agent call Atlas tools before guessing?
 - did it choose the correct app?
 - did it prefer a matching `forj make:*` command over raw file creation?
+- did it preserve Go package scope instead of creating unnecessary nested
+  class-style directories?
 - did it write to the correct registration point?
 - did it avoid stale binary assumptions?
 - did it keep output concise?
@@ -1044,6 +1076,7 @@ Recommended scoring dimensions:
 - selected the right app
 - used the right command shape
 - used available scaffold commands instead of hand-creating framework artifacts
+- preserved Go package scope instead of unnecessary class-style nesting
 - wrote to the right registration point
 - used Atlas docs/tools before guessing
 - avoided unsafe database or shell behavior
@@ -1118,8 +1151,8 @@ Build:
 - `forj atlas:list-skills`
 
 Initial built-in skills should cover app architecture, app registration, make
-commands, migrations, runtime workflows, database/data access, observability,
-Vue starter kit workflows, and testing/validation.
+commands, Go package design, migrations, runtime workflows, database/data
+access, observability, Vue starter kit workflows, and testing/validation.
 
 ### Phase 3: MCP MVP
 
