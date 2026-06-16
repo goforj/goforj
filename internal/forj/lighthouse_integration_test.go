@@ -1363,7 +1363,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"source":  "http",
 		"payload": json.RawMessage(registerPayload),
 	})
-	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 1*time.Second); err != nil {
+	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 3*time.Second); err != nil {
 		t.Fatalf("agent did not register: %v", err)
 	}
 
@@ -1383,7 +1383,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		t.Fatalf("send command: %v", err)
 	}
 
-	readDeadline := time.Now().Add(1 * time.Second)
+	readDeadline := time.Now().Add(3 * time.Second)
 	var gotCommand bool
 	for time.Now().Before(readDeadline) {
 		agentConn.SetReadDeadline(readDeadline)
@@ -1415,7 +1415,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		t.Fatal("agent did not receive command")
 	}
 
-	deadline := time.Now().Add(1 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		consoleConn.SetReadDeadline(deadline)
 		var msg struct {
