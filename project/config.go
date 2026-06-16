@@ -68,22 +68,23 @@ func DefaultNamedApp(name string) App {
 	}
 }
 
-// IsSafeAppName reports whether name is safe for app-owned paths.
+// IsSafeAppName reports whether name is a lowercase app slug safe for app-owned paths.
 func IsSafeAppName(name string) bool {
-	if name == "" || name == "." || name == ".." {
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
 		return false
 	}
-	for _, r := range name {
+	previousWasSeparator := false
+	for i, r := range name {
 		if r >= 'a' && r <= 'z' {
+			previousWasSeparator = false
 			continue
 		}
-		if r >= 'A' && r <= 'Z' {
+		if i > 0 && r >= '0' && r <= '9' {
+			previousWasSeparator = false
 			continue
 		}
-		if r >= '0' && r <= '9' {
-			continue
-		}
-		if r == '-' || r == '_' {
+		if r == '-' && !previousWasSeparator {
+			previousWasSeparator = true
 			continue
 		}
 		return false

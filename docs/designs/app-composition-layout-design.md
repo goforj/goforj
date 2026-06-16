@@ -343,7 +343,7 @@ The source of truth for normal app dispatch is convention, not configuration:
 
 `.goforj.yml` should not describe which apps exist. App discovery, app dispatch, runtime metadata, and all-app dev fanout should use project layout convention rather than a configured app list.
 
-The implementation also supports binary dispatch: if `./bin/<app>` exists, `forj <app> ...` delegates to that binary with the remaining arguments. During dispatch, GoForj sets app identity environment values such as `FORJ_COMMAND_PREFIX=forj <app>` and `FORJ_APP=<app>`.
+The implementation also supports binary dispatch outside the source-tree path: if only `./bin/<app>` exists, `forj <app> ...` delegates to that binary with the remaining arguments. During dispatch, GoForj sets app identity environment values such as `FORJ_COMMAND_PREFIX=forj <app>` and `FORJ_APP=<app>`.
 
 Examples:
 
@@ -389,15 +389,15 @@ Those binaries are built from `cmd/<app>/main.go`.
 ./bin/<app> --help
 ```
 
-In source-aware development, `forj` delegates through the generated app command surface when `cmd/<app>/main.go` exists, without requiring the binary to already exist.
+In source-aware development, `forj` delegates through the generated app command surface when `cmd/<app>/main.go` exists, even if `./bin/<app>` also exists. That keeps source-mutating commands such as `make:*` from running through a stale built app binary.
 
 ### Command Resolution
 
 Suggested resolution order:
 
 1. If the first argument is a native Framework command, run the native command.
-2. Else if the first argument matches a built app binary at `./bin/<app>`, delegate the remaining arguments to that binary.
-3. Else if the first argument matches `cmd/<app>/main.go`, set the active app and resolve the remaining command normally in that app context.
+2. Else if the first argument matches `cmd/<app>/main.go` in a generated project, set the active app and resolve the remaining command normally in that app context.
+3. Else if the first argument matches a built app binary at `./bin/<app>`, delegate the remaining arguments to that binary.
 4. Else resolve the command against the default app.
 
 App names should not be allowed to collide with native Framework commands such as `build`, `dev`, `render`, or `version`.
@@ -674,28 +674,28 @@ Runtime port resolution should prefer the most specific env value and then fall 
 
 ```text
 HTTP:
-  <TARGET>_PORT
-  <TARGET>_API_HTTP_PORT
+  <APP>_PORT
+  <APP>_API_HTTP_PORT
   PORT or API_HTTP_PORT for the default app only
   3000 + appIndex
 
 HTTP metrics:
-  <TARGET>_METRICS_PORT
-  <TARGET>_API_METRICS_PORT or <TARGET>_METRICS_API_PORT
+  <APP>_METRICS_PORT
+  <APP>_API_METRICS_PORT or <APP>_METRICS_API_PORT
   METRICS_PORT, API_METRICS_PORT, or METRICS_API_PORT for the default app only
   10000 + (appIndex * 10)
 
 Scheduler metrics:
-  <TARGET>_SCHEDULER_METRICS_PORT
-  <TARGET>_METRICS_SCHEDULER_PORT
-  <TARGET>_METRICS_PORT
+  <APP>_SCHEDULER_METRICS_PORT
+  <APP>_METRICS_SCHEDULER_PORT
+  <APP>_METRICS_PORT
   SCHEDULER_METRICS_PORT, METRICS_SCHEDULER_PORT, or METRICS_PORT for the default app only
   10000 + (appIndex * 10) + 1
 
 Worker metrics:
-  <TARGET>_WORKER_METRICS_PORT
-  <TARGET>_JOBS_METRICS_PORT or <TARGET>_METRICS_JOBS_PORT
-  <TARGET>_METRICS_PORT
+  <APP>_WORKER_METRICS_PORT
+  <APP>_JOBS_METRICS_PORT or <APP>_METRICS_JOBS_PORT
+  <APP>_METRICS_PORT
   WORKER_METRICS_PORT, JOBS_METRICS_PORT, METRICS_JOBS_PORT, or METRICS_PORT for the default app only
   10000 + (appIndex * 10) + 2
 ```
@@ -968,7 +968,7 @@ Possible path:
 2. Add new templates for `cmd/app/`, `app/`, and `app/wire/` in new Apps. Done for the default app.
 3. Keep compatibility with current `internal/` and `wire/` registration files for existing Apps. Done through generator path fallback and legacy cleanup.
 4. Teach generators to detect which layout exists. Done for the default app generators.
-5. Add app detection and command resolution to `forj`. Done for binary dispatch and source-mode convention dispatch.
+5. Add app detection and command resolution to `forj`. Done for source-mode convention dispatch and binary fallback dispatch.
 6. Add app-aware generator registration. Done for default and named app-owned generator registration.
 7. Add app-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-app build/run/wire paths, source-mode app build/run/wire paths, all-app unqualified dev orchestration, API index/OpenAPI app paths and status labeling, and Lighthouse agent identity.
 8. Add rendered smoke scenarios for single-app and multi-app Apps. Done for default single-app render coverage; named-app coverage remains.
@@ -1072,12 +1072,11 @@ Track implementation as concrete work items:
 
 - [x] Update command resolution.
   - [x] Detect `forj <app> ...` when `./bin/<app>` exists.
-  - [x] Delegate remaining arguments to the built app binary.
+  - [x] Delegate remaining arguments to the built app binary when source layout is not present.
   - [x] Set app identity env during binary dispatch.
   - [x] Keep unqualified commands on the default app.
-  - [x] Set the active app from `cmd/<app>/main.go` when no binary exists.
+  - [x] Set the active app from `cmd/<app>/main.go` before binary dispatch in source projects.
   - [x] Route `forj <app> --help` through the source app in source mode.
-  - [x] Preserve native Framework command precedence for convention source-mode app dispatch.
   - [x] Preserve native Framework command precedence for convention source-mode app dispatch.
   - [x] Make `forj <app> <native-command>` pass active app context into native commands.
   - [x] Make `forj <app> <app-command>` execute the selected app command surface.

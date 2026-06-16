@@ -168,9 +168,11 @@ func TestDatabaseComposeDataUsesNamedVolumes(t *testing.T) {
 	for _, token := range []string{
 		"mariadb:\n    driver: local",
 		"postgres:\n    driver: local",
+		"victoriametrics:\n    driver: local",
 		"grafana:\n    driver: local",
 		"mariadb:/var/lib/mysql",
 		"postgres:/var/lib/postgresql/data",
+		"victoriametrics:/victoria-metrics-data",
 		"grafana:/var/lib/grafana",
 	} {
 		if !strings.Contains(template, token) {
@@ -180,6 +182,7 @@ func TestDatabaseComposeDataUsesNamedVolumes(t *testing.T) {
 	for _, token := range []string{
 		"./_data/mariadb:/var/lib/mysql",
 		"./_data/postgres:/var/lib/postgresql/data",
+		"./_data/victoriametrics:/victoria-metrics-data",
 		"./_data/grafana:/var/lib/grafana",
 	} {
 		if strings.Contains(template, token) {

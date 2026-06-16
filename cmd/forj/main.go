@@ -61,7 +61,7 @@ func main() {
 	inGeneratedApp := isGeneratedAppDir()
 	appContext := ""
 	if appName, remaining, ok := resolveAppPrefix(args, inGeneratedApp); ok {
-		if shouldRunAppNativeCommand(remaining) {
+		if shouldRunAppThroughSource(appName, remaining, inGeneratedApp) {
 			applySourceAppEnv(appName)
 			appContext = appName
 			args = remaining
@@ -140,6 +140,14 @@ func resolveAppPrefix(args []string, inGeneratedApp bool) (string, []string, boo
 		return appName, args[1:], true
 	}
 	return "", args, false
+}
+
+// shouldRunAppThroughSource keeps source-tree app commands current when app binaries may be stale.
+func shouldRunAppThroughSource(appName string, args []string, inGeneratedApp bool) bool {
+	if shouldRunAppNativeCommand(args) {
+		return true
+	}
+	return inGeneratedApp && isConventionalSourceApp(appName)
 }
 
 // shouldRunAppNativeCommand keeps framework-owned commands app-scoped instead of delegating them to app binaries.

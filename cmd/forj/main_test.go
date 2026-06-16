@@ -99,6 +99,44 @@ func TestAppPrefixedNativeCommandStaysInSourceMode(t *testing.T) {
 	}
 }
 
+func TestAppPrefixedSourceCommandWinsOverBuiltBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceApp(t, "billing")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "billing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	if !shouldRunAppThroughSource("billing", []string{"make:controller", "checkout"}, true) {
+		t.Fatal("expected source app commands to avoid stale built app binaries")
+	}
+}
+
+func TestAppPrefixedBinaryOnlyCommandUsesBuiltBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "billing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	if shouldRunAppThroughSource("billing", []string{"route:list"}, false) {
+		t.Fatal("expected binary-only app commands to delegate to the built app binary")
+	}
+}
+
 func TestResolveAppPrefixPreservesNativeCommandPrecedence(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()

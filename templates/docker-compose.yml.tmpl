@@ -13,6 +13,10 @@ volumes:
   postgres:
     driver: local
 {{ end }}
+{{- if .Components.Observability }}
+  victoriametrics:
+    driver: local
+{{ end }}
 {{- if .Components.Grafana }}
   grafana:
     driver: local
@@ -31,7 +35,7 @@ services:
     ports:
       - ${IP_ADDRESS:-0.0.0.0}:${OBSERVABILITY_VM_PORT:-8428}:8428
     volumes:
-      - ./_data/victoriametrics:/victoria-metrics-data
+      - victoriametrics:/victoria-metrics-data
     command:
       - --storageDataPath=/victoria-metrics-data
       - --httpListenAddr=:8428

@@ -45,7 +45,7 @@ func TestCmdSkipsWizardByDefaultOutsideInteractiveTerminal(t *testing.T) {
 
 	cmd := &Cmd{}
 	if cmd.shouldRunWizard() {
-		t.Fatal("expected non-interactive make:app to use default target selection")
+		t.Fatal("expected non-interactive make:app to use default app selection")
 	}
 }
 
@@ -93,7 +93,7 @@ render:
 	}
 }
 
-func TestCmdRunTreatsExistingTargetAsNormalExit(t *testing.T) {
+func TestCmdRunTreatsExistingAppAsNormalExit(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.MkdirAll(filepath.Join("cmd", "billing"), 0o755); err != nil {
@@ -111,7 +111,7 @@ func TestCmdRunTreatsExistingTargetAsNormalExit(t *testing.T) {
 	}
 }
 
-func TestCmdRunRemovesTarget(t *testing.T) {
+func TestCmdRunRemovesApp(t *testing.T) {
 	renderer := &recordingRenderer{
 		removeResult: RemoveResult{
 			Removed: []string{filepath.Join("app", "billing")},
@@ -136,7 +136,7 @@ func TestCmdRunRemovesTarget(t *testing.T) {
 	}
 }
 
-func TestCmdRunTreatsMissingRemoveTargetAsNormalExit(t *testing.T) {
+func TestCmdRunTreatsMissingRemoveAppAsNormalExit(t *testing.T) {
 	renderer := &recordingRenderer{}
 	cmd := NewCmd(logger.NewSilentLogger(), renderer)
 	cmd.Name = "billing"
