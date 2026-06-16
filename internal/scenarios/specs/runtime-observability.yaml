@@ -68,8 +68,8 @@ markdown:
 
     ```bash
     forj run api
-    forj run worker
-    forj run scheduler
+    forj worker
+    forj scheduler
     ```
 
     In production, use the built binary equivalents:
@@ -147,8 +147,8 @@ markdown:
 
         ```bash
         forj run api
-        forj run worker
-        forj run scheduler
+        forj worker
+        forj scheduler
         ```
 
         Good logs should answer:

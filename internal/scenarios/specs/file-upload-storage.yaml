@@ -301,7 +301,7 @@ steps:
                 return ctx.JSON(http.StatusCreated, upload)
         }
 
-  - title: Wire The Disk And Service
+  - title: Wire the Disk and Service
     explain: |
       Open `app/wire/inject_services_app.go`.
 

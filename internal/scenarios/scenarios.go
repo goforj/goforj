@@ -673,7 +673,7 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 		}
 	}
 	if len(spec.Verify.Commands) > 0 {
-		b.WriteString("## Build And Verify\n\n")
+		b.WriteString("## Build and Verify\n\n")
 		for _, command := range spec.Verify.Commands {
 			if len(command.Run) == 0 {
 				continue

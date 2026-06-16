@@ -254,7 +254,7 @@ steps:
                 return s.repo.Find(ctx, id)
         }
 
-  - title: Wire The Repository And Cache
+  - title: Wire the Repository and Cache
     explain: |
       Open `app/wire/inject_services_app.go`.
 
