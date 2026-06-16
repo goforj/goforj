@@ -203,11 +203,11 @@ import (
 )
 
 var appScheduleSet = wire.NewSet(
-	reporting.NewScheduleRegistry,
-	wire.Bind(new(schedules.ScheduleRegistry), new(*reporting.ScheduleRegistry)),
+	reportingapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*reportingapp.ScheduleRegistry)),
 )
 `)
-	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "schedules.go"), `package reporting
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "schedules.go"), `package reportingapp
 
 import "example.com/testapp/internal/schedules"
 

@@ -91,7 +91,7 @@ func IsSafeAppName(name string) bool {
 	return true
 }
 
-// AppPackageName converts an app slug into a valid Go package name.
+// AppPackageName converts an app slug into a valid Go package name for app-owned composition.
 func AppPackageName(name string) string {
 	var builder strings.Builder
 	for _, r := range strings.ToLower(name) {
@@ -104,7 +104,10 @@ func AppPackageName(name string) string {
 		return DefaultAppName
 	}
 	if pkg[0] >= '0' && pkg[0] <= '9' {
-		return DefaultAppName + pkg
+		pkg = DefaultAppName + pkg
+	}
+	if pkg != DefaultAppName && !strings.HasSuffix(pkg, DefaultAppName) {
+		pkg += DefaultAppName
 	}
 	return pkg
 }

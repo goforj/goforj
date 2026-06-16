@@ -173,7 +173,7 @@ import "github.com/goforj/wire"
 var appCommandSet = wire.NewSet(
 )
 `)
-	writeMakeFlowFile(t, filepath.Join(projectDir, "app", "reporting", "commands.go"), `package reporting
+	writeMakeFlowFile(t, filepath.Join(projectDir, "app", "reporting", "commands.go"), `package reportingapp
 
 type Commands struct {
 }
