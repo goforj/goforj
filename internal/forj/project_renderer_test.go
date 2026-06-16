@@ -475,17 +475,17 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
 		`"example.com/test/app/customer-portal"`,
 		`"example.com/test/app/customer-portal/wire"`,
-		`&customerportal.RootCmd{}`,
+		`&customerportalapp.RootCmd{}`,
 	)
-	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportal")
-	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportal")
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportalapp")
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "routes.go"), "package customerportalapp")
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "wire", "inject_http.go"),
 		`"example.com/test/app/customer-portal"`,
-		"customerportal.ProvideRoutes",
+		"customerportalapp.ProvideRoutes",
 	)
 
 	commandsPath := filepath.Join("app", "customer-portal", "commands.go")
-	customCommands := "package customerportal\n\n// custom\n"
+	customCommands := "package customerportalapp\n\n// custom\n"
 	if err := os.WriteFile(commandsPath, []byte(customCommands), 0o644); err != nil {
 		t.Fatalf("write custom commands: %v", err)
 	}
@@ -1034,7 +1034,7 @@ var appSet = wire.NewSet(
 	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp", "app/billing")
 	for _, want := range []string{
 		`"example.com/testapp/app/billing"`,
-		"billing.NewLifecycleRegistry",
+		"billingapp.NewLifecycleRegistry",
 	} {
 		if !strings.Contains(updated, want) {
 			t.Fatalf("expected migrated service injector to contain %q:\n%s", want, updated)
@@ -1204,8 +1204,8 @@ var appScheduleSet = wire.NewSet(
 	updated := syncLegacyScheduleInjector(legacy, "example.com/testapp", "app/billing")
 	for _, want := range []string{
 		`"example.com/testapp/app/billing"`,
-		"billing.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*billing.ScheduleRegistry))",
+		"billingapp.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*billingapp.ScheduleRegistry))",
 	} {
 		if !strings.Contains(updated, want) {
 			t.Fatalf("expected migrated schedule injector to contain %q:\n%s", want, updated)

@@ -117,10 +117,10 @@ func TestIsNativeFrameworkCommandName(t *testing.T) {
 func TestAppPackageName(t *testing.T) {
 	tests := map[string]string{
 		"app":             "app",
-		"reporting":       "reporting",
-		"customer-portal": "customerportal",
-		"ops_api":         "opsapi",
-		"2fa":             "app2fa",
+		"reporting":       "reportingapp",
+		"customer-portal": "customerportalapp",
+		"ops_api":         "opsapiapp",
+		"2fa":             "app2faapp",
 	}
 	for input, want := range tests {
 		if got := AppPackageName(input); got != want {

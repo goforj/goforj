@@ -461,7 +461,7 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 	writeMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 	writeMakeAppTestFile(t, filepath.Join("cmd", "billing", "custom.go"), "package main\n")
 	writeMakeAppTestFile(t, filepath.Join("cmd", "billing", "frontend", "dist", "index.html"), "<html></html>\n")
-	writeMakeAppTestFile(t, filepath.Join("app", "billing", "root_cmd.go"), "package billing\n")
+	writeMakeAppTestFile(t, filepath.Join("app", "billing", "root_cmd.go"), "package billingapp\n")
 	writeMakeAppTestFile(t, filepath.Join("bin", "billing"), "binary\n")
 	writeMakeAppTestFile(t, filepath.Join("migrations", "billing", "default", "001_create_widgets.up.sql"), "-- user migration\n")
 	writeMakeAppTestFile(t, ".env", strings.Join([]string{
