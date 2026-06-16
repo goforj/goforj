@@ -62,6 +62,19 @@ func selectStarterKitRow(t *testing.T, m *model, key project.StarterKit) {
 	t.Fatalf("starter kit %q not found", key)
 }
 
+func selectAtlasModeRow(t *testing.T, m *model, mode atlasMode) {
+	t.Helper()
+	for idx, item := range m.atlasModeList.Items() {
+		atlasModeItem := item.(AtlasModeItem)
+		if atlasModeItem.Mode != mode {
+			continue
+		}
+		m.atlasModeList.Select(idx)
+		return
+	}
+	t.Fatalf("atlas mode %q not found", mode)
+}
+
 func TestModelHandlesCtrlC(t *testing.T) {
 	m := initialModel()
 
@@ -145,8 +158,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageAtlasSupport {
+		t.Fatalf("expected to be on atlas support stage after extras, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageProjectPath {
-		t.Fatalf("expected to be on project path stage after extras when jobs are selected by default")
+		t.Fatalf("expected to be on project path stage after atlas support, got %v", m.stage)
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -410,6 +429,107 @@ func TestVueStarterKitSelectionPersists(t *testing.T) {
 	}
 }
 
+func TestAtlasRecommendedMovesToProjectPath(t *testing.T) {
+	m := initialModel()
+	m.stage = StageAtlasSupport
+	selectAtlasModeRow(t, &m, atlasModeRecommended)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.stage != StageProjectPath {
+		t.Fatalf("expected recommended atlas to continue to project path, got %v", m.stage)
+	}
+	if !m.atlasInstallEnabled() {
+		t.Fatalf("expected recommended atlas install to be enabled")
+	}
+	surfaces := m.selectedAtlasSurfaces()
+	if !surfaces.guidelines || !surfaces.skills || !surfaces.mcp {
+		t.Fatalf("expected recommended atlas surfaces, got %#v", surfaces)
+	}
+	if len(m.selectedAtlasAgents()) == 0 {
+		t.Fatalf("expected recommended atlas agents")
+	}
+}
+
+func TestAtlasMinimalInstallsGuidelinesOnly(t *testing.T) {
+	m := initialModel()
+	m.stage = StageAtlasSupport
+	selectAtlasModeRow(t, &m, atlasModeMinimal)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	surfaces := m.selectedAtlasSurfaces()
+	if !surfaces.guidelines || surfaces.skills || surfaces.mcp {
+		t.Fatalf("expected minimal atlas guidelines only, got %#v", surfaces)
+	}
+}
+
+func TestAtlasSkipDisablesInstall(t *testing.T) {
+	m := initialModel()
+	m.stage = StageAtlasSupport
+	selectAtlasModeRow(t, &m, atlasModeSkip)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.stage != StageProjectPath {
+		t.Fatalf("expected skip to continue to project path, got %v", m.stage)
+	}
+	if m.atlasInstallEnabled() {
+		t.Fatalf("expected skip to disable atlas install")
+	}
+}
+
+func TestAtlasCustomRequiresAgentAndSurface(t *testing.T) {
+	m := initialModel()
+	m.stage = StageAtlasSupport
+	selectAtlasModeRow(t, &m, atlasModeCustom)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageAtlasAgents {
+		t.Fatalf("expected custom to open agent selection, got %v", m.stage)
+	}
+
+	for idx, listItem := range m.atlasAgentList.Items() {
+		item := listItem.(AtlasAgentItem)
+		item.Selected = false
+		m.atlasAgentList.SetItem(idx, item)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageAtlasAgents || !strings.Contains(m.errorMsg, "Select at least one agent") {
+		t.Fatalf("expected custom agent validation, stage=%v error=%q", m.stage, m.errorMsg)
+	}
+
+	m.toggleAtlasAgentSelection()
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageAtlasSurfaces {
+		t.Fatalf("expected custom to open surface selection, got %v", m.stage)
+	}
+
+	for idx, listItem := range m.atlasSurfaceList.Items() {
+		item := listItem.(AtlasSurfaceItem)
+		item.Selected = false
+		m.atlasSurfaceList.SetItem(idx, item)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageAtlasSurfaces || !strings.Contains(m.errorMsg, "Select at least one install option") {
+		t.Fatalf("expected custom surface validation, stage=%v error=%q", m.stage, m.errorMsg)
+	}
+
+	m.toggleAtlasSurfaceSelection()
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageProjectPath {
+		t.Fatalf("expected custom selections to continue to project path, got %v", m.stage)
+	}
+}
+
 func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
@@ -437,8 +557,14 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageAtlasSupport {
+		t.Fatalf("expected atlas support stage when jobs enabled, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageProjectPath {
-		t.Fatalf("expected project path stage when jobs enabled, got %v", m.stage)
+		t.Fatalf("expected project path stage after atlas support, got %v", m.stage)
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})

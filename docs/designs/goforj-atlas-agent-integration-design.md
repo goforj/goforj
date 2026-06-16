@@ -16,6 +16,11 @@ The working GoForj name remains `Atlas`.
 ## Reference material
 
 - Local GoForj MCP design: `docs/designs/go-mcp-server-design.md`
+- Implementation spec: `/workspace/code/atlas/IMPLEMENTATION.md`
+
+The implementation spec in `github.com/goforj/atlas` is the execution source of
+truth. This design explains the product and architecture; the Atlas repo spec
+tracks phases, package layout, acceptance tests, and continuation state.
 
 ## Core recommendation
 
@@ -48,7 +53,22 @@ Atlas should make GoForj projects understandable to local agents without asking
 users to manually copy prompt text, hand-edit MCP config, or remember framework
 conventions.
 
-The user-facing flow should be:
+The primary user-facing flow should be part of project creation:
+
+```bash
+forj new
+```
+
+The project wizard should ask about agent support and make the recommended path
+clear:
+
+- Recommended: detected agents, falling back to Codex, with guidelines, skills,
+  and MCP server config
+- Minimal: detected agents, falling back to Codex, with guidelines only
+- Custom: user-selected agents and install surfaces
+- Skip: no Atlas files
+
+Atlas should also remain available after project creation:
 
 ```bash
 forj atlas:install
@@ -68,7 +88,7 @@ Suggested follow-up commands:
 ```bash
 forj atlas:update
 forj atlas:list-skills
-forj atlas:add-skill <path-or-repository>
+forj atlas:make-skill <name>
 forj atlas:mcp
 ```
 
@@ -358,6 +378,8 @@ User-defined skills should live under:
 
 ```text
 .ai/skills/
+  checkout-rules/
+    SKILL.md
 ```
 
 Atlas should copy or symlink those into each agent's skill directory, depending
@@ -367,6 +389,13 @@ Agents that do not support `SKILL.md` directly should get equivalent native
 files. For GitHub Copilot, Atlas should map reusable skills into
 `.github/instructions/*.instructions.md` and workflow prompts into
 `.github/prompts/*.prompt.md`.
+
+Atlas-generated guidelines should also teach agents to notice durable
+repo-specific knowledge. When the user repeats or corrects a convention,
+workflow, command, or review expectation that is likely to matter again, the
+agent should briefly ask whether it belongs in `.ai/skills/<name>/SKILL.md`.
+This suggestion should stay rare and should not fire for one-off preferences or
+temporary debugging steps.
 
 Suggested Copilot output:
 
@@ -498,15 +527,14 @@ Example shape:
 
 Searches GoForj documentation for the current project version.
 
-GoForj should embed the Markdown documentation that ships with the installed
-`forj` version. This is a major strength of Atlas: local docs search can be
-versioned, deterministic, offline, and tied directly to the CLI that is running
-the MCP server.
+Atlas should load GoForj Markdown documentation into memory when the MCP server
+starts. This keeps search fast while avoiding a copied docs tree in the GoForj
+or Atlas source repos.
 
 MVP sources, in priority order:
 
-- embedded Markdown docs from the installed `forj` binary
-- checked-out `goforj-docs` index when available
+- `GOFORJ_DOCS_PATH` local override when available
+- cached clone of `github.com/goforj/docs`
 - generated project docs and API index
 
 Development override:
@@ -516,7 +544,9 @@ GOFORJ_DOCS_PATH=/workspace/code/goforj-docs forj atlas:mcp
 ```
 
 That lets framework and docs development use the live docs repo while normal
-projects use the embedded docs that match their installed CLI.
+projects use a cache that Atlas refreshes at runtime. Atlas should use the
+`git` executable when present and silently fall back to native Go git support
+when it is not.
 
 Optional later source:
 
@@ -524,9 +554,8 @@ Optional later source:
 https://docs.goforj.dev/api/search
 ```
 
-A hosted endpoint can help with cross-version browsing, richer global search,
-or docs that were published after a local CLI install. It should not replace the
-embedded docs as the default source.
+A hosted endpoint can help with cross-version browsing or richer global search.
+It should not replace the local cache as the default source.
 
 The important part is local version awareness. Agents should not use docs for a
 newer or older GoForj API unless no exact match exists.
@@ -1149,6 +1178,7 @@ Build:
 - Copilot `.github/instructions` output
 - Copilot `.github/prompts` output
 - `forj atlas:list-skills`
+- `forj atlas:make-skill`
 
 Initial built-in skills should cover app architecture, app registration, make
 commands, Go package design, migrations, runtime workflows, database/data

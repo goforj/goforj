@@ -11,6 +11,7 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
+	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
@@ -26,7 +27,12 @@ func InitializeApplication() (App, error) {
 	generateCmd := generate.NewCmd()
 	projectRenderer := forj.NewProjectRenderer(appLogger)
 	newProjectCmd := forj.NewNewProjectCmd(appLogger, projectRenderer)
-	makeAppCmd := makeapp.NewCmd(appLogger, projectRenderer)
+	installCmd := atlas.NewInstallCmd()
+	updateCmd := atlas.NewUpdateCmd()
+	listSkillsCmd := atlas.NewListSkillsCmd()
+	makeSkillCmd := atlas.NewMakeSkillCmd()
+	mcpCmd := atlas.NewMCPCmd()
+	makeappCmd := makeapp.NewCmd(appLogger, projectRenderer)
 	devCmd := forj.NewDevCmd(appLogger)
 	downCmd := forj.NewDownCmd(appLogger)
 	buildBinaryCmd := forj.NewBuildBinaryCmd(appLogger)
@@ -45,7 +51,7 @@ func InitializeApplication() (App, error) {
 	scenarioTestCmd := forj.NewScenarioTestCmd(appLogger)
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
 	runCmd := build.NewRunCmd(appLogger, apiIndexRunner)
-	rootCmd := forj.NewRootCmd(buildCmd, generateCmd, newProjectCmd, makeAppCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd)
+	rootCmd := forj.NewRootCmd(buildCmd, generateCmd, newProjectCmd, installCmd, updateCmd, listSkillsCmd, makeSkillCmd, mcpCmd, makeappCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)
