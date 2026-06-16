@@ -6,7 +6,7 @@ package wire
 import (
 	"github.com/goforj/wire"
 
-	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
@@ -24,7 +24,7 @@ import (
 
 // appSet is a wire set that provides application-level services and dependencies.
 var appSet = wire.NewSet(
-	compositionapp.NewLifecycleRegistry,
+	{{.AppPackageName}}.NewLifecycleRegistry,
 	runtime.NewTimeouts,
 	makecmd.NewEventCmd,
 	makecmd.NewSubscriberCmd,

@@ -2951,22 +2951,26 @@ func syncLegacyScheduleInjector(content string, moduleName string, appImportPath
 	}
 	schedulesPath := moduleName + "/internal/schedules"
 	compositionAppPath := moduleName + "/" + appImportPath
+	appPackageName := project.AppPackageName(filepath.Base(appImportPath))
 	updated = ensureGoImport(updated, schedulesPath, "")
-	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "compositionapp")
+	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
 	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
-	updated = replaceQualifiedIdentifier(updated, "targetapp.NewScheduleRegistry", "compositionapp.NewScheduleRegistry")
-	updated = replaceQualifiedIdentifier(updated, "targetapp.ScheduleRegistry", "compositionapp.ScheduleRegistry")
-	updated = ensureGoImport(updated, compositionAppPath, "compositionapp")
+	updated = replaceQualifiedIdentifier(updated, "targetapp.NewScheduleRegistry", appPackageName+".NewScheduleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "targetapp.ScheduleRegistry", appPackageName+".ScheduleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "compositionapp.NewScheduleRegistry", appPackageName+".NewScheduleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "compositionapp.ScheduleRegistry", appPackageName+".ScheduleRegistry")
+	updated = ensureGoImport(updated, compositionAppPath, "")
 	updated = strings.ReplaceAll(updated, "\tschedules.NewAppSchedules,", "\tProvideAppSchedules,")
 
 	if !strings.Contains(updated, "func ProvideAppSchedules(") {
 		updated = appendProvideAppSchedules(updated)
 	}
-	if !strings.Contains(updated, "compositionapp.NewScheduleRegistry") {
-		updated = insertIntoWireSet(updated, "appScheduleSet", "\tcompositionapp.NewScheduleRegistry,")
+	if !strings.Contains(updated, appPackageName+".NewScheduleRegistry") {
+		updated = insertIntoWireSet(updated, "appScheduleSet", "\t"+appPackageName+".NewScheduleRegistry,")
 	}
-	if !strings.Contains(updated, "wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))") {
-		updated = insertIntoWireSet(updated, "appScheduleSet", "\twire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry)),")
+	scheduleBinding := "wire.Bind(new(schedules.ScheduleRegistry), new(*" + appPackageName + ".ScheduleRegistry))"
+	if !strings.Contains(updated, scheduleBinding) {
+		updated = insertIntoWireSet(updated, "appScheduleSet", "\t"+scheduleBinding+",")
 	}
 	return dedupeWireSetProviders(updated, "appScheduleSet")
 }
@@ -2991,9 +2995,6 @@ func syncLegacyAppServiceInjector(content string, moduleName string, appImportPa
 	}
 
 	updated := content
-	updated = replaceQualifiedIdentifier(updated, "app.NewLifecycleRegistry", "compositionapp.NewLifecycleRegistry")
-	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
-	updated = replaceQualifiedIdentifier(updated, "targetapp.NewLifecycleRegistry", "compositionapp.NewLifecycleRegistry")
 	updated = replaceQualifiedIdentifier(updated, "app.NewTimeouts", "runtime.NewTimeouts")
 	updated = replaceQualifiedIdentifier(updated, "app.BackgroundSourceContext", "runtime.BackgroundSourceContext")
 	updated = replaceQualifiedIdentifier(updated, "app.SourceStartup", "runtime.SourceStartup")
@@ -3008,10 +3009,15 @@ func syncLegacyAppServiceInjector(content string, moduleName string, appImportPa
 		appImportPath = "app"
 	}
 	compositionAppPath := moduleName + "/" + appImportPath
+	appPackageName := project.AppPackageName(filepath.Base(appImportPath))
+	updated = replaceQualifiedIdentifier(updated, "app.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
+	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
+	updated = replaceQualifiedIdentifier(updated, "targetapp.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
+	updated = replaceQualifiedIdentifier(updated, "compositionapp.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
 	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
 	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
-	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "compositionapp")
-	updated = ensureGoImport(updated, compositionAppPath, "compositionapp")
+	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
+	updated = ensureGoImport(updated, compositionAppPath, "")
 	return updated
 }
 
@@ -3057,10 +3063,11 @@ func replaceGoImportPath(content string, oldPath string, newPath string, alias s
 		replacement = "\t" + alias + " " + newQuotedPath
 	}
 	replacements := map[string]string{
-		"\t" + oldQuotedPath:            replacement,
-		"\tapp " + oldQuotedPath:        replacement,
-		"\truntimeapp " + oldQuotedPath: replacement,
-		"\truntime " + oldQuotedPath:    replacement,
+		"\t" + oldQuotedPath:                replacement,
+		"\tapp " + oldQuotedPath:            replacement,
+		"\tcompositionapp " + oldQuotedPath: replacement,
+		"\truntimeapp " + oldQuotedPath:     replacement,
+		"\truntime " + oldQuotedPath:        replacement,
 		// targetapp is legacy-only compatibility for preserved render-once files.
 		"\ttargetapp " + oldQuotedPath: replacement,
 	}

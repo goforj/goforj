@@ -336,12 +336,12 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 	renderAppAtDir(t, projectDir)
 	assertFileContains(t, scheduleInjectorPath, []string{
-		`compositionapp "example.com/testapp/app"`,
+		`"example.com/testapp/app"`,
 		`"example.com/testapp/internal/schedules"`,
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
-		"compositionapp.NewScheduleRegistry",
-		"wire.Bind(new(schedules.ScheduleRegistry), new(*compositionapp.ScheduleRegistry))",
+		"app.NewScheduleRegistry",
+		"wire.Bind(new(schedules.ScheduleRegistry), new(*app.ScheduleRegistry))",
 	})
 	assertFileContains(t, scheduleRegistryPath, []string{
 		`"example.com/testapp/internal/schedules"`,

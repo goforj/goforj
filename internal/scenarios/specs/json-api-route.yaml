@@ -200,10 +200,10 @@ steps:
       path: app/wire/inject_services_app.go
       language: go
       old: |
-                compositionapp.NewLifecycleRegistry,
+                app.NewLifecycleRegistry,
       new: |
                 users.NewService,
-                compositionapp.NewLifecycleRegistry,
+                app.NewLifecycleRegistry,
 
   - title: Add A Service Test
     explain: |

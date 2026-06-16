@@ -2,7 +2,7 @@ package main
 
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
-	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/{{.WireImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/console"
@@ -23,7 +23,7 @@ func main() {
 		console.Fatalf("loading env: %v", err)
 	}
 
-	handled, err := cmd.DispatchPrebootCommand(args, &compositionapp.RootCmd{})
+	handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})
 	if err != nil {
 		console.Fatalf("%v", err)
 	} else if handled {

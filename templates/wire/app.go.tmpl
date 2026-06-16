@@ -17,14 +17,14 @@ import (
 	"github.com/goforj/queue"
 {{- end }}
 
-	compositionapp "{{.GoModuleName}}/{{.AppImportPath}}"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
-	eventcore "{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
@@ -40,24 +40,24 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.Mail }}
-	appmail "{{.GoModuleName}}/internal/mail"
+	"{{.GoModuleName}}/internal/mail"
 {{- end }}
 )
 
 // App is the root App resource
 type App struct {
-	rootCmd *compositionapp.RootCmd
+	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
 	topology runtime.RuntimeTopology
 	cache   *caches.Manager
 	storage *storages.Manager
-	events *eventcore.Manager
+	events *events.Manager
 	inspects *inspects.Manager
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager
 	{{- end }}
 	{{- if .Components.Mail }}
-	mail *appmail.Manager
+	mail *mail.Manager
 	{{- end }}
 	lifecycle *runtime.Lifecycle
 	appTimeouts *runtime.Timeouts
@@ -70,7 +70,7 @@ type App struct {
 }
 
 // RootCmd returns the root command of the application
-func (a *App) RootCmd() *compositionapp.RootCmd {
+func (a *App) RootCmd() *{{.AppPackageName}}.RootCmd {
 	return a.rootCmd
 }
 
@@ -101,18 +101,18 @@ func (a *App) Storage() *storages.Manager {
 
 {{- if .Components.Mail }}
 // Mail returns the mail manager of the application.
-func (a *App) Mail() *appmail.Manager {
+func (a *App) Mail() *mail.Manager {
 	return a.mail
 }
 {{- end }}
 
 // Bus returns the default event bus of the application.
-func (a *App) Bus() eventcore.Bus {
+func (a *App) Bus() events.Bus {
 	return a.events.Default()
 }
 
 // Events returns the named event bus manager of the application.
-func (a *App) Events() *eventcore.Manager {
+func (a *App) Events() *events.Manager {
 	return a.events
 }
 
@@ -278,19 +278,19 @@ func NewApplication(
 	_ *demoPreseedReady,
 	{{- end }}
 	appLogger *logger.AppLogger,
-	rootCmd *compositionapp.RootCmd,
+	rootCmd *{{.AppPackageName}}.RootCmd,
 	appTimeouts *runtime.Timeouts,
-	lifecycleRegistry *compositionapp.LifecycleRegistry,
+	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
 	cacheManager *caches.Manager,
 	storage *storages.Manager,
-	events *eventcore.Manager,
+	eventsManager *events.Manager,
 	_ *EventSubscribersReady,
 	inspectManager *inspects.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 	{{- end }}
 	{{- if .Components.Mail }}
-	mailManager *appmail.Manager,
+	mailManager *mail.Manager,
 	{{- end }}
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
@@ -318,7 +318,7 @@ func NewApplication(
 {{- end }}
 	)
 {{- end }}
-	registerEventBusLifecycle(lifecycleManager, appLogger, events)
+	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
 	lifecycleRegistry.Register(lifecycleManager)
 
 	return App{
@@ -330,7 +330,7 @@ func NewApplication(
 		{{- end }}
 		cache: cacheManager,
 		storage: storage,
-		events: events,
+		events: eventsManager,
 		inspects: inspectManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
@@ -422,9 +422,9 @@ func registerQueueHandlers(
 {{- end }}
 
 // registerEventBusLifecycle starts and stops each unique event bus with the application lifecycle.
-func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, events *eventcore.Manager) {
-	seenEventBuses := map[eventcore.Bus]struct{}{}
-	for _, instance := range events.Instances() {
+func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, eventsManager *events.Manager) {
+	seenEventBuses := map[events.Bus]struct{}{}
+	for _, instance := range eventsManager.Instances() {
 		bus := instance.Bus
 		if bus == nil {
 			continue
