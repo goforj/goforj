@@ -576,7 +576,7 @@ steps:
                 return ctx.JSON(http.StatusCreated, user)
         }
 
-  - title: Wire The Event Boundary And Subscriber
+  - title: Wire the Event Boundary and Subscriber
     explain: |
       Add the event publisher and notification subscriber providers.
     replace:

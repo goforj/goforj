@@ -97,7 +97,7 @@ Component-specific metric families are emitted when the corresponding component 
 
 Labels are intentionally low-cardinality:
 
-- `app` is the generated App composition target, such as `app`, `billing`, or `customer-portal`.
+- `app` is the generated app identity, such as `app`, `marketplace`, or `backstage`.
 - `source` is the runtime surface, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, `startup`, or `app`.
 - `route` uses the registered route pattern, such as `/api/users/:id`, not the raw URL.
 - `cache`, `disk`, `mailer`, `queue`, `connection`, and `bus` use named accessors or configured primitive names.

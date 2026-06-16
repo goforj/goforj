@@ -69,7 +69,7 @@ markdown:
     Start a worker in one terminal:
 
     ```bash
-    forj run worker
+    forj worker
     ```
 
     Start the API in another terminal:
@@ -109,7 +109,7 @@ markdown:
     forj build
     ```
 
-    Business code does not change. `GenerateJob` still dispatches `reports:generate`, and workers still run with `forj run worker` or `./bin/app worker`.
+    Business code does not change. `GenerateJob` still dispatches `reports:generate`, and workers still run with `forj worker` or `./bin/app worker`.
   common_mistakes:
     - "Do not use an in-process queue when API and worker run as separate processes."
     - "Do not put report generation logic directly inside the event subscriber."
@@ -418,7 +418,7 @@ steps:
                 })
         }
 
-  - title: Wire Reports And The Job
+  - title: Wire Reports and the Job
     explain: |
       Add the report storage provider and report service constructor.
     replace:
