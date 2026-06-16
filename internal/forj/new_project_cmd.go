@@ -2,10 +2,12 @@ package forj
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
@@ -36,6 +38,12 @@ const (
 	StageStarterKit
 	// StageExtras collects optional project profiles that expand component selection.
 	StageExtras
+	// StageAtlasSupport collects optional AI agent support installation.
+	StageAtlasSupport
+	// StageAtlasAgents collects custom AI agent selections.
+	StageAtlasAgents
+	// StageAtlasSurfaces collects custom Atlas file surface selections.
+	StageAtlasSurfaces
 	// StageRuntime collects runtime driver choices that depend on selected components.
 	StageRuntime
 	// StageProjectPath collects the destination directory.
@@ -132,6 +140,78 @@ func (i StarterKitItem) Description() string { return i.Desc }
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i StarterKitItem) FilterValue() string { return i.Label }
 
+type atlasMode string
+
+const (
+	atlasModeRecommended atlasMode = "recommended"
+	atlasModeMinimal     atlasMode = "minimal"
+	atlasModeCustom      atlasMode = "custom"
+	atlasModeSkip        atlasMode = "skip"
+)
+
+type atlasSurface string
+
+const (
+	atlasSurfaceGuidelines atlasSurface = "guidelines"
+	atlasSurfaceSkills     atlasSurface = "skills"
+	atlasSurfaceMCP        atlasSurface = "mcp"
+)
+
+// AtlasModeItem adapts an Atlas support mode to the Bubbles list model.
+type AtlasModeItem struct {
+	Mode  atlasMode
+	Label string
+	Desc  string
+}
+
+// Title satisfies the Bubbles list item contract for Atlas mode rows.
+func (i AtlasModeItem) Title() string { return i.Label }
+
+// Description satisfies the Bubbles list item contract even though descriptions are manually rendered.
+func (i AtlasModeItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
+func (i AtlasModeItem) FilterValue() string { return i.Label }
+
+// AtlasAgentItem adapts a supported local AI agent to the Bubbles list model.
+type AtlasAgentItem struct {
+	Name        string
+	DisplayName string
+	Detected    bool
+	Selected    bool
+}
+
+// Title satisfies the Bubbles list item contract for Atlas agent rows.
+func (i AtlasAgentItem) Title() string { return i.DisplayName }
+
+// Description satisfies the Bubbles list item contract even though descriptions are manually rendered.
+func (i AtlasAgentItem) Description() string {
+	if i.Detected {
+		return "detected"
+	}
+	return "available"
+}
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
+func (i AtlasAgentItem) FilterValue() string { return i.DisplayName }
+
+// AtlasSurfaceItem adapts an Atlas install surface to the Bubbles list model.
+type AtlasSurfaceItem struct {
+	Surface  atlasSurface
+	Label    string
+	Desc     string
+	Selected bool
+}
+
+// Title satisfies the Bubbles list item contract for Atlas surface rows.
+func (i AtlasSurfaceItem) Title() string { return i.Label }
+
+// Description satisfies the Bubbles list item contract even though descriptions are manually rendered.
+func (i AtlasSurfaceItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
+func (i AtlasSurfaceItem) FilterValue() string { return i.Label }
+
 // makeProjectComponentItems converts the shared component catalog into wizard rows.
 func makeProjectComponentItems() []list.Item {
 	items := make([]list.Item, 0, len(project.ComponentCatalog()))
@@ -158,6 +238,44 @@ func makeStarterKitItems() []list.Item {
 		})
 	}
 	return items
+}
+
+// makeAtlasModeItems returns the high-level Atlas install choices for the wizard.
+func makeAtlasModeItems() []list.Item {
+	return []list.Item{
+		AtlasModeItem{Mode: atlasModeRecommended, Label: "Recommended", Desc: "detected agents with guidelines, skills, and MCP"},
+		AtlasModeItem{Mode: atlasModeMinimal, Label: "Minimal", Desc: "detected agents with guidelines only"},
+		AtlasModeItem{Mode: atlasModeCustom, Label: "Custom", Desc: "choose agents and install surfaces"},
+		AtlasModeItem{Mode: atlasModeSkip, Label: "Skip", Desc: "do not install local agent support"},
+	}
+}
+
+// makeAtlasAgentItems converts Atlas agent detection into wizard rows.
+func makeAtlasAgentItems() []list.Item {
+	options := atlas.AgentOptions(context.Background(), ".")
+	recommended := map[string]bool{}
+	for _, name := range atlas.RecommendedAgents(context.Background(), ".") {
+		recommended[name] = true
+	}
+	items := make([]list.Item, 0, len(options))
+	for _, option := range options {
+		items = append(items, AtlasAgentItem{
+			Name:        option.Name,
+			DisplayName: option.DisplayName,
+			Detected:    option.Detected,
+			Selected:    recommended[option.Name],
+		})
+	}
+	return items
+}
+
+// makeAtlasSurfaceItems returns install surfaces with the recommended defaults selected.
+func makeAtlasSurfaceItems() []list.Item {
+	return []list.Item{
+		AtlasSurfaceItem{Surface: atlasSurfaceGuidelines, Label: "Guidelines", Desc: "project guidance for local agents", Selected: true},
+		AtlasSurfaceItem{Surface: atlasSurfaceSkills, Label: "Skills / prompts", Desc: "framework-specific reusable instructions", Selected: true},
+		AtlasSurfaceItem{Surface: atlasSurfaceMCP, Label: "MCP server config", Desc: "read-only project tools and docs search", Selected: true},
+	}
 }
 
 type queueDriverOption struct {
@@ -199,6 +317,9 @@ type model struct {
 	componentList      list.Model
 	starterKitList     list.Model
 	queueDriverList    list.Model
+	atlasModeList      list.Model
+	atlasAgentList     list.Model
+	atlasSurfaceList   list.Model
 	selectedComponents []string
 	config             project.Config
 	cancelled          bool
@@ -207,6 +328,7 @@ type model struct {
 	termWidth          int
 	extrasIndex        int
 	demoAppEnabled     bool
+	atlasMode          atlasMode
 }
 
 const wizardWidth = 90
@@ -344,14 +466,51 @@ func initialModel() model {
 	runtimeList.SetShowStatusBar(false)
 	runtimeList.SetShowPagination(false)
 
+	atlasModeList := list.New(makeAtlasModeItems(), delegate, 42, 4)
+	atlasModeList.Title = "Atlas - Agent Support"
+	atlasModeList.SetShowFilter(false)
+	atlasModeList.SetShowHelp(false)
+	atlasModeList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	atlasModeList.Styles.PaginationStyle = helpStyle
+	atlasModeList.Styles.HelpStyle = helpStyle
+	atlasModeList.Styles.StatusBar = helpStyle
+	atlasModeList.SetShowStatusBar(false)
+	atlasModeList.SetShowPagination(false)
+
+	atlasAgentList := list.New(makeAtlasAgentItems(), delegate, 42, 4)
+	atlasAgentList.Title = "Atlas Agents"
+	atlasAgentList.SetShowFilter(false)
+	atlasAgentList.SetShowHelp(false)
+	atlasAgentList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	atlasAgentList.Styles.PaginationStyle = helpStyle
+	atlasAgentList.Styles.HelpStyle = helpStyle
+	atlasAgentList.Styles.StatusBar = helpStyle
+	atlasAgentList.SetShowStatusBar(false)
+	atlasAgentList.SetShowPagination(false)
+
+	atlasSurfaceList := list.New(makeAtlasSurfaceItems(), delegate, 42, 3)
+	atlasSurfaceList.Title = "Atlas Install"
+	atlasSurfaceList.SetShowFilter(false)
+	atlasSurfaceList.SetShowHelp(false)
+	atlasSurfaceList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	atlasSurfaceList.Styles.PaginationStyle = helpStyle
+	atlasSurfaceList.Styles.HelpStyle = helpStyle
+	atlasSurfaceList.Styles.StatusBar = helpStyle
+	atlasSurfaceList.SetShowStatusBar(false)
+	atlasSurfaceList.SetShowPagination(false)
+
 	return model{
-		stage:           StageProjectName,
-		projectInput:    ti,
-		moduleInput:     styledTextInput(),
-		pathInput:       pi,
-		componentList:   li,
-		starterKitList:  starterKitList,
-		queueDriverList: runtimeList,
+		stage:            StageProjectName,
+		projectInput:     ti,
+		moduleInput:      styledTextInput(),
+		pathInput:        pi,
+		componentList:    li,
+		starterKitList:   starterKitList,
+		queueDriverList:  runtimeList,
+		atlasModeList:    atlasModeList,
+		atlasAgentList:   atlasAgentList,
+		atlasSurfaceList: atlasSurfaceList,
+		atlasMode:        atlasModeRecommended,
 		config: project.Config{
 			Render: project.RenderConfig{
 				QueueDriver:   "redis",
@@ -427,6 +586,120 @@ func (m *model) applyExtrasSelection() {
 	components.DatabaseSQLite = false
 	m.config.Render.StarterKit = project.StarterKitNone
 	components.ResolveDependencies()
+}
+
+func (m *model) applyAtlasModeSelection() {
+	index := m.atlasModeList.Index()
+	if index < 0 || index >= len(m.atlasModeList.Items()) {
+		m.atlasMode = atlasModeRecommended
+		return
+	}
+	item, ok := m.atlasModeList.Items()[index].(AtlasModeItem)
+	if !ok {
+		m.atlasMode = atlasModeRecommended
+		return
+	}
+	m.atlasMode = item.Mode
+}
+
+func (m model) atlasInstallOptions(root string) atlas.InstallOptions {
+	surfaces := m.selectedAtlasSurfaces()
+	return atlas.InstallOptions{
+		Root:          root,
+		Agents:        m.selectedAtlasAgents(),
+		Guidelines:    surfaces.guidelines,
+		Skills:        surfaces.skills,
+		MCP:           surfaces.mcp,
+		NoInteraction: true,
+	}
+}
+
+func (m model) atlasInstallEnabled() bool {
+	return m.atlasMode != atlasModeSkip
+}
+
+func (m model) selectedAtlasAgents() []string {
+	if m.atlasMode == atlasModeSkip {
+		return nil
+	}
+	if m.atlasMode != atlasModeCustom {
+		return atlas.RecommendedAgents(context.Background(), ".")
+	}
+	return m.selectedCustomAtlasAgents()
+}
+
+func (m model) selectedCustomAtlasAgents() []string {
+	names := []string{}
+	for _, listItem := range m.atlasAgentList.Items() {
+		item, ok := listItem.(AtlasAgentItem)
+		if ok && item.Selected {
+			names = append(names, item.Name)
+		}
+	}
+	return names
+}
+
+type atlasSurfaceSelection struct {
+	guidelines bool
+	skills     bool
+	mcp        bool
+}
+
+func (s atlasSurfaceSelection) any() bool {
+	return s.guidelines || s.skills || s.mcp
+}
+
+func (m model) selectedAtlasSurfaces() atlasSurfaceSelection {
+	switch m.atlasMode {
+	case atlasModeSkip:
+		return atlasSurfaceSelection{}
+	case atlasModeMinimal:
+		return atlasSurfaceSelection{guidelines: true}
+	case atlasModeRecommended:
+		return atlasSurfaceSelection{guidelines: true, skills: true, mcp: true}
+	}
+	selection := atlasSurfaceSelection{}
+	for _, listItem := range m.atlasSurfaceList.Items() {
+		item, ok := listItem.(AtlasSurfaceItem)
+		if !ok || !item.Selected {
+			continue
+		}
+		switch item.Surface {
+		case atlasSurfaceGuidelines:
+			selection.guidelines = true
+		case atlasSurfaceSkills:
+			selection.skills = true
+		case atlasSurfaceMCP:
+			selection.mcp = true
+		}
+	}
+	return selection
+}
+
+func (m *model) toggleAtlasAgentSelection() {
+	index := m.atlasAgentList.Index()
+	if index < 0 || index >= len(m.atlasAgentList.Items()) {
+		return
+	}
+	item, ok := m.atlasAgentList.Items()[index].(AtlasAgentItem)
+	if !ok {
+		return
+	}
+	item.Selected = !item.Selected
+	m.atlasAgentList.SetItem(index, item)
+}
+
+func (m *model) toggleAtlasSurfaceSelection() {
+	index := m.atlasSurfaceList.Index()
+	if index < 0 || index >= len(m.atlasSurfaceList.Items()) {
+		return
+	}
+	item, ok := m.atlasSurfaceList.Items()[index].(AtlasSurfaceItem)
+	if !ok {
+		return
+	}
+	item.Selected = !item.Selected
+	m.atlasSurfaceList.SetItem(index, item)
 }
 
 // Update advances the project wizard state in response to terminal input.
@@ -587,13 +860,84 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				m.applyExtrasSelection()
+				m.stage = StageAtlasSupport
+				m.pathInput.Focus()
+				return m, nil
+			}
+
+		case StageAtlasSupport:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageExtras
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				m.applyAtlasModeSelection()
+				if m.atlasMode == atlasModeCustom {
+					m.stage = StageAtlasAgents
+				} else {
+					m.stage = StageProjectPath
+					if m.pathInput.Value() == "" {
+						m.pathInput.SetValue(m.defaultTargetPath())
+					}
+					m.pathInput.Focus()
+				}
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.atlasModeList, cmd = m.atlasModeList.Update(msg)
+			return m, cmd
+
+		case StageAtlasAgents:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageAtlasSupport
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				if len(m.selectedAtlasAgents()) == 0 {
+					m.errorMsg = "Select at least one agent or go back and choose Skip."
+					return m, nil
+				}
+				m.errorMsg = ""
+				m.stage = StageAtlasSurfaces
+				return m, nil
+			case " ":
+				m.toggleAtlasAgentSelection()
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.atlasAgentList, cmd = m.atlasAgentList.Update(msg)
+			return m, cmd
+
+		case StageAtlasSurfaces:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageAtlasAgents
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				if !m.selectedAtlasSurfaces().any() {
+					m.errorMsg = "Select at least one install option or go back and choose Skip."
+					return m, nil
+				}
+				m.errorMsg = ""
 				m.stage = StageProjectPath
 				if m.pathInput.Value() == "" {
 					m.pathInput.SetValue(m.defaultTargetPath())
 				}
 				m.pathInput.Focus()
 				return m, nil
+			case " ":
+				m.toggleAtlasSurfaceSelection()
+				return m, nil
 			}
+			var cmd tea.Cmd
+			m.atlasSurfaceList, cmd = m.atlasSurfaceList.Update(msg)
+			return m, cmd
 
 		case StageRuntime:
 			switch msg.Type {
@@ -625,7 +969,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageProjectPath:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				m.stage = StageExtras
+				if m.atlasMode == atlasModeCustom {
+					m.stage = StageAtlasSurfaces
+				} else {
+					m.stage = StageAtlasSupport
+				}
 				return m, nil
 			}
 
@@ -782,6 +1130,42 @@ func (m model) View() string {
 		}
 	}
 
+	// Atlas panel.
+	if m.stage >= StageAtlasSupport {
+		switch m.stage {
+		case StageAtlasSupport:
+			panels = append(panels, m.panelWithTitle("Atlas - Agent Support", lipgloss.JoinVertical(
+				lipgloss.Left,
+				renderAtlasPanelBanner(),
+				"",
+				m.renderAtlasModeList(m.termWidth),
+				"",
+				m.renderAtlasDetectedSummary(),
+				"",
+				m.renderAtlasInstallSummary(),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		case StageAtlasAgents:
+			panels = append(panels, m.panelWithTitle("Atlas - Agent Support · Agents", lipgloss.JoinVertical(
+				lipgloss.Left,
+				renderAtlasPanelBanner(),
+				"",
+				m.renderAtlasAgentList(m.termWidth),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel", "space: toggle"}
+		case StageAtlasSurfaces:
+			panels = append(panels, m.panelWithTitle("Atlas - Agent Support · Install", lipgloss.JoinVertical(
+				lipgloss.Left,
+				renderAtlasPanelBanner(),
+				"",
+				m.renderAtlasSurfaceList(m.termWidth),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel", "space: toggle"}
+		default:
+			panels = append(panels, m.panelWithTitle("Atlas - Agent Support", normalStyle.Render(m.atlasSummary()), m.termWidth, false))
+		}
+	}
+
 	// Runtime panel.
 	if m.stage >= StageRuntime && m.config.Render.Components.Jobs {
 		driver := selectedQueueDriverSummary(m)
@@ -832,6 +1216,7 @@ func (m model) View() string {
 				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
 				{"Starter kit", m.selectedStarterKitSummary()},
 				{"Queue driver", selectedQueueDriverSummary(m)},
+				{"Agent support", m.atlasSummary()},
 				{"Components", componentNames},
 			}),
 		)
@@ -1061,6 +1446,128 @@ func (m model) renderStarterKitList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+func (m model) renderAtlasModeList(termWidth int) string {
+	items := m.atlasModeList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+	rows := []string{}
+	for i, listItem := range items {
+		item, ok := listItem.(AtlasModeItem)
+		if !ok {
+			continue
+		}
+		isFocused := m.atlasModeList.Index() == i
+		caret := "  "
+		if isFocused {
+			caret = titleIndicatorStyle.Render("› ")
+		}
+		marker := normalStyle.Render("○")
+		if isFocused {
+			marker = lipgloss.NewStyle().Foreground(accentColor).Render("●")
+		}
+		labelStyle := listOptionMutedStyle
+		descStyle := listDescStyle
+		if isFocused {
+			labelStyle = listFocusedNameStyle
+			descStyle = listFocusedDescStyle
+		}
+		line := caret + marker + " " + labelStyle.Render(item.Label)
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + descStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+func (m model) renderAtlasAgentList(termWidth int) string {
+	items := m.atlasAgentList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+	rows := []string{}
+	for i, listItem := range items {
+		item, ok := listItem.(AtlasAgentItem)
+		if !ok {
+			continue
+		}
+		isFocused := m.atlasAgentList.Index() == i
+		caret := "  "
+		if isFocused {
+			caret = titleIndicatorStyle.Render("› ")
+		}
+		marker := normalStyle.Render("○")
+		if item.Selected {
+			marker = successStyle.Render("●")
+		}
+		if isFocused {
+			glyph := "○"
+			if item.Selected {
+				glyph = "●"
+			}
+			marker = lipgloss.NewStyle().Foreground(accentColor).Render(glyph)
+		}
+		labelStyle := listOptionMutedStyle
+		if item.Selected {
+			labelStyle = listNameStyle
+		}
+		if isFocused {
+			labelStyle = listFocusedNameStyle
+		}
+		desc := "available"
+		if item.Detected {
+			desc = "detected"
+		}
+		line := caret + marker + " " + labelStyle.Render(item.DisplayName) + " " + listDescStyle.Render("· "+desc)
+		rows = append(rows, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+func (m model) renderAtlasSurfaceList(termWidth int) string {
+	items := m.atlasSurfaceList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+	rows := []string{}
+	for i, listItem := range items {
+		item, ok := listItem.(AtlasSurfaceItem)
+		if !ok {
+			continue
+		}
+		isFocused := m.atlasSurfaceList.Index() == i
+		caret := "  "
+		if isFocused {
+			caret = titleIndicatorStyle.Render("› ")
+		}
+		marker := normalStyle.Render("○")
+		if item.Selected {
+			marker = successStyle.Render("●")
+		}
+		if isFocused {
+			glyph := "○"
+			if item.Selected {
+				glyph = "●"
+			}
+			marker = lipgloss.NewStyle().Foreground(accentColor).Render(glyph)
+		}
+		labelStyle := listOptionMutedStyle
+		if item.Selected {
+			labelStyle = listNameStyle
+		}
+		if isFocused {
+			labelStyle = listFocusedNameStyle
+		}
+		line := caret + marker + " " + labelStyle.Render(item.Label)
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + listDescStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
 func (m model) selectedStarterKitSummary() string {
 	if !m.config.Render.Components.WebUI || m.config.Render.Components.DemoApp {
 		return "None"
@@ -1078,6 +1585,103 @@ func (m model) selectedStarterKitSummary() string {
 		return definition.Label
 	}
 	return "None"
+}
+
+func (m model) renderAtlasDetectedSummary() string {
+	detected := []string{}
+	for _, listItem := range m.atlasAgentList.Items() {
+		item, ok := listItem.(AtlasAgentItem)
+		if ok && item.Detected {
+			detected = append(detected, item.DisplayName)
+		}
+	}
+	if len(detected) == 0 {
+		return labelKeyStyle.Render("Detected") + " " + labelSepStyle.Render("»") + " " + normalStyle.Render("None")
+	}
+	return labelKeyStyle.Render("Detected") + " " + labelSepStyle.Render("»") + " " + normalStyle.Render(strings.Join(detected, ", "))
+}
+
+func (m model) renderAtlasInstallSummary() string {
+	if m.previewAtlasMode() == atlasModeSkip {
+		return labelKeyStyle.Render("Will install") + " " + labelSepStyle.Render("»") + " " + normalStyle.Render("Nothing")
+	}
+	agents := m.previewAtlasAgents()
+	surfaces := m.previewAtlasSurfaceNames()
+	if len(agents) == 0 || len(surfaces) == 0 {
+		return labelKeyStyle.Render("Will install") + " " + labelSepStyle.Render("»") + " " + normalStyle.Render("Nothing")
+	}
+	rows := []string{labelKeyStyle.Render("Will install") + " " + labelSepStyle.Render("»")}
+	for _, agent := range agents {
+		rows = append(rows, "  "+normalStyle.Render(atlas.DisplayName(agent)+": "+strings.Join(surfaces, ", ")))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+func (m model) atlasSummary() string {
+	if m.atlasMode == atlasModeSkip {
+		return "Skip"
+	}
+	agents := m.selectedAtlasAgents()
+	surfaces := m.selectedAtlasSurfaceNames()
+	if len(agents) == 0 || len(surfaces) == 0 {
+		return "Skip"
+	}
+	display := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		display = append(display, atlas.DisplayName(agent))
+	}
+	return strings.Join(display, ", ") + " · " + strings.Join(surfaces, ", ")
+}
+
+func (m model) previewAtlasMode() atlasMode {
+	index := m.atlasModeList.Index()
+	if index < 0 || index >= len(m.atlasModeList.Items()) {
+		return atlasModeRecommended
+	}
+	item, ok := m.atlasModeList.Items()[index].(AtlasModeItem)
+	if !ok {
+		return atlasModeRecommended
+	}
+	return item.Mode
+}
+
+func (m model) previewAtlasAgents() []string {
+	mode := m.previewAtlasMode()
+	if mode == atlasModeSkip {
+		return nil
+	}
+	if mode != atlasModeCustom {
+		return atlas.RecommendedAgents(context.Background(), ".")
+	}
+	return m.selectedCustomAtlasAgents()
+}
+
+func (m model) previewAtlasSurfaceNames() []string {
+	switch m.previewAtlasMode() {
+	case atlasModeSkip:
+		return nil
+	case atlasModeMinimal:
+		return []string{"guidelines"}
+	case atlasModeRecommended:
+		return []string{"guidelines", "skills", "MCP"}
+	default:
+		return m.selectedAtlasSurfaceNames()
+	}
+}
+
+func (m model) selectedAtlasSurfaceNames() []string {
+	selection := m.selectedAtlasSurfaces()
+	names := []string{}
+	if selection.guidelines {
+		names = append(names, "guidelines")
+	}
+	if selection.skills {
+		names = append(names, "skills")
+	}
+	if selection.mcp {
+		names = append(names, "MCP")
+	}
+	return names
 }
 
 func (m model) renderSummary() string {
@@ -1280,6 +1884,7 @@ func (m model) renderProgress() string {
 		{"Components", StageSelectComponents},
 		{"Starter", StageStarterKit},
 		{"Extras", StageExtras},
+		{"Atlas", StageAtlasSupport},
 		{"Path", StageProjectPath},
 		{"Confirm", StageConfirm},
 	}
@@ -1598,6 +2203,19 @@ func renderFooter(actions []string, termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, bar, panelBorderStyle.Render(line))
 }
 
+func renderAtlasPanelBanner() string {
+	lines := []string{
+		"   _  _____ _      _   ___ ",
+		"  /_\\|_   _| |    /_\\ / __|",
+		" / _ \\ | | | |__ / _ \\\\__ \\",
+		"/_/ \\_\\|_| |____/_/ \\_\\___/",
+	}
+	for i, line := range lines {
+		lines[i] = colorizeGradientLine(line, true)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
 // packageJSONHasNpmDev checks whether the target-local frontend defines an npm dev script.
 func packageJSONHasNpmDev() bool {
 	path := filepath.Join(defaultFrontendDir(), "package.json")
@@ -1626,17 +2244,17 @@ type NewProjectCmd struct {
 	renderer *ProjectRenderer
 }
 
-// Signature exposes the project wizard as the `forj new` command.
-func (*NewProjectCmd) Signature() string {
-	return `name:"new" help:"New project command"`
-}
-
 // NewNewProjectCmd creates a project creation command.
 func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewProjectCmd {
 	return &NewProjectCmd{
 		logger:   logger,
 		renderer: renderer,
 	}
+}
+
+// Signature exposes the project wizard as the `forj new` command.
+func (*NewProjectCmd) Signature() string {
+	return `name:"new" help:"New project command"`
 }
 
 func (c *NewProjectCmd) Run() error {
@@ -1649,16 +2267,19 @@ func (c *NewProjectCmd) Run() error {
 		os.Exit(1)
 	}
 
-	if m, ok := resultModel.(model); ok && m.cancelled {
+	m, ok := resultModel.(model)
+	if !ok {
+		return fmt.Errorf("failed to capture wizard model")
+	}
+
+	if m.cancelled {
 		return nil
 	}
 
 	var targetPath string
-	if m, ok := resultModel.(model); ok {
-		targetPath = m.targetPath
-		if targetPath == "" {
-			targetPath = m.projectPath()
-		}
+	targetPath = m.targetPath
+	if targetPath == "" {
+		targetPath = m.projectPath()
 	}
 	if targetPath == "" {
 		return fmt.Errorf("target path could not be determined")
@@ -1672,22 +2293,18 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	// write .goforj.yml in target path using the model config
-	if m, ok := resultModel.(model); ok {
-		m.finalizeConfig()
-		m.targetPath = targetPath
+	m.finalizeConfig()
+	m.targetPath = targetPath
 
-		var buf bytes.Buffer
-		encoder := yaml.NewEncoder(&buf)
-		encoder.SetIndent(2)
-		if err := encoder.Encode(m.config); err != nil {
-			return fmt.Errorf("failed to encode .goforj.yml: %w", err)
-		}
-		configPath := filepath.Join(targetPath, ".goforj.yml")
-		if writeErr := os.WriteFile(configPath, buf.Bytes(), 0644); writeErr != nil {
-			return fmt.Errorf("failed to write .goforj.yml: %w", writeErr)
-		}
-	} else {
-		return fmt.Errorf("failed to capture wizard model for config write")
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(m.config); err != nil {
+		return fmt.Errorf("failed to encode .goforj.yml: %w", err)
+	}
+	configPath := filepath.Join(targetPath, ".goforj.yml")
+	if writeErr := os.WriteFile(configPath, buf.Bytes(), 0644); writeErr != nil {
+		return fmt.Errorf("failed to write .goforj.yml: %w", writeErr)
 	}
 
 	// project renderer
@@ -1698,6 +2315,17 @@ func (c *NewProjectCmd) Run() error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if m.atlasInstallEnabled() {
+		err = runWithLoader("Installing Atlas agent support", func() error {
+			_, installErr := atlas.RunInstall(context.Background(), m.atlasInstallOptions(targetPath))
+			return installErr
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s Installed Atlas agent support\n", console.SuccessMark())
 	}
 
 	return nil

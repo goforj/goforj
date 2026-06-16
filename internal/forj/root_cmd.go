@@ -4,6 +4,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
+	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 )
@@ -15,6 +16,11 @@ type RootCmd struct {
 	BuildCmd                  build.Cmd                       `cmd:""`
 	GenerateCmd               generate.Cmd                    `cmd:""`
 	NewProjectCmd             NewProjectCmd                   `cmd:""`
+	AtlasInstallCmd           atlas.InstallCmd                `cmd:""`
+	AtlasUpdateCmd            atlas.UpdateCmd                 `cmd:""`
+	AtlasListSkillsCmd        atlas.ListSkillsCmd             `cmd:""`
+	AtlasMakeSkillCmd         atlas.MakeSkillCmd              `cmd:""`
+	AtlasMCPCmd               atlas.MCPCmd                    `cmd:""`
 	MakeAppCmd                makeapp.Cmd                     `cmd:""`
 	DevCmd                    DevCmd                          `cmd:""`
 	DownCmd                   DownCmd                         `cmd:""`
@@ -41,6 +47,11 @@ func NewRootCmd(
 	buildCmd *build.Cmd,
 	generateCmd *generate.Cmd,
 	newProjectCmd *NewProjectCmd,
+	atlasInstallCmd *atlas.InstallCmd,
+	atlasUpdateCmd *atlas.UpdateCmd,
+	atlasListSkillsCmd *atlas.ListSkillsCmd,
+	atlasMakeSkillCmd *atlas.MakeSkillCmd,
+	atlasMCPCmd *atlas.MCPCmd,
 	makeAppCmd *makeapp.Cmd,
 	devCmd *DevCmd,
 	downCmd *DownCmd,
@@ -65,6 +76,11 @@ func NewRootCmd(
 		BuildCmd:                  *buildCmd,
 		GenerateCmd:               *generateCmd,
 		NewProjectCmd:             *newProjectCmd,
+		AtlasInstallCmd:           *atlasInstallCmd,
+		AtlasUpdateCmd:            *atlasUpdateCmd,
+		AtlasListSkillsCmd:        *atlasListSkillsCmd,
+		AtlasMakeSkillCmd:         *atlasMakeSkillCmd,
+		AtlasMCPCmd:               *atlasMCPCmd,
 		MakeAppCmd:                *makeAppCmd,
 		DevCmd:                    *devCmd,
 		DownCmd:                   *downCmd,
