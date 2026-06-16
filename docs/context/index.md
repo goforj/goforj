@@ -16,6 +16,21 @@ That should usually keep context to 2-3 files, not the whole folder.
 
 ## Topic Map
 
+### App layout, `cmd/app`, `app/`, app composition, or multi-app routing
+
+Read:
+
+- [App Structure](app-structure.md)
+- [Generated App Extension Points](generated-app-extension-points.md)
+
+Add if the task touches runtime ownership, lifecycle, scheduler, jobs, or process startup:
+
+- [Runtime Architecture](runtime-architecture.md)
+
+Add if the task is about the full design history or unresolved architecture tradeoffs:
+
+- [../designs/app-composition-layout-design.md](../designs/app-composition-layout-design.md)
+
 ### Rendering, templates, smoke apps, or `forj render`
 
 Read:
@@ -127,6 +142,10 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
 - [Runtime Architecture](runtime-architecture.md)
   - generated app ownership lines
   - scheduler/runtime boundaries
+- [App Structure](app-structure.md)
+  - current `cmd/app`, `app/`, `app/wire`, and `internal/` ownership
+  - default app vs named app shape
+  - command prefix routing for named apps
 - [Generated App Extension Points](generated-app-extension-points.md)
   - where app-level customizations should go
 - [Auth](auth.md)
