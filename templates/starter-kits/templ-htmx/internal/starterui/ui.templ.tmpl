@@ -1,0 +1,22 @@
+package starterui
+
+templ hero(badge string, badge2 string, title string, description string) {
+		<section class="hero-card">
+			<div class="badge-row"><span class="badge">{ badge }</span><span class="badge-outline">{ badge2 }</span></div>
+			<h1>{ title }</h1>
+			<p>{ description }</p>
+		</section>
+	}
+templ heroMuted(badge string, badge2 string, title string, description string) {
+		<section class="hero-card">
+			<div class="badge-row"><span class="badge-secondary">{ badge }</span><span class="badge-outline">{ badge2 }</span></div>
+			<h1>{ title }</h1>
+			<p>{ description }</p>
+		</section>
+	}
+templ activityItem(title string, description string) {
+		<div class="item-row"><span class="item-icon">@iconActivity()</span><div><strong>{ title }</strong><p>{ description }</p></div></div>
+	}
+templ metricCard(label string, value string, copy string) {
+		<section class="card"><p class="muted">{ label }</p><strong class="metric-value">{ value }</strong><p>{ copy }</p></section>
+	}

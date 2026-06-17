@@ -1,0 +1,22 @@
+package starterui
+
+templ DashboardPage(data PageData) {
+	@shell(data) {
+		<div class="page-stack">
+			@heroMuted("templ application shell", "Local Basecoat source", "Start from an application shell that already feels production-ready.", "templ, htmx, Tailwind, and Basecoat source files are rendered directly into your app so your team can inspect, adapt, or replace every layer.")
+			<div class="grid grid-3">
+				<div class="card feature-card"><div class="icon-tile">@iconDatabase()</div><h2>Backend-integrated</h2><p>Generated routes and controllers give the frontend a server-owned foundation from the start.</p></div>
+				<div class="card feature-card"><div class="icon-tile">@iconShieldCheck()</div><h2>Auth-ready</h2><p>Sign-in, session bootstrap, password reset, and account surfaces can be connected without rebuilding the shell.</p></div>
+				<div class="card feature-card"><div class="icon-tile">@iconLayers3()</div><h2>Composable UI foundation</h2><p>The copied Basecoat patterns are local source, so your team can evolve them as product code.</p></div>
+			</div>
+				<div class="card">
+					<div style="align-items:center;display:flex;justify-content:space-between;gap:1rem"><div><h2>Suggested next steps</h2><p>Replace the starter examples with the first workflow your product actually needs.</p></div><span class="badge-secondary">App-owned</span></div>
+					<div class="grid grid-3">
+						<div class="step-card compact"><strong>1. Define a domain route</strong><p>Create the API surface your first real screen depends on under <code>/api/v1</code>.</p></div>
+						<div class="step-card compact"><strong>2. Connect authentication</strong><p>Wire sign-in, session bootstrap, and logout to the generated cookie-backed auth endpoints.</p></div>
+						<div class="step-card compact"><strong>3. Tailor the interface</strong><p>Replace the starter content with product-specific views and extend the local Basecoat library as needed.</p></div>
+					</div>
+				</div>
+		</div>
+	}
+}

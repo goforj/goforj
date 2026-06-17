@@ -4,7 +4,7 @@ import "context"
 
 // InstallCmd installs local agent integration files for a GoForj project.
 type InstallCmd struct {
-	Agent         []string `help:"Agent to install. Repeatable. Supported: codex, claude, copilot"`
+	Agent         []string `help:"Agent to install. Repeatable. Supported: codex, claude, copilot, gemini"`
 	AllAgents     bool     `help:"Install all supported agents"`
 	Guidelines    bool     `help:"Install generated guideline files"`
 	Skills        bool     `help:"Install generated skill or instruction files"`

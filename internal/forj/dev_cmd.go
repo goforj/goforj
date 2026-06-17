@@ -132,7 +132,7 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	baseWatches := copyDevWatches(config.Dev.Watches)
+	baseWatches := normalizeDevWatchesForRuntime(config, copyDevWatches(config.Dev.Watches))
 	config.Dev.Watches = devWatchesForApps(config, baseWatches)
 
 	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -542,6 +542,36 @@ func devWatchesForApps(config *project.Config, watches []project.DevWatch) []pro
 	return rewritten
 }
 
+func normalizeDevWatchesForRuntime(config *project.Config, watches []project.DevWatch) []project.DevWatch {
+	usesTempl := configUsesTemplHTMX(config)
+	normalized := copyDevWatches(watches)
+	for i := range normalized {
+		normalized[i].Watch = normalizeDevWatchWireGenExclusion(normalized[i].Watch)
+		if normalized[i].Name == "NPM" && strings.TrimSpace(normalized[i].Exec) == "npm run dev" {
+			normalized[i].Watch = normalizeFrontendNPMWatchExclusions(normalized[i].Watch)
+		}
+		if usesTempl && normalized[i].Name == "Build App" {
+			normalized[i].Watch = normalizeTemplBuildWatchExclusions(normalized[i].Watch)
+		}
+	}
+	return normalized
+}
+
+func configUsesTemplHTMX(config *project.Config) bool {
+	if config == nil {
+		return false
+	}
+	if project.NormalizeStarterKit(config.Render.StarterKit) == project.StarterKitTemplHTMX {
+		return true
+	}
+	for _, app := range config.Apps {
+		if project.NormalizeStarterKit(app.StarterKit) == project.StarterKitTemplHTMX {
+			return true
+		}
+	}
+	return false
+}
+
 // copyDevWatches preserves the configured watcher template before dev expands app watchers.
 func copyDevWatches(watches []project.DevWatch) []project.DevWatch {
 	copied := make([]project.DevWatch, len(watches))
@@ -935,7 +965,7 @@ func reloadDevWatchSessionConfig(session *devWatchSession) error {
 		return err
 	}
 	session.config = config
-	session.baseWatches = copyDevWatches(config.Dev.Watches)
+	session.baseWatches = normalizeDevWatchesForRuntime(config, copyDevWatches(config.Dev.Watches))
 	return nil
 }
 

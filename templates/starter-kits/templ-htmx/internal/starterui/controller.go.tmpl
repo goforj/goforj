@@ -1,0 +1,237 @@
+package starterui
+
+import (
+	"bytes"
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"errors"
+{{- end }}
+	"net/http"
+	"strings"
+
+	"github.com/a-h/templ"
+	"github.com/goforj/web"
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+{{- end }}
+)
+
+// Controller serves the templ + htmx starter pages.
+type Controller struct {
+{{- if and .Components.Auth .Components.HasDatabase }}
+	auth *auth.Service
+{{- end }}
+}
+
+// NewController creates the starter UI controller.
+func NewController(
+{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service,
+{{- end }}
+) *Controller {
+	return &Controller{
+{{- if and .Components.Auth .Components.HasDatabase }}
+		auth: authService,
+{{- end }}
+	}
+}
+
+// Routes returns the starter UI routes.
+func (c *Controller) Routes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodGet, "/", c.Dashboard),
+		web.NewRoute(http.MethodGet, "/components", c.Components),
+		web.NewRoute(http.MethodGet, "/components/overview", c.ComponentsOverview),
+		web.NewRoute(http.MethodGet, "/components/forms", c.Forms),
+		web.NewRoute(http.MethodGet, "/components/navigation", c.Navigation),
+		web.NewRoute(http.MethodGet, "/components/overlays", c.Overlays),
+		web.NewRoute(http.MethodGet, "/components/data", c.Data),
+		web.NewRoute(http.MethodGet, "/settings", c.Settings),
+		web.NewRoute(http.MethodGet, "/settings/profile", c.SettingsProfile),
+		web.NewRoute(http.MethodGet, "/settings/password", c.SettingsPassword),
+		web.NewRoute(http.MethodGet, "/settings/appearance", c.SettingsAppearance),
+{{- if and .Components.Auth .Components.HasDatabase }}
+		web.NewRoute(http.MethodGet, "/login", c.LoginPage),
+		web.NewRoute(http.MethodGet, "/register", c.RegisterPage),
+		web.NewRoute(http.MethodGet, "/forgot-password", c.ForgotPasswordPage),
+		web.NewRoute(http.MethodGet, "/reset-password", c.ResetPasswordPage),
+		web.NewRoute(http.MethodGet, "/verify-email", c.VerifyEmailPage),
+		web.NewRoute(http.MethodPost, "/login", c.Login),
+		web.NewRoute(http.MethodPost, "/logout", c.Logout),
+{{- end }}
+	}
+}
+
+// Dashboard renders the starter dashboard.
+func (c *Controller) Dashboard(r web.Context) error {
+	return c.renderAppPage(r, "Dashboard", DashboardPage)
+}
+
+// Components redirects to the component overview.
+func (c *Controller) Components(r web.Context) error {
+	return r.Redirect(http.StatusSeeOther, "/components/overview")
+}
+
+// ComponentsOverview renders the component overview.
+func (c *Controller) ComponentsOverview(r web.Context) error {
+	return c.renderAppPage(r, "Components Overview", ComponentsOverviewPage)
+}
+
+// Forms renders the form patterns page.
+func (c *Controller) Forms(r web.Context) error {
+	return c.renderAppPage(r, "Components Forms", FormsPage)
+}
+
+// Navigation renders the navigation patterns page.
+func (c *Controller) Navigation(r web.Context) error {
+	return c.renderAppPage(r, "Components Navigation", NavigationPage)
+}
+
+// Overlays renders the overlay patterns page.
+func (c *Controller) Overlays(r web.Context) error {
+	return c.renderAppPage(r, "Components Overlays", OverlaysPage)
+}
+
+// Data renders the data patterns page.
+func (c *Controller) Data(r web.Context) error {
+	return c.renderAppPage(r, "Components Data", DataPage)
+}
+
+// Settings redirects to profile settings.
+func (c *Controller) Settings(r web.Context) error {
+	return r.Redirect(http.StatusSeeOther, "/settings/profile")
+}
+
+// SettingsProfile renders the profile settings page.
+func (c *Controller) SettingsProfile(r web.Context) error {
+	return c.renderAppPage(r, "Profile settings", SettingsProfilePage)
+}
+
+// SettingsPassword renders the password settings page.
+func (c *Controller) SettingsPassword(r web.Context) error {
+	return c.renderAppPage(r, "Password settings", SettingsPasswordPage)
+}
+
+// SettingsAppearance renders the appearance settings page.
+func (c *Controller) SettingsAppearance(r web.Context) error {
+	return c.renderAppPage(r, "Appearance settings", SettingsAppearancePage)
+}
+
+func (c *Controller) renderAppPage(r web.Context, title string, page func(PageData) templ.Component) error {
+{{- if and .Components.Auth .Components.HasDatabase }}
+	return c.requirePageAuth(r, func(_ web.Context, user *auth.User) error {
+		return render(r, page(PageData{
+			Title: title,
+			User:  UserFromAuth(user),
+		}))
+	})
+{{- else }}
+	return render(r, page(PageData{Title: title, User: fallbackUserData()}))
+{{- end }}
+}
+
+{{- if and .Components.Auth .Components.HasDatabase }}
+func (c *Controller) requirePageAuth(r web.Context, next func(web.Context, *auth.User) error) error {
+	user, err := c.auth.AuthenticateRequest(r)
+	if err != nil {
+		if errors.Is(err, auth.ErrUnauthorized) {
+			if isHTMX(r) {
+				r.SetHeader("HX-Redirect", "/login")
+				return r.NoContent(http.StatusNoContent)
+			}
+			return r.Redirect(http.StatusSeeOther, "/login")
+		}
+		return err
+	}
+	return next(r, user)
+}
+{{- end }}
+
+// LoginPage renders the sign-in page.
+func (c *Controller) LoginPage(r web.Context) error {
+	return render(r, LoginPage(LoginPageData{}))
+}
+
+// RegisterPage renders the registration page.
+func (c *Controller) RegisterPage(r web.Context) error {
+	return render(r, RegisterPage(LoginPageData{}))
+}
+
+// ForgotPasswordPage renders the password reset request page.
+func (c *Controller) ForgotPasswordPage(r web.Context) error {
+	return render(r, ForgotPasswordPage(LoginPageData{}))
+}
+
+// ResetPasswordPage renders the password reset confirmation page.
+func (c *Controller) ResetPasswordPage(r web.Context) error {
+	return render(r, ResetPasswordPage(LoginPageData{}))
+}
+
+// VerifyEmailPage renders the email verification page.
+func (c *Controller) VerifyEmailPage(r web.Context) error {
+	return render(r, VerifyEmailPage(LoginPageData{}))
+}
+
+{{- if and .Components.Auth .Components.HasDatabase }}
+// Login authenticates the submitted form and redirects to the dashboard.
+func (c *Controller) Login(r web.Context) error {
+	if err := r.Request().ParseForm(); err != nil {
+		return render(r, LoginPage(LoginPageData{Error: "Invalid form submission"}))
+	}
+	login := strings.TrimSpace(r.Request().FormValue("login"))
+	password := r.Request().FormValue("password")
+	remember := r.Request().FormValue("remember") != ""
+	if login == "" || password == "" {
+		return render(r, LoginPage(LoginPageData{
+			Login: login,
+			Error: "Username and password are required",
+		}))
+	}
+	_, tokens, err := c.auth.Authenticate(r.Context(), auth.AuthenticateInput{
+		Login:     login,
+		Password:  password,
+		Remember:  remember,
+		UserAgent: r.Request().UserAgent(),
+		IPAddress: r.RealIP(),
+	})
+	if err != nil {
+		message := "Unable to sign in"
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			message = "Invalid credentials"
+		}
+		return render(r, LoginPage(LoginPageData{
+			Login: login,
+			Error: message,
+		}))
+	}
+	c.auth.SetSessionCookies(r, tokens)
+	if isHTMX(r) {
+		r.SetHeader("HX-Redirect", "/")
+		return r.NoContent(http.StatusNoContent)
+	}
+	return r.Redirect(http.StatusSeeOther, "/")
+}
+
+// Logout revokes the current session and returns to the login page.
+func (c *Controller) Logout(r web.Context) error {
+	if err := c.auth.Logout(r); err != nil && !errors.Is(err, auth.ErrUnauthorized) {
+		return err
+	}
+	if isHTMX(r) {
+		r.SetHeader("HX-Redirect", "/login")
+		return r.NoContent(http.StatusNoContent)
+	}
+	return r.Redirect(http.StatusSeeOther, "/login")
+}
+{{- end }}
+
+func render(r web.Context, component templ.Component) error {
+	var body bytes.Buffer
+	if err := component.Render(r.Context(), &body); err != nil {
+		return err
+	}
+	return r.HTML(http.StatusOK, body.String())
+}
+
+func isHTMX(r web.Context) bool {
+	return strings.EqualFold(r.Header("HX-Request"), "true")
+}

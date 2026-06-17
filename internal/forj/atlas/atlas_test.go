@@ -70,6 +70,29 @@ render:
 	assertFileContains(t, filepath.Join(".goforj", "atlas.json"), `"codex"`)
 }
 
+func TestInstallCmdWritesGeminiFiles(t *testing.T) {
+	root := t.TempDir()
+	withWorkingDir(t, root)
+	writeFile(t, ".goforj.yml", `
+project_name: demo
+module_name: example.com/demo
+render:
+  goforj_version: 0.18.0
+  components:
+    cli: true
+`)
+
+	cmd := &InstallCmd{Agent: []string{"gemini"}, NoInteraction: true}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run install: %v", err)
+	}
+
+	assertFileContains(t, "GEMINI.md", "GoForj Atlas")
+	assertFileContains(t, filepath.Join(".gemini", "settings.json"), "atlas:mcp")
+	assertFileContains(t, filepath.Join(".gemini", "skills", "goforj-make-commands", "GEMINI.md"), "forj <app> make:*")
+	assertFileContains(t, filepath.Join(".goforj", "atlas.json"), `"gemini"`)
+}
+
 func TestListSkillsIncludesMakeCommands(t *testing.T) {
 	if _, ok := skills.ByName("goforj-make-commands"); !ok {
 		t.Fatal("expected built-in make command skill")

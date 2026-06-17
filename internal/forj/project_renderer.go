@@ -115,6 +115,7 @@ type templateRenderConfig struct {
 	*project.Config
 	Components        project.Components
 	ProjectComponents project.Components
+	StarterKit        project.StarterKit
 	App               project.App
 	AppPackageName    string
 	AppImportPath     string
@@ -708,8 +709,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Starter Kit Rendering",
-			enabled: p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp,
-			action:  p.scaffoldVueStarterKit,
+			enabled: p.config.Render.Components.WebUI && p.config.Render.StarterKit != project.StarterKitNone && !p.config.Render.Components.DemoApp,
+			action:  p.scaffoldDefaultStarterKit,
 		},
 		{
 			title:   "Metrics Components Rendering",
@@ -1072,6 +1073,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("sync core libraries: %w", err)
 	}
 
+	usesTemplHTMX := appRenderStarterKit(p.config, project.DefaultApp()) == project.StarterKitTemplHTMX
+	if usesTemplHTMX {
+		if err := p.timeRenderStage("runTemplGenerate", p.runTemplGenerate); err != nil {
+			return fmt.Errorf("templ generate: %w", err)
+		}
+	}
+
 	if input.renderAll {
 		if err := p.timeRenderStage("generateProjectFiles", p.runGenerateAll); err != nil {
 			return fmt.Errorf("generate: %w", err)
@@ -1158,6 +1166,11 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		}
 	}
 	if !opts.SkipWire {
+		if appRenderStarterKit(p.config, app) == project.StarterKitTemplHTMX {
+			if err := p.runTemplGenerate(); err != nil {
+				return err
+			}
+		}
 		if err := p.runWireGenerate(); err != nil {
 			return err
 		}
@@ -1880,12 +1893,18 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	}
 	for i := range p.config.Dev.Watches {
 		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
+		if p.config.Dev.Watches[i].Name == "NPM" && strings.TrimSpace(p.config.Dev.Watches[i].Exec) == "npm run dev" {
+			normalized = normalizeFrontendNPMWatchExclusions(normalized)
+		}
+		if p.config.Render.StarterKit == project.StarterKitTemplHTMX && p.config.Dev.Watches[i].Name == "Build App" {
+			normalized = normalizeTemplBuildWatchExclusions(normalized)
+		}
 		if normalized != p.config.Dev.Watches[i].Watch {
 			p.config.Dev.Watches[i].Watch = normalized
 			changed = true
 		}
 	}
-	if p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp {
+	if p.config.Render.Components.WebUI && project.StarterKitUsesNPM(p.config.Render.StarterKit) && !p.config.Render.Components.DemoApp {
 		task := project.DevTask{
 			Name: "Install Frontend Dependencies",
 			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
@@ -1906,6 +1925,34 @@ func normalizeDevWatchWireGenExclusion(watch string) string {
 	normalized := strings.ReplaceAll(watch, "-xfile wire/wire_gen\\.go$", "-xfile app/wire/wire_gen\\.go$")
 	for strings.Contains(normalized, "app/app/") {
 		normalized = strings.ReplaceAll(normalized, "app/app/", "app/")
+	}
+	return normalized
+}
+
+func normalizeFrontendNPMWatchExclusions(watch string) string {
+	return appendMissingWatchArgs(watch, []string{"-xdir node_modules", "-xdir dist"})
+}
+
+func normalizeTemplBuildWatchExclusions(watch string) string {
+	return appendMissingWatchArgs(watch, []string{"-xfile '.*_templ\\.go$'"})
+}
+
+func appendMissingWatchArgs(watch string, args []string) string {
+	normalized := strings.TrimSpace(watch)
+	for _, arg := range args {
+		fields := strings.Fields(arg)
+		if len(fields) != 2 {
+			continue
+		}
+		needle := fields[0] + " " + strings.Trim(fields[1], "'\"")
+		if strings.Contains(normalized, arg) || strings.Contains(normalized, needle) {
+			continue
+		}
+		if normalized == "" {
+			normalized = arg
+			continue
+		}
+		normalized += " " + arg
 	}
 	return normalized
 }
@@ -3290,6 +3337,9 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 // syncCoreLibrariesInDir updates core goforj dependencies in a specific module without forcing callers to change process cwd.
 func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 	modules := coredeps.SyncCoreLibraries()
+	if p.config != nil && p.config.Render.StarterKit == project.StarterKitTemplHTMX {
+		modules = append(modules, "github.com/a-h/templ@"+coredeps.MustVersionFor("github.com/a-h/templ"))
+	}
 	modules, skipped, err := coreModulesNeedingSync(filepath.Join(dir, "go.mod"), modules)
 	if err != nil {
 		return err
@@ -3431,6 +3481,21 @@ func stripGoModLineComment(line string) string {
 		return line
 	}
 	return before
+}
+
+func (p *ProjectRenderer) runTemplGenerate() error {
+	cmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail != "" {
+			return fmt.Errorf("%w (%s)", err, detail)
+		}
+		return err
+	}
+	p.lines = append(p.lines, renderCountsLine("templ generate", 1, 0, "commands"))
+	return nil
 }
 
 // runWireGenerate refreshes Wire output for the default app and every discovered named app.
@@ -3645,14 +3710,14 @@ func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 	return nil
 }
 
-func (p *ProjectRenderer) scaffoldVueStarterKit() error {
-	return p.scaffoldVueStarterKitForApp(project.DefaultApp(), true)
+func (p *ProjectRenderer) scaffoldDefaultStarterKit() error {
+	return p.scaffoldStarterKitForApp(project.DefaultApp(), p.config.Render.StarterKit, true)
 }
 
 // scaffoldAppStarterKit creates an app-local frontend scaffold only on first app creation.
 func (p *ProjectRenderer) scaffoldAppStarterKit(app project.App) error {
 	starterKit := appRenderStarterKit(p.config, app)
-	if starterKit != project.StarterKitVue {
+	if starterKit == project.StarterKitNone {
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(appFrontendDir(app), "package.json")); err == nil {
@@ -3660,19 +3725,32 @@ func (p *ProjectRenderer) scaffoldAppStarterKit(app project.App) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return p.scaffoldVueStarterKitForApp(app, false)
+	return p.scaffoldStarterKitForApp(app, starterKit, false)
 }
 
-// scaffoldVueStarterKitForApp copies the shared Vue starter kit into an app frontend directory.
-func (p *ProjectRenderer) scaffoldVueStarterKitForApp(app project.App, overwrite bool) error {
+// scaffoldStarterKitForApp copies the selected shared starter kit into an app frontend directory.
+func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit project.StarterKit, overwrite bool) error {
+	starterKit = project.NormalizeStarterKit(starterKit)
+	if starterKit == project.StarterKitNone {
+		return nil
+	}
 	frontendDir := appFrontendDir(app)
 	if overwrite {
 		if err := os.RemoveAll(frontendDir); err != nil {
 			return err
 		}
 	}
-	if err := p.copyRawPathToDestFiltered("starter-kits/vue/frontend", frontendDir, skipFrontendBuildArtifact); err != nil {
+	sourceRoot, err := starterKitFrontendSource(starterKit)
+	if err != nil {
 		return err
+	}
+	if err := p.copyRawPathToDestFiltered(sourceRoot, frontendDir, starterKitFrontendFilter(starterKit)); err != nil {
+		return err
+	}
+	if starterKit == project.StarterKitTemplHTMX {
+		if err := p.scaffoldTemplHTMXStarterKitForApp(app, overwrite); err != nil {
+			return err
+		}
 	}
 	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
 		if p.config != nil {
@@ -3686,9 +3764,52 @@ func (p *ProjectRenderer) scaffoldVueStarterKitForApp(app project.App, overwrite
 	return nil
 }
 
+func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, overwrite bool) error {
+	mappings := []templateMapping{
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/controller.go.tmpl", "internal/starterui/controller.go"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/controller_test.go.tmpl", "internal/starterui/controller_test.go"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/viewmodels.go.tmpl", "internal/starterui/viewmodels.go"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/auth_views.templ.tmpl", "internal/starterui/auth_views.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_data.templ.tmpl", "internal/starterui/components_data.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_forms.templ.tmpl", "internal/starterui/components_forms.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_navigation.templ.tmpl", "internal/starterui/components_navigation.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_overlays.templ.tmpl", "internal/starterui/components_overlays.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_views.templ.tmpl", "internal/starterui/components_views.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/dashboard.templ.tmpl", "internal/starterui/dashboard.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/icons.templ.tmpl", "internal/starterui/icons.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/layout.templ.tmpl", "internal/starterui/layout.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/settings_views.templ.tmpl", "internal/starterui/settings_views.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/ui.templ.tmpl", "internal/starterui/ui.templ"),
+		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/views.templ.tmpl", "internal/starterui/views.templ"),
+	}
+	if overwrite {
+		return p.writeTemplateMappingsForApp(app, mappings)
+	}
+	return p.writeTemplateMappingsOnceForApp(app, mappings)
+}
+
+func starterKitFrontendSource(starterKit project.StarterKit) (string, error) {
+	switch project.NormalizeStarterKit(starterKit) {
+	case project.StarterKitVue:
+		return "starter-kits/vue/frontend", nil
+	case project.StarterKitReact:
+		return "starter-kits/react/frontend", nil
+	case project.StarterKitTemplHTMX:
+		return "starter-kits/templ-htmx/frontend", nil
+	default:
+		return "", fmt.Errorf("unknown starter kit: %s", starterKit)
+	}
+}
+
 func skipFrontendBuildArtifact(rel string, d fs.DirEntry) bool {
 	name := filepath.Base(rel)
 	return d.IsDir() && (name == "node_modules" || name == "dist")
+}
+
+func starterKitFrontendFilter(starterKit project.StarterKit) func(string, fs.DirEntry) bool {
+	return func(rel string, d fs.DirEntry) bool {
+		return d.IsDir() && filepath.Base(rel) == "node_modules"
+	}
 }
 
 func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
@@ -3838,11 +3959,13 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 	appImportPath := filepath.ToSlash(app.AppDir)
 	wireImportPath := filepath.ToSlash(app.WireDir)
 	components := appRenderComponents(config, app)
+	starterKit := appRenderStarterKit(config, app)
 	runtimeApps := runtimeAppMetadataForRender()
 	return templateRenderConfig{
 		Config:            config,
 		Components:        components,
 		ProjectComponents: config.Render.Components,
+		StarterKit:        starterKit,
 		App:               app,
 		AppPackageName:    project.AppPackageName(app.Name),
 		AppImportPath:     appImportPath,
@@ -4314,9 +4437,13 @@ func (p *ProjectRenderer) nextSteps() []string {
 			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install"
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render(cmd)))
 		}
-		if p.config.Render.StarterKit == project.StarterKitVue && p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {
+		if p.config.Render.StarterKit != project.StarterKitNone && p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {
 			createUserCmd := "bin/app auth:create-user --username <username> --email <email> --password <password>"
-			steps = append(steps, fmt.Sprintf("Sign into the Vue app locally with %s / %s", commandStyle.Render("admin"), commandStyle.Render("admin")))
+			starterKitName := "starter app"
+			if definition, ok := project.StarterKitDefinitionByKey(p.config.Render.StarterKit); ok {
+				starterKitName = definition.Label + " app"
+			}
+			steps = append(steps, fmt.Sprintf("Sign into the %s locally with %s / %s", starterKitName, commandStyle.Render("admin"), commandStyle.Render("admin")))
 			steps = append(steps, fmt.Sprintf("Create another auth user: %s", commandStyle.Render(createUserCmd)))
 		}
 		if p.config.Render.Components.Mail && p.config.Render.Components.Docker {

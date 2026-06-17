@@ -1,0 +1,270 @@
+package starterui
+
+templ FormsPage(data PageData) {
+		@shell(data) {
+			<div class="page-stack">
+				@hero("Components", "Forms", "Form and input patterns", "Validation, selection, token entry, and staged setup examples arranged the way account settings, onboarding, and admin forms usually need them.")
+				<div class="section-stack">
+					<section class="card">
+						<h2>Checkout and billing fields</h2>
+						<p>Lead with a real transactional flow: billing identity, payment details, billing address, and order notes in one surface.</p>
+						<form class="form">
+							<div class="demo-card">
+								<strong>Payment Method</strong>
+								<p>All transactions are secure and encrypted.</p>
+								<label class="field"><span>Name on Card</span><input type="text" placeholder="John Doe"/></label>
+								<div class="grid grid-2">
+									<label class="field"><span>Card Number</span><input type="text" inputmode="numeric" placeholder="1234 5678 9012 3456"/></label>
+									<label class="field"><span>CVV</span><input type="text" inputmode="numeric" placeholder="123"/></label>
+								</div>
+								<div class="grid grid-2">
+									<label class="field"><span>Month</span><select class="select"><option>04</option><option>05</option><option>06</option></select></label>
+									<label class="field"><span>Year</span><select class="select"><option>2026</option><option>2027</option><option>2028</option></select></label>
+								</div>
+							</div>
+							<div class="demo-card">
+								<strong>Billing Address</strong>
+								<div class="grid grid-2">
+									<label class="field"><span>Street address</span><input type="text" placeholder="100 Market Street"/></label>
+									<label class="field"><span>City</span><input type="text" placeholder="San Francisco"/></label>
+									<label class="field"><span>State / Region</span><input type="text" placeholder="California"/></label>
+									<label class="field"><span>Postal code</span><input type="text" inputmode="numeric" placeholder="94105"/></label>
+								</div>
+								<label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="checkbox" checked/> Same as shipping address</label>
+							</div>
+							<label class="field"><span>Order notes</span><textarea placeholder="Add any purchasing notes, PO references, or delivery requirements."></textarea></label>
+							<div class="inline-controls"><button class="btn-primary" type="button">Submit</button><button class="btn-outline" type="button">Cancel</button></div>
+						</form>
+					</section>
+					<section class="card">
+						<h2>Purchase controls</h2>
+						<div class="demo-card">
+							<p class="muted">Order summary</p>
+							<div class="command-row">Starter Kit License<span>$299</span></div>
+							<div class="command-row">Seats<span data-gf-seat-summary>8</span></div>
+							<div class="command-row">Tax<span data-gf-seat-tax>$24</span></div>
+							<div class="command-row"><strong>Total due today</strong><strong data-gf-seat-total>$323</strong></div>
+						</div>
+						<div class="demo-card" data-gf-controller="billingControls">
+							<strong>Billing cadence</strong>
+							<p>Segmented controls work well for pricing or plan cadence selection.</p>
+							<div class="segmented" role="group" aria-label="Billing cadence">
+								<button type="button" data-gf-segment value="monthly" aria-pressed="true" data-active="true">Monthly</button>
+								<button type="button" data-gf-segment value="annual" aria-pressed="false" data-active="false">Annual</button>
+							</div>
+							<strong>Seat count</strong>
+							<div class="quantity-control" role="group" aria-label="Seat count">
+								<button class="btn-outline" type="button" aria-label="Decrease seats" data-gf-seat-decrement>-</button>
+								<input data-gf-seat-count aria-label="Seats" type="number" inputmode="numeric" min="1" max="25" value="8"/>
+								<button class="btn-outline" type="button" aria-label="Increase seats" data-gf-seat-increment>+</button>
+							</div>
+							<label class="form flex flex-row items-start gap-3 rounded-md border p-4 shadow-xs"><input class="input" data-gf-receipt-toggle type="checkbox" checked/><span>Email me receipts and renewal reminders</span></label>
+						</div>
+					</section>
+					<section class="card">
+						<h2>Account and project settings</h2>
+						<p>A realistic settings editor with validation, profile ownership, access controls, and a release summary.</p>
+						<div class="demo-card">
+							<div class="inline-controls" style="justify-content:space-between"><div><strong>Project status</strong><p>Use a dedicated settings row for simple on or off preferences.</p></div><label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="checkbox" checked/> Enabled</label></div>
+						</div>
+						<div class="grid grid-2">
+							<label class="field"><span>Project name</span><input type="text" placeholder="GoForj Admin"/></label>
+							<label class="field"><span>Owner email</span><input type="email" placeholder="team@example.com"/></label>
+						</div>
+						<label class="field">
+							<span>API token</span>
+							<div class="gf-input-group">
+								<span class="gf-input-addon">API</span>
+								<input type="text" value="token_live_4c4c..."/>
+								<span class="gf-input-addon gf-input-addon-end"><button class="btn-sm-outline" type="button">Copy</button></span>
+							</div>
+						</label>
+						<label class="field"><span>Starter profile</span><select class="select"><option>Vue + Shadcn-Vue</option><option>templ + Basecoat</option><option>React dashboard</option></select></label>
+						<div class="grid grid-2">
+							<div class="field">
+								<span>Basecoat select</span>
+								<div class="select w-full" id="starter-runtime-select">
+									<button type="button" class="btn-outline w-full" id="starter-runtime-select-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="starter-runtime-select-listbox"><span class="truncate">Production</span>@iconChevronsUpDown()</button>
+									<div id="starter-runtime-select-popover" data-popover aria-hidden="true">
+										<div role="listbox" id="starter-runtime-select-listbox" aria-orientation="vertical" aria-labelledby="starter-runtime-select-trigger">
+											<div role="option" data-value="local">Local</div>
+											<div role="option" data-value="staging">Staging</div>
+											<div role="option" data-value="production" aria-selected="true">Production</div>
+										</div>
+									</div>
+									<input type="hidden" name="starter-runtime" value="production"/>
+								</div>
+							</div>
+							<div class="field">
+								<span>Basecoat combobox</span>
+								<div class="select w-full" id="starter-framework-combobox">
+									<button type="button" class="btn-outline w-full" id="starter-framework-combobox-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="starter-framework-combobox-listbox"><span class="truncate">templ</span>@iconChevronsUpDown()</button>
+									<div id="starter-framework-combobox-popover" data-popover aria-hidden="true">
+										<header>@iconSearch()<input type="text" value="" placeholder="Search framework..." autocomplete="off" autocorrect="off" spellcheck="false" aria-autocomplete="list" role="combobox" aria-expanded="false" aria-controls="starter-framework-combobox-listbox" aria-labelledby="starter-framework-combobox-trigger"/></header>
+										<div role="listbox" id="starter-framework-combobox-listbox" aria-orientation="vertical" aria-labelledby="starter-framework-combobox-trigger" data-empty="No framework found.">
+											<div role="option" data-value="vue">Vue</div>
+											<div role="option" data-value="react">React</div>
+											<div role="option" data-value="templ" aria-selected="true">templ</div>
+											<div role="option" data-value="svelte">Svelte</div>
+										</div>
+									</div>
+									<input type="hidden" name="starter-framework" value="templ"/>
+								</div>
+							</div>
+						</div>
+						<div class="demo-card">
+							<strong>Release controls</strong>
+							<label class="field"><span>Environment</span><select class="select"><option>US East</option><option>US West</option><option>Europe</option></select></label>
+							<label class="field"><span>Frontend stack</span><input type="text" list="frameworks" placeholder="Search framework..."/><datalist id="frameworks"><option>Vue</option><option>React</option><option>templ</option><option>Svelte</option></datalist></label>
+						</div>
+						<label class="field"><span>Summary</span><textarea placeholder="Describe the product screen you want to build next."></textarea></label>
+						<div class="inline-controls"><button class="btn-primary" type="button">Save settings</button><button class="btn-outline" type="button" data-gf-toast="success" data-gf-toast-title="Starter preview saved" data-gf-toast-description="This toast is rendered by the templ starter controller.">Preview toast</button></div>
+					</section>
+					<section class="card">
+						<h2>Input groups and assistant surfaces</h2>
+						<div class="grid grid-2">
+							<label class="field">
+								<span>Basecoat search input group</span>
+								<div class="bc-input-group with-left with-right">
+									<input type="text" class="input" placeholder="Search..."/>
+									<span class="bc-input-prefix">@iconSearch()</span>
+									<span class="bc-input-suffix bc-input-text">12 results</span>
+								</div>
+							</label>
+							<label class="field">
+								<span>Basecoat URL input group</span>
+								<div class="bc-input-group url-input">
+									<input type="text" class="input" placeholder="example.com"/>
+									<span class="bc-input-prefix bc-input-text">https://</span>
+									<span class="bc-input-suffix" data-tooltip="Basecoat tooltip syntax uses data-tooltip.">@iconInfo()</span>
+								</div>
+							</label>
+						</div>
+						<label class="field">
+							<span>Command bar</span>
+							<div class="gf-input-group gf-input-group-pill">
+								<span class="gf-input-addon">@iconSearch()</span>
+								<input type="search" placeholder="Search docs, commands, and project resources..."/>
+								<span class="gf-input-addon gf-input-addon-end"><kbd class="kbd">Ctrl K</kbd></span>
+							</div>
+						</label>
+						<div class="grid grid-2">
+							<label class="field">
+								<span>Search input</span>
+								<div class="gf-input-group">
+									<span class="gf-input-addon">@iconSearch()</span>
+									<input type="search" placeholder="Search..."/>
+									<span class="gf-input-addon gf-input-addon-end">12 results</span>
+								</div>
+							</label>
+							<label class="field">
+								<span>URL input</span>
+								<div class="gf-input-group">
+									<span class="gf-input-addon">https://</span>
+									<input type="url" placeholder="example.com"/>
+									<span class="gf-input-addon gf-input-addon-end"><button class="btn-sm-icon-ghost" type="button" aria-label="URL information">@iconInfo()</button></span>
+								</div>
+							</label>
+						</div>
+						<label class="field">
+							<span>Message composer</span>
+							<div class="gf-input-group gf-input-group-stack">
+								<textarea placeholder="Ask, Search or Chat..."></textarea>
+								<footer role="group" class="gf-input-toolbar gf-input-toolbar-bottom">
+									<button class="btn-icon-outline" type="button" aria-label="Add attachment">@iconPlus()</button>
+									<button class="btn-sm-ghost" type="button">Auto</button>
+									<span class="gf-input-addon gf-input-toolbar-spacer">52% used</span>
+									<button class="btn-icon-primary" type="button" disabled aria-label="Send message">@iconArrowUp()</button>
+								</footer>
+							</div>
+						</label>
+						<div class="gf-handoff">
+							<div class="gf-handoff-heading">
+								<strong>Assistant handoff</strong>
+								<p>Compose richer prompts with source scope, mode selection, and a named destination before sending.</p>
+							</div>
+							<div class="gf-input-group gf-input-group-stack">
+								<header role="group" class="gf-input-toolbar gf-input-toolbar-top">
+									<button class="btn-sm-outline" type="button">Add context</button>
+									<span class="badge-outline">frontend</span>
+									<span class="badge-outline">billing</span>
+									<span class="badge-outline">starter-kit</span>
+								</header>
+								<textarea placeholder="Describe what the assistant should investigate, change, or summarize."></textarea>
+								<footer role="group" class="gf-input-toolbar gf-input-toolbar-bottom">
+									<button class="btn-sm-ghost" type="button">Auto</button>
+									<button class="btn-sm-ghost" type="button">All sources</button>
+									<span class="gf-input-addon gf-input-toolbar-spacer">Draft response mode</span>
+									<button class="btn-icon-primary" type="button" aria-label="Send handoff">@iconArrowUp()</button>
+								</footer>
+							</div>
+						</div>
+						<div class="grid grid-2">
+							<label class="field">
+								<span>Webhook endpoint</span>
+								<div class="gf-input-group">
+									<span class="gf-input-addon">POST</span>
+									<input type="text" placeholder="/api/v1/webhooks/stripe"/>
+									<span class="gf-input-addon gf-input-addon-end"><button class="btn-sm-outline" type="button">Copy</button></span>
+								</div>
+							</label>
+							<label class="field">
+								<span>Verified handle</span>
+								<div class="gf-input-group">
+									<input type="text" placeholder="@shadcn"/>
+									<span class="gf-input-addon gf-input-addon-end"><span class="gf-verified-mark">@iconCircleCheckBig()</span></span>
+								</div>
+							</label>
+						</div>
+					</section>
+					<section class="card">
+						<h2>Identity and access verification</h2>
+						<div class="item-list">
+							<div class="item-row"><div><strong>Two-factor authentication</strong><p>Verify via email or phone number.</p></div><button class="btn-primary" type="button">Enable</button></div>
+							<div class="item-row">
+								<span class="item-icon">@iconBadgeCheck()</span>
+								<strong>Your profile has been verified.</strong>
+								@iconChevronRight()
+							</div>
+						</div>
+						<div class="demo-card" data-gf-controller="otp">
+							<label class="field"><span>Invite tags</span><div class="tag-row"><span class="badge-outline">frontend</span><span class="badge-outline">platform</span><input type="text" placeholder="Add tag..."/></div></label>
+							<label class="field"><span>Email verification</span><div class="otp-row" role="group" aria-label="Email verification code">@otpInput("verification-code", "4", "Email verification digit 1")@otpInput("verification-code", "2", "Email verification digit 2")@otpInput("verification-code", "8", "Email verification digit 3")@otpInput("verification-code", "9", "Email verification digit 4")@otpInput("verification-code", "1", "Email verification digit 5")@otpInput("verification-code", "6", "Email verification digit 6")</div></label>
+							<label class="field"><span>Backup PIN</span><div class="otp-row" role="group" aria-label="Backup PIN">@otpInput("backup-pin", "2", "Backup PIN digit 1")@otpInput("backup-pin", "4", "Backup PIN digit 2")@otpInput("backup-pin", "7", "Backup PIN digit 3")@otpInput("backup-pin", "1", "Backup PIN digit 4")</div></label>
+						</div>
+					</section>
+					<section class="card">
+						<h2>Recovery and session controls</h2>
+						<div class="demo-card">
+							<strong>Access recovery</strong>
+							<label class="field"><span>Recovery email</span><input type="email" placeholder="security@example.com"/></label>
+							<label class="field">
+								<span>Recovery phone</span>
+								<div class="gf-input-group">
+									<span class="gf-input-addon">+1</span>
+									<input type="tel" placeholder="415 555 0188"/>
+									<span class="gf-input-addon gf-input-addon-end">Verified</span>
+								</div>
+							</label>
+							<div class="control-list"><label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="radio" name="recovery-priority" checked/> Email first</label><label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="radio" name="recovery-priority"/> SMS first</label></div>
+						</div>
+						<div class="demo-card">
+							<strong>Session and device controls</strong>
+							<label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="checkbox" checked/> Require device approval</label>
+							<label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="checkbox"/> Session timeout after 30 minutes</label>
+							<div class="item-row"><div><strong>MacBook Pro - San Francisco</strong><p>Last active 2 minutes ago on Chrome 136.</p></div><button class="btn-outline" type="button">Revoke</button></div>
+						</div>
+					</section>
+					<section class="card">
+						<h2>Environment controls and staged rollout</h2>
+						<div class="demo-card"><strong>Compute Environment</strong><label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="radio" name="compute-environment" checked/> Kubernetes - Run GPU workloads on a configured cluster.</label><label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="radio" name="compute-environment"/> Virtual Machine - Coming soon.</label></div>
+						<div class="demo-card"><strong>Staged onboarding</strong><div class="step-grid"><div class="step-card"><span>1</span><strong>Workspace</strong><p>Capture account and project ownership.</p></div><div class="step-card"><span>2</span><strong>Credentials</strong><p>Collect secrets and service configuration.</p></div><div class="step-card"><span>3</span><strong>Review</strong><p>Confirm generated routes before launch.</p></div></div></div>
+					</section>
+				</div>
+			</div>
+		}
+	}
+
+templ otpInput(name string, value string, label string) {
+	<input class="input" data-gf-otp-cell name={ name } value={ value } type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" aria-label={ label }/>
+}

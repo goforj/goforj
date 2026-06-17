@@ -75,6 +75,30 @@ func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
 	}
 }
 
+func TestNormalizeDevWatchesForRuntimeStopsTemplOutputLoops(t *testing.T) {
+	watches := []project.DevWatch{
+		{Name: "Build App", Watch: "-file .go -file .templ -xfile app/wire/wire_gen\\.go$ -postpone", Exec: "forj build -o ./bin/app"},
+		{Name: "NPM", Watch: "-cd ./cmd/app/frontend -xdir _data -xdir .", Exec: "npm run dev"},
+	}
+	cfg := &project.Config{
+		Render: project.RenderConfig{StarterKit: project.StarterKitTemplHTMX},
+	}
+
+	got := normalizeDevWatchesForRuntime(cfg, watches)
+
+	if !strings.Contains(got[0].Watch, ".*_templ\\.go$") {
+		t.Fatalf("expected templ build watcher to exclude generated templ go files, got %q", got[0].Watch)
+	}
+	for _, expected := range []string{"-xdir node_modules", "-xdir dist"} {
+		if !strings.Contains(got[1].Watch, expected) {
+			t.Fatalf("expected NPM watcher to contain %q, got %q", expected, got[1].Watch)
+		}
+	}
+	if strings.Contains(watches[1].Watch, "node_modules") || strings.Contains(watches[1].Watch, "dist") {
+		t.Fatalf("expected original watches to remain unchanged, got %#v", watches)
+	}
+}
+
 func TestDevWatchesForAppsCanScopeToExplicitApp(t *testing.T) {
 	t.Setenv("FORJ_APP", "customer-portal")
 	got := devWatchesForApps(nil, []project.DevWatch{

@@ -23,7 +23,7 @@ type AppRoutes struct {
 
 // ProvideAppRoutes is a function that returns a slice of routes.
 func ProvideAppRoutes(
-	{{if and .Components.Auth .Components.HasDatabase}}authController *auth.Controller,{{end}}
+	{{if and .Components.Auth .Components.HasDatabase (ne .StarterKit "templ_htmx")}}authController *auth.Controller,{{end}}
 	helloController *hello.Controller,
 	{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController *appsettings.Controller,{{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController *monitoring.Controller,{{end}}
@@ -31,7 +31,9 @@ func ProvideAppRoutes(
 	var publicRoutes []web.Route
 	var protectedRoutes []web.Route
 	{{if and .Components.Auth .Components.HasDatabase}}
+		{{if ne .StarterKit "templ_htmx"}}
 	publicRoutes = append(publicRoutes, authController.Routes()...)
+		{{end}}
 	protectedRoutes = append(protectedRoutes, helloController.Routes()...)
 	{{else}}
 	publicRoutes = append(publicRoutes, helloController.Routes()...)

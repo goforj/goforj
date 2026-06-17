@@ -165,6 +165,9 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
 	steps := make([]Step, 0, 4)
 	steps = append(steps, generateStep)
+	if buildUsesTemplHTMX() {
+		steps = append(steps, Step{Name: "templ", Run: p.runTemplGenerate})
+	}
 	if !opts.SkipWire {
 		steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
 	}
@@ -269,6 +272,35 @@ func printStepTiming(kind string, stepName string, duration time.Duration, statu
 		return
 	}
 	fmt.Fprintf(os.Stderr, "forj %s %s: %s\n", kind, stepName, timing)
+}
+
+func buildUsesTemplHTMX() bool {
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		return false
+	}
+	app := activeApp()
+	starterKit := cfg.Render.StarterKit
+	if app.Name != project.DefaultAppName {
+		if appConfig, ok := cfg.Apps[app.Name]; ok {
+			starterKit = appConfig.StarterKit
+		}
+	}
+	return project.NormalizeStarterKit(starterKit) == project.StarterKitTemplHTMX
+}
+
+func (p Pipeline) runTemplGenerate() (string, error) {
+	cmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail != "" {
+			printBuildFailureDetail(detail)
+		}
+		return "", fmt.Errorf("templ generate: %w", err)
+	}
+	return "generated", nil
 }
 
 func (p Pipeline) runWireGenerate() (string, error) {

@@ -3,6 +3,7 @@ package coredeps
 import "sort"
 
 var pinnedModuleVersions = map[string]string{
+	"github.com/a-h/templ":                            "v0.3.1020",
 	"github.com/goforj/cache":                         "v0.3.0",
 	"github.com/goforj/cache/cachecore":               "v0.3.0",
 	"github.com/goforj/cache/cachetest":               "v0.3.0",

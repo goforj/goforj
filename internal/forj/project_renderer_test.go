@@ -108,6 +108,30 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	}
 }
 
+func TestSyncCoreLibrariesAddsTemplDependencyForTemplStarter(t *testing.T) {
+	root := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer.config = &project.Config{}
+	renderer.config.Render.StarterKit = project.StarterKitTemplHTMX
+	if err := renderer.syncCoreLibrariesInDir(root); err != nil {
+		t.Fatalf("syncCoreLibraries returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	want := "github.com/a-h/templ " + coredeps.MustVersionFor("github.com/a-h/templ")
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("expected go.mod to contain %q:\n%s", want, string(data))
+	}
+}
+
 func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
 	data, err := os.ReadFile("project_renderer.go")
 	if err != nil {
@@ -504,6 +528,54 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 }
 
+func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			GoModuleName: "example.com/test",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					WebAPI:         true,
+					WebUI:          true,
+					Auth:           true,
+					DatabaseSQLite: true,
+				},
+				StarterKit: project.StarterKitTemplHTMX,
+			},
+		},
+		stats: &renderStats{},
+	}
+	if err := renderer.renderApp(project.DefaultApp()); err != nil {
+		t.Fatalf("renderApp returned error: %v", err)
+	}
+
+	routesPath := filepath.Join("app", "routes.go")
+	assertProjectRendererFileContains(t, routesPath,
+		"starterUIController.Routes()",
+		"authService.RequireAuth",
+	)
+	assertProjectRendererFileNotContains(t, routesPath,
+		"authController *auth.Controller",
+		"authController.Routes()",
+	)
+
+	injectPath := filepath.Join("app", "wire", "inject_http_controllers_app.go")
+	assertProjectRendererFileContains(t, injectPath, "starterui.NewController")
+	assertProjectRendererFileNotContains(t, injectPath,
+		`"example.com/test/internal/auth"`,
+		"auth.NewController",
+	)
+}
+
 func TestRemoveLegacyInitialBuildTask(t *testing.T) {
 	tasks := []project.DevTask{
 		{Name: "Initial build", Cmd: "forj build -o ./bin/app"},
@@ -536,6 +608,30 @@ func TestNormalizeDevWatchWireGenExclusionIsIdempotent(t *testing.T) {
 		if got := normalizeDevWatchWireGenExclusion(input); got != want {
 			t.Fatalf("normalizeDevWatchWireGenExclusion(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestNormalizeFrontendNPMWatchExclusions(t *testing.T) {
+	input := "-cd ./cmd/app/frontend -xdir _data -xdir ."
+	got := normalizeFrontendNPMWatchExclusions(input)
+	for _, expected := range []string{input, "-xdir node_modules", "-xdir dist"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected normalized NPM watch to contain %q, got %q", expected, got)
+		}
+	}
+	if gotAgain := normalizeFrontendNPMWatchExclusions(got); gotAgain != got {
+		t.Fatalf("expected NPM watch normalization to be idempotent, got %q then %q", got, gotAgain)
+	}
+}
+
+func TestNormalizeTemplBuildWatchExclusions(t *testing.T) {
+	input := "-file .go -file .templ -xfile app/wire/wire_gen\\.go$ -postpone"
+	got := normalizeTemplBuildWatchExclusions(input)
+	if !strings.Contains(got, ".*_templ\\.go$") {
+		t.Fatalf("expected templ build watch to exclude generated templ go files, got %q", got)
+	}
+	if gotAgain := normalizeTemplBuildWatchExclusions(got); gotAgain != got {
+		t.Fatalf("expected templ build watch normalization to be idempotent, got %q then %q", got, gotAgain)
 	}
 }
 
@@ -907,6 +1003,20 @@ func assertProjectRendererFileContains(t *testing.T, path string, snippets ...st
 	for _, snippet := range snippets {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected %s to contain %q:\n%s", path, snippet, source)
+		}
+	}
+}
+
+func assertProjectRendererFileNotContains(t *testing.T, path string, snippets ...string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	source := string(content)
+	for _, snippet := range snippets {
+		if strings.Contains(source, snippet) {
+			t.Fatalf("expected %s not to contain %q:\n%s", path, snippet, source)
 		}
 	}
 }

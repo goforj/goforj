@@ -654,3 +654,31 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	}
 	t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
 }
+
+func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) {
+	m := initialModel()
+	m.config.Render.Components.WebUI = true
+	m.config.Render.Components.WebAPI = true
+	m.config.Render.StarterKit = project.StarterKitTemplHTMX
+
+	m.finalizeConfig()
+
+	var buildWatch string
+	var npmWatch string
+	for _, watch := range m.config.Dev.Watches {
+		switch watch.Name {
+		case "Build App":
+			buildWatch = watch.Watch
+		case "NPM":
+			npmWatch = watch.Watch
+		}
+	}
+	if !strings.Contains(buildWatch, "-file .templ") || !strings.Contains(buildWatch, ".*_templ\\.go$") {
+		t.Fatalf("expected templ build watcher to include .templ and exclude generated templ go files, got %q", buildWatch)
+	}
+	for _, expected := range []string{"-xdir node_modules", "-xdir dist"} {
+		if !strings.Contains(npmWatch, expected) {
+			t.Fatalf("expected NPM watcher to include %q, got %q", expected, npmWatch)
+		}
+	}
+}

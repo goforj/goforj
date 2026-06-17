@@ -1,0 +1,22 @@
+{
+  "name": "goforj-templ-htmx-starter",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "basecoat-css": "^0.3.11",
+    "htmx.org": "^2.0.8",
+    "shadcn": "^4.11.0",
+    "tailwindcss": "^4.1.18"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}

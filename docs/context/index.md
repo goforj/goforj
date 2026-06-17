@@ -110,6 +110,14 @@ Read:
 - [Generated App Extension Points](generated-app-extension-points.md)
 - [Auth](auth.md)
 
+Add if the task is about React:
+
+- [../designs/react-starter-kit-design.md](../designs/react-starter-kit-design.md)
+
+Add if the task is about server-rendered templates, Blade-like rendering, htmx, or templ:
+
+- [../designs/templ-htmx-starter-kit-design.md](../designs/templ-htmx-starter-kit-design.md)
+
 ### Queue shutdown behavior or worker-stop semantics
 
 Read:

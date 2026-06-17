@@ -6,8 +6,10 @@ import "fmt"
 type StarterKit string
 
 const (
-	StarterKitNone StarterKit = "none"
-	StarterKitVue  StarterKit = "vue"
+	StarterKitNone      StarterKit = "none"
+	StarterKitVue       StarterKit = "vue"
+	StarterKitReact     StarterKit = "react"
+	StarterKitTemplHTMX StarterKit = "templ_htmx"
 )
 
 // StarterKitDefinition describes a selectable starter kit and its component contract.
@@ -30,6 +32,18 @@ var starterKitCatalog = []StarterKitDefinition{
 		Key:         StarterKitVue,
 		Label:       "Vue",
 		Description: "Vue, Vite, TypeScript, Tailwind, and Shadcn-Vue app shell",
+		Requires:    []ComponentKey{ComponentWebUI},
+	},
+	{
+		Key:         StarterKitReact,
+		Label:       "React",
+		Description: "React, Vite, TypeScript, Tailwind, and shadcn/ui app shell",
+		Requires:    []ComponentKey{ComponentWebUI},
+	},
+	{
+		Key:         StarterKitTemplHTMX,
+		Label:       "templ + htmx",
+		Description: "Server-rendered templ views with htmx and Tailwind",
 		Requires:    []ComponentKey{ComponentWebUI},
 	},
 }
@@ -64,12 +78,24 @@ func DefaultStarterKit() StarterKit {
 // NormalizeStarterKit returns a supported starter-kit value.
 func NormalizeStarterKit(value StarterKit) StarterKit {
 	switch value {
-	case StarterKitVue:
-		return StarterKitVue
+	case StarterKitVue, StarterKitReact, StarterKitTemplHTMX:
+		return value
+	case "templ-htmx":
+		return StarterKitTemplHTMX
 	case StarterKitNone, "":
 		return StarterKitNone
 	default:
 		return value
+	}
+}
+
+// StarterKitUsesNPM reports whether the starter kit has an app-local npm workflow.
+func StarterKitUsesNPM(starterKit StarterKit) bool {
+	switch NormalizeStarterKit(starterKit) {
+	case StarterKitVue, StarterKitReact, StarterKitTemplHTMX:
+		return true
+	default:
+		return false
 	}
 }
 

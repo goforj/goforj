@@ -225,8 +225,8 @@ skills:     .claude/skills
 MCP config: .mcp.json
 ```
 
-GitHub Copilot should also be part of the initial adapter set because it has
-stable repository instruction files and VS Code workspace MCP config:
+GitHub Copilot should be a first-class adapter because it has stable repository
+instruction files and VS Code workspace MCP config:
 
 ```text
 guidelines: .github/copilot-instructions.md
@@ -234,6 +234,15 @@ skills:     .github/instructions/*.instructions.md
 prompts:    .github/prompts/*.prompt.md
 MCP config: .vscode/mcp.json
 MCP key:    servers
+```
+
+Gemini CLI should be a first-class adapter:
+
+```text
+guidelines: GEMINI.md
+skills:     .gemini/skills/*/GEMINI.md
+MCP config: .gemini/settings.json
+MCP key:    mcpServers
 ```
 
 Cursor can follow once the core installer is stable.
@@ -898,6 +907,8 @@ Test cases:
 - Claude writes `CLAUDE.md`, `.claude/skills`, and `.mcp.json`
 - GitHub Copilot writes `.github/copilot-instructions.md`,
   `.github/instructions`, `.github/prompts`, and `.vscode/mcp.json`
+- Gemini CLI writes `GEMINI.md`, `.gemini/skills`, and
+  `.gemini/settings.json`
 - existing user content is preserved outside Atlas marker blocks
 - existing Atlas marker blocks are replaced instead of duplicated
 - stale generated skills are removed
@@ -1160,6 +1171,7 @@ Build:
 - Codex agent adapter
 - Claude Code agent adapter
 - GitHub Copilot adapter
+- Gemini CLI adapter
 - guideline composer
 - guideline writer with marker blocks
 - `.goforj/atlas.json`
@@ -1189,7 +1201,7 @@ access, observability, Vue starter kit workflows, and testing/validation.
 Build:
 
 - `forj atlas:mcp`
-- MCP config writer for Codex, Claude, and GitHub Copilot
+- MCP config writer for Codex, Claude, GitHub Copilot, and Gemini CLI
 - `application-info`
 - `search-docs`
 - `read-doc-section`
