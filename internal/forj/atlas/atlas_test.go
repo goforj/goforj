@@ -59,7 +59,7 @@ render:
     cli: true
 `)
 
-	cmd := &InstallCmd{NoInteraction: true}
+	cmd := &InstallCmd{Agent: []string{"codex"}, NoInteraction: true}
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("run install: %v", err)
 	}

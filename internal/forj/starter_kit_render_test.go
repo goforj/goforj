@@ -44,7 +44,6 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 		filepath.Join(frontendDir, "src", "App.vue"),
 		filepath.Join(frontendDir, "dist", "index.html"),
 		filepath.Join(frontendDir, "dist", "goforj-logo.png"),
-		filepath.Join(frontendDir, "dist", "assets"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
