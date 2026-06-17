@@ -5,6 +5,7 @@ module github.com/goforj/goforj/tools/renderwarm
 go 1.25.0
 
 require (
+	github.com/a-h/templ v0.3.1020
 	github.com/alecthomas/kong v1.15.0
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.4
@@ -20,16 +21,15 @@ require (
 	github.com/goforj/mail v0.2.0
 	github.com/goforj/metrics v0.1.0
 	github.com/goforj/null/v6 v6.0.2
-	github.com/goforj/queue v0.1.16
+	github.com/goforj/queue v0.2.1
 	github.com/goforj/scheduler/v2 v2.1.3
 	github.com/goforj/storage v0.4.6
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.4.2
+	github.com/goforj/web v0.5.2
 	github.com/goforj/wire v1.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jedib0t/go-pretty/v6 v6.7.10
 	github.com/joho/godotenv v1.5.1
 	github.com/klauspost/compress v1.18.2
 	github.com/rs/zerolog v1.34.0
@@ -37,11 +37,11 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	golang.org/x/crypto v0.48.0
-	golang.org/x/net v0.50.0
+	golang.org/x/crypto v0.50.0
+	golang.org/x/net v0.53.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/term v0.40.0
-	golang.org/x/tools v0.41.0
+	golang.org/x/term v0.42.0
+	golang.org/x/tools v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
@@ -144,10 +144,10 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
-	golang.org/x/mod v0.32.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/mod v0.34.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.67.6 // indirect

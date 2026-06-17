@@ -8,7 +8,7 @@ import (
 
 // UpdateCmd refreshes previously installed Atlas integration files.
 type UpdateCmd struct {
-	Agent         []string `help:"Agent to update. Repeatable. Supported: codex, claude, copilot"`
+	Agent         []string `help:"Agent to update. Repeatable. Supported: codex, claude, copilot, gemini"`
 	AllAgents     bool     `help:"Update all supported agents"`
 	Guidelines    bool     `help:"Update generated guideline files"`
 	Skills        bool     `help:"Update generated skill or instruction files"`

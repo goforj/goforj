@@ -382,7 +382,7 @@ func (m *model) finalizeConfig() {
 		}
 	}
 
-	if components.WebUI && m.config.Render.StarterKit == project.StarterKitVue {
+	if components.WebUI && project.StarterKitUsesNPM(m.config.Render.StarterKit) {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Install Frontend Dependencies",
 			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
@@ -391,9 +391,13 @@ func (m *model) finalizeConfig() {
 
 	needsApp := components.WebAPI || components.WebUI || components.Scheduler || components.Jobs
 	if needsApp {
+		buildWatch := "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone"
+		if m.config.Render.StarterKit == project.StarterKitTemplHTMX {
+			buildWatch = "-file .go -file .templ -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -xfile '.*_templ\\.go$' -postpone"
+		}
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+			Watch: buildWatch,
 			Exec:  "forj build -o ./bin/app",
 		})
 	}
@@ -406,13 +410,17 @@ func (m *model) finalizeConfig() {
 		})
 	}
 
-	if components.WebUI && (m.config.Render.StarterKit == project.StarterKitVue || packageJSONHasNpmDev()) {
+	if components.WebUI && (project.StarterKitUsesNPM(m.config.Render.StarterKit) || packageJSONHasNpmDev()) {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
-			Watch: "-cd ./" + filepath.ToSlash(defaultFrontendDir()) + " -xdir _data -xdir .",
+			Watch: frontendNPMWatch(defaultFrontendDir()),
 			Exec:  "npm run dev",
 		})
 	}
+}
+
+func frontendNPMWatch(frontendDir string) string {
+	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir . -xdir node_modules -xdir dist"
 }
 
 func initialModel() model {

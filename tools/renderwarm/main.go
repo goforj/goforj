@@ -3,6 +3,7 @@
 package main
 
 import (
+	_ "github.com/a-h/templ"
 	_ "github.com/alecthomas/kong"
 	_ "github.com/charmbracelet/bubbles/textinput"
 	_ "github.com/charmbracelet/bubbletea"
@@ -30,7 +31,6 @@ import (
 	_ "github.com/golang-jwt/jwt/v5"
 	_ "github.com/google/uuid"
 	_ "github.com/gorilla/websocket"
-	_ "github.com/jedib0t/go-pretty/v6/table"
 	_ "github.com/joho/godotenv"
 	_ "github.com/klauspost/compress/zstd"
 	_ "github.com/rs/zerolog"

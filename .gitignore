@@ -1,3 +1,5 @@
 bin/forj
 .DS_Store
 .idea
+templates/starter-kits/*/frontend/node_modules/
+templates/starter-kits/*/frontend/tsconfig.tsbuildinfo

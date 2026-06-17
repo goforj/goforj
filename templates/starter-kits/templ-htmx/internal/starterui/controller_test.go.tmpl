@@ -1,0 +1,227 @@
+package starterui
+
+import (
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"context"
+{{- end }}
+	"net/http"
+	"net/http/httptest"
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"net/url"
+	"path/filepath"
+	"strconv"
+{{- end }}
+	"strings"
+	"testing"
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"time"
+{{- end }}
+
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"github.com/goforj/env/v2"
+{{- end }}
+	"github.com/goforj/web/webtest"
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+	"{{.GoModuleName}}/internal/caches"
+	"{{.GoModuleName}}/internal/database"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/migrations"
+{{- end }}
+)
+
+func TestStarterUILoginPageRenders(t *testing.T) {
+	controller := NewController(
+{{- if and .Components.Auth .Components.HasDatabase }}
+		nil,
+{{- end }}
+	)
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+	ctx := webtest.NewContext(req, rec, "/login", nil)
+
+	if err := controller.LoginPage(ctx); err != nil {
+		t.Fatalf("render login page: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Sign in") || !strings.Contains(body, "GoForj") {
+		t.Fatalf("login page missing expected content:\n%s", body)
+	}
+}
+
+func TestStarterUIDataPageIncludesLocalTableController(t *testing.T) {
+{{- if and .Components.Auth .Components.HasDatabase }}
+	fixture := newStarterUITestAuthFixture(t)
+	controller := NewController(fixture.Service)
+	login := starterUITestLogin(t, fixture, controller)
+{{- else }}
+	controller := NewController(
+	)
+{{- end }}
+	req := httptest.NewRequest(http.MethodGet, "/components/data", nil)
+{{- if and .Components.Auth .Components.HasDatabase }}
+	for _, cookie := range login.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+{{- end }}
+	rec := httptest.NewRecorder()
+	ctx := webtest.NewContext(req, rec, "/components/data", nil)
+
+	if err := controller.Data(ctx); err != nil {
+		t.Fatalf("render data page: %v", err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `data-gf-controller="table"`) || !strings.Contains(body, "Search resources") {
+		t.Fatalf("data page missing local table controller:\n%s", body)
+	}
+}
+
+{{- if and .Components.Auth .Components.HasDatabase }}
+func TestStarterUIUnauthenticatedPageRedirectsToLogin(t *testing.T) {
+	fixture := newStarterUITestAuthFixture(t)
+	controller := NewController(fixture.Service)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := webtest.NewContext(req, rec, "/", nil)
+
+	if err := controller.Dashboard(ctx); err != nil {
+		t.Fatalf("dashboard: %v", err)
+	}
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body:\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "/login" {
+		t.Fatalf("redirect = %q, want /login", location)
+	}
+	if strings.Contains(rec.Body.String(), `"error":"unauthorized"`) {
+		t.Fatalf("page rendered JSON unauthorized response:\n%s", rec.Body.String())
+	}
+}
+
+func TestStarterUIUnauthenticatedHTMXPageRedirectsToLogin(t *testing.T) {
+	fixture := newStarterUITestAuthFixture(t)
+	controller := NewController(fixture.Service)
+	req := httptest.NewRequest(http.MethodGet, "/components/data", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	ctx := webtest.NewContext(req, rec, "/components/data", nil)
+
+	if err := controller.Data(ctx); err != nil {
+		t.Fatalf("data page: %v", err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body:\n%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if redirect := rec.Header().Get("HX-Redirect"); redirect != "/login" {
+		t.Fatalf("HX-Redirect = %q, want /login", redirect)
+	}
+}
+
+type starterUITestAuthFixture struct {
+	Service  *auth.Service
+	Login    string
+	Password string
+}
+
+func newStarterUITestAuthFixture(t *testing.T) starterUITestAuthFixture {
+	t.Helper()
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("API_JWT_SECRET_KEY", "starter-ui-test-secret")
+	t.Setenv("AUTH_COOKIE_SECURE", "false")
+	t.Setenv("DB_DRIVER", "sqlite")
+	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "starter-ui-auth.db"))
+	if err := env.Load(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+
+	conns := database.NewConnections(nil)
+	t.Cleanup(func() {
+		_ = conns.Close(context.Background())
+	})
+	migrate := migrations.NewMigrateCmd(logger.NewSilentLogger(), conns)
+	if err := migrate.Run(); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	cacheManager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("new cache manager: %v", err)
+	}
+	sessionCache := cacheManager.Sessions()
+	appLogger := logger.NewSilentLogger()
+	service := auth.NewService(
+		auth.NewUserRepo(conns, sessionCache),
+		auth.NewAuthSessionRepo(conns, sessionCache),
+		auth.NewEmailVerificationRepo(conns),
+		auth.NewPasswordResetRepo(conns),
+		auth.NewLoginAttemptRepo(conns),
+		auth.NewLogDelivery(appLogger),
+		appLogger,
+	)
+
+	login := strings.NewReplacer("/", "-", " ", "-").Replace(strings.ToLower(t.Name())) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	password := "Admin!123"
+	if _, err := service.Register(t.Context(), auth.RegisterInput{
+		Username:    login,
+		DisplayName: "Admin User",
+		Email:       login + "@example.com",
+		Password:    password,
+		Remember:    true,
+		UserAgent:   "starter-ui-test",
+		IPAddress:   "127.0.0.1",
+	}); err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	return starterUITestAuthFixture{Service: service, Login: login, Password: password}
+}
+
+func starterUITestLogin(t *testing.T, fixture starterUITestAuthFixture, controller *Controller) *httptest.ResponseRecorder {
+	t.Helper()
+	form := url.Values{}
+	form.Set("login", fixture.Login)
+	form.Set("password", fixture.Password)
+	form.Set("remember", "on")
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	ctx := webtest.NewContext(req, rec, "/login", nil)
+
+	if err := controller.Login(ctx); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	return rec
+}
+
+func TestStarterUILoginFlowIntegration(t *testing.T) {
+	fixture := newStarterUITestAuthFixture(t)
+	controller := NewController(fixture.Service)
+	rec := starterUITestLogin(t, fixture, controller)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("login status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if location := rec.Header().Get("Location"); location != "/" {
+		t.Fatalf("login redirect = %q, want /", location)
+	}
+	if len(rec.Result().Cookies()) == 0 {
+		t.Fatal("expected login to set auth cookies")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, cookie := range rec.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	rec = httptest.NewRecorder()
+	ctx := webtest.NewContext(req, rec, "/", nil)
+	if err := controller.Dashboard(ctx); err != nil {
+		t.Fatalf("dashboard: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Dashboard") || !strings.Contains(body, "Admin User") {
+		t.Fatalf("dashboard missing authenticated content:\n%s", body)
+	}
+}
+{{- end }}

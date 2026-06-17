@@ -1,0 +1,167 @@
+package starterui
+
+templ DataPage(data PageData) {
+		@shell(data) {
+			<div class="page-stack">
+				@hero("Components", "Data", "Tables, pagination, and dates", "Reference patterns for resource indexes, operational reporting, scheduling, and review workflows.")
+				<div class="grid grid-3">
+					@metricCard("Indexed resources", "128", "Routes, screens, and generated surfaces tracked by the shell.")
+					@metricCard("Ready to ship", "42", "Resources currently in a production-ready state.")
+					@metricCard("Scheduled windows", "3", "Upcoming launches, cutovers, or maintenance windows.")
+				</div>
+				<div class="section-stack">
+				<div class="card" data-gf-controller="table">
+					<h2>Table variations</h2>
+					<p>Tables are low-level primitives, so this section shows several common product treatments in one place.</p>
+					<div class="table-tools"><input data-gf-table-filter type="search" placeholder="Search resources..."/><select data-gf-table-status><option value="all">All statuses</option><option value="ready">Ready</option><option value="draft">Draft</option><option value="blocked">Blocked</option></select><button class="btn-outline" type="button" data-gf-export-table="starter-resources">Export CSV</button></div>
+					<div class="table-wrap">
+						<table class="table">
+							<thead><tr><th><button type="button" data-gf-table-sort="name">Resource</button></th><th>Status</th><th>Owner</th><th>Route</th><th>Updated</th></tr></thead>
+							<tbody>
+								@dataRow("Dashboard shell", "Ready", "Frontend", "/", "Just now")
+								@dataRow("Auth screens", "Draft", "Platform", "/login", "2h ago")
+							@dataRow("Metrics cards", "Blocked", "API", "/metrics", "Yesterday")
+							@dataRow("Components gallery", "Ready", "Frontend", "/components", "15m ago")
+							@dataRow("Settings view", "Draft", "Platform", "/settings", "1d ago")
+						</tbody>
+						</table>
+					</div>
+					<div class="demo-card">
+						<div class="inline-controls" style="justify-content:space-between"><strong>Pagination</strong><span class="muted">Page 3 of 10</span></div>
+						<div class="tag-row"><button class="btn-outline" type="button">Previous</button><button class="btn-primary" type="button">1</button><button class="btn-outline" type="button">2</button><button class="btn-outline" type="button">3</button><button class="btn-outline" type="button">Next</button></div>
+					</div>
+					<div class="demo-card">
+						<div class="inline-controls" style="justify-content:space-between"><div><strong>Audit log</strong><p>A dense event stream with subdued chrome and clear status emphasis.</p></div><span class="badge-outline">Realtime</span></div>
+						<div class="table-wrap">
+							<table class="table"><thead><tr><th>Event</th><th>Actor</th><th>Status</th><th>Time</th></tr></thead><tbody>
+								@auditRow("Starter rendered", "forj cli", "Success", "00:37:07")
+								@auditRow("Auth me bootstrap", "frontend app", "Success", "00:37:12")
+								@auditRow("Lighthouse WS request", "browser", "Unauthorized", "00:37:15")
+							</tbody></table>
+						</div>
+					</div>
+					<div class="demo-card">
+						<div class="inline-controls" style="justify-content:space-between"><div><strong>Invoice summary</strong><p>A financial table with stronger row separation and right-aligned values.</p></div><button class="btn-outline" type="button">Download all</button></div>
+						<div class="table-wrap">
+							<table class="table"><thead><tr><th>Invoice</th><th>Customer</th><th>State</th><th>Amount</th><th>Action</th></tr></thead><tbody>
+								@invoiceRow("INV-2048", "April 2026", "Acme Labs", "Paid", "$1,240.00")
+								@invoiceRow("INV-2049", "April 2026", "Northwind", "Pending", "$860.00")
+								@invoiceRow("INV-2050", "April 2026", "Orbit Systems", "Overdue", "$2,410.00")
+							</tbody></table>
+						</div>
+					</div>
+				</div>
+				<section class="card">
+					<h2>Scheduling and dates</h2>
+					<p>Calendar primitives work well for launch planning, booking flows, reporting windows, and release coordination.</p>
+					<div class="demo-card"><strong>Single date</strong><input type="text" value="Jun 16, 2026" readonly/>@miniCalendar()</div>
+					<div class="demo-card"><strong>Date range</strong><div class="inline-controls"><input type="text" value="Apr 23, 2026" readonly/><input type="text" value="Apr 30, 2026" readonly/></div>@rangeCalendar()</div>
+					<div class="demo-card">
+						<div class="inline-controls" style="justify-content:space-between"><strong>Upcoming windows</strong><span class="badge-outline">3 scheduled</span></div>
+						<div class="item-list">
+							@releaseWindow("Starter kit polish", "UI audit and cleanup pass across components routes.", "Today", "Ready")
+							@releaseWindow("Auth route handoff", "Wire account pages to the generated auth service.", "Tomorrow", "Draft")
+							@releaseWindow("API metrics rollout", "Blocked pending backend instrumentation fixes.", "Blocked", "Blocked")
+						</div>
+					</div>
+				</section>
+				<section class="card"><h2>Reporting snapshots</h2><p>Small summary cards help table and calendar sections feel like a dashboard instead of isolated widgets.</p><div class="grid grid-3">@metricCard("Daily events", "18.4k", "Across API, auth, and renderer flows.")@metricCard("Failed jobs", "12", "Down from 31 after the last deploy.")@metricCard("Median latency", "84ms", "Healthy for the current load profile.")</div></section>
+				<section class="card section-wide" data-gf-controller="chart">
+					<h2>Basecoat data states</h2>
+					<p>These examples mirror Basecoat's composed HTML patterns for alerts, progress, charts, carousels, items, empty states, and spinners.</p>
+					<div class="grid grid-2">
+						<div class="demo-card">
+							<div class="alert">
+								@iconCircleCheckBig()
+								<h2>Dataset export completed</h2>
+								<section>The generated CSV is ready for review.</section>
+							</div>
+							<div class="alert-destructive">
+								@iconArchive()
+								<h2>Sync stalled</h2>
+								<section>Metrics ingestion has not reported a checkpoint in 15 minutes.</section>
+							</div>
+						</div>
+						<div class="demo-card">
+							<strong>Render progress</strong>
+							<div class="progress-stack">
+								<div class="progress-track" aria-label="Template render progress"><div style="width: 66%"></div></div>
+								<div class="progress-track" aria-label="Asset build progress"><div style="width: 42%"></div></div>
+							</div>
+							<button class="btn-outline" type="button" disabled>@iconLoaderCircleSpin()<span>Building preview</span></button>
+						</div>
+					</div>
+					<div class="grid grid-2">
+						<div class="card">
+							<header><h2>Traffic by surface</h2><p>Canvas-based chart pattern with theme-aware colors.</p></header>
+							<section><canvas class="chart-canvas" width="520" height="220" aria-label="Traffic by surface chart" data-gf-chart></canvas></section>
+							<footer><span class="badge-secondary">@iconActivity()<span>Trending up 5.2%</span></span></footer>
+						</div>
+						<div class="demo-card">
+							<strong>Release carousel</strong>
+							<div class="slider">
+								<nav aria-label="Release slides"><a href="#release-slide-1">1</a><a href="#release-slide-2">2</a><a href="#release-slide-3">3</a></nav>
+								<div class="slides">
+									<div id="release-slide-1"><strong>Routes</strong><p>Review generated endpoints and page routes.</p></div>
+									<div id="release-slide-2"><strong>Data</strong><p>Check import status and table filters.</p></div>
+									<div id="release-slide-3"><strong>Ship</strong><p>Promote the starter surface after review.</p></div>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="grid grid-2">
+						<article class="group/item flex items-center border text-sm rounded-md transition-colors flex-wrap outline-none border-border p-4 gap-4">
+							<span class="item-icon">@iconShieldCheck()</span>
+							<div class="flex flex-1 flex-col gap-1">
+								<h3 class="flex w-fit items-center gap-2 text-sm leading-snug font-medium">Security review</h3>
+								<p class="text-muted-foreground text-sm leading-normal">Credential rotation and session policy are ready for sign-off.</p>
+							</div>
+							<button class="btn-sm-outline" type="button">Review</button>
+						</article>
+						<div class="empty-box">
+							<span class="empty-icon">@iconDatabase()</span>
+							<strong>No imports queued</strong>
+							<p>Upload a dataset or connect a source when the workspace is ready.</p>
+							<button class="btn-sm-outline" type="button">@iconPlus()<span>Add source</span></button>
+						</div>
+					</div>
+				</section>
+				<section class="card"><h2>Queue and dataset states</h2><p>Data-heavy pages usually need one more block for queues, exports, or stateful operational messaging.</p><div class="item-list">@releaseWindow("Export component inventory", "Generate a source-owned report of installed UI primitives.", "Queued", "Draft")@releaseWindow("Render preview build", "Assemble a production bundle for design review.", "Running", "Ready")@releaseWindow("Sync usage analytics", "Blocked until the metrics query logger lands.", "Blocked", "Blocked")</div></section>
+				</div>
+			</div>
+		}
+	}
+templ dataRow(name string, status string, owner string, route string, updated string) {
+		<tr data-gf-table-row data-gf-table-status={ statusKey(status) }>
+			<td data-gf-table-value="name">{ name }</td>
+			<td><span class={ statusClass(status) }>{ status }</span></td>
+			<td>{ owner }</td>
+		<td><code>{ route }</code></td>
+			<td>{ updated }</td>
+		</tr>
+	}
+templ auditRow(event string, actor string, status string, time string) {
+		<tr><td>{ event }</td><td>{ actor }</td><td><span class={ statusClass(status) }>{ status }</span></td><td>{ time }</td></tr>
+	}
+templ invoiceRow(number string, period string, customer string, state string, amount string) {
+		<tr><td><strong>{ number }</strong><br/><span class="muted">{ period }</span></td><td>{ customer }</td><td><span class={ statusClass(state) }>{ state }</span></td><td>{ amount }</td><td><button class="btn-outline" type="button">View</button></td></tr>
+	}
+templ releaseWindow(title string, description string, status string, classStatus string) {
+		<div class="item-row"><div><strong>{ title }</strong><p>{ description }</p></div><span class={ statusClass(classStatus) }>{ status }</span></div>
+	}
+templ miniCalendar() {
+		<div class="calendar-grid" aria-label="June 2026 calendar">
+			<span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+			<span>31</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span>
+			<span>7</span><span>8</span><span>9</span><span>10</span><span>11</span><span>12</span><span>13</span>
+			<span>14</span><span>15</span><span class="selected">16</span><span>17</span><span>18</span><span>19</span><span>20</span>
+			<span>21</span><span>22</span><span>23</span><span>24</span><span>25</span><span>26</span><span>27</span>
+		</div>
+	}
+templ rangeCalendar() {
+		<div class="calendar-grid" aria-label="April 2026 range calendar">
+			<span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+			<span>19</span><span>20</span><span>21</span><span>22</span><span class="selected">23</span><span class="range">24</span><span class="range">25</span>
+			<span class="range">26</span><span class="range">27</span><span class="range">28</span><span class="range">29</span><span class="selected">30</span><span>1</span><span>2</span>
+		</div>
+	}

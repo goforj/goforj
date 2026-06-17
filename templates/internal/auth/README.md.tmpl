@@ -35,6 +35,22 @@ Generated component rules:
 - `OAuth` requires `Auth` and a database.
 {{- end }}
 
+{{- if eq .StarterKit "templ_htmx" }}
+## Generated Templ Auth Routes
+
+The templ starter owns the browser-facing auth routes and calls `internal/auth`
+services directly. It does not mount the JSON `/api/v1/auth/*` controller.
+
+Browser auth routes:
+
+- `GET /login`
+- `POST /login`
+- `POST /logout`
+- `GET /register`
+- `GET /forgot-password`
+- `GET /reset-password`
+- `GET /verify-email`
+{{- else }}
 ## Generated HTTP API
 
 Baseline auth routes:
@@ -62,6 +78,7 @@ OAuth routes when the `OAuth` component is enabled:
 - `POST /api/v1/auth/oauth/:provider/callback`
 - `GET /api/v1/auth/oauth/:provider/link/start`
 {{- end }}
+{{- end }}
 
 ## Cookies And Session Model
 
@@ -83,7 +100,7 @@ Generated auth middleware follows this flow:
 1. `RequireAuth` first tries the access cookie.
 2. If the access token is missing or expired, it attempts refresh.
 3. If refresh succeeds, cookies rotate and the request continues.
-4. Otherwise the request returns `401`, and dedicated auth endpoints such as refresh or logout own cookie invalidation.
+4. Otherwise the request returns `401`{{if eq .StarterKit "templ_htmx"}}, and the templ auth routes own browser redirects and logout behavior.{{else}}, and dedicated auth endpoints such as refresh or logout own cookie invalidation.{{end}}
 
 This keeps browser auth smooth while still preserving explicit server-side revocation.
 

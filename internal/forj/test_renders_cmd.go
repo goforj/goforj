@@ -244,6 +244,7 @@ func testRenderWorkerCount() int {
 type renderCombo struct {
 	id         string
 	components project.Components
+	starterKit project.StarterKit
 	enabled    []string
 }
 
@@ -344,6 +345,7 @@ func buildFullRenderCombos() []renderCombo {
 		combos = append(combos, renderCombo{
 			id:         fmt.Sprintf("%v", i),
 			components: cfg,
+			starterKit: project.StarterKitNone,
 			enabled:    componentLabels(cfg),
 		})
 	}
@@ -377,9 +379,11 @@ func buildSmokeRenderCombos() []renderCombo {
 		combos = append(combos, renderCombo{
 			id:         tc.id,
 			components: cfg,
+			starterKit: project.StarterKitNone,
 			enabled:    componentLabels(cfg),
 		})
 	}
+	combos = append(combos, starterKitRenderCombos()...)
 	return combos
 }
 
@@ -437,10 +441,30 @@ func prSentinelRenderCombos() []renderCombo {
 		combos = append(combos, renderCombo{
 			id:         tc.id,
 			components: cfg,
+			starterKit: project.StarterKitNone,
 			enabled:    componentLabels(cfg),
 		})
 	}
 	return combos
+}
+
+func starterKitRenderCombos() []renderCombo {
+	cfg := project.Components{CLI: true, Docker: true, Auth: true, WebAPI: true, WebUI: true, DatabaseSQLite: true}
+	cfg.ResolveDependencies()
+	return []renderCombo{
+		{
+			id:         "starter_react_auth_sqlite",
+			components: cfg,
+			starterKit: project.StarterKitReact,
+			enabled:    append(componentLabels(cfg), "StarterKit:React"),
+		},
+		{
+			id:         "starter_templ_htmx_auth_sqlite",
+			components: cfg,
+			starterKit: project.StarterKitTemplHTMX,
+			enabled:    append(componentLabels(cfg), "StarterKit:templ_htmx"),
+		},
+	}
 }
 
 // buildCuratedRenderCombos returns a curated pairwise set of combos.
@@ -488,6 +512,7 @@ func buildCuratedRenderCombos() []renderCombo {
 		combos = append(combos, renderCombo{
 			id:         featureID(feature),
 			components: cfg,
+			starterKit: project.StarterKitNone,
 			enabled:    componentLabels(cfg),
 		})
 	}
@@ -510,12 +535,14 @@ func buildCuratedRenderCombos() []renderCombo {
 			combos = append(combos, renderCombo{
 				id:         fmt.Sprintf("%s_%02d", variant.name, idx),
 				components: cfg,
+				starterKit: project.StarterKitNone,
 				enabled:    componentLabels(cfg),
 			})
 		}
 	}
 
 	combos = append(combos, prSentinelRenderCombos()...)
+	combos = append(combos, starterKitRenderCombos()...)
 	return combos
 }
 
@@ -594,6 +621,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		Dev:          project.DevConfig{},
 		Render: project.RenderConfig{
 			Components: combo.components,
+			StarterKit: combo.starterKit,
 		},
 	}
 
@@ -636,6 +664,25 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 	}); err != nil {
 		cmd.fail("render failed", comboID, &cfg, err)
 		return
+	}
+
+	if combo.starterKit == project.StarterKitTemplHTMX {
+		if err := timer.Track("templ_generate", func() error {
+			templCmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+			templCmd.Dir = dir
+			templCmd.Env = append(os.Environ(),
+				"GOMODCACHE="+modCache,
+				"GOCACHE="+buildCache,
+			)
+			output, err := templCmd.CombinedOutput()
+			if err != nil {
+				return formatCommandFailure("templ generate", err, string(output), "")
+			}
+			return nil
+		}); err != nil {
+			cmd.fail("templ generate failed", comboID, &cfg, err)
+			return
+		}
 	}
 
 	if err := timer.Track("wire_gen", func() error {

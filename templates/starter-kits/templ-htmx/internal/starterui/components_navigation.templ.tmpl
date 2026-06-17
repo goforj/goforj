@@ -1,0 +1,155 @@
+package starterui
+
+templ NavigationPage(data PageData) {
+		@shell(data) {
+			<div class="page-stack">
+				@hero("Components", "Navigation", "Navigation and layout patterns", "Menus, action bars, resizable panes, and scroll surfaces shown the way they appear in product UI rather than a flat component catalog.")
+				<div class="section-stack">
+					<section class="card section-wide">
+						<h2>Toolbar and action clusters</h2>
+						<p>Action bars, pagination controls, and utility toggles are easier to evaluate when they are grouped the way a product would use them.</p>
+						<div class="toolbar-grid">
+							<div class="demo-card">
+								<strong>Message actions</strong>
+								<div class="toolbar-row">
+									<div role="group" class="button-group"><button class="btn-outline" type="button" aria-label="Go back">@iconArrowLeft()</button></div>
+									<div class="inline-controls"><div role="group" class="button-group"><button class="btn-outline" type="button">Archive</button><button class="btn-outline" type="button">Report</button></div><div role="group" class="button-group"><button class="btn-outline" type="button">Snooze</button><button class="btn-outline" type="button" aria-label="More options">...</button></div></div>
+								</div>
+							</div>
+							<div class="demo-card">
+								<strong>Pagination tools</strong>
+								<div class="toolbar-row">
+									<div role="group" class="button-group"><button class="btn-outline" type="button">1</button><button class="btn-outline" type="button">2</button><button class="btn-outline" type="button">3</button></div>
+									<div class="inline-controls">
+										<div role="group" class="button-group"><button class="btn-outline" type="button" aria-label="Previous page">@iconArrowLeft()</button><button class="btn-outline" type="button" aria-label="Next page">@iconArrowRight()</button></div>
+										<button class="btn-outline" type="button">@iconBot()<span>Copilot</span></button>
+									</div>
+								</div>
+							</div>
+							<div class="demo-card">
+								<strong>Confirmation row</strong>
+								<label class="label gap-3 font-normal text-muted-foreground"><input class="input" type="checkbox" checked/> I agree to the terms and conditions</label>
+							</div>
+						</div>
+					</section>
+					<section class="card">
+						<h2>Menus and contextual actions</h2>
+						<p>Dropdowns, context menus, and disclosures should feel like product tools, not isolated demos.</p>
+						<div class="inline-controls" data-gf-controller="menu">
+							<div id="starter-project-actions" class="dropdown-menu">
+								<button type="button" id="starter-project-actions-trigger" aria-haspopup="menu" aria-controls="starter-project-actions-menu" aria-expanded="false" class="btn-outline"><span>Project actions</span>@iconChevronsUpDown()</button>
+								<div id="starter-project-actions-popover" data-popover aria-hidden="true" class="min-w-56">
+									<div role="menu" id="starter-project-actions-menu" aria-labelledby="starter-project-actions-trigger">
+										<div role="group" aria-labelledby="starter-project-heading">
+											<span role="heading" id="starter-project-heading">Project</span>
+											<a role="menuitem" href="/">Open dashboard</a>
+											<a role="menuitem" href="https://github.com/goforj/goforj">View repository</a>
+										</div>
+										<hr role="separator"/>
+										<div role="group" aria-labelledby="starter-project-options">
+											<span role="heading" id="starter-project-options">Options</span>
+											<div role="menuitemcheckbox" aria-checked="true" class="group" data-gf-menu-checkbox>@iconCheckGroupVisible()<span>Show sidebar</span></div>
+											<div role="menuitemcheckbox" aria-checked="true" class="group" data-gf-menu-checkbox>@iconCheckGroupVisible()<span>Show hints</span></div>
+										</div>
+										<hr role="separator"/>
+										<div role="group" aria-labelledby="starter-project-track">
+											<span role="heading" id="starter-project-track">Track</span>
+											<div role="menuitemradio" aria-checked="true" class="group" data-gf-menu-radio="track">@menuRadioIndicator()<span>Stable</span></div>
+											<div role="menuitemradio" aria-checked="false" class="group" data-gf-menu-radio="track">@menuRadioIndicator()<span>Beta</span></div>
+										</div>
+									</div>
+								</div>
+							</div>
+							<div id="starter-launch-date" class="dropdown-menu">
+								<button type="button" id="starter-launch-date-trigger" aria-haspopup="menu" aria-controls="starter-launch-date-menu" aria-expanded="false" class="btn-outline"><span>Pick launch date</span>@iconCalendar()</button>
+								<div id="starter-launch-date-popover" data-popover aria-hidden="true" class="w-72">
+									<div role="menu" id="starter-launch-date-menu" aria-labelledby="starter-launch-date-trigger">@miniCalendar()</div>
+								</div>
+							</div>
+						</div>
+						<div data-gf-controller="contextMenu">
+							<div class="context-surface" data-gf-context-surface tabindex="0" role="button" aria-haspopup="menu">Right click this deployment surface</div>
+							<div class="demo-menu context-menu-panel" data-gf-context-menu role="menu" hidden>
+								<button class="demo-menu-item" type="button" role="menuitem">@iconExternalLink()<span>Open deployment</span></button>
+								<button class="demo-menu-item" type="button" role="menuitem">@iconCopy()<span>Copy deployment URL</span></button>
+								<button class="demo-menu-item" type="button" role="menuitem">@iconRefreshCw()<span>Redeploy surface</span></button>
+								<button class="demo-menu-item danger-action" type="button" role="menuitem">@iconArchive()<span>Archive deployment</span></button>
+							</div>
+						</div>
+						<div class="demo-card">
+							<div class="inline-controls" style="justify-content:space-between"><div><strong>Need a smaller disclosure?</strong><p>Use a collapsible block when one hidden section is enough.</p></div><button class="btn-outline" type="button">Toggle</button></div>
+							<p class="muted">This pattern works well for advanced settings, environment details, or inline help that should stay secondary to the main workflow.</p>
+						</div>
+						<section class="accordion demo-card">
+							<details class="group border-b last:border-b-0" open>
+								<summary class="w-full focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] transition-all outline-none rounded-md">
+									<h3 class="flex flex-1 items-start justify-between gap-4 py-4 text-left text-sm font-medium hover:underline">When should a page keep the examples?@iconChevronsUpDown()</h3>
+								</summary>
+								<section class="pb-4"><p class="text-sm text-muted-foreground">Keep only the examples that act as a real scaffold for your team. Delete the rest once product-specific replacements land.</p></section>
+							</details>
+							<details class="group border-b last:border-b-0">
+								<summary class="w-full focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] transition-all outline-none rounded-md">
+									<h3 class="flex flex-1 items-start justify-between gap-4 py-4 text-left text-sm font-medium hover:underline">What about the sidebar family?@iconChevronsUpDown()</h3>
+								</summary>
+								<section class="pb-4"><p class="text-sm text-muted-foreground">The generated app shell is already a sidebar example, so this page focuses on supporting navigation families.</p></section>
+							</details>
+						</section>
+					</section>
+					<section class="card">
+					<h2>Scrollable and resizable work surfaces</h2>
+					<p>Dashboards often need split panes and bounded scroll containers for logs, inspectors, and operational activity.</p>
+					<div class="resizable-preview" data-gf-controller="resize" data-gf-resize-min="32" data-gf-resize-max="68" data-gf-resize-value="46">
+						<div class="scroll-panel" data-gf-resize-panel="start">
+							<p><strong>Activity feed</strong></p>
+							<div class="item-list activity-scroll">
+								@activityItem("Starter rendered", "templ shell copied into the generated frontend folder.")
+								@activityItem("User authenticated", "The navbar and sidebar consume generated auth state.")
+								@activityItem("Theme detected", "Dark mode follows system preference by default.")
+								@activityItem("Components installed", "The local UI examples are ready to adapt.")
+							</div>
+						</div>
+						<div class="resize-handle" data-gf-resize-handle role="separator" aria-orientation="vertical" aria-label="Resize work surface panels" aria-valuemin="32" aria-valuemax="68" aria-valuenow="46" tabindex="0"></div>
+						<div class="scroll-panel" data-gf-resize-panel="end">
+							<p><strong>Content carousel</strong></p>
+							<div class="carousel-preview">
+								<div class="demo-card"><strong>Dashboard baseline</strong><p>Cards, charts, tables, and app navigation.</p></div>
+								<div class="demo-card"><strong>Auth surface</strong><p>Login, logout, me bootstrap, and user shell.</p></div>
+								<div class="demo-card"><strong>Reference gallery</strong><p>Menus, overlays, and form controls.</p></div>
+							</div>
+						</div>
+					</div>
+				</section>
+				<section class="card">
+					<h2>Breadcrumbs, tabs, and pagination</h2>
+					<ol class="text-muted-foreground flex flex-wrap items-center gap-1.5 text-sm break-words sm:gap-2.5">
+						<li class="inline-flex items-center gap-1.5"><a href="/" class="hover:text-foreground transition-colors">Application</a></li>
+						<li class="inline-flex items-center gap-1.5">/</li>
+						<li class="inline-flex items-center gap-1.5"><a href="/components/overview" class="hover:text-foreground transition-colors">Components</a></li>
+						<li class="inline-flex items-center gap-1.5">/</li>
+						<li class="inline-flex items-center gap-1.5"><span class="text-foreground font-normal">Navigation</span></li>
+					</ol>
+					<div class="tabs" id="starter-navigation-tabs">
+						<nav role="tablist" aria-orientation="horizontal" class="w-full">
+							<button type="button" role="tab" id="starter-navigation-tabs-tab-1" aria-controls="starter-navigation-tabs-panel-1" aria-selected="true" tabindex="0">Overview</button>
+							<button type="button" role="tab" id="starter-navigation-tabs-tab-2" aria-controls="starter-navigation-tabs-panel-2" aria-selected="false" tabindex="-1">Activity</button>
+							<button type="button" role="tab" id="starter-navigation-tabs-tab-3" aria-controls="starter-navigation-tabs-panel-3" aria-selected="false" tabindex="-1">Settings</button>
+						</nav>
+						<div role="tabpanel" id="starter-navigation-tabs-panel-1" aria-labelledby="starter-navigation-tabs-tab-1" tabindex="-1" aria-selected="true"><div class="demo-card"><strong>Overview</strong><p>Tabs keep related route metadata in one compact surface.</p></div></div>
+						<div role="tabpanel" id="starter-navigation-tabs-panel-2" aria-labelledby="starter-navigation-tabs-tab-2" tabindex="-1" aria-selected="false" hidden><div class="demo-card"><strong>Activity</strong><p>Recent route changes and app shell events appear here.</p></div></div>
+						<div role="tabpanel" id="starter-navigation-tabs-panel-3" aria-labelledby="starter-navigation-tabs-tab-3" tabindex="-1" aria-selected="false" hidden><div class="demo-card"><strong>Settings</strong><p>Navigation preferences and shell density controls belong here.</p></div></div>
+					</div>
+					<nav role="navigation" aria-label="pagination" class="mx-auto flex w-full justify-center">
+						<ul class="flex flex-row items-center gap-1">
+							<li><a href="#" class="btn-ghost">@iconArrowLeft()<span>Previous</span></a></li>
+							<li><a href="#" class="btn-icon-ghost">1</a></li>
+							<li><a href="#" class="btn-icon-outline">2</a></li>
+							<li><a href="#" class="btn-icon-ghost">3</a></li>
+							<li><div class="size-9 flex items-center justify-center">...</div></li>
+							<li><a href="#" class="btn-ghost"><span>Next</span>@iconArrowRight()</a></li>
+						</ul>
+					</nav>
+				</section>
+				</div>
+			</div>
+		}
+	}

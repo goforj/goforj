@@ -1,0 +1,56 @@
+package starterui
+
+templ settingsShell(data PageData, section string) {
+	@shell(data) {
+		<section class="settings-page">
+			<div class="settings-heading">
+				<h1>Settings</h1>
+				<p>Manage your profile and account settings</p>
+			</div>
+			<div class="settings-shell">
+				<aside class="settings-nav">
+					<a class={ activeClass(section == "profile") } href="/settings/profile">Profile</a>
+					<a class={ activeClass(section == "password") } href="/settings/password">Password</a>
+					<a class={ activeClass(section == "appearance") } href="/settings/appearance">Appearance</a>
+				</aside>
+				<section class="settings-panel">
+					{ children... }
+				</section>
+			</div>
+		</section>
+	}
+}
+templ SettingsProfilePage(data PageData) {
+	@settingsShell(data, "profile") {
+		<form class="settings-form">
+			<div><h1>Profile</h1><p>Update the account details exposed by generated auth.</p></div>
+			<label class="field"><span>Name</span><input type="text" value={ data.User.Name } autocomplete="name"/></label>
+			<label class="field"><span>Email address</span><input value={ data.User.Email } type="email" autocomplete="username"/></label>
+			<p class="muted">Your email address is active for sign-in and notifications. Request verification after changing it.</p>
+			<button class="btn-primary" type="button">Save</button>
+		</form>
+	}
+}
+templ SettingsPasswordPage(data PageData) {
+	@settingsShell(data, "password") {
+		<form class="settings-form">
+			<div><h1>Password</h1><p>Change the password used by generated cookie-backed auth.</p></div>
+			<label class="field"><span>Current password</span><input type="password" autocomplete="current-password"/></label>
+			<label class="field"><span>New password</span><input type="password" autocomplete="new-password"/></label>
+			<label class="field"><span>Confirm password</span><input type="password" autocomplete="new-password"/></label>
+			<button class="btn-primary" type="button">Save password</button>
+		</form>
+	}
+}
+templ SettingsAppearancePage(data PageData) {
+	@settingsShell(data, "appearance") {
+		<div class="settings-form" data-gf-controller="theme">
+			<div><h1>Appearance settings</h1><p>Update your account's appearance settings</p></div>
+			<div class="theme-toggle" role="group" aria-label="Theme preference">
+				<button type="button" data-gf-theme-option="light" aria-pressed="false">@iconSun()<span>Light</span></button>
+				<button type="button" data-gf-theme-option="dark" aria-pressed="false">@iconMoon()<span>Dark</span></button>
+				<button type="button" data-gf-theme-option="system" aria-pressed="false">@iconMonitor()<span>System</span></button>
+			</div>
+		</div>
+	}
+}

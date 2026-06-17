@@ -278,7 +278,7 @@ func CurrentUser(r web.Context) *User {
 // RequireAuth ensures the request is authenticated before running the next handler.
 func (s *Service) RequireAuth(next web.Handler) web.Handler {
 	return func(r web.Context) error {
-		user, err := s.authenticateRequest(r)
+		_, err := s.AuthenticateRequest(r)
 		if err != nil {
 			// Do not clear cookies here. Protected requests can race with a
 			// concurrent refresh flow, especially when a tab resumes and many
@@ -287,9 +287,18 @@ func (s *Service) RequireAuth(next web.Handler) web.Handler {
 			// wipe browser auth state.
 			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 		}
-		r.Set(string(currentUserKey), user)
 		return next(r)
 	}
+}
+
+// AuthenticateRequest validates the current request cookies and attaches the current user to the web context.
+func (s *Service) AuthenticateRequest(r web.Context) (*User, error) {
+	user, err := s.authenticateRequest(r)
+	if err != nil {
+		return nil, err
+	}
+	r.Set(string(currentUserKey), user)
+	return user, nil
 }
 
 // Authenticate validates local credentials and issues a new session.
