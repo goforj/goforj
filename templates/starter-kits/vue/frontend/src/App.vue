@@ -25,10 +25,7 @@
                 </BreadcrumbItem>
                 <BreadcrumbSeparator class="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage class="inline-flex items-center gap-1.5">
-                    <component :is="pageIcon" v-if="pageIcon" class="size-4 text-muted-foreground" />
-                    {{ pageTitle }}
-                  </BreadcrumbPage>
+                  <BreadcrumbPage>{{ pageTitle }}</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -56,7 +53,6 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import CommandMenu from './components/CommandMenu.vue'
 import { authState, loadCurrentUser, logout } from './lib/auth'
-import { findAppNavItem } from './lib/navigation'
 import { applyTheme, themePreference } from './lib/theme'
 import { toast } from 'vue-sonner'
 import {
@@ -76,7 +72,6 @@ const router = useRouter()
 const isPublicShell = computed(() => Boolean(route.meta.publicShell))
 const showLoginLayout = computed(() => !routeReady.value || isPublicShell.value)
 const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
-const pageIcon = computed(() => findAppNavItem(route.path)?.icon)
 const commandOpen = ref(false)
 const routeReady = ref(false)
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null
