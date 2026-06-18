@@ -569,7 +569,7 @@ templ appHeader(data PageData) {
 		<nav class="breadcrumb-list" aria-label="Breadcrumb">
 			<span>Application</span>
 			@iconChevronRight()
-			<span class="breadcrumb-page">@pageIcon(data.Title)<span>{ data.Title }</span></span>
+			<span class="breadcrumb-page">{ data.Title }</span>
 		</nav>
 	</header>
 }
@@ -577,15 +577,6 @@ templ appContent() {
 	<section class="gf-content">
 		{ children... }
 	</section>
-}
-templ pageIcon(title string) {
-	if title == "Dashboard" {
-		@iconDashboard()
-	} else if componentsActive(title) {
-		@iconBlocks()
-	} else {
-		@iconSettings()
-	}
 }
 templ componentIcon(title string) {
 	if title == "Forms" {

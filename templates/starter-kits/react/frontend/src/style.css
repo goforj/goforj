@@ -366,10 +366,6 @@ svg {
   font-weight: 500;
 }
 
-.breadcrumb-page-icon {
-  color: var(--muted-foreground);
-}
-
 .icon-button {
   display: inline-flex;
   height: 2.25rem;

@@ -289,15 +289,6 @@ function routeTitle(pathname: string) {
   return "Dashboard"
 }
 
-function routeIcon(pathname: string) {
-  for (const item of navItems) {
-    if (item.path === "/" && pathname === "/") return item.icon
-    const childActive = item.children?.some((candidate) => pathname.startsWith(candidate.path))
-    if (item.path !== "/" && (pathname.startsWith(item.path) || childActive)) return item.icon
-  }
-  return LayoutDashboard
-}
-
 export function App() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
@@ -306,7 +297,6 @@ export function App() {
   const navigate = useNavigate()
   const isPublic = publicRoutes.has(location.pathname)
   const title = useMemo(() => routeTitle(location.pathname), [location.pathname])
-  const PageIcon = useMemo(() => routeIcon(location.pathname), [location.pathname])
 
   useLayoutEffect(() => {
     window.scrollTo(0, 0)
@@ -388,7 +378,6 @@ export function App() {
               <BreadcrumbItem>Application</BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <PageIcon className="breadcrumb-page-icon" />
                 <BreadcrumbPage>{title}</BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
