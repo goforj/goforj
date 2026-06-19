@@ -45,24 +45,12 @@ services:
 
   vmagent:
     restart: unless-stopped
-    image: victoriametrics/vmagent:v1.120.0
+    build:
+      context: ./containers/observability/vmagent
     depends_on:
       - victoriametrics
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - type: bind
-        source: ./containers/observability/vmagent/prometheus.yml
-        target: /etc/vmagent/prometheus.yml
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./containers/observability/vmagent/metrics-targets.json
-        target: /etc/vmagent/metrics-targets.json
-        read_only: true
-        bind:
-          create_host_path: false
     command:
       - -promscrape.config=/etc/vmagent/prometheus.yml
       - -remoteWrite.url=http://victoriametrics:8428/api/v1/write
@@ -73,7 +61,8 @@ services:
 {{- if .Components.Grafana }}
   grafana:
     restart: unless-stopped
-    image: grafana/grafana:12.0.2
+    build:
+      context: ./containers/observability/grafana
     depends_on:
       - victoriametrics
     ports:
@@ -84,44 +73,21 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana:/var/lib/grafana
-      - type: bind
-        source: ./containers/observability/grafana/provisioning
-        target: /etc/grafana/provisioning
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./containers/observability/grafana/dashboards
-        target: /etc/grafana/dashboards
-        read_only: true
-        bind:
-          create_host_path: false
     networks:
       - backend
 
   grafana-seed:
     restart: "no"
     stop_grace_period: 1s
-    image: curlimages/curl:8.10.1
+    build:
+      context: ./containers/observability/grafana
+      dockerfile: Dockerfile.seed
     depends_on:
       - grafana
     environment:
       - GRAFANA_URL=http://grafana:3000
       - GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - type: bind
-        source: ./containers/observability/grafana/seed-dashboards.sh
-        target: /seed-dashboards.sh
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./containers/observability/grafana/dashboards
-        target: /dashboards
-        read_only: true
-        bind:
-          create_host_path: false
     entrypoint: ["sh"]
     command: ["/seed-dashboards.sh"]
     networks:

@@ -1,0 +1,4 @@
+FROM victoriametrics/vmagent:v1.120.0
+
+COPY prometheus.yml /etc/vmagent/prometheus.yml
+COPY metrics-targets.json /etc/vmagent/metrics-targets.json
