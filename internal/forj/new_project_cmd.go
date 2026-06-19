@@ -363,8 +363,11 @@ func (m *model) finalizeConfig() {
 	if components.Docker {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Run Docker Compose",
-			Cmd:  "docker-compose up -d",
+			Cmd:  dockerComposeUpDevCommand(*components),
 		})
+		if components.Grafana {
+			m.config.Dev.Pre = append(m.config.Dev.Pre, grafanaSeedDevTask())
+		}
 		m.config.Dev.Down = append(m.config.Dev.Down, project.DevTask{
 			Name: "Docker Compose Down",
 			Cmd:  "docker-compose down",
