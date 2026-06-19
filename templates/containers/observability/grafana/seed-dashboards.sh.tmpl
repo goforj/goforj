@@ -21,7 +21,7 @@ dashboard_uids="${dashboard_uids} goforj-scheduler-overview"
 {{- end }}
 
 echo "Waiting for Grafana at ${grafana_url}..."
-until curl -fsS "${grafana_url}/api/health" >/dev/null; do
+until status="$(curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health" 2>/dev/null)" && [ "${status}" != "000" ]; do
 	sleep 2
 done
 

@@ -736,12 +736,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Render.Components.Observability,
 			templates: []string{
 				"internal/observability/README.md.tmpl",
+				"containers/observability/vmagent/Dockerfile.tmpl",
+				"containers/observability/vmagent/metrics-targets.json.tmpl",
 				"containers/observability/vmagent/prometheus.yml.tmpl",
 			},
 			action: func() error {
 				templates := []string{}
 				if p.config.Render.Components.Grafana {
 					templates = append(templates,
+						"containers/observability/grafana/Dockerfile.tmpl",
+						"containers/observability/grafana/Dockerfile.seed.tmpl",
 						"containers/observability/grafana/provisioning/datasources/datasource.yml.tmpl",
 						"containers/observability/grafana/provisioning/dashboards/dashboards.yml.tmpl",
 						"containers/observability/grafana/seed-dashboards.sh.tmpl",
@@ -1891,13 +1895,13 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	if removeLegacyInitialBuildTask(&p.config.Dev.Pre) {
 		changed = true
 	}
-	if p.config.Render.Components.Docker && p.config.Render.Components.Grafana {
+	if p.config.Render.Components.Docker {
 		if normalizeDockerComposeUpTask(&p.config.Dev.Pre, p.config.Render.Components) {
 			changed = true
 		}
-		if normalizeGrafanaSeedTask(&p.config.Dev.Pre) {
-			changed = true
-		}
+	}
+	if removeGrafanaSeedTask(&p.config.Dev.Pre) {
+		changed = true
 	}
 	for i := range p.config.Dev.Watches {
 		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
@@ -1922,41 +1926,30 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 			changed = true
 		}
 	}
-	if p.config.Render.Components.Docker && p.config.Render.Components.Grafana {
-		task := grafanaSeedDevTask()
-		if !hasDevTask(p.config.Dev.Pre, task) {
-			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
-			changed = true
-		}
-	}
 	if !changed {
 		return nil
 	}
 	return writeProjectConfig(".goforj.yml", p.config)
 }
 
-func grafanaSeedDevTask() project.DevTask {
-	return project.DevTask{
-		Name: "Seed Grafana Dashboards",
-		Cmd:  "docker-compose run --rm --no-deps grafana-seed",
-	}
-}
-
 func dockerComposeUpDevCommand(components project.Components) string {
-	if components.Grafana {
-		return "docker-compose up -d --scale grafana-seed=0"
-	}
 	return "docker-compose up -d"
 }
 
 func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.Components) bool {
 	changed := false
 	want := dockerComposeUpDevCommand(components)
+	legacy := map[string]bool{
+		"docker-compose up -d":                                true,
+		"docker-compose up -d --build":                        true,
+		"docker-compose up -d --scale grafana-seed=0":         true,
+		"docker-compose up -d --build --scale grafana-seed=0": true,
+	}
 	for i := range *tasks {
 		if (*tasks)[i].Name != "Run Docker Compose" {
 			continue
 		}
-		if (*tasks)[i].Cmd == "docker-compose up -d" {
+		if legacy[(*tasks)[i].Cmd] && (*tasks)[i].Cmd != want {
 			(*tasks)[i].Cmd = want
 			changed = true
 		}
@@ -1964,18 +1957,17 @@ func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.C
 	return changed
 }
 
-func normalizeGrafanaSeedTask(tasks *[]project.DevTask) bool {
+func removeGrafanaSeedTask(tasks *[]project.DevTask) bool {
 	changed := false
-	want := grafanaSeedDevTask()
-	for i := range *tasks {
-		if (*tasks)[i].Name != want.Name {
+	out := (*tasks)[:0]
+	for _, task := range *tasks {
+		if task.Name == "Seed Grafana Dashboards" {
+			changed = true
 			continue
 		}
-		if (*tasks)[i].Cmd != want.Cmd {
-			(*tasks)[i].Cmd = want.Cmd
-			changed = true
-		}
+		out = append(out, task)
 	}
+	*tasks = out
 	return changed
 }
 
@@ -4512,11 +4504,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
 		}
 		if p.config.Render.Components.Observability {
-			observabilityCmd := "docker-compose up -d victoriametrics vmagent"
-			if p.config.Render.Components.Grafana {
-				observabilityCmd += " grafana && docker-compose run --rm --no-deps grafana-seed"
-			}
-			steps = append(steps, fmt.Sprintf("Start observability services: %s", commandStyle.Render(observabilityCmd)))
+			steps = append(steps, fmt.Sprintf("Start local services: %s", commandStyle.Render("docker-compose up -d")))
 			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))
 		}
 		if p.config.Render.Components.Grafana {

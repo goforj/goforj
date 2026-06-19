@@ -3,11 +3,18 @@
 package forj
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/testkit"
@@ -40,6 +47,18 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		},
 	})
 
+	renderedDefaultTargets := readRenderedFile(t, projectDir, "containers/observability/vmagent/metrics-targets.json")
+	for _, token := range []string{
+		"host.docker.internal:3000",
+		`"process": "app"`,
+		`"service": "Observability Test App"`,
+		`"environment": "local"`,
+	} {
+		if !strings.Contains(renderedDefaultTargets, token) {
+			t.Fatalf("rendered default metrics targets missing %q\n%s", token, renderedDefaultTargets)
+		}
+	}
+
 	buildRenderedDefaultApp(t, projectDir, nil, "build rendered app")
 
 	t.Setenv("APP_NAME", "Observability Test App")
@@ -60,20 +79,11 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"grafana:",
 		"grafana-seed:",
 		"stop_grace_period: 1s",
-		"source: ./containers/observability/vmagent/prometheus.yml",
-		"target: /etc/vmagent/prometheus.yml",
-		"source: ./containers/observability/vmagent/metrics-targets.json",
-		"target: /etc/vmagent/metrics-targets.json",
-		"create_host_path: false",
+		"build:\n      context: ./containers/observability/vmagent",
 		"victoriametrics:/victoria-metrics-data",
-		"source: ./containers/observability/grafana/provisioning",
-		"target: /etc/grafana/provisioning",
+		"build:\n      context: ./containers/observability/grafana",
 		"grafana:/var/lib/grafana",
-		"source: ./containers/observability/grafana/dashboards",
-		"target: /etc/grafana/dashboards",
-		"source: ./containers/observability/grafana/seed-dashboards.sh",
-		"target: /seed-dashboards.sh",
-		"target: /dashboards",
+		"dockerfile: Dockerfile.seed",
 		`entrypoint: ["sh"]`,
 		`command: ["/seed-dashboards.sh"]`,
 		"mariadb:/var/lib/mysql",
@@ -92,14 +102,58 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"./_data/victoriametrics:/victoria-metrics-data",
 		"./_data/grafana:/var/lib/grafana",
 		"./_data/mariadb:/var/lib/mysql",
+		"image: victoriametrics/vmagent:v1.120.0",
+		"image: grafana/grafana:12.0.2",
+		"image: curlimages/curl:8.10.1",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
 		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		"source: ./containers/observability/vmagent/prometheus.yml",
+		"target: /etc/vmagent/prometheus.yml",
+		"source: ./containers/observability/vmagent/metrics-targets.json",
+		"target: /etc/vmagent/metrics-targets.json",
+		"source: ./containers/observability/grafana/provisioning",
+		"source: ./containers/observability/grafana/dashboards",
+		"source: ./containers/observability/grafana/seed-dashboards.sh",
+		"create_host_path: false",
 		`command: ["sh", "/seed-dashboards.sh"]`,
 	} {
 		if strings.Contains(composeText, token) {
 			t.Fatalf("docker-compose.yml should not contain %q\n%s", token, composeText)
+		}
+	}
+
+	vmagentDockerfile := readRenderedFile(t, projectDir, "containers/observability/vmagent/Dockerfile")
+	for _, token := range []string{
+		"FROM victoriametrics/vmagent:v1.120.0",
+		"COPY prometheus.yml /etc/vmagent/prometheus.yml",
+		"COPY metrics-targets.json /etc/vmagent/metrics-targets.json",
+	} {
+		if !strings.Contains(vmagentDockerfile, token) {
+			t.Fatalf("vmagent Dockerfile missing %q\n%s", token, vmagentDockerfile)
+		}
+	}
+
+	grafanaDockerfile := readRenderedFile(t, projectDir, "containers/observability/grafana/Dockerfile")
+	for _, token := range []string{
+		"FROM grafana/grafana:12.0.2",
+		"COPY provisioning /etc/grafana/provisioning",
+		"COPY dashboards /etc/grafana/dashboards",
+	} {
+		if !strings.Contains(grafanaDockerfile, token) {
+			t.Fatalf("grafana Dockerfile missing %q\n%s", token, grafanaDockerfile)
+		}
+	}
+
+	grafanaSeedDockerfile := readRenderedFile(t, projectDir, "containers/observability/grafana/Dockerfile.seed")
+	for _, token := range []string{
+		"FROM curlimages/curl:8.10.1",
+		"COPY seed-dashboards.sh /seed-dashboards.sh",
+		"COPY dashboards /dashboards",
+	} {
+		if !strings.Contains(grafanaSeedDockerfile, token) {
+			t.Fatalf("grafana seed Dockerfile missing %q\n%s", token, grafanaSeedDockerfile)
 		}
 	}
 
@@ -152,6 +206,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	grafanaSeedScript := readRenderedFile(t, projectDir, "containers/observability/grafana/seed-dashboards.sh")
 	for _, token := range []string{
+		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health"`,
 		"/api/datasources/uid/goforj-victoriametrics",
 		"/api/dashboards/db",
 		"/dashboards/*.json",
@@ -173,6 +228,32 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	} {
 		if !strings.Contains(grafanaSeedScript, token) {
 			t.Fatalf("grafana seed script missing %q\n%s", token, grafanaSeedScript)
+		}
+	}
+	if strings.Contains(grafanaSeedScript, `curl -fsS "${grafana_url}/api/health"`) {
+		t.Fatalf("grafana seed script readiness check must use auth\n%s", grafanaSeedScript)
+	}
+	if strings.Contains(grafanaSeedScript, `curl -fsS -u "${auth}" "${grafana_url}/api/health"`) {
+		t.Fatalf("grafana seed script readiness check must not require a 2xx health response\n%s", grafanaSeedScript)
+	}
+
+	for _, dashboard := range []string{
+		"platform-overview.json",
+		"lighthouse-inspects-overview.json",
+		"cache-overview.json",
+		"storage-overview.json",
+		"events-overview.json",
+		"http-overview.json",
+		"auth-overview.json",
+		"mail-overview.json",
+		"database-overview.json",
+		"queue-overview.json",
+		"scheduler-overview.json",
+	} {
+		body := readRenderedFile(t, projectDir, filepath.Join("containers/observability/grafana/dashboards", dashboard))
+		var decoded any
+		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+			t.Fatalf("rendered grafana dashboard %s is invalid JSON: %v\n%s", dashboard, err, body)
 		}
 	}
 
@@ -323,6 +404,71 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	}
 }
 
+func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker is required for rendered observability compose smoke")
+	}
+	if out, err := exec.Command("docker", "compose", "version").CombinedOutput(); err != nil {
+		t.Skipf("docker compose is required for rendered observability compose smoke: %v\n%s", err, string(out))
+	}
+
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Observability Compose Smoke",
+			GoModuleName: "example.com/observabilitycomposesmoke",
+			UpdatedAt:    "2026-06-19 00:00:00 UTC",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					CLI:           true,
+					WebAPI:        true,
+					Metrics:       true,
+					Mail:          true,
+					Docker:        true,
+					DatabaseMySQL: true,
+					Scheduler:     true,
+					Jobs:          true,
+					Observability: true,
+					Grafana:       true,
+				},
+				QueueDriver: "redis",
+			},
+		},
+	})
+
+	t.Setenv("APP_NAME", "Observability Compose Smoke")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	if _, err := generate.GenerateObservabilityFiles(projectDir); err != nil {
+		t.Fatalf("generate observability files: %v", err)
+	}
+
+	vmPort := freeTCPPort(t)
+	grafanaPort := freeTCPPort(t)
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, map[string]string{
+		"OBSERVABILITY_VM_PORT": vmPort,
+		"GRAFANA_PORT":          grafanaPort,
+	}); err != nil {
+		t.Fatalf("set observability smoke ports: %v", err)
+	}
+
+	projectName := fmt.Sprintf("goforj-observability-%d", time.Now().UnixNano())
+	defer runDockerComposeBestEffort(t, projectDir, projectName, "down", "-v", "--remove-orphans")
+
+	runDockerCompose(t, projectDir, projectName, 3*time.Minute, "up", "-d")
+
+	assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/datasources/uid/goforj-victoriametrics", http.StatusOK)
+	for _, uid := range []string{
+		"goforj-platform-overview",
+		"goforj-http-overview",
+		"goforj-database-overview",
+		"goforj-queue-overview",
+		"goforj-scheduler-overview",
+	} {
+		assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/dashboards/uid/"+uid, http.StatusOK)
+	}
+}
+
 func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
 	projectDir := t.TempDir()
 	for _, target := range []string{"billing", "customer-portal"} {
@@ -380,6 +526,79 @@ func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
 		{App: "customer-portal", Process: "scheduler", Target: "host.docker.internal:10021"},
 	}
 	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
+}
+
+func freeTCPPort(t *testing.T) string {
+	t.Helper()
+	addr := findFreeAddr(t)
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split free addr %q: %v", addr, err)
+	}
+	return port
+}
+
+func runDockerCompose(t *testing.T, projectDir string, projectName string, timeout time.Duration, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	fullArgs := append([]string{"compose", "-p", projectName}, args...)
+	cmd := exec.CommandContext(ctx, "docker", fullArgs...)
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker %s failed: %v\n%s", strings.Join(fullArgs, " "), err, string(output))
+	}
+}
+
+func runDockerComposeBestEffort(t *testing.T, projectDir string, projectName string, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	fullArgs := append([]string{"compose", "-p", projectName}, args...)
+	cmd := exec.CommandContext(ctx, "docker", fullArgs...)
+	cmd.Dir = projectDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("docker %s cleanup failed: %v\n%s", strings.Join(fullArgs, " "), err, string(output))
+	}
+}
+
+func dockerComposeOutput(t *testing.T, projectDir string, projectName string, args ...string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fullArgs := append([]string{"compose", "-p", projectName}, args...)
+	cmd := exec.CommandContext(ctx, "docker", fullArgs...)
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("docker %s failed: %v\n%s", strings.Join(fullArgs, " "), err, string(output))
+	}
+	return string(output)
+}
+
+func assertGrafanaComposeAPIStatus(t *testing.T, projectDir string, projectName string, path string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	var output string
+	for time.Now().Before(deadline) {
+		output = dockerComposeOutput(t, projectDir, projectName,
+			"run", "--rm", "--no-deps",
+			"--entrypoint", "curl",
+			"grafana-seed",
+			"-sS",
+			"-u", "admin:admin",
+			"-o", "/dev/null",
+			"-w", "%{http_code}",
+			"http://grafana:3000"+path,
+		)
+		got, err := strconv.Atoi(strings.TrimSpace(output))
+		if err == nil && got == want {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("GET grafana %s did not reach status %d\nlast response: %s\nlogs:\n%s", path, want, output, dockerComposeOutput(t, projectDir, projectName, "logs", "grafana", "grafana-seed"))
 }
 
 func readRenderedFile(t *testing.T, root string, rel string) string {

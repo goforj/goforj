@@ -1,0 +1,13 @@
+[
+  {
+    "targets": [
+      "host.docker.internal:3000"
+    ],
+    "labels": {
+      "app": "app",
+      "environment": "local",
+      "process": "app",
+      "service": {{ .ProjectName | printf "%q" }}
+    }
+  }
+]

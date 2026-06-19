@@ -155,10 +155,21 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 		"chmod -R a+rwX /var/lib/grafana",
 		"service_completed_successfully",
 		"./_data/grafana:/var/lib/grafana",
+		"image: victoriametrics/vmagent:v1.120.0",
+		"image: grafana/grafana:12.0.2",
+		"image: curlimages/curl:8.10.1",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
 		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		"source: ./containers/observability/vmagent/prometheus.yml",
+		"target: /etc/vmagent/prometheus.yml",
+		"source: ./containers/observability/vmagent/metrics-targets.json",
+		"target: /etc/vmagent/metrics-targets.json",
+		"source: ./containers/observability/grafana/provisioning",
+		"source: ./containers/observability/grafana/dashboards",
+		"source: ./containers/observability/grafana/seed-dashboards.sh",
+		"create_host_path: false",
 		`command: ["sh", "/seed-dashboards.sh"]`,
 	} {
 		if strings.Contains(template, token) {
@@ -168,18 +179,9 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	for _, token := range []string{
 		"grafana:\n    driver: local",
 		"grafana:/var/lib/grafana",
-		"source: ./containers/observability/vmagent/prometheus.yml",
-		"target: /etc/vmagent/prometheus.yml",
-		"source: ./containers/observability/vmagent/metrics-targets.json",
-		"target: /etc/vmagent/metrics-targets.json",
-		"source: ./containers/observability/grafana/provisioning",
-		"target: /etc/grafana/provisioning",
-		"source: ./containers/observability/grafana/dashboards",
-		"target: /etc/grafana/dashboards",
-		"source: ./containers/observability/grafana/seed-dashboards.sh",
-		"target: /seed-dashboards.sh",
-		"target: /dashboards",
-		"create_host_path: false",
+		"build:\n      context: ./containers/observability/vmagent",
+		"build:\n      context: ./containers/observability/grafana",
+		"dockerfile: Dockerfile.seed",
 		`entrypoint: ["sh"]`,
 		`command: ["/seed-dashboards.sh"]`,
 	} {
@@ -200,6 +202,67 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	}
 }
 
+func TestObservabilityDockerfilesBakeRuntimeAssets(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{
+			path: filepath.Join("..", "..", "templates", "containers", "observability", "vmagent", "Dockerfile.tmpl"),
+			want: []string{
+				"FROM victoriametrics/vmagent:v1.120.0",
+				"COPY prometheus.yml /etc/vmagent/prometheus.yml",
+				"COPY metrics-targets.json /etc/vmagent/metrics-targets.json",
+			},
+		},
+		{
+			path: filepath.Join("..", "..", "templates", "containers", "observability", "grafana", "Dockerfile.tmpl"),
+			want: []string{
+				"FROM grafana/grafana:12.0.2",
+				"COPY provisioning /etc/grafana/provisioning",
+				"COPY dashboards /etc/grafana/dashboards",
+			},
+		},
+		{
+			path: filepath.Join("..", "..", "templates", "containers", "observability", "grafana", "Dockerfile.seed.tmpl"),
+			want: []string{
+				"FROM curlimages/curl:8.10.1",
+				"COPY seed-dashboards.sh /seed-dashboards.sh",
+				"COPY dashboards /dashboards",
+			},
+		},
+	}
+	for _, tc := range cases {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.path, err)
+		}
+		template := string(data)
+		for _, token := range tc.want {
+			if !strings.Contains(template, token) {
+				t.Fatalf("%s missing %q\n%s", tc.path, token, template)
+			}
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "containers", "observability", "vmagent", "metrics-targets.json.tmpl"))
+	if err != nil {
+		t.Fatalf("read metrics targets template: %v", err)
+	}
+	template := string(data)
+	for _, token := range []string{
+		"host.docker.internal:3000",
+		`"app": "app"`,
+		`"environment": "local"`,
+		`"process": "app"`,
+		`"service": {{ .ProjectName | printf "%q" }}`,
+	} {
+		if !strings.Contains(template, token) {
+			t.Fatalf("metrics targets template missing %q\n%s", token, template)
+		}
+	}
+}
+
 func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "containers", "observability", "grafana", "seed-dashboards.sh.tmpl"))
 	if err != nil {
@@ -207,6 +270,7 @@ func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
 	}
 	template := string(data)
 	for _, token := range []string{
+		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health"`,
 		"/api/datasources/uid/goforj-victoriametrics",
 		"-X PUT",
 		"-X POST",
@@ -220,6 +284,12 @@ func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
 			t.Fatalf("expected grafana seed script template to contain %q\n%s", token, template)
 		}
 	}
+	if strings.Contains(template, `curl -fsS "${grafana_url}/api/health"`) {
+		t.Fatalf("expected grafana seed readiness check to use auth\n%s", template)
+	}
+	if strings.Contains(template, `curl -fsS -u "${auth}" "${grafana_url}/api/health"`) {
+		t.Fatalf("expected grafana seed readiness check not to require a 2xx health response\n%s", template)
+	}
 	for _, token := range []string{
 		"curl -fsS -u \"${auth}\" \"${grafana_url}/api/dashboards/uid/${uid}\" >/dev/null; do",
 		"curl -fsS -u \"${auth}\" \"${grafana_url}/api/dashboards/uid/${uid}\" >/dev/null do",
@@ -230,20 +300,9 @@ func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
 	}
 }
 
-func TestGrafanaSeedDevTask(t *testing.T) {
-	task := grafanaSeedDevTask()
-	want := project.DevTask{
-		Name: "Seed Grafana Dashboards",
-		Cmd:  "docker-compose run --rm --no-deps grafana-seed",
-	}
-	if !reflect.DeepEqual(task, want) {
-		t.Fatalf("grafanaSeedDevTask() = %#v, want %#v", task, want)
-	}
-}
-
 func TestNormalizeGrafanaDevTasks(t *testing.T) {
 	tasks := []project.DevTask{
-		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d --build --scale grafana-seed=0"},
 		{Name: "Seed Grafana Dashboards", Cmd: "docker-compose up -d --force-recreate grafana-seed"},
 	}
 
@@ -251,14 +310,29 @@ func TestNormalizeGrafanaDevTasks(t *testing.T) {
 	if !normalizeDockerComposeUpTask(&tasks, components) {
 		t.Fatal("expected docker compose up task to be normalized")
 	}
-	if !normalizeGrafanaSeedTask(&tasks) {
-		t.Fatal("expected grafana seed task to be normalized")
+	if !removeGrafanaSeedTask(&tasks) {
+		t.Fatal("expected grafana seed task to be removed")
 	}
 
 	want := []project.DevTask{
-		{Name: "Run Docker Compose", Cmd: "docker-compose up -d --scale grafana-seed=0"},
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
+	}
+	if !reflect.DeepEqual(tasks, want) {
+		t.Fatalf("tasks = %#v, want %#v", tasks, want)
+	}
+}
+
+func TestRemoveGrafanaSeedTask(t *testing.T) {
+	tasks := []project.DevTask{
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
 		{Name: "Seed Grafana Dashboards", Cmd: "docker-compose run --rm --no-deps grafana-seed"},
 	}
+
+	if !removeGrafanaSeedTask(&tasks) {
+		t.Fatal("expected grafana seed task to be removed")
+	}
+
+	want := []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker-compose up -d"}}
 	if !reflect.DeepEqual(tasks, want) {
 		t.Fatalf("tasks = %#v, want %#v", tasks, want)
 	}
@@ -324,6 +398,34 @@ func TestNextStepsIncludeVueAuthLoginHint(t *testing.T) {
 	steps = strings.Join(renderer.nextSteps(), "\n")
 	if strings.Contains(steps, "auth:create-user") {
 		t.Fatalf("expected auth login hint to be omitted without auth:\n%s", steps)
+	}
+}
+
+func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
+	renderer := &ProjectRenderer{config: &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				Observability: true,
+				Grafana:       true,
+			},
+		},
+	}}
+
+	steps := strings.Join(renderer.nextSteps(), "\n")
+	if !strings.Contains(steps, "Start local services") || !strings.Contains(steps, "docker-compose up -d") {
+		t.Fatalf("expected next steps to use simple local services command:\n%s", steps)
+	}
+	if strings.Contains(steps, "Start observability services") {
+		t.Fatalf("expected next steps not to describe docker compose as observability-only:\n%s", steps)
+	}
+	for _, token := range []string{
+		"--scale grafana-seed=0",
+		"docker-compose run --rm --no-deps grafana-seed",
+		"victoriametrics vmagent grafana grafana-seed",
+	} {
+		if strings.Contains(steps, token) {
+			t.Fatalf("expected next steps not to contain %q:\n%s", token, steps)
+		}
 	}
 }
 

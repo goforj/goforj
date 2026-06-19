@@ -655,7 +655,7 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
 }
 
-func TestFinalizeConfigAddsGrafanaSeedTask(t *testing.T) {
+func TestFinalizeConfigDoesNotAddGrafanaSeedTask(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.Docker = true
 	m.config.Render.Components.Grafana = true
@@ -663,11 +663,10 @@ func TestFinalizeConfigAddsGrafanaSeedTask(t *testing.T) {
 	m.finalizeConfig()
 
 	for _, task := range m.config.Dev.Pre {
-		if task == grafanaSeedDevTask() {
-			return
+		if task.Name == "Seed Grafana Dashboards" {
+			t.Fatalf("expected grafana seed to run through docker-compose up, got separate task %#v", task)
 		}
 	}
-	t.Fatalf("expected grafana seed dev pre-task, got %#v", m.config.Dev.Pre)
 }
 
 func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) {
