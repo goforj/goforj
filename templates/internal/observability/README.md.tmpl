@@ -61,7 +61,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 2. Refresh generated observability files when topology or metrics host settings change:
    - `forj generate --observability`
 3. Start observability services:
-   - `docker-compose up -d victoriametrics vmagent{{ if .Components.Grafana }} grafana grafana-seed{{ end }}`
+   - `docker-compose up -d victoriametrics vmagent{{ if .Components.Grafana }} grafana && docker-compose run --rm --no-deps grafana-seed{{ end }}`
 4. Open the stack:
    - VictoriaMetrics: `http://localhost:8428`
 {{- if .Components.Grafana }}
@@ -142,7 +142,7 @@ If rendered dashboards do not refresh immediately:
 
 1. Re-render the project with `forj render`.
 2. Restart Grafana and the seed container:
-   - `docker-compose up -d grafana grafana-seed`
+   - `docker-compose up -d grafana && docker-compose run --rm --no-deps grafana-seed`
 3. Wait for Grafana provisioning to rescan dashboards.
 {{- end }}
 

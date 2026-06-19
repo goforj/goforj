@@ -51,7 +51,18 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./containers/observability/vmagent:/etc/vmagent:ro
+      - type: bind
+        source: ./containers/observability/vmagent/prometheus.yml
+        target: /etc/vmagent/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./containers/observability/vmagent/metrics-targets.json
+        target: /etc/vmagent/metrics-targets.json
+        read_only: true
+        bind:
+          create_host_path: false
     command:
       - -promscrape.config=/etc/vmagent/prometheus.yml
       - -remoteWrite.url=http://victoriametrics:8428/api/v1/write
@@ -73,8 +84,18 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana:/var/lib/grafana
-      - ./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - type: bind
+        source: ./containers/observability/grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./containers/observability/grafana/dashboards
+        target: /etc/grafana/dashboards
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - backend
 
@@ -89,8 +110,20 @@ services:
       - GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
-      - ./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro
-    command: ["sh", "/seed-dashboards.sh"]
+      - type: bind
+        source: ./containers/observability/grafana/seed-dashboards.sh
+        target: /seed-dashboards.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./containers/observability/grafana/dashboards
+        target: /dashboards
+        read_only: true
+        bind:
+          create_host_path: false
+    entrypoint: ["sh"]
+    command: ["/seed-dashboards.sh"]
     networks:
       - backend
 {{- end }}

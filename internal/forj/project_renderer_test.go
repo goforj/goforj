@@ -155,6 +155,11 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 		"chmod -R a+rwX /var/lib/grafana",
 		"service_completed_successfully",
 		"./_data/grafana:/var/lib/grafana",
+		"./containers/observability/vmagent:/etc/vmagent:ro",
+		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
+		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
+		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		`command: ["sh", "/seed-dashboards.sh"]`,
 	} {
 		if strings.Contains(template, token) {
 			t.Fatalf("expected docker compose template not to contain %q\n%s", token, template)
@@ -163,8 +168,20 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	for _, token := range []string{
 		"grafana:\n    driver: local",
 		"grafana:/var/lib/grafana",
-		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
-		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
+		"source: ./containers/observability/vmagent/prometheus.yml",
+		"target: /etc/vmagent/prometheus.yml",
+		"source: ./containers/observability/vmagent/metrics-targets.json",
+		"target: /etc/vmagent/metrics-targets.json",
+		"source: ./containers/observability/grafana/provisioning",
+		"target: /etc/grafana/provisioning",
+		"source: ./containers/observability/grafana/dashboards",
+		"target: /etc/grafana/dashboards",
+		"source: ./containers/observability/grafana/seed-dashboards.sh",
+		"target: /seed-dashboards.sh",
+		"target: /dashboards",
+		"create_host_path: false",
+		`entrypoint: ["sh"]`,
+		`command: ["/seed-dashboards.sh"]`,
 	} {
 		if !strings.Contains(template, token) {
 			t.Fatalf("expected docker compose template to contain %q\n%s", token, template)
@@ -180,6 +197,70 @@ func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	}
 	if !strings.Contains(seedBlock, "stop_grace_period: 1s") {
 		t.Fatalf("expected grafana-seed to stop quickly during dev shutdown:\n%s", seedBlock)
+	}
+}
+
+func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "containers", "observability", "grafana", "seed-dashboards.sh.tmpl"))
+	if err != nil {
+		t.Fatalf("read grafana seed script template: %v", err)
+	}
+	template := string(data)
+	for _, token := range []string{
+		"/api/datasources/uid/goforj-victoriametrics",
+		"-X PUT",
+		"-X POST",
+		"/api/datasources",
+		"/api/dashboards/db",
+		`"overwrite":true`,
+		"for file in /dashboards/*.json",
+		`/api/dashboards/uid/${uid}" >/dev/null 2>/dev/null`,
+	} {
+		if !strings.Contains(template, token) {
+			t.Fatalf("expected grafana seed script template to contain %q\n%s", token, template)
+		}
+	}
+	for _, token := range []string{
+		"curl -fsS -u \"${auth}\" \"${grafana_url}/api/dashboards/uid/${uid}\" >/dev/null; do",
+		"curl -fsS -u \"${auth}\" \"${grafana_url}/api/dashboards/uid/${uid}\" >/dev/null do",
+	} {
+		if strings.Contains(template, token) {
+			t.Fatalf("expected grafana seed script template not to contain noisy wait loop %q\n%s", token, template)
+		}
+	}
+}
+
+func TestGrafanaSeedDevTask(t *testing.T) {
+	task := grafanaSeedDevTask()
+	want := project.DevTask{
+		Name: "Seed Grafana Dashboards",
+		Cmd:  "docker-compose run --rm --no-deps grafana-seed",
+	}
+	if !reflect.DeepEqual(task, want) {
+		t.Fatalf("grafanaSeedDevTask() = %#v, want %#v", task, want)
+	}
+}
+
+func TestNormalizeGrafanaDevTasks(t *testing.T) {
+	tasks := []project.DevTask{
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
+		{Name: "Seed Grafana Dashboards", Cmd: "docker-compose up -d --force-recreate grafana-seed"},
+	}
+
+	components := project.Components{Grafana: true}
+	if !normalizeDockerComposeUpTask(&tasks, components) {
+		t.Fatal("expected docker compose up task to be normalized")
+	}
+	if !normalizeGrafanaSeedTask(&tasks) {
+		t.Fatal("expected grafana seed task to be normalized")
+	}
+
+	want := []project.DevTask{
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d --scale grafana-seed=0"},
+		{Name: "Seed Grafana Dashboards", Cmd: "docker-compose run --rm --no-deps grafana-seed"},
+	}
+	if !reflect.DeepEqual(tasks, want) {
+		t.Fatalf("tasks = %#v, want %#v", tasks, want)
 	}
 }
 

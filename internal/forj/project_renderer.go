@@ -1891,6 +1891,14 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	if removeLegacyInitialBuildTask(&p.config.Dev.Pre) {
 		changed = true
 	}
+	if p.config.Render.Components.Docker && p.config.Render.Components.Grafana {
+		if normalizeDockerComposeUpTask(&p.config.Dev.Pre, p.config.Render.Components) {
+			changed = true
+		}
+		if normalizeGrafanaSeedTask(&p.config.Dev.Pre) {
+			changed = true
+		}
+	}
 	for i := range p.config.Dev.Watches {
 		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
 		if p.config.Dev.Watches[i].Name == "NPM" && strings.TrimSpace(p.config.Dev.Watches[i].Exec) == "npm run dev" {
@@ -1914,10 +1922,61 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 			changed = true
 		}
 	}
+	if p.config.Render.Components.Docker && p.config.Render.Components.Grafana {
+		task := grafanaSeedDevTask()
+		if !hasDevTask(p.config.Dev.Pre, task) {
+			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
+			changed = true
+		}
+	}
 	if !changed {
 		return nil
 	}
 	return writeProjectConfig(".goforj.yml", p.config)
+}
+
+func grafanaSeedDevTask() project.DevTask {
+	return project.DevTask{
+		Name: "Seed Grafana Dashboards",
+		Cmd:  "docker-compose run --rm --no-deps grafana-seed",
+	}
+}
+
+func dockerComposeUpDevCommand(components project.Components) string {
+	if components.Grafana {
+		return "docker-compose up -d --scale grafana-seed=0"
+	}
+	return "docker-compose up -d"
+}
+
+func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.Components) bool {
+	changed := false
+	want := dockerComposeUpDevCommand(components)
+	for i := range *tasks {
+		if (*tasks)[i].Name != "Run Docker Compose" {
+			continue
+		}
+		if (*tasks)[i].Cmd == "docker-compose up -d" {
+			(*tasks)[i].Cmd = want
+			changed = true
+		}
+	}
+	return changed
+}
+
+func normalizeGrafanaSeedTask(tasks *[]project.DevTask) bool {
+	changed := false
+	want := grafanaSeedDevTask()
+	for i := range *tasks {
+		if (*tasks)[i].Name != want.Name {
+			continue
+		}
+		if (*tasks)[i].Cmd != want.Cmd {
+			(*tasks)[i].Cmd = want.Cmd
+			changed = true
+		}
+	}
+	return changed
 }
 
 // normalizeDevWatchWireGenExclusion keeps the generated wire exclusion stable across repeated renders.
@@ -4455,7 +4514,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 		if p.config.Render.Components.Observability {
 			observabilityCmd := "docker-compose up -d victoriametrics vmagent"
 			if p.config.Render.Components.Grafana {
-				observabilityCmd += " grafana grafana-seed"
+				observabilityCmd += " grafana && docker-compose run --rm --no-deps grafana-seed"
 			}
 			steps = append(steps, fmt.Sprintf("Start observability services: %s", commandStyle.Render(observabilityCmd)))
 			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))

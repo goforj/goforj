@@ -60,12 +60,22 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"grafana:",
 		"grafana-seed:",
 		"stop_grace_period: 1s",
-		"./containers/observability/vmagent:/etc/vmagent:ro",
+		"source: ./containers/observability/vmagent/prometheus.yml",
+		"target: /etc/vmagent/prometheus.yml",
+		"source: ./containers/observability/vmagent/metrics-targets.json",
+		"target: /etc/vmagent/metrics-targets.json",
+		"create_host_path: false",
 		"victoriametrics:/victoria-metrics-data",
-		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
+		"source: ./containers/observability/grafana/provisioning",
+		"target: /etc/grafana/provisioning",
 		"grafana:/var/lib/grafana",
-		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
-		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		"source: ./containers/observability/grafana/dashboards",
+		"target: /etc/grafana/dashboards",
+		"source: ./containers/observability/grafana/seed-dashboards.sh",
+		"target: /seed-dashboards.sh",
+		"target: /dashboards",
+		`entrypoint: ["sh"]`,
+		`command: ["/seed-dashboards.sh"]`,
 		"mariadb:/var/lib/mysql",
 	} {
 		if !strings.Contains(composeText, token) {
@@ -82,6 +92,11 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"./_data/victoriametrics:/victoria-metrics-data",
 		"./_data/grafana:/var/lib/grafana",
 		"./_data/mariadb:/var/lib/mysql",
+		"./containers/observability/vmagent:/etc/vmagent:ro",
+		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
+		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
+		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
+		`command: ["sh", "/seed-dashboards.sh"]`,
 	} {
 		if strings.Contains(composeText, token) {
 			t.Fatalf("docker-compose.yml should not contain %q\n%s", token, composeText)
@@ -137,6 +152,12 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	grafanaSeedScript := readRenderedFile(t, projectDir, "containers/observability/grafana/seed-dashboards.sh")
 	for _, token := range []string{
+		"/api/datasources/uid/goforj-victoriametrics",
+		"/api/dashboards/db",
+		"/dashboards/*.json",
+		`"overwrite":true`,
+		"-X PUT",
+		"-X POST",
 		"/api/user/stars/dashboard/uid/",
 		"/api/org/preferences",
 		"goforj-platform-overview",

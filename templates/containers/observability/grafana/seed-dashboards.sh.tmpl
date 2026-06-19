@@ -25,10 +25,48 @@ until curl -fsS "${grafana_url}/api/health" >/dev/null; do
 	sleep 2
 done
 
+datasource_body='{"name":"VictoriaMetrics","type":"prometheus","uid":"goforj-victoriametrics","url":"http://victoriametrics:8428","access":"proxy","isDefault":true,"jsonData":{"httpMethod":"POST"}}'
+if curl -fsS -u "${auth}" "${grafana_url}/api/datasources/uid/goforj-victoriametrics" >/dev/null 2>/dev/null; then
+	curl -fsS -u "${auth}" \
+		-H "Content-Type: application/json" \
+		-X PUT \
+		-d "${datasource_body}" \
+		"${grafana_url}/api/datasources/uid/goforj-victoriametrics" >/dev/null
+else
+	curl -fsS -u "${auth}" \
+		-H "Content-Type: application/json" \
+		-X POST \
+		-d "${datasource_body}" \
+		"${grafana_url}/api/datasources" >/dev/null
+fi
+echo "Grafana datasource ready."
+
+import_dashboard() {
+	file="$1"
+	payload="/tmp/dashboard-payload.json"
+	printf '{"dashboard":' > "${payload}"
+	cat "${file}" >> "${payload}"
+	printf ',"overwrite":true}' >> "${payload}"
+	curl -fsS -u "${auth}" \
+		-H "Content-Type: application/json" \
+		-X POST \
+		--data-binary @"${payload}" \
+		"${grafana_url}/api/dashboards/db" >/dev/null
+	rm -f "${payload}"
+	echo "Imported Grafana dashboard $(basename "${file}")"
+}
+
+if [ -d /dashboards ]; then
+	for file in /dashboards/*.json; do
+		[ -f "${file}" ] || continue
+		import_dashboard "${file}"
+	done
+fi
+
 wait_for_dashboard() {
 	uid="$1"
 	attempts=0
-	until curl -fsS -u "${auth}" "${grafana_url}/api/dashboards/uid/${uid}" >/dev/null; do
+	until curl -fsS -u "${auth}" "${grafana_url}/api/dashboards/uid/${uid}" >/dev/null 2>/dev/null; do
 		attempts=$((attempts + 1))
 		if [ "${attempts}" -ge 60 ]; then
 			echo "Timed out waiting for dashboard ${uid}" >&2
