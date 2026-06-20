@@ -2,7 +2,6 @@ package build
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,108 +115,26 @@ func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI s
 }
 
 func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (webindex.Manifest, error) {
-	sourceRoot, cleanup, err := stageAPIIndexSource(paths.root)
-	if err != nil {
-		return webindex.Manifest{}, err
-	}
-	defer cleanup()
-
 	options := webindex.IndexOptions{
-		Root:                 sourceRoot,
+		Root:                 paths.root,
 		OutPath:              paths.out,
 		DiagnosticsPath:      paths.diagnostics,
 		OpenAPIPath:          paths.openAPI,
-		RouteCompositionPath: stagedRouteCompositionPath(paths.root, paths.routeComposition),
+		RouteCompositionPath: paths.routeComposition,
+		SkipDir: func(_ string, name string) bool {
+			return shouldSkipAPIIndexSourceDir(name)
+		},
 	}
 	return webindex.Run(context.Background(), options)
 }
 
-// stageAPIIndexSource keeps runtime data outside webindex without teaching the web package GoForj layout.
-func stageAPIIndexSource(root string) (string, func(), error) {
-	stage, err := os.MkdirTemp("", "forj-api-index-*")
-	if err != nil {
-		return "", func() {}, err
-	}
-	cleanup := func() { _ = os.RemoveAll(stage) }
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			cleanup()
-			return walkErr
-		}
-		name := entry.Name()
-		if entry.IsDir() {
-			if shouldSkipAPIIndexSourceDir(name) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !shouldStageAPIIndexFile(path, name) {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			cleanup()
-			return err
-		}
-		return stageAPIIndexFile(path, filepath.Join(stage, rel))
-	})
-	if err != nil {
-		return "", func() {}, err
-	}
-	return stage, cleanup, nil
-}
-
 func shouldSkipAPIIndexSourceDir(name string) bool {
 	switch name {
-	case ".git", "vendor", "node_modules", ".cache", "tmp", "_data", "bin":
+	case "_data", "bin":
 		return true
 	default:
 		return false
 	}
-}
-
-func shouldStageAPIIndexFile(path string, name string) bool {
-	if name == ".env" {
-		return true
-	}
-	if !strings.HasSuffix(name, ".go") {
-		return false
-	}
-	return !strings.Contains(filepath.ToSlash(path), "/templates/")
-}
-
-func stageAPIIndexFile(src string, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	if err := os.Link(src, dst); err == nil {
-		return nil
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
-}
-
-func stagedRouteCompositionPath(root string, routeComposition string) string {
-	if routeComposition == "" || !filepath.IsAbs(routeComposition) {
-		return routeComposition
-	}
-	rel, err := filepath.Rel(root, routeComposition)
-	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return routeComposition
-	}
-	return rel
 }
 
 func defaultAPIIndexPaths(target project.App) apiIndexPaths {

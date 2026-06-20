@@ -3,6 +3,7 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/internal/logger"
@@ -43,6 +44,26 @@ func TestAPIIndexRunnerSkipsRuntimeDataDir(t *testing.T) {
 		t.Fatalf("chmod data dir: %v", err)
 	}
 	defer func() { _ = os.Chmod(dataDir, 0o755) }()
+	nodeModulesDir := filepath.Join(root, "cmd", "app", "frontend", "node_modules", "package")
+	if err := os.MkdirAll(nodeModulesDir, 0o755); err != nil {
+		t.Fatalf("mkdir nested node_modules dir: %v", err)
+	}
+	nodeModuleSource := `package packagefixture
+import (
+	"net/http"
+
+	"github.com/goforj/web"
+)
+type Controller struct{}
+func (c *Controller) Routes() []any {
+	return []any{
+		web.NewRoute(http.MethodGet, "/node-modules-leak", c.Leak),
+	}
+}
+func (c *Controller) Leak(ctx any) error { return nil }`
+	if err := os.WriteFile(filepath.Join(nodeModulesDir, "ignored.go"), []byte(nodeModuleSource), 0o644); err != nil {
+		t.Fatalf("write ignored node_modules file: %v", err)
+	}
 
 	runner := NewAPIIndexRunner(logger.NewSilentLogger())
 	out := filepath.Join(root, "build", "api_index.json")
@@ -51,6 +72,13 @@ func TestAPIIndexRunnerSkipsRuntimeDataDir(t *testing.T) {
 
 	if err := runner.Run(root, out, diagnostics, openAPI, false); err != nil {
 		t.Fatalf("run failed: %v", err)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read api index: %v", err)
+	}
+	if strings.Contains(string(body), "node-modules-leak") {
+		t.Fatalf("nested node_modules route leaked into api index:\n%s", string(body))
 	}
 }
 

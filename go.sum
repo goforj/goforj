@@ -96,8 +96,6 @@ github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
-github.com/fsnotify/fsnotify v1.7.0 h1:8JEhPFa5W2WU7YfeZzPNqzMP6Lwt7L2715Ggo0nosvA=
-github.com/fsnotify/fsnotify v1.7.0/go.mod h1:40Bi/Hjc2AVfZrqy+aj+yEI+/bRxZnMJyTJwOpGvigM=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=
 github.com/glebarez/go-sqlite v1.21.2/go.mod h1:sfxdZyhQjTM2Wry3gVYWaW072Ri1WMdWJi0k6+3382k=
 github.com/glebarez/sqlite v1.11.0 h1:wSG0irqzP6VurnMEpFGer5Li19RpIRi2qvQz++w0GMw=
@@ -120,8 +118,6 @@ github.com/go-logr/stdr v1.2.2/go.mod h1:mMo/vtBO5dYbehREoey6XUKy/eSumjCCveDpRre
 github.com/go-ole/go-ole v1.2.6 h1:/Fpf6oFPoeFik9ty7siob0G6Ke8QvQEuVcuChpwXzpY=
 github.com/go-ole/go-ole v1.2.6/go.mod h1:pprOEPIfldk/42T2oK7lQ4v4JSDwmV0As9GaiUsvbm0=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
-github.com/goforj/atlas v0.1.2 h1:6QjJGzO0uSeJm0Qy28GS8C1LfRhWolgBOoPYrKqDiug=
-github.com/goforj/atlas v0.1.2/go.mod h1:opwql3EDKTd/TYWkWAs/CP3OzomX5Dn11wtDR7W5ENs=
 github.com/goforj/atlas v0.2.0 h1:0C3o2O/AUiwkbns4uf8vrorIUkz5f1m4o6zRhWtLXng=
 github.com/goforj/atlas v0.2.0/go.mod h1:opwql3EDKTd/TYWkWAs/CP3OzomX5Dn11wtDR7W5ENs=
 github.com/goforj/cache v0.3.0 h1:pL/X6D0hvVt61m4V2PY4p+6Bp+taX4n17dSjQjFmbls=
@@ -150,8 +146,8 @@ github.com/goforj/storage/storagecore v0.4.5 h1:PQucsQymVFz4h4mHD2Q/gsvk4fJ/X+I4
 github.com/goforj/storage/storagecore v0.4.5/go.mod h1:n6epEk/dinioVPKa8VkWduaf0b1ggcnycXRmd6nURCY=
 github.com/goforj/str v1.2.0 h1:WN+IXSvBC5uGaQG76vn7NVTk5gInMl944YzKyHeLtb4=
 github.com/goforj/str v1.2.0/go.mod h1:LGUzW/UEbvNG8TbN7kIzd9O10oq4wyGyF5Xk4SzfKZk=
-github.com/goforj/web v0.5.2 h1:SdMZ5tGVMi44hOsbms7zM04sCMGplZ732Ruw+AfLXCQ=
-github.com/goforj/web v0.5.2/go.mod h1:Vxs9M8/LfKEM5uW/ENhoun4lOpDazJrYrVrlpULjREg=
+github.com/goforj/web v0.5.3 h1:4SFC+L0a0S6ZlGQJYZepIGGZmxdBAk0T9ju496vQVnc=
+github.com/goforj/web v0.5.3/go.mod h1:Vxs9M8/LfKEM5uW/ENhoun4lOpDazJrYrVrlpULjREg=
 github.com/goforj/wire v1.2.0 h1:F02xb36PwSJZCpazfWBs4Gc7qtm34NICH0QMAqfFtn4=
 github.com/goforj/wire v1.2.0/go.mod h1:liyCJqszv9cbeDz09W+/yAcWi05803Q4ncm7lhMO6QM=
 github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 h1:f+oWsMOmNPc8JmEHVZIycC7hBoQxHH9pNKQORJNozsQ=
@@ -166,8 +162,6 @@ github.com/google/jsonschema-go v0.4.2 h1:tmrUohrwoLZZS/P3x7ex0WAVknEkBZM46iALbc
 github.com/google/jsonschema-go v0.4.2/go.mod h1:r5quNTdLOYEz95Ru18zA0ydNbBuYoo9tgaYcxEYhJVE=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e/go.mod h1:boTsfXsheKC2y+lKOCMpSfarhxDeIzfZG1jqGcPl3cA=
-github.com/google/subcommands v1.2.0 h1:vWQspBTo2nEqTUFita5/KeEWlUL8kQObDFbub/EN9oE=
-github.com/google/subcommands v1.2.0/go.mod h1:ZjhPrFU+Olkh9WazFPsl27BQ4UPiG37m3yTrtFlrHVk=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
