@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"{{.GoModuleName}}/internal/konghelp"
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/alecthomas/kong"
 	"os"
@@ -31,7 +32,7 @@ func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
 	parser, err := kong.New(
 		command,
 		kong.Name(AppHelpName()),
-		kong.Help(KongHelpFormatter),
+		kong.Help(konghelp.{{.HelpFormatterFunc}}),
 	)
 	if err != nil {
 		return true, err
@@ -39,17 +40,17 @@ func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
 	signed, _ := command.(standaloneCommand)
 	applyStandalonePrebootSignature(parser.Model.Node, signed)
 	if commandHelpRequested(args[1:]) {
-		printCommandHelp(os.Stdout, parser.Model.Node)
+		konghelp.{{.HelpCommandFunc}}(os.Stdout, parser.Model.Node)
 		return true, nil
 	}
 	parseCtx, err := parser.Parse(args[1:])
 	if err != nil {
 		if helper, ok := command.(interface{ Help() string }); ok {
-			if example := firstExampleFromDetail(helper.Help()); example != "" {
+			if example := konghelp.FirstExampleFromDetail(helper.Help()); example != "" {
 				return true, fmt.Errorf("%w\nexample: %s", err, example)
 			}
 		}
-		return true, CommandParseError(parser, args[0], err)
+		return true, konghelp.CommandParseError(parser, args[0], err)
 	}
 	parseCtx.BindTo(runtime.CLIContext(), (*context.Context)(nil))
 	return true, parseCtx.Run()
@@ -81,7 +82,7 @@ func printRootPrebootHelp(root interface{}) error {
 	parser, err := kong.New(
 		root,
 		kong.Name(AppHelpName()),
-		kong.Help(KongHelpFormatter),
+		kong.Help(konghelp.{{.HelpFormatterFunc}}),
 	)
 	if err != nil {
 		return err

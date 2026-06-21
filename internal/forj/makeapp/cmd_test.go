@@ -30,12 +30,61 @@ func TestCmdSkipsWizardWhenSelectionIsExplicit(t *testing.T) {
 		"components":  {Components: "web-api"},
 		"without":     {Without: "web-ui"},
 		"starter-kit": {StarterKit: "vue"},
+		"help-format": {HelpFormat: string(project.HelpFormatExternalCLI)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if cmd.shouldRunWizard() {
 				t.Fatalf("expected explicit %s selection to skip wizard", name)
 			}
 		})
+	}
+}
+
+func TestAppSelectionAllowsExternalHelpFormatWithOtherComponents(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "ship", Components: "web-api,jobs", HelpFormat: string(project.HelpFormatExternalCLI)}
+	components, starterKit, helpFormat, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true, WebAPI: true, Jobs: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("appSelection() error = %v", err)
+	}
+	if !components.CLI || !components.WebAPI || !components.Jobs {
+		t.Fatalf("expected CLI, WebAPI, and Jobs components, got %+v", components)
+	}
+	if starterKit != project.StarterKitNone {
+		t.Fatalf("starterKit = %q, want none", starterKit)
+	}
+	if helpFormat != project.HelpFormatExternalCLI {
+		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatExternalCLI)
+	}
+}
+
+func TestAppSelectionAllowsGuidedHelpFormatWithOtherComponents(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "tasks", Components: "scheduler,database_sqlite", HelpFormat: string(project.HelpFormatGuided)}
+	components, starterKit, helpFormat, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true, Scheduler: true, DatabaseSQLite: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("appSelection() error = %v", err)
+	}
+	if !components.CLI || !components.Scheduler || !components.DatabaseSQLite {
+		t.Fatalf("expected CLI, Scheduler, and SQLite components, got %+v", components)
+	}
+	if starterKit != project.StarterKitNone {
+		t.Fatalf("starterKit = %q, want none", starterKit)
+	}
+	if helpFormat != project.HelpFormatGuided {
+		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatGuided)
 	}
 }
 
@@ -77,8 +126,8 @@ render:
 	}
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, bool, error) {
-		return project.Components{}, project.StarterKitNone, true, nil
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error) {
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), true, nil
 	})
 	defer restoreWizard()
 	renderer := &recordingRenderer{}
@@ -153,13 +202,13 @@ func TestCmdRunTreatsMissingRemoveAppAsNormalExit(t *testing.T) {
 func TestAppSelectionReturnsCancellationSentinel(t *testing.T) {
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, bool, error) {
-		return project.Components{}, project.StarterKitNone, true, nil
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error) {
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), true, nil
 	})
 	defer restoreWizard()
 
 	cmd := &Cmd{Name: "reporting"}
-	_, _, err := cmd.appSelection(&project.Config{
+	_, _, _, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -316,7 +365,7 @@ func stubInteractiveTerminal(t *testing.T, interactive bool) func() {
 	}
 }
 
-func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, bool, error)) func() {
+func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error)) func() {
 	t.Helper()
 	original := appWizardRunner
 	appWizardRunner = runner

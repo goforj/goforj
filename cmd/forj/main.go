@@ -16,6 +16,7 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
@@ -47,7 +48,7 @@ func main() {
 		app.RootCmd(),
 		kong.Name("goforj"),
 		kong.Description("GoForj CLI\n  The composable stack for building with Go."),
-		kong.Help(cmd.KongHelpFormatter),
+		kong.Help(konghelp.FrameworkFormatter),
 		kong.Vars{
 			"version": version.String(),
 		},

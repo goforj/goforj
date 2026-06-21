@@ -38,6 +38,7 @@ var appWizardRunner = runAppWizard
 type RenderOptions struct {
 	Components project.Components
 	StarterKit project.StarterKit
+	HelpFormat project.HelpFormat
 	SkipWire   bool
 }
 
@@ -67,6 +68,7 @@ type Cmd struct {
 	Components string `name:"components" help:"Comma-separated app components, such as web-api,jobs"`
 	Without    string `name:"without" help:"Comma-separated app components to remove from the default app selection"`
 	StarterKit string `name:"starter-kit" help:"Frontend starter kit for apps with Web UI"`
+	HelpFormat string `name:"help-format" help:"Help output format for app CLI commands: framework, external_cli, or guided"`
 	SkipWire   bool   `name:"skip-wire" help:"Render files without running Wire generation"`
 	Remove     bool   `name:"remove" help:"Remove the conventional files and metadata for an app"`
 }
@@ -120,7 +122,7 @@ func (c *Cmd) Run() error {
 	if err != nil {
 		return err
 	}
-	components, starterKit, err := c.appSelection(config)
+	components, starterKit, helpFormat, err := c.appSelection(config)
 	if err != nil {
 		if errors.Is(err, errAppCreationCancelled) {
 			return nil
@@ -134,6 +136,7 @@ func (c *Cmd) Run() error {
 	if err := c.renderer.RenderAppOnly(app, RenderOptions{
 		Components: components,
 		StarterKit: starterKit,
+		HelpFormat: helpFormat,
 		SkipWire:   c.SkipWire,
 	}); err != nil {
 		return err
@@ -171,41 +174,41 @@ func (c *Cmd) removeApp(app project.App) error {
 }
 
 // appSelection resolves the per-app component and starter-kit choices.
-func (c *Cmd) appSelection(config *project.Config) (project.Components, project.StarterKit, error) {
+func (c *Cmd) appSelection(config *project.Config) (project.Components, project.StarterKit, project.HelpFormat, error) {
 	available := config.Render.Components
 	if c.shouldRunWizard() {
 		if !isInteractiveTerminal() {
-			return project.Components{}, project.StarterKitNone, fmt.Errorf("app wizard requires an interactive terminal")
+			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), fmt.Errorf("app wizard requires an interactive terminal")
 		}
-		components, starterKit, cancelled, err := appWizardRunner(c.Name, config)
+		components, starterKit, helpFormat, cancelled, err := appWizardRunner(c.Name, config)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, err
+			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 		}
 		if cancelled {
-			return project.Components{}, project.StarterKitNone, errAppCreationCancelled
+			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), errAppCreationCancelled
 		}
-		return components, starterKit, nil
+		return components, starterKit, helpFormat, nil
 	}
 	components := project.AppDefaultComponents(available)
 	if strings.TrimSpace(c.Components) != "" {
 		keys, err := project.ParseComponentKeys(c.Components)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, err
+			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 		}
 		components, err = project.AppComponentsFromKeys(available, keys)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, err
+			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 		}
 	}
 	if strings.TrimSpace(c.Without) != "" {
 		keys, err := project.ParseComponentKeys(c.Without)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, err
+			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 		}
 		for _, key := range keys {
 			if !project.IsAppComponentKey(key) {
 				definition, _ := project.ComponentDefinitionByKey(key)
-				return project.Components{}, project.StarterKitNone, fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
+				return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
 			}
 			components.SetEnabled(key, false)
 		}
@@ -220,12 +223,16 @@ func (c *Cmd) appSelection(config *project.Config) (project.Components, project.
 		starterKit = project.StarterKitNone
 	}
 	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
-		return project.Components{}, project.StarterKitNone, err
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 	}
 	if err := components.ValidateRenderContract(); err != nil {
-		return project.Components{}, project.StarterKitNone, err
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 	}
-	return components, starterKit, nil
+	helpFormat := project.NormalizeHelpFormat(project.HelpFormat(c.HelpFormat))
+	if strings.TrimSpace(c.HelpFormat) == "" {
+		helpFormat = project.NormalizeHelpFormat(config.Render.HelpFormat)
+	}
+	return components, starterKit, helpFormat, nil
 }
 
 // shouldRunWizard keeps the default flow interactive while allowing explicit flags to stay scriptable.
@@ -240,7 +247,8 @@ func (c *Cmd) shouldRunWizard() bool {
 func (c *Cmd) hasExplicitSelection() bool {
 	return strings.TrimSpace(c.Components) != "" ||
 		strings.TrimSpace(c.Without) != "" ||
-		strings.TrimSpace(c.StarterKit) != ""
+		strings.TrimSpace(c.StarterKit) != "" ||
+		strings.TrimSpace(c.HelpFormat) != ""
 }
 
 // printMissingNameHelp keeps the no-arg command path instructional instead of error-styled.

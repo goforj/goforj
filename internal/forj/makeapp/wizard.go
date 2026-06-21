@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/project"
 )
 
@@ -49,10 +50,27 @@ func (i starterKitItem) Description() string { return i.Desc }
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i starterKitItem) FilterValue() string { return i.Label }
 
+type helpFormatItem struct {
+	Key      project.HelpFormat
+	Label    string
+	Desc     string
+	Selected bool
+}
+
+// Title satisfies the Bubbles list item contract for help-format rows.
+func (i helpFormatItem) Title() string { return i.Label }
+
+// Description satisfies the Bubbles list item contract for help-format rows.
+func (i helpFormatItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
+func (i helpFormatItem) FilterValue() string { return i.Label }
+
 type appWizardStage int
 
 const (
 	appWizardComponents appWizardStage = iota
+	appWizardHelpFormat
 	appWizardStarterKit
 	appWizardConfirm
 	appWizardDone
@@ -62,26 +80,28 @@ type appWizardModel struct {
 	appName        string
 	stage          appWizardStage
 	componentList  list.Model
+	helpFormatList list.Model
 	starterKitList list.Model
 	available      project.Components
 	components     project.Components
+	helpFormat     project.HelpFormat
 	starterKit     project.StarterKit
 	cancelled      bool
 	termWidth      int
 }
 
 // runAppWizard selects components and starter kit for a new app.
-func runAppWizard(appName string, config *project.Config) (project.Components, project.StarterKit, bool, error) {
+func runAppWizard(appName string, config *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error) {
 	initial := initialAppWizardModel(appName, config)
 	result, err := tea.NewProgram(initial).Run()
 	if err != nil {
-		return project.Components{}, project.StarterKitNone, false, err
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), false, err
 	}
 	model, ok := result.(appWizardModel)
 	if !ok || model.cancelled {
-		return project.Components{}, project.StarterKitNone, true, nil
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), true, nil
 	}
-	return model.components, model.starterKit, false, nil
+	return model.components, model.starterKit, model.helpFormat, false, nil
 }
 
 // initialAppWizardModel builds the initial wizard state from project defaults.
@@ -106,15 +126,24 @@ func initialAppWizardModel(appName string, config *project.Config) appWizardMode
 	starterKitList.SetShowHelp(false)
 	starterKitList.SetShowStatusBar(false)
 	starterKitList.SetShowPagination(false)
+	helpFormat := project.NormalizeHelpFormat(config.Render.HelpFormat)
+	helpFormatList := list.New(makeHelpFormatItems(helpFormat), delegate, 34, 2)
+	helpFormatList.Title = "Help Format"
+	helpFormatList.SetShowFilter(false)
+	helpFormatList.SetShowHelp(false)
+	helpFormatList.SetShowStatusBar(false)
+	helpFormatList.SetShowPagination(false)
 	return appWizardModel{
 		appName:        appName,
 		stage:          appWizardComponents,
 		componentList:  componentList,
+		helpFormatList: helpFormatList,
 		starterKitList: starterKitList,
 		available:      available,
 		components:     components,
+		helpFormat:     helpFormat,
 		starterKit:     starterKit,
-		termWidth:      90,
+		termWidth:      132,
 	}
 }
 
@@ -125,8 +154,8 @@ func (m appWizardModel) Init() tea.Cmd { return nil }
 func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.termWidth = 90
-		if msg.Width > 0 && msg.Width < 90 {
+		m.termWidth = 132
+		if msg.Width > 0 && msg.Width < 132 {
 			m.termWidth = msg.Width
 		}
 		return m, nil
@@ -141,12 +170,7 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				m.applyComponentSelection()
-				if m.components.WebUI {
-					m.stage = appWizardStarterKit
-				} else {
-					m.starterKit = project.StarterKitNone
-					m.stage = appWizardConfirm
-				}
+				m.stage = appWizardHelpFormat
 				return m, nil
 			case " ":
 				index := m.componentList.Index()
@@ -163,10 +187,29 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
-		case appWizardStarterKit:
+		case appWizardHelpFormat:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				m.stage = appWizardComponents
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				m.applyHelpFormatSelection()
+				if m.components.WebUI {
+					m.stage = appWizardStarterKit
+				} else {
+					m.stage = appWizardConfirm
+				}
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.helpFormatList, cmd = m.helpFormatList.Update(msg)
+			m.syncHelpFormatSelectionFromCursor()
+			return m, cmd
+		case appWizardStarterKit:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = appWizardHelpFormat
 				return m, nil
 			}
 			if msg.String() == "enter" {
@@ -184,7 +227,7 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.components.WebUI {
 					m.stage = appWizardStarterKit
 				} else {
-					m.stage = appWizardComponents
+					m.stage = appWizardHelpFormat
 				}
 				return m, nil
 			}
@@ -214,11 +257,16 @@ func (m appWizardModel) View() string {
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
 		panels = append(panels, wizardPanel("Starter Kit", m.renderStarterKitList(), m.termWidth, true))
 		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+	case appWizardHelpFormat:
+		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
+		panels = append(panels, m.renderHelpFormatStage())
+		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case appWizardConfirm:
 		panels = append(panels, wizardPanel("Confirm app", renderKeyValueTable([]keyValue{
 			{"App", m.appName},
 			{"Components", componentNames},
 			{"Starter kit", m.selectedStarterKitSummary()},
+			{"Help format", m.selectedHelpFormatSummary()},
 		}), m.termWidth, true))
 		actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
 	}
@@ -307,6 +355,22 @@ func (m *appWizardModel) applyStarterKitSelection() {
 	m.setStarterKitSelected(m.starterKit)
 }
 
+// applyHelpFormatSelection commits the highlighted formatter before confirmation.
+func (m *appWizardModel) applyHelpFormatSelection() {
+	index := m.helpFormatList.Index()
+	if index < 0 || index >= len(m.helpFormatList.Items()) {
+		m.helpFormat = project.DefaultHelpFormat()
+		return
+	}
+	item, ok := m.helpFormatList.Items()[index].(helpFormatItem)
+	if !ok {
+		m.helpFormat = project.DefaultHelpFormat()
+		return
+	}
+	m.helpFormat = project.NormalizeHelpFormat(item.Key)
+	m.setHelpFormatSelected(m.helpFormat)
+}
+
 // renderComponentList renders component rows manually because the default list chrome is hidden.
 func (m appWizardModel) renderComponentList() string {
 	var rows []string
@@ -323,6 +387,58 @@ func (m appWizardModel) renderComponentList() string {
 		label := wizardPrimaryStyle.Render(item.Name)
 		if m.componentList.Index() == i {
 			label = wizardAccentStyle.Render(item.Name)
+		}
+		line := caret + marker + " " + label
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + wizardMutedStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// renderHelpFormatStage renders formatter choices with a live preview of real formatter output.
+func (m appWizardModel) renderHelpFormatStage() string {
+	selection := wizardPanelWithWidth("Help Format", m.renderHelpFormatList(), m.termWidth, true)
+	if m.termWidth >= 118 {
+		gap := 2
+		available := m.termWidth - gap*2
+		leftWidth := available / 3
+		middleWidth := available / 3
+		rightWidth := available - leftWidth - middleWidth
+		previews := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			wizardPanelWithWidth("Framework Preview", previewText(project.HelpFormatFramework, leftWidth-6), leftWidth, false),
+			strings.Repeat(" ", gap),
+			wizardPanelWithWidth("External CLI Preview", previewText(project.HelpFormatExternalCLI, middleWidth-6), middleWidth, false),
+			strings.Repeat(" ", gap),
+			wizardPanelWithWidth("Guided Preview", previewText(project.HelpFormatGuided, rightWidth-6), rightWidth, false),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, selection, previews)
+	}
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		selection,
+		wizardPanelWithWidth("Preview", previewText(m.highlightedHelpFormat(), m.termWidth-6), m.termWidth, false),
+	)
+}
+
+// renderHelpFormatList renders formatter rows as radio choices.
+func (m appWizardModel) renderHelpFormatList() string {
+	var rows []string
+	for i, raw := range m.helpFormatList.Items() {
+		item := raw.(helpFormatItem)
+		caret := "  "
+		if m.helpFormatList.Index() == i {
+			caret = wizardAccentStyle.Render("› ")
+		}
+		label := wizardPrimaryStyle.Render(item.Label)
+		if m.helpFormatList.Index() == i {
+			label = wizardAccentStyle.Render(item.Label)
+		}
+		marker := "○"
+		if item.Selected {
+			marker = "●"
 		}
 		line := caret + marker + " " + label
 		if strings.TrimSpace(item.Desc) != "" {
@@ -359,6 +475,35 @@ func (m appWizardModel) renderStarterKitList() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// syncHelpFormatSelectionFromCursor makes cursor movement behave like a radio selection.
+func (m *appWizardModel) syncHelpFormatSelectionFromCursor() {
+	m.helpFormat = m.highlightedHelpFormat()
+	m.setHelpFormatSelected(m.helpFormat)
+}
+
+// highlightedHelpFormat returns the formatter under the cursor.
+func (m appWizardModel) highlightedHelpFormat() project.HelpFormat {
+	index := m.helpFormatList.Index()
+	if index < 0 || index >= len(m.helpFormatList.Items()) {
+		return project.DefaultHelpFormat()
+	}
+	item, ok := m.helpFormatList.Items()[index].(helpFormatItem)
+	if !ok {
+		return project.DefaultHelpFormat()
+	}
+	return project.NormalizeHelpFormat(item.Key)
+}
+
+// setHelpFormatSelected keeps only one help format marked as selected.
+func (m *appWizardModel) setHelpFormatSelected(selected project.HelpFormat) {
+	selected = project.NormalizeHelpFormat(selected)
+	for idx, raw := range m.helpFormatList.Items() {
+		item := raw.(helpFormatItem)
+		item.Selected = project.NormalizeHelpFormat(item.Key) == selected
+		m.helpFormatList.SetItem(idx, item)
+	}
+}
+
 // syncStarterKitSelectionFromCursor makes cursor movement behave like a radio selection.
 func (m *appWizardModel) syncStarterKitSelectionFromCursor() {
 	index := m.starterKitList.Index()
@@ -383,6 +528,18 @@ func (m *appWizardModel) setStarterKitSelected(selected project.StarterKit) {
 	}
 }
 
+// selectedHelpFormatSummary reports the selected CLI help layout.
+func (m appWizardModel) selectedHelpFormatSummary() string {
+	helpFormat := m.helpFormat
+	if m.stage == appWizardHelpFormat {
+		helpFormat = m.highlightedHelpFormat()
+	}
+	if definition, ok := project.HelpFormatDefinitionByKey(helpFormat); ok {
+		return definition.Label
+	}
+	return "Framework"
+}
+
 // selectedStarterKitSummary reports the effective starter kit for the confirmation panel.
 func (m appWizardModel) selectedStarterKitSummary() string {
 	if !m.components.WebUI {
@@ -401,6 +558,22 @@ func (m appWizardModel) selectedStarterKitSummary() string {
 		return definition.Label
 	}
 	return "None"
+}
+
+// makeHelpFormatItems converts formatter definitions into radio-style list rows.
+func makeHelpFormatItems(selected project.HelpFormat) []list.Item {
+	selected = project.NormalizeHelpFormat(selected)
+	definitions := project.HelpFormatCatalog()
+	items := make([]list.Item, 0, len(definitions))
+	for _, definition := range definitions {
+		items = append(items, helpFormatItem{
+			Key:      definition.Key,
+			Label:    definition.Label,
+			Desc:     definition.Description,
+			Selected: project.NormalizeHelpFormat(definition.Key) == selected,
+		})
+	}
+	return items
 }
 
 // makeAppComponentItems converts component definitions into list rows with current selection state.
@@ -432,6 +605,16 @@ func makeStarterKitItems(selected project.StarterKit) []list.Item {
 		})
 	}
 	return items
+}
+
+// previewText renders and clips real formatter output for the wizard preview panes.
+func previewText(format project.HelpFormat, width int) string {
+	preview := konghelp.Preview(string(project.NormalizeHelpFormat(format)))
+	lines := strings.Split(preview, "\n")
+	for i, line := range lines {
+		lines[i] = lipgloss.NewStyle().MaxWidth(maxInt(20, width)).Render(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // selectedComponentNamesFromItems preserves visible order for wizard summaries.
@@ -470,6 +653,11 @@ func wizardPanel(title string, content string, termWidth int, active bool) strin
 	if termWidth <= 0 || termWidth > 90 {
 		termWidth = 90
 	}
+	return wizardPanelWithWidth(title, content, termWidth, active)
+}
+
+// wizardPanelWithWidth renders a panel at an explicit width for side-by-side panes.
+func wizardPanelWithWidth(title string, content string, termWidth int, active bool) string {
 	titleStyle := wizardMutedStyle
 	if active {
 		titleStyle = wizardAccentStyle

@@ -1,4 +1,4 @@
-package cmd
+package konghelp
 
 import (
 	"fmt"
@@ -12,113 +12,41 @@ import (
 	"github.com/goforj/str"
 )
 
-// sectionHeader formats a top-level help section title.
+// sectionHeader centralizes section styling so all formatter variants stay visually consistent.
 func sectionHeader(title string) string {
 	return console.Colorize(console.ColorBoldWhite, title)
 }
 
-// categoryHeader formats a command category label.
+// categoryHeader shares the section treatment for command groups and usage headings.
 func categoryHeader(category string) string {
 	return console.Colorize(console.ColorBoldWhite, category)
 }
 
-// helpIdentifier formats positional and flag names in command help.
+// helpIdentifier gives arguments and flags a distinct treatment from prose.
 func helpIdentifier(value string) string {
 	return console.Colorize(console.ColorCyan, value)
 }
 
-// helpCommand formats command names in command lists.
+// helpCommand highlights copyable command text across all formatter variants.
 func helpCommand(value string) string {
 	return console.Colorize(console.ColorBoldGreen, value)
 }
 
-// helpDescription formats muted descriptive help text.
+// helpDescription mutes explanatory text so command names remain the visual anchor.
 func helpDescription(value string) string {
 	return console.Colorize(console.ColorGray, value)
 }
 
-// KongHelpFormatter is a custom help formatter for Kong CLI that resembles Laravel's artisan help output.
-func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
-	out := os.Stdout
+// selectedNode falls back to the model root because standalone preboot parsers can leave no selected node.
+func selectedNode(ctx *kong.Context) *kong.Node {
 	node := ctx.Selected()
 	if node == nil {
 		node = ctx.Model.Node
 	}
-	maintainerHelp := maintainerHelpEnabled()
-
-	// If the selected node is a command, print its flags/help. Standalone
-	// preboot commands are both the selected command and the parser root.
-	if node.Type == kong.CommandNode && (node != ctx.Model.Node || len(node.Children) == 0) {
-		printCommandHelp(out, node)
-		return nil
-	}
-
-	printRootHelpHeader(out, ctx.Model.Help, node.Name)
-
-	sections := make(map[string][]*kong.Node)
-
-	for _, child := range node.Children {
-		if !commandVisibleInHelp(child, maintainerHelp) {
-			continue
-		}
-
-		section := commandNamespace(child)
-		sections[section] = append(sections[section], child)
-	}
-
-	maxLen := maxCommandLen(sections)
-	for _, section := range sortedKeys(sections) {
-		fmt.Fprintln(out, categoryHeader(section))
-		renderAlignedCommands(out, sections[section], maxLen, "  ")
-	}
-
-	return nil
+	return node
 }
 
-// printRootHelpHeader renders the root help title.
-func printRootHelpHeader(out io.Writer, modelHelp string, modelName string) {
-	if help := strings.TrimSpace(modelHelp); help != "" {
-		for index, line := range strings.Split(help, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			if index == 0 {
-				fmt.Fprintln(out, sectionHeader(line))
-				continue
-			}
-			fmt.Fprintln(out, helpDescription(line))
-		}
-		fmt.Fprintln(out)
-		return
-	}
-	if name := strings.TrimSpace(modelName); name != "" {
-		fmt.Fprintln(out, sectionHeader(name))
-		fmt.Fprintln(out)
-	}
-}
-
-// commandNamespace returns the namespace used to group a command in root help.
-func commandNamespace(child *kong.Node) string {
-	if child == nil {
-		return "app"
-	}
-	if child.Tag != nil {
-		if group := str.Of(child.Tag.Group).TrimSpace().String(); group != "" {
-			return group
-		}
-	}
-	name := strings.TrimSpace(child.Name)
-	if name == "migrate" {
-		return "migrate"
-	}
-	if prefix, _, ok := strings.Cut(name, ":"); ok && prefix != "" {
-		return prefix
-	}
-	return "app"
-}
-
-// maintainerHelpEnabled reports whether hidden maintainer commands should be shown.
+// maintainerHelpEnabled exposes hidden diagnostic commands only in explicit framework-development contexts.
 func maintainerHelpEnabled() bool {
 	v := str.Of(os.Getenv("FORJ_DEV")).TrimSpace().ToLower().String()
 	if v == "1" || v == "true" || v == "yes" || v == "on" {
@@ -132,7 +60,7 @@ func maintainerHelpEnabled() bool {
 	return false
 }
 
-// commandVisibleInHelp reports whether a command node belongs in normal or maintainer help.
+// commandVisibleInHelp keeps internal test and scenario commands out of normal user help.
 func commandVisibleInHelp(child *kong.Node, maintainerHelp bool) bool {
 	if child == nil || child.Type != kong.CommandNode {
 		return false
@@ -143,8 +71,14 @@ func commandVisibleInHelp(child *kong.Node, maintainerHelp bool) bool {
 	return maintainerHelp && (strings.HasPrefix(child.Name, "test:") || strings.HasPrefix(child.Name, "scenario:"))
 }
 
-// printCommandHelp renders detailed help for a single command node.
-func printCommandHelp(out io.Writer, node *kong.Node) {
+// helpRow carries already-derived command metadata through the shared table renderer.
+type helpRow struct {
+	name string
+	help string
+}
+
+// PrintCommandHelp renders detailed help for a single command node.
+func PrintCommandHelp(out io.Writer, node *kong.Node) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, sectionHeader(node.Help))
 	renderHelpRows(out, commandHelpRows(node), "  ")
@@ -155,13 +89,7 @@ func printCommandHelp(out io.Writer, node *kong.Node) {
 	fmt.Fprintln(out)
 }
 
-// helpRow represents one positional argument or flag row.
-type helpRow struct {
-	name string
-	help string
-}
-
-// commandHelpRows returns visible positional arguments and flags for a command node.
+// commandHelpRows filters hidden flags before any formatter renders detailed command help.
 func commandHelpRows(node *kong.Node) []helpRow {
 	rows := make([]helpRow, 0, len(node.Positional)+len(node.Flags))
 	for _, pos := range node.Positional {
@@ -180,7 +108,7 @@ func commandHelpRows(node *kong.Node) []helpRow {
 	return rows
 }
 
-// renderHelpRows prints aligned command help rows.
+// renderHelpRows aligns metadata columns so mixed short and long flags remain easy to scan.
 func renderHelpRows(out io.Writer, rows []helpRow, indent string) {
 	maxLen := 0
 	for _, row := range rows {
@@ -194,11 +122,11 @@ func renderHelpRows(out io.Writer, rows []helpRow, indent string) {
 	}
 }
 
-// renderCommandDetail prints extended command help with styled section labels.
+// renderCommandDetail styles known sections while preserving user-authored help text.
 func renderCommandDetail(out io.Writer, detail string) {
 	for _, line := range strings.Split(detail, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if isHelpDetailSection(trimmed) {
+		if strings.EqualFold(strings.TrimSuffix(trimmed, ":"), "examples") {
 			fmt.Fprintln(out, console.Colorize(console.ColorBoldWhite, trimmed))
 			continue
 		}
@@ -206,12 +134,7 @@ func renderCommandDetail(out io.Writer, detail string) {
 	}
 }
 
-// isHelpDetailSection reports whether a detail line should be styled as a section label.
-func isHelpDetailSection(line string) bool {
-	return strings.EqualFold(strings.TrimSuffix(line, ":"), "examples")
-}
-
-// renderAlignedCommands prints command names and descriptions in aligned columns.
+// renderAlignedCommands normalizes command-list spacing across root help layouts.
 func renderAlignedCommands(out io.Writer, cmds []*kong.Node, maxLen int, indent string) {
 	sortCommands(cmds)
 	for _, cmd := range cmds {
@@ -220,14 +143,14 @@ func renderAlignedCommands(out io.Writer, cmds []*kong.Node, maxLen int, indent 
 	}
 }
 
-// sortCommands sorts command nodes alphabetically by name.
+// sortCommands makes generated help deterministic across map and registration order changes.
 func sortCommands(cmds []*kong.Node) {
 	sort.Slice(cmds, func(i, j int) bool {
 		return cmds[i].Name < cmds[j].Name
 	})
 }
 
-// sortedKeys returns map keys sorted alphabetically.
+// sortedKeys keeps framework command categories stable between runs.
 func sortedKeys(m map[string][]*kong.Node) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -237,7 +160,7 @@ func sortedKeys(m map[string][]*kong.Node) []string {
 	return keys
 }
 
-// maxCommandLen returns the longest command name across command groups.
+// maxCommandLen lets root and command-specific tables share one alignment calculation.
 func maxCommandLen(groups ...interface{}) int {
 	maxLen := 0
 	for _, group := range groups {

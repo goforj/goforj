@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/forj/atlas"
+	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
@@ -34,6 +35,8 @@ const (
 	StageModuleName
 	// StageSelectComponents collects the project-level component selection.
 	StageSelectComponents
+	// StageHelpFormat collects the CLI help formatter.
+	StageHelpFormat
 	// StageStarterKit collects the frontend starter kit when Web UI is enabled.
 	StageStarterKit
 	// StageExtras collects optional project profiles that expand component selection.
@@ -140,6 +143,22 @@ func (i StarterKitItem) Description() string { return i.Desc }
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i StarterKitItem) FilterValue() string { return i.Label }
 
+// HelpFormatItem adapts a help formatter option to the Bubbles list model.
+type HelpFormatItem struct {
+	Key   project.HelpFormat
+	Label string
+	Desc  string
+}
+
+// Title satisfies the Bubbles list item contract for help-format rows.
+func (i HelpFormatItem) Title() string { return i.Label }
+
+// Description satisfies the Bubbles list item contract for help-format rows.
+func (i HelpFormatItem) Description() string { return i.Desc }
+
+// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
+func (i HelpFormatItem) FilterValue() string { return i.Label }
+
 type atlasMode string
 
 const (
@@ -240,6 +259,20 @@ func makeStarterKitItems() []list.Item {
 	return items
 }
 
+// makeHelpFormatItems converts the shared help formatter catalog into wizard rows.
+func makeHelpFormatItems() []list.Item {
+	definitions := project.HelpFormatCatalog()
+	items := make([]list.Item, 0, len(definitions))
+	for _, definition := range definitions {
+		items = append(items, HelpFormatItem{
+			Key:   definition.Key,
+			Label: definition.Label,
+			Desc:  definition.Description,
+		})
+	}
+	return items
+}
+
 // makeAtlasModeItems returns the high-level Atlas install choices for the wizard.
 func makeAtlasModeItems() []list.Item {
 	return []list.Item{
@@ -315,6 +348,7 @@ type model struct {
 	moduleInput        textinput.Model
 	pathInput          textinput.Model
 	componentList      list.Model
+	helpFormatList     list.Model
 	starterKitList     list.Model
 	queueDriverList    list.Model
 	atlasModeList      list.Model
@@ -345,6 +379,7 @@ func (m *model) finalizeConfig() {
 	if !components.WebUI || components.DemoApp {
 		m.config.Render.StarterKit = project.StarterKitNone
 	}
+	m.config.Render.HelpFormat = project.NormalizeHelpFormat(m.config.Render.HelpFormat)
 	if components.Jobs {
 		m.config.Render.QueueDriver = normalizeQueueDriver(m.config.Render.QueueDriver)
 		if m.config.Render.QueueDriver == "" {
@@ -463,6 +498,17 @@ func initialModel() model {
 	starterKitList.SetShowStatusBar(false)
 	starterKitList.SetShowPagination(false)
 
+	helpFormatList := list.New(makeHelpFormatItems(), delegate, 42, 2)
+	helpFormatList.Title = "Help Format"
+	helpFormatList.SetShowFilter(false)
+	helpFormatList.SetShowHelp(false)
+	helpFormatList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	helpFormatList.Styles.PaginationStyle = helpStyle
+	helpFormatList.Styles.HelpStyle = helpStyle
+	helpFormatList.Styles.StatusBar = helpStyle
+	helpFormatList.SetShowStatusBar(false)
+	helpFormatList.SetShowPagination(false)
+
 	runtimeList := list.New(makeQueueDriverItems(), delegate, 42, 6)
 	runtimeList.Title = "Queue Driver"
 	runtimeList.SetShowFilter(false)
@@ -513,6 +559,7 @@ func initialModel() model {
 		moduleInput:      styledTextInput(),
 		pathInput:        pi,
 		componentList:    li,
+		helpFormatList:   helpFormatList,
 		starterKitList:   starterKitList,
 		queueDriverList:  runtimeList,
 		atlasModeList:    atlasModeList,
@@ -525,6 +572,7 @@ func initialModel() model {
 				GoForjVersion: version.Semver(),
 				Components:    project.DefaultSelectedComponents(),
 				StarterKit:    project.DefaultStarterKit(),
+				HelpFormat:    project.DefaultHelpFormat(),
 			},
 		},
 	}
@@ -555,6 +603,21 @@ func (m *model) applyComponentSelection() {
 	if !m.components().WebUI {
 		m.config.Render.StarterKit = project.StarterKitNone
 	}
+}
+
+// applyHelpFormatSelection commits the highlighted formatter before the wizard advances.
+func (m *model) applyHelpFormatSelection() {
+	index := m.helpFormatList.Index()
+	if index < 0 || index >= len(m.helpFormatList.Items()) {
+		m.config.Render.HelpFormat = project.DefaultHelpFormat()
+		return
+	}
+	item, ok := m.helpFormatList.Items()[index].(HelpFormatItem)
+	if !ok {
+		m.config.Render.HelpFormat = project.DefaultHelpFormat()
+		return
+	}
+	m.config.Render.HelpFormat = project.NormalizeHelpFormat(item.Key)
 }
 
 func (m *model) applyStarterKitSelection() {
@@ -785,12 +848,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				m.applyComponentSelection()
-				if m.config.Render.Components.WebUI {
-					m.stage = StageStarterKit
-				} else {
-					m.config.Render.StarterKit = project.StarterKitNone
-					m.stage = StageExtras
-				}
+				m.stage = StageHelpFormat
 				return m, nil
 			case "a":
 				m.setAllComponents(true)
@@ -826,10 +884,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
 
-		case StageStarterKit:
+		case StageHelpFormat:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				m.stage = StageSelectComponents
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				m.applyHelpFormatSelection()
+				if m.config.Render.Components.WebUI {
+					m.stage = StageStarterKit
+				} else {
+					m.config.Render.StarterKit = project.StarterKitNone
+					m.stage = StageExtras
+				}
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.helpFormatList, cmd = m.helpFormatList.Update(msg)
+			m.applyHelpFormatSelection()
+			return m, cmd
+
+		case StageStarterKit:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageHelpFormat
 				return m, nil
 			}
 			switch msg.String() {
@@ -848,7 +928,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.config.Render.Components.WebUI {
 					m.stage = StageStarterKit
 				} else {
-					m.stage = StageSelectComponents
+					m.stage = StageHelpFormat
 				}
 				return m, nil
 			}
@@ -1085,6 +1165,17 @@ func (m model) View() string {
 		}
 	}
 
+	// CLI help format panel.
+	if m.stage >= StageHelpFormat {
+		helpFormatSummary := m.selectedHelpFormatSummary()
+		if m.stage == StageHelpFormat {
+			panels = append(panels, m.renderHelpFormatPanel())
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Help Format", normalStyle.Render(helpFormatSummary), m.termWidth, false))
+		}
+	}
+
 	// Starter kit panel.
 	if m.stage >= StageStarterKit && m.config.Render.Components.WebUI {
 		starterKitSummary := m.selectedStarterKitSummary()
@@ -1214,20 +1305,19 @@ func (m model) View() string {
 		if strings.TrimSpace(componentNames) == "" {
 			componentNames = "CLI"
 		}
-		confirmBody := lipgloss.JoinVertical(
-			lipgloss.Left,
-			renderKeyValueTable([]keyValue{
-				{"Project", m.projectInput.Value()},
-				{"Directory", m.projectSlug()},
-				{"Go module", m.modulePreview()},
-				{"Path", m.projectPath()},
-				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
-				{"Starter kit", m.selectedStarterKitSummary()},
-				{"Queue driver", selectedQueueDriverSummary(m)},
-				{"Agent support", m.atlasSummary()},
-				{"Components", componentNames},
-			}),
-		)
+		rows := []keyValue{
+			{"Project", m.projectInput.Value()},
+			{"Directory", m.projectSlug()},
+			{"Go module", m.modulePreview()},
+			{"Path", m.projectPath()},
+			{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
+			{"Starter kit", m.selectedStarterKitSummary()},
+			{"Queue driver", selectedQueueDriverSummary(m)},
+			{"Agent support", m.atlasSummary()},
+			{"Components", componentNames},
+		}
+		rows = append(rows, keyValue{"Help format", m.selectedHelpFormatSummary()})
+		confirmBody := lipgloss.JoinVertical(lipgloss.Left, renderKeyValueTable(rows))
 		panels = append(panels, m.panelWithTitle("Confirm your project", confirmBody, m.termWidth, m.stage == StageConfirm))
 		if m.stage == StageConfirm {
 			actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
@@ -1253,6 +1343,10 @@ func (m model) View() string {
 
 func (m model) panelWithTitle(title, content string, termWidth int, active bool) string {
 	return m.panelWithTitleWithPadding(title, content, termWidth, active, 1, 1)
+}
+
+func (m model) panelWithTitleWidth(title, content string, width int, active bool) string {
+	return m.panelWithTitleWithPadding(title, content, width, active, 1, 1)
 }
 
 func (m model) panelWithTitleWithPadding(title, content string, termWidth int, active bool, leftPad, rightPad int) string {
@@ -1576,6 +1670,94 @@ func (m model) renderAtlasSurfaceList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// renderHelpFormatPanel keeps formatter previews adjacent to the selected option.
+func (m model) renderHelpFormatPanel() string {
+	selection := m.panelWithTitleWidth("Help Format", m.renderHelpFormatList(), m.termWidth, true)
+	if m.termWidth >= 118 {
+		gap := 2
+		available := m.termWidth - gap*2
+		leftWidth := available / 3
+		middleWidth := available / 3
+		rightWidth := available - leftWidth - middleWidth
+		previews := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.panelWithTitleWidth("Framework Preview", renderHelpPreview(project.HelpFormatFramework, leftWidth-6), leftWidth, false),
+			strings.Repeat(" ", gap),
+			m.panelWithTitleWidth("External CLI Preview", renderHelpPreview(project.HelpFormatExternalCLI, middleWidth-6), middleWidth, false),
+			strings.Repeat(" ", gap),
+			m.panelWithTitleWidth("Guided Preview", renderHelpPreview(project.HelpFormatGuided, rightWidth-6), rightWidth, false),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, selection, previews)
+	}
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		selection,
+		m.panelWithTitleWidth("Preview", renderHelpPreview(m.highlightedHelpFormat(), m.termWidth-6), m.termWidth, false),
+	)
+}
+
+// renderHelpFormatList mirrors radio behavior because the Bubble list chrome is hidden.
+func (m model) renderHelpFormatList() string {
+	var rows []string
+	for i, listItem := range m.helpFormatList.Items() {
+		item := listItem.(HelpFormatItem)
+		isFocused := m.helpFormatList.Index() == i
+		caret := "  "
+		if isFocused {
+			caret = progressCurrentStyle.Render("› ")
+		}
+		labelStyle := listNameStyle
+		if isFocused {
+			labelStyle = listFocusedNameStyle
+		}
+		marker := normalStyle.Render("○")
+		if project.NormalizeHelpFormat(item.Key) == project.NormalizeHelpFormat(m.config.Render.HelpFormat) {
+			marker = normalStyle.Render("●")
+		}
+		line := caret + marker + " " + labelStyle.Render(item.Label)
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + listDescStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// highlightedHelpFormat reports the formatter currently under the cursor for live previews.
+func (m model) highlightedHelpFormat() project.HelpFormat {
+	index := m.helpFormatList.Index()
+	if index < 0 || index >= len(m.helpFormatList.Items()) {
+		return project.DefaultHelpFormat()
+	}
+	item, ok := m.helpFormatList.Items()[index].(HelpFormatItem)
+	if !ok {
+		return project.DefaultHelpFormat()
+	}
+	return project.NormalizeHelpFormat(item.Key)
+}
+
+// selectedHelpFormatSummary renders the committed or previewed formatter label for summary panels.
+func (m model) selectedHelpFormatSummary() string {
+	helpFormat := project.NormalizeHelpFormat(m.config.Render.HelpFormat)
+	if m.stage == StageHelpFormat {
+		helpFormat = m.highlightedHelpFormat()
+	}
+	if definition, ok := project.HelpFormatDefinitionByKey(helpFormat); ok {
+		return definition.Label
+	}
+	return "Framework"
+}
+
+// renderHelpPreview clips real formatter output so wide examples fit inside wizard panels.
+func renderHelpPreview(format project.HelpFormat, width int) string {
+	preview := konghelp.Preview(string(project.NormalizeHelpFormat(format)))
+	lines := strings.Split(preview, "\n")
+	for i, line := range lines {
+		lines[i] = lipgloss.NewStyle().MaxWidth(maxInt(20, width)).Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m model) selectedStarterKitSummary() string {
 	if !m.config.Render.Components.WebUI || m.config.Render.Components.DemoApp {
 		return "None"
@@ -1890,12 +2072,33 @@ func (m model) renderProgress() string {
 		{"Project", StageProjectName},
 		{"Module", StageModuleName},
 		{"Components", StageSelectComponents},
-		{"Starter", StageStarterKit},
-		{"Extras", StageExtras},
-		{"Atlas", StageAtlasSupport},
-		{"Path", StageProjectPath},
-		{"Confirm", StageConfirm},
 	}
+	steps = append(steps, struct {
+		label string
+		stage WizardStage
+	}{"Help", StageHelpFormat})
+	steps = append(steps,
+		struct {
+			label string
+			stage WizardStage
+		}{"Starter", StageStarterKit},
+		struct {
+			label string
+			stage WizardStage
+		}{"Extras", StageExtras},
+		struct {
+			label string
+			stage WizardStage
+		}{"Atlas", StageAtlasSupport},
+		struct {
+			label string
+			stage WizardStage
+		}{"Path", StageProjectPath},
+		struct {
+			label string
+			stage WizardStage
+		}{"Confirm", StageConfirm},
+	)
 
 	var parts []string
 	for _, step := range steps {
