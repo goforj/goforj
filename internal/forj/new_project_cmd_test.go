@@ -146,8 +146,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageHelpFormat {
+		t.Fatalf("expected to be on help format stage")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageStarterKit {
-		t.Fatalf("expected to be on starter kit stage")
+		t.Fatalf("expected to be on starter kit stage after help format")
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -390,8 +396,15 @@ func TestStarterKitStageAppearsWhenWebUIEnabled(t *testing.T) {
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 
+	if m.stage != StageHelpFormat {
+		t.Fatalf("expected help format stage when web ui is enabled, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
 	if m.stage != StageStarterKit {
-		t.Fatalf("expected starter kit stage when web ui is enabled, got %v", m.stage)
+		t.Fatalf("expected starter kit stage after help format when web ui is enabled, got %v", m.stage)
 	}
 }
 
@@ -404,8 +417,15 @@ func TestStarterKitStageSkippedWhenWebUIDisabled(t *testing.T) {
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 
+	if m.stage != StageHelpFormat {
+		t.Fatalf("expected help format stage when web ui is disabled, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
 	if m.stage != StageExtras {
-		t.Fatalf("expected extras stage when web ui is disabled, got %v", m.stage)
+		t.Fatalf("expected extras stage after help format when web ui is disabled, got %v", m.stage)
 	}
 	if m.config.Render.StarterKit != project.StarterKitNone {
 		t.Fatalf("expected starter kit to be cleared when web ui is disabled, got %q", m.config.Render.StarterKit)
@@ -545,8 +565,14 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageHelpFormat {
+		t.Fatalf("expected help format stage, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageStarterKit {
-		t.Fatalf("expected starter kit stage, got %v", m.stage)
+		t.Fatalf("expected starter kit stage after help format, got %v", m.stage)
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})

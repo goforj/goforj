@@ -117,6 +117,7 @@ func AppPackageName(name string) string {
 type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
 	StarterKit    StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat    HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
 	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
 	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
@@ -127,6 +128,7 @@ type RenderConfig struct {
 type AppConfig struct {
 	Components Components `yaml:"components" json:"components"`
 	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
 }
 
 // ProjectConfig represents the configuration for a project.

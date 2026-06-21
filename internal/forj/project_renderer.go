@@ -116,6 +116,9 @@ type templateRenderConfig struct {
 	Components        project.Components
 	ProjectComponents project.Components
 	StarterKit        project.StarterKit
+	HelpFormat        project.HelpFormat
+	HelpFormatterFunc string
+	HelpCommandFunc   string
 	App               project.App
 	AppPackageName    string
 	AppImportPath     string
@@ -572,7 +575,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/monitoring/poll_cmd.go.tmpl",
 				"internal/monitoring/push_trigger_cmd.go.tmpl",
 				"internal/monitoring/test_poll_loop_cmd.go.tmpl",
-				"internal/cmd/kong_help_formatter.go.tmpl",
+				"internal/konghelp/help_doc.go.tmpl",
+				"internal/konghelp/help.go.tmpl",
+				"internal/konghelp/help_framework.go.tmpl",
+				"internal/konghelp/help_external.go.tmpl",
+				"internal/konghelp/help_guided.go.tmpl",
+				"internal/konghelp/help_render.go.tmpl",
+				"internal/konghelp/help_parse_error.go.tmpl",
+				"internal/konghelp/help_preview.go.tmpl",
 				"internal/cmd/default_launch.go.tmpl",
 				"internal/cmd/default_launch_test.go.tmpl",
 				"internal/cmd/env_defaults.go.tmpl",
@@ -1139,7 +1149,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	}
 	promotedProjectComponents := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
-		promoted, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit)
+		promoted, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.HelpFormat)
 		if err != nil {
 			return err
 		}
@@ -1279,7 +1289,7 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 }
 
 // setAppConfig persists app participation so future full renders keep the same app shape.
-func (p *ProjectRenderer) setAppConfig(name string, components project.Components, starterKit project.StarterKit) (bool, error) {
+func (p *ProjectRenderer) setAppConfig(name string, components project.Components, starterKit project.StarterKit, helpFormat project.HelpFormat) (bool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || name == project.DefaultAppName {
 		return false, nil
@@ -1301,6 +1311,7 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
 		return false, err
 	}
+	helpFormat = project.NormalizeHelpFormat(helpFormat)
 	before := p.config.Render.Components
 	p.config.Render.Components = project.PromoteAppComponents(p.config.Render.Components, components)
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
@@ -1309,6 +1320,7 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 	p.config.Apps[name] = project.AppConfig{
 		Components: components,
 		StarterKit: starterKit,
+		HelpFormat: helpFormat,
 	}
 	return p.config.Render.Components != before, nil
 }
@@ -4011,12 +4023,16 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 	wireImportPath := filepath.ToSlash(app.WireDir)
 	components := appRenderComponents(config, app)
 	starterKit := appRenderStarterKit(config, app)
+	helpFormat := appRenderHelpFormat(config, app)
 	runtimeApps := runtimeAppMetadataForRender()
 	return templateRenderConfig{
 		Config:            config,
 		Components:        components,
 		ProjectComponents: config.Render.Components,
 		StarterKit:        starterKit,
+		HelpFormat:        helpFormat,
+		HelpFormatterFunc: helpFormatterFunc(helpFormat),
+		HelpCommandFunc:   helpCommandFunc(helpFormat),
 		App:               app,
 		AppPackageName:    project.AppPackageName(app.Name),
 		AppImportPath:     appImportPath,
@@ -4025,6 +4041,44 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 		HasNamedApps:      app.Name != project.DefaultAppName || len(runtimeApps) > 1,
 		RuntimeApps:       runtimeApps,
 	}
+}
+
+// helpFormatterFunc returns the generated konghelp package function used by Kong.
+func helpFormatterFunc(helpFormat project.HelpFormat) string {
+	switch project.NormalizeHelpFormat(helpFormat) {
+	case project.HelpFormatGuided:
+		return "GuidedFormatter"
+	case project.HelpFormatExternalCLI:
+		return "ExternalCLIFormatter"
+	default:
+		return "FrameworkFormatter"
+	}
+}
+
+// helpCommandFunc returns the generated konghelp package function used for standalone preboot command help.
+func helpCommandFunc(helpFormat project.HelpFormat) string {
+	switch project.NormalizeHelpFormat(helpFormat) {
+	case project.HelpFormatGuided:
+		return "PrintGuidedCommandHelp"
+	case project.HelpFormatExternalCLI:
+		return "PrintExternalCLICommandHelp"
+	default:
+		return "PrintCommandHelp"
+	}
+}
+
+// appRenderHelpFormat resolves the app-specific help formatter selection.
+func appRenderHelpFormat(config *project.Config, app project.App) project.HelpFormat {
+	if config == nil {
+		return project.DefaultHelpFormat()
+	}
+	helpFormat := config.Render.HelpFormat
+	if app.Name != "" && app.Name != project.DefaultAppName {
+		if appConfig, ok := config.Apps[app.Name]; ok {
+			helpFormat = appConfig.HelpFormat
+		}
+	}
+	return project.NormalizeHelpFormat(helpFormat)
 }
 
 // appRenderComponents resolves the app-slice component participation for an app render.

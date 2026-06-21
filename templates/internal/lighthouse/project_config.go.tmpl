@@ -36,6 +36,7 @@ const DefaultAppName = "app"
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
+	HelpFormat    string     `yaml:"help_format,omitempty" json:"help_format,omitempty"`
 	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
 	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
 }

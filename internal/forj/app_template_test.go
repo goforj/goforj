@@ -38,7 +38,7 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
 		`kong.Name(cmd.AppHelpName())`,
-		`cmd.CommandParseError(parser, command, err)`,
+		`konghelp.CommandParseError(parser, command, err)`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected wire app template to contain %q", snippet)

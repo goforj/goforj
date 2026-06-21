@@ -26,6 +26,7 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/konghelp"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -190,7 +191,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	parser, err := kong.New(
 		a.RootCmd(),
 		kong.Name(cmd.AppHelpName()),
-		kong.Help(cmd.KongHelpFormatter),
+		kong.Help(konghelp.{{.HelpFormatterFunc}}),
 	)
 	if err != nil {
 		return err
@@ -204,7 +205,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 	parseCtx, err := parser.Parse(args)
 	if err != nil {
-		return cmd.CommandParseError(parser, command, err)
+		return konghelp.CommandParseError(parser, command, err)
 	}
 	ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
