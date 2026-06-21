@@ -16,7 +16,7 @@ import (
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
 {{- end }}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/observability"
@@ -27,6 +27,9 @@ import (
 )
 
 var managerSet = wire.NewSet(
+{{- if .ProjectComponents.Metrics }}
+	metrics.NewManager,
+{{- end }}
 	provideCacheManager,
 	provideEventManager,
 	provideInspectManager,
@@ -41,7 +44,7 @@ var managerSet = wire.NewSet(
 
 // provideCacheManager attaches cache metrics during manager construction so app-owned injectors stay focused on registrations.
 func provideCacheManager(
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*caches.Manager, error) {
@@ -49,7 +52,7 @@ func provideCacheManager(
 	if err != nil {
 		return nil, err
 	}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if metricsManager.CacheEnabled() {
 		manager = manager.WithObserver(observability.CacheMetricsObserver(metricsManager))
 	}
@@ -67,7 +70,7 @@ func provideInspectManager(cacheManager *caches.Manager) *inspects.Manager {
 // provideEventManager attaches observability hooks without making the observability package construct managers.
 func provideEventManager(
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*events.Manager, error) {
@@ -77,7 +80,7 @@ func provideEventManager(
 	}
 	return manager.WithObserver(observability.EventObserver(
 		inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager,
 {{- end }}
 	)), nil
@@ -86,7 +89,7 @@ func provideEventManager(
 // provideStorageManager attaches storage observers while leaving disk registration inside the storage manager.
 func provideStorageManager(
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*storages.Manager, error) {
@@ -96,7 +99,7 @@ func provideStorageManager(
 	}
 	return manager.WithObserver(observability.StorageObserver(
 		inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager,
 {{- end }}
 	)), nil
@@ -106,13 +109,13 @@ func provideStorageManager(
 // provideMailManager attaches mail observers at the framework wiring boundary.
 func provideMailManager(
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*mail.Manager, error) {
 	return mail.NewManagerWithObserver(observability.MailObserver(
 		inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager,
 {{- end }}
 	))
@@ -124,7 +127,7 @@ func provideMailManager(
 func provideQueueManager(
 	appLogger *logger.AppLogger,
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*queues.Manager, error) {
@@ -133,7 +136,7 @@ func provideQueueManager(
 		observability.QueueObserver(
 			jobsLogger,
 			inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 			metricsManager,
 {{- end }}
 		),

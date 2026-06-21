@@ -2,6 +2,7 @@ package forj
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -194,6 +195,76 @@ func TestConfirmationFlow(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatalf("expected QuitMsg on confirmation")
+	}
+}
+
+// TestValidatePathInputRejectsNonEmptyDirectoryByDefault keeps project creation conservative unless explicitly overridden.
+func TestValidatePathInputRejectsNonEmptyDirectoryByDefault(t *testing.T) {
+	temp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(temp, "README.md"), []byte("# existing\n"), 0644); err != nil {
+		t.Fatalf("failed to seed target directory: %v", err)
+	}
+
+	m := initialModel()
+	m.pathInput.SetValue(temp)
+
+	err := m.validatePathInput()
+	if err == nil {
+		t.Fatalf("expected non-empty directory validation error")
+	}
+	if !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("expected non-empty error, got %v", err)
+	}
+}
+
+// TestValidatePathInputAllowsNonEmptyDirectoryWithFlag protects the explicit opt-in escape hatch.
+func TestValidatePathInputAllowsNonEmptyDirectoryWithFlag(t *testing.T) {
+	temp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(temp, "README.md"), []byte("# existing\n"), 0644); err != nil {
+		t.Fatalf("failed to seed target directory: %v", err)
+	}
+
+	m := initialModelWithOptions(newProjectModelOptions{allowNonEmpty: true})
+	m.pathInput.SetValue(temp)
+
+	if err := m.validatePathInput(); err != nil {
+		t.Fatalf("expected non-empty directory to validate with allow-non-empty, got %v", err)
+	}
+}
+
+// TestPathStatusAllowsNonEmptyDirectoryWithFlag ensures the wizard preview matches validation behavior.
+func TestPathStatusAllowsNonEmptyDirectoryWithFlag(t *testing.T) {
+	temp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(temp, "README.md"), []byte("# existing\n"), 0644); err != nil {
+		t.Fatalf("failed to seed target directory: %v", err)
+	}
+
+	m := initialModelWithOptions(newProjectModelOptions{allowNonEmpty: true})
+	m.pathInput.SetValue(temp)
+
+	status, ok := m.pathStatus()
+	if !ok {
+		t.Fatalf("expected non-empty path status to be valid with allow-non-empty, got %q", status)
+	}
+	if !strings.Contains(status, "not empty") || !strings.Contains(status, "preserved") {
+		t.Fatalf("expected status to explain existing files are preserved, got %q", status)
+	}
+}
+
+// TestEnsureNewProjectConfigCanBeWrittenRejectsExistingConfig prevents accidental reinitialization.
+func TestEnsureNewProjectConfigCanBeWrittenRejectsExistingConfig(t *testing.T) {
+	temp := t.TempDir()
+	configPath := filepath.Join(temp, ".goforj.yml")
+	if err := os.WriteFile(configPath, []byte("project_name: existing\n"), 0644); err != nil {
+		t.Fatalf("failed to seed config file: %v", err)
+	}
+
+	err := ensureNewProjectConfigCanBeWritten(configPath)
+	if err == nil {
+		t.Fatalf("expected existing .goforj.yml to be rejected")
+	}
+	if !strings.Contains(err.Error(), "already contains .goforj.yml") {
+		t.Fatalf("expected existing config error, got %v", err)
 	}
 }
 
@@ -429,6 +500,26 @@ func TestStarterKitStageSkippedWhenWebUIDisabled(t *testing.T) {
 	}
 	if m.config.Render.StarterKit != project.StarterKitNone {
 		t.Fatalf("expected starter kit to be cleared when web ui is disabled, got %q", m.config.Render.StarterKit)
+	}
+}
+
+// TestHelpFormatPreviewOrderMatchesOptionOrder prevents the side-by-side panes from drifting away from the option list.
+func TestHelpFormatPreviewOrderMatchesOptionOrder(t *testing.T) {
+	m := initialModel()
+	m.stage = StageHelpFormat
+	m.termWidth = 160
+	m.helpFormatList.Select(1)
+
+	view := m.renderHelpFormatPanel()
+
+	frameworkIndex := strings.Index(view, "Framework Preview")
+	guidedIndex := strings.Index(view, "Guided Preview")
+	externalIndex := strings.Index(view, "External CLI Preview")
+	if frameworkIndex < 0 || guidedIndex < 0 || externalIndex < 0 {
+		t.Fatalf("expected all preview panels to be rendered, got %q", view)
+	}
+	if !(frameworkIndex < guidedIndex && guidedIndex < externalIndex) {
+		t.Fatalf("expected preview panels to match option order, got %q", view)
 	}
 }
 

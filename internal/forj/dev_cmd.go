@@ -25,6 +25,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
+	"golang.org/x/term"
 )
 
 var errDevInterrupted = errors.New("dev interrupted")
@@ -407,20 +408,96 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	console.Actionf("%s", heading)
 	for _, task := range tasks {
 		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
+		outputTail := newDevTaskOutputTail(40)
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
 			StdinReader(devNull).
-			StdoutWriter(os.Stdout).
-			StderrWriter(os.Stderr).
+			StdoutWriter(io.MultiWriter(os.Stdout, outputTail)).
+			StderrWriter(io.MultiWriter(os.Stderr, outputTail)).
 			Run()
 		if err != nil {
-			return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
+			clearPreDevTaskProgressLine()
+			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
 		}
 		if !res.OK() {
-			return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
+			clearPreDevTaskProgressLine()
+			return devTaskFailureError(task.Name, fmt.Sprintf("failed with exit code %d", res.ExitCode), outputTail.String())
 		}
 	}
 	return nil
+}
+
+// clearPreDevTaskProgressLine keeps BuildKit-style progress output from visually merging with GoForj's final error line.
+func clearPreDevTaskProgressLine() {
+	if term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprint(os.Stderr, "\r\x1b[2K")
+	}
+}
+
+// devTaskFailureError includes the task output tail because pre-dev failures often happen before the TUI can preserve details.
+func devTaskFailureError(name string, reason string, output string) error {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return fmt.Errorf("pre-dev task '%s' %s", name, reason)
+	}
+	return fmt.Errorf("pre-dev task '%s' %s\n\nLast task output:\n%s", name, reason, output)
+}
+
+type devTaskOutputTail struct {
+	mu      sync.Mutex
+	max     int
+	lines   []string
+	partial string
+}
+
+// newDevTaskOutputTail records the final lines of a streamed pre-dev command without hiding live output.
+func newDevTaskOutputTail(max int) *devTaskOutputTail {
+	return &devTaskOutputTail{max: max}
+}
+
+// Write records complete output lines and treats carriage returns as progress-line boundaries.
+func (t *devTaskOutputTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	input := t.partial + string(p)
+	input = strings.ReplaceAll(input, "\r", "\n")
+	parts := strings.Split(input, "\n")
+	t.partial = parts[len(parts)-1]
+	for _, line := range parts[:len(parts)-1] {
+		t.appendLine(line)
+	}
+	return len(p), nil
+}
+
+// String returns a normalized output tail suitable for the final error message.
+func (t *devTaskOutputTail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	lines := append([]string(nil), t.lines...)
+	if strings.TrimSpace(t.partial) != "" {
+		lines = append(lines, t.normalizeLine(t.partial))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// appendLine keeps only non-empty, normalized lines so progress noise does not bury the useful error.
+func (t *devTaskOutputTail) appendLine(line string) {
+	line = t.normalizeLine(line)
+	if line == "" {
+		return
+	}
+	t.lines = append(t.lines, line)
+	if t.max > 0 && len(t.lines) > t.max {
+		t.lines = t.lines[len(t.lines)-t.max:]
+	}
+}
+
+// normalizeLine strips terminal control noise before the line is repeated outside the TUI.
+func (t *devTaskOutputTail) normalizeLine(line string) string {
+	line = stripANSIForSearch(line)
+	return strings.TrimSpace(line)
 }
 
 func runPreDevSetup(config *project.Config) error {

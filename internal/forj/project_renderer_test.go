@@ -1275,12 +1275,14 @@ import (
 
 	"example.com/testapp/internal/app"
 	"example.com/testapp/internal/makecmd"
+	"example.com/testapp/internal/metrics"
 )
 
 var appSet = wire.NewSet(
 	app.NewLifecycleRegistry,
 	app.NewTimeouts,
 	makecmd.NewEventCmd,
+	metrics.NewManager,
 )
 `
 
@@ -1298,6 +1300,8 @@ var appSet = wire.NewSet(
 	for _, unexpected := range []string{
 		"\t\"example.com/testapp/internal/app\"",
 		"\tapp.NewTimeouts",
+		"\t\"example.com/testapp/internal/metrics\"",
+		"metrics.NewManager",
 		"compositionapp",
 		"runtimeruntime",
 		"runtimeapp",

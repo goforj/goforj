@@ -3128,6 +3128,14 @@ func syncLegacyAppServiceInjector(content string, moduleName string, appImportPa
 	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
 	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
 	updated = ensureGoImport(updated, compositionAppPath, "")
+	updated = removeFrameworkMetricsProviderFromAppServiceInjector(updated, moduleName)
+	return updated
+}
+
+// removeFrameworkMetricsProviderFromAppServiceInjector moves metrics manager ownership back to framework-managed wiring.
+func removeFrameworkMetricsProviderFromAppServiceInjector(content string, moduleName string) string {
+	updated := strings.Replace(content, "\tmetrics.NewManager,\n", "", 1)
+	updated = strings.Replace(updated, "\t"+strconv.Quote(moduleName+"/internal/metrics")+"\n", "", 1)
 	return updated
 }
 

@@ -6,6 +6,7 @@ import (
 )
 
 var appComponentKeys = []ComponentKey{
+	ComponentCLI,
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -18,6 +19,7 @@ var appComponentKeys = []ComponentKey{
 }
 
 var appWizardComponentKeys = []ComponentKey{
+	ComponentCLI,
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -117,6 +119,52 @@ func NormalizeAppComponents(available Components, selected Components) Component
 	selected.Observability = false
 	selected.Grafana = false
 	return selected
+}
+
+// DeselectAppComponent clears a selected app component and any selected app components that depend on it.
+func DeselectAppComponent(selected *Components, key ComponentKey) {
+	if selected == nil {
+		return
+	}
+	selected.SetEnabled(key, false)
+	for _, candidate := range appComponentKeys {
+		if candidate == key || !selected.Enabled(candidate) || !AppComponentRequires(candidate, key) {
+			continue
+		}
+		DeselectAppComponent(selected, candidate)
+	}
+}
+
+// AppComponentRequires reports app-level dependencies, including rules that are stricter than project-level catalog dependencies.
+func AppComponentRequires(component ComponentKey, required ComponentKey) bool {
+	definition, ok := ComponentDefinitionByKey(component)
+	if ok {
+		for _, catalogRequired := range definition.Requires {
+			if catalogRequired == required {
+				return true
+			}
+		}
+	}
+	switch component {
+	case ComponentWebUI:
+		return required == ComponentWebAPI
+	case ComponentAuth:
+		return required == ComponentWebAPI || IsAppDatabaseComponent(required)
+	case ComponentOAuth:
+		return required == ComponentAuth || required == ComponentWebAPI || IsAppDatabaseComponent(required)
+	default:
+		return false
+	}
+}
+
+// IsAppDatabaseComponent reports whether a component is one of the app-local database choices.
+func IsAppDatabaseComponent(key ComponentKey) bool {
+	switch key {
+	case ComponentDatabaseMySQL, ComponentDatabasePostgres, ComponentDatabaseSQLite:
+		return true
+	default:
+		return false
+	}
 }
 
 // PromoteAppComponents adds selected app capabilities to the project-level render set.

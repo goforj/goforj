@@ -25,8 +25,8 @@ type HelpFormatDefinition struct {
 func HelpFormatCatalog() []HelpFormatDefinition {
 	return []HelpFormatDefinition{
 		{Key: HelpFormatFramework, Label: "Framework", Description: "grouped command surface for app operations"},
-		{Key: HelpFormatExternalCLI, Label: "External CLI", Description: "compact help for user-facing command tools"},
-		{Key: HelpFormatGuided, Label: "Guided (clig.dev-inspired)", Description: "Examples, usage, commands, and next steps"},
+		{Key: HelpFormatGuided, Label: "Guided (clig.dev-inspired)", Description: "external/user-facing CLI with examples and next steps"},
+		{Key: HelpFormatExternalCLI, Label: "External CLI", Description: "compact help for small command tools"},
 	}
 }
 

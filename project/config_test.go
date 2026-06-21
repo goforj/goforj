@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,26 @@ func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
 		if definition.Description == "" {
 			t.Fatalf("expected component %q to have a wizard description", definition.Key)
 		}
+	}
+}
+
+// TestHelpFormatCatalogPresentsGuidedAsExternalDefault keeps Guided as the first user-facing CLI recommendation.
+func TestHelpFormatCatalogPresentsGuidedAsExternalDefault(t *testing.T) {
+	definitions := HelpFormatCatalog()
+	if len(definitions) < 3 {
+		t.Fatalf("expected help format catalog to contain at least three choices, got %#v", definitions)
+	}
+	if definitions[0].Key != HelpFormatFramework {
+		t.Fatalf("expected framework to remain first, got %#v", definitions)
+	}
+	if definitions[1].Key != HelpFormatGuided {
+		t.Fatalf("expected guided to be second for user-facing CLIs, got %#v", definitions)
+	}
+	if definitions[2].Key != HelpFormatExternalCLI {
+		t.Fatalf("expected compact external CLI to remain available after guided, got %#v", definitions)
+	}
+	if !strings.Contains(definitions[1].Description, "external/user-facing CLI") {
+		t.Fatalf("expected guided description to frame external CLI usage, got %q", definitions[1].Description)
 	}
 }
 

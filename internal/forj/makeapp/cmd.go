@@ -206,11 +206,14 @@ func (c *Cmd) appSelection(config *project.Config) (project.Components, project.
 			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), err
 		}
 		for _, key := range keys {
+			if key == project.ComponentCLI {
+				return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), fmt.Errorf("CLI is always enabled for apps and cannot be removed per app")
+			}
 			if !project.IsAppComponentKey(key) {
 				definition, _ := project.ComponentDefinitionByKey(key)
 				return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
 			}
-			components.SetEnabled(key, false)
+			project.DeselectAppComponent(&components, key)
 		}
 		components = project.NormalizeAppComponents(available, components)
 	}
@@ -294,11 +297,45 @@ func (c *Cmd) ensureAppDoesNotExist(app project.App) error {
 		app.WireDir,
 		filepath.Dir(app.Entrypoint),
 	} {
-		if _, err := os.Stat(path); err == nil {
-			return appExistsError{app: app, path: path}
-		} else if !os.IsNotExist(err) {
+		exists, err := appPathHasUserContent(path)
+		if err != nil {
 			return err
+		}
+		if exists {
+			return appExistsError{app: app, path: path}
 		}
 	}
 	return nil
+}
+
+// appPathHasUserContent treats empty leftover directories as reusable because Git deletion commonly leaves them behind.
+func appPathHasUserContent(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return true, nil
+	}
+	hasContent := false
+	err = filepath.WalkDir(path, func(candidate string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if candidate == path {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		hasContent = true
+		return filepath.SkipAll
+	})
+	if err != nil {
+		return false, err
+	}
+	return hasContent, nil
 }
