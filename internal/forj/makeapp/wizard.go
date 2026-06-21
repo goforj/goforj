@@ -172,15 +172,27 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyComponentSelection()
 				m.stage = appWizardHelpFormat
 				return m, nil
+			case "a":
+				m.setAllComponents(true)
+				return m, nil
+			case "c":
+				m.setAllComponents(false)
+				return m, nil
 			case " ":
 				index := m.componentList.Index()
 				item := m.componentList.Items()[index].(componentItem)
+				if item.Key == project.ComponentCLI {
+					return m, nil
+				}
 				definition, _ := project.ComponentDefinitionByKey(item.Key)
 				if !item.Selected && definition.ExclusiveGroup != "" {
 					m.deselectExclusiveComponents(item.Key, definition.ExclusiveGroup)
 				}
 				item.Selected = !item.Selected
 				m.componentList.SetItem(index, item)
+				if !item.Selected {
+					m.deselectDependentComponents(item.Key)
+				}
 				m.normalizeComponentSelections()
 				return m, nil
 			}
@@ -252,7 +264,7 @@ func (m appWizardModel) View() string {
 	case appWizardComponents:
 		panels = append(panels, wizardPanel("App", wizardPrimaryStyle.Render(m.appName), m.termWidth, false))
 		panels = append(panels, wizardPanel("Components", m.renderComponentList(), m.termWidth, true))
-		actions = []string{"Space to toggle", "Enter to continue", "Esc to cancel"}
+		actions = []string{"Space to toggle", "A select all", "C select none", "Enter to continue", "Esc to cancel"}
 	case appWizardStarterKit:
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
 		panels = append(panels, wizardPanel("Starter Kit", m.renderStarterKitList(), m.termWidth, true))
@@ -304,6 +316,48 @@ func (m *appWizardModel) deselectExclusiveComponents(selectedKey project.Compone
 		}
 		m.setComponentSelected(definition.Key, false)
 	}
+}
+
+// setAllComponents bulk-updates visible app components while keeping CLI and database exclusivity coherent.
+func (m *appWizardModel) setAllComponents(selected bool) {
+	for idx, raw := range m.componentList.Items() {
+		item := raw.(componentItem)
+		switch item.Key {
+		case project.ComponentCLI:
+			item.Selected = true
+		case project.ComponentDatabasePostgres, project.ComponentDatabaseSQLite:
+			item.Selected = false
+		default:
+			item.Selected = selected
+		}
+		m.componentList.SetItem(idx, item)
+	}
+	m.normalizeComponentSelections()
+}
+
+// deselectDependentComponents removes visible app surfaces that would otherwise force the component back on.
+func (m *appWizardModel) deselectDependentComponents(key project.ComponentKey) {
+	for _, definition := range project.AppWizardComponentDefinitions(m.available) {
+		if definition.Key == key || !project.AppComponentRequires(definition.Key, key) {
+			continue
+		}
+		if !m.componentSelected(definition.Key) {
+			continue
+		}
+		m.setComponentSelected(definition.Key, false)
+		m.deselectDependentComponents(definition.Key)
+	}
+}
+
+// componentSelected reports visible list state without normalizing dependency rules first.
+func (m *appWizardModel) componentSelected(key project.ComponentKey) bool {
+	for _, raw := range m.componentList.Items() {
+		item := raw.(componentItem)
+		if item.Key == key {
+			return item.Selected
+		}
+	}
+	return false
 }
 
 // setComponentSelected updates list state without rebuilding the cursor position.
@@ -400,6 +454,7 @@ func (m appWizardModel) renderComponentList() string {
 // renderHelpFormatStage renders formatter choices with a live preview of real formatter output.
 func (m appWizardModel) renderHelpFormatStage() string {
 	selection := wizardPanelWithWidth("Help Format", m.renderHelpFormatList(), m.termWidth, true)
+	highlighted := m.highlightedHelpFormat()
 	if m.termWidth >= 118 {
 		gap := 2
 		available := m.termWidth - gap*2
@@ -408,18 +463,18 @@ func (m appWizardModel) renderHelpFormatStage() string {
 		rightWidth := available - leftWidth - middleWidth
 		previews := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			wizardPanelWithWidth("Framework Preview", previewText(project.HelpFormatFramework, leftWidth-6), leftWidth, false),
+			wizardPanelWithWidth("Framework Preview", previewText(project.HelpFormatFramework, leftWidth-6), leftWidth, highlighted == project.HelpFormatFramework),
 			strings.Repeat(" ", gap),
-			wizardPanelWithWidth("External CLI Preview", previewText(project.HelpFormatExternalCLI, middleWidth-6), middleWidth, false),
+			wizardPanelWithWidth("Guided Preview", previewText(project.HelpFormatGuided, middleWidth-6), middleWidth, highlighted == project.HelpFormatGuided),
 			strings.Repeat(" ", gap),
-			wizardPanelWithWidth("Guided Preview", previewText(project.HelpFormatGuided, rightWidth-6), rightWidth, false),
+			wizardPanelWithWidth("External CLI Preview", previewText(project.HelpFormatExternalCLI, rightWidth-6), rightWidth, highlighted == project.HelpFormatExternalCLI),
 		)
 		return lipgloss.JoinVertical(lipgloss.Left, selection, previews)
 	}
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		selection,
-		wizardPanelWithWidth("Preview", previewText(m.highlightedHelpFormat(), m.termWidth-6), m.termWidth, false),
+		wizardPanelWithWidth("Preview", previewText(highlighted, m.termWidth-6), m.termWidth, true),
 	)
 }
 

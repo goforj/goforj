@@ -29,6 +29,29 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 	}
 }
 
+// TestRunDevTasksIncludesOutputTailOnFailure keeps Docker port errors visible after startup exits.
+func TestRunDevTasksIncludesOutputTailOnFailure(t *testing.T) {
+	err := runDevTasks("Test setup", []project.DevTask{
+		{
+			Name: "Run Docker Compose",
+			Cmd:  "printf 'docker: Error response from daemon: Ports are not available: bind: address already in use\\n' >&2; exit 1",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected pre-dev task failure")
+	}
+	for _, expected := range []string{
+		"pre-dev task 'Run Docker Compose' failed with exit code 1",
+		"Last task output:",
+		"Ports are not available",
+		"address already in use",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected error to contain %q, got:\n%s", expected, err.Error())
+		}
+	}
+}
+
 func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
 	withConventionalApp(t, "customer-portal")
 

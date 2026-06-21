@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -88,6 +89,45 @@ func TestAppSelectionAllowsGuidedHelpFormatWithOtherComponents(t *testing.T) {
 	}
 }
 
+// TestAppSelectionAllowsExplicitCLIOnlyApp keeps non-interactive app creation viable for user-facing tools.
+func TestAppSelectionAllowsExplicitCLIOnlyApp(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "ship", Components: "cli", HelpFormat: string(project.HelpFormatExternalCLI)}
+	components, starterKit, helpFormat, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:              true,
+				WebAPI:           true,
+				WebUI:            true,
+				Auth:             true,
+				OAuth:            true,
+				DatabaseMySQL:    true,
+				Scheduler:        true,
+				Jobs:             true,
+				DatabasePostgres: true,
+				DatabaseSQLite:   true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("appSelection() error = %v", err)
+	}
+	if !components.CLI {
+		t.Fatalf("expected CLI to be enabled, got %+v", components)
+	}
+	if components.WebAPI || components.WebUI || components.Auth || components.OAuth || components.HasDatabase() || components.Scheduler || components.Jobs {
+		t.Fatalf("expected CLI-only app components, got %+v", components)
+	}
+	if starterKit != project.StarterKitNone {
+		t.Fatalf("starterKit = %q, want none", starterKit)
+	}
+	if helpFormat != project.HelpFormatExternalCLI {
+		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatExternalCLI)
+	}
+}
+
 func TestCmdSkipsWizardByDefaultOutsideInteractiveTerminal(t *testing.T) {
 	restore := stubInteractiveTerminal(t, false)
 	defer restore()
@@ -147,6 +187,9 @@ func TestCmdRunTreatsExistingAppAsNormalExit(t *testing.T) {
 	t.Chdir(dir)
 	if err := os.MkdirAll(filepath.Join("cmd", "billing"), 0o755); err != nil {
 		t.Fatalf("mkdir app: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("cmd", "billing", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write app file: %v", err)
 	}
 	renderer := &recordingRenderer{}
 	cmd := NewCmd(logger.NewSilentLogger(), renderer)
@@ -244,6 +287,204 @@ func TestWizardShowsAllDatabaseDrivers(t *testing.T) {
 		if !seen[key] {
 			t.Fatalf("expected app wizard to include %s", key)
 		}
+	}
+}
+
+// TestWizardShowsCLIComponentSelected makes the always-on app CLI visible to users.
+func TestWizardShowsCLIComponentSelected(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:    true,
+				WebAPI: true,
+			},
+		},
+	})
+
+	if !model.componentSelected(project.ComponentCLI) {
+		t.Fatalf("expected CLI component to be visible and selected")
+	}
+	if !strings.Contains(model.renderComponentList(), "CLI") {
+		t.Fatalf("expected component list to render CLI row, got %q", model.renderComponentList())
+	}
+}
+
+// TestWizardUnselectingWebAPIRemovesDependents lets users reach CLI-only without hidden dependency re-selection.
+func TestWizardUnselectingWebAPIRemovesDependents(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:           true,
+				WebAPI:        true,
+				WebUI:         true,
+				Auth:          true,
+				OAuth:         true,
+				DatabaseMySQL: true,
+			},
+		},
+	})
+	selectAppWizardComponent(t, &model, project.ComponentWebAPI)
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	model = next.(appWizardModel)
+
+	if !model.componentSelected(project.ComponentCLI) {
+		t.Fatalf("expected CLI to remain selected")
+	}
+	for _, key := range []project.ComponentKey{
+		project.ComponentWebAPI,
+		project.ComponentWebUI,
+		project.ComponentAuth,
+		project.ComponentOAuth,
+	} {
+		if model.componentSelected(key) {
+			t.Fatalf("expected %s to be unselected after Web API was removed", key)
+		}
+	}
+}
+
+// TestWizardCanProduceCLIOnlyApp verifies the selected component contract after all optional rows are disabled.
+func TestWizardCanProduceCLIOnlyApp(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:           true,
+				WebAPI:        true,
+				WebUI:         true,
+				Auth:          true,
+				OAuth:         true,
+				DatabaseMySQL: true,
+				Scheduler:     true,
+				Jobs:          true,
+			},
+		},
+	})
+	for idx, raw := range model.componentList.Items() {
+		item := raw.(componentItem)
+		if item.Key != project.ComponentCLI {
+			item.Selected = false
+			model.componentList.SetItem(idx, item)
+		}
+	}
+
+	model.applyComponentSelection()
+
+	if !model.components.CLI {
+		t.Fatalf("expected CLI to remain enabled, got %+v", model.components)
+	}
+	if model.components.WebAPI || model.components.WebUI || model.components.Auth || model.components.OAuth || model.components.HasDatabase() || model.components.Scheduler || model.components.Jobs {
+		t.Fatalf("expected CLI-only app components, got %+v", model.components)
+	}
+}
+
+// TestWizardBulkComponentShortcutsExposeCLIOnlyAndFullAppPaths keeps make:app parity with the project wizard.
+func TestWizardBulkComponentShortcutsExposeCLIOnlyAndFullAppPaths(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:           true,
+				WebAPI:        true,
+				WebUI:         true,
+				Auth:          true,
+				OAuth:         true,
+				DatabaseMySQL: true,
+				Scheduler:     true,
+				Jobs:          true,
+			},
+		},
+	})
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	model = next.(appWizardModel)
+
+	if !model.componentSelected(project.ComponentCLI) {
+		t.Fatalf("expected clear shortcut to keep CLI selected")
+	}
+	for _, key := range []project.ComponentKey{
+		project.ComponentWebAPI,
+		project.ComponentWebUI,
+		project.ComponentAuth,
+		project.ComponentOAuth,
+		project.ComponentDatabaseMySQL,
+		project.ComponentScheduler,
+		project.ComponentJobs,
+	} {
+		if model.componentSelected(key) {
+			t.Fatalf("expected clear shortcut to unselect %s", key)
+		}
+	}
+
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	model = next.(appWizardModel)
+
+	for _, key := range []project.ComponentKey{
+		project.ComponentCLI,
+		project.ComponentWebAPI,
+		project.ComponentWebUI,
+		project.ComponentAuth,
+		project.ComponentOAuth,
+		project.ComponentDatabaseMySQL,
+		project.ComponentScheduler,
+		project.ComponentJobs,
+	} {
+		if !model.componentSelected(key) {
+			t.Fatalf("expected select-all shortcut to select %s", key)
+		}
+	}
+	if model.componentSelected(project.ComponentDatabasePostgres) || model.componentSelected(project.ComponentDatabaseSQLite) {
+		t.Fatalf("expected select-all shortcut to preserve one database choice")
+	}
+}
+
+// TestWizardComponentFooterIncludesBulkShortcuts documents the visible make:app component controls.
+func TestWizardComponentFooterIncludesBulkShortcuts(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:    true,
+				WebAPI: true,
+			},
+		},
+	})
+
+	view := model.View()
+	for _, expected := range []string{"A select all", "C select none"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected wizard footer to contain %q, got %q", expected, view)
+		}
+	}
+}
+
+// TestWizardHelpFormatPreviewHighlightsGuidedAsSecondOption ties the recommended external formatter to the active preview.
+func TestWizardHelpFormatPreviewHighlightsGuidedAsSecondOption(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI: true,
+			},
+		},
+	})
+	model.stage = appWizardHelpFormat
+	model.termWidth = 160
+	model.helpFormatList.Select(1)
+
+	view := model.renderHelpFormatStage()
+
+	if !strings.Contains(view, "Guided Preview") {
+		t.Fatalf("expected guided preview panel, got %q", view)
+	}
+	if !strings.Contains(view, wizardAccentStyle.Render(" Guided Preview ")) {
+		t.Fatalf("expected selected preview title to use active style, got %q", view)
+	}
+
+	frameworkIndex := strings.Index(view, "Framework Preview")
+	guidedIndex := strings.Index(view, "Guided Preview")
+	externalIndex := strings.Index(view, "External CLI Preview")
+	if frameworkIndex < 0 || guidedIndex < 0 || externalIndex < 0 {
+		t.Fatalf("expected all preview panels to be rendered, got %q", view)
+	}
+	if !(frameworkIndex < guidedIndex && guidedIndex < externalIndex) {
+		t.Fatalf("expected preview panels to match option order, got %q", view)
 	}
 }
 
@@ -372,6 +613,19 @@ func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (pro
 	return func() {
 		appWizardRunner = original
 	}
+}
+
+// selectAppWizardComponent moves the wizard cursor to a component row by key.
+func selectAppWizardComponent(t *testing.T, model *appWizardModel, key project.ComponentKey) {
+	t.Helper()
+	for idx, raw := range model.componentList.Items() {
+		item := raw.(componentItem)
+		if item.Key == key {
+			model.componentList.Select(idx)
+			return
+		}
+	}
+	t.Fatalf("component %s not found", key)
 }
 
 type recordingRenderer struct {

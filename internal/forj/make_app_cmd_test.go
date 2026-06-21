@@ -221,6 +221,58 @@ func TestMakeAppCmdWiresMetricsRunCommandDependency(t *testing.T) {
 	}
 }
 
+func TestMakeAppCmdWiresProjectMetricsObserversForCLIOnlyApp(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := writeProjectConfig(".goforj.yml", &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:     true,
+				WebAPI:  true,
+				Metrics: true,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "ship"
+	cmd.Components = "cli"
+	cmd.SkipWire = true
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make app: %v", err)
+	}
+
+	managersSrc := readMakeAppTestFile(t, filepath.Join("app", "ship", "wire", "inject_managers.go"))
+	for _, want := range []string{
+		`"example.com/testapp/internal/metrics"`,
+		"metrics.NewManager",
+		"metricsManager *metrics.Manager",
+		"observability.EventObserver(\n\t\tinspectManager,\n\t\tmetricsManager,",
+		"observability.StorageObserver(\n\t\tinspectManager,\n\t\tmetricsManager,",
+	} {
+		if !strings.Contains(managersSrc, want) {
+			t.Fatalf("expected project metrics observer wiring %q in inject_managers.go:\n%s", want, managersSrc)
+		}
+	}
+
+	appSetSrc := readMakeAppTestFile(t, filepath.Join("app", "ship", "wire", "inject_services_app.go"))
+	if strings.Contains(appSetSrc, "metrics.NewManager") || strings.Contains(appSetSrc, `/internal/metrics`) {
+		t.Fatalf("expected app-owned service injector not to provide framework metrics manager:\n%s", appSetSrc)
+	}
+}
+
 func TestMakeAppCmdDoesNotCreateDemoJobProvidersForNamedApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -409,7 +461,7 @@ func TestMakeAppCmdCreatesAppVueStarterKit(t *testing.T) {
 	}
 }
 
-func TestMakeAppCmdTreatsExistingAppPathsAsNoOp(t *testing.T) {
+func TestMakeAppCmdTreatsExistingAppFilesAsNoOp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -423,11 +475,63 @@ func TestMakeAppCmdTreatsExistingAppPathsAsNoOp(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join("cmd", "billing"), 0o755); err != nil {
 		t.Fatalf("mkdir app: %v", err)
 	}
+	writeMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("expected existing app to return nil, got %v", err)
+	}
+}
+
+func TestMakeAppCmdAllowsEmptyConventionalAppDirs(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := writeProjectConfig(".goforj.yml", &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:    true,
+				WebAPI: true,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join("cmd", "billing"),
+		filepath.Join("app", "billing", "wire"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "billing"
+	cmd.Components = "cli"
+	cmd.SkipWire = true
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make app: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join("cmd", "billing", "main.go"),
+		filepath.Join("app", "billing", "root_cmd.go"),
+		filepath.Join("app", "billing", "wire", "inject_managers.go"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s after recreating app from empty dirs: %v", path, err)
+		}
 	}
 }
 

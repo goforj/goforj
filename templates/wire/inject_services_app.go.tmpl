@@ -14,9 +14,6 @@ import (
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
 	"{{.GoModuleName}}/internal/makecmd"
-{{- if .Components.Metrics }}
-	"{{.GoModuleName}}/internal/metrics"
-{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
@@ -28,9 +25,6 @@ var appSet = wire.NewSet(
 	runtime.NewTimeouts,
 	makecmd.NewEventCmd,
 	makecmd.NewSubscriberCmd,
-{{- if .Components.Metrics }}
-	metrics.NewManager,
-{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitoring.NewIncidentTransitionService,
 	monitoring.NewRetentionService,

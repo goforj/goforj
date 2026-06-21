@@ -360,12 +360,18 @@ type model struct {
 	errorMsg           string
 	targetPath         string
 	termWidth          int
+	allowNonEmpty      bool
 	extrasIndex        int
 	demoAppEnabled     bool
 	atlasMode          atlasMode
 }
 
 const wizardWidth = 90
+
+// newProjectModelOptions carries non-interactive command flags into wizard validation.
+type newProjectModelOptions struct {
+	allowNonEmpty bool
+}
 
 func (m *model) components() *project.Components {
 	return &m.config.Render.Components
@@ -458,7 +464,13 @@ func frontendNPMWatch(frontendDir string) string {
 	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir . -xdir node_modules -xdir dist"
 }
 
+// initialModel builds the default wizard state used by tests and the plain interactive command.
 func initialModel() model {
+	return initialModelWithOptions(newProjectModelOptions{})
+}
+
+// initialModelWithOptions builds wizard state for command-line flags that need to affect validation.
+func initialModelWithOptions(options newProjectModelOptions) model {
 	ti := styledTextInput()
 	ti.Placeholder = "My Awesome App"
 	ti.Focus()
@@ -566,6 +578,7 @@ func initialModel() model {
 		atlasAgentList:   atlasAgentList,
 		atlasSurfaceList: atlasSurfaceList,
 		atlasMode:        atlasModeRecommended,
+		allowNonEmpty:    options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
 				QueueDriver:   "redis",
@@ -1673,6 +1686,7 @@ func (m model) renderAtlasSurfaceList(termWidth int) string {
 // renderHelpFormatPanel keeps formatter previews adjacent to the selected option.
 func (m model) renderHelpFormatPanel() string {
 	selection := m.panelWithTitleWidth("Help Format", m.renderHelpFormatList(), m.termWidth, true)
+	highlighted := m.highlightedHelpFormat()
 	if m.termWidth >= 118 {
 		gap := 2
 		available := m.termWidth - gap*2
@@ -1681,18 +1695,18 @@ func (m model) renderHelpFormatPanel() string {
 		rightWidth := available - leftWidth - middleWidth
 		previews := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			m.panelWithTitleWidth("Framework Preview", renderHelpPreview(project.HelpFormatFramework, leftWidth-6), leftWidth, false),
+			m.panelWithTitleWidth("Framework Preview", renderHelpPreview(project.HelpFormatFramework, leftWidth-6), leftWidth, highlighted == project.HelpFormatFramework),
 			strings.Repeat(" ", gap),
-			m.panelWithTitleWidth("External CLI Preview", renderHelpPreview(project.HelpFormatExternalCLI, middleWidth-6), middleWidth, false),
+			m.panelWithTitleWidth("Guided Preview", renderHelpPreview(project.HelpFormatGuided, middleWidth-6), middleWidth, highlighted == project.HelpFormatGuided),
 			strings.Repeat(" ", gap),
-			m.panelWithTitleWidth("Guided Preview", renderHelpPreview(project.HelpFormatGuided, rightWidth-6), rightWidth, false),
+			m.panelWithTitleWidth("External CLI Preview", renderHelpPreview(project.HelpFormatExternalCLI, rightWidth-6), rightWidth, highlighted == project.HelpFormatExternalCLI),
 		)
 		return lipgloss.JoinVertical(lipgloss.Left, selection, previews)
 	}
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		selection,
-		m.panelWithTitleWidth("Preview", renderHelpPreview(m.highlightedHelpFormat(), m.termWidth-6), m.termWidth, false),
+		m.panelWithTitleWidth("Preview", renderHelpPreview(highlighted, m.termWidth-6), m.termWidth, true),
 	)
 }
 
@@ -2371,6 +2385,9 @@ func (m model) validatePathInput() error {
 		return fmt.Errorf("Cannot read target path: %v", err)
 	}
 	if len(entries) > 0 {
+		if m.allowNonEmpty {
+			return nil
+		}
 		return fmt.Errorf("Target path is not empty: %s", target)
 	}
 	return nil
@@ -2393,9 +2410,22 @@ func (m model) pathStatus() (string, bool) {
 		return "Cannot read target path.", false
 	}
 	if len(entries) > 0 {
+		if m.allowNonEmpty {
+			return "Path exists and is not empty. Existing files will be preserved.", true
+		}
 		return "Path is not empty.", false
 	}
 	return "Path exists and is empty.", true
+}
+
+// ensureNewProjectConfigCanBeWritten prevents `forj new` from reinitializing an existing GoForj project.
+func ensureNewProjectConfigCanBeWritten(configPath string) error {
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("target already contains .goforj.yml: %s", configPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("cannot stat .goforj.yml: %w", err)
+	}
+	return nil
 }
 
 func renderFooter(actions []string, termWidth int) string {
@@ -2451,6 +2481,9 @@ func packageJSONHasNpmDev() bool {
 
 // NewProjectCmd owns the interactive project creation flow.
 type NewProjectCmd struct {
+	// AllowNonEmpty lets advanced users intentionally initialize inside a directory that already has files.
+	AllowNonEmpty bool `name:"allow-non-empty" help:"Allow creating a project in a non-empty directory"`
+
 	logger   *logger.AppLogger
 	renderer *ProjectRenderer
 }
@@ -2468,11 +2501,14 @@ func (*NewProjectCmd) Signature() string {
 	return `name:"new" help:"New project command"`
 }
 
+// Run starts the project wizard and renders the selected project into the target directory.
 func (c *NewProjectCmd) Run() error {
 	printNewProjectBanner()
 
 	// Run the wizard
-	resultModel, err := tea.NewProgram(initialModel()).Run()
+	resultModel, err := tea.NewProgram(initialModelWithOptions(newProjectModelOptions{
+		allowNonEmpty: c.AllowNonEmpty,
+	})).Run()
 	if err != nil {
 		fmt.Print("Error running GoForj wizard:", err)
 		os.Exit(1)
@@ -2514,6 +2550,9 @@ func (c *NewProjectCmd) Run() error {
 		return fmt.Errorf("failed to encode .goforj.yml: %w", err)
 	}
 	configPath := filepath.Join(targetPath, ".goforj.yml")
+	if err := ensureNewProjectConfigCanBeWritten(configPath); err != nil {
+		return err
+	}
 	if writeErr := os.WriteFile(configPath, buf.Bytes(), 0644); writeErr != nil {
 		return fmt.Errorf("failed to write .goforj.yml: %w", writeErr)
 	}
