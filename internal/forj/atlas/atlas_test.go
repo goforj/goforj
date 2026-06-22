@@ -66,6 +66,7 @@ render:
 
 	assertFileContains(t, "AGENTS.md", "GoForj Atlas")
 	assertFileContains(t, filepath.Join(".codex", "config.toml"), "atlas:mcp")
+	assertFileContains(t, filepath.Join(".codex", "config.toml"), `cwd = "."`)
 	assertFileContains(t, filepath.Join(".agents", "skills", "goforj-make-commands", "SKILL.md"), "forj <app> make:*")
 	assertFileContains(t, filepath.Join(".goforj", "atlas.json"), `"codex"`)
 }
