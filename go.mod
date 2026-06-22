@@ -11,7 +11,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/atlas v0.2.0
+	github.com/goforj/atlas v0.2.2
 	github.com/goforj/cache v0.3.0
 	github.com/goforj/cache/cachecore v0.3.0
 	github.com/goforj/crypt v1.0.0
@@ -152,3 +152,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.46.0 // indirect
 )
+
+replace github.com/goforj/atlas => ../atlas
