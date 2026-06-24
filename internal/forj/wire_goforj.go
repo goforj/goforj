@@ -17,6 +17,7 @@ var WireSet = wire.NewSet(
 	NewNewProjectCmd,
 	atlas.NewInstallCmd,
 	atlas.NewUpdateCmd,
+	atlas.NewDoctorCmd,
 	atlas.NewListSkillsCmd,
 	atlas.NewMakeSkillCmd,
 	atlas.NewMCPCmd,

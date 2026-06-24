@@ -21,7 +21,9 @@ func (*MCPCmd) Signature() string {
 // Run starts Atlas MCP over stdio. Stdout must stay reserved for MCP JSON-RPC.
 func (*MCPCmd) Run() error {
 	return mcp.ServeStdio(mcp.Server{
-		Project: Project("."),
-		Version: version.String(),
+		Project:     Project("."),
+		Diagnostics: Diagnostics("."),
+		Inventory:   Inventory("."),
+		Version:     version.String(),
 	})
 }

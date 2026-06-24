@@ -10,6 +10,7 @@ type InstallCmd struct {
 	Skills        bool     `help:"Install generated skill or instruction files"`
 	MCP           bool     `help:"Install MCP configuration"`
 	NoInteraction bool     `name:"no-interaction" help:"Run without interactive prompts"`
+	DryRun        bool     `name:"dry-run" help:"Show files that would be written without changing the project"`
 }
 
 // NewInstallCmd creates an InstallCmd.
@@ -32,9 +33,14 @@ func (c *InstallCmd) Run() error {
 		Skills:        c.Skills,
 		MCP:           c.MCP,
 		NoInteraction: c.NoInteraction,
+		DryRun:        c.DryRun,
 	})
 	if err != nil {
 		return err
+	}
+	if c.DryRun {
+		printResult("Would install Atlas", result)
+		return nil
 	}
 	printResult("Installed Atlas", result)
 	return nil

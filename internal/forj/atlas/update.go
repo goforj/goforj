@@ -14,6 +14,7 @@ type UpdateCmd struct {
 	Skills        bool     `help:"Update generated skill or instruction files"`
 	MCP           bool     `help:"Update MCP configuration"`
 	NoInteraction bool     `name:"no-interaction" help:"Run without interactive prompts"`
+	DryRun        bool     `name:"dry-run" help:"Show files that would be written without changing the project"`
 }
 
 // NewUpdateCmd creates an UpdateCmd.
@@ -37,9 +38,14 @@ func (c *UpdateCmd) Run() error {
 		Skills:        c.Skills,
 		MCP:           c.MCP,
 		NoInteraction: c.NoInteraction,
+		DryRun:        c.DryRun,
 	})
 	if err != nil {
 		return err
+	}
+	if c.DryRun {
+		printResult("Would update Atlas", result)
+		return nil
 	}
 	printResult("Updated Atlas", result)
 	return nil
