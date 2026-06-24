@@ -29,6 +29,7 @@ func Project(root string) atlasproject.Project {
 	discovered.FrontendKit = string(cfg.Render.StarterKit)
 	discovered.DatabaseDriver = cfg.Render.Components.DatabaseDriver()
 	discovered.QueueDriver = cfg.Render.QueueDriver
+	discovered.Apps = atlasAppsFromConfig(root, cfg, discovered.Apps)
 
 	return discovered.WithDiscoveredDefaults()
 }

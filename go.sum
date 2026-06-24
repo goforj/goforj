@@ -118,6 +118,8 @@ github.com/go-logr/stdr v1.2.2/go.mod h1:mMo/vtBO5dYbehREoey6XUKy/eSumjCCveDpRre
 github.com/go-ole/go-ole v1.2.6 h1:/Fpf6oFPoeFik9ty7siob0G6Ke8QvQEuVcuChpwXzpY=
 github.com/go-ole/go-ole v1.2.6/go.mod h1:pprOEPIfldk/42T2oK7lQ4v4JSDwmV0As9GaiUsvbm0=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
+github.com/goforj/atlas v0.3.0 h1:2fRMkffFIJ2GLDN7tavNMclblXY9BnHWPiGFV6BbwSU=
+github.com/goforj/atlas v0.3.0/go.mod h1:opwql3EDKTd/TYWkWAs/CP3OzomX5Dn11wtDR7W5ENs=
 github.com/goforj/cache v0.3.0 h1:pL/X6D0hvVt61m4V2PY4p+6Bp+taX4n17dSjQjFmbls=
 github.com/goforj/cache v0.3.0/go.mod h1:Y6CAhr5ZL9z77qz02L3rNeM7LCXmN8oEr1Aal0dCu+s=
 github.com/goforj/cache/cachecore v0.3.0 h1:G2peyR1O6baGnHAmgfoSvxQUkkD2uw43qzAmEIssrT8=

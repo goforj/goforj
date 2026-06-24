@@ -15,6 +15,7 @@ type InstallOptions struct {
 	Skills        bool
 	MCP           bool
 	NoInteraction bool
+	DryRun        bool
 }
 
 // RunInstall writes Atlas guidance, skills, and MCP config for a rendered project.
@@ -29,5 +30,6 @@ func RunInstall(ctx context.Context, opts InstallOptions) (install.Result, error
 		Skills:        opts.Skills,
 		MCP:           opts.MCP,
 		NoInteraction: opts.NoInteraction,
+		DryRun:        opts.DryRun,
 	})
 }

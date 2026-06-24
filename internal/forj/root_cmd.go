@@ -18,6 +18,7 @@ type RootCmd struct {
 	NewProjectCmd             NewProjectCmd                   `cmd:""`
 	AtlasInstallCmd           atlas.InstallCmd                `cmd:""`
 	AtlasUpdateCmd            atlas.UpdateCmd                 `cmd:""`
+	AtlasDoctorCmd            atlas.DoctorCmd                 `cmd:""`
 	AtlasListSkillsCmd        atlas.ListSkillsCmd             `cmd:""`
 	AtlasMakeSkillCmd         atlas.MakeSkillCmd              `cmd:""`
 	AtlasMCPCmd               atlas.MCPCmd                    `cmd:""`
@@ -49,6 +50,7 @@ func NewRootCmd(
 	newProjectCmd *NewProjectCmd,
 	atlasInstallCmd *atlas.InstallCmd,
 	atlasUpdateCmd *atlas.UpdateCmd,
+	atlasDoctorCmd *atlas.DoctorCmd,
 	atlasListSkillsCmd *atlas.ListSkillsCmd,
 	atlasMakeSkillCmd *atlas.MakeSkillCmd,
 	atlasMCPCmd *atlas.MCPCmd,
@@ -78,6 +80,7 @@ func NewRootCmd(
 		NewProjectCmd:             *newProjectCmd,
 		AtlasInstallCmd:           *atlasInstallCmd,
 		AtlasUpdateCmd:            *atlasUpdateCmd,
+		AtlasDoctorCmd:            *atlasDoctorCmd,
 		AtlasListSkillsCmd:        *atlasListSkillsCmd,
 		AtlasMakeSkillCmd:         *atlasMakeSkillCmd,
 		AtlasMCPCmd:               *atlasMCPCmd,

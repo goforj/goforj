@@ -18,7 +18,7 @@ var (
 // GoForjConfigVersion is the scaffold/config version written to .goforj.yml.
 // Bump this intentionally when config/render behavior changes in a way you
 // want recorded in project config.
-const GoForjConfigVersion = "0.18.0"
+const GoForjConfigVersion = "0.19.0"
 
 func init() {
 	if info, ok := debug.ReadBuildInfo(); ok {
