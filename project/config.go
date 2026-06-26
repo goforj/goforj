@@ -45,6 +45,57 @@ type App struct {
 	WireDir    string `yaml:"wire_dir" json:"wire_dir"`
 }
 
+// StartupCommand describes how forj dev should start an app binary.
+type StartupCommand struct {
+	Set  bool     `yaml:"-" json:"-"`
+	Args []string `yaml:"args,omitempty" json:"args,omitempty"`
+}
+
+// UnmarshalYAML decodes explicit startup command configuration.
+func (s *StartupCommand) UnmarshalYAML(value *yaml.Node) error {
+	s.Set = true
+	s.Args = nil
+
+	if value == nil || value.Tag == "!!null" {
+		return nil
+	}
+
+	switch value.Kind {
+	case yaml.ScalarNode:
+		command := strings.TrimSpace(value.Value)
+		if command == "" {
+			return nil
+		}
+		s.Args = strings.Fields(command)
+		return nil
+	case yaml.SequenceNode:
+		var args []string
+		if err := value.Decode(&args); err != nil {
+			return fmt.Errorf("decode startup_command: %w", err)
+		}
+		for _, arg := range args {
+			arg = strings.TrimSpace(arg)
+			if arg != "" {
+				s.Args = append(s.Args, arg)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("startup_command must be a string, list, or null")
+	}
+}
+
+// Command returns the configured startup command or the supplied default.
+func (s StartupCommand) Command(defaultArgs ...string) ([]string, bool) {
+	if !s.Set {
+		return append([]string(nil), defaultArgs...), true
+	}
+	if len(s.Args) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), s.Args...), true
+}
+
 // DefaultApp returns the conventional single-app project app.
 func DefaultApp() App {
 	return DefaultNamedApp(DefaultAppName)
@@ -126,9 +177,41 @@ type RenderConfig struct {
 
 // AppConfig records optional per-app participation in project-level capabilities.
 type AppConfig struct {
-	Components Components `yaml:"components" json:"components"`
-	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	Components     Components     `yaml:"components" json:"components"`
+	StarterKit     StarterKit     `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat     HelpFormat     `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	StartupCommand StartupCommand `yaml:"startup_command,omitempty" json:"startup_command,omitempty"`
+}
+
+// UnmarshalYAML preserves explicit app configuration keys that carry semantic meaning when null.
+func (a *AppConfig) UnmarshalYAML(value *yaml.Node) error {
+	type appConfig AppConfig
+
+	var decoded appConfig
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+
+	*a = AppConfig(decoded)
+	if yamlMappingHasKey(value, "startup_command") && !a.StartupCommand.Set {
+		a.StartupCommand.Set = true
+	}
+
+	return nil
+}
+
+func yamlMappingHasKey(value *yaml.Node, key string) bool {
+	if value == nil || value.Kind != yaml.MappingNode {
+		return false
+	}
+
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == key {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ProjectConfig represents the configuration for a project.

@@ -56,6 +56,48 @@ render:
 	}
 }
 
+func TestLoadProjectConfigSupportsNullStartupCommand(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".goforj.yml")
+	if err := os.WriteFile(configPath, []byte(`project_name: Test
+module_name: example.com/test
+updated_at: 2026-03-14 00:00:00 CDT
+apps:
+  ship:
+    startup_command: null
+render:
+  components:
+    cli: true
+  queue_driver: redis
+  goforj_version: 0.18.0
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	cfg, err := LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("LoadProjectConfig returned error: %v", err)
+	}
+
+	startup := cfg.Apps["ship"].StartupCommand
+	if !startup.Set {
+		t.Fatal("expected explicit null startup_command to be marked set")
+	}
+	args, ok := startup.Command("run")
+	if ok || len(args) != 0 {
+		t.Fatalf("expected null startup_command to disable startup, got args=%#v ok=%v", args, ok)
+	}
+}
+
 func TestDefaultNamedAppUsesConvention(t *testing.T) {
 	app := DefaultNamedApp("reporting")
 	if app.Entrypoint != filepath.Join("cmd", "reporting", "main.go") ||
