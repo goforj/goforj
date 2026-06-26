@@ -409,12 +409,12 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	for _, task := range tasks {
 		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
 		outputTail := newDevTaskOutputTail(40)
-		res, err := execx.Command("bash", "-c", task.Cmd).
+		cmd := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
 			StdinReader(devNull).
 			StdoutWriter(io.MultiWriter(os.Stdout, outputTail)).
-			StderrWriter(io.MultiWriter(os.Stderr, outputTail)).
-			Run()
+			StderrWriter(io.MultiWriter(os.Stderr, outputTail))
+		res, err := configureDevTaskTTY(cmd, outputTail).Run()
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -610,13 +610,43 @@ func devWatchesForApps(config *project.Config, watches []project.DevWatch) []pro
 		switch watch.Name {
 		case "Build App", "Run App":
 			for _, app := range apps {
-				rewritten = append(rewritten, devWatchForApp(watch, app))
+				appWatch, ok := devWatchForAppWithConfig(config, watch, app)
+				if ok {
+					rewritten = append(rewritten, appWatch)
+				}
 			}
 		default:
 			rewritten = append(rewritten, watch)
 		}
 	}
 	return rewritten
+}
+
+func devWatchForAppWithConfig(config *project.Config, watch project.DevWatch, app project.App) (project.DevWatch, bool) {
+	if watch.Name != "Run App" {
+		return devWatchForApp(watch, app), true
+	}
+
+	startup := project.StartupCommand{}
+	app = normalizeRenderApp(app)
+	if config != nil && config.Apps != nil {
+		if appConfig, ok := config.Apps[app.Name]; ok {
+			startup = appConfig.StartupCommand
+		}
+	}
+
+	args, ok := startup.Command("run")
+	if !ok {
+		return project.DevWatch{}, false
+	}
+
+	appWatch := devWatchForApp(watch, app)
+	binary := "./bin/app"
+	if app.Name != project.DefaultAppName {
+		binary = "./bin/" + app.Name
+	}
+	appWatch.Exec = strings.Join(append([]string{binary}, args...), " ")
+	return appWatch, true
 }
 
 func normalizeDevWatchesForRuntime(config *project.Config, watches []project.DevWatch) []project.DevWatch {
@@ -1889,12 +1919,12 @@ func runDevDownTasks(tasks []project.DevTask) error {
 	}
 	console.Infof("Bringing down resources")
 	for _, task := range tasks {
-		res, err := execx.Command("bash", "-c", task.Cmd).
+		cmd := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(os.Stdout).
-			StderrWriter(os.Stderr).
-			Run()
+			StderrWriter(os.Stderr)
+		res, err := configureDevTaskTTY(cmd, nil).Run()
 		if err != nil {
 			return fmt.Errorf("dev_down task '%s' failed: %v", task.Name, err)
 		}
@@ -1904,6 +1934,22 @@ func runDevDownTasks(tasks []project.DevTask) error {
 		console.Successf("%s", task.Name)
 	}
 	return nil
+}
+
+// configureDevTaskTTY preserves native command output for interactive helpers like Docker Compose.
+func configureDevTaskTTY(cmd *execx.Cmd, outputTail io.Writer) *execx.Cmd {
+	switch goruntime.GOOS {
+	case "linux", "darwin":
+		cmd = cmd.WithPTY()
+		if outputTail != nil {
+			cmd = cmd.StdoutWriter(io.MultiWriter(os.Stdout, outputTail))
+		} else {
+			cmd = cmd.StdoutWriter(os.Stdout)
+		}
+		return cmd.StderrWriter(nil)
+	default:
+		return cmd
+	}
 }
 
 // configureWatcherPTY wires PTY and output hooks based on platform constraints.
