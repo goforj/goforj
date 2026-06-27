@@ -755,6 +755,9 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	if runWatch.Exec != "./bin/app run" {
 		t.Fatalf("expected Run App watcher to execute ./bin/app run, got %q", runWatch.Exec)
 	}
+	if got := m.config.Dev.Run[project.DefaultAppName]; got != "run" {
+		t.Fatalf("expected dev.run.app to enable default app, got %q", got)
+	}
 }
 
 func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {

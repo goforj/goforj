@@ -602,9 +602,6 @@ func activeDevAppBinaryPath() string {
 // devWatchesForApps expands the single-app default watchers across every discovered app.
 func devWatchesForApps(config *project.Config, watches []project.DevWatch) []project.DevWatch {
 	apps := activeDevApps()
-	if len(apps) == 1 && apps[0].Name == project.DefaultAppName {
-		return watches
-	}
 	rewritten := make([]project.DevWatch, 0, len(watches)*len(apps))
 	for _, watch := range watches {
 		switch watch.Name {
@@ -627,15 +624,8 @@ func devWatchForAppWithConfig(config *project.Config, watch project.DevWatch, ap
 		return devWatchForApp(watch, app), true
 	}
 
-	startup := project.StartupCommand{}
 	app = normalizeRenderApp(app)
-	if config != nil && config.Apps != nil {
-		if appConfig, ok := config.Apps[app.Name]; ok {
-			startup = appConfig.StartupCommand
-		}
-	}
-
-	args, ok := startup.Command("run")
+	runCommand, ok := devRunCommandForApp(config, app)
 	if !ok {
 		return project.DevWatch{}, false
 	}
@@ -645,8 +635,24 @@ func devWatchForAppWithConfig(config *project.Config, watch project.DevWatch, ap
 	if app.Name != project.DefaultAppName {
 		binary = "./bin/" + app.Name
 	}
-	appWatch.Exec = strings.Join(append([]string{binary}, args...), " ")
+	appWatch.Exec = strings.TrimSpace(binary + " " + runCommand)
 	return appWatch, true
+}
+
+func devRunCommandForApp(config *project.Config, app project.App) (string, bool) {
+	if config == nil || config.Dev.Run == nil {
+		return "", false
+	}
+	app = normalizeRenderApp(app)
+	command, ok := config.Dev.Run[app.Name]
+	if !ok {
+		return "", false
+	}
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", false
+	}
+	return command, true
 }
 
 func normalizeDevWatchesForRuntime(config *project.Config, watches []project.DevWatch) []project.DevWatch {
@@ -1138,7 +1144,6 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	results := make([]devBuildResult, len(jobs))
 	var wg sync.WaitGroup
 	for index, job := range jobs {
-		writeDevActionLine(outWriter, "Building "+job.app.Name)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1150,7 +1155,6 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	failures := make([]string, 0)
 	for _, result := range results {
 		if result.err == nil {
-			writeDevTimingLine(outWriter, "Built "+result.job.app.Name+" in "+formatDevElapsed(result.elapsed))
 			continue
 		}
 		writeDevBuildFailureOutput(outWriter, errWriter, result)

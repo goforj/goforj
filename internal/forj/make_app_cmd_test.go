@@ -124,6 +124,86 @@ func TestMakeAppCmdUsesNextAvailableEnvPortForSequentialApps(t *testing.T) {
 	}
 }
 
+func TestMakeAppCmdLeavesDevRunDisabledByDefault(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := writeProjectConfig(".goforj.yml", &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true},
+		},
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "ship"
+	cmd.Components = "cli"
+	cmd.SkipWire = true
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make app: %v", err)
+	}
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if _, ok := cfg.Dev.Run["ship"]; ok {
+		t.Fatalf("expected ship to be absent from dev.run")
+	}
+	if _, ok := cfg.Apps["ship"]; !ok {
+		t.Fatalf("expected ship render app config")
+	}
+}
+
+func TestMakeAppCmdPersistsDevRunCommand(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := writeProjectConfig(".goforj.yml", &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true},
+		},
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "ship"
+	cmd.Components = "cli"
+	cmd.DevRun = "sync --once"
+	cmd.SkipWire = true
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make app: %v", err)
+	}
+
+	cfg, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.Dev.Run["ship"]; got != "sync --once" {
+		t.Fatalf("expected custom ship dev run command, got %q", got)
+	}
+}
+
 func TestMakeAppCmdCreatesAPIOnlyAppInWebUIProject(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -554,6 +634,11 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 				WebAPI: true,
 			},
 		},
+		Dev: project.DevConfig{
+			Run: map[string]string{
+				"billing": "run",
+			},
+		},
 		Apps: map[string]project.AppConfig{
 			"billing": {
 				Components: project.Components{WebAPI: true},
@@ -620,6 +705,9 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 	}
 	if _, ok := cfg.Apps["billing"]; ok {
 		t.Fatalf("expected billing app config to be removed")
+	}
+	if _, ok := cfg.Dev.Run["billing"]; ok {
+		t.Fatalf("expected billing dev run config to be removed")
 	}
 	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))
 	if strings.Contains(runtimeSrc, `Name: "billing"`) {

@@ -1154,6 +1154,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		promotedProjectComponents = promoted
+		p.setAppDevRun(app.Name, opts.DevRunCommand)
 		if err := p.writeAppEnvDefaults(app, appRenderComponents(p.config, app)); err != nil {
 			return err
 		}
@@ -1275,17 +1276,29 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 
 // removeAppConfig forgets app-local render choices without downgrading project capabilities.
 func (p *ProjectRenderer) removeAppConfig(name string) bool {
-	if p.config == nil || p.config.Apps == nil {
+	if p.config == nil {
 		return false
 	}
-	if _, ok := p.config.Apps[name]; !ok {
-		return false
+	changed := false
+	if p.config.Apps != nil {
+		if _, ok := p.config.Apps[name]; ok {
+			delete(p.config.Apps, name)
+			changed = true
+		}
+		if len(p.config.Apps) == 0 {
+			p.config.Apps = nil
+		}
 	}
-	delete(p.config.Apps, name)
-	if len(p.config.Apps) == 0 {
-		p.config.Apps = nil
+	if p.config.Dev.Run != nil {
+		if _, ok := p.config.Dev.Run[name]; ok {
+			delete(p.config.Dev.Run, name)
+			changed = true
+		}
+		if len(p.config.Dev.Run) == 0 {
+			p.config.Dev.Run = nil
+		}
 	}
-	return true
+	return changed
 }
 
 // setAppConfig persists app participation so future full renders keep the same app shape.
@@ -1323,6 +1336,28 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 		HelpFormat: helpFormat,
 	}
 	return p.config.Render.Components != before, nil
+}
+
+// setAppDevRun persists the app allowlist entry used by forj dev runtime watchers.
+func (p *ProjectRenderer) setAppDevRun(name string, command string) {
+	name = strings.TrimSpace(name)
+	command = strings.TrimSpace(command)
+	if p.config == nil || name == "" || name == project.DefaultAppName {
+		return
+	}
+	if command == "" {
+		if p.config.Dev.Run != nil {
+			delete(p.config.Dev.Run, name)
+			if len(p.config.Dev.Run) == 0 {
+				p.config.Dev.Run = nil
+			}
+		}
+		return
+	}
+	if p.config.Dev.Run == nil {
+		p.config.Dev.Run = map[string]string{}
+	}
+	p.config.Dev.Run[name] = command
 }
 
 // writeAppEnvDefaults appends app-scoped env defaults without changing the default App values.
