@@ -46,7 +46,7 @@ func TestAppSelectionAllowsExternalHelpFormatWithOtherComponents(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "ship", Components: "web-api,jobs", HelpFormat: string(project.HelpFormatExternalCLI)}
-	components, starterKit, helpFormat, err := cmd.appSelection(&project.Config{
+	components, starterKit, helpFormat, _, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true, WebAPI: true, Jobs: true},
 		},
@@ -70,7 +70,7 @@ func TestAppSelectionAllowsGuidedHelpFormatWithOtherComponents(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "tasks", Components: "scheduler,database_sqlite", HelpFormat: string(project.HelpFormatGuided)}
-	components, starterKit, helpFormat, err := cmd.appSelection(&project.Config{
+	components, starterKit, helpFormat, _, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true, Scheduler: true, DatabaseSQLite: true},
 		},
@@ -95,7 +95,7 @@ func TestAppSelectionAllowsExplicitCLIOnlyApp(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "ship", Components: "cli", HelpFormat: string(project.HelpFormatExternalCLI)}
-	components, starterKit, helpFormat, err := cmd.appSelection(&project.Config{
+	components, starterKit, helpFormat, _, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:              true,
@@ -125,6 +125,38 @@ func TestAppSelectionAllowsExplicitCLIOnlyApp(t *testing.T) {
 	}
 	if helpFormat != project.HelpFormatExternalCLI {
 		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatExternalCLI)
+	}
+}
+
+func TestAppSelectionLeavesDevRunDisabledByDefault(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "ship", Components: "cli"}
+	_, _, _, devRun, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+	})
+	if err != nil {
+		t.Fatalf("appSelection() error = %v", err)
+	}
+	if devRun != "" {
+		t.Fatalf("expected default make:app dev run to be disabled, got %q", devRun)
+	}
+}
+
+func TestAppSelectionSupportsDevRunCommand(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "ship", Components: "cli", DevRun: "sync --once"}
+	_, _, _, devRun, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+	})
+	if err != nil {
+		t.Fatalf("appSelection() error = %v", err)
+	}
+	if devRun != "sync --once" {
+		t.Fatalf("expected custom dev run command, got %q", devRun)
 	}
 }
 
@@ -166,8 +198,8 @@ render:
 	}
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error) {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), true, nil
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error) {
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", true, nil
 	})
 	defer restoreWizard()
 	renderer := &recordingRenderer{}
@@ -245,13 +277,13 @@ func TestCmdRunTreatsMissingRemoveAppAsNormalExit(t *testing.T) {
 func TestAppSelectionReturnsCancellationSentinel(t *testing.T) {
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error) {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), true, nil
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error) {
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", true, nil
 	})
 	defer restoreWizard()
 
 	cmd := &Cmd{Name: "reporting"}
-	_, _, _, err := cmd.appSelection(&project.Config{
+	_, _, _, _, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -374,6 +406,34 @@ func TestWizardCanProduceCLIOnlyApp(t *testing.T) {
 	}
 	if model.components.WebAPI || model.components.WebUI || model.components.Auth || model.components.OAuth || model.components.HasDatabase() || model.components.Scheduler || model.components.Jobs {
 		t.Fatalf("expected CLI-only app components, got %+v", model.components)
+	}
+}
+
+func TestWizardDevRunDefaultsToRun(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true},
+		},
+	})
+
+	if got := model.devRunCommand(); got != "run" {
+		t.Fatalf("expected wizard dev run default to be run, got %q", got)
+	}
+}
+
+func TestWizardCanDisableDevRun(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true},
+		},
+	})
+	model.stage = appWizardDevRun
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model = next.(appWizardModel)
+
+	if got := model.devRunCommand(); got != "" {
+		t.Fatalf("expected disabled wizard dev run to be empty, got %q", got)
 	}
 }
 
@@ -606,7 +666,7 @@ func stubInteractiveTerminal(t *testing.T, interactive bool) func() {
 	}
 }
 
-func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error)) func() {
+func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error)) func() {
 	t.Helper()
 	original := appWizardRunner
 	appWizardRunner = runner
@@ -630,6 +690,7 @@ func selectAppWizardComponent(t *testing.T, model *appWizardModel, key project.C
 
 type recordingRenderer struct {
 	called       bool
+	options      RenderOptions
 	removeCalled bool
 	removeApp    project.App
 	removeResult RemoveResult
@@ -637,8 +698,9 @@ type recordingRenderer struct {
 }
 
 // RenderAppOnly records render attempts so cancellation tests can assert no files were written.
-func (r *recordingRenderer) RenderAppOnly(project.App, RenderOptions) error {
+func (r *recordingRenderer) RenderAppOnly(_ project.App, options RenderOptions) error {
 	r.called = true
+	r.options = options
 	return nil
 }
 

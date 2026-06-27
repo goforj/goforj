@@ -71,7 +71,14 @@ func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
 			Exec: "echo ok",
 		},
 	}
-	got := devWatchesForApps(&project.Config{}, watches)
+	got := devWatchesForApps(&project.Config{
+		Dev: project.DevConfig{
+			Run: map[string]string{
+				"app":             "run",
+				"customer-portal": "run",
+			},
+		},
+	}, watches)
 	if len(got) != 5 {
 		t.Fatalf("expected expanded watchers, got %#v", got)
 	}
@@ -124,7 +131,11 @@ func TestNormalizeDevWatchesForRuntimeStopsTemplOutputLoops(t *testing.T) {
 
 func TestDevWatchesForAppsCanScopeToExplicitApp(t *testing.T) {
 	t.Setenv("FORJ_APP", "customer-portal")
-	got := devWatchesForApps(nil, []project.DevWatch{
+	got := devWatchesForApps(&project.Config{
+		Dev: project.DevConfig{
+			Run: map[string]string{"customer-portal": "run"},
+		},
+	}, []project.DevWatch{
 		{Name: "Build App", Watch: "-file .go -xfile app/wire/wire_gen\\.go$", Exec: "forj build -o ./bin/app"},
 		{Name: "Run App", Watch: "-file ./bin/app -file .env", Exec: "./bin/app run"},
 	})
@@ -136,20 +147,66 @@ func TestDevWatchesForAppsCanScopeToExplicitApp(t *testing.T) {
 	}
 }
 
+func TestDevWatchesForAppsUsesDevRunCommand(t *testing.T) {
+	withConventionalApp(t, "billing")
+	got := devWatchesForApps(&project.Config{
+		Dev: project.DevConfig{
+			Run: map[string]string{
+				"app":     "run",
+				"billing": "sync --once",
+			},
+		},
+	}, []project.DevWatch{
+		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
+	})
+
+	if len(got) != 2 {
+		t.Fatalf("expected default and billing run watchers, got %#v", got)
+	}
+	if got[1].Name != "Run billing" || got[1].Exec != "./bin/billing sync --once" {
+		t.Fatalf("expected custom billing dev run command, got %#v", got[1])
+	}
+}
+
+func TestDevWatchesForAppsSkipsAppsMissingFromDevRun(t *testing.T) {
+	withConventionalApp(t, "billing")
+	got := devWatchesForApps(&project.Config{
+		Dev: project.DevConfig{
+			Run: map[string]string{
+				"app": "run",
+			},
+		},
+	}, []project.DevWatch{
+		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("expected disabled billing dev run to be omitted, got %#v", got)
+	}
+	if got[0].Name != "Run App" {
+		t.Fatalf("expected default app run watcher to remain, got %#v", got)
+	}
+}
+
 func TestDevWatchesForAppsDropsRemovedConventionalApp(t *testing.T) {
 	withConventionalApp(t, "billing")
 	base := []project.DevWatch{
 		{Name: "Build App", Watch: "-file .go", Exec: "forj build -o ./bin/app"},
 		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
 	}
-	if got := devWatchesForApps(&project.Config{}, base); len(got) != 4 {
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Run: map[string]string{"app": "run", "billing": "run"},
+		},
+	}
+	if got := devWatchesForApps(config, base); len(got) != 4 {
 		t.Fatalf("expected billing watchers before removal, got %#v", got)
 	}
 	if err := os.RemoveAll(filepath.Join("cmd", "billing")); err != nil {
 		t.Fatalf("remove billing app: %v", err)
 	}
 
-	got := devWatchesForApps(&project.Config{}, base)
+	got := devWatchesForApps(config, base)
 	if len(got) != 2 {
 		t.Fatalf("expected only default watchers after removal, got %#v", got)
 	}
@@ -544,6 +601,37 @@ func TestRunDevBuildBuffersFailureOutputByApp(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "billing failed") {
 		t.Fatalf("expected buffered stderr, got %q", errOut.String())
+	}
+}
+
+func TestRunDevBuildKeepsMultiAppSuccessTranscriptCompact(t *testing.T) {
+	withConventionalApp(t, "billing")
+
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: "true"},
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := runDevBuild(config, &out, &errOut); err != nil {
+		t.Fatalf("runDevBuild returned error: %v", err)
+	}
+	text := out.String()
+	if strings.Contains(text, "Building app") || strings.Contains(text, "Building billing") {
+		t.Fatalf("expected compact multi-app build transcript, got stdout %q", text)
+	}
+	if strings.Contains(text, "Built billing") {
+		t.Fatalf("expected no per-app success timing lines, got stdout %q", text)
+	}
+	if !strings.Contains(text, "Built apps in ") {
+		t.Fatalf("expected aggregate build timing, got stdout %q", text)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected no stderr, got %q", errOut.String())
 	}
 }
 

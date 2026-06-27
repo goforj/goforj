@@ -294,6 +294,7 @@ type ProjectConfigResponse = {
   dev?: {
     pre?: DevTask[];
     down?: DevTask[];
+    run?: Record<string, string>;
     auto_migrate?: boolean;
     down_on_exit?: boolean;
     sound_on_watch_error?: boolean;
@@ -327,6 +328,7 @@ const snapshot = ref("");
 const watchers = ref<EditableWatch[]>([]);
 const preTasks = ref<EditableTask[]>([]);
 const downTasks = ref<EditableTask[]>([]);
+const devRun = ref<Record<string, string>>({});
 
 const createWatcher = (data: DevWatch = {}) => ({
   id: nextWatcherId.value++,
@@ -350,6 +352,7 @@ const buildSnapshot = () =>
     })),
     pre: preTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
     down: downTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
+    run: devRun.value,
     autoMigrate: autoMigrate.value,
     downOnExit: downOnExit.value,
     soundOnWatchError: soundOnWatchError.value,
@@ -374,6 +377,7 @@ const loadConfig = async (options: { skipStatusReset?: boolean } = {}) => {
     autoMigrate.value = payload.dev?.auto_migrate ?? false;
     downOnExit.value = payload.dev?.down_on_exit ?? false;
     soundOnWatchError.value = payload.dev?.sound_on_watch_error ?? false;
+    devRun.value = payload.dev?.run || {};
     nextWatcherId.value = 1;
     watchers.value = (payload.dev?.watches || []).map((watch) => createWatcher(watch));
     nextTaskId.value = 1;
@@ -401,6 +405,7 @@ const saveConfig = async () => {
     dev: {
       pre: preTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
       down: downTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
+      run: devRun.value,
       auto_migrate: autoMigrate.value,
       down_on_exit: downOnExit.value,
       sound_on_watch_error: soundOnWatchError.value,

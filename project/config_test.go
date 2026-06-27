@@ -56,15 +56,16 @@ render:
 	}
 }
 
-func TestLoadProjectConfigSupportsNullStartupCommand(t *testing.T) {
+func TestLoadProjectConfigSupportsDevRunAllowlist(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, ".goforj.yml")
 	if err := os.WriteFile(configPath, []byte(`project_name: Test
 module_name: example.com/test
 updated_at: 2026-03-14 00:00:00 CDT
-apps:
-  ship:
-    startup_command: null
+dev:
+  run:
+    app: run
+    worker: queue:work
 render:
   components:
     cli: true
@@ -88,13 +89,11 @@ render:
 		t.Fatalf("LoadProjectConfig returned error: %v", err)
 	}
 
-	startup := cfg.Apps["ship"].StartupCommand
-	if !startup.Set {
-		t.Fatal("expected explicit null startup_command to be marked set")
+	if got := cfg.Dev.Run["app"]; got != "run" {
+		t.Fatalf("expected app dev run command to load, got %q", got)
 	}
-	args, ok := startup.Command("run")
-	if ok || len(args) != 0 {
-		t.Fatalf("expected null startup_command to disable startup, got args=%#v ok=%v", args, ok)
+	if got := cfg.Dev.Run["worker"]; got != "queue:work" {
+		t.Fatalf("expected worker dev run command to load, got %q", got)
 	}
 }
 

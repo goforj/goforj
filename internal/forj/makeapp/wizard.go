@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/konghelp"
@@ -72,6 +73,7 @@ const (
 	appWizardComponents appWizardStage = iota
 	appWizardHelpFormat
 	appWizardStarterKit
+	appWizardDevRun
 	appWizardConfirm
 	appWizardDone
 )
@@ -82,26 +84,28 @@ type appWizardModel struct {
 	componentList  list.Model
 	helpFormatList list.Model
 	starterKitList list.Model
+	devRunInput    textinput.Model
 	available      project.Components
 	components     project.Components
 	helpFormat     project.HelpFormat
 	starterKit     project.StarterKit
+	devRunEnabled  bool
 	cancelled      bool
 	termWidth      int
 }
 
-// runAppWizard selects components and starter kit for a new app.
-func runAppWizard(appName string, config *project.Config) (project.Components, project.StarterKit, project.HelpFormat, bool, error) {
+// runAppWizard selects components, starter kit, and dev run behavior for a new app.
+func runAppWizard(appName string, config *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error) {
 	initial := initialAppWizardModel(appName, config)
 	result, err := tea.NewProgram(initial).Run()
 	if err != nil {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), false, err
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", false, err
 	}
 	model, ok := result.(appWizardModel)
 	if !ok || model.cancelled {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), true, nil
+		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", true, nil
 	}
-	return model.components, model.starterKit, model.helpFormat, false, nil
+	return model.components, model.starterKit, model.helpFormat, model.devRunCommand(), false, nil
 }
 
 // initialAppWizardModel builds the initial wizard state from project defaults.
@@ -133,16 +137,25 @@ func initialAppWizardModel(appName string, config *project.Config) appWizardMode
 	helpFormatList.SetShowHelp(false)
 	helpFormatList.SetShowStatusBar(false)
 	helpFormatList.SetShowPagination(false)
+	devRunInput := textinput.New()
+	devRunInput.Placeholder = "run"
+	devRunInput.SetValue("run")
+	devRunInput.Prompt = ""
+	devRunInput.CharLimit = 160
+	devRunInput.Width = 64
+	devRunInput.Focus()
 	return appWizardModel{
 		appName:        appName,
 		stage:          appWizardComponents,
 		componentList:  componentList,
 		helpFormatList: helpFormatList,
 		starterKitList: starterKitList,
+		devRunInput:    devRunInput,
 		available:      available,
 		components:     components,
 		helpFormat:     helpFormat,
 		starterKit:     starterKit,
+		devRunEnabled:  true,
 		termWidth:      132,
 	}
 }
@@ -210,7 +223,7 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.components.WebUI {
 					m.stage = appWizardStarterKit
 				} else {
-					m.stage = appWizardConfirm
+					m.stage = appWizardDevRun
 				}
 				return m, nil
 			}
@@ -226,14 +239,14 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.String() == "enter" {
 				m.applyStarterKitSelection()
-				m.stage = appWizardConfirm
+				m.stage = appWizardDevRun
 				return m, nil
 			}
 			var cmd tea.Cmd
 			m.starterKitList, cmd = m.starterKitList.Update(msg)
 			m.syncStarterKitSelectionFromCursor()
 			return m, cmd
-		case appWizardConfirm:
+		case appWizardDevRun:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				if m.components.WebUI {
@@ -241,6 +254,31 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.stage = appWizardHelpFormat
 				}
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				m.stage = appWizardConfirm
+				return m, nil
+			case "y":
+				m.devRunEnabled = true
+				m.devRunInput.Focus()
+				return m, nil
+			case "n":
+				m.devRunEnabled = false
+				m.devRunInput.Blur()
+				return m, nil
+			}
+			if !m.devRunEnabled {
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.devRunInput, cmd = m.devRunInput.Update(msg)
+			return m, cmd
+		case appWizardConfirm:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = appWizardDevRun
 				return m, nil
 			}
 			if msg.String() == "enter" {
@@ -273,12 +311,17 @@ func (m appWizardModel) View() string {
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
 		panels = append(panels, m.renderHelpFormatStage())
 		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+	case appWizardDevRun:
+		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
+		panels = append(panels, wizardPanel("Dev Run", m.renderDevRunStage(), m.termWidth, true))
+		actions = []string{"Y run app", "N skip app", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case appWizardConfirm:
 		panels = append(panels, wizardPanel("Confirm app", renderKeyValueTable([]keyValue{
 			{"App", m.appName},
 			{"Components", componentNames},
 			{"Starter kit", m.selectedStarterKitSummary()},
 			{"Help format", m.selectedHelpFormatSummary()},
+			{"Dev run", m.selectedDevRunSummary()},
 		}), m.termWidth, true))
 		actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
 	}
@@ -287,6 +330,37 @@ func (m appWizardModel) View() string {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, wizardFooter(actions, m.termWidth))
 	}
 	return "\n" + view
+}
+
+// renderDevRunStage renders whether the app participates in forj dev runtime processes.
+func (m appWizardModel) renderDevRunStage() string {
+	enabled := "No"
+	if m.devRunEnabled {
+		enabled = "Yes"
+	}
+	command := wizardMutedStyle.Render("Not run by forj dev")
+	if m.devRunEnabled {
+		command = m.devRunInput.View()
+		if strings.TrimSpace(command) == "" {
+			command = wizardMutedStyle.Render("run")
+		}
+	}
+	return renderKeyValueTable([]keyValue{
+		{"Run in dev", enabled},
+		{"Command", command},
+	})
+}
+
+// devRunCommand returns the allowlist entry for dev.run. Empty means the app is not run by forj dev.
+func (m appWizardModel) devRunCommand() string {
+	if !m.devRunEnabled {
+		return ""
+	}
+	command := strings.TrimSpace(m.devRunInput.Value())
+	if command == "" {
+		return "run"
+	}
+	return command
 }
 
 // applyComponentSelection normalizes visible choices into the app component contract.
@@ -613,6 +687,18 @@ func (m appWizardModel) selectedStarterKitSummary() string {
 		return definition.Label
 	}
 	return "None"
+}
+
+// selectedDevRunSummary reports whether forj dev will run the app and with which command.
+func (m appWizardModel) selectedDevRunSummary() string {
+	if !m.devRunEnabled {
+		return "No"
+	}
+	command := strings.TrimSpace(m.devRunInput.Value())
+	if command == "" {
+		command = "run"
+	}
+	return "Yes, " + command
 }
 
 // makeHelpFormatItems converts formatter definitions into radio-style list rows.

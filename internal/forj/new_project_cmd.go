@@ -444,6 +444,10 @@ func (m *model) finalizeConfig() {
 	}
 
 	if components.WebAPI || components.WebUI || components.Scheduler || components.Jobs {
+		if m.config.Dev.Run == nil {
+			m.config.Dev.Run = map[string]string{}
+		}
+		m.config.Dev.Run[project.DefaultAppName] = "run"
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Run App",
 			Watch: "-file ./bin/app -file .env -file .env.*",
