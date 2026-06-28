@@ -124,6 +124,9 @@ func TestNormalizeDevWatchesForRuntimeStopsTemplOutputLoops(t *testing.T) {
 			t.Fatalf("expected NPM watcher to contain %q, got %q", expected, got[1].Watch)
 		}
 	}
+	if strings.Contains(got[1].Watch, "-xdir .") {
+		t.Fatalf("expected NPM watcher to remove wildcard directory exclusion, got %q", got[1].Watch)
+	}
 	if strings.Contains(watches[1].Watch, "node_modules") || strings.Contains(watches[1].Watch, "dist") {
 		t.Fatalf("expected original watches to remain unchanged, got %#v", watches)
 	}

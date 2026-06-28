@@ -815,4 +815,7 @@ func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) 
 			t.Fatalf("expected NPM watcher to include %q, got %q", expected, npmWatch)
 		}
 	}
+	if strings.Contains(npmWatch, "-xdir .") {
+		t.Fatalf("expected NPM watcher to omit wildcard directory exclusion, got %q", npmWatch)
+	}
 }
