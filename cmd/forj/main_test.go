@@ -266,6 +266,70 @@ func TestRunAppHelpForAppMarksMultiAppHelp(t *testing.T) {
 	}
 }
 
+func TestPrintGeneratedAppHelpIgnoresUnavailableAppHelp(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	scriptPath, err := filepath.Abs("fake-forj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+case "$1" in
+  app)
+    printf '%s\n\n%s\n  %s\n' 'test · app' 'app' 'about    Show environment'
+    exit 0
+    ;;
+  ship-smoke)
+    echo 'custom binary has no framework help' >&2
+    exit 1
+    ;;
+esac
+exit 1
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousArg0 := os.Args[0]
+	defer func() { os.Args[0] = previousArg0 }()
+	os.Args[0] = scriptPath
+
+	output := captureStdout(t, func() {
+		if err := printGeneratedAppHelp([]string{"app", "ship-smoke"}); err != nil {
+			t.Fatalf("print app help: %v", err)
+		}
+	})
+	if !strings.Contains(output, "test · app") {
+		t.Fatalf("expected generated app help to be printed, got:\n%s", output)
+	}
+	if strings.Contains(output, "ship-smoke") || strings.Contains(output, "custom binary") {
+		t.Fatalf("expected unavailable app help to be ignored, got:\n%s", output)
+	}
+}
+
+func TestGeneratedAppHelpResultsIgnoreCustomHelp(t *testing.T) {
+	results := generatedAppHelpResults([]appHelpResult{
+		{
+			app: "app",
+			output: strings.Join([]string{
+				"test · app",
+				"",
+				"app",
+				"  about    Show environment",
+				"",
+			}, "\n"),
+		},
+		{
+			app:    "ship-smoke",
+			output: "Usage: ship-smoke [options]\n",
+		},
+	})
+
+	if len(results) != 1 || results[0].app != "app" {
+		t.Fatalf("filtered app help = %#v, want only app", results)
+	}
+}
+
 func TestCompactGeneratedAppHelpDeduplicatesSharedCommands(t *testing.T) {
 	results := []appHelpResult{
 		{app: "app", output: strings.Join([]string{

@@ -464,8 +464,9 @@ func (m *model) finalizeConfig() {
 	}
 }
 
+// frontendNPMWatch returns source-oriented frontend watch filters for wgo.
 func frontendNPMWatch(frontendDir string) string {
-	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir . -xdir node_modules -xdir dist"
+	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir node_modules -xdir dist"
 }
 
 // initialModel builds the default wizard state used by tests and the plain interactive command.

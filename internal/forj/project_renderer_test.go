@@ -797,10 +797,13 @@ func TestNormalizeDevWatchWireGenExclusionIsIdempotent(t *testing.T) {
 func TestNormalizeFrontendNPMWatchExclusions(t *testing.T) {
 	input := "-cd ./cmd/app/frontend -xdir _data -xdir ."
 	got := normalizeFrontendNPMWatchExclusions(input)
-	for _, expected := range []string{input, "-xdir node_modules", "-xdir dist"} {
+	for _, expected := range []string{"-cd ./cmd/app/frontend -xdir _data", "-xdir node_modules", "-xdir dist"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("expected normalized NPM watch to contain %q, got %q", expected, got)
 		}
+	}
+	if strings.Contains(got, "-xdir .") {
+		t.Fatalf("expected normalized NPM watch to remove wildcard directory exclusion, got %q", got)
 	}
 	if gotAgain := normalizeFrontendNPMWatchExclusions(got); gotAgain != got {
 		t.Fatalf("expected NPM watch normalization to be idempotent, got %q then %q", got, gotAgain)

@@ -364,12 +364,7 @@ func renderAppUsageRow(command string, help string) {
 
 // printGeneratedAppHelp prints generated app help screens in app order after collecting them concurrently.
 func printGeneratedAppHelp(apps []string) error {
-	results := collectGeneratedAppHelp(apps)
-	for _, result := range results {
-		if result.err != nil {
-			return fmt.Errorf("%s help: %w", result.app, result.err)
-		}
-	}
+	results := generatedAppHelpResults(collectGeneratedAppHelp(apps))
 	if output, ok := compactGeneratedAppHelp(results); ok {
 		fmt.Print(output)
 		return nil
@@ -379,6 +374,21 @@ func printGeneratedAppHelp(apps []string) error {
 		fmt.Print(result.output)
 	}
 	return nil
+}
+
+// generatedAppHelpResults keeps root help aggregation limited to GoForj-generated app help.
+func generatedAppHelpResults(results []appHelpResult) []appHelpResult {
+	filtered := make([]appHelpResult, 0, len(results))
+	for _, result := range results {
+		if result.err != nil {
+			continue
+		}
+		if _, ok := parseGeneratedAppHelp(result.app, result.output); !ok {
+			continue
+		}
+		filtered = append(filtered, result)
+	}
+	return filtered
 }
 
 type appHelpResult struct {

@@ -2027,8 +2027,12 @@ func normalizeDevWatchWireGenExclusion(watch string) string {
 	return normalized
 }
 
+// normalizeFrontendNPMWatchExclusions keeps frontend watchers focused on source files.
 func normalizeFrontendNPMWatchExclusions(watch string) string {
-	return appendMissingWatchArgs(watch, []string{"-xdir node_modules", "-xdir dist"})
+	normalized := removeWatchArgs(watch, map[string]map[string]bool{
+		"-xdir": {".": true},
+	})
+	return appendMissingWatchArgs(normalized, []string{"-xdir node_modules", "-xdir dist"})
 }
 
 func normalizeTemplBuildWatchExclusions(watch string) string {
@@ -2053,6 +2057,28 @@ func appendMissingWatchArgs(watch string, args []string) string {
 		normalized += " " + arg
 	}
 	return normalized
+}
+
+// removeWatchArgs drops legacy wgo flag pairs that block recursive source watching.
+func removeWatchArgs(watch string, removals map[string]map[string]bool) string {
+	fields := strings.Fields(watch)
+	if len(fields) == 0 {
+		return ""
+	}
+	kept := make([]string, 0, len(fields))
+	for index := 0; index < len(fields); index++ {
+		flag := fields[index]
+		values, ok := removals[flag]
+		if ok && index+1 < len(fields) {
+			value := strings.Trim(fields[index+1], "'\"")
+			if values[value] {
+				index++
+				continue
+			}
+		}
+		kept = append(kept, flag)
+	}
+	return strings.Join(kept, " ")
 }
 
 // removeLegacyInitialBuildTask removes the old single-app bootstrap build now owned by forj dev.
