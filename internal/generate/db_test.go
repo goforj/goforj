@@ -56,7 +56,7 @@ func TestGenerateDBFilesUsesDatabasePackageAndSelectedDrivers(t *testing.T) {
 
 func TestGenerateDBFilesUsesSupportedDrivers(t *testing.T) {
 	t.Setenv("DB_DRIVER", "mysql")
-	t.Setenv("DB_SUPPORTED_DRIVERS", "sqlite,mysql")
+	t.Setenv("DB_SUPPORTED_DRIVERS", "mysql")
 
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "database"), 0o755); err != nil {
@@ -73,7 +73,7 @@ func TestGenerateDBFilesUsesSupportedDrivers(t *testing.T) {
 	}
 	content := string(src)
 	if !strings.Contains(content, `"github.com/glebarez/sqlite"`) {
-		t.Fatal("expected generated db source to include sqlite from DB_SUPPORTED_DRIVERS")
+		t.Fatal("expected generated db source to keep sqlite as the no-env fallback")
 	}
 	if !strings.Contains(content, `"gorm.io/driver/mysql"`) {
 		t.Fatal("expected generated db source to include mysql from DB_SUPPORTED_DRIVERS")

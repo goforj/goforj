@@ -8,8 +8,8 @@ import (
 )
 
 func TestGenerateMailFilesUsesSupportedDriverImports(t *testing.T) {
-	t.Setenv("MAIL_DRIVER", "log")
-	t.Setenv("MAIL_SUPPORTED_DRIVERS", "log,resend")
+	t.Setenv("MAIL_DRIVER", "resend")
+	t.Setenv("MAIL_SUPPORTED_DRIVERS", "resend")
 
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "mail"), 0o755); err != nil {
@@ -27,6 +27,9 @@ func TestGenerateMailFilesUsesSupportedDriverImports(t *testing.T) {
 	source := string(managerGen)
 	if !strings.Contains(source, `"github.com/goforj/mail/mailresend"`) {
 		t.Fatal("expected generated mail manager to import mailresend from MAIL_SUPPORTED_DRIVERS")
+	}
+	if !strings.Contains(source, `"github.com/goforj/mail/maillog"`) {
+		t.Fatal("expected generated mail manager to keep maillog as the no-env fallback")
 	}
 	if strings.Contains(source, `"github.com/goforj/mail/mailses"`) {
 		t.Fatal("did not expect generated mail manager to import mailses when it is not supported")
@@ -93,8 +96,8 @@ func TestGenerateMailFilesSupportsDefaultAndNamedMailers(t *testing.T) {
 	source = string(managerGen)
 	for _, snippet := range []string{
 		`transactional *goforjmail.Mailer`,
-		`case "transactional":`,
-		`scope := env.WithPrefix("MAIL").Child(child)`,
+		`scopeTransactional := env.WithPrefix("MAIL").Child(str.Of("transactional").Snake("_").ToUpper().String())`,
+		`manager.transactional = goforjmail.New(`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected generated mail manager to contain %q", snippet)
@@ -130,6 +133,7 @@ func TestGenerateMailFilesSupportsObserverWrapping(t *testing.T) {
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	goforjmail "github.com/goforj/mail"
@@ -167,6 +171,40 @@ func TestGeneratedObserver(t *testing.T) {
 	}
 	if observed[1] != "transactional:log" {
 		t.Fatalf("transactional observed = %q", observed[1])
+	}
+}
+
+func TestGeneratedAccessorsFallbackWithoutRuntimeEnv(t *testing.T) {
+	for _, key := range []string{
+		"MAIL_DRIVER",
+		"MAIL_FROM_ADDRESS",
+		"MAIL_FROM_NAME",
+		"MAIL_TRANSACTIONAL_DRIVER",
+		"MAIL_TRANSACTIONAL_FROM_ADDRESS",
+		"MAIL_TRANSACTIONAL_FROM_NAME",
+	} {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if mgr.Default() == nil {
+		t.Fatal("expected default mailer fallback")
+	}
+	if mgr.Transactional() == nil {
+		t.Fatal("expected transactional mailer fallback")
+	}
+	msg := goforjmail.Message{
+		To:      []goforjmail.Recipient{{Email: "alice@example.com", Name: "Alice"}},
+		Subject: "Welcome",
+		Text:    "hello world",
+	}
+	if err := mgr.Transactional().Send(context.Background(), msg); err != nil {
+		t.Fatalf("transactional fallback Send returned error: %v", err)
 	}
 }
 

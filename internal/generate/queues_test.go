@@ -155,6 +155,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	testSource := `package queues
 
 import (
+	"os"
 	"testing"
 
 	"github.com/goforj/env/v2"
@@ -215,6 +216,36 @@ func TestGeneratedQueueNamesUseCurrentApp(t *testing.T) {
 	queueScope := env.WithPrefix("QUEUE")
 	if got := queueDefaultQueue("critical", queueScope.Child("critical"), queueScope); got != "billing_critical" {
 		t.Fatalf("critical queue name = %q, want billing_critical", got)
+	}
+}
+
+func TestGeneratedAccessorsFallbackWithoutRuntimeEnv(t *testing.T) {
+	for _, key := range []string{
+		"FORJ_APP",
+		"QUEUE_DRIVER",
+		"QUEUE_CRITICAL_DRIVER",
+		"QUEUE_CRITICAL_NAME",
+	} {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if mgr.Default() == nil {
+		t.Fatal("expected default queue fallback")
+	}
+	if mgr.Critical() == nil {
+		t.Fatal("expected critical queue fallback")
+	}
+	if got := mgr.Default().Driver(); got != "workerpool" {
+		t.Fatalf("Default driver = %q, want workerpool", got)
+	}
+	if got := mgr.Critical().Driver(); got != "workerpool" {
+		t.Fatalf("Critical driver = %q, want workerpool", got)
 	}
 }
 `
@@ -327,8 +358,8 @@ func TestNamedQueueInheritsRootConfig(t *testing.T) {
 }
 
 func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
-	t.Setenv("QUEUE_DRIVER", "workerpool")
-	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "workerpool,redis")
+	t.Setenv("QUEUE_DRIVER", "redis")
+	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "redis")
 
 	root := t.TempDir()
 	writeQueueFixtureModule(t, root,
@@ -351,6 +382,9 @@ func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
 	}
 	if !strings.Contains(source, `case driverRedis:`) {
 		t.Fatal("expected generated queue manager to include redis case from QUEUE_SUPPORTED_DRIVERS")
+	}
+	if !strings.Contains(source, `case driverWorkerpool:`) {
+		t.Fatal("expected generated queue manager to keep workerpool as the no-env fallback")
 	}
 }
 

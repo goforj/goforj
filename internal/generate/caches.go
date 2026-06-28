@@ -600,27 +600,16 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 		defaultStore: defaultStore,
 	}
 
-{{- if .Names }}
-	for _, child := range cacheScope.ChildNames(cacheRootKeys) {
-		name := str.Of(child).TrimSpace().ToLower().String()
-		if name == "" {
-			continue
-		}
-		store, err := buildStore(name, cacheScope.Child(child))
-		if err != nil {
-			return nil, err
-		}
-		switch name {
 {{- range .Names }}
-		case "{{ .Store }}":
-{{- if eq .Store "sessions" }}
-			manager.sessions = store
-{{- else }}
-			manager.{{ .Store }} = store
-{{- end }}
-{{- end }}
-		}
+	store{{ .Method }}, err := buildStore("{{ .Store }}", cacheScope.Child(str.Of("{{ .Store }}").Snake("_").ToUpper().String()))
+	if err != nil {
+		return nil, err
 	}
+{{- if eq .Store "sessions" }}
+	manager.sessions = store{{ .Method }}
+{{- else }}
+	manager.{{ .Store }} = store{{ .Method }}
+{{- end }}
 {{- end }}
 
 	return manager, nil

@@ -159,7 +159,7 @@ func databaseEnvOr(name, driver string) string {
 func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	driver := str.Of(envOr(name, "DRIVER")).TrimSpace().ToLower().String()
 	if driver == "" {
-		return nil, fmt.Errorf("missing %s", envKey(name, "DRIVER"))
+		driver = "sqlite"
 	}
 
 	dsn := str.Of(envOr(name, "DSN")).TrimSpace().String()
@@ -287,7 +287,7 @@ func buildDSN(name, driver string) (string, error) {
 		), nil
 	case "sqlite", "sqlite3":
 		if database == "" {
-			return "", fmt.Errorf("missing %s", envKey(name, "DATABASE"))
+			database = defaultSQLiteDatabase(name)
 		}
 		if err := ensureSQLitePath(database); err != nil {
 			return "", err
@@ -296,6 +296,15 @@ func buildDSN(name, driver string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported driver %q", driver)
 	}
+}
+
+// defaultSQLiteDatabase returns the local SQLite path used when DB env is absent.
+func defaultSQLiteDatabase(name string) string {
+	name = str.Of(name).TrimSpace().ToLower().String()
+	if name == "" || name == "default" {
+		return filepath.Join("_data", "sqlite", "app.db")
+	}
+	return filepath.Join("_data", "sqlite", name+".db")
 }
 
 // ensureSQLitePath creates the parent directory for file-backed SQLite DSNs.

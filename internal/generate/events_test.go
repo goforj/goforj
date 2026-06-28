@@ -276,6 +276,7 @@ func normalizeEventsContext(ctx context.Context) context.Context {
 
 import (
 	"context"
+	"os"
 	"testing"
 )
 
@@ -322,6 +323,31 @@ func TestObserverChain(t *testing.T) {
 	}
 	if inspectPublishes != 1 {
 		t.Fatalf("inspect observer count = %d, want 1", inspectPublishes)
+	}
+}
+
+func TestGeneratedAccessorsFallbackWithoutRuntimeEnv(t *testing.T) {
+	for _, key := range []string{
+		"EVENTS_DRIVER",
+		"EVENTS_AUDIT_DRIVER",
+	} {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if mgr.Default() == nil {
+		t.Fatal("expected default event bus fallback")
+	}
+	if mgr.Audit() == nil {
+		t.Fatal("expected audit event bus fallback")
+	}
+	if got := mgr.Audit().Driver(); got != DriverInproc {
+		t.Fatalf("Audit driver = %q, want %q", got, DriverInproc)
 	}
 }
 `

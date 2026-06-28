@@ -325,6 +325,7 @@ func renderQueueConfig(projectDir string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	drivers = appendMissingString(drivers, "workerpool")
 
 	data := queueConfigTemplateData{
 		GoModuleName: moduleName,
@@ -669,24 +670,13 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 		inspects: inspectManager,
 	}
 
-{{- if .Names }}
-	for _, child := range queueScope.ChildNames(queueRootKeys) {
-		name := str.Of(child).TrimSpace().ToLower().String()
-		if name == "" {
-			continue
-		}
-		queueInstance, err := buildQueue(name, queueScope.Child(child), queueScope, observer, logger)
-		if err != nil {
-			return nil, err
-		}
-		switch name {
 {{- range .Names }}
-		case "{{ .Queue }}":
-			manager.{{ .Queue }} = queueInstance
-			manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(child), queueScope)
-{{- end }}
-		}
+	queue{{ .Method }}, err := buildQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope, observer, logger)
+	if err != nil {
+		return nil, err
 	}
+	manager.{{ .Queue }} = queue{{ .Method }}
+	manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
 {{- end }}
 
 	return manager, nil

@@ -361,6 +361,7 @@ func renderStorageConfig() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	drivers = appendMissingString(drivers, "local")
 	data := storageConfigTemplateData{
 		Drivers: make([]storageDriverSpec, 0, len(drivers)),
 		Names:   make([]storageAccessorName, 0, len(names)),
