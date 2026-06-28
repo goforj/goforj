@@ -550,23 +550,12 @@ func newManagerFromEnv(ctx context.Context, eventsScope env.Scope) (*Manager, er
 		return nil, err
 	}
 	manager := &Manager{defaultBus: defaultBus}
-{{- if .Names }}
-	for _, child := range eventsScope.ChildNames(eventRootKeys) {
-		name := str.Of(child).TrimSpace().ToLower().String()
-		if name == "" {
-			continue
-		}
-		bus, err := buildBus(ctx, eventsScope.Child(child))
-		if err != nil {
-			return nil, err
-		}
-		switch name {
 {{- range .Names }}
-		case "{{ .Bus }}":
-			manager.{{ .Field }} = bus
-{{- end }}
-		}
+	bus{{ .Method }}, err := buildBus(ctx, eventsScope.Child(str.Of("{{ .Bus }}").Snake("_").ToUpper().String()))
+	if err != nil {
+		return nil, err
 	}
+	manager.{{ .Field }} = bus{{ .Method }}
 {{- end }}
 	return manager, nil
 }

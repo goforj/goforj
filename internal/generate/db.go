@@ -126,6 +126,7 @@ func renderDBAccessors(names []string, drivers []dbDriverSpec) ([]byte, error) {
 
 func discoverDBDrivers() ([]dbDriverSpec, error) {
 	drivers := map[string]dbDriverSpec{}
+	recordDBDriver(drivers, "sqlite")
 	rawSupported := str.Of(env.WithPrefix("DB").Get("SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
 	if rawSupported != "" {
 		for _, part := range strings.Split(rawSupported, ",") {
@@ -138,14 +139,11 @@ func discoverDBDrivers() ([]dbDriverSpec, error) {
 			}
 		}
 	}
-	if len(drivers) == 0 {
+	if rawSupported == "" {
 		recordDBDriver(drivers, str.Of(env.WithPrefix("DB").Get("DRIVER", "")).TrimSpace().ToLower().String())
 		for _, name := range discoverDBConnectionNames() {
 			scope := env.WithPrefix("DB").Child(str.Of(name).Snake("_").ToUpper().String())
 			recordDBDriver(drivers, str.Of(scope.Get("DRIVER", "")).TrimSpace().ToLower().String())
-		}
-		if len(drivers) == 0 {
-			recordDBDriver(drivers, "sqlite")
 		}
 	}
 	out := make([]dbDriverSpec, 0, len(drivers))

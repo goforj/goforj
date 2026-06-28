@@ -74,6 +74,7 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 
 import (
 	"context"
+	"os"
 	"testing"
 )
 
@@ -136,6 +137,39 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 	if len(observed) == 0 {
 		t.Fatal("expected observer to capture cache operations")
+	}
+}
+
+func TestGeneratedAccessorsFallbackWithoutRuntimeEnv(t *testing.T) {
+	for _, key := range []string{
+		"CACHE_DRIVER",
+		"CACHE_SESSIONS_DRIVER",
+		"CACHE_SESSIONS_FILE_DIR",
+		"CACHE_PAGES_DRIVER",
+	} {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if mgr.Default() == nil {
+		t.Fatal("expected default cache fallback")
+	}
+	if mgr.Sessions() == nil {
+		t.Fatal("expected sessions cache fallback")
+	}
+	if mgr.Pages() == nil {
+		t.Fatal("expected pages cache fallback")
+	}
+	if err := mgr.Sessions().SetString("session", "fallback", 0); err != nil {
+		t.Fatalf("sessions fallback SetString returned error: %v", err)
+	}
+	if got, ok, err := mgr.Sessions().GetString("session"); err != nil || !ok || got != "fallback" {
+		t.Fatalf("sessions fallback GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "fallback")
 	}
 }
 `
@@ -227,8 +261,8 @@ func TestObserverChain(t *testing.T) {
 }
 
 func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SUPPORTED_DRIVERS", "memory,redis")
+	t.Setenv("CACHE_DRIVER", "redis")
+	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")
 
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
@@ -246,6 +280,9 @@ func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
 	source := string(managerGen)
 	if !strings.Contains(source, `"github.com/goforj/cache/driver/rediscache"`) {
 		t.Fatal("expected generated cache manager to import rediscache from CACHE_SUPPORTED_DRIVERS")
+	}
+	if !strings.Contains(source, `case driverMemory:`) {
+		t.Fatal("expected generated cache manager to keep memory as the no-env fallback")
 	}
 }
 

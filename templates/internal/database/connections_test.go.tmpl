@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -101,12 +102,25 @@ func TestBuildDSNMySQL(t *testing.T) {
 	}
 }
 
-func TestBuildDSNSQLiteMissingDatabase(t *testing.T) {
+func TestBuildDSNSQLiteDefaultsDatabasePath(t *testing.T) {
 	t.Setenv("DB_DEFAULT", "default")
 	t.Setenv("DB_DATABASE", "")
-	_, err := buildDSN("default", "sqlite")
-	if err == nil {
-		t.Fatal("expected error for missing sqlite database")
+	got, err := buildDSN("default", "sqlite")
+	if err != nil {
+		t.Fatalf("expected default sqlite DSN, got %v", err)
+	}
+	if got != filepath.Join("_data", "sqlite", "app.db") {
+		t.Fatalf("default sqlite DSN = %q", got)
+	}
+}
+
+func TestBuildDSNNamedSQLiteDefaultsDatabasePath(t *testing.T) {
+	got, err := buildDSN("analytics", "sqlite")
+	if err != nil {
+		t.Fatalf("expected named sqlite DSN, got %v", err)
+	}
+	if got != filepath.Join("_data", "sqlite", "analytics.db") {
+		t.Fatalf("named sqlite DSN = %q", got)
 	}
 }
 
