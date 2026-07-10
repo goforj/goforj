@@ -462,18 +462,25 @@ func emitOutputEntry(output *zerolog.Logger, level zerolog.Level, caller bool, e
 //
 // It preserves the normal structured logger behavior and dedupe semantics while
 // avoiding the generic fluent field-builder overhead on the request hot path.
-func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency time.Duration, err error) {
+func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency time.Duration, err error, clientIPs ...string) {
 	if l == nil || l.silent || l.outputInfoLogger == nil {
 		return
 	}
 
-	orderedFields := make([]eventField, 0, 4+len(l.contextFields)+1)
+	orderedFields := make([]eventField, 0, 5+len(l.contextFields)+1)
 	orderedFields = append(orderedFields,
 		eventField{key: "uri", value: uri},
 		eventField{key: "status", value: status},
 		eventField{key: "method", value: method},
 		eventField{key: "latency", value: formatHTTPAccessLatency(latency)},
 	)
+	clientIP := ""
+	if len(clientIPs) > 0 {
+		clientIP = strings.TrimSpace(clientIPs[0])
+	}
+	if clientIP != "" {
+		orderedFields = append(orderedFields, eventField{key: "client_ip", value: clientIP})
+	}
 	if err != nil {
 		orderedFields = append(orderedFields, eventField{key: "error", value: err.Error()})
 	}
