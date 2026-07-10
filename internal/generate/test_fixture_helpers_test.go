@@ -112,6 +112,9 @@ func fixtureGoEnv(extra map[string]string) []string {
 	env := append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
 		"GOMODCACHE=/tmp/gomodcache",
+		// Generated fixtures use public modules; proxy resolution avoids a CI-wide GOPRIVATE setting forcing slow direct Git fetches.
+		"GOPRIVATE=",
+		"GONOSUMDB=",
 	)
 	for key, value := range extra {
 		env = append(env, key+"="+value)
