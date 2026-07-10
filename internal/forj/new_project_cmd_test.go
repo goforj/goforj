@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 )
@@ -510,7 +511,7 @@ func TestHelpFormatPreviewOrderMatchesOptionOrder(t *testing.T) {
 	m.termWidth = 160
 	m.helpFormatList.Select(1)
 
-	view := m.renderHelpFormatPanel()
+	view := ansi.Strip(m.renderHelpFormatPanel())
 
 	frameworkIndex := strings.Index(view, "Framework Preview")
 	guidedIndex := strings.Index(view, "Guided Preview")

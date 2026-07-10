@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
@@ -528,7 +529,7 @@ func TestWizardHelpFormatPreviewHighlightsGuidedAsSecondOption(t *testing.T) {
 	model.termWidth = 160
 	model.helpFormatList.Select(1)
 
-	view := model.renderHelpFormatStage()
+	view := ansi.Strip(model.renderHelpFormatStage())
 
 	if !strings.Contains(view, "Guided Preview") {
 		t.Fatalf("expected guided preview panel, got %q", view)
