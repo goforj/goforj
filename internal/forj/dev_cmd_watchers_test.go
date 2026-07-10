@@ -24,8 +24,96 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 	if want := "__FORJ_WATCHER_TRIGGER__"; !contains(script, want) {
 		t.Fatalf("expected watcher trigger marker in script: %q", script)
 	}
-	if want := "exec ./bin/app http:serve"; !contains(script, want) {
+	if want := "exec \"$forj_dev_exec_target\" http:serve"; !contains(script, want) {
 		t.Fatalf("expected exec for watcher command in script: %q", script)
+	}
+	if contains(script, "exec ./bin/app http:serve") {
+		t.Fatalf("expected watcher to avoid direct binary exec: %q", script)
+	}
+	if want := "forj_dev_target='./bin/app'"; !contains(script, want) {
+		t.Fatalf("expected binary readiness target in script: %q", script)
+	}
+	if want := "forj_dev_ready='./bin/.app.ready'"; !contains(script, want) {
+		t.Fatalf("expected build ready stamp target in script: %q", script)
+	}
+	if want := "wc -c"; !contains(script, want) {
+		t.Fatalf("expected binary size stability check in script: %q", script)
+	}
+	if want := "forj_dev_binary_magic_ok"; !contains(script, want) {
+		t.Fatalf("expected executable format check in script: %q", script)
+	}
+	if want := "mktemp"; !contains(script, want) {
+		t.Fatalf("expected binary snapshot in script: %q", script)
+	}
+	if want := "forj_dev_ready_ok"; !contains(script, want) {
+		t.Fatalf("expected readiness guard in script: %q", script)
+	}
+	if want := "exit 0"; !contains(script, want) {
+		t.Fatalf("expected timeout to avoid executing stale binary: %q", script)
+	}
+}
+
+func TestBuildWatcherExecSkipsReadinessForNonBinaryCommands(t *testing.T) {
+	script := buildWatcherExec("npm run dev")
+	if contains(script, "forj_dev_target") {
+		t.Fatalf("did not expect binary readiness target for npm watcher: %q", script)
+	}
+	if want := "exec npm run dev"; !contains(script, want) {
+		t.Fatalf("expected npm watcher exec to remain direct: %q", script)
+	}
+}
+
+func TestDevExecutableTargetHandlesAbsoluteBinPath(t *testing.T) {
+	target, ok := devExecutableTarget("/Users/cmiles/code/ditracker/bin/app run")
+	if !ok {
+		t.Fatal("expected absolute bin path to be treated as executable target")
+	}
+	if target != "/Users/cmiles/code/ditracker/bin/app" {
+		t.Fatalf("target = %q", target)
+	}
+	ready := devExecutableReadyStampTarget(target)
+	if ready != "/Users/cmiles/code/ditracker/bin/.app.ready" {
+		t.Fatalf("ready stamp = %q", ready)
+	}
+}
+
+func TestDevExecutableArgSuffixPreservesRuntimeArgs(t *testing.T) {
+	if got := devExecutableArgSuffix("./bin/app run --port 3000", "./bin/app"); got != " run --port 3000" {
+		t.Fatalf("arg suffix = %q", got)
+	}
+}
+
+func TestClearDevRunReadyStampsRemovesAppsWithBuildWatchers(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	for _, path := range []string{"bin/.app.ready", "bin/.worker.ready", "bin/.orphan.ready"} {
+		if err := os.WriteFile(path, []byte("ready\n"), 0o644); err != nil {
+			t.Fatalf("write ready stamp %s: %v", path, err)
+		}
+	}
+
+	clearDevBuildReadyStamps([]devBuildJob{
+		{app: project.DefaultNamedApp("app")},
+		{app: project.DefaultNamedApp("worker")},
+	})
+
+	for _, path := range []string{"bin/.app.ready", "bin/.worker.ready"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err: %v", path, err)
+		}
+	}
+	if _, err := os.Stat("bin/.orphan.ready"); err != nil {
+		t.Fatalf("expected orphan stamp to remain: %v", err)
 	}
 }
 
@@ -91,7 +179,7 @@ func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
 	if !strings.Contains(got[1].Watch, "app/customer-portal/wire/wire_gen\\.go$") {
 		t.Fatalf("expected app wire exclusion, got %q", got[1].Watch)
 	}
-	if got[3].Name != "Run customer-portal" || got[3].Watch != "-file ./bin/customer-portal -file .env" || got[3].Exec != "./bin/customer-portal run" {
+	if got[3].Name != "Run customer-portal" || got[3].Watch != "-file ./bin/.customer-portal.ready -file .env" || got[3].Exec != "./bin/customer-portal run" {
 		t.Fatalf("expected named run watcher, got %#v", got[3])
 	}
 	if got[3].Env["FORJ_APP"] != "customer-portal" || got[3].Env["FORJ_COMMAND_PREFIX"] != "forj customer-portal" {
@@ -102,6 +190,26 @@ func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
 	}
 	if watches[1].Exec != "./bin/app run" {
 		t.Fatalf("expected original watches to remain unchanged, got %q", watches[1].Exec)
+	}
+}
+
+func TestDevWatchesForAppsUsesReadyStampForDefaultRunWatcher(t *testing.T) {
+	got := devWatchesForApps(&project.Config{
+		Dev: project.DevConfig{
+			Run: map[string]string{"app": "run"},
+		},
+	}, []project.DevWatch{
+		{Name: "Run App", Watch: "-file ./bin/app -file bin/app -file .env", Exec: "./bin/app run"},
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("expected default run watcher, got %#v", got)
+	}
+	if got[0].Watch != "-file ./bin/.app.ready -file bin/.app.ready -file .env" {
+		t.Fatalf("expected ready stamp watch, got %q", got[0].Watch)
+	}
+	if got[0].Exec != "./bin/app run" {
+		t.Fatalf("expected run exec to stay on binary, got %q", got[0].Exec)
 	}
 }
 
@@ -129,6 +237,26 @@ func TestNormalizeDevWatchesForRuntimeStopsTemplOutputLoops(t *testing.T) {
 	}
 	if strings.Contains(watches[1].Watch, "node_modules") || strings.Contains(watches[1].Watch, "dist") {
 		t.Fatalf("expected original watches to remain unchanged, got %#v", watches)
+	}
+}
+
+func TestNormalizeDevWatchesForRuntimeRemovesEnvTriggersFromBuildAndRun(t *testing.T) {
+	watches := []project.DevWatch{
+		{Name: "Build App", Watch: "-file .go -file .env -file .env.* -postpone", Exec: "forj build -o ./bin/app"},
+		{Name: "Run App", Watch: "-file ./bin/app -file .env -file .env.*", Exec: "./bin/app run"},
+		{Name: "NPM", Watch: "-file .env -xdir node_modules", Exec: "npm run dev"},
+	}
+
+	got := normalizeDevWatchesForRuntime(&project.Config{}, watches)
+
+	if got[0].Watch != "-file .go -postpone" {
+		t.Fatalf("expected build watcher env triggers removed, got %q", got[0].Watch)
+	}
+	if got[1].Watch != "-file ./bin/app" {
+		t.Fatalf("expected run watcher env triggers removed, got %q", got[1].Watch)
+	}
+	if !strings.Contains(got[2].Watch, "-file .env") {
+		t.Fatalf("expected unrelated watcher env trigger preserved, got %q", got[2].Watch)
 	}
 }
 
@@ -1008,6 +1136,37 @@ func TestDecorateWatcherLineFormatsANSIWrappedTriggerAsStarting(t *testing.T) {
 	}
 }
 
+func TestDecorateWatcherLineFormatsSpinnerPrefixedTriggerAsStarting(t *testing.T) {
+	line := decorateWatcherLine("⠙__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
+	if !contains(line, "Starting") {
+		t.Fatalf("expected starting label in trigger line: %q", line)
+	}
+	if contains(line, "__FORJ_WATCHER_TRIGGER__") {
+		t.Fatalf("expected raw trigger marker to be hidden, got %q", line)
+	}
+}
+
+func TestDecorateWatcherLineUsesLastCarriageReturnSegment(t *testing.T) {
+	line := decorateWatcherLine("\r⠙ 1/4 build\r__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
+	if !contains(line, "Starting") {
+		t.Fatalf("expected starting label in trigger line: %q", line)
+	}
+	if contains(line, "__FORJ_WATCHER_TRIGGER__") {
+		t.Fatalf("expected raw trigger marker to be hidden, got %q", line)
+	}
+}
+
+func TestDevwatchWriterPreservesANSIForNormalOutput(t *testing.T) {
+	var out bytes.Buffer
+	writer := newDevwatchWriter(&out, nil, "stdout", "API", "./bin/app run", newDevwatchLifecycleState(0, nil))
+	if _, err := writer.Write([]byte("\x1b[31mred\x1b[0m\n")); err != nil {
+		t.Fatalf("writer returned error: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "\x1b[31mred\x1b[0m") {
+		t.Fatalf("expected ANSI color to be preserved, got %q", got)
+	}
+}
+
 func TestFormatWatcherNameList(t *testing.T) {
 	got := formatWatcherNameList([]project.DevWatch{
 		{Name: "Build App"},
@@ -1181,6 +1340,16 @@ func TestHandleBuildProgressLineConsumesNamedAppBuildMarkers(t *testing.T) {
 	var out bytes.Buffer
 	if !handleBuildProgressLine(&out, "Build billing", "__FORJ_BUILD_PROGRESS__ step 2/4 wire") {
 		t.Fatal("expected named app build progress marker to be handled")
+	}
+	if strings.Contains(out.String(), buildProgressMarker) {
+		t.Fatalf("did not expect raw progress marker in output: %q", out.String())
+	}
+}
+
+func TestHandleBuildProgressLineConsumesSpinnerPrefixedMarkers(t *testing.T) {
+	var out bytes.Buffer
+	if !handleBuildProgressLine(&out, "Build App", "⠙__FORJ_BUILD_PROGRESS__ step 2/4 wire") {
+		t.Fatal("expected prefixed build progress marker to be handled")
 	}
 	if strings.Contains(out.String(), buildProgressMarker) {
 		t.Fatalf("did not expect raw progress marker in output: %q", out.String())
