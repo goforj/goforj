@@ -500,7 +500,7 @@ function AppSidebar({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Repository">
-                  <a href="https://github.com/goforj/goforj" target="_blank" rel="noreferrer" aria-label="Repository">
+                  <a href="https://github.com/goforj/goforj" target="_blank" rel="noreferrer" aria-label="Repository" onClick={closeMobile}>
                     <Github />
                     <span>Repository</span>
                   </a>
@@ -508,7 +508,7 @@ function AppSidebar({
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Documentation">
-                  <a href="https://goforj.dev" target="_blank" rel="noreferrer" aria-label="Documentation">
+                  <a href="https://goforj.dev" target="_blank" rel="noreferrer" aria-label="Documentation" onClick={closeMobile}>
                     <BookOpen />
                     <span>Documentation</span>
                   </a>
