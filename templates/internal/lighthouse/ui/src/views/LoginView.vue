@@ -269,7 +269,6 @@ onMounted(() => {
   background-size: cover;
   background-position: 54% 44%;
   background-repeat: no-repeat;
-  transform: scale(0.98);
 }
 
 .login-cover-overlay {
@@ -309,6 +308,18 @@ onMounted(() => {
   font-size: 0.95rem;
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.68);
+}
+
+:global(html:not(.dark) .login-brand-copy .login-eyebrow) {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+:global(html:not(.dark) .login-brand-copy .login-title) {
+  color: rgba(255, 255, 255, 0.98);
+}
+
+:global(html:not(.dark) .login-brand-copy .login-subtitle) {
+  color: rgba(255, 255, 255, 0.72);
 }
 
 @keyframes loginFadeDown {
