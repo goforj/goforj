@@ -526,10 +526,11 @@ func compactLogFields(fields []eventField) string {
 	for _, field := range fields {
 		value := strings.TrimSpace(fmt.Sprint(field.value))
 		if value != "" {
-			values = append(values, value)
+			key := strings.ToLower(strings.TrimSpace(field.key))
+			values = append(values, fmt.Sprintf("%s%s%s", colorForCompactField(key, value), value, Reset))
 		}
 	}
-	return strings.Join(values, " · ")
+	return strings.Join(values, fmt.Sprintf(" %s·%s ", HighIntensityBlack, Reset))
 }
 
 func buildHTTPAccessSignature(uri string, status int, method string, contextFields []eventField) string {
