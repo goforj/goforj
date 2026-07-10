@@ -71,9 +71,8 @@ async function handleLogout() {
           </SidebarMenuButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent
-          :portalled="false"
-          class="w-[--reka-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-          :side="isMobile ? 'bottom' : state === 'collapsed' ? 'left' : 'bottom'"
+          class="z-[100] w-[--reka-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+          :side="isMobile ? 'bottom' : state === 'collapsed' ? 'right' : 'bottom'"
           align="end"
           :side-offset="4"
         >
