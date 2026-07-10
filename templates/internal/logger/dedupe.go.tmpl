@@ -271,6 +271,7 @@ func cloneLogEntry(entry LogEntry) LogEntry {
 		cloned.orderedFields = make([]eventField, len(entry.orderedFields))
 		copy(cloned.orderedFields, entry.orderedFields)
 	}
+	cloned.compact = entry.compact
 	return cloned
 }
 
