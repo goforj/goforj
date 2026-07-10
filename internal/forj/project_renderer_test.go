@@ -17,6 +17,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestGeneratedGitignoreIgnoresRuntimeStorage(t *testing.T) {
+	data, err := templatesFS.ReadFile(".gitignore.tmpl")
+	if err != nil {
+		t.Fatalf("read gitignore template: %v", err)
+	}
+	if !strings.Contains(string(data), "storage/\n") {
+		t.Fatalf("expected generated gitignore to ignore runtime storage:\n%s", data)
+	}
+}
+
 func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
 	modules := coredeps.SyncCoreLibraries()
 	expected := []string{
