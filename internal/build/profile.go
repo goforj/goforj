@@ -140,17 +140,14 @@ func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 		if _, err := c.runGoBuild(atomicArgs, goBuildOptions{allowRecovery: true}); err != nil {
 			return "", err
 		}
-		if err := os.Chmod(output.cache, 0o755); err != nil {
+		if err := os.Chmod(output.build, 0o755); err != nil {
 			return "", fmt.Errorf("prepare built binary permissions: %w", err)
 		}
-		if err := copyFile(output.cache, output.publish); err != nil {
-			return "", fmt.Errorf("stage built binary: %w", err)
-		}
-		if err := os.Chmod(output.publish, 0o755); err != nil {
-			return "", fmt.Errorf("prepare published binary permissions: %w", err)
-		}
-		if err := os.Rename(output.publish, output.final); err != nil {
+		if err := os.Rename(output.build, output.final); err != nil {
 			return "", fmt.Errorf("publish built binary: %w", err)
+		}
+		if err := writeBuildReadyStamp(output.ready); err != nil {
+			return "", fmt.Errorf("write build ready stamp: %w", err)
 		}
 		return c.lastBuildStatus, nil
 	}
@@ -161,12 +158,12 @@ func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 }
 
 type atomicBuildOutput struct {
-	final   string
-	cache   string
-	publish string
+	final string
+	build string
+	ready string
 }
 
-// atomicGoBuildArgs builds watched binaries away from their final path so dev never executes a partial file.
+// atomicGoBuildArgs builds watched binaries in a hidden unique file so dev never executes a partial file.
 func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool, error) {
 	outIndex := outputArgIndex(args)
 	if outIndex < 0 {
@@ -184,36 +181,37 @@ func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, atomicBuildOutput{}, nil, true, err
 	}
-	cache := filepath.Join(cacheDir, filepath.Base(final))
-	publish := filepath.Join(dir, "."+filepath.Base(final)+".publish")
-	if err := os.Remove(publish); err != nil && !os.IsNotExist(err) {
-		return nil, atomicBuildOutput{}, nil, true, err
+	build := filepath.Join(cacheDir, uniqueBuildOutputName(filepath.Base(final)))
+	atomicArgs := replaceBuildOutputArg(args, outIndex, build)
+	legacyBuild := filepath.Join(cacheDir, filepath.Base(final))
+	cleanup := func() {
+		_ = os.Remove(build)
+		_ = os.Remove(legacyBuild)
 	}
-	atomicArgs := replaceBuildOutputArg(args, outIndex, cache)
-	cleanup := func() { _ = os.Remove(publish) }
-	return atomicArgs, atomicBuildOutput{final: final, cache: cache, publish: publish}, cleanup, true, nil
+	return atomicArgs, atomicBuildOutput{final: final, build: build, ready: buildReadyStampPath(final)}, cleanup, true, nil
 }
 
-// copyFile stages the cached build output onto a separate inode before the atomic publish rename.
-func copyFile(from string, to string) error {
-	src, err := os.Open(from)
-	if err != nil {
-		return err
+// uniqueBuildOutputName avoids shared temp paths when dev and manual builds overlap.
+func uniqueBuildOutputName(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" || base == "." || base == string(os.PathSeparator) {
+		base = "app"
 	}
-	defer src.Close()
+	return fmt.Sprintf(".%s.%d.%d.build", base, os.Getpid(), time.Now().UnixNano())
+}
 
-	dst, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
+// buildReadyStampPath returns the watcher trigger written after a binary is fully published.
+func buildReadyStampPath(final string) string {
+	return filepath.Join(filepath.Dir(final), "."+filepath.Base(final)+".ready")
+}
+
+// writeBuildReadyStamp updates the watcher trigger after the executable is safe to launch.
+func writeBuildReadyStamp(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
 	}
-	if _, err := io.Copy(dst, src); err != nil {
-		_ = dst.Close()
-		return err
-	}
-	if err := dst.Close(); err != nil {
-		return err
-	}
-	return nil
+	content := []byte(fmt.Sprintf("%d\n", time.Now().UnixNano()))
+	return os.WriteFile(path, content, 0o644)
 }
 
 // atomicBuildOutputPath avoids rewriting cases where go build expects -o to be a directory.

@@ -877,22 +877,20 @@ func decorateWatcherLine(line, watcher string, command string) string {
 }
 
 func isWatcherTriggerLine(line string) bool {
-	line = strings.ReplaceAll(line, "\r", "")
-	line = ansiCSI.ReplaceAllString(line, "")
-	line = str.Of(line).TrimSpace().String()
-	return line == watcherTriggerMarker
+	line = normalizeDevwatchProtocolLine(line)
+	return line == watcherTriggerMarker || strings.Contains(line, watcherTriggerMarker)
 }
 
 func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
 	if !isDevBuildWatcher(watcher) {
 		return false
 	}
-	line = strings.ReplaceAll(line, "\r", "")
-	line = ansiCSI.ReplaceAllString(line, "")
-	line = str.Of(line).TrimSpace().String()
-	if !strings.HasPrefix(line, buildProgressMarker) {
+	line = normalizeDevwatchProtocolLine(line)
+	markerIndex := strings.Index(line, buildProgressMarker)
+	if markerIndex < 0 {
 		return false
 	}
+	line = line[markerIndex:]
 	payload := strings.TrimSpace(strings.TrimPrefix(line, buildProgressMarker))
 	switch {
 	case strings.HasPrefix(payload, "step "):
@@ -911,6 +909,14 @@ func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
 		clearDevStatusLine(out)
 	}
 	return true
+}
+
+func normalizeDevwatchProtocolLine(line string) string {
+	line = ansiCSI.ReplaceAllString(line, "")
+	if index := strings.LastIndex(line, "\r"); index >= 0 {
+		line = line[index+1:]
+	}
+	return str.Of(line).TrimSpace().String()
 }
 
 func formatBuildProgressStatus(stepNumber string, stepName string) string {

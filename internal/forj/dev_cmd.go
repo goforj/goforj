@@ -660,6 +660,9 @@ func normalizeDevWatchesForRuntime(config *project.Config, watches []project.Dev
 	normalized := copyDevWatches(watches)
 	for i := range normalized {
 		normalized[i].Watch = normalizeDevWatchWireGenExclusion(normalized[i].Watch)
+		if isDevBuildWatcher(normalized[i].Name) || isDevRunWatcher(normalized[i].Name) {
+			normalized[i].Watch = normalizeDevWatchEnvFileTriggers(normalized[i].Watch)
+		}
 		if normalized[i].Name == "NPM" && strings.TrimSpace(normalized[i].Exec) == "npm run dev" {
 			normalized[i].Watch = normalizeFrontendNPMWatchExclusions(normalized[i].Watch)
 		}
@@ -668,6 +671,16 @@ func normalizeDevWatchesForRuntime(config *project.Config, watches []project.Dev
 		}
 	}
 	return normalized
+}
+
+// normalizeDevWatchEnvFileTriggers lets the coordinated env watcher own env rebuilds.
+func normalizeDevWatchEnvFileTriggers(watch string) string {
+	return removeWatchArgs(watch, map[string]map[string]bool{
+		"-file": {
+			".env":   true,
+			".env.*": true,
+		},
+	})
 }
 
 func configUsesTemplHTMX(config *project.Config) bool {
@@ -755,6 +768,7 @@ func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
 		watch.Name = strings.ReplaceAll(watch.Name, "App", app.Name)
 	}
 	appBinary := "./bin/" + app.Name
+	appReady := devReadyStampPath(app)
 	appWireGen := filepath.ToSlash(filepath.Join(app.WireDir, "wire_gen\\.go$"))
 	if isDevBuildWatcher(baseName) {
 		watch.Exec = devBuildCommandForApp(watch.Exec, app)
@@ -762,6 +776,11 @@ func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
 		watch.Exec = strings.ReplaceAll(watch.Exec, "./bin/app", appBinary)
 	}
 	watch.Watch = strings.ReplaceAll(watch.Watch, "./bin/app", appBinary)
+	watch.Watch = strings.ReplaceAll(watch.Watch, "bin/app", strings.TrimPrefix(appBinary, "./"))
+	if isDevRunWatcher(baseName) {
+		watch.Watch = strings.ReplaceAll(watch.Watch, appBinary, appReady)
+		watch.Watch = strings.ReplaceAll(watch.Watch, strings.TrimPrefix(appBinary, "./"), strings.TrimPrefix(appReady, "./"))
+	}
 	watch.Watch = strings.ReplaceAll(watch.Watch, "app/wire/wire_gen\\.go$", appWireGen)
 	watch.Env = copyDevWatchEnv(watch.Env)
 	watch.Env["FORJ_APP"] = app.Name
@@ -771,6 +790,21 @@ func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
 		watch.Env["FORJ_COMMAND_PREFIX"] = "forj " + app.Name
 	}
 	return watch
+}
+
+// isDevRunWatcher reports whether a watcher supervises a built app process.
+func isDevRunWatcher(name string) bool {
+	return name == "Run App" || strings.HasPrefix(name, "Run ")
+}
+
+// devReadyStampPath returns the app-specific build completion trigger watched by runtime watchers.
+func devReadyStampPath(app project.App) string {
+	app = normalizeRenderApp(app)
+	name := app.Name
+	if name == "" {
+		name = project.DefaultAppName
+	}
+	return "./bin/." + name + ".ready"
 }
 
 // copyDevWatchEnv prevents synthesized app watchers from sharing mutable env maps.
@@ -1124,6 +1158,7 @@ type devBuildResult struct {
 // runDevBuildJobs runs app builds together so multi-app dev startup scales with the slowest build.
 func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, missingOnly bool, failurePrefix string) error {
 	jobs := devBuildJobs(config, missingOnly)
+	clearDevBuildReadyStamps(jobs)
 	switch len(jobs) {
 	case 0:
 		return nil
@@ -1634,6 +1669,14 @@ func devRuntimeWatcherApp(watcher string) string {
 	}
 }
 
+// clearDevBuildReadyStamps prevents runtime watchers from treating a previous build as current.
+func clearDevBuildReadyStamps(jobs []devBuildJob) {
+	for _, job := range jobs {
+		app := normalizeRenderApp(job.app)
+		_ = os.Remove(devReadyStampPath(app))
+	}
+}
+
 // devAppColumnWidth keeps app log columns aligned without letting long slugs dominate output.
 func devAppColumnWidth(apps []string) int {
 	const maxWidth = 18
@@ -1666,8 +1709,101 @@ func isDevBuildWatcher(name string) bool {
 	return name == "Build App" || strings.HasPrefix(name, "Build ")
 }
 
+// buildWatcherExec wraps watcher commands with restart markers and binary readiness checks.
 func buildWatcherExec(execCmd string) string {
-	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; exec %s", execCmd)
+	target, ok := devExecutableTarget(execCmd)
+	if !ok {
+		return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; exec %s", execCmd)
+	}
+	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__;%s exec \"$forj_dev_exec_target\"%s", devExecutableReadinessScript(target), devExecutableArgSuffix(execCmd, target))
+}
+
+// devExecutableReadinessScript gives file events a short settle window before a replaced binary is executed.
+func devExecutableReadinessScript(target string) string {
+	quotedTarget := shellSingleQuote(target)
+	ready := devExecutableReadyStampTarget(target)
+	maxIterations := "100"
+	readySetup := ""
+	readyCheck := ""
+	if ready != "" {
+		maxIterations = "2400"
+		readySetup = " forj_dev_ready=" + shellSingleQuote(ready) + ";"
+		readyCheck = " [ -f \"$forj_dev_ready\" ] &&"
+	}
+	return " forj_dev_target=" + quotedTarget + ";" + readySetup + " forj_dev_last_size=; forj_dev_stable=0; forj_dev_ready_ok=0; forj_dev_i=0;" +
+		devBinaryMagicFunctionScript() +
+		" while [ \"$forj_dev_i\" -lt " + maxIterations + " ]; do" +
+		" if" + readyCheck + " [ -s \"$forj_dev_target\" ] && [ -x \"$forj_dev_target\" ] && forj_dev_binary_magic_ok \"$forj_dev_target\"; then" +
+		" forj_dev_size=$(wc -c < \"$forj_dev_target\" 2>/dev/null || echo 0);" +
+		" if [ \"$forj_dev_size\" = \"$forj_dev_last_size\" ]; then forj_dev_stable=$((forj_dev_stable + 1)); else forj_dev_stable=0; forj_dev_last_size=$forj_dev_size; fi;" +
+		" if [ \"$forj_dev_stable\" -ge 4 ]; then forj_dev_ready_ok=1; break; fi;" +
+		" fi;" +
+		" forj_dev_i=$((forj_dev_i + 1)); sleep 0.05;" +
+		" done;" +
+		" if [ \"$forj_dev_ready_ok\" != 1 ]; then echo \"forj dev: $forj_dev_target is not ready; waiting for a successful build\" >&2; exit 0; fi;" +
+		" forj_dev_snapshot=$(mktemp \"$forj_dev_target.run.XXXXXX\" 2>/dev/null || mktemp \"/tmp/forj-dev-run.XXXXXX\") || exit 0;" +
+		" if ! cp \"$forj_dev_target\" \"$forj_dev_snapshot\" || ! chmod 700 \"$forj_dev_snapshot\" || ! forj_dev_binary_magic_ok \"$forj_dev_snapshot\"; then rm -f \"$forj_dev_snapshot\"; echo \"forj dev: $forj_dev_target snapshot is not executable yet\" >&2; exit 0; fi;" +
+		" forj_dev_exec_target=$forj_dev_snapshot; (sleep 300; rm -f \"$forj_dev_snapshot\") >/dev/null 2>&1 &"
+}
+
+// devBinaryMagicFunctionScript validates the executable format before the shell opens it.
+func devBinaryMagicFunctionScript() string {
+	return " forj_dev_binary_magic_ok() {" +
+		" forj_dev_magic=$(dd if=\"$1\" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n');" +
+		" case \"$(uname -s 2>/dev/null)\" in" +
+		" Darwin*) case \"$forj_dev_magic\" in cffaedfe|feedfacf|cefaedfe|cafebabe|bebafeca) return 0;; *) return 1;; esac;;" +
+		" Linux*) case \"$forj_dev_magic\" in 7f454c46) return 0;; *) return 1;; esac;;" +
+		" *) return 0;;" +
+		" esac;" +
+		" };"
+}
+
+// devExecutableArgSuffix returns the original command arguments after the executable path.
+func devExecutableArgSuffix(execCmd string, target string) string {
+	suffix := strings.TrimPrefix(strings.TrimSpace(execCmd), target)
+	if suffix == "" {
+		return ""
+	}
+	if !strings.HasPrefix(suffix, " ") && !strings.HasPrefix(suffix, "\t") {
+		return " " + strings.TrimSpace(suffix)
+	}
+	return suffix
+}
+
+// devExecutableTarget extracts the binary path from watcher commands that execute built app binaries.
+func devExecutableTarget(execCmd string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(execCmd))
+	if len(fields) == 0 {
+		return "", false
+	}
+	target := fields[0]
+	normalized := filepath.ToSlash(target)
+	if strings.HasPrefix(normalized, "./bin/") || strings.HasPrefix(normalized, "bin/") || strings.Contains(normalized, "/bin/") {
+		return target, true
+	}
+	return "", false
+}
+
+// devExecutableReadyStampTarget returns the build stamp that publishes a watched binary.
+func devExecutableReadyStampTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	normalized := filepath.ToSlash(target)
+	if !(strings.HasPrefix(normalized, "./bin/") || strings.HasPrefix(normalized, "bin/") || strings.Contains(normalized, "/bin/")) {
+		return ""
+	}
+	dir := filepath.ToSlash(filepath.Dir(target))
+	if strings.HasPrefix(normalized, "./") && !strings.HasPrefix(dir, ".") && !filepath.IsAbs(dir) {
+		dir = "./" + dir
+	}
+	return strings.TrimRight(dir, "/") + "/." + filepath.Base(target) + ".ready"
+}
+
+// shellSingleQuote returns a POSIX single-quoted shell literal.
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func buildWatcherCommandArgs(watchExpr string, execCmd string) []string {

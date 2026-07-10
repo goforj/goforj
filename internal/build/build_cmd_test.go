@@ -87,6 +87,13 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	if err := os.WriteFile(binPath, []byte("not executable"), 0o644); err != nil {
 		t.Fatalf("write stale binary: %v", err)
 	}
+	legacyCachePath := filepath.Join(root, "bin", ".forj-build-cache", "app")
+	if err := os.MkdirAll(filepath.Dir(legacyCachePath), 0o755); err != nil {
+		t.Fatalf("mkdir legacy cache: %v", err)
+	}
+	if err := os.WriteFile(legacyCachePath, []byte("old shared cache binary"), 0o755); err != nil {
+		t.Fatalf("write legacy cache binary: %v", err)
+	}
 
 	previousWD, err := os.Getwd()
 	if err != nil {
@@ -111,8 +118,50 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "bin", ".app.publish")); !os.IsNotExist(err) {
 		t.Fatalf("expected publish temporary build output to be cleaned up, got %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "bin", ".forj-build-cache", "app")); err != nil {
-		t.Fatalf("expected persistent build cache output: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "bin", ".app.ready")); err != nil {
+		t.Fatalf("expected build ready stamp: %v", err)
+	}
+	cacheEntries, err := os.ReadDir(filepath.Join(root, "bin", ".forj-build-cache"))
+	if err != nil {
+		t.Fatalf("read build cache dir: %v", err)
+	}
+	if len(cacheEntries) != 0 {
+		t.Fatalf("expected hidden build temp output to be cleaned up, got %d entries", len(cacheEntries))
+	}
+}
+
+func TestAtomicGoBuildArgsUsesUniqueHiddenBuildOutputs(t *testing.T) {
+	firstArgs, firstOutput, firstCleanup, firstOK, err := atomicGoBuildArgs([]string{"-o", "./bin/app", "./cmd/app"})
+	if err != nil {
+		t.Fatalf("first atomicGoBuildArgs returned error: %v", err)
+	}
+	if !firstOK {
+		t.Fatal("expected first build output to use atomic publishing")
+	}
+	defer firstCleanup()
+
+	secondArgs, secondOutput, secondCleanup, secondOK, err := atomicGoBuildArgs([]string{"-o", "./bin/app", "./cmd/app"})
+	if err != nil {
+		t.Fatalf("second atomicGoBuildArgs returned error: %v", err)
+	}
+	if !secondOK {
+		t.Fatal("expected second build output to use atomic publishing")
+	}
+	defer secondCleanup()
+
+	if firstOutput.build == secondOutput.build {
+		t.Fatalf("expected unique build outputs, got %q", firstOutput.build)
+	}
+	if firstOutput.ready != filepath.Join("bin", ".app.ready") || secondOutput.ready != filepath.Join("bin", ".app.ready") {
+		t.Fatalf("expected shared ready stamp path, got %q and %q", firstOutput.ready, secondOutput.ready)
+	}
+	for _, path := range []string{firstOutput.build, secondOutput.build} {
+		if filepath.Dir(path) != filepath.Join("bin", ".forj-build-cache") {
+			t.Fatalf("expected hidden build output dir, got %q", path)
+		}
+	}
+	if strings.Contains(strings.Join(firstArgs, " "), "./bin/app") || strings.Contains(strings.Join(secondArgs, " "), "./bin/app") {
+		t.Fatalf("expected go build args to avoid final output path, got %#v and %#v", firstArgs, secondArgs)
 	}
 }
 
