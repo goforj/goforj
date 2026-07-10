@@ -467,7 +467,7 @@ function AppSidebar({
   onSelectUserMenu: (path: string) => void
   onLogout: () => void
 }) {
-  const { isMobile, setOpenMobile, toggleSidebar } = useSidebar()
+  const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar()
 
   function closeMobile() {
     setOpenMobile(false)
@@ -489,7 +489,7 @@ function AppSidebar({
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => (
-                <NavSection key={item.path} item={item} pathname={pathname} onNavigate={closeMobile} />
+                <NavSection key={item.path} item={item} pathname={pathname} onNavigate={closeMobile} collapsed={!isMobile && state === "collapsed"} />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -583,18 +583,39 @@ function AppSidebar({
   )
 }
 
-function NavSection({ item, pathname, onNavigate }: { item: NavItem; pathname: string; onNavigate?: () => void }) {
+function NavSection({ item, pathname, onNavigate, collapsed }: { item: NavItem; pathname: string; onNavigate?: () => void; collapsed: boolean }) {
   const Icon = item.icon
   const active = item.path === "/" ? pathname === "/" : pathname.startsWith(item.path)
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
-        <Link to={item.children?.[0]?.path ?? item.path} title={item.title} aria-label={item.title} onClick={onNavigate}>
-          <Icon />
-          <span>{item.title}</span>
-        </Link>
-      </SidebarMenuButton>
-      {item.children && active ? (
+      {item.children && collapsed ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
+              <button type="button" title={item.title} aria-label={item.title}>
+                <Icon />
+                <span>{item.title}</span>
+              </button>
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="w-52">
+            <DropdownMenuLabel>{item.title}</DropdownMenuLabel>
+            {item.children.map((child) => (
+              <DropdownMenuItem key={child.path} asChild>
+                <Link to={child.path} onClick={onNavigate}>{child.title}</Link>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
+          <Link to={item.children?.[0]?.path ?? item.path} title={item.title} aria-label={item.title} onClick={onNavigate}>
+            <Icon />
+            <span>{item.title}</span>
+          </Link>
+        </SidebarMenuButton>
+      )}
+      {item.children && active && !collapsed ? (
         <SidebarMenuSub>
           {item.children.map((child) => (
             <SidebarMenuSubItem key={child.path}>
