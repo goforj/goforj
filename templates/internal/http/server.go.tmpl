@@ -147,7 +147,7 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		return nil
 	}
 
-	s.logger.HTTPAccess(v.URI, v.Status, v.Method, v.Latency, v.Error)
+	s.logger.HTTPAccess(v.URI, v.Status, v.Method, v.Latency, v.Error, r.RealIP())
 
 	return nil
 }

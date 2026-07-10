@@ -325,7 +325,7 @@ func TestAppLoggerHTTPAccessAddsInspectFieldsToSinkEntries(t *testing.T) {
 
 	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
 	ctx = inspects.WithInspectID(ctx, "inspect-123")
-	appLogger.WithContext(ctx).HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
+	appLogger.WithContext(ctx).HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil, "203.0.113.9")
 
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 sink entry, got %d", len(entries))
@@ -339,6 +339,9 @@ func TestAppLoggerHTTPAccessAddsInspectFieldsToSinkEntries(t *testing.T) {
 	}
 	if fields["uri"] != "/-/health" {
 		t.Fatalf("expected uri field, got %#v", fields["uri"])
+	}
+	if fields["client_ip"] != "203.0.113.9" {
+		t.Fatalf("expected client_ip field, got %#v", fields["client_ip"])
 	}
 }
 
