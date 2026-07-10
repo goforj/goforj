@@ -49,7 +49,8 @@ type logConfig struct {
 const (
 	logFormatEnv   = "APP_LOG_FORMAT"
 	logFormatJSON  = "json"
-	consoleMetaKey = "__forj_console_meta"
+	consoleMetaKey    = "__forj_console_meta"
+	consoleCompactKey = "__forj_console_compact"
 )
 
 // LogEntry represents a structured log payload.
@@ -61,6 +62,7 @@ type LogEntry struct {
 	Fields        map[string]any
 	signature     string
 	orderedFields []eventField
+	compact       bool
 }
 
 func logEntryTimestamp(entry LogEntry) string {
@@ -440,6 +442,9 @@ func writeConsoleMetadata(buf *bytes.Buffer, fields map[string]interface{}) {
 
 func colorizeKV(key string, value interface{}) string {
 	raw := strings.TrimSpace(fmt.Sprintf("%v", value))
+	if key == consoleCompactKey {
+		return fmt.Sprintf("%s%s%s", SoftWhite, raw, Reset)
+	}
 	if lowerKey := strings.ToLower(strings.TrimSpace(key)); lowerKey == "error" || lowerKey == "err" {
 		raw = formatConsoleErrorValue(value)
 	}

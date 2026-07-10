@@ -23,6 +23,7 @@ type Event struct {
 	level    zerolog.Level
 	disabled bool
 	caller   bool
+	compact  bool
 	fields   []eventField
 	unordered bool
 }
@@ -55,6 +56,7 @@ func newEvent(logger *AppLogger, output *zerolog.Logger, level zerolog.Level, di
 	event.level = level
 	event.disabled = disabled || logger == nil || output == nil
 	event.caller = false
+	event.compact = false
 	event.fields = event.fields[:0]
 	event.unordered = false
 	return event
@@ -69,6 +71,7 @@ func (e *Event) release() {
 	e.level = zerolog.Disabled
 	e.disabled = false
 	e.caller = false
+	e.compact = false
 	e.unordered = false
 	if cap(e.fields) > 64 {
 		e.fields = make([]eventField, 0, 8)
@@ -100,6 +103,14 @@ func (e *Event) setField(key string, value any) *Event {
 // Str appends a string field.
 func (e *Event) Str(key string, value string) *Event {
 	return e.setField(key, value)
+}
+
+// Compact makes console output render this event's field values without field labels.
+func (e *Event) Compact() *Event {
+	if e != nil && !e.disabled {
+		e.compact = true
+	}
+	return e
 }
 
 // Int appends an int field.
@@ -295,7 +306,7 @@ func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, 
 				sink(*outputSummary)
 			}
 		}
-		emitOutputEntry(output, level, caller, *outputSummary)
+		emitOutputEntry(output, level, caller, l.outputEntry(*outputSummary))
 	}
 	if outputEmit && len(sinks) > 0 {
 		ensureLogEntryFields(&entry)
@@ -306,7 +317,17 @@ func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, 
 	if !outputEmit {
 		return
 	}
-	emitOutputEntry(output, level, caller, entry)
+	emitOutputEntry(output, level, caller, l.outputEntry(entry))
+}
+
+// outputEntry prepares the console projection without changing sink or JSON fields.
+func (l *AppLogger) outputEntry(entry LogEntry) LogEntry {
+	if l == nil || l.config.format == logFormatJSON || !entry.compact {
+		return entry
+	}
+	entry.orderedFields = []eventField{eventField{key: consoleCompactKey, value: compactLogFields(entry.orderedFields)}}
+	entry.Fields = nil
+	return entry
 }
 
 // buildEntry materializes the in-memory structured entry used for dedupe/sinks.
@@ -323,6 +344,7 @@ func (e *Event) buildEntry(msg string) LogEntry {
 		TimeValue:     time.Now(),
 		signature:     buildEventSignature(e.level.String(), msg, orderedFields, e.unordered),
 		orderedFields: orderedFields,
+		compact:       e.compact,
 	}
 }
 
@@ -470,17 +492,16 @@ func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency ti
 	orderedFields := make([]eventField, 0, 5+len(l.contextFields)+1)
 	orderedFields = append(orderedFields,
 		eventField{key: "uri", value: uri},
-		eventField{key: "status", value: status},
 		eventField{key: "method", value: method},
+		eventField{key: "status", value: status},
 		eventField{key: "latency", value: formatHTTPAccessLatency(latency)},
+		eventField{key: "client_ip"},
 	)
 	clientIP := ""
 	if len(clientIPs) > 0 {
 		clientIP = strings.TrimSpace(clientIPs[0])
 	}
-	if clientIP != "" {
-		orderedFields = append(orderedFields, eventField{key: "client_ip", value: clientIP})
-	}
+	orderedFields[4].value = clientIP
 	if err != nil {
 		orderedFields = append(orderedFields, eventField{key: "error", value: err.Error()})
 	}
@@ -494,8 +515,21 @@ func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency ti
 		TimeValue:     time.Now(),
 		signature:     buildHTTPAccessSignature(uri, status, method, l.contextFields),
 		orderedFields: orderedFields,
+		compact:       true,
 	}
 	l.emitTypedEntry(l.outputInfoLogger, zerolog.InfoLevel, false, entry)
+}
+
+// compactLogFields joins field values in their original emission order.
+func compactLogFields(fields []eventField) string {
+	values := make([]string, 0, len(fields))
+	for _, field := range fields {
+		value := strings.TrimSpace(fmt.Sprint(field.value))
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return strings.Join(values, " · ")
 }
 
 func buildHTTPAccessSignature(uri string, status int, method string, contextFields []eventField) string {
