@@ -521,7 +521,7 @@ jobs:
           path: |
             ${{ env.GOCACHE }}
             ${{ env.GOMODCACHE }}
-          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/cache.go', 'internal/generate/storage.go', 'internal/forj/internal/cache/manager.go', 'internal/forj/internal/storage/manager.go') }}
+          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'go.mod', 'integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/cache.go', 'internal/generate/storage.go', 'internal/forj/internal/cache/manager.go', 'internal/forj/internal/storage/manager.go') }}
           restore-keys: |
             generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
@@ -578,9 +578,10 @@ jobs:
             fi
           done
 
-      - name: Download Go modules
+      - name: Validate and download Go modules
         run: |
           cd integration
+          GOWORK=off go mod tidy -diff
           GOWORK=off go mod download
 
       - name: Run generator integration smoke tests
