@@ -2,14 +2,9 @@
 
 ## Summary
 
-This branch adds a framework-level backup and restore system to GoForj. It is
-designed for live service applications where operators need a verified local
-backup, a production repository, and a deliberate path for moving data between
-SQLite, MySQL/MariaDB, and Postgres.
+This branch adds a framework-level backup and restore system to GoForj. It is designed for live service applications where operators need a verified local backup, a production repository, and a deliberate path for moving data between SQLite, MySQL/MariaDB, and Postgres.
 
-The backup engine and command surface live in `forj`. Generated Apps expose a
-small resource contract so `forj` can discover their databases and storage
-without embedding backup code in production binaries.
+The backup engine and command surface live in `forj`. Generated Apps expose a small resource contract so `forj` can discover their databases and storage without embedding backup code in production binaries.
 
 ## Commands
 
@@ -25,8 +20,7 @@ backup:prune
 backup:status
 ```
 
-Native backup creation follows the configured database driver. Restore is
-destructive and requires an explicit confirmation token:
+Native backup creation follows the configured database driver. Restore is destructive and requires an explicit confirmation token:
 
 ```bash
 forj backup:create
@@ -37,8 +31,7 @@ forj backup:restore \
   --confirm restore-production
 ```
 
-`backup:status` reports the newest completed local backup in a compact form so
-operators do not need to inspect raw logs.
+`backup:status` reports the newest completed local backup in a compact form so operators do not need to inspect raw logs.
 
 Generated Apps expose the versioned discovery contract used by `forj`:
 
@@ -47,16 +40,9 @@ Generated Apps expose the versioned discovery contract used by `forj`:
 forj billing resources:describe --json
 ```
 
-The contract reports `version: 1`, resource IDs, kinds, names, normalized
-drivers, default status, and configuration key names. It never reports secret
-values. `forj backup:*` validates this contract before planning or executing a
-backup and falls back only for older Apps that do not expose the command.
+The contract reports `version: 1`, resource IDs, kinds, names, normalized drivers, default status, and configuration key names. It never reports secret values. `forj backup:*` validates this contract before planning or executing a backup and falls back only for older Apps that do not expose the command.
 
-Resource discovery is deliberately separate from backup execution. The App
-reports safe metadata such as resource IDs, drivers, and the environment keys
-that contain configuration. It does not emit passwords, tokens, or DSN values.
-`forj` consumes that contract and performs the backup using the selected App's
-environment.
+Resource discovery is deliberately separate from backup execution. The App reports safe metadata such as resource IDs, drivers, and the environment keys that contain configuration. It does not emit passwords, tokens, or DSN values. `forj` consumes that contract and performs the backup using the selected App's environment.
 
 ## Native Backups
 
@@ -67,30 +53,22 @@ Native backups preserve the production driver's own format and behavior:
 - Postgres uses `pg_dump`/`pg_restore`.
 - Local storage is archived as a checksummed compressed archive.
 
-Every backup set contains a manifest, resource metadata, artifact checksums,
-and sizes. Verification happens before a completed backup is uploaded to a
-remote repository.
+Every backup set contains a manifest, resource metadata, artifact checksums, and sizes. Verification happens before a completed backup is uploaded to a remote repository.
 
-Restore validates the manifest and checksums before touching the target. It
-also verifies that the configured target driver matches the native artifact;
-cross-driver restore must use the portable format.
+Restore validates the manifest and checksums before touching the target. It also verifies that the configured target driver matches the native artifact; cross-driver restore must use the portable format.
 
 ## Portable Transfers
 
-`backup:create --portable` exports data through `database/sql` into a
-database-neutral archive. The format contains:
+`backup:create --portable` exports data through `database/sql` into a database-neutral archive. The format contains:
 
-- canonical values for integers, decimals, booleans, timestamps, JSON, bytes,
-  strings, and nulls;
+- canonical values for integers, decimals, booleans, timestamps, JSON, bytes, strings, and nulls;
 - table and column contracts;
 - schema and migration fingerprints;
 - dependency-aware row data;
 - identity and sequence continuation metadata;
 - a manifest and checksums.
 
-The target schema remains the target database's migration contract. Operators
-run the target migrations first, then restore the portable data. GoForj checks
-the migration and schema contracts before opening the write transaction.
+The target schema remains the target database's migration contract. Operators run the target migrations first, then restore the portable data. GoForj checks the migration and schema contracts before opening the write transaction.
 
 The integration suite exercises every source-to-target pair:
 
@@ -100,30 +78,17 @@ MySQL   -> SQLite, MySQL, Postgres
 Postgres -> SQLite, MySQL, Postgres
 ```
 
-It also covers chained round trips, identity continuation, incompatible
-schemas, unsupported values, and failed transfers.
+It also covers chained round trips, identity continuation, incompatible schemas, unsupported values, and failed transfers.
 
-Large-table coverage is part of the same integration matrix. The suite exports
-and restores a 5,000-row table for every SQLite, MySQL, and Postgres
-source-target pair, then verifies the complete row count and boundary rows. A
-separate SQLite test exercises a 20,000-row round trip.
+Large-table coverage is part of the same integration matrix. The suite exports and restores a 5,000-row table for every SQLite, MySQL, and Postgres source-target pair, then verifies the complete row count and boundary rows. A separate SQLite test exercises a 20,000-row round trip.
 
-These tests currently validate correctness and completeness at larger volumes;
-the portable JSON archive still materializes rows in memory. Bounded-memory
-pagination and chunked archive streaming remain a follow-up before portable
-transfers should be used for very large production tables.
+These tests currently validate correctness and completeness at larger volumes; the portable JSON archive still materializes rows in memory. Bounded-memory pagination and chunked archive streaming remain a follow-up before portable transfers should be used for very large production tables.
 
 ## Repositories and Retention
 
-Completed backup directories can be stored locally or uploaded to an
-S3-compatible repository, including Backblaze B2 through its S3 interface.
-Repository operations include upload, download, list, and delete. Downloads
-use guarded path extraction so object names cannot escape the destination.
+Completed backup directories can be stored locally or uploaded to an S3-compatible repository, including Backblaze B2 through its S3 interface. Repository operations include upload, download, list, and delete. Downloads use guarded path extraction so object names cannot escape the destination.
 
-S3-backed application storage is currently recorded as a checksummed object
-inventory. Because an inventory does not contain object contents, native
-restore refuses it rather than claiming that the objects were recovered.
-Materialization is an explicit repository operation for future work.
+S3-backed application storage is currently recorded as a checksummed object inventory. Because an inventory does not contain object contents, native restore refuses it rather than claiming that the objects were recovered. Materialization is an explicit repository operation for future work.
 
 Local retention supports the documented policy keys:
 
@@ -133,49 +98,36 @@ APP_BACKUP_KEEP_WEEKLY=4
 APP_BACKUP_KEEP_MONTHLY=6
 ```
 
-The existing count-based `backup:prune --keep` behavior remains available for
-simple deployments. Backups are only eligible for pruning after they have a
-valid manifest.
+The existing count-based `backup:prune --keep` behavior remains available for simple deployments. Backups are only eligible for pruning after they have a valid manifest.
 
 ## Hooks
 
-The backup package provides an explicit hook registry for App-owned operational
-policy:
+The backup package provides an explicit hook registry for App-owned operational policy:
 
 - before and after create;
 - before and after restore.
 
-Hooks can pause workers, enable maintenance mode, emit audit events, or
-invalidate derived state. The default registry is empty, so applications do
-not need placeholder dependencies or hidden hook behavior.
+Hooks can pause workers, enable maintenance mode, emit audit events, or invalidate derived state. The default registry is empty, so applications do not need placeholder dependencies or hidden hook behavior.
 
 ## CI
 
-Backup integration now has its own CI job in `.github/workflows/test.yml`.
-The job runs in the nested `integration` module with Docker and executes:
+Backup integration now has its own CI job in `.github/workflows/test.yml`. The job runs in the nested `integration` module with Docker and executes:
 
 1. the portable transfer matrix and compatibility tests;
 2. native SQLite and MySQL recovery;
 3. isolated native Postgres recovery.
 
-This keeps backup failures visible as a feature-specific signal instead of
-depending on the repository's general unit or generator integration jobs.
+This keeps backup failures visible as a feature-specific signal instead of depending on the repository's general unit or generator integration jobs.
 
 ## Design Boundaries
 
 - Native formats remain first-class for same-driver production recovery.
-- Portable archives are for intentional cross-driver movement, not a
-  replacement for native dumps.
-- Migrations remain the application's schema authority; backup does not create
-  a second migration runner.
+- Portable archives are for intentional cross-driver movement, not a replacement for native dumps.
+- Migrations remain the application's schema authority; backup does not create a second migration runner.
 - Restore is explicit and destructive by design.
-- Secrets are read from runtime configuration and are never written into
-  manifests or backup metadata.
-- Generated Apps contain only the resource-description command. Backup
-  strategies, repository access, and restore execution remain in `forj`.
-- The resource contract is the authoritative inventory when available; the
-  environment scanner is retained only as a compatibility fallback for older
-  Apps.
+- Secrets are read from runtime configuration and are never written into manifests or backup metadata.
+- Generated Apps contain only the resource-description command. Backup strategies, repository access, and restore execution remain in `forj`.
+- The resource contract is the authoritative inventory when available; the environment scanner is retained only as a compatibility fallback for older Apps.
 
 ## Verification
 
@@ -192,6 +144,4 @@ GOFORJ_BACKUP_INTEGRATION=1 GOFORJ_BACKUP_NATIVE_POSTGRES=1 \
   sh -c 'cd integration && go test -tags=integration_backup ./... -run "^TestNativePostgresBackupRestore$"'
 ```
 
-The full PR render profile passes all 54 combinations, including generated App
-resource discovery and `backup:plan` consumption. Wire generation, compile-only
-repository tests, and `git diff --check` also pass.
+The full PR render profile passes all 54 combinations, including generated App resource discovery and `backup:plan` consumption. Wire generation, compile-only repository tests, and `git diff --check` also pass.
