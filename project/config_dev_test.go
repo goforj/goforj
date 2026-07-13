@@ -1,0 +1,442 @@
+package project
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+// TestDevWatchYAMLSeparatesLegacyAndNativeMatchers verifies that the watch
+// node's shape selects compatibility or native behavior without changing old input.
+func TestDevWatchYAMLSeparatesLegacyAndNativeMatchers(t *testing.T) {
+	input := `dev:
+  watches:
+    - name: Legacy
+      watch: -file .go -postpone
+      exec: forj build
+    - name: Native
+      watch: [.go, .env, "re:^schemas/.+\\.json$"]
+      ignore: [_test.go, generated]
+      root: ./schemas
+      workdir: ./tools
+      files:
+        exclude: [generated.go]
+      dirs:
+        include: [schemas]
+        exclude: [vendor]
+      exec: forj api-index
+      env:
+        INDEX_MODE: fast
+      debounce: 125ms
+      poll: 2s
+      postpone: true
+      restart: true
+      exit: true
+      stdin: true
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal dev watches: %v", err)
+	}
+	if len(config.Dev.Watches) != 2 {
+		t.Fatalf("watch count = %d, want 2", len(config.Dev.Watches))
+	}
+	legacy := config.Dev.Watches[0]
+	if !legacy.IsLegacy() || legacy.Watch != "-file .go -postpone" || len(legacy.Include) != 0 {
+		t.Fatalf("legacy watch was not preserved: %#v", legacy)
+	}
+
+	native := config.Dev.Watches[1]
+	if native.IsLegacy() {
+		t.Fatalf("native watch was classified as legacy: %#v", native)
+	}
+	if want := []string{".go", ".env", `re:^schemas/.+\.json$`}; !reflect.DeepEqual(native.Include, want) {
+		t.Fatalf("native include = %#v, want %#v", native.Include, want)
+	}
+	if want := []string{"_test.go", "generated"}; !reflect.DeepEqual(native.Ignore, want) {
+		t.Fatalf("native ignore = %#v, want %#v", native.Ignore, want)
+	}
+	if want := []string{"./schemas"}; !reflect.DeepEqual(native.Roots, want) {
+		t.Fatalf("native roots = %#v, want %#v", native.Roots, want)
+	}
+	if native.WorkDir != "./tools" || native.Debounce != "125ms" || native.Poll != "2s" {
+		t.Fatalf("native timing and path controls were not decoded: %#v", native)
+	}
+	if !native.Postpone || !native.Restart || !native.Exit || !native.Stdin {
+		t.Fatalf("native process controls were not decoded: %#v", native)
+	}
+	if native.Env["INDEX_MODE"] != "fast" {
+		t.Fatalf("native env = %#v, want INDEX_MODE=fast", native.Env)
+	}
+	if !reflect.DeepEqual(native.Files.Exclude, []string{"generated.go"}) ||
+		!reflect.DeepEqual(native.Dirs.Include, []string{"schemas"}) ||
+		!reflect.DeepEqual(native.Dirs.Exclude, []string{"vendor"}) {
+		t.Fatalf("scoped native matchers were not decoded: %#v", native)
+	}
+}
+
+// TestDevWatchYAMLRoundTripPreservesBothModes verifies that renderer writes do
+// not turn legacy flags into native matchers or discard native controls.
+func TestDevWatchYAMLRoundTripPreservesBothModes(t *testing.T) {
+	original := Config{Dev: DevConfig{Watches: []DevWatch{
+		{Name: "Legacy", Watch: "-file .go -postpone", Exec: "forj build"},
+		{
+			Name:     "Native",
+			Include:  []string{".md"},
+			Ignore:   []string{"_data"},
+			Roots:    []string{"docs", "examples"},
+			WorkDir:  "docs",
+			Exec:     "make docs",
+			Debounce: "200ms",
+			Poll:     "1s",
+			Postpone: true,
+		},
+	}}}
+
+	encoded, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal dev watches: %v", err)
+	}
+	if !strings.Contains(string(encoded), "watch: -file .go -postpone") {
+		t.Fatalf("legacy watch was not emitted as a scalar:\n%s", encoded)
+	}
+	if !strings.Contains(string(encoded), "watch:\n") || !strings.Contains(string(encoded), "- .md") {
+		t.Fatalf("native watch was not emitted as a list:\n%s", encoded)
+	}
+
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal round-tripped dev watches: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped.Dev.Watches, original.Dev.Watches) {
+		t.Fatalf("round-tripped watches = %#v, want %#v", roundTripped.Dev.Watches, original.Dev.Watches)
+	}
+}
+
+// TestDevAppsYAMLSupportsConciseLifecycleConfig verifies the generated config's
+// boolean, command suffix, and SPA path shorthands.
+func TestDevAppsYAMLSupportsConciseLifecycleConfig(t *testing.T) {
+	input := `dev:
+  apps:
+    app:
+      run: run
+      spas:
+        portal: ./cmd/app/frontend
+        admin:
+          path: ./cmd/app/admin
+          build: npm run build:admin
+          watch: [.ts, .css]
+          ignore: [node_modules, dist]
+    reporting: true
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal dev apps: %v", err)
+	}
+	app := config.Dev.Apps["app"]
+	if app.Run == nil || app.Run.Exec != "run" {
+		t.Fatalf("default app run shorthand was not decoded: %#v", app)
+	}
+	if app.Build != nil {
+		t.Fatalf("omitted app build should use defaults, got %#v", app.Build)
+	}
+	if got := app.SPAs["portal"].Path; got != "./cmd/app/frontend" {
+		t.Fatalf("portal path = %q, want conventional scalar path", got)
+	}
+	admin := app.SPAs["admin"]
+	if admin.Path != "./cmd/app/admin" || admin.Build != "npm run build:admin" {
+		t.Fatalf("admin SPA overrides were not decoded: %#v", admin)
+	}
+	if reporting := config.Dev.Apps["reporting"]; !reflect.DeepEqual(reporting, DevApp{}) {
+		t.Fatalf("reporting app true shorthand = %#v, want empty defaults", reporting)
+	}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal concise dev apps: %v", err)
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal round-tripped dev apps: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped.Dev.Apps, config.Dev.Apps) {
+		t.Fatalf("round-tripped dev apps = %#v, want %#v", roundTripped.Dev.Apps, config.Dev.Apps)
+	}
+}
+
+// TestDevAppsYAMLRejectsFalseEntry keeps app inclusion equivalent to map presence.
+func TestDevAppsYAMLRejectsFalseEntry(t *testing.T) {
+	input := `dev:
+  apps:
+    worker: false
+`
+
+	var config Config
+	err := yaml.Unmarshal([]byte(input), &config)
+	if err == nil || !strings.Contains(err.Error(), "remove the app from dev.apps to exclude it") {
+		t.Fatalf("false dev app error = %v, want presence-based inclusion guidance", err)
+	}
+}
+
+// TestDevAppsYAMLPreservesEmptyAllowlistPresence keeps native-none distinct from legacy discovery.
+func TestDevAppsYAMLPreservesEmptyAllowlistPresence(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		structured bool
+	}{
+		{name: "absent legacy model", input: "dev: {}\n"},
+		{name: "explicit empty native model", input: "dev:\n  apps: {}\n", structured: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var config Config
+			if err := yaml.Unmarshal([]byte(test.input), &config); err != nil {
+				t.Fatalf("unmarshal config: %v", err)
+			}
+			if got := config.Dev.UsesStructuredApps(); got != test.structured {
+				t.Fatalf("UsesStructuredApps() = %t, want %t", got, test.structured)
+			}
+			encoded, err := yaml.Marshal(config)
+			if err != nil {
+				t.Fatalf("marshal config: %v", err)
+			}
+			hasEmptyApps := strings.Contains(string(encoded), "apps: {}")
+			if hasEmptyApps != test.structured {
+				t.Fatalf("encoded empty apps presence = %t, want %t:\n%s", hasEmptyApps, test.structured, encoded)
+			}
+			var roundTripped Config
+			if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+				t.Fatalf("unmarshal round trip: %v", err)
+			}
+			if got := roundTripped.Dev.UsesStructuredApps(); got != test.structured {
+				t.Fatalf("round-trip UsesStructuredApps() = %t, want %t", got, test.structured)
+			}
+		})
+	}
+}
+
+// TestDevRunYAMLPreservesEmptyAllowlistPresence keeps explicit legacy exclusion distinct from the pre-allowlist model.
+func TestDevRunYAMLPreservesEmptyAllowlistPresence(t *testing.T) {
+	t.Parallel()
+	var config Config
+	if err := yaml.Unmarshal([]byte("dev:\n  run: {}\n"), &config); err != nil {
+		t.Fatalf("unmarshal empty dev.run: %v", err)
+	}
+	if config.Dev.Run == nil || len(config.Dev.Run) != 0 {
+		t.Fatalf("empty dev.run was not retained in memory: %#v", config.Dev.Run)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal empty dev.run: %v", err)
+	}
+	if !strings.Contains(string(encoded), "run: {}") {
+		t.Fatalf("empty dev.run was omitted:\n%s", encoded)
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal empty dev.run round trip: %v", err)
+	}
+	if roundTripped.Dev.Run == nil {
+		t.Fatal("round-trip empty dev.run became the absent pre-allowlist model")
+	}
+}
+
+// TestDevAppCommandYAMLRoundTripsLifecycleStates verifies omission, disabling, shorthand, and full overrides remain distinct.
+func TestDevAppCommandYAMLRoundTripsLifecycleStates(t *testing.T) {
+	input := `dev:
+  apps:
+    omitted: true
+    disabled:
+      run: false
+    shorthand:
+      run: jobs --once
+    override:
+      run:
+        exec: forj jobs run
+        watch: [.go]
+        env:
+          JOB_MODE: eager
+        postpone: false
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal dev app command states: %v", err)
+	}
+	if config.Dev.Apps["omitted"].Run != nil {
+		t.Fatalf("omitted run = %#v, want nil default", config.Dev.Apps["omitted"].Run)
+	}
+	disabled := config.Dev.Apps["disabled"].Run
+	if disabled == nil || !disabled.Disabled || disabled.Shorthand {
+		t.Fatalf("disabled run was not preserved: %#v", disabled)
+	}
+	shorthand := config.Dev.Apps["shorthand"].Run
+	if shorthand == nil || shorthand.Disabled || !shorthand.Shorthand || shorthand.Exec != "jobs --once" {
+		t.Fatalf("shorthand run was not preserved: %#v", shorthand)
+	}
+	override := config.Dev.Apps["override"].Run
+	if override == nil || override.Disabled || override.Shorthand || override.Exec != "forj jobs run" {
+		t.Fatalf("mapping run was not preserved: %#v", override)
+	}
+	if !reflect.DeepEqual(override.Watch, []string{".go"}) || override.Env["JOB_MODE"] != "eager" || !override.PostponeSet || override.Postpone {
+		t.Fatalf("mapping run controls were not preserved: %#v", override)
+	}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal dev app command states: %v", err)
+	}
+	encodedText := string(encoded)
+	for _, expected := range []string{"omitted: true", "run: false", "run: jobs --once", "exec: forj jobs run", "postpone: false"} {
+		if !strings.Contains(encodedText, expected) {
+			t.Fatalf("round-trip YAML omitted %q:\n%s", expected, encoded)
+		}
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal round-tripped dev app command states: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped.Dev.Apps, config.Dev.Apps) {
+		t.Fatalf("round-tripped dev app commands = %#v, want %#v", roundTripped.Dev.Apps, config.Dev.Apps)
+	}
+}
+
+// TestDevAppCommandYAMLPreservesTrueCompatibilityAlias keeps older explicit defaults readable without making them canonical.
+func TestDevAppCommandYAMLPreservesTrueCompatibilityAlias(t *testing.T) {
+	input := `dev:
+  apps:
+    legacy:
+      run: true
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal true command compatibility alias: %v", err)
+	}
+	run := config.Dev.Apps["legacy"].Run
+	if run == nil || run.Disabled || run.Shorthand || run.IsMapping() || run.Exec != "" {
+		t.Fatalf("true command compatibility alias = %#v, want conventional default", run)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal true command compatibility alias: %v", err)
+	}
+	if !strings.Contains(string(encoded), "run: true") {
+		t.Fatalf("true command compatibility alias did not round trip:\n%s", encoded)
+	}
+}
+
+// TestDevAppCommandYAMLPreservesEmptyMappingShape keeps a full override distinct from the compatibility-only true alias.
+func TestDevAppCommandYAMLPreservesEmptyMappingShape(t *testing.T) {
+	input := `dev:
+  apps:
+    invalid:
+      run: {}
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal empty run mapping: %v", err)
+	}
+	run := config.Dev.Apps["invalid"].Run
+	if run == nil || !run.IsMapping() {
+		t.Fatalf("empty run mapping = %#v, want explicit mapping state", run)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal empty run mapping: %v", err)
+	}
+	if !strings.Contains(string(encoded), "run: {}") {
+		t.Fatalf("empty run mapping did not retain its shape:\n%s", encoded)
+	}
+}
+
+// TestDevAppsYAMLSupportsExplicitCommandOverrides verifies that app build and
+// runtime maps expose the native watcher controls needed beyond defaults.
+func TestDevAppsYAMLSupportsExplicitCommandOverrides(t *testing.T) {
+	input := `dev:
+  apps:
+    billing:
+      build:
+        exec: forj billing build -o ./bin/billing
+        watch: [.go, .env]
+        ignore: [wire_gen.go]
+        root: ./cmd/billing
+        workdir: .
+        env:
+          CGO_ENABLED: "0"
+        debounce: 175ms
+        poll: 3s
+        postpone: true
+      run: false
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal explicit dev app: %v", err)
+	}
+	app := config.Dev.Apps["billing"]
+	if app.Build == nil {
+		t.Fatalf("billing app build was not decoded: %#v", app)
+	}
+	build := app.Build
+	if build.Exec != "forj billing build -o ./bin/billing" || build.Root != "./cmd/billing" || build.WorkDir != "." {
+		t.Fatalf("billing build path and command controls were not decoded: %#v", build)
+	}
+	if !reflect.DeepEqual(build.Watch, []string{".go", ".env"}) || !reflect.DeepEqual(build.Ignore, []string{"wire_gen.go"}) {
+		t.Fatalf("billing build matchers were not decoded: %#v", build)
+	}
+	if build.Env["CGO_ENABLED"] != "0" || build.Debounce != "175ms" || build.Poll != "3s" || !build.Postpone {
+		t.Fatalf("billing build execution controls were not decoded: %#v", build)
+	}
+	if app.Run == nil || !app.Run.Disabled {
+		t.Fatalf("billing run false should disable only the runtime: %#v", app.Run)
+	}
+}
+
+// TestDevWatchYAMLRejectsAmbiguousIncludes keeps each watcher on one explicit
+// input grammar so native and legacy matching cannot be combined accidentally.
+func TestDevWatchYAMLRejectsAmbiguousIncludes(t *testing.T) {
+	input := `dev:
+  watches:
+    - name: Ambiguous
+      watch: [.go]
+      include: [.md]
+      exec: make
+`
+
+	var config Config
+	err := yaml.Unmarshal([]byte(input), &config)
+	if err == nil || !strings.Contains(err.Error(), "watch and include cannot both be set") {
+		t.Fatalf("ambiguous watcher error = %v, want watch/include conflict", err)
+	}
+}
+
+// TestDevWatchYAMLPreservesEmptyLegacyScalar keeps an all-files wgo watcher distinct from a native watcher with no watch key.
+func TestDevWatchYAMLPreservesEmptyLegacyScalar(t *testing.T) {
+	input := `dev:
+  watches:
+    - name: Everything
+      watch: ""
+      exec: make refresh
+`
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal empty legacy watch: %v", err)
+	}
+	if len(config.Dev.Watches) != 1 || !config.Dev.Watches[0].IsLegacy() {
+		t.Fatalf("empty scalar watch lost legacy mode: %#v", config.Dev.Watches)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal empty legacy watch: %v", err)
+	}
+	if !strings.Contains(string(encoded), `watch: ""`) {
+		t.Fatalf("empty scalar watch was not preserved:\n%s", encoded)
+	}
+}

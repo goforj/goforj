@@ -50,6 +50,53 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	}
 }
 
+// TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig verifies that
+// generated settings saves retain lifecycle fields older UIs do not expose.
+func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	base := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "lighthouse")
+	files := map[string][]string{
+		"project_config.go.tmpl": {
+			`Watch    any`,
+			`Root     string`,
+			`Roots    []string`,
+			`Files    DevWatchMatchers`,
+			`Dirs     DevWatchMatchers`,
+			`Apps              map[string]any`,
+			`Extra`,
+			`ModuleReplaces`,
+			`Observability`,
+			`func applyDevConfigUpdate(`,
+			`func mergeLighthouseDevWatches(`,
+			`if _, scalar := existing.Watch.(string); scalar`,
+		},
+		"server.go.tmpl": {
+			`Dev          *devConfigUpdate`,
+			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
+		},
+		"project_config_test.go.tmpl": {
+			`func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(`,
+			`func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(`,
+			`future_watch_control: retained`,
+			`native watcher controls were erased`,
+		},
+	}
+	for name, snippets := range files {
+		content, err := os.ReadFile(filepath.Join(base, name))
+		if err != nil {
+			t.Fatalf("read Lighthouse template %s: %v", name, err)
+		}
+		for _, snippet := range snippets {
+			if !strings.Contains(string(content), snippet) {
+				t.Fatalf("expected Lighthouse template %s to contain %q", name, snippet)
+			}
+		}
+	}
+}
+
 func TestAboutCommandTemplateIsWired(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

@@ -396,6 +396,7 @@ func (m *model) finalizeConfig() {
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
 		Pre:               []project.DevTask{},
+		Apps:              map[string]project.DevApp{},
 		SoundOnWatchError: true,
 		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
@@ -424,38 +425,16 @@ func (m *model) finalizeConfig() {
 	}
 
 	if components.WebUI && project.StarterKitUsesNPM(m.config.Render.StarterKit) {
-		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
-			Name: "Install Frontend Dependencies",
-			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
-		})
+		m.config.Dev.Pre = append(m.config.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultApp()))
 	}
 
-	needsApp := components.WebAPI || components.WebUI || components.Scheduler || components.Jobs
-	if needsApp {
-		buildWatch := "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone"
-		if m.config.Render.StarterKit == project.StarterKitTemplHTMX {
-			buildWatch = "-file .go -file .templ -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -xfile '.*_templ\\.go$' -postpone"
+	if components.HasRuntime() {
+		m.config.Dev.Apps = map[string]project.DevApp{
+			project.DefaultAppName: generatedDevAppConfig(&m.config, project.DefaultApp(), ""),
 		}
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Build App",
-			Watch: buildWatch,
-			Exec:  "forj build -o ./bin/app",
-		})
 	}
 
-	if components.WebAPI || components.WebUI || components.Scheduler || components.Jobs {
-		if m.config.Dev.Run == nil {
-			m.config.Dev.Run = map[string]string{}
-		}
-		m.config.Dev.Run[project.DefaultAppName] = "run"
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Run App",
-			Watch: "-file ./bin/app -file .env -file .env.*",
-			Exec:  "./bin/app run",
-		})
-	}
-
-	if components.WebUI && (project.StarterKitUsesNPM(m.config.Render.StarterKit) || packageJSONHasNpmDev()) {
+	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
 			Watch: frontendNPMWatch(defaultFrontendDir()),
@@ -464,7 +443,8 @@ func (m *model) finalizeConfig() {
 	}
 }
 
-// frontendNPMWatch returns source-oriented frontend watch filters for wgo.
+// frontendNPMWatch returns compatibility filters for an existing frontend whose
+// build lifecycle is not owned by a known GoForj starter kit.
 func frontendNPMWatch(frontendDir string) string {
 	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir node_modules -xdir dist"
 }

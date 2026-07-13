@@ -2,15 +2,15 @@
 
 ## Purpose
 
-This document captures a proposed redesign for `forj dev` watchers.
+This document records the implemented contract for native `forj dev` watchers.
 
-The current implementation shells out to `wgo` for each configured watcher. That
-has worked well enough for simple projects, but the model starts leaking when
+The previous implementation shelled out to `wgo` for each configured watcher.
+That worked well enough for simple projects, but the model started leaking when
 `forj dev` needs to coordinate app builds, app runtimes, embedded SPAs, and
 multi-app projects.
 
-The proposed direction is to make `forj dev` own the watcher engine directly
-while preserving the useful parts of the `wgo` model:
+`forj dev` now owns the watcher engine directly while preserving the useful
+parts of the `wgo` model:
 
 - recursive filesystem watching
 - include and exclude matching
@@ -19,13 +19,14 @@ while preserving the useful parts of the `wgo` model:
 - process restart behavior
 - custom watcher flexibility
 
-The important change is that `.goforj.yml` should describe GoForj development
-lifecycle intent. It should not have to encode raw `wgo` CLI flags for framework
+The important change is that `.goforj.yml` describes GoForj development
+lifecycle intent instead of encoding raw `wgo` CLI flags for framework
 conventions.
 
 ## Problem
 
-Generated projects currently express dev behavior as raw watcher command lines:
+Generated projects previously expressed dev behavior as raw watcher command
+lines:
 
 ```yaml
 dev:
@@ -49,8 +50,7 @@ Observed issues:
 - `-dir ./cmd/app/frontend/dist` controls watched directories, but file events
   still need matching `-file` includes.
 - Embedded SPA dev requires a dependency chain:
-  SPA source change -> SPA build -> dist marker change -> app binary rebuild ->
-  app restart.
+  SPA source change -> SPA build -> app binary rebuild -> app restart.
 - Hardcoding `./cmd/app/frontend/dist/index.html` into the default app build
   watcher does not scale to multiple apps or multiple SPAs per app.
 - `run` and `watch` are related lifecycle concepts, but the current config keeps
@@ -98,11 +98,11 @@ the framework-owned default path.
 - Removing build-only participation. A listed App can explicitly disable its
   runtime while retaining build and watch behavior.
 
-## Proposed Config Shape
+## Implemented Config Shape
 
-The generated config should be small and app-centered.
+Generated config is small and app-centered.
 
-For Ship, a realistic generated shape could be:
+For Ship, a realistic generated shape is:
 
 ```yaml
 dev:
@@ -137,10 +137,10 @@ The target semantics are:
 | App mapping with `run: false` | build and watch only |
 | CLI-only App mapping with no `run` | build and watch only |
 | App mapping with scalar `run` | build and run that App command |
-| App mapping with a `run:` object | build and run the explicit runtime override |
+| App mapping with a `run:` object | build and run the exact process override |
 
-App-level `false` is not part of the target schema. Absence is the only
-App-level exclusion mechanism, so generated configuration should never contain:
+App-level `false` is invalid. Absence is the only App-level exclusion mechanism,
+so generated configuration never contains:
 
 ```yaml
 dev:
@@ -148,8 +148,13 @@ dev:
     ship: false
 ```
 
-`app: true` is only a concise inclusion shorthand for an App with no overrides.
-A mapping is used when the App owns SPAs or changes conventional behavior.
+`app: true` is a concise inclusion shorthand for an App with no overrides. A
+mapping is used when the App owns SPAs or changes conventional behavior.
+
+For backward compatibility, a project with no `dev.apps` field remains on the
+historical discovery path used by raw legacy watchers. An explicit
+`dev.apps: {}` selects the native model with no managed Apps, which lets a
+project run custom watchers without an implicit App build.
 
 Runtime capability comes from the existing App component model. An App is
 runtime-capable when it enables Web API, Web UI, Scheduler, or Jobs. The watcher
@@ -163,26 +168,27 @@ their binaries rebuilt during `forj dev`.
 
 ### App Defaults
 
-For a listed App, GoForj can infer:
+For a listed App, GoForj infers:
 
 ```yaml
 build:
   exec: forj <app> build -o ./bin/<app>
   watch: [.go, .env, .env.*]
-  ignore: [forj, _data, wire_gen.go]
+  ignore: [forj, _data, wire_gen.go, .git, .hg, .svn, .idea, .vscode, .settings, node_modules]
 
 run: # runtime-capable Apps only, unless explicitly overridden
   exec: ./bin/<app>
-  watch: [./bin/<app>]
 ```
 
 The build node is conventional for every listed App. The runtime node is
 conventional only when the App is runtime-capable and `run` is not `false`.
+The [App Default Launch Design](completed/app-default-launch-design.md) makes the bare
+executable enter `run` intrinsically for runtime-capable Apps, while CLI-only
+Apps retain their no-argument help behavior.
 
-The bare executable is sufficient because the
-[`App Default Launch Design`](completed/app-default-launch-design.md) makes zero-argument
-execution intrinsic: runtime-capable Apps enter `run`, while CLI-only Apps print
-help.
+The build-to-runtime edge is internal. Additional `run.watch` matchers remain
+available for external restart triggers, and a conventional binary matcher is
+removed during compilation to avoid duplicate restarts.
 
 For the default app named `app`, the build command remains:
 
@@ -218,17 +224,18 @@ rewrite an explicit leaf command into the standalone host.
 
 ### SPA Defaults
 
-For each SPA path, GoForj can infer:
+For each SPA path, GoForj infers:
 
 ```yaml
 build: npm run build -s -- --logLevel silent
-watch: [.ts, .js, .vue, .css, .html, package.json, package-lock.json]
+watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]
 ignore: [_data, node_modules, dist]
-dist: <spa path>/dist/index.html
 ```
 
-The SPA dist marker is automatically added as an app build dependency. Users
-should not need to list it in the app build watcher.
+SPA build success directly queues the owning app build. App build success then
+queues the runtime restart. This explicit success graph avoids relying on a
+generated dist-marker event and prevents a failed SPA build from rebuilding or
+restarting the app.
 
 ### Explicit App Overrides
 
@@ -243,26 +250,23 @@ dev:
         watch: [.go, .env, .env.*, ./cmd/app/frontend/dist/index.html]
         ignore: [forj, _data, app/wire/wire_gen.go]
       run:
-        exec: ./bin/app http:serve
-        watch: [./bin/app]
+        exec: env MODE=dev ./tools/app-server
+        watch: [.runtime-restart]
       spas:
         portal:
           path: ./cmd/app/frontend
           build: npm run build -s -- --logLevel silent
-          watch: [.ts, .js, .vue, .css, .html, package.json, package-lock.json]
+          watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]
           ignore: [_data, node_modules, dist]
 ```
 
 This is intentionally more verbose. It exists for projects that need control,
-not as the generated default.
+not as the generated default. App build ignores extend the invariant VCS,
+editor, and `node_modules` safety exclusions rather than replacing them.
 
-The `run:` mapping is an advanced process override. It implies that a runtime
-node should be created and its `exec` value is used exactly as configured. This
-keeps explicit leaf-runtime development available without making it the
-framework default.
-
-The scalar form remains a concise override for a command executed through the
-App binary:
+The `run:` mapping is a full process override. Its `exec` value is preserved
+exactly and is not prefixed with the App binary. The scalar form is a concise
+App-command override:
 
 ```yaml
 dev:
@@ -271,9 +275,11 @@ dev:
       run: http:serve
 ```
 
-This expands to `./bin/app http:serve`. The redundant scalar `run: run` should
-not be generated; omitting `run` already represents the conventional standalone
-command. It may remain accepted while existing structured config migrates.
+This expands to `./bin/app http:serve`. Existing scalar `run: run` values remain
+accepted for backward compatibility, but generation and normalization omit
+them because an omitted `run` already means the conventional standalone
+runtime. `run: false` keeps the build and SPA graph while suppressing the
+runtime node.
 
 For the uncommon build-only case:
 
@@ -301,15 +307,15 @@ dev:
         admin:
           path: ./cmd/app/admin
           build: npm run build -s -- --logLevel silent
-          watch: [.ts, .js, .vue, .css, .html]
+          watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html]
           ignore: [node_modules, dist]
 ```
 
-GoForj adds both SPA dist markers to the owning app build dependencies:
+Both SPA build nodes feed the same owning app build:
 
 ```text
-./cmd/app/frontend/dist/index.html
-./cmd/app/admin/dist/index.html
+portal build --+
+admin build  ----+--> app build
 ```
 
 ### Custom Watchers
@@ -345,15 +351,54 @@ until their final compile or process-start boundary succeeds, so a separate
 index watcher is only useful when the project wants contract refreshes without
 running either pipeline.
 
-The exact raw marker is open for design. The key requirement is that ordinary
-generated config should not require raw regexes.
+`re:` is the implemented raw marker. Ordinary generated config does not require
+regular expressions.
+
+### Structured Custom Controls
+
+List-shaped `watch` values opt into native matching. Structured custom watchers
+also support:
+
+```yaml
+dev:
+  watches:
+    - name: schema compiler
+      roots: [schemas, internal/contracts]
+      workdir: ./tools/schema
+      watch: [.json, .yaml]
+      ignore: [generated]
+      files:
+        include: [re:^v[0-9]+/.+\.json$]
+        exclude: [snapshot.json]
+      dirs:
+        include: [schemas]
+        exclude: [vendor]
+      exec: make generate
+      env:
+        GENERATOR_MODE: dev
+      debounce: 150ms
+      poll: 1s
+      postpone: true
+      restart: false
+      exit: false
+      stdin: false
+```
+
+`root` is accepted as a single-root YAML convenience; `roots` is the normalized
+multi-root form. `poll` selects bounded snapshot polling for that watcher. With
+no `poll`, filesystem notifications are preferred and startup falls back to
+polling if notification coverage cannot be established.
+
+Outermost physical roots must exist as real directories when the watcher
+starts; symbolic-link roots are rejected because notification paths cannot be
+routed reliably through both lexical and resolved names. An explicit nested
+root can still restore coverage inside a subtree excluded by an outer root.
 
 ## Matcher Semantics
 
-The config should expose simple matchers and compile them into native matcher
-rules internally.
+The config exposes simple matchers and compiles them into native matcher rules.
 
-Suggested simple matcher behavior:
+Implemented simple matcher behavior:
 
 | Config value | Meaning |
 | --- | --- |
@@ -384,37 +429,41 @@ tested directly.
 
 ## Native Watcher Engine
 
-`forj dev` should embed the watcher engine instead of starting `wgo` processes.
+`forj dev` embeds the watcher engine instead of starting `wgo` processes.
 
-The engine should provide:
+The engine provides:
 
 - recursive watch roots
 - include matchers
 - exclude matchers
 - directory pruning
 - event debounce
-- optional polling fallback
+- create, write, remove, and rename events
+- filesystem notification health/error reporting
+- bounded polling and automatic startup fallback
 - postponed first execution
 - process lifecycle management
 - restart-on-change behavior
 
-The public config should compile into internal watcher specs:
+Project config compiles into `internal/devwatch.Spec` values. The engine spec is
+filesystem-oriented and intentionally contains no project, app, YAML, TUI, or
+Lighthouse concepts:
 
 ```go
-type DevWatcherSpec struct {
-	Name      string
-	Root      string
-	Includes  []Matcher
-	Excludes  []Matcher
-	Postpone  bool
-	Command   DevCommandSpec
-	Restart   bool
-	App       string
-	Kind      DevWatcherKind
+type Spec struct {
+	Name              string
+	Roots             []string
+	Includes          []Matcher
+	Excludes          []Matcher
+	DirectoryIncludes []Matcher
+	DirectoryExcludes []Matcher
+	Debounce          time.Duration
+	DebounceSet       bool
 }
 ```
 
-Potential watcher kinds:
+The GoForj adapter attaches lifecycle kinds and process commands after matcher
+compilation:
 
 ```text
 app_build
@@ -426,10 +475,36 @@ custom
 The kind gives the dev output layer enough context to render clean lifecycle
 messages without parsing watcher names.
 
+### Package Boundary
+
+`internal/devwatch` owns two reusable mechanisms:
+
+- shared physical filesystem subscriptions, typed matchers, debounce,
+  notification health, and polling
+- process supervision, process-tree shutdown, restart, and exit records
+- pseudo-terminal output on Linux and macOS, preserving the historical merged
+  watcher stream and native color/cursor behavior
+
+`internal/forj` owns policy:
+
+- compiling `project.Config` into watcher specs and commands
+- app/SPA lifecycle graph edges
+- framework build conventions and Templ/HTMX generated-output exclusions
+- transcript formatting, TUI state, sound hooks, and Lighthouse streaming
+- outer-session environment reload, migration setup, and explicit rebuilds
+
+Lifecycle wrappers consistently use the same Bash command contract as the
+rest of `forj dev`, including on Windows. PTY attachment is enabled where the
+platform supports it; other platforms retain separate output streams.
+
+This boundary keeps the engine reusable without turning `.goforj.yml` or UI
+concerns into low-level watcher dependencies. `internal/devwatch` is an internal
+package boundary, not a promised public Go API.
+
 ## Lifecycle Graph
 
 The important difference from raw watcher orchestration is that `forj dev`
-should know dependencies between watchers.
+knows dependencies between watchers.
 
 These inferred graphs are created only for Apps present in `dev.apps`.
 
@@ -438,19 +513,14 @@ For an app with one SPA:
 ```text
 SPA source files
   -> spa_build
-  -> SPA dist marker
   -> app_build
-  -> app binary
   -> app_run restart
 ```
 
 For an app with no SPA:
 
 ```text
-Go/env files
-  -> app_build
-  -> app binary
-  -> app_run restart
+Go/env files -> app_build -> app_run restart
 ```
 
 For a listed CLI-only App or an App with `run: false`, the graph ends at the
@@ -467,13 +537,12 @@ No `app_run` node exists in that graph.
 For an app with multiple SPAs:
 
 ```text
-portal source -> portal build -> portal dist
-admin source  -> admin build  -> admin dist
-portal/admin dist or Go/env files -> app_build -> app_run restart
+portal source -> portal build --+
+admin source  -> admin build  ----+-> app_build -> app_run restart
+Go/env files ---------------------+
 ```
 
-This graph should be explicit enough to avoid duplicate restarts and noisy
-build loops.
+The explicit graph avoids duplicate restarts and noisy build loops.
 
 ## Process Behavior
 
@@ -485,48 +554,43 @@ The current `forj dev` behavior already has useful process semantics:
 - shutdown stops children in parallel
 - build progress markers feed the dev TUI
 
-The native watcher engine should preserve those behaviors, but without each
-watcher being a separate `wgo` process.
+The native watcher engine preserves those behaviors without making each watcher
+a separate `wgo` process.
 
-Suggested process behavior:
+Implemented process behavior:
 
+- Cold start builds listed apps, runs pre-dev setup, builds configured SPAs,
+  rebuilds app artifacts when SPA output was published, and only then starts
+  watcher runtimes.
 - Build commands are one-shot subprocesses.
 - Runtime commands are long-running subprocesses.
 - The conventional runtime command is the bare `./bin/<app>` executable.
 - An explicit `run.exec` command is preserved exactly.
-- A pending build cancels or coalesces duplicate build requests during debounce.
+- Trailing-edge debounce coalesces duplicate filesystem events.
+- A change during an active build queues at most one follow-up build; it does
+  not cancel the active build.
+- A custom watcher with `restart: true` cancels and replaces its active command.
 - A runtime restarts only after its corresponding build succeeds.
 - Failed builds do not restart the runtime.
 - Runtime exits are surfaced as watcher failures unless shutdown is intentional.
-- App shutdown still happens in parallel.
+- App shutdown happens in parallel and uses process-group termination followed
+  by forced termination after a bounded grace period.
 
 ## Dev Output
 
-Native events should improve output because `forj dev` will see file events,
-build requests, skipped restarts, and dependency edges directly.
+The filesystem engine exposes typed `Event` and `Health` streams to the GoForj
+controller. The controller knows watcher kinds, graph edges, process exits, and
+intentional stop reasons without parsing `wgo` output. It routes child output
+through the existing transcript writers so the TUI and Lighthouse devwatch
+stream retain their established presentation and restart separators.
 
-Useful event types:
+There is not yet a separate public `build.started`/`runtime.restarting` event
+schema. That can be added above the `internal/devwatch` boundary without
+changing matcher or process supervision APIs.
 
-```text
-watcher.started
-watcher.stopped
-file.changed
-build.queued
-build.started
-build.succeeded
-build.failed
-runtime.started
-runtime.restarting
-runtime.stopped
-runtime.failed
-```
+## Migration and Backwards Compatibility
 
-The dev TUI and Lighthouse devwatch stream can consume these structured events
-instead of inferring lifecycle from child process output.
-
-## Migration Strategy
-
-This should not require a flag day.
+The implementation does not require a flag day.
 
 ### Backwards Compatibility
 
@@ -539,126 +603,96 @@ Compatibility rules:
 - Existing raw `watch:` strings continue to mean "use the legacy `wgo` flag
   grammar."
 - Custom watcher names, commands, env values, and ordering should be preserved.
-- If GoForj cannot confidently translate a legacy raw watcher into structured
-  config, it should execute it through the compatibility path instead of
-  rewriting it.
+- If GoForj cannot confidently migrate a legacy raw watcher, it leaves the
+  config untouched and compiles the scalar string through the native legacy
+  parser.
 - Generated legacy watchers can be recognized by name and command shape, but
   hand-written watchers should not be rewritten unless the user asks for it.
 
-The native implementation can parse the subset of `wgo` flags GoForj generated
-historically:
+The native implementation supports these scalar legacy flags:
 
 ```text
+-root
 -cd
 -file
 -dir
 -xfile
 -xdir
+-debounce
+-poll
 -postpone
+-exit
+-stdin
+-verbose
+-exec-log
+-exec-msg
+-log-prefix
 ```
 
-Unknown legacy flags should produce a clear compatibility warning and either:
-
-- continue through a raw `wgo` subprocess compatibility mode during the
-  transition, or
-- fail with a focused message if the raw compatibility mode has been removed in
-  a later major version.
+Repeated flags, quoted values, `-flag=value`, boolean `=true`/`=false`, ordered
+roots, forward-slash paths, exclude precedence, and `wgo`'s dot convenience
+escaping are preserved. Unsupported flags fail with a focused message that
+points users to structured fields. GoForj does not fall back to a `wgo`
+subprocess.
 
 ### Auto-Migration
 
-GoForj can offer an automatic migration path for generated watcher config.
+`forj render` performs conservative automatic migration for known generated
+watcher config.
 
-The migration should be conservative:
+The migration is conservative:
 
 - Detect only known generated watcher shapes.
-- Convert a known App build/run watcher pair into a listed `dev.apps` entry with
-  no `run` field.
+- Convert known App build/run watcher pairs into listed `dev.apps` entries with
+  no redundant `run` field.
 - Convert a known build-only App watcher into a listed entry with `run: false`.
 - Convert generated NPM frontend watchers into `spas`.
 - Omit known nonparticipating Apps instead of writing App-level `false` values.
-- Preserve a nonstandard App command as an explicit scalar `run` value. Preserve
-  full process overrides as a `run:` mapping.
+- Preserve legacy custom App commands as scalar `run` overrides.
+- Preserve full custom process commands as `run:` mappings.
+- Keep Apps outside the legacy allowlist absent.
 - Preserve unknown `dev.watches` entries as custom watchers.
-- Preserve comments and formatting where practical, but correctness matters more
-  than perfect YAML layout.
-- Show a diff or dry-run mode before writing changes.
-
-Possible command:
-
-```text
-forj config migrate-dev-watchers
-```
-
-Possible render behavior:
-
-- `forj render` can normalize legacy generated watcher bugs, such as bad
-  frontend excludes.
-- `forj render` should not silently replace a user's raw custom watcher with a
-  structured watcher.
-- If a project still uses generated legacy watcher config, `forj render` can
-  print a one-time suggestion pointing to the migration command.
+- Preserve semantic values and custom watcher order. Re-encoding may normalize
+  YAML comments and formatting.
+- Preserve the ordering of remaining custom watchers.
+- Treat added env, matcher, timing, process, or path controls as evidence of
+  customization and do not migrate that watcher.
 
 The goal is that old projects keep working immediately, while projects can move
 to the cleaner `dev.apps` model when they are ready.
 
-Phase 1:
+Implemented phases:
 
 - Add native watcher config structs.
 - Keep existing `dev.watches[].watch` raw `wgo` strings working.
 - Add parsing for `dev.apps`.
 - Compile `dev.apps` into the same internal watcher list used by raw watches.
-
-Phase 2:
-
-- Replace `wgo` subprocess startup with native watcher execution.
-- Keep raw `watch:` strings as compatibility input by parsing the subset of
-  existing flags GoForj generates today.
-- Prefer structured `watch: [...]` and `ignore: [...]` for new configs.
-
-Phase 3:
-
 - Update generated `.goforj.yml` to use `dev.apps`.
 - Generate only participating App keys.
 - Omit `run` for the conventional standalone runtime.
 - Render old `dev.watches` only for custom watches.
 - Normalize or migrate generated old watcher strings during render.
+- Replace `wgo` subprocess startup with native watcher execution.
+- Keep raw scalar `watch:` strings as a backwards-compatible input grammar.
+- Preserve Lighthouse round trips for `dev.apps`, native watcher controls, and
+  scalar legacy watcher strings even though the current form edits only the
+  legacy scalar surface.
 
-Phase 4:
+## Implementation Layout
 
-- Decide whether raw `wgo` syntax remains permanently supported or becomes an
-  explicit legacy escape hatch.
+- `project/config_dev.go`: YAML unions for scalar/list watches, app booleans,
+  command shorthands, and SPA shorthands
+- `internal/devwatch`: filesystem engine and process supervisor
+- `internal/forj/dev_watcher_spec.go`: config and legacy grammar compiler
+- `internal/forj/dev_watcher_runner.go`: lifecycle graph controller and output
+  integration
+- `internal/forj/project_dev_config.go`: generated defaults and conservative
+  render migration
+- generated Lighthouse config/server: lossless settings round trips
 
-## Implementation Notes
+### Structured App Compilation
 
-The existing `internal/forj/dev_cmd.go` already owns app expansion and process
-orchestration. The native watcher work should keep those responsibilities but
-replace the shell-out boundary.
-
-Likely implementation areas:
-
-- `project.Config`
-  - add structured dev app/watch config
-  - preserve existing raw watcher config during migration
-- `internal/forj/dev_cmd.go`
-  - compile config into watcher specs
-  - build lifecycle graph
-  - run native watcher engine
-- `internal/forj/dev_watch_engine.go`
-  - recursive fsnotify/polling engine
-  - debounce
-  - matcher evaluation
-- `internal/forj/dev_process.go`
-  - one-shot build process execution
-  - runtime process restart logic
-- `internal/forj/dev_tui.go`
-  - consume structured lifecycle events
-- `internal/forj/devwatch_streamer.go`
-  - stream structured dev events to Lighthouse
-
-The names are illustrative. The actual split should follow the existing file
-boundaries once implementation starts.
-
-Structured App expansion must follow this order:
+Structured App expansion follows this order:
 
 1. Iterate only keys explicitly present in `dev.apps`.
 2. Resolve each key against the project's existing App model.
@@ -671,11 +705,11 @@ Structured App expansion must follow this order:
 7. Otherwise, create a bare-binary runtime node only when the App is
    runtime-capable.
 
-The compiler must not scan `cmd/`, the filesystem, or the project App registry
-and silently enroll omitted Apps. Discovery can validate configured names, but
+The compiler does not scan `cmd/`, the filesystem, or the project App registry
+to silently enroll omitted Apps. Discovery can validate configured names, but
 it cannot expand the participation set.
 
-The config representation needs to distinguish four runtime states:
+The config representation distinguishes four runtime states:
 
 ```text
 run omitted  -> capability-derived default
@@ -684,10 +718,9 @@ run scalar   -> explicit App command suffix
 run mapping  -> explicit runtime override
 ```
 
-It does not need an App-level `Enabled` state in the target model. Map presence
-already represents inclusion.
+There is no App-level `Enabled` state. Map presence represents inclusion.
 
-Framework-owned config generation and migration should normalize to this model:
+Framework-owned config generation and migration normalize to this model:
 
 | Input intent | Stored `dev.apps` shape |
 | --- | --- |
@@ -711,14 +744,14 @@ dev:
 This expands transparently to `./bin/worker queue:work`. A `run.exec` mapping is
 reserved for callers that need to replace the complete process command.
 
-## Testing Strategy
+## Test Coverage
 
-The test suite should cover:
+The test suite covers:
 
 - simple matcher translation
 - raw regex matcher behavior
 - directory pruning
-- exact path matching for SPA dist markers
+- exact path matching
 - app expansion for default and named apps
 - multiple SPAs under one app
 - omitted App creates no build, SPA, or runtime nodes
@@ -739,23 +772,35 @@ The test suite should cover:
 For integration tests that render projects, test renders must happen under
 `/tmp`, not inside the GoForj repository.
 
-## Open Questions
+## Implemented Decisions
 
-- Should SPA default detection be automatic when `cmd/<app>/frontend/package.json`
-  exists, or should generated config list SPAs explicitly?
-- Should `watch: [.go]` match by suffix everywhere, or only file basenames?
-- Should directory ignores and file ignores share one `ignore` list, or should
-  they be split for precision?
-- What raw escape hatch is least confusing: `re:<expr>`, `regex:<expr>`, or a
-  separate `raw_watch` field?
-- Should polling fallback be configurable per watcher or globally?
-- How much of `wgo`'s existing code can be reused directly, and what license or
-  maintenance implications does that create?
+- App map presence opts into the conventional build; omission leaves an App
+  completely unmanaged. App-level `false` is rejected.
+- `app: true` is the concise conventional inclusion shorthand.
+- Omitted `run` launches `./bin/<app>` only when the App's components satisfy
+  `WebAPI || WebUI || Scheduler || Jobs`. Listed CLI-only Apps build only.
+- Scalar `run` values append an App command; mapped `run.exec` values replace
+  the complete process command exactly.
+- `build: false` supports an existing-artifact/runtime-only app;
+  `run: false` supports build-only behavior.
+- SPAs are listed explicitly. GoForj generates ownership for known starter kits
+  but does not infer arbitrary `package.json` files into lifecycle graphs.
+- `.go` is a basename suffix matcher; named values are exact basenames; paths
+  containing `/` are exact normalized relative paths.
+- Shared `ignore` values apply to files and directory pruning. `files` and
+  `dirs` provide scoped precision when needed.
+- `re:` is the explicit regex escape hatch.
+- Polling is configured per watcher by duration. Watchers with the same polling
+  interval share an engine; notification-backed watchers share physical
+  coverage.
+- The watcher and process mechanisms were adapted from `wgo` concepts while
+  correcting delete/rename handling, coverage errors, unbounded polling, build
+  cancellation, and shutdown escalation. Legacy regex behavior derived from
+  `wgo` remains attributed in code under its MIT license.
 
 ## Desired End State
 
-The generated Ship-style dev config should be readable enough to understand at
-a glance:
+The generated Ship-style dev config is readable at a glance:
 
 ```yaml
 dev:
@@ -765,7 +810,7 @@ dev:
         portal: ./cmd/app/frontend
 ```
 
-From that, `forj dev` should know how to:
+From that, `forj dev` knows how to:
 
 - watch app Go/env inputs
 - watch SPA source inputs

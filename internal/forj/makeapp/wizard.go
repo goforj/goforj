@@ -155,7 +155,7 @@ func initialAppWizardModel(appName string, config *project.Config) appWizardMode
 		components:     components,
 		helpFormat:     helpFormat,
 		starterKit:     starterKit,
-		devRunEnabled:  true,
+		devRunEnabled:  components.HasRuntime(),
 		termWidth:      132,
 	}
 }
@@ -332,13 +332,13 @@ func (m appWizardModel) View() string {
 	return "\n" + view
 }
 
-// renderDevRunStage renders whether the app participates in forj dev runtime processes.
+// renderDevRunStage renders whether the app participates in the forj dev lifecycle.
 func (m appWizardModel) renderDevRunStage() string {
 	enabled := "No"
 	if m.devRunEnabled {
 		enabled = "Yes"
 	}
-	command := wizardMutedStyle.Render("Not run by forj dev")
+	command := wizardMutedStyle.Render("Not managed by forj dev")
 	if m.devRunEnabled {
 		command = m.devRunInput.View()
 		if strings.TrimSpace(command) == "" {
@@ -346,12 +346,13 @@ func (m appWizardModel) renderDevRunStage() string {
 		}
 	}
 	return renderKeyValueTable([]keyValue{
-		{"Run in dev", enabled},
+		{"Manage in dev", enabled},
 		{"Command", command},
 	})
 }
 
-// devRunCommand returns the allowlist entry for dev.run. Empty means the app is not run by forj dev.
+// devRunCommand returns the runtime suffix stored in the app's native dev
+// lifecycle config. Empty keeps the app out of the default dev loop.
 func (m appWizardModel) devRunCommand() string {
 	if !m.devRunEnabled {
 		return ""
@@ -375,6 +376,9 @@ func (m *appWizardModel) applyComponentSelection() {
 	components, err := project.AppComponentsFromKeys(m.available, keys)
 	if err == nil {
 		m.components = components
+	}
+	if command := strings.TrimSpace(m.devRunInput.Value()); command == "" || command == "run" {
+		m.devRunEnabled = m.components.HasRuntime()
 	}
 	if !m.components.WebUI {
 		m.starterKit = project.StarterKitNone
@@ -689,7 +693,7 @@ func (m appWizardModel) selectedStarterKitSummary() string {
 	return "None"
 }
 
-// selectedDevRunSummary reports whether forj dev will run the app and with which command.
+// selectedDevRunSummary reports whether forj dev will manage the app and with which command.
 func (m appWizardModel) selectedDevRunSummary() string {
 	if !m.devRunEnabled {
 		return "No"
