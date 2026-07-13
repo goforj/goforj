@@ -6,9 +6,92 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/alecthomas/kong"
+	"github.com/goforj/goforj/internal/build"
 )
+
+// TestInsertBuildPassthroughBoundaryPreservesGoFlags verifies raw Go syntax reaches the build command intact.
+func TestInsertBuildPassthroughBoundaryPreservesGoFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "tags", args: []string{"build", "-tags", "dev"}, want: []string{"build", "--", "-tags", "dev"}},
+		{name: "output", args: []string{"build", "-o", "./bin/app"}, want: []string{"build", "--", "-o", "./bin/app"}},
+		{name: "framework then Go", args: []string{"build", "--api-index-strict", "--root", ".", "-modfile", "alternate.mod"}, want: []string{"build", "--api-index-strict", "--root", ".", "--", "-modfile", "alternate.mod"}},
+		{name: "root flag before build", args: []string{"--dev", "build", "-tags", "dev"}, want: []string{"--dev", "build", "--", "-tags", "dev"}},
+		{name: "inherited root flag after build", args: []string{"build", "--dev", "-tags", "dev"}, want: []string{"build", "--dev", "--", "-tags", "dev"}},
+		{name: "package begins passthrough", args: []string{"build", "./cmd/app", "-race"}, want: []string{"build", "--", "./cmd/app", "-race"}},
+		{name: "explicit boundary", args: []string{"build", "--", "-overlay", "overlay.json"}, want: []string{"build", "--", "-overlay", "overlay.json"}},
+		{name: "inline output", args: []string{"build", "-o=./bin/app"}, want: []string{"build", "--", "-o=./bin/app"}},
+		{name: "other command", args: []string{"run", "-config", "app.yml"}, want: []string{"run", "-config", "app.yml"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := insertBuildPassthroughBoundary(test.args); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("normalized args = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// TestBuildPassthroughBoundarySurvivesKong verifies parser behavior rather than only the pre-parser transformation.
+func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantGoArgs []string
+		wantStrict bool
+		wantRoot   string
+		wantDev    bool
+	}{
+		{name: "tags", args: []string{"build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}},
+		{name: "root flag before build", args: []string{"--dev", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
+		{name: "root alias before build", args: []string{"--x", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
+		{name: "inherited root flag after build", args: []string{"build", "--dev", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
+		{name: "root alias after build", args: []string{"build", "--x", "-tags=dev"}, wantGoArgs: []string{"-tags=dev"}, wantDev: true},
+		{name: "Go x flag", args: []string{"build", "-x"}, wantGoArgs: []string{"-x"}},
+		{name: "explicit boundary preserves Go x", args: []string{"build", "--", "-x"}, wantGoArgs: []string{"-x"}},
+		{name: "source flags", args: []string{"build", "--api-index-strict", "-overlay", "overlay.json"}, wantGoArgs: []string{"-overlay", "overlay.json"}, wantStrict: true},
+		{name: "root and modfile", args: []string{"build", "--root", "project", "-modfile", "alternate.mod"}, wantGoArgs: []string{"-modfile", "alternate.mod"}, wantRoot: "project"},
+		{name: "output", args: []string{"build", "-o", "./bin/app"}, wantGoArgs: []string{"-o", "./bin/app"}},
+		{name: "inline output", args: []string{"build", "-o=./bin/app"}, wantGoArgs: []string{"-o=./bin/app"}},
+		{name: "linker flags", args: []string{"build", "-ldflags", "-X example.com/app.Value=dev"}, wantGoArgs: []string{"-ldflags", "-X example.com/app.Value=dev"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := struct {
+				Dev      bool      `name:"dev" aliases:"x"`
+				BuildCmd build.Cmd `cmd:""`
+			}{}
+			parser, err := kong.New(&root)
+			if err != nil {
+				t.Fatalf("create parser: %v", err)
+			}
+			if _, err := parser.Parse(insertBuildPassthroughBoundary(test.args)); err != nil {
+				t.Fatalf("parse build command: %v", err)
+			}
+			goArgs := buildPassthroughArgs(root.BuildCmd.Args)
+			if !reflect.DeepEqual(goArgs, test.wantGoArgs) {
+				t.Fatalf("Go build args = %#v, want %#v", goArgs, test.wantGoArgs)
+			}
+			if root.BuildCmd.APIIndexStrict != test.wantStrict {
+				t.Fatalf("strict = %t, want %t", root.BuildCmd.APIIndexStrict, test.wantStrict)
+			}
+			if root.Dev != test.wantDev {
+				t.Fatalf("dev = %t, want %t", root.Dev, test.wantDev)
+			}
+			if test.wantRoot != "" && root.BuildCmd.Root != test.wantRoot {
+				t.Fatalf("root = %q, want %q", root.BuildCmd.Root, test.wantRoot)
+			}
+		})
+	}
+}
 
 func TestShouldDelegateToAppCommand(t *testing.T) {
 	parseErr := errors.New("unexpected argument route:list")
