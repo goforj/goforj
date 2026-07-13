@@ -566,16 +566,16 @@ Per-app component participation is allowed, but it should not become app discove
 ```yaml
 apps:
   billing:
-    components:
-      web_api: true
-      jobs: true
+    components: [web_api, jobs]
     starter_kit: none
   customer-portal:
-    components:
-      web_api: true
-      web_ui: true
+    components: [web_api, web_ui]
     starter_kit: vue
 ```
+
+Legacy boolean mappings remain readable, but the next `forj render` or other
+config-writing command normalizes both Project and per-App component selections
+to one-line arrays without changing which components are selected.
 
 The project-level component set is the currently rendered support surface, not a hard ceiling for future apps. `make:app` may promote newly selected app-safe capabilities into the project render set. For example, a project that starts with MySQL can create a `reporting` app that uses Postgres; the app keeps an exclusive database driver selection while the project records both drivers as supported.
 

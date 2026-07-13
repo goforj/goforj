@@ -260,6 +260,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			Render: project.RenderConfig{Components: input.components},
 		}
 	}
+	configuredComponents := p.config.Render.Components
 	if p.config.Render.Components.DemoApp {
 		p.config.Render.Components.Auth = true
 		p.config.Render.StarterKit = project.StarterKitNone
@@ -278,7 +279,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return err
 	}
 	if input.renderAll {
-		if err := p.syncProjectConfigForRender(); err != nil {
+		if err := p.syncProjectConfigForRender(configuredComponents); err != nil {
 			return err
 		}
 	}
@@ -2007,11 +2008,15 @@ func renderDebugEnabled() bool {
 	return false
 }
 
-func (p *ProjectRenderer) syncProjectConfigForRender() error {
+// syncProjectConfigForRender updates generated config conventions without persisting dependency-expanded component selections.
+func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents project.Components) error {
 	if p.config == nil {
 		return nil
 	}
 	changed := false
+	if p.config.NeedsComponentMigration() {
+		changed = true
+	}
 	if p.removeLegacyQueueDriver {
 		changed = true
 	}
@@ -2060,6 +2065,11 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	if !changed {
 		return nil
 	}
+	effectiveComponents := p.config.Render.Components
+	p.config.Render.Components = configuredComponents
+	defer func() {
+		p.config.Render.Components = effectiveComponents
+	}()
 	return writeProjectConfig(".goforj.yml", p.config)
 }
 
