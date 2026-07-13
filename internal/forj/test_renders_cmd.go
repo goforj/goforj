@@ -398,7 +398,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Jobs: true,
+				Scheduler: true, Jobs: true, Backup: true,
 			},
 		},
 		{
@@ -591,6 +591,9 @@ func componentLabels(cfg project.Components) []string {
 	if cfg.Jobs {
 		enabled = append(enabled, "Jobs")
 	}
+	if cfg.Backup {
+		enabled = append(enabled, "Backup")
+	}
 	return enabled
 }
 
@@ -623,6 +626,11 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 			Components: combo.components,
 			StarterKit: combo.starterKit,
 		},
+	}
+	if repoRoot, err := os.Getwd(); err == nil {
+		if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
+			cfg.Render.ModuleReplaces = map[string]string{"github.com/goforj/goforj": repoRoot}
+		}
 	}
 
 	console.Actionf("Rendering components %s", strings.Join(combo.enabled, ", "))

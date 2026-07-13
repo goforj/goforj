@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/alecthomas/kong"
-	"github.com/goforj/env/v2"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/console"
@@ -63,14 +62,7 @@ func main() {
 	inGeneratedApp := isGeneratedAppDir()
 	appContext := ""
 	if appName, remaining, ok := resolveAppPrefix(args, inGeneratedApp); ok {
-		if shouldRunFrameworkCommandWithAppEnv(remaining) {
-			applySourceAppEnv(appName)
-			if err := loadAppScopedEnv(); err != nil {
-				console.Fatalf("loading app environment: %v", err)
-			}
-			appContext = appName
-			args = remaining
-		} else if shouldRunAppThroughSource(appName, remaining, inGeneratedApp) {
+		if shouldRunAppThroughSource(appName, remaining, inGeneratedApp) {
 			applySourceAppEnv(appName)
 			appContext = appName
 			args = remaining
@@ -131,47 +123,6 @@ func main() {
 		}
 		console.Fatalf("%v", err)
 	}
-}
-
-// shouldRunFrameworkCommandWithAppEnv keeps framework-owned backup commands in the framework process.
-func shouldRunFrameworkCommandWithAppEnv(args []string) bool {
-	return len(args) > 0 && strings.HasPrefix(strings.TrimSpace(args[0]), "backup:")
-}
-
-// loadAppScopedEnv loads project env files and promotes the selected App's prefixed values.
-func loadAppScopedEnv() error {
-	if err := env.Reload(); err != nil {
-		return err
-	}
-	prefix := appEnvPrefix(os.Getenv("FORJ_APP"))
-	if prefix == "" {
-		return nil
-	}
-	for _, entry := range os.Environ() {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok || !strings.HasPrefix(key, prefix+"_") {
-			continue
-		}
-		baseKey := strings.TrimPrefix(key, prefix+"_")
-		if baseKey == "" || baseKey == "FORJ_APP" {
-			continue
-		}
-		if err := os.Setenv(baseKey, value); err != nil {
-			return fmt.Errorf("set app environment %s from %s: %w", baseKey, key, err)
-		}
-	}
-	return nil
-}
-
-// appEnvPrefix converts a conventional App name into its environment prefix.
-func appEnvPrefix(appName string) string {
-	parts := strings.FieldsFunc(strings.TrimSpace(appName), func(r rune) bool {
-		return r == '-' || r == '_' || r == ' ' || r == '.'
-	})
-	for i := range parts {
-		parts[i] = strings.ToUpper(parts[i])
-	}
-	return strings.Join(parts, "_")
 }
 
 // resolveAppPrefix strips a conventional app prefix while preserving native command precedence.

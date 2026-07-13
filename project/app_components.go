@@ -16,6 +16,7 @@ var appComponentKeys = []ComponentKey{
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
 	ComponentJobs,
+	ComponentBackup,
 }
 
 var appWizardComponentKeys = []ComponentKey{
@@ -29,6 +30,7 @@ var appWizardComponentKeys = []ComponentKey{
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
 	ComponentJobs,
+	ComponentBackup,
 }
 
 // AppComponentDefinitions returns catalog entries that can participate in an app graph.

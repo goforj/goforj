@@ -62,6 +62,8 @@ func (c *RenderCmd) Run() error {
 				cmp.Scheduler = true
 			case "jobs":
 				cmp.Jobs = true
+			case "backup":
+				cmp.Backup = true
 			default:
 				return fmt.Errorf("unknown component: %s", name)
 			}

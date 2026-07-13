@@ -7,7 +7,6 @@
 package wire
 
 import (
-	"github.com/goforj/goforj/internal/backup"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
@@ -53,14 +52,7 @@ func InitializeApplication() (App, error) {
 	scenarioTestCmd := forj.NewScenarioTestCmd(appLogger)
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
 	runCmd := build.NewRunCmd(appLogger, apiIndexRunner)
-	planCmd := backup.NewPlanCmd()
-	listCmd := backup.NewListCmd()
-	createCmd := backup.NewCreateCmd()
-	verifyCmd := backup.NewVerifyCmd()
-	restoreCmd := backup.NewRestoreCmd()
-	pruneCmd := backup.NewPruneCmd()
-	statusCmd := backup.NewStatusCmd()
-	rootCmd := forj.NewRootCmd(buildCmd, generateCmd, newProjectCmd, installCmd, updateCmd, doctorCmd, listSkillsCmd, makeSkillCmd, mcpCmd, makeappCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd, planCmd, listCmd, createCmd, verifyCmd, restoreCmd, pruneCmd, statusCmd)
+	rootCmd := forj.NewRootCmd(buildCmd, generateCmd, newProjectCmd, installCmd, updateCmd, doctorCmd, listSkillsCmd, makeSkillCmd, mcpCmd, makeappCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)

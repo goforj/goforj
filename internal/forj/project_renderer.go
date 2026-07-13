@@ -568,7 +568,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/json_helpers.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
-				"internal/backup/commands.go.tmpl",
 				"internal/monitoring/seed_cmd.go.tmpl",
 				"internal/monitoring/reset_cmd.go.tmpl",
 				"internal/monitoring/retention_cmd.go.tmpl",
@@ -614,6 +613,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_command.tmpl",
 				"internal/makecmd/README.md",
 				"internal/makecmd/subscriber.tmpl",
+			},
+		},
+		{
+			title:   "Backup Component Rendering",
+			enabled: input.renderAll && p.config.Render.Components.Backup,
+			templates: []string{
+				"internal/backup/commands.go.tmpl",
 			},
 		},
 		{
@@ -3470,6 +3476,16 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 // syncCoreLibrariesInDir updates core goforj dependencies in a specific module without forcing callers to change process cwd.
 func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 	modules := coredeps.SyncCoreLibraries()
+	if !p.usesBackupComponent() {
+		filtered := modules[:0]
+		for _, module := range modules {
+			if strings.HasPrefix(module, "github.com/goforj/goforj@") {
+				continue
+			}
+			filtered = append(filtered, module)
+		}
+		modules = filtered
+	}
 	if p.config != nil && p.config.Render.StarterKit == project.StarterKitTemplHTMX {
 		modules = append(modules, "github.com/a-h/templ@"+coredeps.MustVersionFor("github.com/a-h/templ"))
 	}
@@ -3507,6 +3523,22 @@ func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 
 	p.lines = append(p.lines, renderCountsLine("sync core libs", len(modules), skipped, "modules"))
 	return nil
+}
+
+// usesBackupComponent reports whether any rendered App needs the optional backup runtime.
+func (p *ProjectRenderer) usesBackupComponent() bool {
+	if p.config == nil {
+		return false
+	}
+	if p.config.Render.Components.Backup {
+		return true
+	}
+	for _, appConfig := range p.config.Apps {
+		if appConfig.Components.Backup {
+			return true
+		}
+	}
+	return false
 }
 
 // coreModulesNeedingSync keeps render fast by avoiding go command work when go.mod already has the desired core dependencies.
