@@ -86,6 +86,43 @@ func TestPortableTransferMatrix(t *testing.T) {
 			})
 		}
 	}
+	for _, sourceDriver := range drivers {
+		for _, targetDriver := range drivers {
+			t.Run("large_"+sourceDriver+"_to_"+targetDriver, func(t *testing.T) {
+				source := databases[sourceDriver]
+				target := databases[targetDriver]
+				resetLargeBackupFixture(t, sourceDriver, source, true)
+				sourceDialect, err := backup.NewSQLDialect(sourceDriver)
+				if err != nil {
+					t.Fatal(err)
+				}
+				archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{"large_users"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				resetLargeBackupFixture(t, targetDriver, target, false)
+				targetDialect, err := backup.NewSQLDialect(targetDriver)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx, err := target.BeginTx(ctx, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := backup.ImportPortable(ctx, tx, targetDialect, archive); err != nil {
+					_ = tx.Rollback()
+					t.Fatal(err)
+				}
+				if err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+				if got := len(archive.Tables[0].Rows); got != 5000 {
+					t.Fatalf("transferred large rows = %d, want 5000", got)
+				}
+				assertLargeBackupRows(t, target, targetDriver)
+			})
+		}
+	}
 	chains := [][]string{{"mysql", "sqlite", "postgres"}, {"postgres", "mysql", "sqlite"}, {"sqlite", "postgres", "mysql"}}
 	for _, chain := range chains {
 		t.Run(strings.Join(chain, "_to_"), func(t *testing.T) {
@@ -243,6 +280,11 @@ func TestNativePostgresBackupRestore(t *testing.T) {
 
 // transferBackupArchive moves one portable archive between SQL participants.
 func transferBackupArchive(t *testing.T, ctx context.Context, source *sql.DB, sourceDriver string, target *sql.DB, targetDriver string) backup.PortableArchive {
+	return transferBackupArchiveByTable(t, ctx, source, sourceDriver, target, targetDriver, "portable_users")
+}
+
+// transferBackupArchiveByTable exports and imports one named table between SQL participants.
+func transferBackupArchiveByTable(t *testing.T, ctx context.Context, source *sql.DB, sourceDriver string, target *sql.DB, targetDriver string, table string) backup.PortableArchive {
 	t.Helper()
 	sourceDialect, err := backup.NewSQLDialect(sourceDriver)
 	if err != nil {
@@ -252,7 +294,7 @@ func transferBackupArchive(t *testing.T, ctx context.Context, source *sql.DB, so
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{"portable_users"})
+	archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{table})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,11 +309,82 @@ func transferBackupArchive(t *testing.T, ctx context.Context, source *sql.DB, so
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := backup.ExportPortable(ctx, target, targetDialect, []string{"portable_users"})
+	got, err := backup.ExportPortable(ctx, target, targetDialect, []string{table})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return got
+}
+
+// resetLargeBackupFixture recreates and optionally seeds a 5,000-row table for every SQL dialect.
+func resetLargeBackupFixture(t *testing.T, driver string, db *sql.DB, withData bool) {
+	t.Helper()
+	if _, err := db.Exec(`DROP TABLE IF EXISTS large_users`); err != nil {
+		t.Fatal(err)
+	}
+	idType := "INTEGER PRIMARY KEY"
+	if driver == "postgres" {
+		idType = "BIGSERIAL PRIMARY KEY"
+	}
+	if driver == "mysql" {
+		idType = "BIGINT AUTO_INCREMENT PRIMARY KEY"
+	}
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE large_users (id %s, value TEXT NOT NULL)`, idType)); err != nil {
+		t.Fatal(err)
+	}
+	if !withData {
+		return
+	}
+	placeholder := "?"
+	if driver == "postgres" {
+		placeholder = "$1, $2"
+	} else {
+		placeholder += ", ?"
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare("INSERT INTO large_users (id, value) VALUES (" + placeholder + ")")
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	for id := 1; id <= 5000; id++ {
+		if _, err := stmt.Exec(id, fmt.Sprintf("large-user-%05d", id)); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertLargeBackupRows verifies count and boundary values after a cross-database transfer.
+func assertLargeBackupRows(t *testing.T, db *sql.DB, driver string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM large_users`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 5000 {
+		t.Fatalf("large table rows = %d, want 5000", count)
+	}
+	for _, id := range []int{1, 5000} {
+		var value string
+		query := `SELECT value FROM large_users WHERE id = ?`
+		if driver == "postgres" {
+			query = `SELECT value FROM large_users WHERE id = $1`
+		}
+		if err := db.QueryRow(query, id).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("large-user-%05d", id); value != want {
+			t.Fatalf("large row %d value = %q, want %q", id, value, want)
+		}
+	}
 }
 
 // resetBackupFixture recreates a dialect-specific compatibility table and optionally seeds one row.
