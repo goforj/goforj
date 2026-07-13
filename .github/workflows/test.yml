@@ -69,6 +69,61 @@ jobs:
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
+  watcher-stress:
+    name: Watcher churn (race)
+    runs-on: ubuntu-latest
+    env:
+      GOCACHE: /tmp/gocache
+      GOMODCACHE: /tmp/gomodcache
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run watcher concurrency stress tests
+        run: |
+          set -euo pipefail
+          devwatch_tests="$(go test ./internal/devwatch -list '^TestDevWatchEngineSustainedEditorStormCoalesces$')"
+          grep -qx 'TestDevWatchEngineSustainedEditorStormCoalesces' <<<"$devwatch_tests"
+          build_tests="$(go test ./internal/build -list '^TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary$')"
+          grep -qx 'TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary' <<<"$build_tests"
+          go test -race ./internal/devwatch ./internal/build \
+            -run '^Test(DevWatchEngineSustainedEditorStormCoalesces|ConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary)$' \
+            -count=3 -timeout=15m -v
+
+      - name: Run forj dev churn integration test
+        run: |
+          set -euo pipefail
+          test_pattern='^TestDevWatcher(ChurnIntegration|PollingStress|Boundary(RejectedReplacementKeepsHealthyRuntime|PostPreparationStartFailureRetries|RelativeCommandDirectoryLaunchesPreparedSnapshot|ShutdownCancelsBlockedBuild|ChangeDuringRuntimeReplacementConverges)|MultiAppChurnIsolation|OutputBackpressureReapsProcesses|InitialInvalidProjectRecovers)$'
+          discovered="$(go test -tags=watcherstress ./internal/forj -list "$test_pattern")"
+          for test_name in \
+            TestDevWatcherChurnIntegration \
+            TestDevWatcherPollingStress \
+            TestDevWatcherBoundaryRejectedReplacementKeepsHealthyRuntime \
+            TestDevWatcherBoundaryPostPreparationStartFailureRetries \
+            TestDevWatcherBoundaryRelativeCommandDirectoryLaunchesPreparedSnapshot \
+            TestDevWatcherBoundaryShutdownCancelsBlockedBuild \
+            TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges \
+            TestDevWatcherMultiAppChurnIsolation \
+            TestDevWatcherOutputBackpressureReapsProcesses \
+            TestDevWatcherInitialInvalidProjectRecovers
+          do
+            grep -qx "$test_name" <<<"$discovered"
+          done
+          go test -race -tags=watcherstress ./internal/forj \
+            -run "$test_pattern" \
+            -count=1 -timeout=15m -v
+
   renders:
     needs: renders-cache
     runs-on: ubuntu-latest

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
+	"gopkg.in/yaml.v3"
 )
 
 func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
@@ -710,7 +711,8 @@ func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 	}
 }
 
-func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
+// TestFinalizeConfigUsesNativeDefaultAppLifecycle verifies generated runtime Apps use convention-only native configuration.
+func TestFinalizeConfigUsesNativeDefaultAppLifecycle(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebAPI = true
 
@@ -722,42 +724,32 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 		}
 	}
 
-	var buildWatch *string
 	for _, watch := range m.config.Dev.Watches {
-		switch watch.Name {
-		case "Build App":
-			value := watch.Watch
-			buildWatch = &value
-			if watch.Exec != "forj build -o ./bin/app" {
-				t.Fatalf("expected build watcher to execute forj build, got %q", watch.Exec)
-			}
-		case "Wire":
-			t.Fatalf("expected no standalone wire watcher, got %#v", watch)
+		if watch.Name == "Build App" || watch.Name == "Run App" || watch.Name == "Wire" {
+			t.Fatalf("expected app lifecycle to avoid framework raw watchers, got %#v", watch)
 		}
 	}
-
-	if buildWatch == nil {
-		t.Fatalf("expected Build App watcher to be configured")
+	app, ok := m.config.Dev.Apps[project.DefaultAppName]
+	if !ok || app.Run != nil {
+		t.Fatalf("expected native default app runtime, got %#v", app)
 	}
-	if !strings.Contains(*buildWatch, "-xfile app/wire/wire_gen\\.go$") {
-		t.Fatalf("expected Build App watcher to exclude wire_gen.go, got %q", *buildWatch)
+	if app.Build != nil {
+		t.Fatalf("expected default app build conventions to remain implicit, got %#v", app.Build)
 	}
-
-	var runWatch *project.DevWatch
-	for i := range m.config.Dev.Watches {
-		if m.config.Dev.Watches[i].Name == "Run App" {
-			runWatch = &m.config.Dev.Watches[i]
-			break
+	if m.config.Dev.Run != nil {
+		t.Fatalf("expected generated config not to use the legacy dev.run allowlist, got %#v", m.config.Dev.Run)
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal generated project config: %v", err)
+	}
+	if !strings.Contains(string(encoded), "apps:") || strings.Contains(string(encoded), "run: run") {
+		t.Fatalf("expected concise dev.apps YAML, got:\n%s", encoded)
+	}
+	for _, legacy := range []string{"watches:", "Build App", "Run App"} {
+		if strings.Contains(string(encoded), legacy) {
+			t.Fatalf("expected generated YAML to omit legacy %q config, got:\n%s", legacy, encoded)
 		}
-	}
-	if runWatch == nil {
-		t.Fatalf("expected Run App watcher to be configured")
-	}
-	if runWatch.Exec != "./bin/app run" {
-		t.Fatalf("expected Run App watcher to execute ./bin/app run, got %q", runWatch.Exec)
-	}
-	if got := m.config.Dev.Run[project.DefaultAppName]; got != "run" {
-		t.Fatalf("expected dev.run.app to enable default app, got %q", got)
 	}
 }
 
@@ -790,7 +782,8 @@ func TestFinalizeConfigDoesNotAddGrafanaSeedTask(t *testing.T) {
 	}
 }
 
-func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) {
+// TestFinalizeConfigTemplStarterUsesOwnedFrontendLifecycle verifies generated SPAs replace raw frontend watcher wiring.
+func TestFinalizeConfigTemplStarterUsesOwnedFrontendLifecycle(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebUI = true
 	m.config.Render.Components.WebAPI = true
@@ -798,25 +791,36 @@ func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) 
 
 	m.finalizeConfig()
 
-	var buildWatch string
-	var npmWatch string
 	for _, watch := range m.config.Dev.Watches {
-		switch watch.Name {
-		case "Build App":
-			buildWatch = watch.Watch
-		case "NPM":
-			npmWatch = watch.Watch
+		if watch.Name == "Build App" || watch.Name == "Run App" || watch.Name == "NPM" {
+			t.Fatalf("expected templ lifecycle to avoid generated raw watchers, got %#v", watch)
 		}
 	}
-	if !strings.Contains(buildWatch, "-file .templ") || !strings.Contains(buildWatch, ".*_templ\\.go$") {
-		t.Fatalf("expected templ build watcher to include .templ and exclude generated templ go files, got %q", buildWatch)
+	app := m.config.Dev.Apps[project.DefaultAppName]
+	spa, ok := app.SPAs[generatedFrontendSPAName]
+	if !ok || spa.Path != "./cmd/app/frontend" || app.Run != nil {
+		t.Fatalf("expected templ frontend ownership in the default app lifecycle, got %#v", app)
 	}
-	for _, expected := range []string{"-xdir node_modules", "-xdir dist"} {
-		if !strings.Contains(npmWatch, expected) {
-			t.Fatalf("expected NPM watcher to include %q, got %q", expected, npmWatch)
-		}
+}
+
+// TestFinalizeConfigOmitsCLIOnlyAppFromDev verifies omission remains the unmanaged state.
+func TestFinalizeConfigOmitsCLIOnlyAppFromDev(t *testing.T) {
+	m := initialModel()
+	m.config.Render.Components = project.Components{CLI: true}
+
+	m.finalizeConfig()
+
+	if len(m.config.Dev.Apps) != 0 {
+		t.Fatalf("expected CLI-only generated app to remain unmanaged by dev, got %#v", m.config.Dev.Apps)
 	}
-	if strings.Contains(npmWatch, "-xdir .") {
-		t.Fatalf("expected NPM watcher to omit wildcard directory exclusion, got %q", npmWatch)
+	if !m.config.Dev.UsesStructuredApps() {
+		t.Fatal("expected CLI-only generation to retain an explicit native-none Apps allowlist")
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal CLI-only generated config: %v", err)
+	}
+	if !strings.Contains(string(encoded), "apps: {}") {
+		t.Fatalf("expected CLI-only generated YAML to retain apps: {}, got:\n%s", encoded)
 	}
 }

@@ -8,9 +8,31 @@ import (
 
 // DevWatch represents a command to be run in development mode.
 type DevWatch struct {
-	Name  string `yaml:"name" json:"name"`
-	Watch string `yaml:"watch" json:"watch"` // wgo options
-	Exec  string `yaml:"exec" json:"exec"`   // bash command to run on change
+	Name     string            `yaml:"name" json:"name"`
+	Watch    any               `yaml:"watch,omitempty" json:"watch,omitempty"`
+	Include  []string          `yaml:"include,omitempty" json:"include,omitempty"`
+	Ignore   []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	Root     string            `yaml:"root,omitempty" json:"root,omitempty"`
+	Roots    []string          `yaml:"roots,omitempty" json:"roots,omitempty"`
+	WorkDir  string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	Files    DevWatchMatchers  `yaml:"files,omitempty" json:"files,omitempty"`
+	Dirs     DevWatchMatchers  `yaml:"dirs,omitempty" json:"dirs,omitempty"`
+	Exec     string            `yaml:"exec" json:"exec"`
+	Env      map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Debounce string            `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+	Poll     string            `yaml:"poll,omitempty" json:"poll,omitempty"`
+	Postpone bool              `yaml:"postpone,omitempty" json:"postpone,omitempty"`
+	Restart  bool              `yaml:"restart,omitempty" json:"restart,omitempty"`
+	Exit     bool              `yaml:"exit,omitempty" json:"exit,omitempty"`
+	Stdin    bool              `yaml:"stdin,omitempty" json:"stdin,omitempty"`
+	Extra    map[string]any    `yaml:",inline" json:"-"`
+}
+
+// DevWatchMatchers preserves precise file or directory matcher controls that
+// are not exposed by Lighthouse's legacy watcher text field.
+type DevWatchMatchers struct {
+	Include []string `yaml:"include,omitempty" json:"include,omitempty"`
+	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
 // DevTask represents a task to be run in development mode.
@@ -28,7 +50,136 @@ type DevConfig struct {
 	DownOnExit        bool              `yaml:"down_on_exit" json:"down_on_exit"`
 	SoundOnWatchError bool              `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
 	WirePaths         []string          `yaml:"wire_paths" json:"wire_paths"`
-	Watches           []DevWatch        `yaml:"watches" json:"watches"`
+	Watches           []DevWatch        `yaml:"watches,omitempty" json:"watches,omitempty"`
+	Apps              map[string]any    `yaml:"apps,omitempty" json:"apps,omitempty"`
+	Extra             map[string]any    `yaml:",inline" json:"-"`
+	appsConfigured    bool
+}
+
+// UnmarshalYAML preserves an explicit empty native App allowlist across Lighthouse edits.
+func (c *DevConfig) UnmarshalYAML(value *yaml.Node) error {
+	type devConfigFields DevConfig
+	var fields devConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*c = DevConfig(fields)
+	for index := 0; index+1 < len(value.Content); index += 2 {
+		if value.Content[index].Value == "apps" {
+			c.appsConfigured = len(c.Apps) == 0
+			break
+		}
+	}
+	return nil
+}
+
+// MarshalYAML retains explicit empty lifecycle maps when Lighthouse saves project settings.
+func (c DevConfig) MarshalYAML() (any, error) {
+	type devConfigFields DevConfig
+	var node yaml.Node
+	if err := node.Encode(devConfigFields(c)); err != nil {
+		return nil, err
+	}
+	if c.Run != nil && len(c.Run) == 0 {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "run"},
+			&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"},
+		)
+	}
+	if (c.appsConfigured || c.Apps != nil) && len(c.Apps) == 0 {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apps"},
+			&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"},
+		)
+	}
+	return &node, nil
+}
+
+// devConfigUpdate represents the fields a Lighthouse client explicitly sends
+// so omitted framework lifecycle configuration survives settings saves.
+type devConfigUpdate struct {
+	Pre               *[]DevTask         `json:"pre"`
+	Down              *[]DevTask         `json:"down"`
+	Run               *map[string]string `json:"run"`
+	AutoMigrate       *bool              `json:"auto_migrate"`
+	DownOnExit        *bool              `json:"down_on_exit"`
+	SoundOnWatchError *bool              `json:"sound_on_watch_error"`
+	WirePaths         *[]string          `json:"wire_paths"`
+	Watches           *[]DevWatch        `json:"watches"`
+	Apps              *map[string]any    `json:"apps"`
+}
+
+// applyDevConfigUpdate applies an explicit Lighthouse patch without replacing
+// lifecycle fields that older clients do not understand.
+func applyDevConfigUpdate(current *DevConfig, update devConfigUpdate) {
+	if current == nil {
+		return
+	}
+	if update.Pre != nil {
+		current.Pre = *update.Pre
+	}
+	if update.Down != nil {
+		current.Down = *update.Down
+	}
+	if update.Run != nil {
+		current.Run = *update.Run
+	}
+	if update.AutoMigrate != nil {
+		current.AutoMigrate = *update.AutoMigrate
+	}
+	if update.DownOnExit != nil {
+		current.DownOnExit = *update.DownOnExit
+	}
+	if update.SoundOnWatchError != nil {
+		current.SoundOnWatchError = *update.SoundOnWatchError
+	}
+	if update.WirePaths != nil {
+		current.WirePaths = *update.WirePaths
+	}
+	if update.Watches != nil {
+		current.Watches = mergeLighthouseDevWatches(current.Watches, *update.Watches)
+	}
+	if update.Apps != nil {
+		current.Apps = *update.Apps
+		current.appsConfigured = len(current.Apps) == 0
+	}
+}
+
+// mergeLighthouseDevWatches preserves controls hidden by the scalar watcher
+// editor while still allowing legacy watcher names, commands, and patterns to change.
+func mergeLighthouseDevWatches(current []DevWatch, updates []DevWatch) []DevWatch {
+	merged := make([]DevWatch, 0, len(updates))
+	used := make(map[int]bool, len(current))
+	for updateIndex, update := range updates {
+		currentIndex := matchingLighthouseDevWatch(current, used, update.Name)
+		if currentIndex < 0 && updateIndex < len(current) && !used[updateIndex] {
+			currentIndex = updateIndex
+		}
+		if currentIndex < 0 {
+			merged = append(merged, update)
+			continue
+		}
+		used[currentIndex] = true
+		existing := current[currentIndex]
+		existing.Name = update.Name
+		existing.Exec = update.Exec
+		if _, scalar := existing.Watch.(string); scalar {
+			existing.Watch = update.Watch
+		}
+		merged = append(merged, existing)
+	}
+	return merged
+}
+
+// matchingLighthouseDevWatch prefers stable names so deleting one watcher does
+// not move another watcher's hidden controls to the wrong entry.
+func matchingLighthouseDevWatch(current []DevWatch, used map[int]bool, name string) int {
+	for index, watch := range current {
+		if !used[index] && watch.Name == name {
+			return index
+		}
+	}
+	return -1
 }
 
 // DefaultAppName is the implicit single-app name.
@@ -36,19 +187,24 @@ const DefaultAppName = "app"
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components    Components `yaml:"components" json:"components"`
-	HelpFormat    string     `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
-	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
+	Components     Components        `yaml:"components" json:"components"`
+	StarterKit     string            `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat     string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	QueueDriver    string            `yaml:"queue_driver" json:"queue_driver"`
+	GoForjVersion  string            `yaml:"goforj_version" json:"goforj_version"`
+	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+	Extra          map[string]any    `yaml:",inline" json:"-"`
 }
 
 // ProjectConfig represents the configuration for a project.
 type ProjectConfig struct {
-	ProjectName  string       `yaml:"project_name" json:"project_name"`
-	GoModuleName string       `yaml:"module_name" json:"module_name"`
-	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
-	Dev          DevConfig    `yaml:"dev" json:"dev"`
-	Render       RenderConfig `yaml:"render" json:"render"`
+	ProjectName  string         `yaml:"project_name" json:"project_name"`
+	GoModuleName string         `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string         `yaml:"updated_at" json:"updated_at"`
+	Dev          DevConfig      `yaml:"dev" json:"dev"`
+	Render       RenderConfig   `yaml:"render" json:"render"`
+	Apps         map[string]any `yaml:"apps,omitempty" json:"apps,omitempty"`
+	Extra        map[string]any `yaml:",inline" json:"-"`
 
 	// temporary
 	AppKey           string `yaml:"-" json:"-"`
@@ -62,19 +218,30 @@ type Config = ProjectConfig
 
 // Components represents the components of the project.
 type Components struct {
-	CLI              bool `yaml:"cli" json:"cli"`
-	DemoApp          bool `yaml:"demo_app" json:"demo_app"`
-	Mail             bool `yaml:"mail" json:"mail"`
-	Auth             bool `yaml:"auth" json:"auth"`
-	OAuth            bool `yaml:"oauth" json:"oauth"`
-	WebAPI           bool `yaml:"web_api" json:"web_api"`
-	WebUI            bool `yaml:"web_ui" json:"web_ui"`
-	Docker           bool `yaml:"docker" json:"docker"`
-	DatabaseMySQL    bool `yaml:"database_mysql" json:"database_mysql"`
-	DatabasePostgres bool `yaml:"database_postgres" json:"database_postgres"`
-	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
-	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
-	Jobs             bool `yaml:"jobs" json:"jobs"`
+	CLI              bool           `yaml:"cli" json:"cli"`
+	DemoApp          bool           `yaml:"demo_app" json:"demo_app"`
+	Mail             bool           `yaml:"mail" json:"mail"`
+	Auth             bool           `yaml:"auth" json:"auth"`
+	OAuth            bool           `yaml:"oauth" json:"oauth"`
+	WebAPI           bool           `yaml:"web_api" json:"web_api"`
+	WebUI            bool           `yaml:"web_ui" json:"web_ui"`
+	Metrics          bool           `yaml:"metrics" json:"metrics"`
+	Observability    bool           `yaml:"observability" json:"observability"`
+	Grafana          bool           `yaml:"grafana" json:"grafana"`
+	Docker           bool           `yaml:"docker" json:"docker"`
+	DatabaseMySQL    bool           `yaml:"database_mysql" json:"database_mysql"`
+	DatabasePostgres bool           `yaml:"database_postgres" json:"database_postgres"`
+	DatabaseSQLite   bool           `yaml:"database_sqlite" json:"database_sqlite"`
+	Scheduler        bool           `yaml:"scheduler" json:"scheduler"`
+	Jobs             bool           `yaml:"jobs" json:"jobs"`
+	Extra            map[string]any `yaml:",inline" json:"-"`
+}
+
+// mergeLighthouseComponents applies editable component switches while retaining
+// extension fields that are intentionally hidden from Lighthouse's JSON API.
+func mergeLighthouseComponents(current Components, update Components) Components {
+	update.Extra = current.Extra
+	return update
 }
 
 // HasDatabase reports whether any database component is enabled.

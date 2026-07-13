@@ -789,6 +789,192 @@ func TestRemoveLegacyInitialBuildTask(t *testing.T) {
 	}
 }
 
+// TestMigrateGeneratedDevWatchersBuildsNativeAppGraph verifies the conservative
+// migration of a complete historical framework watcher set.
+func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{WebAPI: true, WebUI: true},
+			StarterKit: project.StarterKitVue,
+		},
+		Apps: map[string]project.AppConfig{
+			"ship":   {Components: project.Components{CLI: true}},
+			"worker": {Components: project.Components{CLI: true}},
+		},
+		Dev: project.DevConfig{
+			Run: map[string]string{
+				project.DefaultAppName: "run",
+				"ship":                 "sync --once",
+			},
+			Watches: []project.DevWatch{
+				{
+					Name:  "Build App",
+					Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+					Exec:  "forj build -o ./bin/app",
+				},
+				{
+					Name:  "Run App",
+					Watch: "-file ./bin/app -file .env -file .env.*",
+					Exec:  "./bin/app run",
+				},
+				{
+					Name:  "NPM",
+					Watch: "-cd ./cmd/app/frontend -xdir _data -xdir node_modules -xdir dist",
+					Exec:  "npm run dev",
+				},
+				{
+					Name:    "Docs",
+					Include: []string{".md"},
+					Exec:    "make docs",
+				},
+			},
+		},
+	}
+
+	if !migrateGeneratedDevWatchers(config) {
+		t.Fatal("expected generated watcher set to migrate")
+	}
+	if len(config.Dev.Watches) != 1 || config.Dev.Watches[0].Name != "Docs" {
+		t.Fatalf("expected only custom watcher to remain, got %#v", config.Dev.Watches)
+	}
+	if config.Dev.Run != nil {
+		t.Fatalf("expected legacy dev.run to be removed, got %#v", config.Dev.Run)
+	}
+	defaultApp, ok := config.Dev.Apps[project.DefaultAppName]
+	if !ok || defaultApp.Run != nil {
+		t.Fatalf("expected native default app runtime, got %#v", defaultApp)
+	}
+	if spa := defaultApp.SPAs[generatedFrontendSPAName]; spa.Path != "./cmd/app/frontend" {
+		t.Fatalf("expected default frontend ownership, got %#v", defaultApp.SPAs)
+	}
+	ship, ok := config.Dev.Apps["ship"]
+	if !ok || ship.Run == nil || ship.Run.Exec != "sync --once" || !ship.Run.Shorthand {
+		t.Fatalf("expected named app run command to migrate, got %#v", ship)
+	}
+	if _, ok := config.Dev.Apps["worker"]; ok {
+		t.Fatalf("expected app outside the old allowlist to remain absent, got %#v", config.Dev.Apps["worker"])
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal migrated config: %v", err)
+	}
+	if strings.Contains(string(encoded), "run: run") || !strings.Contains(string(encoded), "run: sync --once") {
+		t.Fatalf("expected migration to omit conventional run and retain the custom scalar:\n%s", encoded)
+	}
+}
+
+// TestMigrateGeneratedDevWatchersKeepsEmptyLegacyAllowlistEmpty prevents render from enrolling an omitted default App.
+func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyAllowlistEmpty(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{
+		Run: map[string]string{},
+		Watches: []project.DevWatch{
+			{
+				Name:  "Build App",
+				Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+				Exec:  "forj build -o ./bin/app",
+			},
+			{
+				Name:  "Run App",
+				Watch: "-file ./bin/app -file .env -file .env.*",
+				Exec:  "./bin/app run",
+			},
+			{Name: "Docs", Include: []string{".md"}, Exec: "make docs"},
+		},
+	}}
+
+	if !migrateGeneratedDevWatchers(config) {
+		t.Fatal("expected explicit empty legacy allowlist to migrate")
+	}
+	if !config.Dev.UsesStructuredApps() || len(config.Dev.Apps) != 0 {
+		t.Fatalf("empty legacy allowlist enrolled Apps: %#v", config.Dev.Apps)
+	}
+	if config.Dev.Run != nil {
+		t.Fatalf("legacy dev.run remained after migration: %#v", config.Dev.Run)
+	}
+	if len(config.Dev.Watches) != 1 || config.Dev.Watches[0].Name != "Docs" {
+		t.Fatalf("generated legacy watchers remained: %#v", config.Dev.Watches)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal migrated config: %v", err)
+	}
+	if !strings.Contains(string(encoded), "apps: {}") {
+		t.Fatalf("empty native allowlist was not serialized:\n%s", encoded)
+	}
+}
+
+// TestMigrateGeneratedDevWatchersRespectsStructuredAppPresence prevents legacy shapes from expanding a native allowlist.
+func TestMigrateGeneratedDevWatchersRespectsStructuredAppPresence(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		apps map[string]project.DevApp
+	}{
+		{name: "explicit empty", apps: map[string]project.DevApp{}},
+		{name: "sparse named App", apps: map[string]project.DevApp{"billing": {}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := &project.Config{Dev: project.DevConfig{
+				Apps: test.apps,
+				Run:  map[string]string{project.DefaultAppName: "run"},
+				Watches: []project.DevWatch{
+					{
+						Name:  "Build App",
+						Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+						Exec:  "forj build -o ./bin/app",
+					},
+					{
+						Name:  "Run App",
+						Watch: "-file ./bin/app -file .env -file .env.*",
+						Exec:  "./bin/app run",
+					},
+				},
+			}}
+
+			if migrateGeneratedDevWatchers(config) {
+				t.Fatal("native dev.apps presence unexpectedly triggered legacy migration")
+			}
+			if _, exists := config.Dev.Apps[project.DefaultAppName]; exists {
+				t.Fatalf("legacy migration enrolled omitted default App: %#v", config.Dev.Apps)
+			}
+			if len(config.Dev.Watches) != 2 || config.Dev.Run[project.DefaultAppName] != "run" {
+				t.Fatalf("legacy fields changed despite native authority: %#v", config.Dev)
+			}
+		})
+	}
+}
+
+// TestMigrateGeneratedDevWatchersPreservesModifiedFrameworkWatch verifies that
+// familiar names do not override evidence of user customization.
+func TestMigrateGeneratedDevWatchersPreservesModifiedFrameworkWatch(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{
+		Run: map[string]string{project.DefaultAppName: "run"},
+		Watches: []project.DevWatch{
+			{
+				Name:  "Build App",
+				Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+				Exec:  "forj build -o ./bin/app",
+				Env:   map[string]string{"CUSTOM_BUILD": "1"},
+			},
+			{
+				Name:  "Run App",
+				Watch: "-file ./bin/app -file .env -file .env.*",
+				Exec:  "./bin/app run",
+			},
+		},
+	}}
+	wantWatches := append([]project.DevWatch(nil), config.Dev.Watches...)
+
+	if migrateGeneratedDevWatchers(config) {
+		t.Fatal("expected modified framework watcher set not to migrate")
+	}
+	if !reflect.DeepEqual(config.Dev.Watches, wantWatches) {
+		t.Fatalf("modified watchers changed from %#v to %#v", wantWatches, config.Dev.Watches)
+	}
+	if config.Dev.Apps != nil {
+		t.Fatalf("expected no native apps after skipped migration, got %#v", config.Dev.Apps)
+	}
+}
+
 func TestNormalizeDevWatchWireGenExclusionIsIdempotent(t *testing.T) {
 	tests := map[string]string{
 		"-file .go -xfile wire/wire_gen\\.go$ -postpone":                         "-file .go -xfile app/wire/wire_gen\\.go$ -postpone",
@@ -873,6 +1059,61 @@ func TestRenderAppUsesPersistedAppComponents(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("cmd", "billing", "frontend", "dist", "index.html")); !os.IsNotExist(err) {
 		t.Fatalf("expected app components to omit frontend placeholder, stat err = %v", err)
 	}
+}
+
+// TestRenderAppsDeriveBareBehaviorIndependently verifies a mixed project does
+// not leak the default App's runtime behavior into a CLI-only binary.
+func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	renderer := &ProjectRenderer{
+		config: &project.Config{
+			ProjectName:  "Mixed Launch",
+			GoModuleName: "example.com/mixedlaunch",
+			Render: project.RenderConfig{
+				Components: project.Components{CLI: true, WebAPI: true},
+			},
+			Apps: map[string]project.AppConfig{
+				"ship": {Components: project.Components{CLI: true}},
+			},
+		},
+		stats: &renderStats{},
+	}
+
+	if err := renderer.renderApp(project.DefaultApp()); err != nil {
+		t.Fatalf("render default runtime app: %v", err)
+	}
+	if err := renderer.renderApp(project.DefaultNamedApp("ship")); err != nil {
+		t.Fatalf("render CLI-only app: %v", err)
+	}
+
+	assertProjectRendererFileContains(t, filepath.Join("cmd", "app", "main.go"),
+		`cmd.EffectiveLaunchArgs(os.Args[1:], true)`,
+	)
+	assertProjectRendererFileContains(t, filepath.Join("app", "root_cmd.go"),
+		`cmd.RunCmd`,
+	)
+	assertProjectRendererFileContains(t, filepath.Join("app", "wire", "inject_cmd.go"),
+		`provideRunCmd,`,
+	)
+
+	assertProjectRendererFileContains(t, filepath.Join("cmd", "ship", "main.go"),
+		`cmd.EffectiveLaunchArgs(os.Args[1:], false)`,
+	)
+	assertProjectRendererFileNotContains(t, filepath.Join("app", "ship", "root_cmd.go"),
+		`cmd.RunCmd`,
+	)
+	assertProjectRendererFileNotContains(t, filepath.Join("app", "ship", "wire", "inject_cmd.go"),
+		`provideRunCmd,`,
+	)
 }
 
 func TestRenderAppWritesAppAwareFrontendPlaceholder(t *testing.T) {

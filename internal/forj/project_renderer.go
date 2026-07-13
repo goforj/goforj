@@ -604,6 +604,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
 				"internal/lighthouse/project_config.go.tmpl",
+				"internal/lighthouse/project_config_test.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
@@ -638,7 +639,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Dev Console Components Rendering",
-			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI || p.config.Render.Components.Scheduler || p.config.Render.Components.Jobs,
+			enabled: p.config.Render.Components.HasRuntime(),
 			templates: []string{
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
@@ -1150,6 +1151,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	}
 	promotedProjectComponents := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
+		if err := p.prepareDevAppsForAppMutation(); err != nil {
+			return err
+		}
 		promoted, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.HelpFormat)
 		if err != nil {
 			return err
@@ -1281,6 +1285,10 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 		return false
 	}
 	changed := false
+	if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, project.DefaultNamedApp(name)); removed {
+		p.config.Dev.Pre = tasks
+		changed = true
+	}
 	if p.config.Apps != nil {
 		if _, ok := p.config.Apps[name]; ok {
 			delete(p.config.Apps, name)
@@ -1295,8 +1303,11 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 			delete(p.config.Dev.Run, name)
 			changed = true
 		}
-		if len(p.config.Dev.Run) == 0 {
-			p.config.Dev.Run = nil
+	}
+	if p.config.Dev.Apps != nil {
+		if _, ok := p.config.Dev.Apps[name]; ok {
+			delete(p.config.Dev.Apps, name)
+			changed = true
 		}
 	}
 	return changed
@@ -1339,26 +1350,71 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 	return p.config.Render.Components != before, nil
 }
 
-// setAppDevRun persists the app allowlist entry used by forj dev runtime watchers.
+// prepareDevAppsForAppMutation establishes native App presence before make:app can change filesystem discovery.
+func (p *ProjectRenderer) prepareDevAppsForAppMutation() error {
+	if p.config.Dev.UsesStructuredApps() {
+		return nil
+	}
+	if migrateGeneratedDevWatchers(p.config) {
+		return nil
+	}
+	if hasLegacyDevAppLifecycle(p.config) {
+		return fmt.Errorf("make app: customized legacy Build App/Run App lifecycle cannot be safely combined with dev.apps; migrate the lifecycle to dev.apps first")
+	}
+	p.config.Dev.Apps = map[string]project.DevApp{}
+	return nil
+}
+
+// hasLegacyDevAppLifecycle identifies discovery-based App watchers that require a deliberate migration.
+func hasLegacyDevAppLifecycle(config *project.Config) bool {
+	if config.Dev.Run != nil {
+		return true
+	}
+	for _, watch := range config.Dev.Watches {
+		if watch.IsLegacy() && (watch.Name == "Build App" || watch.Name == "Run App") {
+			return true
+		}
+	}
+	return false
+}
+
+// setAppDevRun normalizes the legacy make:app choice into presence-based native lifecycle configuration.
 func (p *ProjectRenderer) setAppDevRun(name string, command string) {
 	name = strings.TrimSpace(name)
 	command = strings.TrimSpace(command)
 	if p.config == nil || name == "" || name == project.DefaultAppName {
 		return
 	}
+	if p.config.Dev.Run != nil {
+		delete(p.config.Dev.Run, name)
+	}
+	app := project.DefaultNamedApp(name)
 	if command == "" {
-		if p.config.Dev.Run != nil {
-			delete(p.config.Dev.Run, name)
-			if len(p.config.Dev.Run) == 0 {
-				p.config.Dev.Run = nil
-			}
+		if p.config.Dev.Apps != nil {
+			delete(p.config.Dev.Apps, name)
+		}
+		if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); removed {
+			p.config.Dev.Pre = tasks
 		}
 		return
 	}
-	if p.config.Dev.Run == nil {
-		p.config.Dev.Run = map[string]string{}
+	if p.config.Dev.Apps == nil {
+		p.config.Dev.Apps = map[string]project.DevApp{}
 	}
-	p.config.Dev.Run[name] = command
+	configured := generatedDevAppConfig(p.config, app, command)
+	if command == "run" && !appRenderComponents(p.config, app).HasRuntime() {
+		// A CLI-only App has no conventional runtime, so an explicit run choice must remain an actual command override.
+		configured.Run = &project.DevAppCommand{Exec: command, Shorthand: true}
+	}
+	p.config.Dev.Apps[name] = configured
+	if len(configured.SPAs) > 0 {
+		task := generatedDevFrontendInstallTask(app)
+		if !hasDevTask(p.config.Dev.Pre, task) {
+			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
+		}
+	} else if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); removed {
+		p.config.Dev.Pre = tasks
+	}
 }
 
 // writeAppEnvDefaults appends app-scoped env defaults without changing the default App values.
@@ -1951,13 +2007,19 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	if removeGrafanaSeedTask(&p.config.Dev.Pre) {
 		changed = true
 	}
+	if migrateGeneratedDevWatchers(p.config) {
+		changed = true
+	}
 	for i := range p.config.Dev.Watches {
-		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
-		if p.config.Dev.Watches[i].Name == "NPM" && strings.TrimSpace(p.config.Dev.Watches[i].Exec) == "npm run dev" {
-			normalized = normalizeFrontendNPMWatchExclusions(normalized)
+		normalized := p.config.Dev.Watches[i].Watch
+		if isGeneratedLegacyBuildWatcher(p.config.Dev.Watches[i]) {
+			normalized = normalizeDevWatchWireGenExclusion(normalized)
+			if p.config.Render.StarterKit == project.StarterKitTemplHTMX {
+				normalized = normalizeTemplBuildWatchExclusions(normalized)
+			}
 		}
-		if p.config.Render.StarterKit == project.StarterKitTemplHTMX && p.config.Dev.Watches[i].Name == "Build App" {
-			normalized = normalizeTemplBuildWatchExclusions(normalized)
+		if isGeneratedLegacyNPMWatcher(p.config.Dev.Watches[i]) {
+			normalized = normalizeFrontendNPMWatchExclusions(normalized)
 		}
 		if normalized != p.config.Dev.Watches[i].Watch {
 			p.config.Dev.Watches[i].Watch = normalized
@@ -1965,10 +2027,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		}
 	}
 	if p.config.Render.Components.WebUI && project.StarterKitUsesNPM(p.config.Render.StarterKit) && !p.config.Render.Components.DemoApp {
-		task := project.DevTask{
-			Name: "Install Frontend Dependencies",
-			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
-		}
+		task := generatedDevFrontendInstallTask(project.DefaultApp())
 		if !hasDevTask(p.config.Dev.Pre, task) {
 			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
 			changed = true

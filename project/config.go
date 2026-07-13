@@ -11,10 +11,23 @@ import (
 
 // DevWatch represents a command to be run in development mode.
 type DevWatch struct {
-	Name  string            `yaml:"name" json:"name"`
-	Watch string            `yaml:"watch" json:"watch"` // wgo options
-	Exec  string            `yaml:"exec" json:"exec"`   // bash command to run on change
-	Env   map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Name     string            `yaml:"name" json:"name"`
+	Watch    string            `yaml:"-" json:"watch,omitempty"`
+	Legacy   bool              `yaml:"-" json:"-"`
+	Include  []string          `yaml:"-" json:"include,omitempty"`
+	Ignore   []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	Roots    []string          `yaml:"roots,omitempty" json:"roots,omitempty"`
+	WorkDir  string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	Files    DevWatchMatchers  `yaml:"files,omitempty" json:"files,omitempty"`
+	Dirs     DevWatchMatchers  `yaml:"dirs,omitempty" json:"dirs,omitempty"`
+	Exec     string            `yaml:"exec" json:"exec"`
+	Env      map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Debounce string            `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+	Poll     string            `yaml:"poll,omitempty" json:"poll,omitempty"`
+	Postpone bool              `yaml:"postpone,omitempty" json:"postpone,omitempty"`
+	Restart  bool              `yaml:"restart,omitempty" json:"restart,omitempty"`
+	Exit     bool              `yaml:"exit,omitempty" json:"exit,omitempty"`
+	Stdin    bool              `yaml:"stdin,omitempty" json:"stdin,omitempty"`
 }
 
 // DevTask represents a task to be run in development mode.
@@ -32,7 +45,9 @@ type DevConfig struct {
 	DownOnExit        bool              `yaml:"down_on_exit" json:"down_on_exit"`
 	SoundOnWatchError bool              `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
 	WirePaths         []string          `yaml:"wire_paths" json:"wire_paths"`
-	Watches           []DevWatch        `yaml:"watches" json:"watches"`
+	Watches           []DevWatch        `yaml:"watches,omitempty" json:"watches,omitempty"`
+	Apps              map[string]DevApp `yaml:"apps,omitempty" json:"apps,omitempty"`
+	appsConfigured    bool
 }
 
 // DefaultAppName is the conventional app name used when no named app is selected.

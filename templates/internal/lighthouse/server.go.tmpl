@@ -280,10 +280,10 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			return r.NoContent(http.StatusInternalServerError)
 		}
 		var payload struct {
-			ProjectName  *string     `json:"project_name"`
-			GoModuleName *string     `json:"module_name"`
-			Dev          *DevConfig  `json:"dev"`
-			Components   *Components `json:"components"`
+			ProjectName  *string          `json:"project_name"`
+			GoModuleName *string          `json:"module_name"`
+			Dev          *devConfigUpdate `json:"dev"`
+			Components   *Components      `json:"components"`
 		}
 		if err := r.Bind(&payload); err != nil {
 			return r.NoContent(http.StatusBadRequest)
@@ -295,10 +295,10 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			current.GoModuleName = *payload.GoModuleName
 		}
 		if payload.Dev != nil {
-			current.Dev = *payload.Dev
+			applyDevConfigUpdate(&current.Dev, *payload.Dev)
 		}
 		if payload.Components != nil {
-			current.Render.Components = *payload.Components
+			current.Render.Components = mergeLighthouseComponents(current.Render.Components, *payload.Components)
 		}
 		if err := saveProjectConfig(current); err != nil {
 			return r.NoContent(http.StatusInternalServerError)

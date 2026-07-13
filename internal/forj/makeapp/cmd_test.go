@@ -410,22 +410,36 @@ func TestWizardCanProduceCLIOnlyApp(t *testing.T) {
 	}
 }
 
-func TestWizardDevRunDefaultsToRun(t *testing.T) {
+// TestWizardDevRunOmitsCLIOnlyAppByDefault verifies tooling Apps do not enter the dev graph without an explicit choice.
+func TestWizardDevRunOmitsCLIOnlyAppByDefault(t *testing.T) {
 	model := initialAppWizardModel("ship", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true},
 		},
 	})
 
+	if got := model.devRunCommand(); got != "" {
+		t.Fatalf("expected wizard to omit CLI-only app from dev, got %q", got)
+	}
+}
+
+// TestWizardDevRunDefaultsRuntimeAppToConventionalRun verifies runtime capability selects concise native participation.
+func TestWizardDevRunDefaultsRuntimeAppToConventionalRun(t *testing.T) {
+	model := initialAppWizardModel("portal", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true, WebAPI: true},
+		},
+	})
+
 	if got := model.devRunCommand(); got != "run" {
-		t.Fatalf("expected wizard dev run default to be run, got %q", got)
+		t.Fatalf("expected runtime app to use conventional dev participation, got %q", got)
 	}
 }
 
 func TestWizardCanDisableDevRun(t *testing.T) {
 	model := initialAppWizardModel("ship", &project.Config{
 		Render: project.RenderConfig{
-			Components: project.Components{CLI: true},
+			Components: project.Components{CLI: true, WebAPI: true},
 		},
 	})
 	model.stage = appWizardDevRun

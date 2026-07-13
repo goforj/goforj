@@ -1,0 +1,255 @@
+package lighthouse
+
+import (
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+// TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields verifies
+// that Lighthouse re-encoding does not narrow the framework configuration.
+func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(t *testing.T) {
+	input := `project_name: Test
+module_name: example.com/test
+future_project_control: retained
+dev:
+  auto_migrate: true
+  wire_paths: [app/wire]
+  future_dev_control: retained
+  apps:
+    app:
+      spas:
+        frontend: ./cmd/app/frontend
+    worker: true
+    tools:
+      run: false
+  watches:
+    - name: Native
+      watch: [.go, .env]
+      ignore: [generated]
+      roots: [internal, schemas]
+      files:
+        exclude: [generated.go]
+      dirs:
+        exclude: [vendor]
+      exec: make native
+      env:
+        MODE: native
+      debounce: 125ms
+      poll: 2s
+      postpone: true
+      restart: true
+      exit: true
+      stdin: true
+      future_watch_control: retained
+    - name: Legacy
+      watch: -file .go -postpone
+      exec: make legacy
+render:
+  starter_kit: vue
+  components:
+    web_ui: true
+    metrics: true
+    observability: true
+    grafana: true
+  module_replaces:
+    github.com/example/dependency: ../dependency
+apps:
+  billing:
+    starter_kit: react
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal project config: %v", err)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal project config: %v", err)
+	}
+	for _, expected := range []string{
+		"future_project_control: retained",
+		"future_dev_control: retained",
+		"future_watch_control: retained",
+		"watch: -file .go -postpone",
+		"frontend: ./cmd/app/frontend",
+		"worker: true",
+		"run: false",
+		"files:",
+		"dirs:",
+		"starter_kit: vue",
+		"metrics: true",
+		"observability: true",
+		"grafana: true",
+		"github.com/example/dependency: ../dependency",
+		"billing:",
+	} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("round-tripped project config omitted %q:\n%s", expected, encoded)
+		}
+	}
+}
+
+// TestProjectConfigYAMLRoundTripPreservesEmptyLifecycleMaps keeps Lighthouse from restoring either discovery model.
+func TestProjectConfigYAMLRoundTripPreservesEmptyLifecycleMaps(t *testing.T) {
+	input := `project_name: Test
+module_name: example.com/test
+dev:
+  run: {}
+  apps: {}
+  watches:
+    - name: Docs
+      watch: [.md]
+      exec: make docs
+render:
+  components: {}
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal project config: %v", err)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal project config: %v", err)
+	}
+	if !strings.Contains(string(encoded), "apps: {}") {
+		t.Fatalf("empty native App allowlist was erased:\n%s", encoded)
+	}
+	if !strings.Contains(string(encoded), "run: {}") {
+		t.Fatalf("empty legacy runtime allowlist was erased:\n%s", encoded)
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal round trip: %v", err)
+	}
+	reencoded, err := yaml.Marshal(roundTripped)
+	if err != nil {
+		t.Fatalf("marshal round trip: %v", err)
+	}
+	if !strings.Contains(string(reencoded), "apps: {}") {
+		t.Fatalf("round-trip empty native App allowlist was erased:\n%s", reencoded)
+	}
+	if !strings.Contains(string(reencoded), "run: {}") {
+		t.Fatalf("round-trip empty legacy runtime allowlist was erased:\n%s", reencoded)
+	}
+}
+
+// TestApplyDevConfigUpdatePreservesNativeLifecycleControls verifies that the
+// scalar Lighthouse editor cannot erase native fields it does not expose.
+func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(t *testing.T) {
+	current := DevConfig{
+		WirePaths: []string{"app/wire"},
+		Apps: map[string]any{
+			"app": map[string]any{
+				"spas": map[string]any{
+					"frontend": "./cmd/app/frontend",
+				},
+			},
+		},
+		Watches: []DevWatch{
+			{
+				Name:    "Native",
+				Watch:   []any{".go", ".env"},
+				Ignore:  []string{"generated"},
+				Roots:   []string{"internal", "schemas"},
+				WorkDir: "./tools",
+				Files: DevWatchMatchers{
+					Exclude: []string{"generated.go"},
+				},
+				Dirs: DevWatchMatchers{
+					Exclude: []string{"vendor"},
+				},
+				Exec:     "make native",
+				Env:      map[string]string{"MODE": "native"},
+				Debounce: "125ms",
+				Poll:     "2s",
+				Postpone: true,
+				Restart:  true,
+				Exit:     true,
+				Stdin:    true,
+			},
+			{
+				Name:  "Legacy",
+				Watch: "-file .go",
+				Exec:  "make legacy",
+				Env:   map[string]string{"KEEP": "1"},
+			},
+		},
+	}
+	autoMigrate := true
+	updates := []DevWatch{
+		{Name: "Legacy", Watch: "-file .md", Exec: "make legacy-docs"},
+		{Name: "Native", Watch: "invalid scalar replacement", Exec: "make native-updated"},
+	}
+
+	applyDevConfigUpdate(&current, devConfigUpdate{
+		AutoMigrate: &autoMigrate,
+		Watches:     &updates,
+	})
+
+	if !current.AutoMigrate {
+		t.Fatal("expected the explicitly submitted lifecycle switch to update")
+	}
+	if !reflect.DeepEqual(current.WirePaths, []string{"app/wire"}) {
+		t.Fatalf("wire paths were erased: %#v", current.WirePaths)
+	}
+	if _, ok := current.Apps["app"]; !ok {
+		t.Fatalf("native dev apps were erased: %#v", current.Apps)
+	}
+	if len(current.Watches) != 2 || current.Watches[0].Name != "Legacy" || current.Watches[1].Name != "Native" {
+		t.Fatalf("watcher updates did not retain submitted ordering: %#v", current.Watches)
+	}
+	legacy := current.Watches[0]
+	if legacy.Watch != "-file .md" || legacy.Exec != "make legacy-docs" || legacy.Env["KEEP"] != "1" {
+		t.Fatalf("legacy watcher edit lost compatibility fields: %#v", legacy)
+	}
+	native := current.Watches[1]
+	if !reflect.DeepEqual(native.Watch, []any{".go", ".env"}) || native.Exec != "make native-updated" {
+		t.Fatalf("native matcher list was not preserved: %#v", native)
+	}
+	if !reflect.DeepEqual(native.Roots, []string{"internal", "schemas"}) ||
+		native.Files.Exclude[0] != "generated.go" || native.Dirs.Exclude[0] != "vendor" ||
+		native.Env["MODE"] != "native" || native.Debounce != "125ms" || native.Poll != "2s" ||
+		!native.Postpone || !native.Restart || !native.Exit || !native.Stdin {
+		t.Fatalf("native watcher controls were erased: %#v", native)
+	}
+}
+
+// TestMergeLighthouseComponentsPreservesUnknownSettings verifies that a JSON
+// settings update cannot erase component extensions the client never received.
+func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
+	input := `render:
+  components:
+    web_api: true
+    future_runtime:
+      enabled: true
+      mode: isolated
+`
+	var current Config
+	if err := yaml.Unmarshal([]byte(input), &current); err != nil {
+		t.Fatalf("decode project settings: %v", err)
+	}
+	var update Components
+	if err := json.Unmarshal([]byte(`{"web_ui":true}`), &update); err != nil {
+		t.Fatalf("decode Lighthouse settings update: %v", err)
+	}
+
+	merged := mergeLighthouseComponents(current.Render.Components, update)
+	if merged.WebAPI || !merged.WebUI {
+		t.Fatalf("known component switches were not replaced: %#v", merged)
+	}
+	if !reflect.DeepEqual(merged.Extra, current.Render.Components.Extra) {
+		t.Fatalf("unknown component settings were erased: %#v", merged.Extra)
+	}
+	encoded, err := yaml.Marshal(RenderConfig{Components: merged})
+	if err != nil {
+		t.Fatalf("marshal merged component settings: %v", err)
+	}
+	if !strings.Contains(string(encoded), "future_runtime:") || !strings.Contains(string(encoded), "mode: isolated") {
+		t.Fatalf("saved component settings omitted extension fields:\n%s", encoded)
+	}
+}
