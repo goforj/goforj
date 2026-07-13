@@ -2,6 +2,7 @@ package coredeps
 
 import "sort"
 
+// pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
 var pinnedModuleVersions = map[string]string{
 	"github.com/a-h/templ":                            "v0.3.1020",
 	"github.com/goforj/cache":                         "v0.3.0",
@@ -42,7 +43,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/storage/driver/s3storage":      "v0.4.6",
 	"github.com/goforj/storage/driver/sftpstorage":    "v0.4.6",
 	"github.com/goforj/storage/storagecore":           "v0.4.6",
-	"github.com/goforj/web":                           "v0.5.2",
+	"github.com/goforj/web":                           "v0.6.0",
 	"github.com/goforj/str":                           "v1.2.0",
 	"github.com/nats-io/nats.go":                      "v1.50.0",
 }
