@@ -583,7 +583,7 @@ func runDevWatcherBoundaryBuildHelper() {
 	appendDevWatcherChurnLine(os.Getenv("GOFORJ_WATCHER_BOUNDARY_LOG"), fmt.Sprintf("build-start:%d:%s", count, version))
 	root := filepath.Dir(filepath.Dir(filepath.Dir(os.Getenv("GOFORJ_WATCHER_BOUNDARY_SOURCE"))))
 	appLogger := logger.NewSilentLogger()
-	command := build.NewCmd(appLogger, build.NewAPIIndexRunner(appLogger))
+	command := build.NewCmd(appLogger, ProvideAPIIndexRunner(appLogger))
 	command.Root = root
 	command.SkipWire = true
 	command.Args = []string{"-o", "./bin/app", "./cmd/app"}
@@ -597,7 +597,7 @@ func runDevWatcherBoundaryBuildHelper() {
 func runDevWatcherBoundaryInitialArtifactBuild(t *testing.T, root string) {
 	t.Helper()
 	appLogger := logger.NewSilentLogger()
-	command := build.NewCmd(appLogger, build.NewAPIIndexRunner(appLogger))
+	command := build.NewCmd(appLogger, ProvideAPIIndexRunner(appLogger))
 	command.Root = root
 	command.SkipWire = true
 	command.Args = []string{"-o", "./bin/app", "./cmd/app"}
