@@ -44,7 +44,10 @@ func (c *RestoreCmd) Run() error {
 		if c.Confirm != "restore-production" {
 			return fmt.Errorf("restore requires --confirm restore-production")
 		}
-		connection := ConnectionFromEnv(normalizeResourceName(c.Resource))
+		connection, err := ConnectionForResource(context.Background(), normalizeResourceName(c.Resource))
+		if err != nil {
+			return err
+		}
 		if c.TargetDriver != "" {
 			connection.Driver = c.TargetDriver
 		}

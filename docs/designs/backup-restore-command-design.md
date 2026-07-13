@@ -58,7 +58,7 @@ turn that knowledge into a consistent backup plan.
 
 ## Goals
 
-- Provide standard backup and restore commands for generated Apps.
+- Provide standard backup and restore commands in the `forj` framework CLI for generated Apps.
 - Discover configured durable resources from generated App configuration.
 - Use driver-aware backup and restore strategies.
 - Support multiple databases and multiple storage disks.
@@ -740,12 +740,9 @@ perfect distributed snapshot.
 
 ## Hooks
 
-Generated Apps should have optional lifecycle-style hooks for backup operations.
-
-The generated adapters call the public `github.com/goforj/goforj/backup`
-bridge. A GoForj release that enables these commands must publish that package
-in the pinned framework module version; local `forj --dev test:render` adds a
-temporary repository replace only while testing an unreleased checkout.
+The framework CLI may expose optional lifecycle-style hooks for backup
+operations. These hooks are registered and executed by `forj`; generated Apps
+only expose resource metadata and do not contain backup execution code.
 
 Conceptual shape:
 
@@ -894,13 +891,17 @@ It should not own CLI parsing, generated App wiring, or project rendering.
 The portable SQL layer should depend on Go's `database/sql` interfaces and a
 small dialect adapter, not on GORM. GORM is an App-level connection
 implementation, while backup must remain usable with native `database/sql`
-connections and future driver integrations. A generated adapter may unwrap a
-GORM connection to its underlying `*sql.DB`, but that dependency must stay
-outside `internal/backup`.
+connections and future driver integrations. The framework resolves connection
+metadata from the App contract and environment without embedding an ORM in the
+backup package.
 
 Generated Apps should expose a stable, secret-free resource description
 contract through templates. `forj` consumes that contract and injects the
 selected App environment into the framework backup workflow:
+
+The contract is versioned (`version: 1`) and contains resource IDs, kinds,
+names, normalized drivers, default status, and configuration key names only.
+Secret values, DSNs, passwords, and tokens are never serialized.
 
 ```text
 App resource description
@@ -912,8 +913,8 @@ App resource description
 ```
 
 The framework command is responsible for flags, confirmation, output, and
-selecting the active App/resource scope. It does not shell out to a generated
-App binary for backup execution.
+selecting the active App/resource scope. It may invoke the generated App only
+for `resources:describe`; backup execution remains inside the framework.
 
 ```bash
 forj backup:create
@@ -1072,8 +1073,8 @@ Exit criteria:
 - operators can inspect backup freshness without reading raw logs
 
 Status: implemented through `backup:status`, compact freshness output, and
-explicit before/after create and restore hook registries. Generated Apps and
-the framework CLI share the same command implementation.
+explicit before/after create and restore hook registries in the framework CLI.
+Generated Apps expose only the resource contract used to select backup inputs.
 
 ## Open Questions
 

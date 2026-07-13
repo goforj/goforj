@@ -40,6 +40,18 @@ forj backup:restore \
 `backup:status` reports the newest completed local backup in a compact form so
 operators do not need to inspect raw logs.
 
+Generated Apps expose the versioned discovery contract used by `forj`:
+
+```bash
+./bin/app resources:describe --json
+forj billing resources:describe --json
+```
+
+The contract reports `version: 1`, resource IDs, kinds, names, normalized
+drivers, default status, and configuration key names. It never reports secret
+values. `forj backup:*` validates this contract before planning or executing a
+backup and falls back only for older Apps that do not expose the command.
+
 Resource discovery is deliberately separate from backup execution. The App
 reports safe metadata such as resource IDs, drivers, and the environment keys
 that contain configuration. It does not emit passwords, tokens, or DSN values.
@@ -149,23 +161,27 @@ depending on the repository's general unit or generator integration jobs.
 - Restore is explicit and destructive by design.
 - Secrets are read from runtime configuration and are never written into
   manifests or backup metadata.
-- The generated public bridge must be included in the pinned GoForj framework
-  release before generated Apps are rendered against that release. Local
-  development renders use a temporary repository replacement for an
-  unreleased checkout.
+- Generated Apps contain only the resource-description command. Backup
+  strategies, repository access, and restore execution remain in `forj`.
+- The resource contract is the authoritative inventory when available; the
+  environment scanner is retained only as a compatibility fallback for older
+  Apps.
 
 ## Verification
 
 Validated locally with:
 
 ```bash
-GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/backup ./backup
-GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go vet ./internal/backup ./backup
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/backup ./project ./cmd/forj ./internal/forj
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go vet ./project ./cmd/forj ./internal/forj ./internal/backup
 GOFORJ_BACKUP_INTEGRATION=1 \
   GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
   sh -c 'cd integration && go test -tags=integration_backup ./...'
+GOFORJ_BACKUP_INTEGRATION=1 GOFORJ_BACKUP_NATIVE_POSTGRES=1 \
+  GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+  sh -c 'cd integration && go test -tags=integration_backup ./... -run "^TestNativePostgresBackupRestore$"'
 ```
 
-Wire generation, generated-App rendering, compile-only repository tests, and
-`git diff --check` also pass. Full framework integration execution may require
-exclusive Docker ports on the runner.
+The full PR render profile passes all 54 combinations, including generated App
+resource discovery and `backup:plan` consumption. Wire generation, compile-only
+repository tests, and `git diff --check` also pass.

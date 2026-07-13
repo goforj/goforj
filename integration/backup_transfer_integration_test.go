@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -218,15 +219,18 @@ func TestNativePostgresBackupRestore(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO native_backup_users VALUES (1, 'native@example.com')`); err != nil {
 		t.Fatal(err)
 	}
-	code, output, err := container.Exec(ctx, []string{"sh", "-c", "PGPASSWORD=secret pg_dump -Fc -f /tmp/native.dump -U app app"})
-	if err != nil || code != 0 {
-		t.Fatalf("pg_dump exit=%d err=%v output=%v", code, err, output)
+	code, output, err := container.Exec(ctx, []string{"sh", "-c", "PGPASSWORD=secret pg_dump --format=custom --file=/tmp/native.dump --username=app app && test -s /tmp/native.dump"})
+	outputBytes, readErr := io.ReadAll(output)
+	if err != nil || readErr != nil || code != 0 {
+		t.Fatalf("pg_dump exit=%d err=%v read_err=%v output=%s", code, err, readErr, outputBytes)
 	}
 	if _, err := db.Exec(`DROP TABLE native_backup_users`); err != nil {
 		t.Fatal(err)
 	}
-	if code, output, err := container.Exec(ctx, []string{"sh", "-c", "PGPASSWORD=secret pg_restore --clean --if-exists --username app --dbname app /tmp/native.dump"}); err != nil || code != 0 {
-		t.Fatalf("pg_restore exit=%d err=%v output=%v", code, err, output)
+	code, output, err = container.Exec(ctx, []string{"sh", "-c", "PGPASSWORD=secret pg_restore --clean --if-exists --exit-on-error --no-owner --username app --dbname app /tmp/native.dump 2>&1"})
+	outputBytes, readErr = io.ReadAll(output)
+	if err != nil || readErr != nil || code != 0 {
+		t.Fatalf("pg_restore exit=%d err=%v read_err=%v output=%s", code, err, readErr, outputBytes)
 	}
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM native_backup_users`).Scan(&count); err != nil {
