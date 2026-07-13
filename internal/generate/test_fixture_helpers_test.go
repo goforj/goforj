@@ -108,10 +108,9 @@ func addFixtureReplaceIfPresent(t *testing.T, root string, replace fixtureReplac
 	}
 }
 
+// fixtureGoEnv inherits cache locations so local policy and CI-restored caches remain effective for nested Go commands.
 func fixtureGoEnv(extra map[string]string) []string {
 	env := append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
 		// Generated fixtures use public modules; proxy resolution avoids a CI-wide GOPRIVATE setting forcing slow direct Git fetches.
 		"GOPRIVATE=",
 		"GONOSUMDB=",
@@ -120,6 +119,26 @@ func fixtureGoEnv(extra map[string]string) []string {
 		env = append(env, key+"="+value)
 	}
 	return env
+}
+
+// TestFixtureGoEnvPreservesCallerCaches prevents nested fixture commands from bypassing local or CI-restored Go caches.
+func TestFixtureGoEnvPreservesCallerCaches(t *testing.T) {
+	t.Setenv("GOCACHE", "/tmp/caller-build-cache")
+	t.Setenv("GOMODCACHE", "/tmp/caller-module-cache")
+
+	values := map[string]string{}
+	for _, entry := range fixtureGoEnv(nil) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if got := values["GOCACHE"]; got != "/tmp/caller-build-cache" {
+		t.Fatalf("GOCACHE = %q, want caller cache", got)
+	}
+	if got := values["GOMODCACHE"]; got != "/tmp/caller-module-cache" {
+		t.Fatalf("GOMODCACHE = %q, want caller cache", got)
+	}
 }
 
 func runFixtureGoModTidy(t *testing.T, root string, extra map[string]string) {
@@ -216,11 +235,11 @@ func mailLocalReplaces(t *testing.T) []fixtureReplace {
 	}
 }
 
+// mustTempGeneratedModuleRoot keeps generated modules outside the source checkout while retaining predictable fixture names.
 func mustTempGeneratedModuleRoot(t *testing.T, pattern, packageDir string) string {
 	t.Helper()
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, pattern)
+	root, err := os.MkdirTemp("", pattern)
 	if err != nil {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}

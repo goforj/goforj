@@ -337,7 +337,7 @@ func TestSessionsAccessorExistsWithoutNamedStore(t *testing.T) {
 		t.Fatalf("write generated test: %v", err)
 	}
 
-	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoModTidy(t, root, nil)
 	runFixtureGoTest(t, root, "./internal/caches", "TestSessionsAccessorExistsWithoutNamedStore", nil)
 }
 
@@ -406,7 +406,7 @@ func TestGeneratedAccessorNames(t *testing.T) {
 		t.Fatalf("write generated test: %v", err)
 	}
 
-	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoModTidy(t, root, nil)
 	runFixtureGoTest(t, root, "./internal/caches", "TestGeneratedAccessorNames", nil)
 }
 
@@ -485,7 +485,7 @@ func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
 	}
 
-	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoModTidy(t, root, nil)
 	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
 	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }
@@ -525,7 +525,7 @@ func TestGenerateCacheFilesWithPinnedDriverModules(t *testing.T) {
 		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
 	}
 
-	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoModTidy(t, root, nil)
 	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
 	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }
@@ -606,7 +606,7 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 		}
 	}
 
-	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoModTidy(t, root, nil)
 	assertFixtureGoModContains(t, root,
 		"github.com/goforj/cache/driver/rediscache",
 		"github.com/goforj/cache/driver/memcachedcache",
