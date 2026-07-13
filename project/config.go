@@ -169,6 +169,7 @@ type Components struct {
 	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
+	Backup           bool `yaml:"backup" json:"backup"`
 }
 
 // Enabled reports whether a component is enabled.
@@ -206,6 +207,8 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.Scheduler
 	case ComponentJobs:
 		return c.Jobs
+	case ComponentBackup:
+		return c.Backup
 	default:
 		return false
 	}
@@ -249,6 +252,8 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.Scheduler = enabled
 	case ComponentJobs:
 		c.Jobs = enabled
+	case ComponentBackup:
+		c.Backup = enabled
 	}
 }
 
@@ -365,12 +370,6 @@ func IsReservedAppName(name string) bool {
 func IsNativeFrameworkCommandName(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "build",
-		"backup:create",
-		"backup:list",
-		"backup:plan",
-		"backup:prune",
-		"backup:restore",
-		"backup:verify",
 		"dev",
 		"down",
 		"generate",

@@ -1,7 +1,6 @@
 package forj
 
 import (
-	"github.com/goforj/goforj/internal/backup"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/forj/atlas"
@@ -41,12 +40,5 @@ var WireSet = wire.NewSet(
 	NewScenarioTestCmd,
 	NewRootCmd,
 	build.NewRunCmd,
-	backup.NewPlanCmd,
-	backup.NewListCmd,
-	backup.NewCreateCmd,
-	backup.NewVerifyCmd,
-	backup.NewRestoreCmd,
-	backup.NewPruneCmd,
-	backup.NewStatusCmd,
 	NewCmd,
 )

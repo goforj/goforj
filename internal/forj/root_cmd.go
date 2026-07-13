@@ -2,7 +2,6 @@ package forj
 
 import (
 	"github.com/alecthomas/kong"
-	"github.com/goforj/goforj/internal/backup"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/forj/atlas"
@@ -42,13 +41,6 @@ type RootCmd struct {
 	ScenarioTestCmd           ScenarioTestCmd                 `cmd:""`
 	RenderCmd                 RenderCmd                       `cmd:""`
 	RunCmd                    build.RunCmd                    `cmd:""`
-	BackupPlanCmd             backup.PlanCmd                  `cmd:""`
-	BackupListCmd             backup.ListCmd                  `cmd:""`
-	BackupCreateCmd           backup.CreateCmd                `cmd:""`
-	BackupVerifyCmd           backup.VerifyCmd                `cmd:""`
-	BackupRestoreCmd          backup.RestoreCmd               `cmd:""`
-	BackupPruneCmd            backup.PruneCmd                 `cmd:""`
-	BackupStatusCmd           backup.StatusCmd                `cmd:""`
 }
 
 // NewRootCmd wires only native framework commands so generated app generators do not appear in forj help.
@@ -81,13 +73,6 @@ func NewRootCmd(
 	scenarioTestCmd *ScenarioTestCmd,
 	rendererCmd *RenderCmd,
 	runCmd *build.RunCmd,
-	backupPlanCmd *backup.PlanCmd,
-	backupListCmd *backup.ListCmd,
-	backupCreateCmd *backup.CreateCmd,
-	backupVerifyCmd *backup.VerifyCmd,
-	backupRestoreCmd *backup.RestoreCmd,
-	backupPruneCmd *backup.PruneCmd,
-	backupStatusCmd *backup.StatusCmd,
 ) *RootCmd {
 	root := &RootCmd{
 		BuildCmd:                  *buildCmd,
@@ -118,13 +103,6 @@ func NewRootCmd(
 		ScenarioTestCmd:           *scenarioTestCmd,
 		RenderCmd:                 *rendererCmd,
 		RunCmd:                    *runCmd,
-		BackupPlanCmd:             *backupPlanCmd,
-		BackupListCmd:             *backupListCmd,
-		BackupCreateCmd:           *backupCreateCmd,
-		BackupVerifyCmd:           *backupVerifyCmd,
-		BackupRestoreCmd:          *backupRestoreCmd,
-		BackupPruneCmd:            *backupPruneCmd,
-		BackupStatusCmd:           *backupStatusCmd,
 	}
 	return root
 }

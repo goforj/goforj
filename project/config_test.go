@@ -111,6 +111,9 @@ func TestDefaultSelectedComponentsIncludeMetricsStack(t *testing.T) {
 	if !components.Metrics || !components.Observability || !components.Grafana {
 		t.Fatalf("expected metrics, observability, and grafana to be selected by default: %#v", components)
 	}
+	if components.Backup {
+		t.Fatal("backup must remain opt-in for generated Apps")
+	}
 }
 
 func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
@@ -164,7 +167,7 @@ func TestIsReservedAppName(t *testing.T) {
 }
 
 func TestIsNativeFrameworkCommandName(t *testing.T) {
-	for _, name := range []string{"build", "backup:create", "backup:list", "backup:plan", "backup:prune", "backup:restore", "backup:verify", "dev", "render", "run", "x", "help", "version"} {
+	for _, name := range []string{"build", "dev", "render", "run", "x", "help", "version"} {
 		if !IsNativeFrameworkCommandName(name) {
 			t.Fatalf("expected %q to be a native framework command", name)
 		}

@@ -4,7 +4,9 @@
 package {{.AppPackageName}}
 
 import (
+	{{- if .Components.Backup }}
 	"{{.GoModuleName}}/internal/backup"
+	{{- end }}
 {{- if and .Components.Auth .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/auth"
 {{- end }}
@@ -17,6 +19,7 @@ import (
 // Commands wires application-specific commands into the CLI.
 // Keep command implementations in the package that owns the workflow.
 type Commands struct {
+	{{- if .Components.Backup }}
 	BackupPlanCmd backup.PlanCmd `cmd:""`
 	BackupCreateCmd backup.CreateCmd `cmd:""`
 	BackupListCmd backup.ListCmd `cmd:""`
@@ -24,6 +27,7 @@ type Commands struct {
 	BackupRestoreCmd backup.RestoreCmd `cmd:""`
 	BackupPruneCmd backup.PruneCmd `cmd:""`
 	BackupStatusCmd backup.StatusCmd `cmd:""`
+	{{- end }}
 	AboutCmd cmd.AboutCmd `cmd:""`
 	CacheShellCmd cmd.CacheShellCmd `cmd:""`
 	{{- if .Components.HasDatabase }}
@@ -53,6 +57,7 @@ type Commands struct {
 
 // NewCommands creates a new Commands instance with the given commands.
 func NewCommands(
+	{{- if .Components.Backup }}
 	backupPlanCmd *backup.PlanCmd,
 	backupCreateCmd *backup.CreateCmd,
 	backupListCmd *backup.ListCmd,
@@ -60,6 +65,7 @@ func NewCommands(
 	backupRestoreCmd *backup.RestoreCmd,
 	backupPruneCmd *backup.PruneCmd,
 	backupStatusCmd *backup.StatusCmd,
+	{{- end }}
 	aboutCmd *cmd.AboutCmd,
 	cacheShellCmd *cmd.CacheShellCmd,
 	{{- if .Components.HasDatabase }}
@@ -87,6 +93,7 @@ func NewCommands(
 	{{- end }}
 ) *Commands {
 	return &Commands{
+		{{- if .Components.Backup }}
 		BackupPlanCmd: *backupPlanCmd,
 		BackupCreateCmd: *backupCreateCmd,
 		BackupListCmd: *backupListCmd,
@@ -94,6 +101,7 @@ func NewCommands(
 		BackupRestoreCmd: *backupRestoreCmd,
 		BackupPruneCmd: *backupPruneCmd,
 		BackupStatusCmd: *backupStatusCmd,
+		{{- end }}
 		AboutCmd: *aboutCmd,
 		CacheShellCmd: *cacheShellCmd,
 		{{- if .Components.HasDatabase }}
