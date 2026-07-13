@@ -7,6 +7,9 @@
 - Language status: accepted for Go 1.27; available in Go 1.27 RC1; not yet stable
 - Expected stable release: August 2026, according to the draft release notes
 - Scope: GoForj-owned sibling libraries and the generated App surface that consumes them
+- Release policy decision: a minimum-Go increase ships in a minor release, never
+  a patch; a major is reserved for incompatible API or behavior changes
+- Revalidation required: refresh the release and repository facts before implementation
 
 ## Decision Summary
 
@@ -44,6 +47,12 @@ package functions. They should follow the direct receiver migrations.
 
 Do not publish any production module using the new syntax before Go 1.27 is
 stable and the GoForj tooling gates in this design pass.
+
+The Go 1.27 floor does not by itself trigger new major module paths. Public
+generic methods are additive, and the existing functions remain compatible.
+Affected `v0`, `v1`, and `v2` modules should use their next minor release and
+announce the new floor prominently. Patch releases must not raise the minimum
+Go version.
 
 ## Why This Fits GoForj
 
@@ -811,8 +820,20 @@ toolchain-dependent public method set through version build tags.
 
 This language change is backward-compatible with existing Go source, but a
 module's minimum-toolchain increase is still a consumer compatibility event.
-Before release, decide whether each stable v1/v2 module permits that increase in
-a minor version or reserves it for the next major line.
+The GoForj release policy is:
+
+- a patch release must not raise the minimum Go version
+- a minor release may raise the minimum Go version when the change is prominent
+  in release notes and installation documentation
+- a minimum-Go increase alone does not require a new major module path
+- a major release remains reserved for incompatible source API, contract, or
+  behavior changes
+- consumers that cannot move to the new toolchain can remain pinned to the
+  previous minor line
+
+This policy must be published in the affected sibling repos before, or as part
+of, the first Go 1.27 release. README Go-version badges and CI matrices must be
+updated at the same time; several currently disagree with their `go.mod` files.
 
 Do not bump every sibling module in lockstep. Modules that declare the new
 methods, plus modules that select dependencies requiring Go 1.27, need the new
@@ -820,7 +841,12 @@ floor. Repositories that do neither should retain their current floor.
 
 GoForj itself imports several affected modules. Consuming their new releases and
 emitting calls to the methods therefore requires a coordinated GoForj minimum-Go
-decision and updated generated project metadata.
+update and updated generated project metadata.
+
+`collection` has a separate release blocker: its module path is currently
+unsuffixed while the repository has `v2` tags. Resolve that semantic import
+versioning mismatch before choosing or publishing the generic-method release
+tag. Do not create another major solely to work around the existing mismatch.
 
 ### No conditional public API
 
@@ -931,6 +957,26 @@ handlers, or inspects input shapes does not automatically disappear when a
 method becomes generic. Remove reflection only where the new API actually makes
 the runtime check unnecessary, as with `execx.As[T]` caller destinations.
 
+## Resume Checklist
+
+This design captures decisions as of 2026-07-13. Before implementation resumes:
+
+1. Replace the draft/RC language status with the final Go 1.27 release notes and
+   verify that syntax, interface, inference, and reflection rules are unchanged.
+2. Refresh every affected repo's latest tag, module path, `go` directive, README
+   Go badge, and CI toolchain matrix.
+3. Re-run the receiver-style API scan in case sibling surfaces changed after the
+   research date.
+4. Confirm the minimum-Go minor-release policy is present in each affected repo.
+5. Resolve `collection`'s module-path/tag mismatch.
+6. Re-audit Wire, `webindex`, generated set rewriters, documentation generators,
+   gopls, lint, and CI against the stable Go 1.27 toolchain.
+7. Reconfirm that no generated interface boundary was replaced merely to obtain
+   generic method syntax.
+
+If any final language rule or repository API differs from this document, update
+the design before implementation rather than silently adapting during rollout.
+
 ## Rollout Plan
 
 ### Phase 0: readiness before stable Go 1.27
@@ -938,8 +984,10 @@ the runtime check unnecessary, as with `execx.As[T]` caller destinations.
 1. Keep this design as the cross-repo contract.
 2. Add Go 1.27 RC CI experiments without publishing production modules.
 3. Repair Wire, source analyzers, set rewriters, and documentation identities.
-4. Decide the GoForj-wide minimum-Go and sibling release-version policy.
-5. Add compile-only prototypes in temporary branches or `/tmp` modules where
+4. Publish the minimum-Go minor-release policy and correct README/CI version
+   claims that disagree with `go.mod`.
+5. Resolve `collection`'s module-path/tag mismatch.
+6. Add compile-only prototypes in temporary branches or `/tmp` modules where
    useful; do not put RC-only syntax in released branches.
 
 ### Phase 1: stable compiler canary
@@ -1085,4 +1133,7 @@ release into an ecosystem-wide redesign.
 - [Draft Go 1.27 release notes](https://go.dev/doc/go1.27)
 - [Accepted generic methods proposal, golang/go#77273](https://github.com/golang/go/issues/77273)
 - [Official Go downloads, including Go 1.27 RC1](https://go.dev/dl/)
+- [Go module version numbering](https://go.dev/doc/modules/version-numbers)
+- [Go major-version guidance](https://go.dev/doc/modules/major-version)
+- [Go modules reference: minimum Go version](https://go.dev/ref/mod#go-mod-file-go)
 - Local API audit of GoForj-owned modules under `/workspace/code`, 2026-07-13
