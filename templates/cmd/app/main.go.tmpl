@@ -16,7 +16,7 @@ var spa embed.FS
 
 {{end}}
 func main() {
-	args := cmd.EffectiveLaunchArgs(os.Args[1:])
+	args := cmd.EffectiveLaunchArgs(os.Args[1:], {{.Components.HasRuntime}})
 	cmd.ApplyLaunchApp("{{.App.Name}}")
 
 	if err := cmd.LoadEnv(); err != nil {

@@ -375,13 +375,15 @@ forj app scheduler
 The built binary shape should match app names:
 
 ```bash
+./bin/app
 ./bin/app run
 ./bin/billing api
 ./bin/billing worker
 ./bin/reporting scheduler
 ```
 
-Those binaries are built from `cmd/<app>/main.go`.
+Those binaries are built from `cmd/<app>/main.go`. Bare execution enters `run`
+when that specific App is runtime-capable; CLI-only Apps print help.
 
 `forj <app> --help` should behave like asking that app for help. In a built context, this is conceptually equivalent to:
 
@@ -450,7 +452,12 @@ Most unqualified commands should operate on the default app only:
 - `forj test:render` validates the default app unless the command explicitly opts into all-app validation.
 - `forj build:all` or another explicit command can build every app.
 
-`forj dev` is the deliberate exception. In a multi-app project, unqualified `forj dev` should orchestrate every discovered app at once: watch all app entrypoints, build all app binaries, and run all configured app runtimes together. This keeps local development closer to the deployed shape when an App has fanned out into multiple executables.
+`forj dev` uses the sparse `dev.apps` lifecycle configuration. Unqualified
+`forj dev` orchestrates only the Apps listed there; filesystem or App discovery
+must not silently enroll omitted Apps. A listed runtime-capable App builds and
+launches its bare binary by default, while a listed CLI-only App builds without
+launching. This keeps participation explicit without turning `.goforj.yml` into
+the source of truth for which Apps exist.
 
 Shutdown should behave like orchestration, not a serial script. When `forj dev` exits, restarts, or rerenders, all running watcher subprocesses should receive the shutdown signal in parallel and then be awaited as a group. A slow worker or scheduler in one app should not delay another app from receiving its interrupt. The shutdown budget should be bounded by the slowest subprocess, not by the sum of every subprocess timeout.
 

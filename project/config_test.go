@@ -209,6 +209,31 @@ func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	}
 }
 
+// TestComponentsHasRuntimeClassifiesAppRuntimeCapabilities verifies command generation and launch behavior share one capability boundary.
+func TestComponentsHasRuntimeClassifiesAppRuntimeCapabilities(t *testing.T) {
+	tests := []struct {
+		name       string
+		components Components
+		want       bool
+	}{
+		{name: "empty", components: Components{}, want: false},
+		{name: "cli only", components: Components{CLI: true}, want: false},
+		{name: "database only", components: Components{DatabaseSQLite: true}, want: false},
+		{name: "web api", components: Components{WebAPI: true}, want: true},
+		{name: "web ui", components: Components{WebUI: true}, want: true},
+		{name: "scheduler", components: Components{Scheduler: true}, want: true},
+		{name: "jobs", components: Components{Jobs: true}, want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.components.HasRuntime(); got != test.want {
+				t.Fatalf("HasRuntime() = %t, want %t for %#v", got, test.want, test.components)
+			}
+		})
+	}
+}
+
 func TestValidateRenderContractHonorsDependencies(t *testing.T) {
 	components := Components{
 		OAuth:            true,

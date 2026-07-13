@@ -33,6 +33,11 @@ cmd/app/main.go
 
 Keep this entrypoint thin. Runtime behavior, commands, routes, schedules, and lifecycle hooks should be composed through `app/` and `app/wire/`.
 
+When the generated App has Web API, Web UI, Scheduler, or Jobs capability,
+launching its binary without arguments starts the combined `run` host. A
+CLI-only App keeps no-argument help behavior. Explicit commands, including
+`run` and `--help`, always remain available.
+
 ## App Composition Points
 
 Common default-app composition files:

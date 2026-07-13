@@ -55,6 +55,10 @@ Observed issues:
   watcher does not scale to multiple apps or multiple SPAs per app.
 - `run` and `watch` are related lifecycle concepts, but the current config keeps
   them apart as raw watcher definitions and a separate `dev.run` map.
+- Listing every nonparticipating App as `false` makes generated config describe
+  what development does not do instead of the lifecycle it owns.
+- Requiring `run: run` repeats an App executable's intrinsic default launch
+  behavior in watcher configuration.
 
 The result is a configuration surface that is powerful but not clean enough for
 the framework-owned default path.
@@ -63,6 +67,8 @@ the framework-owned default path.
 
 - Keep `forj dev` flexible enough for custom watchers.
 - Make the generated config short and understandable.
+- Treat `dev.apps` as a sparse participation set: omitted Apps have no inferred
+  development lifecycle.
 - Make app lifecycle behavior first-class:
   - build this app
   - run this app
@@ -76,6 +82,10 @@ the framework-owned default path.
   Lighthouse devwatch streaming.
 - Avoid inventing a second app model. Watchers should attach to the existing
   GoForj App concept.
+- Use the App's existing runtime capability to decide whether conventional
+  participation includes a runtime process.
+- Launch conventional runtime Apps through their bare executable instead of
+  restating `run` in watcher config.
 
 ## Non-Goals
 
@@ -83,8 +93,10 @@ the framework-owned default path.
 - Removing custom watchers.
 - Making `forj dev` a task runner for unrelated production operations.
 - Encoding every possible build system as a first-class framework feature.
-- Requiring all apps to run during dev. An app can build without being launched,
-  and an app can be disabled from the dev loop.
+- Requiring all Apps to participate during development. Omitted Apps remain
+  completely outside the inferred lifecycle graph.
+- Removing build-only participation. A listed App can explicitly disable its
+  runtime while retaining build and watch behavior.
 
 ## Proposed Config Shape
 
@@ -96,29 +108,62 @@ For Ship, a realistic generated shape could be:
 dev:
   apps:
     app:
-      run: run
       spas:
         portal: ./cmd/app/frontend
-
-    ship: false
-    ship-agent: false
-    ship-sentinel: false
 ```
 
 This means:
 
 - `app` participates in the dev loop.
-- `app` runs with `./bin/app run`.
+- because `app` is runtime-capable, it builds and runs with `./bin/app`.
 - `app` owns one SPA named `portal`.
 - the `portal` SPA lives at `./cmd/app/frontend`.
-- `ship`, `ship-agent`, and `ship-sentinel` do not participate in the default
-  dev loop.
+- `ship`, `ship-agent`, and `ship-sentinel` are absent, so GoForj creates no
+  inferred build, SPA, or runtime nodes for them.
 
 GoForj expands this into the conventional watcher graph internally.
 
+### Sparse App Participation
+
+`dev.apps` is an allowlist, not an inventory of every App in the project.
+
+The target semantics are:
+
+| Configuration | Inferred lifecycle |
+| --- | --- |
+| App key absent | no build, SPA, or runtime nodes |
+| `app: true` | conventional build; conventional runtime when runtime-capable |
+| App mapping | conventional lifecycle plus the listed overrides |
+| App mapping with `run: false` | build and watch only |
+| CLI-only App mapping with no `run` | build and watch only |
+| App mapping with scalar `run` | build and run that App command |
+| App mapping with a `run:` object | build and run the explicit runtime override |
+
+App-level `false` is not part of the target schema. Absence is the only
+App-level exclusion mechanism, so generated configuration should never contain:
+
+```yaml
+dev:
+  apps:
+    ship: false
+```
+
+`app: true` is only a concise inclusion shorthand for an App with no overrides.
+A mapping is used when the App owns SPAs or changes conventional behavior.
+
+Runtime capability comes from the existing App component model. An App is
+runtime-capable when it enables Web API, Web UI, Scheduler, or Jobs. The watcher
+must not infer capability from the presence of a binary, filesystem layout, or
+an App name.
+
+A listed CLI-only App builds but does not launch by default because its bare
+executable intentionally prints help. CLI-only Apps such as `ship`,
+`ship-agent`, and `ship-sentinel` are normally omitted unless a developer wants
+their binaries rebuilt during `forj dev`.
+
 ### App Defaults
 
-For an enabled app, GoForj can infer:
+For a listed App, GoForj can infer:
 
 ```yaml
 build:
@@ -126,10 +171,18 @@ build:
   watch: [.go, .env, .env.*]
   ignore: [forj, _data, wire_gen.go]
 
-run:
-  exec: ./bin/<app> <run>
+run: # runtime-capable Apps only, unless explicitly overridden
+  exec: ./bin/<app>
   watch: [./bin/<app>]
 ```
+
+The build node is conventional for every listed App. The runtime node is
+conventional only when the App is runtime-capable and `run` is not `false`.
+
+The bare executable is sufficient because the
+[`App Default Launch Design`](completed/app-default-launch-design.md) makes zero-argument
+execution intrinsic: runtime-capable Apps enter `run`, while CLI-only Apps print
+help.
 
 For the default app named `app`, the build command remains:
 
@@ -142,6 +195,26 @@ For a named app such as `billing`, the build command becomes:
 ```text
 forj billing build -o ./bin/billing
 ```
+
+### Default Development Runtime Topology
+
+The completed
+[`app run` single-process host design](completed/app-run-single-process-design.md)
+left `forj dev` topology unchanged unless a separate design chose otherwise.
+This watcher design is that separate decision for the structured `dev.apps`
+path.
+
+A listed runtime-capable App with no `run` override launches its bare binary,
+which enters the standalone host:
+
+```text
+forj dev -> ./bin/<app> -> run -> standalone runtime host
+```
+
+An explicit leaf-runtime development topology remains available through a
+scalar `run` command or a `run:` mapping. Legacy raw watchers also retain their
+configured commands during migration. The native watcher must not silently
+rewrite an explicit leaf command into the standalone host.
 
 ### SPA Defaults
 
@@ -170,7 +243,7 @@ dev:
         watch: [.go, .env, .env.*, ./cmd/app/frontend/dist/index.html]
         ignore: [forj, _data, app/wire/wire_gen.go]
       run:
-        exec: ./bin/app run
+        exec: ./bin/app http:serve
         watch: [./bin/app]
       spas:
         portal:
@@ -183,6 +256,38 @@ dev:
 This is intentionally more verbose. It exists for projects that need control,
 not as the generated default.
 
+The `run:` mapping is an advanced process override. It implies that a runtime
+node should be created and its `exec` value is used exactly as configured. This
+keeps explicit leaf-runtime development available without making it the
+framework default.
+
+The scalar form remains a concise override for a command executed through the
+App binary:
+
+```yaml
+dev:
+  apps:
+    app:
+      run: http:serve
+```
+
+This expands to `./bin/app http:serve`. The redundant scalar `run: run` should
+not be generated; omitting `run` already represents the conventional standalone
+command. It may remain accepted while existing structured config migrates.
+
+For the uncommon build-only case:
+
+```yaml
+dev:
+  apps:
+    app:
+      run: false
+```
+
+This creates the App build node and its SPA dependencies, but no runtime node.
+The negative value is attached to the one exceptional behavior being disabled
+instead of requiring `false` entries for every unrelated App.
+
 ### Multiple SPAs
 
 Apps can own more than one SPA:
@@ -191,7 +296,6 @@ Apps can own more than one SPA:
 dev:
   apps:
     app:
-      run: run
       spas:
         portal: ./cmd/app/frontend
         admin:
@@ -318,6 +422,8 @@ messages without parsing watcher names.
 The important difference from raw watcher orchestration is that `forj dev`
 should know dependencies between watchers.
 
+These inferred graphs are created only for Apps present in `dev.apps`.
+
 For an app with one SPA:
 
 ```text
@@ -337,6 +443,17 @@ Go/env files
   -> app binary
   -> app_run restart
 ```
+
+For a listed CLI-only App or an App with `run: false`, the graph ends at the
+binary:
+
+```text
+Go/env files or SPA output
+  -> app_build
+  -> app binary
+```
+
+No `app_run` node exists in that graph.
 
 For an app with multiple SPAs:
 
@@ -366,6 +483,8 @@ Suggested process behavior:
 
 - Build commands are one-shot subprocesses.
 - Runtime commands are long-running subprocesses.
+- The conventional runtime command is the bare `./bin/<app>` executable.
+- An explicit `run.exec` command is preserved exactly.
 - A pending build cancels or coalesces duplicate build requests during debounce.
 - A runtime restarts only after its corresponding build succeeds.
 - Failed builds do not restart the runtime.
@@ -443,8 +562,13 @@ GoForj can offer an automatic migration path for generated watcher config.
 The migration should be conservative:
 
 - Detect only known generated watcher shapes.
-- Convert app build/run watcher pairs into `dev.apps`.
+- Convert a known App build/run watcher pair into a listed `dev.apps` entry with
+  no `run` field.
+- Convert a known build-only App watcher into a listed entry with `run: false`.
 - Convert generated NPM frontend watchers into `spas`.
+- Omit known nonparticipating Apps instead of writing App-level `false` values.
+- Preserve a nonstandard App command as an explicit scalar `run` value. Preserve
+  full process overrides as a `run:` mapping.
 - Preserve unknown `dev.watches` entries as custom watchers.
 - Preserve comments and formatting where practical, but correctness matters more
   than perfect YAML layout.
@@ -485,6 +609,8 @@ Phase 2:
 Phase 3:
 
 - Update generated `.goforj.yml` to use `dev.apps`.
+- Generate only participating App keys.
+- Omit `run` for the conventional standalone runtime.
 - Render old `dev.watches` only for custom watches.
 - Normalize or migrate generated old watcher strings during render.
 
@@ -523,6 +649,59 @@ Likely implementation areas:
 The names are illustrative. The actual split should follow the existing file
 boundaries once implementation starts.
 
+Structured App expansion must follow this order:
+
+1. Iterate only keys explicitly present in `dev.apps`.
+2. Resolve each key against the project's existing App model.
+3. Always create the conventional build node unless `build` explicitly changes
+   that behavior.
+4. If `run: false`, stop the graph at the build output.
+5. If a scalar `run` command is present, append it to the conventional App
+   binary and create that runtime node.
+6. If a `run:` mapping is present, create the configured runtime node.
+7. Otherwise, create a bare-binary runtime node only when the App is
+   runtime-capable.
+
+The compiler must not scan `cmd/`, the filesystem, or the project App registry
+and silently enroll omitted Apps. Discovery can validate configured names, but
+it cannot expand the participation set.
+
+The config representation needs to distinguish four runtime states:
+
+```text
+run omitted  -> capability-derived default
+run false    -> explicit build-only behavior
+run scalar   -> explicit App command suffix
+run mapping  -> explicit runtime override
+```
+
+It does not need an App-level `Enabled` state in the target model. Map presence
+already represents inclusion.
+
+Framework-owned config generation and migration should normalize to this model:
+
+| Input intent | Stored `dev.apps` shape |
+| --- | --- |
+| Initial runtime-capable default App | listed App with no `run` field |
+| Additional App not selected for dev | omitted App key |
+| Additional App selected with conventional `run` | listed App with no `run` field |
+| Additional App selected with a custom App command | listed App with a scalar `run` |
+| Additional App selected with a custom process | listed App with a `run.exec` override |
+| Legacy App explicitly built without running | listed App with `run: false` |
+
+For an existing command-suffix input such as `queue:work`, the generator or
+migration owns expanding it to a complete runtime command:
+
+```yaml
+dev:
+  apps:
+    worker:
+      run: queue:work
+```
+
+This expands transparently to `./bin/worker queue:work`. A `run.exec` mapping is
+reserved for callers that need to replace the complete process command.
+
 ## Testing Strategy
 
 The test suite should cover:
@@ -533,7 +712,14 @@ The test suite should cover:
 - exact path matching for SPA dist markers
 - app expansion for default and named apps
 - multiple SPAs under one app
-- disabled apps
+- omitted App creates no build, SPA, or runtime nodes
+- listed runtime-capable App builds and launches its bare binary
+- listed runtime-capable App with `run: false` creates no runtime node
+- listed CLI-only App builds without implicitly launching help
+- generated config omits CLI-only Apps that have no dev participation
+- explicit scalar and mapped `run` overrides preserve their respective command
+  semantics
+- mixed runtime and CLI-only projects do not enroll Apps by discovery
 - app build followed by app run restart
 - SPA source change followed by SPA build, app build, and app restart
 - build failure does not restart runtime
@@ -546,9 +732,6 @@ For integration tests that render projects, test renders must happen under
 
 ## Open Questions
 
-- Should apps disabled with `false` skip both build and run, or only run?
-- Should an app be allowed to build but not run with `run: false`, or is that a
-  separate `build: true` setting?
 - Should SPA default detection be automatic when `cmd/<app>/frontend/package.json`
   exists, or should generated config list SPAs explicitly?
 - Should `watch: [.go]` match by suffix everywhere, or only file basenames?
@@ -569,13 +752,8 @@ a glance:
 dev:
   apps:
     app:
-      run: run
       spas:
         portal: ./cmd/app/frontend
-
-    ship: false
-    ship-agent: false
-    ship-sentinel: false
 ```
 
 From that, `forj dev` should know how to:
@@ -585,7 +763,7 @@ From that, `forj dev` should know how to:
 - build SPA output
 - rebuild the embedding app when SPA output changes
 - restart the app when the binary changes
-- skip disabled apps
+- leave omitted Apps completely unmanaged
 - keep custom watchers available for project-specific work
 
 The framework still provides the flexibility that made `wgo` useful, but the

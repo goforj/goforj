@@ -733,7 +733,9 @@ The implementation should not be considered complete until all of the following 
 
 These are intentionally left out of the current implementation scope:
 
-- whether bare-binary execution should default to standalone host behavior
+- bare-binary execution is resolved by the completed
+  [`App Default Launch Design`](app-default-launch-design.md): runtime-capable
+  Apps default to the standalone `run` host while CLI-only Apps retain help
 - whether distributed role selection should also support a separate env-driven runtime role concept
 
 ## Test Plan To Add Later

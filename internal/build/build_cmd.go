@@ -13,14 +13,12 @@ import (
 
 // Cmd runs the forj build pipeline.
 type Cmd struct {
-	logger        *logger.AppLogger
-	pipeline      Pipeline
-	Timings       bool   `help:"Print per-step timings for generate, api index, and go build"`
-	SkipWire      bool   `help:"Skip running wire before build" hidden:""`
-	AutoRun       bool   `help:"Build binary so launching it with no args runs the app runtime command"`
-	DefaultLaunch string `help:"Set compiled default command used when the built binary is launched without args"`
-	EnvDefaults   string `help:"Compile unset-only environment defaults as comma-separated KEY=value pairs"`
-	EnvOverrides  string `help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
+	logger       *logger.AppLogger
+	pipeline     Pipeline
+	Timings      bool   `help:"Print per-step timings for generate, api index, and go build"`
+	SkipWire     bool   `help:"Skip running wire before build" hidden:""`
+	EnvDefaults  string `help:"Compile unset-only environment defaults as comma-separated KEY=value pairs"`
+	EnvOverrides string `help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
 
 	// Profile flags.
 	Profile bool `help:"Profile compile time for this build"`
@@ -45,7 +43,7 @@ func (*Cmd) Signature() string {
 }
 
 func (c *Cmd) Run() error {
-	if err := c.validateLaunchDefaults(); err != nil {
+	if err := c.validateCompiledEnv(); err != nil {
 		return err
 	}
 	if err := c.pipeline.Run(c.Root, "build", Step{
@@ -74,17 +72,13 @@ func (c *Cmd) buildBinary() (string, error) {
 }
 
 func (c *Cmd) buildArgs() []string {
-	defaultLaunch := c.effectiveDefaultLaunch()
 	envDefaultsEncoded := c.encodedEnvDefaults()
 	envOverridesEncoded := c.encodedEnvOverrides()
 	modulePath := ""
-	if defaultLaunch != "" || envDefaultsEncoded != "" || envOverridesEncoded != "" {
+	if envDefaultsEncoded != "" || envOverridesEncoded != "" {
 		modulePath = c.modulePath()
 	}
 	var extraLdflags []string
-	if defaultLaunch != "" {
-		extraLdflags = append(extraLdflags, c.defaultLaunchLdflags(modulePath, defaultLaunch))
-	}
 	if envDefaultsEncoded != "" {
 		extraLdflags = append(extraLdflags, c.envDefaultsLdflags(modulePath, envDefaultsEncoded))
 	}
@@ -177,44 +171,21 @@ func outputPath(arg string) string {
 	return arg
 }
 
-func (c *Cmd) validateLaunchDefaults() error {
-	if c.AutoRun && strings.TrimSpace(c.DefaultLaunch) != "" && strings.TrimSpace(c.DefaultLaunch) != "run" {
-		return fmt.Errorf("--auto-run and --default-launch must agree; got default-launch=%q", c.DefaultLaunch)
-	}
-	if launch := strings.TrimSpace(c.DefaultLaunch); launch != "" && strings.ContainsAny(launch, " \t\r\n") {
-		return fmt.Errorf("--default-launch must be a single command token, got %q", c.DefaultLaunch)
-	}
+// validateCompiledEnv fails before pipeline work because linker injection needs valid assignments and a resolvable module path.
+func (c *Cmd) validateCompiledEnv() error {
 	if _, err := parseEnvAssignments(c.EnvDefaults, "--env-defaults"); err != nil {
 		return err
 	}
 	if _, err := parseEnvAssignments(c.EnvOverrides, "--env-overrides"); err != nil {
 		return err
 	}
-	if modulePath := c.modulePath(); modulePath == "" && (c.effectiveDefaultLaunch() != "" || strings.TrimSpace(c.EnvDefaults) != "" || strings.TrimSpace(c.EnvOverrides) != "") {
-		target := c.effectiveDefaultLaunch()
-		if target != "" {
-			return fmt.Errorf("could not resolve module path from %s/go.mod for default launch %q", strings.TrimSpace(c.Root), target)
-		}
+	if modulePath := c.modulePath(); modulePath == "" && (strings.TrimSpace(c.EnvDefaults) != "" || strings.TrimSpace(c.EnvOverrides) != "") {
 		if strings.TrimSpace(c.EnvDefaults) != "" {
 			return fmt.Errorf("could not resolve module path from %s/go.mod for env defaults %q", strings.TrimSpace(c.Root), strings.TrimSpace(c.EnvDefaults))
 		}
 		return fmt.Errorf("could not resolve module path from %s/go.mod for env overrides %q", strings.TrimSpace(c.Root), strings.TrimSpace(c.EnvOverrides))
 	}
 	return nil
-}
-
-func (c *Cmd) effectiveDefaultLaunch() string {
-	if launch := strings.TrimSpace(c.DefaultLaunch); launch != "" {
-		return launch
-	}
-	if c.AutoRun {
-		return "run"
-	}
-	return ""
-}
-
-func (c *Cmd) defaultLaunchLdflags(modulePath, defaultLaunch string) string {
-	return fmt.Sprintf("-X %s/internal/cmd.DefaultLaunchCommand=%s", modulePath, defaultLaunch)
 }
 
 func (c *Cmd) encodedEnvDefaults() string {

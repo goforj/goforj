@@ -464,53 +464,23 @@ func TestBuildProgressReporterNoopsWithoutTTY(t *testing.T) {
 	}
 }
 
-func TestBuildArgsAddsAutoRunDefaultLaunchLdflags(t *testing.T) {
+func TestBuildArgsMergesCompiledEnvWithExistingLdflags(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
 
 	cmd := &Cmd{
-		Root:    root,
-		AutoRun: true,
+		Root:        root,
+		EnvDefaults: "FEATURE_A=true",
+		Args:        []string{"-trimpath", "-ldflags", "-s -w", "-o", "./bin/app", "."},
 	}
 
 	args := cmd.buildArgs()
 	got := strings.Join(args, " ")
-	if !strings.Contains(got, "-ldflags") {
-		t.Fatalf("expected build args to include -ldflags, got %v", args)
-	}
-	if !strings.Contains(got, "-X example.com/demo/internal/cmd.DefaultLaunchCommand=run") {
-		t.Fatalf("expected default launch ldflags in build args, got %v", args)
-	}
-}
-
-func TestBuildArgsMergesDefaultLaunchWithExistingLdflags(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	cmd := &Cmd{
-		Root:          root,
-		DefaultLaunch: "run",
-		Args:          []string{"-trimpath", "-ldflags", "-s -w", "-o", "./bin/app", "."},
-	}
-
-	args := cmd.buildArgs()
-	got := strings.Join(args, " ")
-	if !strings.Contains(got, "-s -w -X example.com/demo/internal/cmd.DefaultLaunchCommand=run") {
+	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true"))
+	if !strings.Contains(got, "-s -w -X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64="+wantPayload) {
 		t.Fatalf("expected merged ldflags, got %v", args)
-	}
-}
-
-func TestValidateLaunchDefaultsRejectsConflictingFlags(t *testing.T) {
-	cmd := &Cmd{
-		AutoRun:       true,
-		DefaultLaunch: "http:serve",
-	}
-	if err := cmd.validateLaunchDefaults(); err == nil {
-		t.Fatal("expected conflicting auto-run/default-launch to fail")
 	}
 }
 
@@ -552,20 +522,20 @@ func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
 	}
 }
 
-func TestValidateLaunchDefaultsRejectsMalformedEnvDefaults(t *testing.T) {
+func TestValidateCompiledEnvRejectsMalformedEnvDefaults(t *testing.T) {
 	cmd := &Cmd{
 		EnvDefaults: "BROKEN",
 	}
-	if err := cmd.validateLaunchDefaults(); err == nil {
+	if err := cmd.validateCompiledEnv(); err == nil {
 		t.Fatal("expected malformed env defaults to fail")
 	}
 }
 
-func TestValidateLaunchDefaultsRejectsMalformedEnvOverrides(t *testing.T) {
+func TestValidateCompiledEnvRejectsMalformedEnvOverrides(t *testing.T) {
 	cmd := &Cmd{
 		EnvOverrides: "BROKEN",
 	}
-	if err := cmd.validateLaunchDefaults(); err == nil {
+	if err := cmd.validateCompiledEnv(); err == nil {
 		t.Fatal("expected malformed env overrides to fail")
 	}
 }

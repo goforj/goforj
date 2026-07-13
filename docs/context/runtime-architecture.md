@@ -12,6 +12,30 @@ This is where app-level runtime policy belongs.
 
 ## Main Concepts
 
+### Default Launch
+
+Runtime-capable generated Apps treat bare execution as the standalone `run`
+host:
+
+```bash
+./bin/app
+./bin/app run
+```
+
+Those invocations enter the same command and have the same topology, lifecycle,
+signals, and exit behavior. An App is runtime-capable when it enables Web API,
+Web UI, Scheduler, or Jobs.
+
+CLI-only Apps retain no-argument help:
+
+```bash
+./bin/ship
+```
+
+Any explicit argument takes precedence, including `--help`, `http:serve`,
+`schedule:run`, and `queue:work`. Launch behavior is generated per App and does
+not depend on `forj build` flags or linker-injected defaults.
+
 ### `Lifecycle`
 
 Coordinates startup and shutdown phases for long-lived runtime components.
