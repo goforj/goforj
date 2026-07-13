@@ -331,7 +331,6 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 			GoModuleName: "example.com/jobsmetricsapp",
 			UpdatedAt:    "2026-05-06 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
 				Components: project.Components{
 					CLI:            true,
 					WebAPI:         true,
@@ -415,7 +414,6 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 			GoModuleName: "example.com/schedulermetricsapp",
 			UpdatedAt:    "2026-05-06 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
 				Components: project.Components{
 					CLI:            true,
 					WebAPI:         true,

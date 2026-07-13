@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -124,7 +125,8 @@ func TestMakeAppCmdUsesNextAvailableEnvPortForSequentialApps(t *testing.T) {
 	}
 }
 
-func TestMakeAppCmdLeavesDevRunDisabledByDefault(t *testing.T) {
+// TestMakeAppCmdOmitsCLIOnlyAppFromDevByDefault verifies omission remains the default for tooling Apps.
+func TestMakeAppCmdOmitsCLIOnlyAppFromDevByDefault(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -157,14 +159,125 @@ func TestMakeAppCmdLeavesDevRunDisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if _, ok := cfg.Dev.Run["ship"]; ok {
-		t.Fatalf("expected ship to be absent from dev.run")
+	if _, ok := cfg.Dev.Apps["ship"]; ok {
+		t.Fatalf("expected CLI-only ship to be absent from native dev apps, got %#v", cfg.Dev.Apps)
 	}
 	if _, ok := cfg.Apps["ship"]; !ok {
 		t.Fatalf("expected ship render app config")
 	}
 }
 
+// TestMakeAppCmdMigratesLegacyLifecycleBeforeOmittingCLIApp prevents filesystem discovery from silently enrolling the new App.
+func TestMakeAppCmdMigratesLegacyLifecycleBeforeOmittingCLIApp(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	config := &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render:       project.RenderConfig{Components: project.Components{CLI: true, WebAPI: true}},
+		Dev: project.DevConfig{
+			Run: map[string]string{project.DefaultAppName: "run"},
+			Watches: []project.DevWatch{
+				{
+					Name:  "Build App",
+					Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+					Exec:  "forj build -o ./bin/app",
+				},
+				{
+					Name:  "Run App",
+					Watch: "-file ./bin/app -file .env -file .env.*",
+					Exec:  "./bin/app run",
+				},
+			},
+		},
+	}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "ship"
+	cmd.Components = "cli"
+	cmd.SkipWire = true
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make app: %v", err)
+	}
+
+	got, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("load migrated config: %v", err)
+	}
+	if !got.Dev.UsesStructuredApps() {
+		t.Fatal("recognized legacy lifecycle was not migrated to native App presence")
+	}
+	if _, exists := got.Dev.Apps[project.DefaultAppName]; !exists {
+		t.Fatalf("migrated default App is absent: %#v", got.Dev.Apps)
+	}
+	if _, exists := got.Dev.Apps["ship"]; exists {
+		t.Fatalf("CLI-only App was silently enrolled: %#v", got.Dev.Apps)
+	}
+	if got.Dev.Run != nil || len(got.Dev.Watches) != 0 {
+		t.Fatalf("legacy lifecycle remained after migration: %#v", got.Dev)
+	}
+	if _, err := compileDevWatchers(got); err != nil {
+		t.Fatalf("migrated make:app config does not compile: %v", err)
+	}
+}
+
+// TestMakeAppCmdRejectsCustomizedLegacyLifecycleBeforeWriting avoids an invalid mixed native and discovery graph.
+func TestMakeAppCmdRejectsCustomizedLegacyLifecycleBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	config := &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render:       project.RenderConfig{Components: project.Components{CLI: true}},
+		Dev: project.DevConfig{Watches: []project.DevWatch{
+			{Name: "Build App", Watch: "-file .go -postpone", Exec: "make custom-build"},
+			{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app custom"},
+		}},
+	}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatalf("write customized legacy config: %v", err)
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "ship"
+	cmd.Components = "cli"
+	cmd.SkipWire = true
+	err = cmd.Run()
+	if err == nil || !strings.Contains(err.Error(), "customized legacy Build App/Run App lifecycle") {
+		t.Fatalf("make app error = %v, want migration guidance", err)
+	}
+	got, loadErr := project.LoadProjectConfig()
+	if loadErr != nil {
+		t.Fatalf("reload untouched config: %v", loadErr)
+	}
+	if got.Dev.UsesStructuredApps() || len(got.Apps) != 0 {
+		t.Fatalf("failed make:app mutated config: %#v", got)
+	}
+	if _, statErr := os.Stat(filepath.Join("cmd", "ship")); !os.IsNotExist(statErr) {
+		t.Fatalf("failed make:app created App files: %v", statErr)
+	}
+}
+
+// TestMakeAppCmdPersistsDevRunCommand verifies an explicit CLI App command becomes a scalar native override.
 func TestMakeAppCmdPersistsDevRunCommand(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -199,8 +312,56 @@ func TestMakeAppCmdPersistsDevRunCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if got := cfg.Dev.Run["ship"]; got != "sync --once" {
-		t.Fatalf("expected custom ship dev run command, got %q", got)
+	devApp, ok := cfg.Dev.Apps["ship"]
+	if !ok || devApp.Run == nil || devApp.Run.Exec != "sync --once" || !devApp.Run.Shorthand {
+		t.Fatalf("expected custom ship native dev run command, got %#v", devApp)
+	}
+}
+
+// TestMakeAppCmdPreservesExplicitRunForCLIOnlyApp distinguishes a user command from capability-derived build-only behavior.
+func TestMakeAppCmdPreservesExplicitRunForCLIOnlyApp(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := writeProjectConfig(".goforj.yml", &project.Config{
+		ProjectName:  "TestApp",
+		GoModuleName: "example.com/testapp",
+		Render:       project.RenderConfig{Components: project.Components{CLI: true}},
+		Dev:          project.DevConfig{Apps: map[string]project.DevApp{}},
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd.Name = "ship"
+	cmd.Components = "cli"
+	cmd.DevRun = "run"
+	cmd.SkipWire = true
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make app: %v", err)
+	}
+
+	config, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	devApp := config.Dev.Apps["ship"]
+	if devApp.Run == nil || !devApp.Run.Shorthand || devApp.Run.Exec != "run" {
+		t.Fatalf("explicit CLI run choice became conventional build-only config: %#v", devApp)
+	}
+	watchers, err := compileDevWatchers(config)
+	if err != nil {
+		t.Fatalf("compile explicit CLI run choice: %v", err)
+	}
+	if got, want := compiledDevWatcherNames(watchers), []string{"Build ship", "Run ship"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("compiled watcher names = %#v, want %#v", got, want)
 	}
 }
 
@@ -516,6 +677,7 @@ func TestMakeAppCmdCreatesAppVueStarterKit(t *testing.T) {
 	cmd.Name = "portal"
 	cmd.Components = "web-api,web-ui"
 	cmd.StarterKit = "vue"
+	cmd.DevRun = "run"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("make app: %v", err)
@@ -538,6 +700,20 @@ func TestMakeAppCmdCreatesAppVueStarterKit(t *testing.T) {
 	appConfig := cfg.Apps["portal"]
 	if !appConfig.Components.WebUI || appConfig.StarterKit != project.StarterKitVue {
 		t.Fatalf("unexpected portal app config: %#v", appConfig)
+	}
+	devApp, ok := cfg.Dev.Apps["portal"]
+	portal := project.DefaultNamedApp("portal")
+	wantBuild := conventionalDevAppBuildCommand(cfg, portal)
+	wantRun := conventionalDevAppRuntimeCommand(portal)
+	wantSPA := conventionalDevSPAConfig("./cmd/portal/frontend")
+	if !ok || devApp.Build == nil || !reflect.DeepEqual(*devApp.Build, wantBuild) ||
+		devApp.Run == nil || !reflect.DeepEqual(*devApp.Run, wantRun) ||
+		!reflect.DeepEqual(devApp.SPAs[generatedFrontendSPAName], wantSPA) {
+		t.Fatalf("expected portal frontend in the native dev graph, got %#v", devApp)
+	}
+	wantTask := generatedDevFrontendInstallTask(project.DefaultNamedApp("portal"))
+	if !hasDevTask(cfg.Dev.Pre, wantTask) {
+		t.Fatalf("expected named frontend dependency task %#v, got %#v", wantTask, cfg.Dev.Pre)
 	}
 }
 
@@ -635,8 +811,12 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 			},
 		},
 		Dev: project.DevConfig{
+			Pre: []project.DevTask{generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))},
 			Run: map[string]string{
 				"billing": "run",
+			},
+			Apps: map[string]project.DevApp{
+				"billing": {},
 			},
 		},
 		Apps: map[string]project.AppConfig{
@@ -708,6 +888,18 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 	}
 	if _, ok := cfg.Dev.Run["billing"]; ok {
 		t.Fatalf("expected billing dev run config to be removed")
+	}
+	if cfg.Dev.Run == nil {
+		t.Fatal("removing the final legacy allowlist entry changed explicit exclusion into pre-allowlist discovery")
+	}
+	if configSource := readMakeAppTestFile(t, ".goforj.yml"); !strings.Contains(configSource, "run: {}") {
+		t.Fatalf("saved config omitted the empty legacy allowlist:\n%s", configSource)
+	}
+	if _, ok := cfg.Dev.Apps["billing"]; ok {
+		t.Fatalf("expected billing native dev app config to be removed")
+	}
+	if hasDevTask(cfg.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) {
+		t.Fatalf("expected billing frontend dependency task to be removed")
 	}
 	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))
 	if strings.Contains(runtimeSrc, `Name: "billing"`) {

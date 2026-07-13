@@ -3,11 +3,17 @@ package build
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/logger"
@@ -171,6 +177,159 @@ func TestAtomicGoBuildArgsUsesUniqueHiddenBuildOutputs(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(firstArgs, " "), "./bin/app") || strings.Contains(strings.Join(secondArgs, " "), "./bin/app") {
 		t.Fatalf("expected go build args to avoid final output path, got %#v and %#v", firstArgs, secondArgs)
+	}
+}
+
+// TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary verifies
+// overlapping publishers cannot expose a missing, malformed, or partial executable.
+func TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows locks running executables, while dev launches snapshots instead of the published path")
+	}
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/publicationrace\n\ngo 1.24\n",
+		"cmd/alpha/main.go": `package main
+
+import "fmt"
+
+func main() { fmt.Print("alpha") }
+`,
+		"cmd/beta/main.go": `package main
+
+import "fmt"
+
+func main() { fmt.Print("beta") }
+`,
+	}
+	for relativePath, contents := range files {
+		absolutePath := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(absolutePath), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", relativePath, err)
+		}
+		if err := os.WriteFile(absolutePath, []byte(contents), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", relativePath, err)
+		}
+	}
+
+	previousDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
+
+	buildPackage := func(packagePath string) error {
+		command := &Cmd{Root: "."}
+		_, buildErr := command.runPlainGoBuild([]string{"-o", "./bin/app", packagePath})
+		return buildErr
+	}
+	if err := buildPackage("./cmd/alpha"); err != nil {
+		t.Fatalf("seed published binary: %v", err)
+	}
+
+	type launchResult struct {
+		count int
+		err   error
+	}
+	stopLaunches := make(chan struct{})
+	launchStarted := make(chan struct{})
+	launchResults := make(chan launchResult, 1)
+	var successfulLaunches atomic.Int64
+	binaryPath := filepath.Join(root, "bin", "app")
+	go func() {
+		result := launchResult{}
+		defer func() { launchResults <- result }()
+		for {
+			select {
+			case <-stopLaunches:
+				return
+			default:
+			}
+			output, runErr := exec.Command(binaryPath).CombinedOutput()
+			if runErr != nil {
+				result.err = fmt.Errorf("launch published binary: %w: %s", runErr, strings.TrimSpace(string(output)))
+				return
+			}
+			version := strings.TrimSpace(string(output))
+			if version != "alpha" && version != "beta" {
+				result.err = fmt.Errorf("published binary returned incomplete version %q", version)
+				return
+			}
+			result.count++
+			successfulLaunches.Add(1)
+			if result.count == 1 {
+				close(launchStarted)
+			}
+		}
+	}()
+	select {
+	case <-launchStarted:
+	case result := <-launchResults:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		t.Fatal("binary launch loop stopped before its first successful execution")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the first published binary launch")
+	}
+
+	const iterations = 6
+	publishersReady := make(chan struct{}, 2)
+	beginBuilds := make(chan struct{})
+	buildErrors := make(chan error, 2)
+	var builds sync.WaitGroup
+	for _, packagePath := range []string{"./cmd/alpha", "./cmd/beta"} {
+		packagePath := packagePath
+		builds.Add(1)
+		go func() {
+			defer builds.Done()
+			publishersReady <- struct{}{}
+			<-beginBuilds
+			for iteration := 1; iteration <= iterations; iteration++ {
+				if buildErr := buildPackage(packagePath); buildErr != nil {
+					buildErrors <- fmt.Errorf("build %s iteration %d: %w", packagePath, iteration, buildErr)
+					return
+				}
+			}
+		}()
+	}
+	for range 2 {
+		<-publishersReady
+	}
+	launchesBeforePublication := successfulLaunches.Load()
+	close(beginBuilds)
+	builds.Wait()
+	launchesDuringPublication := successfulLaunches.Load() - launchesBeforePublication
+	close(stopLaunches)
+	var result launchResult
+	select {
+	case result = <-launchResults:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out stopping the published binary launch loop")
+	}
+	close(buildErrors)
+	for buildErr := range buildErrors {
+		t.Error(buildErr)
+	}
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if result.count < iterations {
+		t.Fatalf("successful launches = %d, want at least %d during repeated publication", result.count, iterations)
+	}
+	if launchesDuringPublication == 0 {
+		t.Fatal("no binary launch overlapped the repeated publication window")
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, "bin", ".forj-build-cache"))
+	if err != nil {
+		t.Fatalf("ReadDir(build cache) error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("build cache retained %d publication artifacts", len(entries))
 	}
 }
 
@@ -521,26 +680,19 @@ func TestBuildProgressReporterNoopsWithoutTTY(t *testing.T) {
 	}
 }
 
-func TestBuildArgsMergesCompiledEnvWithExistingLdflags(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	cmd := &Cmd{
-		Root:        root,
-		EnvDefaults: "FEATURE_A=true",
-		Args:        []string{"-trimpath", "-ldflags", "-s -w", "-o", "./bin/app", "."},
-	}
-
+// TestBuildArgsDoNotInjectLaunchState verifies executable behavior is derived
+// from generated app source rather than artifact-specific linker values.
+func TestBuildArgsDoNotInjectLaunchState(t *testing.T) {
+	cmd := &Cmd{Root: t.TempDir()}
 	args := cmd.buildArgs()
 	got := strings.Join(args, " ")
-	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true"))
-	if !strings.Contains(got, "-s -w -X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64="+wantPayload) {
-		t.Fatalf("expected merged ldflags, got %v", args)
+	if strings.Contains(got, "-ldflags") {
+		t.Fatalf("buildArgs() injected launch state: %v", args)
 	}
 }
 
+// TestBuildArgsAddsCompiledEnvDefaultsLdflags verifies unset-only values remain
+// available through the independent compiled environment channel.
 func TestBuildArgsAddsCompiledEnvDefaultsLdflags(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
@@ -560,6 +712,8 @@ func TestBuildArgsAddsCompiledEnvDefaultsLdflags(t *testing.T) {
 	}
 }
 
+// TestBuildArgsAddsCompiledEnvOverridesLdflags verifies forced values remain
+// available without coupling them to executable launch behavior.
 func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
@@ -579,6 +733,31 @@ func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
 	}
 }
 
+// TestBuildArgsMergesCompiledEnvWithExistingLdflags verifies removing launch
+// injection does not disturb the generic linker-flag merge path.
+func TestBuildArgsMergesCompiledEnvWithExistingLdflags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	cmd := &Cmd{
+		Root:        root,
+		EnvDefaults: "FEATURE_A=true",
+		Args:        []string{"-trimpath", "-ldflags", "-s -w", "-o", "./bin/app", "."},
+	}
+
+	args := cmd.buildArgs()
+	got := strings.Join(args, " ")
+	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true"))
+	want := "-s -w -X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64=" + wantPayload
+	if !strings.Contains(got, want) {
+		t.Fatalf("buildArgs() did not preserve and extend linker flags: %v", args)
+	}
+}
+
+// TestValidateCompiledEnvRejectsMalformedEnvDefaults verifies malformed
+// unset-only values still fail before invoking the compiler.
 func TestValidateCompiledEnvRejectsMalformedEnvDefaults(t *testing.T) {
 	cmd := &Cmd{
 		EnvDefaults: "BROKEN",
@@ -588,6 +767,8 @@ func TestValidateCompiledEnvRejectsMalformedEnvDefaults(t *testing.T) {
 	}
 }
 
+// TestValidateCompiledEnvRejectsMalformedEnvOverrides verifies malformed
+// forced values still fail before invoking the compiler.
 func TestValidateCompiledEnvRejectsMalformedEnvOverrides(t *testing.T) {
 	cmd := &Cmd{
 		EnvOverrides: "BROKEN",

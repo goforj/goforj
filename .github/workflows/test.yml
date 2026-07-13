@@ -69,6 +69,61 @@ jobs:
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
+  watcher-stress:
+    name: Watcher churn (race)
+    runs-on: ubuntu-latest
+    env:
+      GOCACHE: /tmp/gocache
+      GOMODCACHE: /tmp/gomodcache
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run watcher concurrency stress tests
+        run: |
+          set -euo pipefail
+          devwatch_tests="$(go test ./internal/devwatch -list '^TestDevWatchEngineSustainedEditorStormCoalesces$')"
+          grep -qx 'TestDevWatchEngineSustainedEditorStormCoalesces' <<<"$devwatch_tests"
+          build_tests="$(go test ./internal/build -list '^TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary$')"
+          grep -qx 'TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary' <<<"$build_tests"
+          go test -race ./internal/devwatch ./internal/build \
+            -run '^Test(DevWatchEngineSustainedEditorStormCoalesces|ConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary)$' \
+            -count=3 -timeout=15m -v
+
+      - name: Run forj dev churn integration test
+        run: |
+          set -euo pipefail
+          test_pattern='^TestDevWatcher(ChurnIntegration|PollingStress|Boundary(RejectedReplacementKeepsHealthyRuntime|PostPreparationStartFailureRetries|RelativeCommandDirectoryLaunchesPreparedSnapshot|ShutdownCancelsBlockedBuild|ChangeDuringRuntimeReplacementConverges)|MultiAppChurnIsolation|OutputBackpressureReapsProcesses|InitialInvalidProjectRecovers)$'
+          discovered="$(go test -tags=watcherstress ./internal/forj -list "$test_pattern")"
+          for test_name in \
+            TestDevWatcherChurnIntegration \
+            TestDevWatcherPollingStress \
+            TestDevWatcherBoundaryRejectedReplacementKeepsHealthyRuntime \
+            TestDevWatcherBoundaryPostPreparationStartFailureRetries \
+            TestDevWatcherBoundaryRelativeCommandDirectoryLaunchesPreparedSnapshot \
+            TestDevWatcherBoundaryShutdownCancelsBlockedBuild \
+            TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges \
+            TestDevWatcherMultiAppChurnIsolation \
+            TestDevWatcherOutputBackpressureReapsProcesses \
+            TestDevWatcherInitialInvalidProjectRecovers
+          do
+            grep -qx "$test_name" <<<"$discovered"
+          done
+          go test -race -tags=watcherstress ./internal/forj \
+            -run "$test_pattern" \
+            -count=1 -timeout=15m -v
+
   renders:
     needs: renders-cache
     runs-on: ubuntu-latest
@@ -423,7 +478,6 @@ jobs:
               scheduler: true
               jobs: true
               stress_test: false
-            queue_driver: redis
             goforj_version: ""
           YAML
           cd "${UPTIME_GOPHER_DEMO_DIR}"
@@ -466,7 +520,7 @@ jobs:
           path: |
             ${{ env.GOCACHE }}
             ${{ env.GOMODCACHE }}
-          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/cache.go', 'internal/generate/storage.go', 'internal/forj/internal/cache/manager.go', 'internal/forj/internal/storage/manager.go') }}
+          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'go.mod', 'integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/cache.go', 'internal/generate/storage.go', 'internal/forj/internal/cache/manager.go', 'internal/forj/internal/storage/manager.go') }}
           restore-keys: |
             generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
@@ -523,9 +577,10 @@ jobs:
             fi
           done
 
-      - name: Download Go modules
+      - name: Validate and download Go modules
         run: |
           cd integration
+          GOWORK=off go mod tidy -diff
           GOWORK=off go mod download
 
       - name: Run generator integration smoke tests

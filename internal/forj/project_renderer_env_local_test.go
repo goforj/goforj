@@ -11,6 +11,86 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestProjectRendererSeedsQueueDriverOnlyInEnv keeps the wizard choice out of durable render configuration.
+func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	root := t.TempDir()
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	config := &project.Config{
+		ProjectName: "QueueSeed", GoModuleName: "example.com/queueseed",
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Jobs: true}},
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	legacyConfig := strings.Replace(string(encoded), "render:\n", "render:\n    queue_driver: \"\"\n", 1)
+	if err := os.WriteFile(".goforj.yml", []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "nats"}); err != nil {
+		t.Fatalf("initial render: %v", err)
+	}
+	envData, err := os.ReadFile(".env")
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if !strings.Contains(string(envData), "QUEUE_DRIVER=nats ") || !strings.Contains(string(envData), "QUEUE_SUPPORTED_DRIVERS=nats ") {
+		t.Fatalf("wizard queue choice was not seeded into .env:\n%s", envData)
+	}
+	configData, err := os.ReadFile(".goforj.yml")
+	if err != nil {
+		t.Fatalf("read rewritten config: %v", err)
+	}
+	if strings.Contains(string(configData), "queue_driver:") {
+		t.Fatalf("wizard queue choice leaked into project config:\n%s", configData)
+	}
+
+	if err := os.WriteFile(".env", []byte("QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool\n"), 0o644); err != nil {
+		t.Fatalf("write existing .env: %v", err)
+	}
+	if err := renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "redis"}); err != nil {
+		t.Fatalf("rerender: %v", err)
+	}
+	envData, err = os.ReadFile(".env")
+	if err != nil {
+		t.Fatalf("read rerendered .env: %v", err)
+	}
+	if !strings.Contains(string(envData), "QUEUE_DRIVER=workerpool\n") || strings.Contains(string(envData), "QUEUE_DRIVER=redis\n") {
+		t.Fatalf("rerender replaced runtime queue configuration:\n%s", envData)
+	}
+}
+
+// TestResolveQueueDriverSeed keeps the wizard selection transient while retaining one-way legacy migration.
+func TestResolveQueueDriverSeed(t *testing.T) {
+	tests := []struct {
+		name     string
+		selected string
+		legacy   string
+		want     string
+	}{
+		{name: "wizard selection wins", selected: " NATS ", legacy: "redis", want: "nats"},
+		{name: "legacy config seeds missing selection", legacy: "workerpool", want: "workerpool"},
+		{name: "invalid values use default", selected: "unknown", legacy: "invalid", want: "redis"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := resolveQueueDriverSeed(test.selected, test.legacy); got != test.want {
+				t.Fatalf("resolveQueueDriverSeed(%q, %q) = %q, want %q", test.selected, test.legacy, got, test.want)
+			}
+		})
+	}
+}
+
 func TestProjectRendererAlwaysRendersEnvLocalWithInspectDefaults(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

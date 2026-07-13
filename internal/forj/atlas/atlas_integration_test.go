@@ -27,8 +27,7 @@ func TestAtlasMCPServerUsesRenderedProjectInventory(t *testing.T) {
 			GoModuleName: "example.com/atlas-smoke",
 			UpdatedAt:    "2026-06-23 00:00:00 UTC",
 			Render: project.RenderConfig{
-				StarterKit:  project.StarterKitVue,
-				QueueDriver: "workerpool",
+				StarterKit: project.StarterKitVue,
 				Components: project.Components{
 					CLI:            true,
 					WebAPI:         true,
@@ -47,6 +46,12 @@ func TestAtlasMCPServerUsesRenderedProjectInventory(t *testing.T) {
 			"EVENTS_AUDIT_DRIVER":   "inproc",
 		},
 	})
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(root, ".env")}, map[string]string{
+		"QUEUE_DRIVER":            "workerpool",
+		"QUEUE_SUPPORTED_DRIVERS": "workerpool",
+	}); err != nil {
+		t.Fatalf("persist workerpool queue selection: %v", err)
+	}
 	appendFile(t, filepath.Join(root, ".env"), `
 QUEUE_REPORTS_DRIVER=workerpool
 CACHE_SESSIONS_DRIVER=memory

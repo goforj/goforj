@@ -21,7 +21,6 @@ module_name: example.com/demo
 render:
   goforj_version: 0.18.0
   starter_kit: vue
-  queue_driver: redis
   components:
     cli: true
     web_api: true
@@ -29,6 +28,7 @@ render:
     jobs: true
     database_sqlite: true
 `)
+	writeFile(t, filepath.Join(root, ".env"), "QUEUE_DRIVER=nats\n")
 	writeFile(t, filepath.Join(root, "cmd", "app", "main.go"), "package main\n")
 	writeFile(t, filepath.Join(root, "app", "routes.go"), "package app\n")
 	writeFile(t, filepath.Join(root, "cmd", "marketplace", "main.go"), "package main\n")
@@ -47,6 +47,9 @@ render:
 	if project.DatabaseDriver != "sqlite" {
 		t.Fatalf("database driver = %q", project.DatabaseDriver)
 	}
+	if project.QueueDriver != "nats" {
+		t.Fatalf("queue driver = %q", project.QueueDriver)
+	}
 	if !containsString(project.Components, "web-api") || !containsString(project.Components, "jobs") {
 		t.Fatalf("components = %#v", project.Components)
 	}
@@ -62,7 +65,6 @@ project_name: demo
 module_name: example.com/demo
 render:
   starter_kit: vue
-  queue_driver: redis
   components:
     cli: true
     web_api: true

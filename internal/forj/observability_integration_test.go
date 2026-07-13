@@ -42,7 +42,6 @@ func TestRenderedObservabilityStack(t *testing.T) {
 					Observability: true,
 					Grafana:       true,
 				},
-				QueueDriver: "redis",
 			},
 		},
 	})
@@ -431,7 +430,6 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 					Observability: true,
 					Grafana:       true,
 				},
-				QueueDriver: "redis",
 			},
 		},
 	})
@@ -504,10 +502,15 @@ func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
 					Jobs:          true,
 					Observability: true,
 				},
-				QueueDriver: "workerpool",
 			},
 		},
 	})
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, map[string]string{
+		"QUEUE_DRIVER":            "workerpool",
+		"QUEUE_SUPPORTED_DRIVERS": "workerpool",
+	}); err != nil {
+		t.Fatalf("set observability target queue driver: %v", err)
+	}
 
 	targets := readRenderedMetricsTargets(t, projectDir)
 	want := []renderedMetricsTarget{

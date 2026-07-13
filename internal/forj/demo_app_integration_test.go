@@ -32,7 +32,6 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 			GoModuleName: "example.com/demoapp",
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
 				Components: project.Components{
 					WebAPI:         true,
 					WebUI:          true,
@@ -183,7 +182,6 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			GoModuleName: "example.com/demoqueuedrivers",
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
 				Components: project.Components{
 					WebAPI:         true,
 					WebUI:          false,

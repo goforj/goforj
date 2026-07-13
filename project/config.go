@@ -11,10 +11,23 @@ import (
 
 // DevWatch represents a command to be run in development mode.
 type DevWatch struct {
-	Name  string            `yaml:"name" json:"name"`
-	Watch string            `yaml:"watch" json:"watch"` // wgo options
-	Exec  string            `yaml:"exec" json:"exec"`   // bash command to run on change
-	Env   map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Name     string            `yaml:"name" json:"name"`
+	Watch    string            `yaml:"-" json:"-"`
+	Legacy   bool              `yaml:"-" json:"-"`
+	Include  []string          `yaml:"-" json:"-"`
+	Ignore   []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	Roots    []string          `yaml:"roots,omitempty" json:"roots,omitempty"`
+	WorkDir  string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	Files    DevWatchMatchers  `yaml:"files,omitempty" json:"files,omitempty"`
+	Dirs     DevWatchMatchers  `yaml:"dirs,omitempty" json:"dirs,omitempty"`
+	Exec     string            `yaml:"exec" json:"exec"`
+	Env      map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Debounce string            `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+	Poll     string            `yaml:"poll,omitempty" json:"poll,omitempty"`
+	Postpone bool              `yaml:"postpone,omitempty" json:"postpone,omitempty"`
+	Restart  bool              `yaml:"restart,omitempty" json:"restart,omitempty"`
+	Exit     bool              `yaml:"exit,omitempty" json:"exit,omitempty"`
+	Stdin    bool              `yaml:"stdin,omitempty" json:"stdin,omitempty"`
 }
 
 // DevTask represents a task to be run in development mode.
@@ -32,7 +45,9 @@ type DevConfig struct {
 	DownOnExit        bool              `yaml:"down_on_exit" json:"down_on_exit"`
 	SoundOnWatchError bool              `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
 	WirePaths         []string          `yaml:"wire_paths" json:"wire_paths"`
-	Watches           []DevWatch        `yaml:"watches" json:"watches"`
+	Watches           []DevWatch        `yaml:"watches,omitempty" json:"watches,omitempty"`
+	Apps              map[string]DevApp `yaml:"apps,omitempty" json:"apps,omitempty"`
+	appsConfigured    bool
 }
 
 // DefaultAppName is the conventional app name used when no named app is selected.
@@ -116,13 +131,44 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components    Components `yaml:"components" json:"components"`
-	StarterKit    StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat    HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
-	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
+	Components           Components `yaml:"components" json:"components"`
+	StarterKit           StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat           HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion        string     `yaml:"goforj_version" json:"goforj_version"`
+	legacyQueueDriverSet bool
+	legacyQueueDriver    string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+}
+
+// HasLegacyQueueDriver reports whether the obsolete render key was present, including an explicitly empty value.
+func (c RenderConfig) HasLegacyQueueDriver() bool {
+	return c.legacyQueueDriverSet
+}
+
+// LegacyQueueDriver returns the obsolete value solely for one-way environment migration.
+func (c RenderConfig) LegacyQueueDriver() string {
+	return c.legacyQueueDriver
+}
+
+// UnmarshalYAML accepts the obsolete queue choice long enough to migrate it into the environment.
+func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
+	type renderConfigFields RenderConfig
+	var fields renderConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return fmt.Errorf("decode render config: %w", err)
+	}
+	*c = RenderConfig(fields)
+	for index := 0; index+1 < len(value.Content); index += 2 {
+		if value.Content[index].Value == "queue_driver" {
+			c.legacyQueueDriverSet = true
+			if err := value.Content[index+1].Decode(&c.legacyQueueDriver); err != nil {
+				return fmt.Errorf("decode legacy queue driver: %w", err)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 // AppConfig records optional per-app participation in project-level capabilities.

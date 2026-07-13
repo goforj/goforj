@@ -196,17 +196,19 @@ func ProvideRoutes(controller *hello.Controller) []web.RouteGroup {
 
 // resolveOpenAPIFixtureWebModule reuses the exact web module selected by the current GoForj build so strict type loading cannot drift.
 func resolveOpenAPIFixtureWebModule() (string, error) {
-	command := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/goforj/web")
-	command.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-		"GOWORK=off",
-	)
-	output, err := command.CombinedOutput()
+	command := exec.Command("go", "list", "-f", "{{.Module.Dir}}", "github.com/goforj/web")
+	command.Env = append(os.Environ(), "GOWORK=off")
+	var stderr strings.Builder
+	// Cold-cache download progress belongs on stderr so stdout remains a usable filesystem path.
+	command.Stderr = &stderr
+	output, err := command.Output()
 	if err != nil {
-		return "", fmt.Errorf("resolve web module for OpenAPI fixture: %w: %s", err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("resolve web module for OpenAPI fixture: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	moduleDir := strings.TrimSpace(string(output))
+	if moduleDir == "" {
+		return "", fmt.Errorf("resolve web module for OpenAPI fixture: Go returned an empty module directory")
+	}
 	info, err := os.Stat(moduleDir)
 	if err != nil {
 		return "", fmt.Errorf("inspect web module for OpenAPI fixture %q: %w", moduleDir, err)

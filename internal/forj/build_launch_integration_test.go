@@ -14,6 +14,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestBuildCompiledEnvModes verifies compiled defaults and overrides remain
+// independent from the generated App's intrinsic launch behavior.
 func TestBuildCompiledEnvModes(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{

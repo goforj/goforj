@@ -29,7 +29,6 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 			GoModuleName: "example.com/queueselection",
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "workerpool",
 				Components: project.Components{
 					Jobs: true,
 				},
@@ -37,6 +36,9 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 		},
 		EnvOverrides: queueEnv,
 	})
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, queueEnv); err != nil {
+		t.Fatalf("persist workerpool queue selection: %v", err)
+	}
 
 	binPath := buildRenderedQueueSelectionApp(t, projectDir, queueEnv)
 
