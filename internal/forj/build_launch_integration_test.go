@@ -14,7 +14,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
+func TestBuildCompiledEnvModes(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
 		Config: project.Config{
@@ -45,13 +45,12 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 			t.Fatalf("forj %s failed: %v\n%s", strings.Join(args, " "), err, out.String())
 		}
 	}
-
-	runBuild("build", "--skip-wire", "--auto-run", `--env-defaults=INTEGRATION_MODE=default,APP_ENV=staging`, `--env-overrides=FORCED_MODE=forced,APP_ENV=production`)
+	runBuild("build", "--skip-wire", `--env-defaults=INTEGRATION_MODE=default,APP_ENV=staging`, `--env-overrides=FORCED_MODE=forced,APP_ENV=production`)
 
 	appPath := filepath.Join(projectDir, "bin", "app")
 
-	t.Run("no args uses run and compiled env semantics", func(t *testing.T) {
-		cmd := exec.Command(appPath)
+	t.Run("compiled defaults and overrides are applied", func(t *testing.T) {
+		cmd := exec.Command(appPath, "inspect-env")
 		cmd.Dir = projectDir
 		cmd.Env = append(os.Environ(),
 			"FORCED_MODE=from-os",
@@ -75,24 +74,9 @@ func TestBuildAutoRunAndCompiledEnvModes(t *testing.T) {
 			}
 		}
 	})
-
-	t.Run("explicit args bypass auto-run", func(t *testing.T) {
-		cmd := exec.Command(appPath, "custom")
-		cmd.Dir = projectDir
-		cmd.Env = os.Environ()
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("run explicit command: %v\n%s", err, out.String())
-		}
-		got := strings.TrimSpace(out.String())
-		if got != "args=[custom]" {
-			t.Fatalf("expected explicit args to bypass auto-run, got %q", got)
-		}
-	})
 }
 
+// writeIntegrationMain replaces the generated entrypoint so this test isolates compiled environment behavior.
 func writeIntegrationMain(t *testing.T, projectDir string) {
 	t.Helper()
 	mainPath := filepath.Join(projectDir, "cmd", "app", "main.go")
@@ -103,15 +87,12 @@ func writeIntegrationMain(t *testing.T, projectDir string) {
 
 import (
 	"fmt"
-	"example.com/buildlaunch/app"
 	"github.com/goforj/env/v2"
 	"os"
 	"example.com/buildlaunch/internal/cmd"
 )
 
 func main() {
-	args := cmd.EffectiveLaunchArgs(os.Args[1:])
-
 	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
 		fmt.Println("override_err=" + err.Error())
 		return
@@ -129,7 +110,7 @@ func main() {
 		return
 	}
 
-	if len(args) == 1 && args[0] == "run" {
+	if len(os.Args) == 2 && os.Args[1] == "inspect-env" {
 		fmt.Printf("mode=%s forced=%s app_env=%s marker=%s\n",
 			os.Getenv("INTEGRATION_MODE"),
 			os.Getenv("FORCED_MODE"),
@@ -139,14 +120,7 @@ func main() {
 		return
 	}
 
-	if handled, err := cmd.DispatchPrebootCommand(args, &app.RootCmd{}); handled {
-		if err != nil {
-			fmt.Println("preboot_err=" + err.Error())
-		}
-		return
-	}
-
-	fmt.Printf("args=%v\n", args)
+	fmt.Printf("args=%v\n", os.Args[1:])
 }
 `
 	if err := os.WriteFile(mainPath, []byte(source), 0o644); err != nil {
@@ -157,6 +131,7 @@ func main() {
 	writeIntegrationEnv(t, filepath.Join(projectDir, ".env.staging"), "APP_MARKER=from-staging\n")
 }
 
+// writeIntegrationEnv writes an environment fixture consumed by the compiled App binary.
 func writeIntegrationEnv(t *testing.T, path string, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {

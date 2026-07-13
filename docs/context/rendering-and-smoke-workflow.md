@@ -243,8 +243,11 @@ After render:
 ```bash
 cd /host-tmp/test
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go build ./...
-./bin/app run
+./bin/app
 ```
+
+For runtime-capable Apps, bare execution is equivalent to `./bin/app run`.
+CLI-only binaries print help when launched without arguments.
 
 For sibling-repo release validation, the practical sequence has been:
 

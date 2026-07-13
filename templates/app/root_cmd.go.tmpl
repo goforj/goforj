@@ -4,7 +4,7 @@
 package {{.AppPackageName}}
 
 import (
-{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+{{- if .Components.HasRuntime }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
@@ -62,7 +62,7 @@ type RootCmd struct {
 {{- if or .Components.WebAPI .Components.WebUI }}
 	RoutesListCmd http.RouteListCmd `cmd:""`
 {{- end }}
-{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+{{- if .Components.HasRuntime }}
 	RunCmd cmd.RunCmd `cmd:""`
 {{- end }}
 {{- if .Components.Scheduler }}
@@ -109,7 +109,7 @@ func NewRootCmd(
 {{- if or .Components.WebAPI .Components.WebUI }}
 	routesListCmd *http.RouteListCmd,
 {{- end }}
-{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+{{- if .Components.HasRuntime }}
 	runCmd *cmd.RunCmd,
 {{- end }}
 {{- if .Components.Scheduler }}
@@ -154,7 +154,7 @@ func NewRootCmd(
 {{- if or .Components.WebAPI .Components.WebUI }}
 		RoutesListCmd: *routesListCmd,
 {{- end }}
-{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+{{- if .Components.HasRuntime }}
 		RunCmd: *runCmd,
 {{- end }}
 {{- if .Components.Scheduler }}

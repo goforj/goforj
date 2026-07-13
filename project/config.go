@@ -287,6 +287,11 @@ func (c Components) HasDatabase() bool {
 	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
 }
 
+// HasRuntime reports whether the app can host at least one runtime through its run command.
+func (c Components) HasRuntime() bool {
+	return c.WebAPI || c.WebUI || c.Scheduler || c.Jobs
+}
+
 // ValidateRenderContract reports invalid component combinations that cannot be rendered coherently.
 func (c Components) ValidateRenderContract() error {
 	c = c.WithResolvedDependencies()

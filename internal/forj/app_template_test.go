@@ -1,11 +1,15 @@
 package forj
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"text/template"
+
+	"github.com/goforj/goforj/project"
 )
 
 func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
@@ -154,10 +158,14 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`args: []string{"Wow", "--", "--help"}, want: false`,
 		},
 		filepath.Join(base, "default_launch.go.tmpl"): {
-			`var DefaultLaunchCommand string`,
-			`func EffectiveLaunchArgs(args []string) []string`,
-			`if len(args) > 0 {`,
-			`return []string{command}`,
+			`func EffectiveLaunchArgs(args []string, hasRuntime bool) []string`,
+			`if len(args) > 0 || !hasRuntime {`,
+			`return []string{"run"}`,
+		},
+		filepath.Join(base, "default_launch_test.go.tmpl"): {
+			`EffectiveLaunchArgs(nil, true)`,
+			`EffectiveLaunchArgs(nil, false)`,
+			`EffectiveLaunchArgs(args, true)`,
 		},
 		filepath.Join(base, "env_defaults.go.tmpl"): {
 			`var CompiledEnvDefaultsBase64 string`,
@@ -220,6 +228,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`appCommandSet,`,
 			`{{.AppPackageName}}.NewCommands,`,
 			`{{.AppPackageName}}.NewRootCmd,`,
+			`.Components.HasRuntime`,
 			`cmd.NewAboutCmd,`,
 			`cmd.NewCacheShellCmd,`,
 			`cmd.NewDBShellCmd,`,
@@ -675,7 +684,7 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
+		`args := cmd.EffectiveLaunchArgs(os.Args[1:], {{.Components.HasRuntime}})`,
 		`cmd.ApplyLaunchApp("{{.App.Name}}")`,
 		`"{{.GoModuleName}}/{{.AppImportPath}}"`,
 		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
@@ -688,6 +697,91 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected main template to contain %q", snippet)
+		}
+	}
+}
+
+// TestDefaultLaunchTemplateDoesNotDependOnBuildState verifies launch identity cannot be changed through linker injection.
+func TestDefaultLaunchTemplateDoesNotDependOnBuildState(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "default_launch.go.tmpl")
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read default launch template: %v", err)
+	}
+	if strings.Contains(string(content), "DefaultLaunchCommand") {
+		t.Fatal("expected default launch template not to expose linker-populated command state")
+	}
+}
+
+// TestMainTemplateRendersRuntimeCapabilityPerEntrypoint verifies mixed projects cannot leak one app's launch behavior into another.
+func TestMainTemplateRendersRuntimeCapabilityPerEntrypoint(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "cmd", "app", "main.go.tmpl")
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read main.go template: %v", err)
+	}
+	mainTemplate, err := template.New("main.go").Parse(string(content))
+	if err != nil {
+		t.Fatalf("parse main.go template: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		components project.Components
+		want       string
+	}{
+		{name: "runtime app", components: project.Components{Jobs: true}, want: `cmd.EffectiveLaunchArgs(os.Args[1:], true)`},
+		{name: "cli app", components: project.Components{CLI: true}, want: `cmd.EffectiveLaunchArgs(os.Args[1:], false)`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var rendered bytes.Buffer
+			data := templateRenderConfig{
+				Config:         &project.Config{GoModuleName: "example.com/test"},
+				Components:     test.components,
+				App:            project.DefaultApp(),
+				AppPackageName: "app",
+				AppImportPath:  "app",
+				WireImportPath: "app/wire",
+			}
+			if err := mainTemplate.Execute(&rendered, data); err != nil {
+				t.Fatalf("render main.go template: %v", err)
+			}
+			if !strings.Contains(rendered.String(), test.want) {
+				t.Fatalf("expected rendered entrypoint to contain %q, got:\n%s", test.want, rendered.String())
+			}
+		})
+	}
+}
+
+// TestRunCommandTemplatesUseSharedRuntimeCapability verifies command exposure cannot drift from default launch classification.
+func TestRunCommandTemplatesUseSharedRuntimeCapability(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	root := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+	oldPredicate := `or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs`
+	for _, relativePath := range []string{"app/root_cmd.go.tmpl", "wire/inject_cmd.go.tmpl"} {
+		content, err := os.ReadFile(filepath.Join(root, relativePath))
+		if err != nil {
+			t.Fatalf("read %s: %v", relativePath, err)
+		}
+		source := string(content)
+		if !strings.Contains(source, ".Components.HasRuntime") {
+			t.Fatalf("expected %s to use Components.HasRuntime", relativePath)
+		}
+		if strings.Contains(source, oldPredicate) {
+			t.Fatalf("expected %s not to duplicate the runtime component predicate", relativePath)
 		}
 	}
 }

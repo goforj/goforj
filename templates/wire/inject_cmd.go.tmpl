@@ -7,20 +7,20 @@ import (
 	"github.com/goforj/wire"
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
-{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) (or .ProjectComponents.WebAPI .ProjectComponents.WebUI) }}
+{{- if and .Components.HasRuntime (or .ProjectComponents.WebAPI .ProjectComponents.WebUI) }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
-{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) .ProjectComponents.Jobs }}
+{{- if and .Components.HasRuntime .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
-{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+{{- if .Components.HasRuntime }}
 	"{{.GoModuleName}}/internal/logger"
 {{- end }}
 	"{{.GoModuleName}}/internal/makecmd"
-{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) .ProjectComponents.Metrics }}
+{{- if and .Components.HasRuntime .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-{{- if and (or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs) .ProjectComponents.Scheduler }}
+{{- if and .Components.HasRuntime .ProjectComponents.Scheduler }}
 	"{{.GoModuleName}}/internal/schedules"
 {{- end }}
 )
@@ -38,7 +38,7 @@ var cmdSet = wire.NewSet(
 	{{- if or .Components.WebAPI .Components.WebUI }}
 	cmd.NewHealthCmd,
 	{{- end }}
-	{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+	{{- if .Components.HasRuntime }}
 	provideRunCmd,
 	{{- end }}
 	makecmd.NewCommandCmd,
@@ -48,7 +48,7 @@ var cmdSet = wire.NewSet(
 	makecmd.NewMigrationCmd,
 )
 
-{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+{{- if .Components.HasRuntime }}
 func provideRunCmd(
 	logger *logger.AppLogger,
 {{- if and (or .ProjectComponents.WebAPI .ProjectComponents.WebUI) (or .Components.WebAPI .Components.WebUI) }}
