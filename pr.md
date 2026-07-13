@@ -103,6 +103,16 @@ Postgres -> SQLite, MySQL, Postgres
 It also covers chained round trips, identity continuation, incompatible
 schemas, unsupported values, and failed transfers.
 
+Large-table coverage is part of the same integration matrix. The suite exports
+and restores a 5,000-row table for every SQLite, MySQL, and Postgres
+source-target pair, then verifies the complete row count and boundary rows. A
+separate SQLite test exercises a 20,000-row round trip.
+
+These tests currently validate correctness and completeness at larger volumes;
+the portable JSON archive still materializes rows in memory. Bounded-memory
+pagination and chunked archive streaming remain a follow-up before portable
+transfers should be used for very large production tables.
+
 ## Repositories and Retention
 
 Completed backup directories can be stored locally or uploaded to an
