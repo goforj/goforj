@@ -1,5 +1,11 @@
 # forj Dev Native Watcher Design
 
+Status:
+
+- completed
+- implemented by the native `forj dev` watcher work
+- retained as the shipped watcher, lifecycle, and migration contract
+
 ## Purpose
 
 This document records the implemented contract for native `forj dev` watchers.
@@ -204,7 +210,7 @@ changes do not silently alter an existing project's visible watcher contract.
 
 The build node is conventional for every listed App. The runtime node is
 conventional only when the App is runtime-capable and `run` is not `false`.
-The [App Default Launch Design](completed/app-default-launch-design.md) makes the bare
+The [App Default Launch Design](app-default-launch-design.md) makes the bare
 executable enter `run` intrinsically for runtime-capable Apps, while CLI-only
 Apps retain their no-argument help behavior.
 
@@ -227,7 +233,7 @@ forj billing build -o ./bin/billing
 ### Default Development Runtime Topology
 
 The completed
-[`app run` single-process host design](completed/app-run-single-process-design.md)
+[`app run` single-process host design](app-run-single-process-design.md)
 left `forj dev` topology unchanged unless a separate design chose otherwise.
 This watcher design is that separate decision for the structured `dev.apps`
 path.

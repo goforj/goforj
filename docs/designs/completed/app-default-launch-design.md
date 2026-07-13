@@ -333,7 +333,7 @@ Default launch answers how a selected runtime App executable starts. It does not
 answer whether an App participates in development watching.
 
 The
-[`forj dev` native watcher design](../forj-dev-native-watcher-design.md)
+[`forj dev` native watcher design](forj-dev-native-watcher-design.md)
 should continue to use sparse App configuration to select participation. For
 example:
 
