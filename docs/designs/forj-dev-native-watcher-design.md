@@ -670,12 +670,18 @@ The migration is conservative:
 - Detect only known generated watcher shapes.
 - Convert known App build/run watcher pairs into listed `dev.apps` entries with
   explicit build and runtime snapshots.
-- Convert a known build-only App watcher into a listed entry with `run: false`.
+- Preserve every App reached by historical conventional discovery as a build
+  participant.
+- Treat an absent `dev.run` as the pre-allowlist model in which every discovered
+  App also retains runtime participation.
+- When `dev.run` is present, convert discovered Apps outside that exact runtime
+  allowlist into listed entries with `run: false`.
 - Convert generated NPM frontend watchers into `spas`.
 - Omit known nonparticipating Apps instead of writing App-level `false` values.
 - Preserve legacy custom App commands as scalar `run` overrides.
 - Preserve full custom process commands as `run:` mappings.
-- Keep Apps outside the legacy allowlist absent.
+- Ignore `dev.run` keys outside conventional discovery because the historical
+  generic watchers did not build or launch them.
 - Preserve unknown `dev.watches` entries as custom watchers.
 - Preserve semantic values and custom watcher order. Re-encoding may normalize
   YAML comments and formatting.
@@ -702,6 +708,8 @@ Implemented phases:
 - Preserve Lighthouse round trips for `dev.apps`, native watcher controls, and
   scalar legacy watcher strings even though the current form edits only the
   legacy scalar surface.
+- Keep the rendered top-level `project.Config` as the durable project model;
+  Lighthouse owns only its partial-update transport and merge policy.
 
 ## Implementation Layout
 
@@ -713,7 +721,9 @@ Implemented phases:
   integration
 - `internal/forj/project_dev_config.go`: generated defaults and conservative
   render migration
-- generated Lighthouse config/server: lossless settings round trips
+- `templates/project/config.go.tmpl`: rendered, lossless project configuration
+- generated Lighthouse patch/server: partial settings updates against the
+  shared top-level project model
 
 ### Structured App Compilation
 

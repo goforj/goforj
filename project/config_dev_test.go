@@ -1,12 +1,156 @@
 package project
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+// TestDevWatchJSONSeparatesLegacyAndNativeMatchers verifies JSON uses one watch key whose shape preserves both watcher modes.
+func TestDevWatchJSONSeparatesLegacyAndNativeMatchers(t *testing.T) {
+	input := `[
+  {
+    "name": "Legacy",
+    "watch": "-file .go -postpone",
+    "exec": "forj build"
+  },
+  {
+    "name": "Native",
+    "watch": [".go", ".env", "re:^schemas/.+\\.json$"],
+    "ignore": ["_test.go", "generated"],
+    "roots": ["./schemas"],
+    "workdir": "./tools",
+    "files": {"exclude": ["generated.go"]},
+    "dirs": {"include": ["schemas"], "exclude": ["vendor"]},
+    "exec": "forj api-index",
+    "env": {"INDEX_MODE": "fast"},
+    "debounce": "125ms",
+    "poll": "2s",
+    "postpone": true,
+    "restart": true,
+    "exit": true,
+    "stdin": true
+  }
+]`
+
+	var watches []DevWatch
+	if err := json.Unmarshal([]byte(input), &watches); err != nil {
+		t.Fatalf("unmarshal dev watches: %v", err)
+	}
+	if len(watches) != 2 {
+		t.Fatalf("watch count = %d, want 2", len(watches))
+	}
+	legacy := watches[0]
+	if !legacy.IsLegacy() || legacy.Watch != "-file .go -postpone" || len(legacy.Include) != 0 {
+		t.Fatalf("legacy watch was not preserved: %#v", legacy)
+	}
+	native := watches[1]
+	if native.IsLegacy() {
+		t.Fatalf("native watch was classified as legacy: %#v", native)
+	}
+	if want := []string{".go", ".env", `re:^schemas/.+\.json$`}; !reflect.DeepEqual(native.Include, want) {
+		t.Fatalf("native watch = %#v, want %#v", native.Include, want)
+	}
+	if !reflect.DeepEqual(native.Files.Exclude, []string{"generated.go"}) ||
+		!reflect.DeepEqual(native.Dirs.Include, []string{"schemas"}) ||
+		!reflect.DeepEqual(native.Dirs.Exclude, []string{"vendor"}) {
+		t.Fatalf("scoped native matchers were not decoded: %#v", native)
+	}
+
+	encoded, err := json.Marshal(watches)
+	if err != nil {
+		t.Fatalf("marshal dev watches: %v", err)
+	}
+	var documents []map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &documents); err != nil {
+		t.Fatalf("inspect marshaled dev watches: %v", err)
+	}
+	if got := string(documents[0]["watch"]); got != `"-file .go -postpone"` {
+		t.Fatalf("legacy watch JSON = %s, want a scalar", got)
+	}
+	if got := string(documents[1]["watch"]); got != `[".go",".env","re:^schemas/.+\\.json$"]` {
+		t.Fatalf("native watch JSON = %s, want a matcher list", got)
+	}
+	for index, document := range documents {
+		if _, ok := document["include"]; ok {
+			t.Fatalf("watch %d exposed competing include field: %s", index, encoded)
+		}
+	}
+
+	var roundTripped []DevWatch
+	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal round-tripped dev watches: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped, watches) {
+		t.Fatalf("round-tripped watches = %#v, want %#v", roundTripped, watches)
+	}
+}
+
+// TestDevWatchJSONPreservesExplicitEmptyWatchShapes keeps empty legacy and native values distinct across JSON round trips.
+func TestDevWatchJSONPreservesExplicitEmptyWatchShapes(t *testing.T) {
+	original := []DevWatch{
+		{Name: "Legacy", Legacy: true, Exec: "make legacy"},
+		{Name: "Native", Include: []string{}, Exec: "make native"},
+	}
+
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal empty dev watch shapes: %v", err)
+	}
+	if got := string(encoded); !strings.Contains(got, `"watch":""`) || !strings.Contains(got, `"watch":[]`) {
+		t.Fatalf("empty dev watch shapes were not preserved: %s", got)
+	}
+	var roundTripped []DevWatch
+	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal empty dev watch shapes: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped, original) {
+		t.Fatalf("round-tripped empty watches = %#v, want %#v", roundTripped, original)
+	}
+}
+
+// TestDevWatchJSONRejectsNonCanonicalMatcherFields prevents ambiguous or lossy JSON watcher contracts.
+func TestDevWatchJSONRejectsNonCanonicalMatcherFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "competing include", input: `{"name":"Native","include":[".go"],"exec":"make"}`, want: "include is invalid"},
+		{name: "ambiguous include", input: `{"name":"Native","watch":[".go"],"include":[".md"],"exec":"make"}`, want: "include is invalid"},
+		{name: "null watch", input: `{"name":"Invalid","watch":null,"exec":"make"}`, want: "watch must be a legacy string or matcher list"},
+		{name: "boolean watch", input: `{"name":"Invalid","watch":true,"exec":"make"}`, want: "watch must be a legacy string or matcher list"},
+		{name: "object watch", input: `{"name":"Invalid","watch":{"suffix":".go"},"exec":"make"}`, want: "watch must be a legacy string or matcher list"},
+		{name: "numeric matcher", input: `{"name":"Invalid","watch":[".go",42],"exec":"make"}`, want: "native watch matcher 1: expected a string"},
+		{name: "null matcher", input: `{"name":"Invalid","watch":[null],"exec":"make"}`, want: "native watch matcher 0: expected a string"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var watch DevWatch
+			err := json.Unmarshal([]byte(test.input), &watch)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("unmarshal error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestDevWatchJSONRejectsAmbiguousInternalMatchers prevents encoding a watcher that cannot round-trip without losing one matcher mode.
+func TestDevWatchJSONRejectsAmbiguousInternalMatchers(t *testing.T) {
+	_, err := json.Marshal(DevWatch{
+		Name:    "Ambiguous",
+		Watch:   "-file .go",
+		Include: []string{".md"},
+		Exec:    "make",
+	})
+	if err == nil || !strings.Contains(err.Error(), "legacy watch and native matchers cannot both be set") {
+		t.Fatalf("marshal error = %v, want matcher mode conflict", err)
+	}
+}
 
 // TestDevWatchYAMLSeparatesLegacyAndNativeMatchers verifies that the watch
 // node's shape selects compatibility or native behavior without changing old input.

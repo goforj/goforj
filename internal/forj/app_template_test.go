@@ -57,9 +57,10 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("unable to resolve current file path")
 	}
-	base := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "lighthouse")
+	templatesRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
 	files := map[string][]string{
-		"project_config.go.tmpl": {
+		filepath.Join("project", "config.go.tmpl"): {
+			`package project`,
 			`Watch    any`,
 			`Root     string`,
 			`Roots    []string`,
@@ -69,24 +70,33 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Extra`,
 			`ModuleReplaces`,
 			`Observability`,
+			`func (c *DevConfig) SetApps(`,
+		},
+		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
+			`import "{{.GoModuleName}}/project"`,
+			`*[]project.DevWatch`,
 			`func applyDevConfigUpdate(`,
 			`func mergeLighthouseDevWatches(`,
 			`if _, scalar := existing.Watch.(string); scalar`,
 		},
-		"server.go.tmpl": {
+		filepath.Join("internal", "lighthouse", "server.go.tmpl"): {
+			`"{{.GoModuleName}}/project"`,
 			`Dev          *devConfigUpdate`,
+			`Components   *project.Components`,
 			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
+			`func loadProjectConfig() (*project.Config, error)`,
 		},
-		"project_config_test.go.tmpl": {
+		filepath.Join("internal", "lighthouse", "project_config_test.go.tmpl"): {
 			`func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(`,
 			`func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(`,
 			`func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(`,
+			`func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(`,
 			`future_watch_control: retained`,
 			`native watcher controls were erased`,
 		},
 	}
 	for name, snippets := range files {
-		content, err := os.ReadFile(filepath.Join(base, name))
+		content, err := os.ReadFile(filepath.Join(templatesRoot, name))
 		if err != nil {
 			t.Fatalf("read Lighthouse template %s: %v", name, err)
 		}

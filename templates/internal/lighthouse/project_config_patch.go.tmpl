@@ -1,0 +1,105 @@
+package lighthouse
+
+import "{{.GoModuleName}}/project"
+
+// devConfigUpdate represents the fields a Lighthouse client explicitly sends
+// so omitted framework lifecycle configuration survives settings saves.
+type devConfigUpdate struct {
+	Pre               *[]project.DevTask  `json:"pre"`
+	Down              *[]project.DevTask  `json:"down"`
+	Run               *map[string]string  `json:"run"`
+	AutoMigrate       *bool               `json:"auto_migrate"`
+	DownOnExit        *bool               `json:"down_on_exit"`
+	SoundOnWatchError *bool               `json:"sound_on_watch_error"`
+	WirePaths         *[]string           `json:"wire_paths"`
+	Watches           *[]project.DevWatch `json:"watches"`
+	Apps              *map[string]any     `json:"apps"`
+}
+
+// applyDevConfigUpdate applies an explicit Lighthouse patch without replacing
+// lifecycle fields that older clients do not understand.
+func applyDevConfigUpdate(current *project.DevConfig, update devConfigUpdate) {
+	if current == nil {
+		return
+	}
+	if update.Pre != nil {
+		current.Pre = *update.Pre
+	}
+	if update.Down != nil {
+		current.Down = *update.Down
+	}
+	if update.Run != nil {
+		current.Run = *update.Run
+	}
+	if update.AutoMigrate != nil {
+		current.AutoMigrate = *update.AutoMigrate
+	}
+	if update.DownOnExit != nil {
+		current.DownOnExit = *update.DownOnExit
+	}
+	if update.SoundOnWatchError != nil {
+		current.SoundOnWatchError = *update.SoundOnWatchError
+	}
+	if update.WirePaths != nil {
+		current.WirePaths = *update.WirePaths
+	}
+	if update.Watches != nil {
+		current.Watches = mergeLighthouseDevWatches(current.Watches, *update.Watches)
+	}
+	if update.Apps != nil {
+		current.SetApps(*update.Apps)
+	}
+}
+
+// mergeLighthouseDevWatches preserves controls hidden by the scalar watcher
+// editor while still allowing legacy watcher names, commands, and patterns to change.
+func mergeLighthouseDevWatches(current []project.DevWatch, updates []project.DevWatch) []project.DevWatch {
+	merged := make([]project.DevWatch, 0, len(updates))
+	used := make(map[int]bool, len(current))
+	updateNameCounts := make(map[string]int, len(updates))
+	for _, update := range updates {
+		updateNameCounts[update.Name]++
+	}
+	for _, update := range updates {
+		currentIndex := -1
+		if updateNameCounts[update.Name] == 1 {
+			currentIndex = matchingLighthouseDevWatch(current, used, update.Name)
+		}
+		if currentIndex < 0 {
+			merged = append(merged, update)
+			continue
+		}
+		used[currentIndex] = true
+		existing := current[currentIndex]
+		existing.Name = update.Name
+		existing.Exec = update.Exec
+		if _, scalar := existing.Watch.(string); scalar {
+			existing.Watch = update.Watch
+		}
+		merged = append(merged, existing)
+	}
+	return merged
+}
+
+// matchingLighthouseDevWatch returns only an unambiguous stable-name match so
+// deleting or renaming a watcher cannot move hidden controls to another entry.
+func matchingLighthouseDevWatch(current []project.DevWatch, used map[int]bool, name string) int {
+	matched := -1
+	for index, watch := range current {
+		if used[index] || watch.Name != name {
+			continue
+		}
+		if matched >= 0 {
+			return -1
+		}
+		matched = index
+	}
+	return matched
+}
+
+// mergeLighthouseComponents applies editable component switches while retaining
+// extension fields that are intentionally hidden from Lighthouse's JSON API.
+func mergeLighthouseComponents(current project.Components, update project.Components) project.Components {
+	update.Extra = current.Extra
+	return update
+}
