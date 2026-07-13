@@ -338,9 +338,17 @@ jobs:
       - name: Verify Docker runtime
         run: docker info
 
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
       - name: Download integration modules
         working-directory: integration
         run: GOWORK=off go mod download
+
+      - name: Validate generated App resource contract
+        run: |
+          GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+            go run ./cmd/forj --dev test:render --silent
 
       - name: Run portable matrix and native SQLite/MySQL recovery
         working-directory: integration

@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,8 +31,47 @@ type StoragePlanResource struct {
 	Status string
 }
 
-// BuildPlan discovers the default and explicitly configured database connections.
+// BuildPlan discovers the App-owned database and storage resources.
 func BuildPlan() (Plan, error) {
+	contract, err := LoadResourceContract(context.Background())
+	if err == nil {
+		return buildPlanFromContract(contract)
+	}
+	if err != ErrResourceContractUnavailable {
+		return Plan{}, err
+	}
+	return buildPlanFromEnvironment()
+}
+
+// buildPlanFromContract creates a plan from the App-owned resource inventory.
+func buildPlanFromContract(contract ResourceContract) (Plan, error) {
+	plan := Plan{}
+	for _, resource := range contract.Resources {
+		switch resource.Kind {
+		case "database":
+			strategy, err := NativeStrategy(resource.Driver)
+			if err != nil {
+				return Plan{}, fmt.Errorf("resource %s: %w", resource.ID, err)
+			}
+			connection := ConnectionFromEnv(resource.Name)
+			connection.Driver = resource.Driver
+			plan.Resources = append(plan.Resources, PlanResource{Connection: connection, Strategy: strategy.Name(), Status: "backupable"})
+		case "storage":
+			plan.Storage = append(plan.Storage, StoragePlanResource{
+				Name: resource.Name, Driver: resource.Driver,
+				Root: storageRootValue(resource.Name), Prefix: storageEnvValue(resource.Name, "PREFIX"),
+				Status: storageStatus(resource.Driver),
+			})
+		}
+	}
+	if len(plan.Resources) == 0 && len(plan.Storage) == 0 {
+		return Plan{}, fmt.Errorf("resource contract contains no backup resources")
+	}
+	return plan, nil
+}
+
+// buildPlanFromEnvironment preserves compatibility with Apps that predate the resource contract.
+func buildPlanFromEnvironment() (Plan, error) {
 	names := []string{"default"}
 	for _, key := range []string{"DB_CONNECTIONS", "DB_SUPPORTED_CONNECTIONS"} {
 		for _, name := range strings.Split(os.Getenv(key), ",") {
@@ -73,6 +113,38 @@ func BuildPlan() (Plan, error) {
 	}
 	plan.Storage = discoverStorageResources()
 	return plan, nil
+}
+
+// storageEnvValue returns a named storage configuration value using the generated environment contract.
+func storageEnvValue(name string, field string) string {
+	prefix := "STORAGE"
+	if name != "default" {
+		prefix += "_" + strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+	}
+	value := os.Getenv(prefix + "_" + field)
+	if value == "" && name != "default" {
+		value = os.Getenv("STORAGE_" + field)
+	}
+	return value
+}
+
+// storageRootValue resolves an App storage root while preserving generated App defaults.
+func storageRootValue(name string) string {
+	if value := storageEnvValue(name, "ROOT"); value != "" {
+		return value
+	}
+	if name == "default" {
+		return filepath.Join("storage", "app", "private")
+	}
+	return filepath.Join("storage", "app", name)
+}
+
+// storageStatus classifies storage drivers without claiming unsupported external data is restorable.
+func storageStatus(driver string) string {
+	if strings.ToLower(strings.TrimSpace(driver)) == "local" || strings.ToLower(strings.TrimSpace(driver)) == "s3" {
+		return "backupable"
+	}
+	return "external-managed"
 }
 
 // discoverStorageResources resolves local disks from the generated storage environment contract.

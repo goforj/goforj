@@ -160,6 +160,10 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 	if err != nil {
 		return err
 	}
+	plan, err := BuildPlan()
+	if err != nil {
+		return err
+	}
 	resourceName = normalizeResourceName(resourceName)
 	for _, resource := range manifest.Resources {
 		if resourceName != "" && resource.Name != resourceName && resource.ID != resourceName {
@@ -169,7 +173,7 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 			if resource.Strategy == "object-manifest" {
 				return fmt.Errorf("restore %s requires object materialization; this backup contains metadata only", resource.ID)
 			}
-			storage := findStoragePlan(planStorage(), resource.Name)
+			storage := findStoragePlan(plan.Storage, resource.Name)
 			if storage == nil {
 				return fmt.Errorf("restore %s: storage configuration not found", resource.ID)
 			}
@@ -185,11 +189,14 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 			}
 			continue
 		}
-		connection := ConnectionFromEnv(resource.Name)
-		if normalizeDriver(connection.Driver) != resource.Driver {
-			return fmt.Errorf("restore %s requires %s, target is %s; use --portable for cross-driver restore", resource.ID, resource.Driver, normalizeDriver(connection.Driver))
+		connection := findPlanConnection(plan.Resources, resource.Name)
+		if connection == nil {
+			return fmt.Errorf("restore %s: database resource not found in App resource contract", resource.ID)
 		}
-		strategy, err := NativeStrategy(connection.Driver)
+		if normalizeDriver(connection.Connection.Driver) != resource.Driver {
+			return fmt.Errorf("restore %s requires %s, target is %s; use --portable for cross-driver restore", resource.ID, resource.Driver, normalizeDriver(connection.Connection.Driver))
+		}
+		strategy, err := NativeStrategy(connection.Connection.Driver)
 		if err != nil {
 			return err
 		}
@@ -197,15 +204,22 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 		if err != nil {
 			return fmt.Errorf("restore %s: %w", resource.ID, err)
 		}
-		if err := strategy.Restore(ctx, connection, artifact); err != nil {
+		if err := strategy.Restore(ctx, connection.Connection, artifact); err != nil {
 			return fmt.Errorf("restore %s: %w", resource.ID, err)
 		}
 	}
 	return s.Hooks.Run(ctx, HookAfterRestore)
 }
 
-// planStorage returns current storage configuration for restore resolution.
-func planStorage() []StoragePlanResource { return discoverStorageResources() }
+// findPlanConnection returns the contract-resolved database resource by name.
+func findPlanConnection(resources []PlanResource, name string) *PlanResource {
+	for i := range resources {
+		if resources[i].Connection.Name == name {
+			return &resources[i]
+		}
+	}
+	return nil
+}
 
 // findStoragePlan returns one named storage configuration.
 func findStoragePlan(resources []StoragePlanResource, name string) *StoragePlanResource {

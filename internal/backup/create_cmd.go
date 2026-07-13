@@ -26,7 +26,10 @@ func (*CreateCmd) Signature() string {
 // Run creates and reports a native backup set.
 func (c *CreateCmd) Run() error {
 	if c.Portable {
-		connection := ConnectionFromEnv(normalizeResourceName(c.Resource))
+		connection, err := ConnectionForResource(context.Background(), normalizeResourceName(c.Resource))
+		if err != nil {
+			return err
+		}
 		db, dialect, err := OpenSQLConnection(context.Background(), connection)
 		if err != nil {
 			return err
