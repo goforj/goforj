@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -196,6 +197,8 @@ func (s mysqlStrategy) Restore(ctx context.Context, conn Connection, artifact st
 func mysqlArgs(conn Connection) []string {
 	args := []string{}
 	if conn.Host != "" {
+		// Mapped container ports must use TCP; MySQL clients otherwise treat localhost as a Unix socket.
+		args = append(args, "--protocol", "TCP")
 		args = append(args, "--host", conn.Host)
 	}
 	if conn.Port != "" {
@@ -273,8 +276,10 @@ func runRedirectedTool(ctx context.Context, name string, args []string, env []st
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = file
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("run %s: %w", name, err)
+		return fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }
@@ -289,8 +294,10 @@ func runInputTool(ctx context.Context, name string, args []string, env []string,
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = file
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("run %s: %w", name, err)
+		return fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }
