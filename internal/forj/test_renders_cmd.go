@@ -398,7 +398,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Jobs: true, Backup: true,
+				Scheduler: true, Jobs: true,
 			},
 		},
 		{
@@ -590,9 +590,6 @@ func componentLabels(cfg project.Components) []string {
 	}
 	if cfg.Jobs {
 		enabled = append(enabled, "Jobs")
-	}
-	if cfg.Backup {
-		enabled = append(enabled, "Backup")
 	}
 	return enabled
 }

@@ -111,9 +111,6 @@ func TestDefaultSelectedComponentsIncludeMetricsStack(t *testing.T) {
 	if !components.Metrics || !components.Observability || !components.Grafana {
 		t.Fatalf("expected metrics, observability, and grafana to be selected by default: %#v", components)
 	}
-	if components.Backup {
-		t.Fatal("backup must remain opt-in for generated Apps")
-	}
 }
 
 func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {

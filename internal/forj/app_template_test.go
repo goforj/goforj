@@ -194,10 +194,14 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`for _, check := range db.ReadinessChecks() {`,
 			`Check: check.Check,`,
 		},
+		filepath.Join(filepath.Dir(base), "cmd", "resources_cmd.go.tmpl"): {
+			`runtime.DiscoverDatabaseInstances()`,
+			`runtime.DiscoverStorageInstances()`,
+			`resources:describe`,
+			`config_keys`,
+			`_PASSWORD`,
+		},
 		filepath.Join(filepath.Dir(base), "..", "app", "commands.go.tmpl"): {
-			`"{{.GoModuleName}}/internal/backup"`,
-			`BackupCreateCmd backup.CreateCmd`,
-			`backupCreateCmd *backup.CreateCmd,`,
 			`AboutCmd cmd.AboutCmd ` + "`cmd:\"\"`",
 			`CacheShellCmd cmd.CacheShellCmd ` + "`cmd:\"\"`",
 			`DBShellCmd cmd.DBShellCmd ` + "`cmd:\"\"`",
@@ -226,8 +230,6 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`makecmd.NewMigrationCmd,`,
 		},
 		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd_app.go.tmpl"): {
-			`"{{.GoModuleName}}/internal/backup"`,
-			`backup.NewCreateCmd,`,
 			`var appCommandSet = wire.NewSet(`,
 			`cmd.NewHelloWorldCmd,`,
 			`cmd.NewTestEventPipelineCmd,`,
@@ -787,21 +789,6 @@ func TestDatabaseRenderingIncludesDBShellCommand(t *testing.T) {
 	source := string(content)
 	if !strings.Contains(source, `"internal/cmd/db_shell_cmd.go.tmpl"`) {
 		t.Fatal("expected database rendering to include db shell command template")
-	}
-}
-
-func TestCommonRenderingIncludesBackupCommandAdapter(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to resolve current file path")
-	}
-	rendererPath := filepath.Join(filepath.Dir(currentFile), "project_renderer.go")
-	content, err := os.ReadFile(rendererPath)
-	if err != nil {
-		t.Fatalf("read renderer: %v", err)
-	}
-	if !strings.Contains(string(content), `"internal/backup/commands.go.tmpl"`) {
-		t.Fatal("expected common rendering to include backup command adapter template")
 	}
 }
 
