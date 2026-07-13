@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
@@ -16,14 +17,16 @@ import (
 	"golang.org/x/term"
 )
 
+// Step names one observable pipeline action and returns its compact status.
 type Step struct {
 	Name string
 	Run  func() (string, error)
 }
 
+// Pipeline coordinates source generation, indexing, and the caller's final build or launch step.
 type Pipeline struct {
 	logger   *logger.AppLogger
-	apiIndex *APIIndexRunner
+	apiIndex apiindex.Preparer
 }
 
 const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
@@ -132,21 +135,31 @@ func (r *buildProgressTTYReporter) renderFrame(frame int, label string) {
 	)
 }
 
+// RunOptions controls diagnostics, source selection, and progress behavior for one pipeline invocation.
 type RunOptions struct {
-	Timings                  bool
-	SkipWire                 bool
+	Timings  bool
+	SkipWire bool
+	// APIIndexStrict fails the pipeline when web indexing reports warnings or errors.
+	APIIndexStrict bool
+	// BuildTags keeps API indexing on the same conditional source surface as the final Go build.
+	BuildTags                []string
 	TransientProgress        bool
 	ClearProgressBeforeFinal bool
 }
 
-func NewPipeline(appLogger *logger.AppLogger, apiIndex *APIIndexRunner) Pipeline {
+// NewPipeline creates a build pipeline whose index candidates share the final step's success boundary.
+func NewPipeline(appLogger *logger.AppLogger, apiIndex apiindex.Preparer) Pipeline {
 	return Pipeline{
 		logger:   appLogger,
 		apiIndex: apiIndex,
 	}
 }
 
+// Run executes the configured steps from the project root and publishes API artifacts after the final step succeeds.
 func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) error {
+	if err := apiindex.ValidateGOFLAGS(os.Getenv("GOFLAGS")); err != nil {
+		return err
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return err
@@ -162,6 +175,12 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 
 	debug := debugEnabled()
 	progress := newBuildProgressReporter(debug, opts)
+	var pendingAPIIndex apiindex.Candidate
+	defer func() {
+		if pendingAPIIndex != nil {
+			pendingAPIIndex.Discard()
+		}
+	}()
 	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
 	steps := make([]Step, 0, 4)
 	steps = append(steps, generateStep)
@@ -171,7 +190,14 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	if !opts.SkipWire {
 		steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
 	}
-	steps = append(steps, Step{Name: "build:api-index", Run: p.runAPIIndex})
+	steps = append(steps, Step{Name: "build:api-index", Run: func() (string, error) {
+		candidate, status, err := p.prepareAPIIndex(opts.APIIndexStrict, opts.BuildTags...)
+		if err != nil {
+			return "", err
+		}
+		pendingAPIIndex = candidate
+		return status, nil
+	}})
 	steps = append(steps, final)
 	progressState := "done"
 	defer func() {
@@ -232,7 +258,7 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		progress.State("done")
 	}
 	finalStartedAt := time.Now()
-	finalStatus, err := final.Run()
+	finalStatus, err := runFinalAndPublishAPIIndex(final, pendingAPIIndex)
 	if err != nil {
 		progressState = "failed"
 		return err
@@ -248,6 +274,29 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		p.logger.Info().Str("kind", kind).Int("steps", steps).Msg("Pipeline completed")
 	}
 	return nil
+}
+
+// runFinalAndPublishAPIIndex keeps the previous active contract until compilation or process startup succeeds.
+func runFinalAndPublishAPIIndex(final Step, pending apiindex.Candidate) (string, error) {
+	status, err := final.Run()
+	if err != nil {
+		return "", err
+	}
+	if pending != nil {
+		if err := pending.Publish(); err != nil {
+			return "", err
+		}
+	}
+	return status, nil
+}
+
+// prepareAPIIndex applies the command's diagnostics policy while keeping pipeline status formatting centralized.
+func (p Pipeline) prepareAPIIndex(strict bool, buildTags ...string) (apiindex.Candidate, string, error) {
+	prepared, status, err := p.apiIndex.Prepare(apiindex.Options{Strict: strict, BuildTags: append([]string(nil), buildTags...)})
+	if err != nil {
+		return nil, status, fmt.Errorf("%s: %w", status, err)
+	}
+	return prepared, status, nil
 }
 
 func buildProgressEnabled() bool {
@@ -274,12 +323,13 @@ func printStepTiming(kind string, stepName string, duration time.Duration, statu
 	fmt.Fprintf(os.Stderr, "forj %s %s: %s\n", kind, stepName, timing)
 }
 
+// buildUsesTemplHTMX limits template generation to the selected App's configured starter kit so unrelated Apps do not add build work.
 func buildUsesTemplHTMX() bool {
 	cfg, err := project.LoadProjectConfig()
 	if err != nil {
 		return false
 	}
-	app := activeApp()
+	app := ActiveApp()
 	starterKit := cfg.Render.StarterKit
 	if app.Name != project.DefaultAppName {
 		if appConfig, ok := cfg.Apps[app.Name]; ok {
@@ -416,14 +466,6 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 		return "no changes", nil
 	}
 	return fmt.Sprintf("%d files", changedFiles), nil
-}
-
-func (p Pipeline) runAPIIndex() (string, error) {
-	status, err := p.apiIndex.RunDefaultWithStatus()
-	if err != nil {
-		return "", err
-	}
-	return status, nil
 }
 
 // loadWirePaths reads project-configured Wire roots and falls back to the generated app layout.

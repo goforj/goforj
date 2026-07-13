@@ -8,17 +8,20 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/logger"
 )
 
 // Cmd runs the forj build pipeline.
 type Cmd struct {
-	logger       *logger.AppLogger
-	pipeline     Pipeline
-	Timings      bool   `help:"Print per-step timings for generate, api index, and go build"`
-	SkipWire     bool   `help:"Skip running wire before build" hidden:""`
-	EnvDefaults  string `help:"Compile unset-only environment defaults as comma-separated KEY=value pairs"`
-	EnvOverrides string `help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
+	logger   *logger.AppLogger
+	pipeline Pipeline
+	Timings  bool `help:"Print per-step timings for generate, api index, and go build"`
+	SkipWire bool `help:"Skip running wire before build" hidden:""`
+	// APIIndexStrict fails the build when API indexing reports warnings or errors.
+	APIIndexStrict bool   `name:"api-index-strict" help:"Fail when API indexing reports warnings or errors"`
+	EnvDefaults    string `help:"Compile unset-only environment defaults as comma-separated KEY=value pairs"`
+	EnvOverrides   string `help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
 
 	// Profile flags.
 	Profile bool `help:"Profile compile time for this build"`
@@ -31,25 +34,32 @@ type Cmd struct {
 	goGetFunc       func([]string) error
 }
 
-func NewCmd(logger *logger.AppLogger, apiIndex *APIIndexRunner) *Cmd {
+// NewCmd creates the build command with the API indexer that shares its final compilation boundary.
+func NewCmd(logger *logger.AppLogger, apiIndex apiindex.Preparer) *Cmd {
 	return &Cmd{
 		logger:   logger,
 		pipeline: NewPipeline(logger, apiIndex),
 	}
 }
 
+// Signature returns CLI metadata for the complete build pipeline.
 func (*Cmd) Signature() string {
 	return `name:"build" help:"Run generate, API indexing, then go build" group:"build"`
 }
 
+// Run generates project source, prepares API artifacts, and publishes them only after compilation succeeds.
 func (c *Cmd) Run() error {
 	if err := c.validateCompiledEnv(); err != nil {
+		return err
+	}
+	buildTags, err := apiindex.BuildTagsFromArgs(c.Args)
+	if err != nil {
 		return err
 	}
 	if err := c.pipeline.Run(c.Root, "build", Step{
 		Name: "go build",
 		Run:  c.buildBinary,
-	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire}); err != nil {
+	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire, APIIndexStrict: c.APIIndexStrict, BuildTags: buildTags}); err != nil {
 		return err
 	}
 	if c.Profile {
@@ -71,6 +81,7 @@ func (c *Cmd) buildBinary() (string, error) {
 	return c.runPlainGoBuild(args)
 }
 
+// buildArgs preserves caller-supplied Go build flags while injecting App environment metadata only when that metadata is configured.
 func (c *Cmd) buildArgs() []string {
 	envDefaultsEncoded := c.encodedEnvDefaults()
 	envOverridesEncoded := c.encodedEnvOverrides()
@@ -86,7 +97,7 @@ func (c *Cmd) buildArgs() []string {
 		extraLdflags = append(extraLdflags, c.envOverridesLdflags(modulePath, envOverridesEncoded))
 	}
 	if len(c.Args) == 0 {
-		target := activeApp()
+		target := ActiveApp()
 		args := []string{"-o", filepath.ToSlash(filepath.Join(".", "bin", target.Name))}
 		if len(extraLdflags) > 0 {
 			args = append(args, "-ldflags", strings.Join(extraLdflags, " "))
@@ -122,8 +133,12 @@ func hasGoBuildPackageArg(args []string) bool {
 			if strings.Contains(arg, "=") {
 				continue
 			}
+			flagName := arg
+			if strings.HasPrefix(flagName, "--") {
+				flagName = "-" + strings.TrimPrefix(flagName, "--")
+			}
 			// Some go build flags consume the next arg, so that value is not a package path.
-			if _, ok := flagsWithValue[arg]; ok && i+1 < len(args) {
+			if _, ok := flagsWithValue[flagName]; ok && i+1 < len(args) {
 				i++
 			}
 			continue
@@ -138,7 +153,7 @@ func defaultBuildPackage(root string) string {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
-	target := activeApp()
+	target := ActiveApp()
 	if packagePath := appPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
 		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
 			return packagePath

@@ -10,6 +10,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 )
 
+// TestRunCmdWithTimingsPrintsStepDurations verifies run-mode timing diagnostics survive the transactional build-and-launch path.
 func TestRunCmdWithTimingsPrintsStepDurations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
@@ -27,10 +28,7 @@ func TestRunCmdWithTimingsPrintsStepDurations(t *testing.T) {
 	}
 
 	appLogger := logger.NewSilentLogger()
-	apiIndexRunner := &APIIndexRunner{
-		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
-	}
-	run := NewRunCmd(appLogger, apiIndexRunner)
+	run := NewRunCmd(appLogger, stubAPIIndexer{root: root})
 	run.Root = root
 	run.Timings = true
 
@@ -58,7 +56,7 @@ func TestRunCmdWithTimingsPrintsStepDurations(t *testing.T) {
 		"forj run wire:",
 		"forj run generate:",
 		"forj run build:api-index:",
-		"forj run go run ./cmd/app:",
+		"forj run compile and start ./cmd/app:",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected timings output to contain %q, got %q", expected, output)

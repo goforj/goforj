@@ -2,6 +2,7 @@ package forj
 
 import (
 	"github.com/alecthomas/kong"
+	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/backup"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
@@ -15,6 +16,7 @@ type RootCmd struct {
 	Version                   kong.VersionFlag                `help:"Show version information" version:"${version}"`
 	Dev                       bool                            `name:"dev" aliases:"x" env:"FORJ_DEV" help:"Show developer/maintainer commands in help output" hidden:""`
 	BuildCmd                  build.Cmd                       `cmd:""`
+	APIIndexCmd               apiindex.Cmd                    `cmd:""`
 	GenerateCmd               generate.Cmd                    `cmd:""`
 	NewProjectCmd             NewProjectCmd                   `cmd:""`
 	AtlasInstallCmd           atlas.InstallCmd                `cmd:""`
@@ -54,6 +56,7 @@ type RootCmd struct {
 // NewRootCmd wires only native framework commands so generated app generators do not appear in forj help.
 func NewRootCmd(
 	buildCmd *build.Cmd,
+	apiIndexCmd *apiindex.Cmd,
 	generateCmd *generate.Cmd,
 	newProjectCmd *NewProjectCmd,
 	atlasInstallCmd *atlas.InstallCmd,
@@ -91,6 +94,7 @@ func NewRootCmd(
 ) *RootCmd {
 	root := &RootCmd{
 		BuildCmd:                  *buildCmd,
+		APIIndexCmd:               *apiIndexCmd,
 		GenerateCmd:               *generateCmd,
 		NewProjectCmd:             *newProjectCmd,
 		AtlasInstallCmd:           *atlasInstallCmd,

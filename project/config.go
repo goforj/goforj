@@ -340,8 +340,13 @@ func (c Components) DatabaseServiceName() string {
 
 // LoadProjectConfig loads the project configuration from the .goforj.yml file.
 func LoadProjectConfig() (*Config, error) {
+	return LoadProjectConfigAt(".")
+}
+
+// LoadProjectConfigAt loads project configuration without requiring callers to change process working directory.
+func LoadProjectConfigAt(root string) (*Config, error) {
 	config := &ProjectConfig{}
-	configFile := ".goforj.yml"
+	configFile := filepath.Join(root, ".goforj.yml")
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil, err
 	}

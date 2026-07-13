@@ -1,6 +1,8 @@
 package http
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,8 +12,13 @@ import (
 	"github.com/goforj/web"
 )
 
+// defaultOpenAPISpecPath keeps the default App artifact compatible with existing GoForj projects.
 const defaultOpenAPISpecPath = "build/openapi.json"
 
+// scalarAPIReferenceURL pins the generated UI so a CDN release cannot change application behavior between builds.
+const scalarAPIReferenceURL = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5"
+
+// swaggerRoutes keeps API documentation opt-out while honoring the legacy environment variable during migration.
 func (s *Server) swaggerRoutes() []web.RouteGroup {
 	legacyDefault := "true"
 	if legacy, ok := os.LookupEnv("SWAGGER_ENABLED"); ok {
@@ -33,8 +40,9 @@ func (s *Server) swaggerRoutes() []web.RouteGroup {
 	}
 }
 
+// swaggerUIHandler renders Scalar against the App-specific OpenAPI endpoint served by this process.
 func (s *Server) swaggerUIHandler(r web.Context) error {
-	return r.HTML(http.StatusOK, `<!doctype html>
+	return r.HTML(http.StatusOK, fmt.Sprintf(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -42,27 +50,92 @@ func (s *Server) swaggerUIHandler(r web.Context) error {
   <title>API Reference</title>
 </head>
 <body>
-  <script
-    id="api-reference"
-    data-url="/swagger/doc.json"
-    src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"
-  ></script>
+	<div id="app"></div>
+	<script src="%s"></script>
+	<script>
+		Scalar.createApiReference('#app', {
+			url: '/swagger/doc.json',
+		})
+	</script>
 </body>
-</html>`)
+</html>`, scalarAPIReferenceURL))
 }
 
+// swaggerSpecHandler serves only the active App artifact and explains how to create it when absent.
 func (s *Server) swaggerSpecHandler(r web.Context) error {
 	specPath := os.Getenv("OPENAPI_SPEC_PATH")
 	if specPath == "" {
 		specPath = defaultOpenAPISpecPathForApp()
 	}
+	info, err := os.Stat(specPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return r.JSON(http.StatusNotFound, map[string]string{
+			"error": "OpenAPI document is missing",
+			"app":   activeOpenAPIAppName(),
+			"path":  specPath,
+			"hint":  fmt.Sprintf(`Run %q before opening the API reference.`, apiIndexBuildCommandForApp()),
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("inspect OpenAPI document %q: %w", specPath, err)
+	}
+	if info.IsDir() {
+		return r.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "OpenAPI document path is a directory",
+			"app":   activeOpenAPIAppName(),
+			"path":  specPath,
+		})
+	}
 	return r.File(specPath)
 }
 
+// defaultOpenAPISpecPathForApp maps the process App identity to the artifact layout used by the build pipeline.
 func defaultOpenAPISpecPathForApp() string {
-	app := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	app := activeOpenAPIAppName()
 	if app == "" || app == "app" {
 		return defaultOpenAPISpecPath
 	}
 	return filepath.Join("build", app, "openapi.json")
+}
+
+// activeOpenAPIAppName normalizes an unset process identity to the conventional default App name.
+func activeOpenAPIAppName() string {
+	app := strings.TrimSpace(os.Getenv("FORJ_APP"))
+	if !isSafeOpenAPIAppName(app) {
+		return "app"
+	}
+	return app
+}
+
+// isSafeOpenAPIAppName keeps implicit App selection inside the generated build directory; OPENAPI_SPEC_PATH remains the explicit path override.
+func isSafeOpenAPIAppName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
+		return false
+	}
+	previousWasSeparator := false
+	for index, character := range name {
+		if character >= 'a' && character <= 'z' {
+			previousWasSeparator = false
+			continue
+		}
+		if index > 0 && character >= '0' && character <= '9' {
+			previousWasSeparator = false
+			continue
+		}
+		if character == '-' && !previousWasSeparator {
+			previousWasSeparator = true
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// apiIndexBuildCommandForApp gives named Apps a command users can run directly from the project root.
+func apiIndexBuildCommandForApp() string {
+	app := activeOpenAPIAppName()
+	if app == "app" {
+		return "forj build:api-index"
+	}
+	return "forj " + app + " build:api-index"
 }

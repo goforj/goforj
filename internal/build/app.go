@@ -8,8 +8,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// activeApp resolves the app selected by environment or convention.
-func activeApp() project.App {
+// ActiveApp resolves the App selected by environment or convention when an operation starts.
+func ActiveApp() project.App {
 	appName := requestedAppName()
 	if project.IsSafeAppName(appName) {
 		return conventionalApp(appName)

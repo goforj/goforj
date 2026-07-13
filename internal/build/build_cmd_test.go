@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -15,7 +17,16 @@ type stubAPIIndexer struct {
 	root string
 }
 
-func (s stubAPIIndexer) RunQuiet() error {
+// Prepare writes lightweight artifacts so build tests can focus on pipeline sequencing.
+func (s stubAPIIndexer) Prepare(apiindex.Options) (apiindex.Candidate, string, error) {
+	if err := s.writeArtifacts(); err != nil {
+		return nil, "app app, rejected, 0 operations, 0 schemas, 0 diagnostics", err
+	}
+	return nil, "app app, changed, 0 operations, 0 schemas, 0 diagnostics", nil
+}
+
+// writeArtifacts preserves the original build integration fixture without exposing Runner internals.
+func (s stubAPIIndexer) writeArtifacts() error {
 	if err := os.MkdirAll(filepath.Join(s.root, "build"), 0o755); err != nil {
 		return err
 	}
@@ -27,6 +38,7 @@ func (s stubAPIIndexer) RunQuiet() error {
 	return nil
 }
 
+// TestCmdRunExecutesBuildPipeline verifies a direct build follows the same transactional indexing boundary as watcher builds.
 func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
@@ -44,10 +56,7 @@ func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 	}
 
 	appLogger := logger.NewSilentLogger()
-	apiIndexRunner := &APIIndexRunner{
-		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
-	}
-	build := NewCmd(appLogger, apiIndexRunner)
+	build := NewCmd(appLogger, stubAPIIndexer{root: root})
 	build.Root = root
 	if err := build.Run(); err != nil {
 		t.Fatalf("build run failed: %v", err)
@@ -165,6 +174,7 @@ func TestAtomicGoBuildArgsUsesUniqueHiddenBuildOutputs(t *testing.T) {
 	}
 }
 
+// TestCmdRunWithTimingsPrintsStepDurations verifies explicit timing output remains available when transient progress is disabled.
 func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
@@ -182,10 +192,7 @@ func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 	}
 
 	appLogger := logger.NewSilentLogger()
-	apiIndexRunner := &APIIndexRunner{
-		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
-	}
-	build := NewCmd(appLogger, apiIndexRunner)
+	build := NewCmd(appLogger, stubAPIIndexer{root: root})
 	build.Root = root
 	build.Timings = true
 
@@ -243,6 +250,58 @@ func TestBuildArgsAppendDefaultPackageWhenOnlyFlagsProvided(t *testing.T) {
 	want := []string{"-o", "./bin/app", "./cmd/app"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("build args = %#v, want %#v", got, want)
+	}
+}
+
+// TestBuildArgsAppendDefaultPackageAfterDoubleDashTags keeps a tag value from masquerading as the package target.
+func TestBuildArgsAppendDefaultPackageAfterDoubleDashTags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "app"), 0o755); err != nil {
+		t.Fatalf("create default app target: %v", err)
+	}
+	command := &Cmd{Root: root, Args: []string{"--tags", "dev"}}
+	got := command.buildArgs()
+	want := []string{"--tags", "dev", "./cmd/app"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("double-dash tag build args = %v, want %v", got, want)
+	}
+}
+
+// TestCmdRunPassesBuildTagsToAPIIndex proves the pipeline and final go build share one invocation tag selection.
+func TestCmdRunPassesBuildTagsToAPIIndex(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/taggedbuild\n\ngo 1.24\n",
+		"cmd/app/main.go": `//go:build tagged
+
+package main
+func main() {}
+`,
+	}
+	for relative, contents := range files {
+		path := filepath.Join(root, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create tagged build directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write tagged build fixture: %v", err)
+		}
+	}
+
+	var indexedTags []string
+	preparer := recordingAPIIndexPreparer{prepare: func(options apiindex.Options) (apiindex.Candidate, string, error) {
+		indexedTags = append([]string(nil), options.BuildTags...)
+		return nil, "app app, changed, 0 operations, 0 schemas, 0 diagnostics", nil
+	}}
+	command := NewCmd(logger.NewSilentLogger(), preparer)
+	command.Root = root
+	command.SkipWire = true
+	command.Args = []string{"-tags", "tagged", "-o", "./bin/app", "./cmd/app"}
+	if err := command.Run(); err != nil {
+		t.Fatalf("run tagged build pipeline: %v", err)
+	}
+	if !reflect.DeepEqual(indexedTags, []string{"tagged"}) {
+		t.Fatalf("API index build tags = %v, want tagged", indexedTags)
 	}
 }
 
@@ -385,6 +444,7 @@ go get github.com/goforj/storage/driver/redisstorage`)
 	}
 }
 
+// TestBuildProgressMarkers verifies machine-readable progress remains stable for watcher and editor integrations.
 func TestBuildProgressMarkers(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
@@ -404,10 +464,7 @@ func TestBuildProgressMarkers(t *testing.T) {
 	t.Setenv("FORJ_BUILD_PROGRESS", "1")
 
 	appLogger := logger.NewSilentLogger()
-	apiIndexRunner := &APIIndexRunner{
-		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
-	}
-	build := NewCmd(appLogger, apiIndexRunner)
+	build := NewCmd(appLogger, stubAPIIndexer{root: root})
 	build.Root = root
 
 	origStderr := os.Stderr
