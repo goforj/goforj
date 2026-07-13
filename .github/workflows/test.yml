@@ -207,9 +207,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y redis-server
-          redis-server --port 6380 --daemonize yes --save "" --appendonly no
+          redis-server --daemonize yes --save "" --appendonly no
           for attempt in {1..30}; do
-            if redis-cli -p 6380 ping | grep -q PONG; then
+            if redis-cli ping | grep -q PONG; then
               exit 0
             fi
             sleep 1
@@ -229,7 +229,7 @@ jobs:
       - name: Run lighthouse integration tests
         env:
           REDIS_HOST: 127.0.0.1
-          REDIS_PORT: "6380"
+          REDIS_PORT: "6379"
         run: go test -tags=integration,lighthouse ./internal/forj -run TestLighthouse -v
 
   integration:
@@ -286,21 +286,6 @@ jobs:
             docker compose version
           fi
 
-      - name: Start Redis
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y redis-server
-          redis-server --daemonize yes --save "" --appendonly no
-          for attempt in {1..30}; do
-            if redis-cli ping | grep -q PONG; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Redis did not become ready"
-          exit 1
-
       - name: Download Go modules
         run: go mod download
 
@@ -311,9 +296,6 @@ jobs:
         run: go install ./cmd/forj
 
       - name: Run consolidated integration tests
-        env:
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: "6379"
         run: |
           set -euo pipefail
           forj test:integration all --variant all -v
