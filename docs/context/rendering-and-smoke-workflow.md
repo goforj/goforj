@@ -61,6 +61,34 @@ Current default behavior matters:
 - do not hide a `current DB only` shortcut behind the default command path
 - if a run is intentionally narrowed, that should happen via explicit args
 
+## CI Parity And Service Ownership
+
+The consolidated integration job owns its test services. Do not start a host Redis instance in that job: the framework integration harness starts and tears down its own Redis container, and a process-level `REDIS_PORT` can override the rendered `.env` value used by Docker Compose. That can make the observability Compose test try to bind `6379` even after it selected a free port.
+
+When a rendered Compose test allocates host ports, pass the same values through both the project `.env` and `t.Setenv`. Docker Compose interpolation gives process environment variables precedence over `.env`, which is important when the test runs under CI with inherited service variables.
+
+Generated environment-sensitive tests must clear unrelated root and named overrides before asserting defaults. For example, a named SQLite default-path test should clear `DB_DATABASE`, `DB_SQLITE_DATABASE`, `DB_ANALYTICS_DATABASE`, and `DB_ANALYTICS_SQLITE_DATABASE`; otherwise a rendered project default can turn a unit assertion into an environment-dependent test.
+
+The CI-equivalent checks for broad changes are:
+
+```bash
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./... -v
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go vet ./...
+go run ./cmd/forj --dev test:integration all --variant all -v
+cd integration
+GOFORJ_BACKUP_INTEGRATION=1 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+  go test -tags=integration_backup ./... -count=1
+GOFORJ_BACKUP_INTEGRATION=1 GOFORJ_BACKUP_NATIVE_POSTGRES=1 \
+  GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+  go test -tags=integration_backup ./... -run '^TestNativePostgresBackupRestore$' -count=1
+GOWORK=off GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+  go test -tags=integration_generator ./... -run 'TestGenerate(Cache|Storage)FilesIntegrationSmoke' -count=1
+cd ..
+go run ./cmd/forj --dev test:renders --profile=pr --run-tests
+```
+
+Run renders in `/tmp`, keep `wire` on `PATH`, and inspect `git status` before trusting a result. A failing generated test should be fixed in its template or generator, not patched in the temporary render.
+
 ## Keep The Repo State Clean Before Render Smoke
 
 Render smoke is sensitive to the actual current checkout state because embedded templates and source assets come from the working tree you build `forj` from.

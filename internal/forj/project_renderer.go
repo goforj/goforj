@@ -568,6 +568,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/json_helpers.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
+				"internal/cmd/resources_cmd.go.tmpl",
 				"internal/monitoring/seed_cmd.go.tmpl",
 				"internal/monitoring/reset_cmd.go.tmpl",
 				"internal/monitoring/retention_cmd.go.tmpl",

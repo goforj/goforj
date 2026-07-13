@@ -624,6 +624,11 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 			StarterKit: combo.starterKit,
 		},
 	}
+	if repoRoot, err := os.Getwd(); err == nil {
+		if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
+			cfg.Render.ModuleReplaces = map[string]string{"github.com/goforj/goforj": repoRoot}
+		}
+	}
 
 	console.Actionf("Rendering components %s", strings.Join(combo.enabled, ", "))
 

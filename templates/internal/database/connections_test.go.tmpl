@@ -115,6 +115,10 @@ func TestBuildDSNSQLiteDefaultsDatabasePath(t *testing.T) {
 }
 
 func TestBuildDSNNamedSQLiteDefaultsDatabasePath(t *testing.T) {
+	t.Setenv("DB_DATABASE", "")
+	t.Setenv("DB_SQLITE_DATABASE", "")
+	t.Setenv("DB_ANALYTICS_DATABASE", "")
+	t.Setenv("DB_ANALYTICS_SQLITE_DATABASE", "")
 	got, err := buildDSN("analytics", "sqlite")
 	if err != nil {
 		t.Fatalf("expected named sqlite DSN, got %v", err)

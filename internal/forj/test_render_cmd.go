@@ -67,6 +67,11 @@ func (cmd *TestRenderCmd) Run() error {
 			},
 		},
 	}
+	if repoRoot, err := os.Getwd(); err == nil {
+		if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
+			cfg.Render.ModuleReplaces = map[string]string{"github.com/goforj/goforj": repoRoot}
+		}
+	}
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 	if err := WriteYAML(ymlPath, cfg); err != nil {
@@ -88,6 +93,15 @@ func (cmd *TestRenderCmd) Run() error {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
+		return err
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "resources describe", dir, modCache, buildCache, []string{forjExec, "resources:describe", "--json"}); err != nil {
+		return err
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "customer-portal resources describe", dir, modCache, buildCache, []string{forjExec, "customer-portal", "resources:describe", "--json"}); err != nil {
+		return err
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "backup plan", dir, modCache, buildCache, []string{forjExec, "backup:plan", "--json"}); err != nil {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "build customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "build"}); err != nil {

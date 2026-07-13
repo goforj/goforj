@@ -56,8 +56,12 @@ jobs:
       - name: Install wire
         run: go install github.com/goforj/wire/cmd/wire@latest
 
-      - name: Run unit tests
-        run: go test ./... -v
+      - name: Run Go tests and multi-App smoke
+        run: |
+          go test ./... -v
+          go test -tags=integration,multiapp ./internal/forj \
+            -run 'TestMakeAppMultiApp(Runtime|SQLiteMigrations)Smoke' \
+            -count=1 -v
 
       # ------------------------------------------------------------------
       # Build GoForj binary
@@ -282,21 +286,6 @@ jobs:
             docker compose version
           fi
 
-      - name: Start Redis
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y redis-server
-          redis-server --daemonize yes --save "" --appendonly no
-          for attempt in {1..30}; do
-            if redis-cli ping | grep -q PONG; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Redis did not become ready"
-          exit 1
-
       - name: Download Go modules
         run: go mod download
 
@@ -307,12 +296,68 @@ jobs:
         run: go install ./cmd/forj
 
       - name: Run consolidated integration tests
-        env:
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: "6379"
         run: |
           set -euo pipefail
           forj test:integration all --variant all -v
+
+  backup-integration:
+    name: Backup and Restore Integration
+    runs-on: ubuntu-latest
+    env:
+      GOCACHE: /tmp/gocache
+      GOMODCACHE: /tmp/gomodcache
+      GOFORJ_BACKUP_INTEGRATION: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            integration/go.sum
+
+      - name: Verify Docker runtime
+        run: docker info
+
+      - name: Install native database clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-mysql-client postgresql-client
+
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
+      - name: Download integration modules
+        working-directory: integration
+        run: GOWORK=off go mod download
+
+      - name: Validate generated App resource contract
+        run: |
+          GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+            go run ./cmd/forj --dev test:render --silent
+
+      - name: Run portable matrix and native SQLite/MySQL recovery
+        working-directory: integration
+        run: |
+          GOWORK=off go test -tags=integration_backup ./... \
+            -run 'TestPortableTransferMatrix|TestPortableCompatibilityFailures|TestNativeSQLiteBackupRestore|TestNativeMySQLBackupRestore' \
+            -count=1 -v
+
+      # Postgres native recovery runs separately because its container lifecycle
+      # must not overlap with the broader transfer matrix in this test suite.
+      - name: Run native Postgres recovery
+        working-directory: integration
+        env:
+          GOFORJ_BACKUP_NATIVE_POSTGRES: "1"
+        run: |
+          GOWORK=off go test -tags=integration_backup ./... \
+            -run '^TestNativePostgresBackupRestore$' \
+            -count=1 -v
 
   uptime-gopher-demo:
     name: Uptime Gopher (Demo)
