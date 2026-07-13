@@ -1,0 +1,232 @@
+package project
+
+import (
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+// DevWatch represents a command to be run in development mode.
+type DevWatch struct {
+	Name     string            `yaml:"name" json:"name"`
+	Watch    any               `yaml:"watch,omitempty" json:"watch,omitempty"`
+	Include  []string          `yaml:"include,omitempty" json:"include,omitempty"`
+	Ignore   []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	Root     string            `yaml:"root,omitempty" json:"root,omitempty"`
+	Roots    []string          `yaml:"roots,omitempty" json:"roots,omitempty"`
+	WorkDir  string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	Files    DevWatchMatchers  `yaml:"files,omitempty" json:"files,omitempty"`
+	Dirs     DevWatchMatchers  `yaml:"dirs,omitempty" json:"dirs,omitempty"`
+	Exec     string            `yaml:"exec" json:"exec"`
+	Env      map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Debounce string            `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+	Poll     string            `yaml:"poll,omitempty" json:"poll,omitempty"`
+	Postpone bool              `yaml:"postpone,omitempty" json:"postpone,omitempty"`
+	Restart  bool              `yaml:"restart,omitempty" json:"restart,omitempty"`
+	Exit     bool              `yaml:"exit,omitempty" json:"exit,omitempty"`
+	Stdin    bool              `yaml:"stdin,omitempty" json:"stdin,omitempty"`
+	Extra    map[string]any    `yaml:",inline" json:"-"`
+}
+
+// DevWatchMatchers preserves precise file or directory controls alongside the
+// shared matcher lists.
+type DevWatchMatchers struct {
+	Include []string `yaml:"include,omitempty" json:"include,omitempty"`
+	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+}
+
+// DevTask represents a task to be run in development mode.
+type DevTask struct {
+	Name string `yaml:"name" json:"name"`
+	Cmd  string `yaml:"cmd" json:"cmd"`
+}
+
+// DevConfig represents development lifecycle configuration.
+type DevConfig struct {
+	Pre               []DevTask         `yaml:"pre" json:"pre"`
+	Down              []DevTask         `yaml:"down" json:"down"`
+	Run               map[string]string `yaml:"run,omitempty" json:"run,omitempty"`
+	AutoMigrate       bool              `yaml:"auto_migrate" json:"auto_migrate"`
+	DownOnExit        bool              `yaml:"down_on_exit" json:"down_on_exit"`
+	SoundOnWatchError bool              `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
+	WirePaths         []string          `yaml:"wire_paths" json:"wire_paths"`
+	Watches           []DevWatch        `yaml:"watches,omitempty" json:"watches,omitempty"`
+	Apps              map[string]any    `yaml:"apps,omitempty" json:"apps,omitempty"`
+	Extra             map[string]any    `yaml:",inline" json:"-"`
+	appsConfigured    bool
+}
+
+// UnmarshalYAML preserves an explicit empty native App allowlist across config round trips.
+func (c *DevConfig) UnmarshalYAML(value *yaml.Node) error {
+	type devConfigFields DevConfig
+	var fields devConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*c = DevConfig(fields)
+	for index := 0; index+1 < len(value.Content); index += 2 {
+		if value.Content[index].Value == "apps" {
+			c.appsConfigured = len(c.Apps) == 0
+			break
+		}
+	}
+	return nil
+}
+
+// MarshalYAML retains explicit empty lifecycle maps whenever project settings are saved.
+func (c DevConfig) MarshalYAML() (any, error) {
+	type devConfigFields DevConfig
+	var node yaml.Node
+	if err := node.Encode(devConfigFields(c)); err != nil {
+		return nil, err
+	}
+	if c.Run != nil && len(c.Run) == 0 {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "run"},
+			&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"},
+		)
+	}
+	if (c.appsConfigured || c.Apps != nil) && len(c.Apps) == 0 {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apps"},
+			&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"},
+		)
+	}
+	return &node, nil
+}
+
+// SetApps replaces the native App allowlist while retaining explicit empty-map presence.
+func (c *DevConfig) SetApps(apps map[string]any) {
+	c.Apps = apps
+	c.appsConfigured = len(apps) == 0
+}
+
+// DefaultAppName is the implicit single-app name.
+const DefaultAppName = "app"
+
+// RenderConfig represents render-time defaults and selections.
+type RenderConfig struct {
+	Components     Components        `yaml:"components" json:"components"`
+	StarterKit     string            `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat     string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion  string            `yaml:"goforj_version" json:"goforj_version"`
+	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+	Extra          map[string]any    `yaml:",inline" json:"-"`
+}
+
+// UnmarshalYAML consumes the obsolete wizard choice so config rewrites cannot preserve it as an extension.
+func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
+	type renderConfigFields RenderConfig
+	var fields renderConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*c = RenderConfig(fields)
+	delete(c.Extra, "queue_driver")
+	return nil
+}
+
+// ProjectConfig represents the configuration for a project.
+type ProjectConfig struct {
+	ProjectName  string         `yaml:"project_name" json:"project_name"`
+	GoModuleName string         `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string         `yaml:"updated_at" json:"updated_at"`
+	Dev          DevConfig      `yaml:"dev" json:"dev"`
+	Render       RenderConfig   `yaml:"render" json:"render"`
+	Apps         map[string]any `yaml:"apps,omitempty" json:"apps,omitempty"`
+	Extra        map[string]any `yaml:",inline" json:"-"`
+
+	// temporary
+	AppKey           string `yaml:"-" json:"-"`
+	AppDiagToken     string `yaml:"-" json:"-"`
+	LighthouseSecret string `yaml:"-" json:"-"`
+	JWTSecretKey     string `yaml:"-" json:"-"`
+}
+
+// Config is the preferred name for project configuration.
+type Config = ProjectConfig
+
+// Components represents the components of the project.
+type Components struct {
+	CLI              bool           `yaml:"cli" json:"cli"`
+	DemoApp          bool           `yaml:"demo_app" json:"demo_app"`
+	Mail             bool           `yaml:"mail" json:"mail"`
+	Auth             bool           `yaml:"auth" json:"auth"`
+	OAuth            bool           `yaml:"oauth" json:"oauth"`
+	WebAPI           bool           `yaml:"web_api" json:"web_api"`
+	WebUI            bool           `yaml:"web_ui" json:"web_ui"`
+	Metrics          bool           `yaml:"metrics" json:"metrics"`
+	Observability    bool           `yaml:"observability" json:"observability"`
+	Grafana          bool           `yaml:"grafana" json:"grafana"`
+	Docker           bool           `yaml:"docker" json:"docker"`
+	DatabaseMySQL    bool           `yaml:"database_mysql" json:"database_mysql"`
+	DatabasePostgres bool           `yaml:"database_postgres" json:"database_postgres"`
+	DatabaseSQLite   bool           `yaml:"database_sqlite" json:"database_sqlite"`
+	Scheduler        bool           `yaml:"scheduler" json:"scheduler"`
+	Jobs             bool           `yaml:"jobs" json:"jobs"`
+	Extra            map[string]any `yaml:",inline" json:"-"`
+}
+
+// HasDatabase reports whether any database component is enabled.
+func (c Components) HasDatabase() bool {
+	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
+}
+
+// DatabaseDriver returns the selected database driver name.
+func (c Components) DatabaseDriver() string {
+	if c.DatabasePostgres {
+		return "postgres"
+	}
+	if c.DatabaseMySQL {
+		return "mysql"
+	}
+	if c.DatabaseSQLite {
+		return "sqlite"
+	}
+	return ""
+}
+
+// DatabaseServiceName returns the docker service name for the selected database.
+func (c Components) DatabaseServiceName() string {
+	if c.DatabasePostgres {
+		return "postgres"
+	}
+	if c.DatabaseMySQL {
+		return "mysql"
+	}
+	if c.DatabaseSQLite {
+		return "sqlite"
+	}
+	return ""
+}
+
+// LoadProjectConfig loads the project configuration from the .goforj.yml file.
+func LoadProjectConfig() (*Config, error) {
+	config := &ProjectConfig{}
+	configFile := ".goforj.yml"
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return nil, err
+	}
+	file, err := os.Open(configFile)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	decoder := yaml.NewDecoder(file)
+	if err := decoder.Decode(config); err != nil {
+		return nil, err
+	}
+	if len(config.Dev.WirePaths) == 0 {
+		config.Dev.WirePaths = []string{defaultWireDir()}
+	}
+
+	return config, nil
+}
+
+// defaultWireDir keeps modern projects on app/wire while retaining the legacy root wire layout.
+func defaultWireDir() string {
+	if info, err := os.Stat("app/wire"); err == nil && info.IsDir() {
+		return "app/wire"
+	}
+	return "wire"
+}

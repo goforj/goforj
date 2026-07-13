@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
+	"gopkg.in/yaml.v3"
 )
 
 func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
@@ -690,27 +692,35 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	if m.stage != StageConfirm {
 		t.Fatalf("expected confirmation stage after project path selection, got %v", m.stage)
 	}
-	if m.config.Render.QueueDriver != "redis" {
-		t.Fatalf("expected default queue driver to be redis, got %q", m.config.Render.QueueDriver)
+	if m.queueDriver != "redis" {
+		t.Fatalf("expected default queue driver to be redis, got %q", m.queueDriver)
 	}
 }
 
 func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.Jobs = true
-	m.config.Render.QueueDriver = "  "
+	m.queueDriver = "  "
 
 	m.finalizeConfig()
 
-	if m.config.Render.QueueDriver != "redis" {
-		t.Fatalf("expected queue driver default redis, got %q", m.config.Render.QueueDriver)
+	if m.queueDriver != "redis" {
+		t.Fatalf("expected queue driver default redis, got %q", m.queueDriver)
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal finalized config: %v", err)
+	}
+	if strings.Contains(string(encoded), "queue_driver:") {
+		t.Fatalf("wizard-only queue driver was persisted:\n%s", encoded)
 	}
 	if m.config.Render.GoForjVersion != version.Semver() {
 		t.Fatalf("expected goforj version %q, got %q", version.Semver(), m.config.Render.GoForjVersion)
 	}
 }
 
-func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
+// TestFinalizeConfigUsesNativeDefaultAppLifecycle verifies generated runtime Apps expose their native lifecycle configuration.
+func TestFinalizeConfigUsesNativeDefaultAppLifecycle(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebAPI = true
 
@@ -722,45 +732,77 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 		}
 	}
 
-	var buildWatch *string
 	for _, watch := range m.config.Dev.Watches {
-		switch watch.Name {
-		case "Build App":
-			value := watch.Watch
-			buildWatch = &value
-			if watch.Exec != "forj build -o ./bin/app" {
-				t.Fatalf("expected build watcher to execute forj build, got %q", watch.Exec)
-			}
-		case "Wire":
-			t.Fatalf("expected no standalone wire watcher, got %#v", watch)
+		if watch.Name == "Build App" || watch.Name == "Run App" || watch.Name == "Wire" {
+			t.Fatalf("expected app lifecycle to avoid framework raw watchers, got %#v", watch)
 		}
 	}
-
-	if buildWatch == nil {
-		t.Fatalf("expected Build App watcher to be configured")
+	app, ok := m.config.Dev.Apps[project.DefaultAppName]
+	if !ok {
+		t.Fatalf("expected native default app runtime, got %#v", app)
 	}
-	if !strings.Contains(*buildWatch, "-xfile app/wire/wire_gen\\.go$") {
-		t.Fatalf("expected Build App watcher to exclude wire_gen.go, got %q", *buildWatch)
+	wantBuild := conventionalDevAppBuildCommand(&m.config, project.DefaultApp())
+	if app.Build == nil || !reflect.DeepEqual(*app.Build, wantBuild) {
+		t.Fatalf("generated build = %#v, want %#v", app.Build, wantBuild)
 	}
-
-	var runWatch *project.DevWatch
-	for i := range m.config.Dev.Watches {
-		if m.config.Dev.Watches[i].Name == "Run App" {
-			runWatch = &m.config.Dev.Watches[i]
-			break
+	wantRun := conventionalDevAppRuntimeCommand(project.DefaultApp())
+	if app.Run == nil || !reflect.DeepEqual(*app.Run, wantRun) {
+		t.Fatalf("generated runtime = %#v, want %#v", app.Run, wantRun)
+	}
+	compiled, err := compileDevWatchers(&m.config)
+	if err != nil {
+		t.Fatalf("compile generated dev lifecycle: %v", err)
+	}
+	if len(compiled) != 2 || len(compiled[0].Watch.Excludes) != len(wantBuild.Ignore) || compiled[1].FullProcessOverride {
+		t.Fatalf("generated explicit lifecycle changed native defaults: %#v", compiled)
+	}
+	if m.config.Dev.Run != nil {
+		t.Fatalf("expected generated config not to use the legacy dev.run allowlist, got %#v", m.config.Dev.Run)
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal generated project config: %v", err)
+	}
+	var decoded project.Config
+	if err := yaml.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal generated project config: %v", err)
+	}
+	decodedApp := decoded.Dev.Apps[project.DefaultAppName]
+	if decodedApp.Build == nil || !reflect.DeepEqual(*decodedApp.Build, wantBuild) ||
+		decodedApp.Run == nil || !reflect.DeepEqual(*decodedApp.Run, wantRun) {
+		t.Fatalf("generated lifecycle changed across YAML round trip: %#v", decodedApp)
+	}
+	decodedCompiled, err := compileDevWatchers(&decoded)
+	if err != nil {
+		t.Fatalf("compile round-tripped dev lifecycle: %v", err)
+	}
+	if len(decodedCompiled) != 2 || decodedCompiled[1].FullProcessOverride {
+		t.Fatalf("round-tripped conventional runtime became a process override: %#v", decodedCompiled)
+	}
+	for _, want := range []string{
+		"apps:",
+		"exec: forj build -o ./bin/app",
+		"watch: [.go, .env, .env.*]",
+		"ignore: [forj, _data, wire_gen.go, .git, .hg, .svn, .idea, .vscode, .settings, node_modules]",
+		"root: .",
+		"postpone: true",
+		"exec: ./bin/app",
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("expected generated dev.apps YAML to contain %q, got:\n%s", want, encoded)
 		}
 	}
-	if runWatch == nil {
-		t.Fatalf("expected Run App watcher to be configured")
+	if strings.Contains(string(encoded), "run: run") {
+		t.Fatalf("expected generated runtime to use its complete command, got:\n%s", encoded)
 	}
-	if runWatch.Exec != "./bin/app run" {
-		t.Fatalf("expected Run App watcher to execute ./bin/app run, got %q", runWatch.Exec)
-	}
-	if got := m.config.Dev.Run[project.DefaultAppName]; got != "run" {
-		t.Fatalf("expected dev.run.app to enable default app, got %q", got)
+	for _, legacy := range []string{"watches:", "Build App", "Run App"} {
+		if strings.Contains(string(encoded), legacy) {
+			t.Fatalf("expected generated YAML to omit legacy %q config, got:\n%s", legacy, encoded)
+		}
 	}
 }
 
+// TestFinalizeConfigInstallsVueStarterDependencies verifies Vue generation exposes its full frontend lifecycle.
 func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebUI = true
@@ -768,12 +810,35 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 
 	m.finalizeConfig()
 
+	foundInstall := false
 	for _, task := range m.config.Dev.Pre {
 		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd cmd/app/frontend && npm install" {
-			return
+			foundInstall = true
+			break
 		}
 	}
-	t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
+	if !foundInstall {
+		t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
+	}
+	app := m.config.Dev.Apps[project.DefaultAppName]
+	wantSPA := conventionalDevSPAConfig("./cmd/app/frontend")
+	if spa, ok := app.SPAs[generatedFrontendSPAName]; !ok || !reflect.DeepEqual(spa, wantSPA) {
+		t.Fatalf("generated Vue SPA = %#v, want %#v", spa, wantSPA)
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal generated Vue config: %v", err)
+	}
+	for _, want := range []string{
+		"path: ./cmd/app/frontend",
+		"build: npm run build -s -- --logLevel silent",
+		"watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]",
+		"ignore: [_data, node_modules, dist]",
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("expected generated Vue config to contain %q, got:\n%s", want, encoded)
+		}
+	}
 }
 
 func TestFinalizeConfigDoesNotAddGrafanaSeedTask(t *testing.T) {
@@ -790,7 +855,8 @@ func TestFinalizeConfigDoesNotAddGrafanaSeedTask(t *testing.T) {
 	}
 }
 
-func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) {
+// TestFinalizeConfigTemplStarterUsesOwnedFrontendLifecycle verifies generated SPAs replace raw frontend watcher wiring.
+func TestFinalizeConfigTemplStarterUsesOwnedFrontendLifecycle(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebUI = true
 	m.config.Render.Components.WebAPI = true
@@ -798,25 +864,44 @@ func TestFinalizeConfigTemplStarterWatchersIgnoreGeneratedOutputs(t *testing.T) 
 
 	m.finalizeConfig()
 
-	var buildWatch string
-	var npmWatch string
 	for _, watch := range m.config.Dev.Watches {
-		switch watch.Name {
-		case "Build App":
-			buildWatch = watch.Watch
-		case "NPM":
-			npmWatch = watch.Watch
+		if watch.Name == "Build App" || watch.Name == "Run App" || watch.Name == "NPM" {
+			t.Fatalf("expected templ lifecycle to avoid generated raw watchers, got %#v", watch)
 		}
 	}
-	if !strings.Contains(buildWatch, "-file .templ") || !strings.Contains(buildWatch, ".*_templ\\.go$") {
-		t.Fatalf("expected templ build watcher to include .templ and exclude generated templ go files, got %q", buildWatch)
+	app := m.config.Dev.Apps[project.DefaultAppName]
+	spa, ok := app.SPAs[generatedFrontendSPAName]
+	wantSPA := conventionalDevSPAConfig("./cmd/app/frontend")
+	wantBuild := conventionalDevAppBuildCommand(&m.config, project.DefaultApp())
+	wantRun := conventionalDevAppRuntimeCommand(project.DefaultApp())
+	if !ok || !reflect.DeepEqual(spa, wantSPA) || app.Build == nil || !reflect.DeepEqual(*app.Build, wantBuild) ||
+		app.Run == nil || !reflect.DeepEqual(*app.Run, wantRun) {
+		t.Fatalf("expected templ frontend ownership in the default app lifecycle, got %#v", app)
 	}
-	for _, expected := range []string{"-xdir node_modules", "-xdir dist"} {
-		if !strings.Contains(npmWatch, expected) {
-			t.Fatalf("expected NPM watcher to include %q, got %q", expected, npmWatch)
-		}
+	if !reflect.DeepEqual(app.Build.Watch, []string{".go", ".env", ".env.*", ".templ"}) ||
+		app.Build.Ignore[len(app.Build.Ignore)-1] != `re:.*_templ\.go$` {
+		t.Fatalf("expected templ-specific build matchers, got %#v", app.Build)
 	}
-	if strings.Contains(npmWatch, "-xdir .") {
-		t.Fatalf("expected NPM watcher to omit wildcard directory exclusion, got %q", npmWatch)
+}
+
+// TestFinalizeConfigOmitsCLIOnlyAppFromDev verifies omission remains the unmanaged state.
+func TestFinalizeConfigOmitsCLIOnlyAppFromDev(t *testing.T) {
+	m := initialModel()
+	m.config.Render.Components = project.Components{CLI: true}
+
+	m.finalizeConfig()
+
+	if len(m.config.Dev.Apps) != 0 {
+		t.Fatalf("expected CLI-only generated app to remain unmanaged by dev, got %#v", m.config.Dev.Apps)
+	}
+	if !m.config.Dev.UsesStructuredApps() {
+		t.Fatal("expected CLI-only generation to retain an explicit native-none Apps allowlist")
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal CLI-only generated config: %v", err)
+	}
+	if !strings.Contains(string(encoded), "apps: {}") {
+		t.Fatalf("expected CLI-only generated YAML to retain apps: {}, got:\n%s", encoded)
 	}
 }

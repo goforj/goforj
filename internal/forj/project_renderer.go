@@ -69,17 +69,20 @@ func (e *wireGenerateError) Unwrap() error {
 
 // ComponentRenderInput controls whether rendering uses explicit components or the stored project config.
 type ComponentRenderInput struct {
-	components project.Components
-	renderAll  bool
+	components  project.Components
+	renderAll   bool
+	queueDriver string
 }
 
 // ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
-	logger  *logger.AppLogger
-	config  *project.Config
-	stats   *renderStats
-	lines   []string
-	timings bool
+	logger                  *logger.AppLogger
+	config                  *project.Config
+	stats                   *renderStats
+	lines                   []string
+	timings                 bool
+	queueDriver             string
+	removeLegacyQueueDriver bool
 }
 
 type renderStats struct {
@@ -117,6 +120,7 @@ type templateRenderConfig struct {
 	ProjectComponents project.Components
 	StarterKit        project.StarterKit
 	HelpFormat        project.HelpFormat
+	QueueDriver       string
 	HelpFormatterFunc string
 	HelpCommandFunc   string
 	App               project.App
@@ -241,6 +245,8 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.stats = &renderStats{}
 	p.lines = nil
+	p.queueDriver = ""
+	p.removeLegacyQueueDriver = false
 
 	if input.renderAll {
 		cfg, err := project.LoadProjectConfig()
@@ -248,6 +254,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			return err
 		}
 		p.config = cfg
+		p.removeLegacyQueueDriver = cfg.Render.HasLegacyQueueDriver()
 	} else {
 		p.config = &project.Config{
 			Render: project.RenderConfig{Components: input.components},
@@ -257,6 +264,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.config.Render.Components.Auth = true
 		p.config.Render.StarterKit = project.StarterKitNone
 	}
+	// The wizard choice seeds .env only; legacy YAML is accepted once and removed when the config is rewritten.
+	p.queueDriver = resolveQueueDriverSeed(input.queueDriver, p.config.Render.LegacyQueueDriver())
 	p.config.Render.Components.ResolveDependencies()
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
@@ -603,7 +612,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/manager.go.tmpl",
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
-				"internal/lighthouse/project_config.go.tmpl",
+				"project/config.go.tmpl",
+				"internal/lighthouse/project_config_patch.go.tmpl",
+				"internal/lighthouse/project_config_test.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
@@ -638,7 +649,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Dev Console Components Rendering",
-			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI || p.config.Render.Components.Scheduler || p.config.Render.Components.Jobs,
+			enabled: p.config.Render.Components.HasRuntime(),
 			templates: []string{
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
@@ -1117,6 +1128,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	return nil
 }
 
+// resolveQueueDriverSeed prefers the current wizard choice while tolerating legacy project configuration.
+func resolveQueueDriverSeed(selected string, legacy string) string {
+	if driver := normalizeQueueDriver(selected); driver != "" {
+		return driver
+	}
+	if driver := normalizeQueueDriver(legacy); driver != "" {
+		return driver
+	}
+	return "redis"
+}
+
 // RenderAppOnly renders one named app without replaying the full project scaffold.
 func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
 	p.stats = &renderStats{}
@@ -1150,6 +1172,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	}
 	promotedProjectComponents := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
+		if err := p.prepareDevAppsForAppMutation(); err != nil {
+			return err
+		}
 		promoted, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.HelpFormat)
 		if err != nil {
 			return err
@@ -1281,6 +1306,10 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 		return false
 	}
 	changed := false
+	if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, project.DefaultNamedApp(name)); removed {
+		p.config.Dev.Pre = tasks
+		changed = true
+	}
 	if p.config.Apps != nil {
 		if _, ok := p.config.Apps[name]; ok {
 			delete(p.config.Apps, name)
@@ -1295,8 +1324,11 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 			delete(p.config.Dev.Run, name)
 			changed = true
 		}
-		if len(p.config.Dev.Run) == 0 {
-			p.config.Dev.Run = nil
+	}
+	if p.config.Dev.Apps != nil {
+		if _, ok := p.config.Dev.Apps[name]; ok {
+			delete(p.config.Dev.Apps, name)
+			changed = true
 		}
 	}
 	return changed
@@ -1339,26 +1371,71 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 	return p.config.Render.Components != before, nil
 }
 
-// setAppDevRun persists the app allowlist entry used by forj dev runtime watchers.
+// prepareDevAppsForAppMutation establishes native App presence before make:app can change filesystem discovery.
+func (p *ProjectRenderer) prepareDevAppsForAppMutation() error {
+	if p.config.Dev.UsesStructuredApps() {
+		return nil
+	}
+	if migrateGeneratedDevWatchers(p.config) {
+		return nil
+	}
+	if hasLegacyDevAppLifecycle(p.config) {
+		return fmt.Errorf("make app: customized legacy Build App/Run App lifecycle cannot be safely combined with dev.apps; migrate the lifecycle to dev.apps first")
+	}
+	p.config.Dev.Apps = map[string]project.DevApp{}
+	return nil
+}
+
+// hasLegacyDevAppLifecycle identifies discovery-based App watchers that require a deliberate migration.
+func hasLegacyDevAppLifecycle(config *project.Config) bool {
+	if config.Dev.Run != nil {
+		return true
+	}
+	for _, watch := range config.Dev.Watches {
+		if watch.IsLegacy() && (watch.Name == "Build App" || watch.Name == "Run App") {
+			return true
+		}
+	}
+	return false
+}
+
+// setAppDevRun normalizes the legacy make:app choice into presence-based native lifecycle configuration.
 func (p *ProjectRenderer) setAppDevRun(name string, command string) {
 	name = strings.TrimSpace(name)
 	command = strings.TrimSpace(command)
 	if p.config == nil || name == "" || name == project.DefaultAppName {
 		return
 	}
+	if p.config.Dev.Run != nil {
+		delete(p.config.Dev.Run, name)
+	}
+	app := project.DefaultNamedApp(name)
 	if command == "" {
-		if p.config.Dev.Run != nil {
-			delete(p.config.Dev.Run, name)
-			if len(p.config.Dev.Run) == 0 {
-				p.config.Dev.Run = nil
-			}
+		if p.config.Dev.Apps != nil {
+			delete(p.config.Dev.Apps, name)
+		}
+		if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); removed {
+			p.config.Dev.Pre = tasks
 		}
 		return
 	}
-	if p.config.Dev.Run == nil {
-		p.config.Dev.Run = map[string]string{}
+	if p.config.Dev.Apps == nil {
+		p.config.Dev.Apps = map[string]project.DevApp{}
 	}
-	p.config.Dev.Run[name] = command
+	configured := generatedDevAppConfig(p.config, app, command)
+	if command == "run" && !appRenderComponents(p.config, app).HasRuntime() {
+		// A CLI-only App has no conventional runtime, so an explicit run choice must remain an actual command override.
+		configured.Run = &project.DevAppCommand{Exec: command, Shorthand: true}
+	}
+	p.config.Dev.Apps[name] = configured
+	if len(configured.SPAs) > 0 {
+		task := generatedDevFrontendInstallTask(app)
+		if !hasDevTask(p.config.Dev.Pre, task) {
+			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
+		}
+	} else if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); removed {
+		p.config.Dev.Pre = tasks
+	}
 }
 
 // writeAppEnvDefaults appends app-scoped env defaults without changing the default App values.
@@ -1935,6 +2012,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		return nil
 	}
 	changed := false
+	if p.removeLegacyQueueDriver {
+		changed = true
+	}
 	defaultApp := project.DefaultApp()
 	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
 		p.config.Dev.WirePaths = []string{defaultApp.WireDir}
@@ -1951,13 +2031,19 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 	if removeGrafanaSeedTask(&p.config.Dev.Pre) {
 		changed = true
 	}
+	if migrateGeneratedDevWatchers(p.config) {
+		changed = true
+	}
 	for i := range p.config.Dev.Watches {
-		normalized := normalizeDevWatchWireGenExclusion(p.config.Dev.Watches[i].Watch)
-		if p.config.Dev.Watches[i].Name == "NPM" && strings.TrimSpace(p.config.Dev.Watches[i].Exec) == "npm run dev" {
-			normalized = normalizeFrontendNPMWatchExclusions(normalized)
+		normalized := p.config.Dev.Watches[i].Watch
+		if isGeneratedLegacyBuildWatcher(p.config.Dev.Watches[i]) {
+			normalized = normalizeDevWatchWireGenExclusion(normalized)
+			if p.config.Render.StarterKit == project.StarterKitTemplHTMX {
+				normalized = normalizeTemplBuildWatchExclusions(normalized)
+			}
 		}
-		if p.config.Render.StarterKit == project.StarterKitTemplHTMX && p.config.Dev.Watches[i].Name == "Build App" {
-			normalized = normalizeTemplBuildWatchExclusions(normalized)
+		if isGeneratedLegacyNPMWatcher(p.config.Dev.Watches[i]) {
+			normalized = normalizeFrontendNPMWatchExclusions(normalized)
 		}
 		if normalized != p.config.Dev.Watches[i].Watch {
 			p.config.Dev.Watches[i].Watch = normalized
@@ -1965,10 +2051,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		}
 	}
 	if p.config.Render.Components.WebUI && project.StarterKitUsesNPM(p.config.Render.StarterKit) && !p.config.Render.Components.DemoApp {
-		task := project.DevTask{
-			Name: "Install Frontend Dependencies",
-			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
-		}
+		task := generatedDevFrontendInstallTask(project.DefaultApp())
 		if !hasDevTask(p.config.Dev.Pre, task) {
 			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
 			changed = true
@@ -2570,7 +2653,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "storage", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd_test.go"),
-		filepath.Join("project", "config.go"),
+		filepath.Join("internal", "lighthouse", "project_config.go"),
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
 		filepath.Join("internal", "cmd", "monitor_seed_cmd.go"),
 		filepath.Join("internal", "cmd", "monitor_reset_cmd.go"),
@@ -2672,9 +2755,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		if err := removeIfExists(path); err != nil {
 			return err
 		}
-	}
-	if err := os.Remove(filepath.Join("project")); err != nil && !os.IsNotExist(err) {
-		return err
 	}
 	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
 		return err
@@ -2867,13 +2947,15 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 			matches: []string{
 				`"/project"`,
 				"project.DevConfig",
-				"project.Components",
-				"var config project.Config",
+				"*DevConfig",
+				"func loadProjectConfig() (*Config, error)",
+				"var config Config",
 				`group.GET("/*"`,
 			},
 			requires: []string{
 				`"/auth/dev-session"`,
 				`group.GET("/*"`,
+				p.config.GoModuleName + "/project",
 			},
 		},
 		{
@@ -2921,15 +3003,29 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config.go")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join("project", "config.go")); os.IsNotExist(err) {
 		if err := p.renderTemplateFile(
-			filepath.Join("internal", "lighthouse", "project_config.go"),
-			"internal/lighthouse/project_config.go.tmpl",
+			filepath.Join("project", "config.go"),
+			"project/config.go.tmpl",
 			p.config,
 		); err != nil {
 			return err
 		}
 	} else if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config_patch.go")); os.IsNotExist(err) {
+		if err := p.renderTemplateFile(
+			filepath.Join("internal", "lighthouse", "project_config_patch.go"),
+			"internal/lighthouse/project_config_patch.go.tmpl",
+			p.config,
+		); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	if err := removeIfExists(filepath.Join("internal", "lighthouse", "project_config.go")); err != nil {
 		return err
 	}
 
@@ -4046,7 +4142,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, templateData(data)); err != nil {
+	if err := t.Execute(&buf, p.templateData(data)); err != nil {
 		return err
 	}
 
@@ -4083,6 +4179,16 @@ func templateData(data any) any {
 	default:
 		return data
 	}
+}
+
+// templateData adds transient environment seeds without placing them in durable project configuration.
+func (p *ProjectRenderer) templateData(data any) any {
+	value := templateData(data)
+	if config, ok := value.(templateRenderConfig); ok {
+		config.QueueDriver = p.queueDriver
+		return config
+	}
+	return value
 }
 
 func templateDataForApp(config *project.Config, app project.App) templateRenderConfig {

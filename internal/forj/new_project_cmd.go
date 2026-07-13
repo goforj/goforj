@@ -351,6 +351,7 @@ type model struct {
 	helpFormatList     list.Model
 	starterKitList     list.Model
 	queueDriverList    list.Model
+	queueDriver        string
 	atlasModeList      list.Model
 	atlasAgentList     list.Model
 	atlasSurfaceList   list.Model
@@ -387,15 +388,16 @@ func (m *model) finalizeConfig() {
 	}
 	m.config.Render.HelpFormat = project.NormalizeHelpFormat(m.config.Render.HelpFormat)
 	if components.Jobs {
-		m.config.Render.QueueDriver = normalizeQueueDriver(m.config.Render.QueueDriver)
-		if m.config.Render.QueueDriver == "" {
-			m.config.Render.QueueDriver = "redis"
+		m.queueDriver = normalizeQueueDriver(m.queueDriver)
+		if m.queueDriver == "" {
+			m.queueDriver = "redis"
 		}
 	}
 
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
 		Pre:               []project.DevTask{},
+		Apps:              map[string]project.DevApp{},
 		SoundOnWatchError: true,
 		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
@@ -424,38 +426,16 @@ func (m *model) finalizeConfig() {
 	}
 
 	if components.WebUI && project.StarterKitUsesNPM(m.config.Render.StarterKit) {
-		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
-			Name: "Install Frontend Dependencies",
-			Cmd:  "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install",
-		})
+		m.config.Dev.Pre = append(m.config.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultApp()))
 	}
 
-	needsApp := components.WebAPI || components.WebUI || components.Scheduler || components.Jobs
-	if needsApp {
-		buildWatch := "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone"
-		if m.config.Render.StarterKit == project.StarterKitTemplHTMX {
-			buildWatch = "-file .go -file .templ -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -xfile '.*_templ\\.go$' -postpone"
+	if components.HasRuntime() {
+		m.config.Dev.Apps = map[string]project.DevApp{
+			project.DefaultAppName: generatedDevAppConfig(&m.config, project.DefaultApp(), ""),
 		}
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Build App",
-			Watch: buildWatch,
-			Exec:  "forj build -o ./bin/app",
-		})
 	}
 
-	if components.WebAPI || components.WebUI || components.Scheduler || components.Jobs {
-		if m.config.Dev.Run == nil {
-			m.config.Dev.Run = map[string]string{}
-		}
-		m.config.Dev.Run[project.DefaultAppName] = "run"
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Run App",
-			Watch: "-file ./bin/app -file .env -file .env.*",
-			Exec:  "./bin/app run",
-		})
-	}
-
-	if components.WebUI && (project.StarterKitUsesNPM(m.config.Render.StarterKit) || packageJSONHasNpmDev()) {
+	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
 			Watch: frontendNPMWatch(defaultFrontendDir()),
@@ -464,7 +444,8 @@ func (m *model) finalizeConfig() {
 	}
 }
 
-// frontendNPMWatch returns source-oriented frontend watch filters for wgo.
+// frontendNPMWatch returns compatibility filters for an existing frontend whose
+// build lifecycle is not owned by a known GoForj starter kit.
 func frontendNPMWatch(frontendDir string) string {
 	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir node_modules -xdir dist"
 }
@@ -579,6 +560,7 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		helpFormatList:   helpFormatList,
 		starterKitList:   starterKitList,
 		queueDriverList:  runtimeList,
+		queueDriver:      "redis",
 		atlasModeList:    atlasModeList,
 		atlasAgentList:   atlasAgentList,
 		atlasSurfaceList: atlasSurfaceList,
@@ -586,7 +568,6 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		allowNonEmpty:    options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
-				QueueDriver:   "redis",
 				GoForjVersion: version.Semver(),
 				Components:    project.DefaultSelectedComponents(),
 				StarterKit:    project.DefaultStarterKit(),
@@ -1055,10 +1036,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				index := m.queueDriverList.Index()
 				if index < 0 || index >= len(m.queueDriverList.Items()) {
-					m.config.Render.QueueDriver = "redis"
+					m.queueDriver = "redis"
 				} else {
 					if item, ok := m.queueDriverList.Items()[index].(QueueDriverItem); ok {
-						m.config.Render.QueueDriver = item.Driver
+						m.queueDriver = item.Driver
 					}
 				}
 				m.stage = StageProjectPath
@@ -1933,7 +1914,7 @@ func selectedQueueDriverSummary(m model) string {
 		return "n/a"
 	}
 
-	driver := normalizeQueueDriver(m.config.Render.QueueDriver)
+	driver := normalizeQueueDriver(m.queueDriver)
 	if driver == "" {
 		index := m.queueDriverList.Index()
 		if index >= 0 && index < len(m.queueDriverList.Items()) {
@@ -2563,8 +2544,7 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	// project renderer
-	i := ComponentRenderInput{}
-	i.renderAll = true
+	i := ComponentRenderInput{renderAll: true, queueDriver: m.queueDriver}
 	err = runWithLoader("Rendering project files", func() error {
 		return c.renderer.Render(i)
 	})

@@ -112,7 +112,6 @@ func renderMultiAppRuntimeTestApp(t *testing.T, dir string) {
 		GoModuleName: "example.com/multiappruntime",
 		UpdatedAt:    "2026-06-05 00:00:00 UTC",
 		Render: project.RenderConfig{
-			QueueDriver: "workerpool",
 			Components: project.Components{
 				CLI:       true,
 				WebAPI:    true,
@@ -141,7 +140,7 @@ func renderMultiAppRuntimeTestApp(t *testing.T, dir string) {
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := runQuietly(func() error {
-		return renderer.Render(ComponentRenderInput{renderAll: true})
+		return renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "workerpool"})
 	}); err != nil {
 		t.Fatalf("render multi-app runtime app: %v", err)
 	}

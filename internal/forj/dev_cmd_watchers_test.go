@@ -63,6 +63,48 @@ func TestBuildWatcherExecSkipsReadinessForNonBinaryCommands(t *testing.T) {
 	}
 }
 
+// TestBuildNativeRuntimeExecFailsClosedUntilPreparation prevents a dormant wrapper from copying after runtime stop.
+func TestBuildNativeRuntimeExecFailsClosedUntilPreparation(t *testing.T) {
+	script := buildNativeRuntimeExec("./bin/app run")
+	for _, expected := range []string{"__FORJ_WATCHER_TRIGGER__", "refusing to start an unprepared native executable", "exit 1"} {
+		if !contains(script, expected) {
+			t.Fatalf("expected native runtime script to contain %q: %q", expected, script)
+		}
+	}
+	for _, forbidden := range []string{"mktemp", "cp ", "trap ", "./bin/app"} {
+		if contains(script, forbidden) {
+			t.Fatalf("unprepared native runtime script retained %q: %q", forbidden, script)
+		}
+	}
+}
+
+// TestBuildPreparedNativeRuntimeExecLaunchesOnlyPreparedPath verifies the supervisor-owned artifact is the sole target.
+func TestBuildPreparedNativeRuntimeExecLaunchesOnlyPreparedPath(t *testing.T) {
+	script := buildPreparedNativeRuntimeExec("./bin/app run", "./bin/app", "/tmp/.app.run-prepared")
+	if want := "exec '/tmp/.app.run-prepared' run"; !contains(script, want) {
+		t.Fatalf("prepared runtime script missing %q: %q", want, script)
+	}
+	for _, forbidden := range []string{"mktemp", "cp ", "trap ", "exec ./bin/app"} {
+		if contains(script, forbidden) {
+			t.Fatalf("prepared native runtime script retained %q: %q", forbidden, script)
+		}
+	}
+}
+
+// TestBuildFullProcessRuntimeExecDoesNotRewriteMappedCommand keeps quoting and environment syntax under user control.
+func TestBuildFullProcessRuntimeExecDoesNotRewriteMappedCommand(t *testing.T) {
+	command := `MODE=dev "./bin/custom app" --flag='quoted value'`
+	script := buildFullProcessRuntimeExec(command)
+	if !strings.HasSuffix(script, command) {
+		t.Fatalf("full process override changed command text: %q", script)
+	}
+	for _, rewritten := range []string{"mktemp", "forj_dev_snapshot", "cp \"$forj_dev_target\""} {
+		if strings.Contains(script, rewritten) {
+			t.Fatalf("full process override unexpectedly contained %q: %q", rewritten, script)
+		}
+	}
+}
+
 func TestDevExecutableTargetHandlesAbsoluteBinPath(t *testing.T) {
 	target, ok := devExecutableTarget("/Users/cmiles/code/ditracker/bin/app run")
 	if !ok {
@@ -114,6 +156,38 @@ func TestClearDevRunReadyStampsRemovesAppsWithBuildWatchers(t *testing.T) {
 	}
 	if _, err := os.Stat("bin/.orphan.ready"); err != nil {
 		t.Fatalf("expected orphan stamp to remain: %v", err)
+	}
+}
+
+// TestPublishDevBuildReadyStampRequiresPublishedBinary verifies custom builds cannot publish readiness before their binary exists.
+func TestPublishDevBuildReadyStampRequiresPublishedBinary(t *testing.T) {
+	root := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := publishDevBuildReadyStamp(project.DefaultApp()); err != nil {
+		t.Fatalf("skip absent binary: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("bin", ".app.ready")); !os.IsNotExist(err) {
+		t.Fatalf("absent binary published a ready stamp: %v", err)
+	}
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "app"), []byte("binary"), 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	if err := publishDevBuildReadyStamp(project.DefaultApp()); err != nil {
+		t.Fatalf("publish ready stamp: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("bin", ".app.ready")); err != nil {
+		t.Fatalf("expected ready stamp: %v", err)
 	}
 }
 
@@ -210,6 +284,33 @@ func TestDevWatchesForAppsUsesReadyStampForDefaultRunWatcher(t *testing.T) {
 	}
 	if got[0].Exec != "./bin/app run" {
 		t.Fatalf("expected run exec to stay on binary, got %q", got[0].Exec)
+	}
+}
+
+// TestDevWatchForAppWithConfigDistinguishesAbsentAndEmptyLegacyRun preserves the pre-allowlist model without weakening an explicit empty allowlist.
+func TestDevWatchForAppWithConfigDistinguishesAbsentAndEmptyLegacyRun(t *testing.T) {
+	t.Parallel()
+	watch := project.DevWatch{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"}
+	tests := []struct {
+		name   string
+		config *project.Config
+		wantOK bool
+	}{
+		{name: "nil config keeps raw command", wantOK: true},
+		{name: "absent allowlist keeps raw command", config: &project.Config{}, wantOK: true},
+		{name: "empty allowlist excludes App", config: &project.Config{Dev: project.DevConfig{Run: map[string]string{}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := devWatchForAppWithConfig(test.config, watch, project.DefaultApp())
+			if ok != test.wantOK {
+				t.Fatalf("devWatchForAppWithConfig() ok = %t, want %t", ok, test.wantOK)
+			}
+			if ok && (got.Exec != watch.Exec || got.Watch != "-file ./bin/.app.ready") {
+				t.Fatalf("legacy Run App watcher changed unexpectedly: %#v", got)
+			}
+		})
 	}
 }
 
@@ -572,7 +673,7 @@ func TestCreateDatabaseScriptsIncludeAllDatabases(t *testing.T) {
 }
 
 func TestDevAutoMigrateUsesUnqualifiedFrameworkPrefix(t *testing.T) {
-	if got := devAutoMigrateShellCommand(); got != "./bin/app migrate" {
+	if got := devAutoMigrateShellCommand(&project.Config{}); got != "./bin/app migrate" {
 		t.Fatalf("auto-migrate command = %q, want ./bin/app migrate", got)
 	}
 	if got := devAutoMigrateEnv()["FORJ_COMMAND_PREFIX"]; got != "forj" {
@@ -583,11 +684,25 @@ func TestDevAutoMigrateUsesUnqualifiedFrameworkPrefix(t *testing.T) {
 func TestDevAutoMigrateKeepsExplicitAppBinary(t *testing.T) {
 	t.Setenv("FORJ_APP", "billing")
 
-	if got := devAutoMigrateShellCommand(); got != "./bin/billing migrate" {
+	if got := devAutoMigrateShellCommand(&project.Config{}); got != "./bin/billing migrate" {
 		t.Fatalf("auto-migrate command = %q, want ./bin/billing migrate", got)
 	}
 	if got := devAutoMigrateEnv()["FORJ_COMMAND_PREFIX"]; got != "forj" {
 		t.Fatalf("auto-migrate prefix = %q, want forj", got)
+	}
+}
+
+// TestDevAutoMigrateUsesNamedStructuredParticipant avoids launching an omitted default App in sparse native config.
+func TestDevAutoMigrateUsesNamedStructuredParticipant(t *testing.T) {
+	t.Parallel()
+	config := &project.Config{
+		Dev: project.DevConfig{Apps: map[string]project.DevApp{"billing": {}}},
+		Apps: map[string]project.AppConfig{
+			"billing": {Components: project.Components{DatabaseSQLite: true}},
+		},
+	}
+	if got := devAutoMigrateShellCommand(config); got != "./bin/billing migrate" {
+		t.Fatalf("auto-migrate command = %q, want named participating binary", got)
 	}
 }
 
@@ -884,20 +999,6 @@ func withConventionalApp(t *testing.T, name string) {
 	}
 }
 
-func TestBuildWatcherCommandArgsPreservesEnvGlobPattern(t *testing.T) {
-	args := buildWatcherCommandArgs("-file .go -file .env -file .env.* -xdir forj -postpone", buildWatcherExec("./bin/app run"))
-	got := strings.Join(args, " ")
-	if !contains(got, ".env.*") {
-		t.Fatalf("expected watcher args to preserve literal env glob, got %q", got)
-	}
-	if contains(got, ".env.local") {
-		t.Fatalf("expected watcher args not to expand hidden env files, got %q", got)
-	}
-	if len(args) < 3 || args[len(args)-3] != "sh" || args[len(args)-2] != "-c" {
-		t.Fatalf("expected watcher args to end with shell runner, got %#v", args)
-	}
-}
-
 func TestSplitWatcherEnvAssignments(t *testing.T) {
 	env, cmd := splitWatcherEnvAssignments("FEATURE_FLAG=1 FOO=bar my-command --verbose")
 	if env["FEATURE_FLAG"] != "1" || env["FOO"] != "bar" {
@@ -905,6 +1006,46 @@ func TestSplitWatcherEnvAssignments(t *testing.T) {
 	}
 	if cmd != "my-command --verbose" {
 		t.Fatalf("expected remaining command to be preserved, got %q", cmd)
+	}
+}
+
+// TestSplitWatcherEnvAssignmentsPreservesShellSyntax verifies extracting simple
+// prefixes never rewrites quoting or substitutions owned by the shell.
+func TestSplitWatcherEnvAssignmentsPreservesShellSyntax(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantEnv map[string]string
+		wantCmd string
+	}{
+		{
+			name:    "quoted command argument",
+			command: `MODE=dev my-command --label="hello  world"`,
+			wantEnv: map[string]string{"MODE": "dev"},
+			wantCmd: `my-command --label="hello  world"`,
+		},
+		{
+			name:    "quoted assignment",
+			command: `MODE="hello world" my-command`,
+			wantCmd: `MODE="hello world" my-command`,
+		},
+		{
+			name:    "substituted assignment after simple prefix",
+			command: `MODE=dev TARGET="$WATCH_TARGET" my-command`,
+			wantEnv: map[string]string{"MODE": "dev"},
+			wantCmd: `TARGET="$WATCH_TARGET" my-command`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotEnv, gotCmd := splitWatcherEnvAssignments(test.command)
+			if !reflect.DeepEqual(gotEnv, test.wantEnv) {
+				t.Fatalf("splitWatcherEnvAssignments() env = %#v, want %#v", gotEnv, test.wantEnv)
+			}
+			if gotCmd != test.wantCmd {
+				t.Fatalf("splitWatcherEnvAssignments() command = %q, want %q", gotCmd, test.wantCmd)
+			}
+		})
 	}
 }
 
@@ -1067,52 +1208,6 @@ func TestBeginStopWatchersReturnsBeforeProcessesExit(t *testing.T) {
 	waitForStop()
 }
 
-func TestStartWatchersStartsProcessesInParallel(t *testing.T) {
-	watches := []project.DevWatch{
-		{Name: "Run App", Watch: "-file ./bin/app", Exec: "./bin/app run"},
-		{Name: "Run billing", Watch: "-file ./bin/billing", Exec: "./bin/billing run"},
-	}
-	entered := make(chan struct{}, len(watches))
-	release := make(chan struct{})
-	starter := func(_ *execx.Cmd) *execx.Process {
-		entered <- struct{}{}
-		<-release
-		return execx.Command("sh", "-c", "exit 0").Start()
-	}
-
-	type startResult struct {
-		watchers []runningWatcher
-		exitCh   <-chan watcherExit
-	}
-	done := make(chan startResult, 1)
-	go func() {
-		watchers, exitCh := startWatchersWithStarter("Test", watches, nil, io.Discard, io.Discard, false, starter)
-		done <- startResult{watchers: watchers, exitCh: exitCh}
-	}()
-
-	for range watches {
-		select {
-		case <-entered:
-		case <-time.After(2 * time.Second):
-			t.Fatal("expected every watcher starter to be entered")
-		}
-	}
-	select {
-	case <-done:
-		t.Fatal("expected watcher startup to wait until all parallel starts are released")
-	default:
-	}
-	close(release)
-
-	result := <-done
-	watchers := result.watchers
-	if got := []string{watchers[0].name, watchers[1].name}; !reflect.DeepEqual(got, []string{"Run App", "Run billing"}) {
-		t.Fatalf("expected watcher order to be preserved, got %#v", got)
-	}
-
-	drainWatcherExits(result.exitCh, len(watches), io.Discard, nil, true)
-}
-
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 	line := decorateWatcherLine("__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
 	if !contains(line, "Starting") {
@@ -1191,16 +1286,6 @@ func TestDevwatchLifecycleStateEmitsStartupSeparatorOnceAfterExpectedTriggers(t 
 	}
 	if state.noteStartupTrigger() {
 		t.Fatal("expected separator emission only once")
-	}
-}
-
-func TestCountImmediateStartupWatchers(t *testing.T) {
-	got := countImmediateStartupWatchers([]project.DevWatch{
-		{Name: "Build App", Watch: "-file .go -postpone"},
-		{Name: "Run App", Watch: "-file ./bin/app"},
-	})
-	if got != 1 {
-		t.Fatalf("expected 1 immediate startup watcher, got %d", got)
 	}
 }
 
@@ -1353,6 +1438,167 @@ func TestHandleBuildProgressLineConsumesSpinnerPrefixedMarkers(t *testing.T) {
 	}
 	if strings.Contains(out.String(), buildProgressMarker) {
 		t.Fatalf("did not expect raw progress marker in output: %q", out.String())
+	}
+}
+
+// TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp verifies one app publication follows all frontend assets.
+func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "reconcile.log")
+	appendLine := func(line string) string {
+		return "printf '%s\\n' " + shellQuote(line) + " >> " + shellQuote(logPath)
+	}
+	config := &project.Config{Dev: project.DevConfig{Apps: map[string]project.DevApp{
+		project.DefaultAppName: {
+			Build: &project.DevAppCommand{Exec: appendLine("app")},
+			SPAs: map[string]project.DevSPA{
+				"admin":  {Path: ".", Build: appendLine("spa-admin")},
+				"portal": {Path: ".", Build: appendLine("spa-portal")},
+			},
+		},
+	}}}
+	if err := runDevWatcherReconciliation(config, io.Discard, io.Discard, false); err != nil {
+		t.Fatalf("runDevWatcherReconciliation() error = %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	lines := strings.Fields(string(data))
+	want := []string{"spa-admin", "spa-portal", "app"}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("reconciliation order = %#v, want %#v", lines, want)
+	}
+}
+
+// TestDevBuildJobsPreserveStructuredExecutionContext verifies bootstrap and outer builds honor app overrides.
+func TestDevBuildJobsPreserveStructuredExecutionContext(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{Apps: map[string]project.DevApp{
+		"billing": {
+			Build: &project.DevAppCommand{
+				Exec: "make billing", WorkDir: "tools/billing", Env: map[string]string{
+					"CUSTOM_BUILD":        "yes",
+					"FORJ_APP":            "wrong",
+					"FORJ_COMMAND_PREFIX": "wrong",
+				},
+			},
+		},
+	}}}
+	jobs := devBuildJobs(config, false)
+	if len(jobs) != 1 {
+		t.Fatalf("devBuildJobs() = %#v, want one billing build", jobs)
+	}
+	job := jobs[0]
+	if job.command != "make billing" || job.dir != "tools/billing" {
+		t.Fatalf("build execution = command %q dir %q", job.command, job.dir)
+	}
+	for key, want := range map[string]string{
+		"CUSTOM_BUILD": "yes", "FORJ_APP": "billing", "FORJ_COMMAND_PREFIX": "forj billing",
+	} {
+		if job.env[key] != want {
+			t.Fatalf("build env %s = %q, want %q", key, job.env[key], want)
+		}
+	}
+	if _, ok := job.env["FORJ_BUILD_PROGRESS"]; ok {
+		t.Fatalf("bootstrap build env enabled watcher progress protocol: %#v", job.env)
+	}
+}
+
+// TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol keeps machine records out of human build output.
+func TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol(t *testing.T) {
+	t.Setenv("FORJ_BUILD_PROGRESS", "1")
+	testCases := []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "inherited"},
+		{name: "configured", env: map[string]string{"FORJ_BUILD_PROGRESS": "1"}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var out bytes.Buffer
+			var errOut bytes.Buffer
+			err := runDevSubprocessCommandInDir(&out, &errOut, `printf '%s' "$FORJ_BUILD_PROGRESS"`, "", testCase.env, true)
+			if err != nil {
+				t.Fatalf("runDevSubprocessCommandInDir() error = %v", err)
+			}
+			if got := out.String(); got != "0" {
+				t.Fatalf("FORJ_BUILD_PROGRESS = %q, want disabled", got)
+			}
+			if errOut.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", errOut.String())
+			}
+		})
+	}
+}
+
+// TestDevBuildJobsTreatExplicitEmptyAppsAsAuthority keeps custom-watcher-only native configs from enrolling Apps.
+func TestDevBuildJobsTreatExplicitEmptyAppsAsAuthority(t *testing.T) {
+	t.Setenv("FORJ_APP", "")
+	native := &project.Config{Dev: project.DevConfig{
+		Apps: map[string]project.DevApp{},
+		Watches: []project.DevWatch{
+			{Name: "Docs", Include: []string{".md"}, Exec: "make docs"},
+		},
+	}}
+	if jobs := devBuildJobs(native, false); len(jobs) != 0 {
+		t.Fatalf("explicit empty dev.apps produced build jobs: %#v", jobs)
+	}
+	if apps := activeDevAppsForConfig(native); len(apps) != 0 {
+		t.Fatalf("explicit empty dev.apps selected Apps: %#v", apps)
+	}
+
+	legacy := &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{
+		{Name: "Docs", Watch: "-file .md", Exec: "make docs"},
+	}}}
+	if jobs := devBuildJobs(legacy, false); len(jobs) == 0 {
+		t.Fatal("omitted dev.apps lost legacy App discovery")
+	}
+}
+
+// TestRunDevFrontendDependencySetupIncludesNamedApps verifies render-created app SPAs receive their own install task.
+func TestRunDevFrontendDependencySetupIncludesNamedApps(t *testing.T) {
+	root := t.TempDir()
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	for _, app := range []project.App{project.DefaultApp(), project.DefaultNamedApp("portal")} {
+		if err := os.MkdirAll(appFrontendDir(app), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", app.Name, err)
+		}
+	}
+	tools := t.TempDir()
+	logPath := filepath.Join(root, "npm.log")
+	npmPath := filepath.Join(tools, "npm")
+	if err := os.WriteFile(npmPath, []byte("#!/bin/sh\npwd >> "+shellQuote(logPath)+"\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(npm) error = %v", err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	defaultTask := generatedDevFrontendInstallTask(project.DefaultApp())
+	namedTask := generatedDevFrontendInstallTask(project.DefaultNamedApp("portal"))
+	config := &project.Config{Dev: project.DevConfig{
+		Apps: map[string]project.DevApp{
+			project.DefaultAppName: {SPAs: map[string]project.DevSPA{"frontend": {Path: "./cmd/app/frontend"}}},
+			"portal":               {SPAs: map[string]project.DevSPA{"frontend": {Path: "./cmd/portal/frontend"}}},
+		},
+		Pre: []project.DevTask{defaultTask, namedTask},
+	}}
+	if err := runDevFrontendDependencySetup(config); err != nil {
+		t.Fatalf("runDevFrontendDependencySetup() error = %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	output := filepath.ToSlash(string(data))
+	for _, path := range []string{"/cmd/app/frontend", "/cmd/portal/frontend"} {
+		if !strings.Contains(output, path) {
+			t.Fatalf("npm working directories = %q, missing %q", output, path)
+		}
 	}
 }
 

@@ -155,7 +155,6 @@ func renderAppAtDir(t *testing.T, dir string) {
 			GoModuleName: "example.com/testapp",
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
 				Components: project.Components{
 					WebAPI:    true,
 					WebUI:     true,

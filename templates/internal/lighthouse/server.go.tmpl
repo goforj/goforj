@@ -20,6 +20,7 @@ import (
 	"time"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/runtime"
+	"{{.GoModuleName}}/project"
 )
 
 // ServerConfig configures the dev console server.
@@ -280,10 +281,10 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			return r.NoContent(http.StatusInternalServerError)
 		}
 		var payload struct {
-			ProjectName  *string     `json:"project_name"`
-			GoModuleName *string     `json:"module_name"`
-			Dev          *DevConfig  `json:"dev"`
-			Components   *Components `json:"components"`
+			ProjectName  *string             `json:"project_name"`
+			GoModuleName *string             `json:"module_name"`
+			Dev          *devConfigUpdate    `json:"dev"`
+			Components   *project.Components `json:"components"`
 		}
 		if err := r.Bind(&payload); err != nil {
 			return r.NoContent(http.StatusBadRequest)
@@ -295,10 +296,10 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			current.GoModuleName = *payload.GoModuleName
 		}
 		if payload.Dev != nil {
-			current.Dev = *payload.Dev
+			applyDevConfigUpdate(&current.Dev, *payload.Dev)
 		}
 		if payload.Components != nil {
-			current.Render.Components = *payload.Components
+			current.Render.Components = mergeLighthouseComponents(current.Render.Components, *payload.Components)
 		}
 		if err := saveProjectConfig(current); err != nil {
 			return r.NoContent(http.StatusInternalServerError)
@@ -457,20 +458,12 @@ func resolveEnvFile(name string) (string, bool) {
 }
 
 // loadProjectConfig reads .goforj.yml into a project config instance.
-func loadProjectConfig() (*Config, error) {
-	data, err := os.ReadFile(".goforj.yml")
-	if err != nil {
-		return nil, err
-	}
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-	return &config, nil
+func loadProjectConfig() (*project.Config, error) {
+	return project.LoadProjectConfig()
 }
 
 // saveProjectConfig persists the project config back to .goforj.yml.
-func saveProjectConfig(config *Config) error {
+func saveProjectConfig(config *project.Config) error {
 	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)

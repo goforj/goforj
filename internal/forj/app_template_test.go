@@ -50,6 +50,64 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	}
 }
 
+// TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig verifies that
+// generated settings saves retain lifecycle fields older UIs do not expose.
+func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatesRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+	files := map[string][]string{
+		filepath.Join("project", "config.go.tmpl"): {
+			`package project`,
+			`Watch    any`,
+			`Root     string`,
+			`Roots    []string`,
+			`Files    DevWatchMatchers`,
+			`Dirs     DevWatchMatchers`,
+			`Apps              map[string]any`,
+			`Extra`,
+			`ModuleReplaces`,
+			`Observability`,
+			`func (c *DevConfig) SetApps(`,
+		},
+		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
+			`import "{{.GoModuleName}}/project"`,
+			`*[]project.DevWatch`,
+			`func applyDevConfigUpdate(`,
+			`func mergeLighthouseDevWatches(`,
+			`if _, scalar := existing.Watch.(string); scalar`,
+		},
+		filepath.Join("internal", "lighthouse", "server.go.tmpl"): {
+			`"{{.GoModuleName}}/project"`,
+			`Dev          *devConfigUpdate`,
+			`Components   *project.Components`,
+			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
+			`func loadProjectConfig() (*project.Config, error)`,
+		},
+		filepath.Join("internal", "lighthouse", "project_config_test.go.tmpl"): {
+			`func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(`,
+			`func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(`,
+			`func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(`,
+			`func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(`,
+			`future_watch_control: retained`,
+			`native watcher controls were erased`,
+		},
+	}
+	for name, snippets := range files {
+		content, err := os.ReadFile(filepath.Join(templatesRoot, name))
+		if err != nil {
+			t.Fatalf("read Lighthouse template %s: %v", name, err)
+		}
+		for _, snippet := range snippets {
+			if !strings.Contains(string(content), snippet) {
+				t.Fatalf("expected Lighthouse template %s to contain %q", name, snippet)
+			}
+		}
+	}
+}
+
 func TestAboutCommandTemplateIsWired(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
