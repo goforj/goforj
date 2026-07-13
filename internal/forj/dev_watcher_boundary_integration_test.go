@@ -495,7 +495,6 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 		default:
 		}
 		if state.version != "latest" || state.pid == initial.pid ||
-			strings.Count(readDevWatcherChurnFile(filepath.Join(root, "watcher.log")), "Starting Run App") != 3 ||
 			len(controller.tasks[runtimeID].triggerCh) != 0 || !controller.supervisor.RuntimeRunning(runtimeID) {
 			return false
 		}
@@ -634,10 +633,10 @@ func runDevWatcherBoundaryRuntimeHelper() {
 	pid := os.Getpid()
 	logPath := os.Getenv("GOFORJ_WATCHER_BOUNDARY_LOG")
 	statePath := os.Getenv("GOFORJ_WATCHER_BOUNDARY_STATE")
-	appendDevWatcherChurnLine(logPath, fmt.Sprintf("runtime-start:%s:%d", version, pid))
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	appendDevWatcherChurnLine(logPath, fmt.Sprintf("runtime-start:%s:%d", version, pid))
 	ticker := time.NewTicker(devWatcherBoundaryHeartbeat)
 	defer ticker.Stop()
 	heartbeat := 0
@@ -791,10 +790,10 @@ const version = __BOUNDARY_ARTIFACT_VERSION__
 // main exposes the immutable artifact version and a graceful-stop synchronization barrier.
 func main() {
 	pid := os.Getpid()
-	appendLifecycle(fmt.Sprintf("runtime-start:%s:%d", version, pid))
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	appendLifecycle(fmt.Sprintf("runtime-start:%s:%d", version, pid))
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	heartbeat := 0

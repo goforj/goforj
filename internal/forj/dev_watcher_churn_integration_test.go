@@ -586,6 +586,9 @@ func main() {
 			time.Sleep(time.Second)
 		}
 	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
 	child := exec.Command(os.Args[0], "child")
 	child.Env = os.Environ()
 	if err := child.Start(); err != nil {
@@ -595,8 +598,6 @@ func main() {
 	pid := os.Getpid()
 	childPID := child.Process.Pid
 	appendLifecycle(fmt.Sprintf("runtime-start:%s:%d:%d", version, pid, childPID))
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	heartbeat := 0
