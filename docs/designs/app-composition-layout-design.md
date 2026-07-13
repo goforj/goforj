@@ -797,19 +797,34 @@ App-aware Lighthouse behavior should make it clear:
 
 ## API Index And OpenAPI
 
-API indexing must become app-aware.
+API indexing is app-aware. It follows the active App's returned route
+composition, so routes exposed by `billing` are not mixed with routes exposed
+only by `reporting`.
 
-Routes exposed by `billing` should not be mixed with routes exposed only by `reporting`.
-
-Single-app projects can keep unqualified commands. Multi-app projects should use app prefixes:
+Single-app projects use the unqualified build command. Multi-app projects use
+the normal App prefix:
 
 ```bash
-forj api-index
-forj billing api-index
-forj reporting api-index
+forj build:api-index
+forj billing build:api-index
+forj reporting build:api-index
 ```
 
-The exact command names may change, but the behavior should be app-scoped.
+The default App writes `build/api_index.json`,
+`build/api_index.diagnostics.json`, and `build/openapi.json`. A named App writes
+the same files below `build/<app>/`. `forj build` and `forj run` also prepare the
+active App's artifacts, but publish them only after the final compile or process
+start succeeds. `build:api-index --strict` and the pipeline
+`--api-index-strict` flag reject warnings as well as errors.
+
+An App explicitly configured without WebAPI produces no API index and stale
+artifacts are cleaned. An App configured with WebAPI but missing its
+`app[/<app>]/routes.go` composition fails instead of widening to a whole-project
+index.
+
+See [Forj API Index Design](forj-api-index-design.md) for route-provider
+identity, Manifest v2, schema inference, OpenAPI projection, and publication
+semantics.
 
 ## Migrations And Database
 
@@ -977,8 +992,8 @@ Possible path:
 4. Teach generators to detect which layout exists. Done for the default app generators.
 5. Add app detection and command resolution to `forj`. Done for source-mode convention dispatch and binary fallback dispatch.
 6. Add app-aware generator registration. Done for default and named app-owned generator registration.
-7. Add app-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-app build/run/wire paths, source-mode app build/run/wire paths, all-app unqualified dev orchestration, API index/OpenAPI app paths and status labeling, and Lighthouse agent identity.
-8. Add rendered smoke scenarios for single-app and multi-app Apps. Done for default single-app render coverage; named-app coverage remains.
+7. Add app-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-app build/run/wire paths, source-mode app build/run/wire paths, all-app unqualified dev orchestration, standalone and pipeline API-index/OpenAPI generation with App-scoped artifacts, and Lighthouse agent identity.
+8. Add rendered smoke scenarios for single-app and multi-app Apps. Done for default and named-App render coverage, including App-scoped API-index artifacts and serving behavior.
 9. Update docs to describe Apps as the preferred generated shape. In progress.
 10. Consider a migration command only after the new layout has proven itself.
 
@@ -1195,7 +1210,7 @@ Track implementation as concrete work items:
   - [x] Keep queue names logical in app code and `.env`; physicalize backend queue names from the active app so named apps use queues such as `billing_default` and `billing_reports`.
   - [x] Avoid a separate `QUEUE_NAMESPACE` setting. The app name is the queue namespace for named apps, and the default `app` keeps existing queue names unchanged.
   - [x] Add queue driver coverage for app-isolated queue names across Redis, SQL, NATS, SQS, and RabbitMQ.
-  - [ ] Decide whether to add a dedicated user-facing API index/OpenAPI command surface beyond build/run pipeline generation.
+  - [x] Add the dedicated `forj [<app>] build:api-index` command with standalone `--strict` diagnostics policy.
 
 - [ ] Partial: add app-aware observability and Lighthouse identity.
   - [x] Add `app` to Lighthouse agent identity.
