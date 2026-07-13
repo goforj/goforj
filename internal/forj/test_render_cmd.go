@@ -67,6 +67,11 @@ func (cmd *TestRenderCmd) Run() error {
 			},
 		},
 	}
+	if repoRoot, err := os.Getwd(); err == nil {
+		if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
+			cfg.Render.ModuleReplaces = map[string]string{"github.com/goforj/goforj": repoRoot}
+		}
+	}
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 	if err := WriteYAML(ymlPath, cfg); err != nil {

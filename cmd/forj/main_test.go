@@ -99,6 +99,36 @@ func TestAppPrefixedNativeCommandStaysInSourceMode(t *testing.T) {
 	}
 }
 
+func TestAppPrefixedBackupCommandStaysInSourceMode(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeSourceApp(t, "billing")
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"backup:create", "backup:list", "backup:plan", "backup:prune", "backup:restore", "backup:verify"}
+
+	appName, remaining, ok := resolveAppPrefix([]string{"billing", "backup:create"}, true)
+	if !ok || appName != "billing" {
+		t.Fatalf("app prefix = (%q, %#v, %t), want billing app", appName, remaining, ok)
+	}
+	if !shouldRunAppNativeCommand(remaining) {
+		t.Fatalf("expected app-prefixed backup command to stay source-scoped, got %#v", remaining)
+	}
+}
+
+func TestBackupCommandUsesFrameworkProcessWithAppEnvironment(t *testing.T) {
+	if !shouldRunFrameworkCommandWithAppEnv([]string{"backup:create"}) {
+		t.Fatal("expected backup command to remain framework-owned")
+	}
+	if shouldRunFrameworkCommandWithAppEnv([]string{"route:list"}) {
+		t.Fatal("expected generated app command to remain app-owned")
+	}
+	if got := appEnvPrefix("customer-portal"); got != "CUSTOMER_PORTAL" {
+		t.Fatalf("app env prefix = %q, want CUSTOMER_PORTAL", got)
+	}
+}
+
 func TestAppPrefixedSourceCommandWinsOverBuiltBinary(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
