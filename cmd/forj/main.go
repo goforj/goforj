@@ -82,6 +82,7 @@ func main() {
 			args = remaining
 		}
 	}
+	args = insertBuildPassthroughBoundary(args)
 	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
 
 	if isRootHelp(args) {
@@ -122,6 +123,7 @@ func main() {
 		}
 		console.Fatalf("%v", err)
 	}
+	app.RootCmd().RootCmd.BuildCmd.Args = buildPassthroughArgs(app.RootCmd().RootCmd.BuildCmd.Args)
 
 	// Execute command
 	err = ctx.Run()
@@ -172,6 +174,82 @@ func appEnvPrefix(appName string) string {
 		parts[i] = strings.ToUpper(parts[i])
 	}
 	return strings.Join(parts, "_")
+}
+
+// insertBuildPassthroughBoundary prevents Kong from splitting Go's single-dash flags into framework short options.
+func insertBuildPassthroughBoundary(args []string) []string {
+	buildIndex := buildCommandIndex(args)
+	if buildIndex < 0 || buildIndex+1 >= len(args) {
+		return args
+	}
+	for index := buildIndex + 1; index < len(args); index++ {
+		argument := strings.TrimSpace(args[index])
+		if argument == "--" {
+			return args
+		}
+		valueCount, frameworkFlag := buildFrameworkFlagValueCount(argument)
+		if frameworkFlag {
+			index += valueCount
+			continue
+		}
+		normalized := make([]string, 0, len(args)+1)
+		normalized = append(normalized, args[:index]...)
+		normalized = append(normalized, "--")
+		normalized = append(normalized, args[index:]...)
+		return normalized
+	}
+	return args
+}
+
+// buildCommandIndex locates build after root flags because Kong accepts inherited flags before a command.
+func buildCommandIndex(args []string) int {
+	for index := 0; index < len(args); index++ {
+		argument := strings.TrimSpace(args[index])
+		if buildRootFlag(argument) {
+			continue
+		}
+		if argument == "build" {
+			return index
+		}
+		return -1
+	}
+	return -1
+}
+
+// buildPassthroughArgs removes the parser sentinel while preserving every raw Go build argument after it.
+func buildPassthroughArgs(args []string) []string {
+	if len(args) > 0 && args[0] == "--" {
+		return args[1:]
+	}
+	return args
+}
+
+// buildFrameworkFlagValueCount identifies flags Kong must parse before raw Go build arguments begin.
+func buildFrameworkFlagValueCount(argument string) (int, bool) {
+	name, _, hasInlineValue := strings.Cut(argument, "=")
+	switch name {
+	case "--timings", "--api-index-strict", "--skip-wire", "--profile", "--help", "-h",
+		"--dev", "--x", "--version":
+		return 0, true
+	case "--env-defaults", "--env-overrides", "--top", "--root":
+		if hasInlineValue {
+			return 0, true
+		}
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+// buildRootFlag identifies inherited root flags that may legally precede the build command.
+func buildRootFlag(argument string) bool {
+	name, _, _ := strings.Cut(argument, "=")
+	switch name {
+	case "--dev", "--x", "--version", "--help", "-h":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveAppPrefix strips a conventional app prefix while preserving native command precedence.
