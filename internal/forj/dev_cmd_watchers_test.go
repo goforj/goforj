@@ -1493,11 +1493,41 @@ func TestDevBuildJobsPreserveStructuredExecutionContext(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"CUSTOM_BUILD": "yes", "FORJ_APP": "billing", "FORJ_COMMAND_PREFIX": "forj billing",
-		"FORJ_BUILD_PROGRESS": "1",
 	} {
 		if job.env[key] != want {
 			t.Fatalf("build env %s = %q, want %q", key, job.env[key], want)
 		}
+	}
+	if _, ok := job.env["FORJ_BUILD_PROGRESS"]; ok {
+		t.Fatalf("bootstrap build env enabled watcher progress protocol: %#v", job.env)
+	}
+}
+
+// TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol keeps machine records out of human build output.
+func TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol(t *testing.T) {
+	t.Setenv("FORJ_BUILD_PROGRESS", "1")
+	testCases := []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "inherited"},
+		{name: "configured", env: map[string]string{"FORJ_BUILD_PROGRESS": "1"}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var out bytes.Buffer
+			var errOut bytes.Buffer
+			err := runDevSubprocessCommandInDir(&out, &errOut, `printf '%s' "$FORJ_BUILD_PROGRESS"`, "", testCase.env, true)
+			if err != nil {
+				t.Fatalf("runDevSubprocessCommandInDir() error = %v", err)
+			}
+			if got := out.String(); got != "0" {
+				t.Fatalf("FORJ_BUILD_PROGRESS = %q, want disabled", got)
+			}
+			if errOut.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", errOut.String())
+			}
+		})
 	}
 }
 

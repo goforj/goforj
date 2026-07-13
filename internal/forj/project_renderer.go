@@ -69,17 +69,20 @@ func (e *wireGenerateError) Unwrap() error {
 
 // ComponentRenderInput controls whether rendering uses explicit components or the stored project config.
 type ComponentRenderInput struct {
-	components project.Components
-	renderAll  bool
+	components  project.Components
+	renderAll   bool
+	queueDriver string
 }
 
 // ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
-	logger  *logger.AppLogger
-	config  *project.Config
-	stats   *renderStats
-	lines   []string
-	timings bool
+	logger                  *logger.AppLogger
+	config                  *project.Config
+	stats                   *renderStats
+	lines                   []string
+	timings                 bool
+	queueDriver             string
+	removeLegacyQueueDriver bool
 }
 
 type renderStats struct {
@@ -117,6 +120,7 @@ type templateRenderConfig struct {
 	ProjectComponents project.Components
 	StarterKit        project.StarterKit
 	HelpFormat        project.HelpFormat
+	QueueDriver       string
 	HelpFormatterFunc string
 	HelpCommandFunc   string
 	App               project.App
@@ -241,6 +245,8 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.stats = &renderStats{}
 	p.lines = nil
+	p.queueDriver = ""
+	p.removeLegacyQueueDriver = false
 
 	if input.renderAll {
 		cfg, err := project.LoadProjectConfig()
@@ -248,6 +254,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			return err
 		}
 		p.config = cfg
+		p.removeLegacyQueueDriver = cfg.Render.HasLegacyQueueDriver()
 	} else {
 		p.config = &project.Config{
 			Render: project.RenderConfig{Components: input.components},
@@ -257,6 +264,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.config.Render.Components.Auth = true
 		p.config.Render.StarterKit = project.StarterKitNone
 	}
+	// The wizard choice seeds .env only; legacy YAML is accepted once and removed when the config is rewritten.
+	p.queueDriver = resolveQueueDriverSeed(input.queueDriver, p.config.Render.LegacyQueueDriver())
 	p.config.Render.Components.ResolveDependencies()
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
@@ -1116,6 +1125,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.printOverallSummary()
 
 	return nil
+}
+
+// resolveQueueDriverSeed prefers the current wizard choice while tolerating legacy project configuration.
+func resolveQueueDriverSeed(selected string, legacy string) string {
+	if driver := normalizeQueueDriver(selected); driver != "" {
+		return driver
+	}
+	if driver := normalizeQueueDriver(legacy); driver != "" {
+		return driver
+	}
+	return "redis"
 }
 
 // RenderAppOnly renders one named app without replaying the full project scaffold.
@@ -1991,6 +2011,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		return nil
 	}
 	changed := false
+	if p.removeLegacyQueueDriver {
+		changed = true
+	}
 	defaultApp := project.DefaultApp()
 	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
 		p.config.Dev.WirePaths = []string{defaultApp.WireDir}
@@ -4105,7 +4128,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, templateData(data)); err != nil {
+	if err := t.Execute(&buf, p.templateData(data)); err != nil {
 		return err
 	}
 
@@ -4142,6 +4165,16 @@ func templateData(data any) any {
 	default:
 		return data
 	}
+}
+
+// templateData adds transient environment seeds without placing them in durable project configuration.
+func (p *ProjectRenderer) templateData(data any) any {
+	value := templateData(data)
+	if config, ok := value.(templateRenderConfig); ok {
+		config.QueueDriver = p.queueDriver
+		return config
+	}
+	return value
 }
 
 func templateDataForApp(config *project.Config, app project.App) templateRenderConfig {

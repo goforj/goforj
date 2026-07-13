@@ -180,15 +180,12 @@ func compileStructuredAppBuild(config *project.Config, app project.App, appConfi
 	}
 	name := devAppWatcherName("Build", app.Name)
 	id := devStructuredAppWatcherID(devWatcherAppBuild, app.Name)
-	execCommand := devBuildCommandForApp("forj build -o ./bin/app", app)
-	includes := []string{".go", ".env", ".env.*"}
-	ignores := []string{"forj", "_data", "wire_gen.go", ".git", ".hg", ".svn", ".idea", ".vscode", ".settings", "node_modules"}
-	if appRenderStarterKit(config, app) == project.StarterKitTemplHTMX {
-		includes = append(includes, ".templ")
-		ignores = append(ignores, `re:.*_templ\.go$`)
-	}
-	root := "."
-	postpone := true
+	conventional := conventionalDevAppBuildCommand(config, app)
+	execCommand := conventional.Exec
+	includes := conventional.Watch
+	ignores := conventional.Ignore
+	root := conventional.Root
+	postpone := conventional.Postpone
 	var workDir string
 	var env map[string]string
 	var debounce string
@@ -204,7 +201,7 @@ func compileStructuredAppBuild(config *project.Config, app project.App, appConfi
 			includes = commandConfig.Watch
 		}
 		if len(commandConfig.Ignore) > 0 {
-			ignores = append(ignores, commandConfig.Ignore...)
+			ignores = appendUniqueDevMatchers(ignores, commandConfig.Ignore...)
 		}
 		if strings.TrimSpace(commandConfig.Root) != "" {
 			root = commandConfig.Root
@@ -251,7 +248,7 @@ func compileStructuredAppRuntime(app project.App, components project.Components,
 	if commandConfig != nil && commandConfig.IsMapping() && strings.TrimSpace(commandConfig.Exec) == "" {
 		return nil, fmt.Errorf("compile %s: run.exec is required for a run mapping", name)
 	}
-	binary := "./bin/" + app.Name
+	binary := conventionalDevAppRuntimeCommand(app).Exec
 	execCommand := binary
 	if commandConfig != nil && strings.TrimSpace(commandConfig.Exec) != "" {
 		execCommand = commandConfig.Exec
@@ -304,8 +301,35 @@ func compileStructuredAppRuntime(app project.App, components project.Components,
 			Stdin: devWatcherStdin(false),
 		},
 		Postpone: postpone, Restart: true, WatchChanges: watchChanges, PollInterval: pollInterval,
-		FullProcessOverride: commandConfig != nil && commandConfig.IsMapping(),
+		FullProcessOverride: commandConfig != nil && commandConfig.IsMapping() && !isExplicitConventionalDevRuntime(commandConfig, binary),
 	}, nil
+}
+
+// isExplicitConventionalDevRuntime recognizes a rendered bare-binary snapshot without weakening custom process overrides.
+func isExplicitConventionalDevRuntime(command *project.DevAppCommand, binary string) bool {
+	if command == nil || command.Exec != binary {
+		return false
+	}
+	return len(command.Watch) == 0 && len(command.Ignore) == 0 && command.Root == "" &&
+		command.WorkDir == "" && len(command.Env) == 0 && command.Debounce == "" &&
+		command.Poll == "" && !command.PostponeSet
+}
+
+// appendUniqueDevMatchers extends invariant matcher lists without duplicating rendered defaults.
+func appendUniqueDevMatchers(values []string, additions ...string) []string {
+	merged := append([]string(nil), values...)
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		merged = append(merged, value)
+		seen[value] = struct{}{}
+	}
+	return merged
 }
 
 // isNestedDevWorkDir identifies command roots where project-relative lifecycle defaults would point at the wrong files.
@@ -346,17 +370,18 @@ func compileStructuredSPA(app project.App, name string, spa project.DevSPA, buil
 	}
 	watchName := "Build " + app.Name + " SPA " + name
 	id := devStructuredSPAWatcherID(app.Name, name)
+	conventional := conventionalDevSPAConfig(root)
 	command := strings.TrimSpace(spa.Build)
 	if command == "" {
-		command = "npm run build -s -- --logLevel silent"
+		command = conventional.Build
 	}
 	includes := spa.Watch
 	if len(includes) == 0 {
-		includes = []string{".ts", ".tsx", ".js", ".jsx", ".vue", ".css", ".html", "package.json", "package-lock.json"}
+		includes = conventional.Watch
 	}
 	ignores := spa.Ignore
 	if len(ignores) == 0 {
-		ignores = []string{"_data", "node_modules", "dist"}
+		ignores = conventional.Ignore
 	}
 	watch, _, err := compileStructuredWatchSpec(id, []string{root}, includes, ignores, nil, nil, "", "")
 	if err != nil {

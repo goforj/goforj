@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -691,27 +692,34 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	if m.stage != StageConfirm {
 		t.Fatalf("expected confirmation stage after project path selection, got %v", m.stage)
 	}
-	if m.config.Render.QueueDriver != "redis" {
-		t.Fatalf("expected default queue driver to be redis, got %q", m.config.Render.QueueDriver)
+	if m.queueDriver != "redis" {
+		t.Fatalf("expected default queue driver to be redis, got %q", m.queueDriver)
 	}
 }
 
 func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.Jobs = true
-	m.config.Render.QueueDriver = "  "
+	m.queueDriver = "  "
 
 	m.finalizeConfig()
 
-	if m.config.Render.QueueDriver != "redis" {
-		t.Fatalf("expected queue driver default redis, got %q", m.config.Render.QueueDriver)
+	if m.queueDriver != "redis" {
+		t.Fatalf("expected queue driver default redis, got %q", m.queueDriver)
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal finalized config: %v", err)
+	}
+	if strings.Contains(string(encoded), "queue_driver:") {
+		t.Fatalf("wizard-only queue driver was persisted:\n%s", encoded)
 	}
 	if m.config.Render.GoForjVersion != version.Semver() {
 		t.Fatalf("expected goforj version %q, got %q", version.Semver(), m.config.Render.GoForjVersion)
 	}
 }
 
-// TestFinalizeConfigUsesNativeDefaultAppLifecycle verifies generated runtime Apps use convention-only native configuration.
+// TestFinalizeConfigUsesNativeDefaultAppLifecycle verifies generated runtime Apps expose their native lifecycle configuration.
 func TestFinalizeConfigUsesNativeDefaultAppLifecycle(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebAPI = true
@@ -730,11 +738,23 @@ func TestFinalizeConfigUsesNativeDefaultAppLifecycle(t *testing.T) {
 		}
 	}
 	app, ok := m.config.Dev.Apps[project.DefaultAppName]
-	if !ok || app.Run != nil {
+	if !ok {
 		t.Fatalf("expected native default app runtime, got %#v", app)
 	}
-	if app.Build != nil {
-		t.Fatalf("expected default app build conventions to remain implicit, got %#v", app.Build)
+	wantBuild := conventionalDevAppBuildCommand(&m.config, project.DefaultApp())
+	if app.Build == nil || !reflect.DeepEqual(*app.Build, wantBuild) {
+		t.Fatalf("generated build = %#v, want %#v", app.Build, wantBuild)
+	}
+	wantRun := conventionalDevAppRuntimeCommand(project.DefaultApp())
+	if app.Run == nil || !reflect.DeepEqual(*app.Run, wantRun) {
+		t.Fatalf("generated runtime = %#v, want %#v", app.Run, wantRun)
+	}
+	compiled, err := compileDevWatchers(&m.config)
+	if err != nil {
+		t.Fatalf("compile generated dev lifecycle: %v", err)
+	}
+	if len(compiled) != 2 || len(compiled[0].Watch.Excludes) != len(wantBuild.Ignore) || compiled[1].FullProcessOverride {
+		t.Fatalf("generated explicit lifecycle changed native defaults: %#v", compiled)
 	}
 	if m.config.Dev.Run != nil {
 		t.Fatalf("expected generated config not to use the legacy dev.run allowlist, got %#v", m.config.Dev.Run)
@@ -743,8 +763,37 @@ func TestFinalizeConfigUsesNativeDefaultAppLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal generated project config: %v", err)
 	}
-	if !strings.Contains(string(encoded), "apps:") || strings.Contains(string(encoded), "run: run") {
-		t.Fatalf("expected concise dev.apps YAML, got:\n%s", encoded)
+	var decoded project.Config
+	if err := yaml.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal generated project config: %v", err)
+	}
+	decodedApp := decoded.Dev.Apps[project.DefaultAppName]
+	if decodedApp.Build == nil || !reflect.DeepEqual(*decodedApp.Build, wantBuild) ||
+		decodedApp.Run == nil || !reflect.DeepEqual(*decodedApp.Run, wantRun) {
+		t.Fatalf("generated lifecycle changed across YAML round trip: %#v", decodedApp)
+	}
+	decodedCompiled, err := compileDevWatchers(&decoded)
+	if err != nil {
+		t.Fatalf("compile round-tripped dev lifecycle: %v", err)
+	}
+	if len(decodedCompiled) != 2 || decodedCompiled[1].FullProcessOverride {
+		t.Fatalf("round-tripped conventional runtime became a process override: %#v", decodedCompiled)
+	}
+	for _, want := range []string{
+		"apps:",
+		"exec: forj build -o ./bin/app",
+		"watch: [.go, .env, .env.*]",
+		"ignore: [forj, _data, wire_gen.go, .git, .hg, .svn, .idea, .vscode, .settings, node_modules]",
+		"root: .",
+		"postpone: true",
+		"exec: ./bin/app",
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("expected generated dev.apps YAML to contain %q, got:\n%s", want, encoded)
+		}
+	}
+	if strings.Contains(string(encoded), "run: run") {
+		t.Fatalf("expected generated runtime to use its complete command, got:\n%s", encoded)
 	}
 	for _, legacy := range []string{"watches:", "Build App", "Run App"} {
 		if strings.Contains(string(encoded), legacy) {
@@ -753,6 +802,7 @@ func TestFinalizeConfigUsesNativeDefaultAppLifecycle(t *testing.T) {
 	}
 }
 
+// TestFinalizeConfigInstallsVueStarterDependencies verifies Vue generation exposes its full frontend lifecycle.
 func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.WebUI = true
@@ -760,12 +810,35 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 
 	m.finalizeConfig()
 
+	foundInstall := false
 	for _, task := range m.config.Dev.Pre {
 		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd cmd/app/frontend && npm install" {
-			return
+			foundInstall = true
+			break
 		}
 	}
-	t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
+	if !foundInstall {
+		t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
+	}
+	app := m.config.Dev.Apps[project.DefaultAppName]
+	wantSPA := conventionalDevSPAConfig("./cmd/app/frontend")
+	if spa, ok := app.SPAs[generatedFrontendSPAName]; !ok || !reflect.DeepEqual(spa, wantSPA) {
+		t.Fatalf("generated Vue SPA = %#v, want %#v", spa, wantSPA)
+	}
+	encoded, err := yaml.Marshal(m.config)
+	if err != nil {
+		t.Fatalf("marshal generated Vue config: %v", err)
+	}
+	for _, want := range []string{
+		"path: ./cmd/app/frontend",
+		"build: npm run build -s -- --logLevel silent",
+		"watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]",
+		"ignore: [_data, node_modules, dist]",
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("expected generated Vue config to contain %q, got:\n%s", want, encoded)
+		}
+	}
 }
 
 func TestFinalizeConfigDoesNotAddGrafanaSeedTask(t *testing.T) {
@@ -798,8 +871,16 @@ func TestFinalizeConfigTemplStarterUsesOwnedFrontendLifecycle(t *testing.T) {
 	}
 	app := m.config.Dev.Apps[project.DefaultAppName]
 	spa, ok := app.SPAs[generatedFrontendSPAName]
-	if !ok || spa.Path != "./cmd/app/frontend" || app.Run != nil {
+	wantSPA := conventionalDevSPAConfig("./cmd/app/frontend")
+	wantBuild := conventionalDevAppBuildCommand(&m.config, project.DefaultApp())
+	wantRun := conventionalDevAppRuntimeCommand(project.DefaultApp())
+	if !ok || !reflect.DeepEqual(spa, wantSPA) || app.Build == nil || !reflect.DeepEqual(*app.Build, wantBuild) ||
+		app.Run == nil || !reflect.DeepEqual(*app.Run, wantRun) {
 		t.Fatalf("expected templ frontend ownership in the default app lifecycle, got %#v", app)
+	}
+	if !reflect.DeepEqual(app.Build.Watch, []string{".go", ".env", ".env.*", ".templ"}) ||
+		app.Build.Ignore[len(app.Build.Ignore)-1] != `re:.*_templ\.go$` {
+		t.Fatalf("expected templ-specific build matchers, got %#v", app.Build)
 	}
 }
 

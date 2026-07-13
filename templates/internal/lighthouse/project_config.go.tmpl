@@ -190,10 +190,21 @@ type RenderConfig struct {
 	Components     Components        `yaml:"components" json:"components"`
 	StarterKit     string            `yaml:"starter_kit" json:"starter_kit"`
 	HelpFormat     string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	QueueDriver    string            `yaml:"queue_driver" json:"queue_driver"`
 	GoForjVersion  string            `yaml:"goforj_version" json:"goforj_version"`
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 	Extra          map[string]any    `yaml:",inline" json:"-"`
+}
+
+// UnmarshalYAML consumes the obsolete wizard choice so Lighthouse cannot preserve it as an extension.
+func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
+	type renderConfigFields RenderConfig
+	var fields renderConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*c = RenderConfig(fields)
+	delete(c.Extra, "queue_driver")
+	return nil
 }
 
 // ProjectConfig represents the configuration for a project.

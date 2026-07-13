@@ -159,6 +159,11 @@ func TestDevAppsYAMLSupportsConciseLifecycleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal concise dev apps: %v", err)
 	}
+	for _, expected := range []string{"watch: [.ts, .css]", "ignore: [node_modules, dist]"} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("round-trip YAML omitted compact matcher list %q:\n%s", expected, encoded)
+		}
+	}
 	var roundTripped Config
 	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
 		t.Fatalf("unmarshal round-tripped dev apps: %v", err)
@@ -292,7 +297,7 @@ func TestDevAppCommandYAMLRoundTripsLifecycleStates(t *testing.T) {
 		t.Fatalf("marshal dev app command states: %v", err)
 	}
 	encodedText := string(encoded)
-	for _, expected := range []string{"omitted: true", "run: false", "run: jobs --once", "exec: forj jobs run", "postpone: false"} {
+	for _, expected := range []string{"omitted: true", "run: false", "run: jobs --once", "exec: forj jobs run", "watch: [.go]", "postpone: false"} {
 		if !strings.Contains(encodedText, expected) {
 			t.Fatalf("round-trip YAML omitted %q:\n%s", expected, encoded)
 		}
@@ -397,6 +402,15 @@ func TestDevAppsYAMLSupportsExplicitCommandOverrides(t *testing.T) {
 	if app.Run == nil || !app.Run.Disabled {
 		t.Fatalf("billing run false should disable only the runtime: %#v", app.Run)
 	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal explicit dev app: %v", err)
+	}
+	for _, expected := range []string{"watch: [.go, .env]", "ignore: [wire_gen.go]"} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("explicit dev app YAML omitted compact matcher list %q:\n%s", expected, encoded)
+		}
+	}
 }
 
 // TestDevWatchYAMLRejectsAmbiguousIncludes keeps each watcher on one explicit
@@ -438,5 +452,111 @@ func TestDevWatchYAMLPreservesEmptyLegacyScalar(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), `watch: ""`) {
 		t.Fatalf("empty scalar watch was not preserved:\n%s", encoded)
+	}
+}
+
+// TestDevFlowMatcherYAMLRoundTripPreservesSyntaxSensitiveStrings verifies compact lists remain valid YAML without changing matcher types or values.
+func TestDevFlowMatcherYAMLRoundTripPreservesSyntaxSensitiveStrings(t *testing.T) {
+	matchers := []string{
+		"",
+		"true",
+		"null",
+		"42",
+		"2026-07-13",
+		"#comment",
+		"!tag",
+		"&anchor",
+		"*alias",
+		"%directive",
+		"@reserved",
+		"`reserved`",
+		"- list item",
+		"? mapping key",
+		": mapping value",
+		"path,with,commas",
+		"[literal brackets]",
+		"{literal braces}",
+		"colon: value",
+		"hash # value",
+		`re:^schemas/.+\.json$`,
+		`re:^[a,b]{1,2}$`,
+		`quote"and'slash\`,
+		" leading space",
+		"trailing space ",
+		"line\nbreak",
+		"tab\tvalue",
+	}
+	original := Config{Dev: DevConfig{Apps: map[string]DevApp{
+		"app": {
+			Build: &DevAppCommand{
+				Exec:   "forj build -o ./bin/app",
+				Watch:  append([]string(nil), matchers...),
+				Ignore: append([]string(nil), matchers...),
+			},
+			SPAs: map[string]DevSPA{
+				"frontend": {
+					Path:   "./cmd/app/frontend",
+					Build:  "npm run build",
+					Watch:  append([]string(nil), matchers...),
+					Ignore: append([]string(nil), matchers...),
+				},
+			},
+		},
+	}}}
+
+	encoded, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal syntax-sensitive matcher lists: %v", err)
+	}
+	if strings.Count(string(encoded), "watch: [") != 2 || strings.Count(string(encoded), "ignore: [") != 2 {
+		t.Fatalf("matcher lists were not emitted as compact flow sequences:\n%s", encoded)
+	}
+
+	var document yaml.Node
+	if err := yaml.Unmarshal(encoded, &document); err != nil {
+		t.Fatalf("parse marshaled syntax-sensitive matcher lists: %v\n%s", err, encoded)
+	}
+	flowSequences := 0
+	var visit func(*yaml.Node)
+	visit = func(node *yaml.Node) {
+		if node.Kind == yaml.MappingNode {
+			for index := 0; index+1 < len(node.Content); index += 2 {
+				key := node.Content[index]
+				value := node.Content[index+1]
+				if key.Value == "watch" || key.Value == "ignore" {
+					if value.Kind != yaml.SequenceNode || value.Style&yaml.FlowStyle == 0 {
+						t.Fatalf("%s matcher was not a flow sequence:\n%s", key.Value, encoded)
+					}
+					flowSequences++
+					for _, scalar := range value.Content {
+						if scalar.Kind != yaml.ScalarNode || scalar.Tag != "!!str" {
+							t.Fatalf("flow matcher decoded as kind %d tag %q value %q:\n%s", scalar.Kind, scalar.Tag, scalar.Value, encoded)
+						}
+					}
+				}
+				visit(value)
+			}
+			return
+		}
+		for _, child := range node.Content {
+			visit(child)
+		}
+	}
+	visit(&document)
+	if flowSequences != 4 {
+		t.Fatalf("flow matcher sequence count = %d, want 4:\n%s", flowSequences, encoded)
+	}
+
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal syntax-sensitive matcher lists: %v\n%s", err, encoded)
+	}
+	app := roundTripped.Dev.Apps["app"]
+	if app.Build == nil || !reflect.DeepEqual(app.Build.Watch, matchers) || !reflect.DeepEqual(app.Build.Ignore, matchers) {
+		t.Fatalf("build matchers changed across YAML round trip: %#v", app.Build)
+	}
+	frontend := app.SPAs["frontend"]
+	if !reflect.DeepEqual(frontend.Watch, matchers) || !reflect.DeepEqual(frontend.Ignore, matchers) {
+		t.Fatalf("SPA matchers changed across YAML round trip: %#v", frontend)
 	}
 }

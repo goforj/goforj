@@ -6,6 +6,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// devFlowStrings keeps matcher lists compact in generated lifecycle configuration.
+type devFlowStrings []string
+
+// MarshalYAML encodes matcher values inline so lifecycle configuration stays scan-friendly.
+func (values devFlowStrings) MarshalYAML() (any, error) {
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+	for _, value := range values {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	}
+	return node, nil
+}
+
 // UsesStructuredApps reports whether dev.apps was explicitly configured, including an empty allowlist.
 func (c DevConfig) UsesStructuredApps() bool {
 	return c.appsConfigured || c.Apps != nil
@@ -326,8 +338,8 @@ func (c DevAppCommand) MarshalYAML() (any, error) {
 	}
 	type commandFields struct {
 		Exec     string            `yaml:"exec,omitempty"`
-		Watch    []string          `yaml:"watch,omitempty"`
-		Ignore   []string          `yaml:"ignore,omitempty"`
+		Watch    devFlowStrings    `yaml:"watch,omitempty"`
+		Ignore   devFlowStrings    `yaml:"ignore,omitempty"`
 		Root     string            `yaml:"root,omitempty"`
 		WorkDir  string            `yaml:"workdir,omitempty"`
 		Env      map[string]string `yaml:"env,omitempty"`
@@ -341,7 +353,7 @@ func (c DevAppCommand) MarshalYAML() (any, error) {
 		*postpone = c.Postpone
 	}
 	return commandFields{
-		Exec: c.Exec, Watch: c.Watch, Ignore: c.Ignore, Root: c.Root,
+		Exec: c.Exec, Watch: devFlowStrings(c.Watch), Ignore: devFlowStrings(c.Ignore), Root: c.Root,
 		WorkDir: c.WorkDir, Env: c.Env, Debounce: c.Debounce, Poll: c.Poll,
 		Postpone: postpone,
 	}, nil
@@ -384,6 +396,14 @@ func (s DevSPA) MarshalYAML() (any, error) {
 	if s.Build == "" && len(s.Watch) == 0 && len(s.Ignore) == 0 {
 		return s.Path, nil
 	}
-	type spaFields DevSPA
-	return spaFields(s), nil
+	type spaFields struct {
+		Path   string         `yaml:"path"`
+		Build  string         `yaml:"build,omitempty"`
+		Watch  devFlowStrings `yaml:"watch,omitempty"`
+		Ignore devFlowStrings `yaml:"ignore,omitempty"`
+	}
+	return spaFields{
+		Path: s.Path, Build: s.Build,
+		Watch: devFlowStrings(s.Watch), Ignore: devFlowStrings(s.Ignore),
+	}, nil
 }

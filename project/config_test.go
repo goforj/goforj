@@ -5,7 +5,49 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+// TestRenderConfigQueueDriverIsLoadOnly keeps legacy projects readable without persisting wizard-only state.
+func TestRenderConfigQueueDriverIsLoadOnly(t *testing.T) {
+	var config Config
+	if err := yaml.Unmarshal([]byte(`render:
+  components:
+    jobs: true
+  queue_driver: nats
+`), &config); err != nil {
+		t.Fatalf("unmarshal legacy queue driver: %v", err)
+	}
+	if config.Render.LegacyQueueDriver() != "nats" {
+		t.Fatalf("legacy queue driver = %q, want nats", config.Render.LegacyQueueDriver())
+	}
+	if !config.Render.HasLegacyQueueDriver() {
+		t.Fatal("legacy queue driver presence was not retained for migration")
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal project config: %v", err)
+	}
+	if strings.Contains(string(encoded), "queue_driver:") {
+		t.Fatalf("wizard-only queue driver remained in project config:\n%s", encoded)
+	}
+
+	var emptyLegacy Config
+	if err := yaml.Unmarshal([]byte("render:\n  queue_driver: \"\"\n"), &emptyLegacy); err != nil {
+		t.Fatalf("unmarshal empty legacy queue driver: %v", err)
+	}
+	if !emptyLegacy.Render.HasLegacyQueueDriver() {
+		t.Fatal("explicitly empty legacy queue driver was indistinguishable from an absent key")
+	}
+	var current Config
+	if err := yaml.Unmarshal([]byte("render: {}\n"), &current); err != nil {
+		t.Fatalf("unmarshal current render config: %v", err)
+	}
+	if current.Render.HasLegacyQueueDriver() {
+		t.Fatal("current render config was classified as legacy")
+	}
+}
 
 // TestLoadProjectConfigAtDoesNotChangeWorkingDirectory verifies App-scoped build helpers can inspect an explicit project root safely.
 func TestLoadProjectConfigAtDoesNotChangeWorkingDirectory(t *testing.T) {
@@ -48,7 +90,6 @@ dev:
 render:
   components:
     cli: true
-  queue_driver: redis
   goforj_version: 0.18.0
   module_replaces:
     github.com/goforj/web: /Users/cmiles/code/web
@@ -93,7 +134,6 @@ dev:
 render:
   components:
     cli: true
-  queue_driver: redis
   goforj_version: 0.18.0
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)

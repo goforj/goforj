@@ -771,9 +771,6 @@ func runRenderedGoTests(dir, modCache, buildCache string) error {
 
 // WriteYAML writes a project config while preserving raw component selections.
 func WriteYAML(path string, cfg project.Config) error {
-	if cfg.Render.QueueDriver == "" {
-		cfg.Render.QueueDriver = "redis"
-	}
 	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
 	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
 		cfg.Render.GoForjVersion = version.Semver()

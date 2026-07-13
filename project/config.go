@@ -131,13 +131,44 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components    Components `yaml:"components" json:"components"`
-	StarterKit    StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat    HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
-	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
+	Components           Components `yaml:"components" json:"components"`
+	StarterKit           StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat           HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion        string     `yaml:"goforj_version" json:"goforj_version"`
+	legacyQueueDriverSet bool
+	legacyQueueDriver    string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+}
+
+// HasLegacyQueueDriver reports whether the obsolete render key was present, including an explicitly empty value.
+func (c RenderConfig) HasLegacyQueueDriver() bool {
+	return c.legacyQueueDriverSet
+}
+
+// LegacyQueueDriver returns the obsolete value solely for one-way environment migration.
+func (c RenderConfig) LegacyQueueDriver() string {
+	return c.legacyQueueDriver
+}
+
+// UnmarshalYAML accepts the obsolete queue choice long enough to migrate it into the environment.
+func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
+	type renderConfigFields RenderConfig
+	var fields renderConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return fmt.Errorf("decode render config: %w", err)
+	}
+	*c = RenderConfig(fields)
+	for index := 0; index+1 < len(value.Content); index += 2 {
+		if value.Content[index].Value == "queue_driver" {
+			c.legacyQueueDriverSet = true
+			if err := value.Content[index+1].Decode(&c.legacyQueueDriver); err != nil {
+				return fmt.Errorf("decode legacy queue driver: %w", err)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 // AppConfig records optional per-app participation in project-level capabilities.

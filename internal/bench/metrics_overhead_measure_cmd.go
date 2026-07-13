@@ -85,7 +85,6 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 		GoModuleName: "example.com/metricsoverheadapp",
 		UpdatedAt:    "2026-05-02 00:00:00 UTC",
 		Render: project.RenderConfig{
-			QueueDriver: "workerpool",
 			Components: project.Components{
 				CLI:            true,
 				WebAPI:         true,
@@ -110,6 +109,16 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	defer cleanup()
 
 	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+		return err
+	}
+	queueEnv := map[string]string{
+		"QUEUE_DRIVER":            "workerpool",
+		"QUEUE_SUPPORTED_DRIVERS": "workerpool",
+	}
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(dir, ".env")}, queueEnv); err != nil {
+		return fmt.Errorf("set metrics benchmark queue driver: %w", err)
+	}
+	if err := runStep(cmd.logger, cmd.Silent, "generate queue", dir, modCache, buildCache, []string{forjExec, "generate", "--queue"}); err != nil {
 		return err
 	}
 

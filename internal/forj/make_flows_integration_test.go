@@ -558,8 +558,7 @@ func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 			GoModuleName: "example.com/testapp",
 			UpdatedAt:    "2026-06-07 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
-				StarterKit:  project.StarterKitVue,
+				StarterKit: project.StarterKitVue,
 				Components: project.Components{
 					CLI:           true,
 					DemoApp:       true,
