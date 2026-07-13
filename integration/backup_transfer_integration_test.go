@@ -453,14 +453,20 @@ func waitForBackupDatabase(t *testing.T, dsn string, driver string) {
 		sqlDriver = "pgx"
 	}
 	deadline := time.Now().Add(60 * time.Second)
+	consecutive := 0
 	for time.Now().Before(deadline) {
 		db, err := sql.Open(sqlDriver, dsn)
-		if err == nil && db.Ping() == nil {
-			_ = db.Close()
-			return
-		}
+		ready := err == nil && db.Ping() == nil
 		if db != nil {
 			_ = db.Close()
+		}
+		if ready {
+			consecutive++
+			if consecutive >= 3 {
+				return
+			}
+		} else {
+			consecutive = 0
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

@@ -56,8 +56,12 @@ jobs:
       - name: Install wire
         run: go install github.com/goforj/wire/cmd/wire@latest
 
-      - name: Run unit tests
-        run: go test ./... -v
+      - name: Run Go tests and multi-App smoke
+        run: |
+          go test ./... -v
+          go test -tags=integration,multiapp ./internal/forj \
+            -run 'TestMakeAppMultiApp(Runtime|SQLiteMigrations)Smoke' \
+            -count=1 -v
 
       # ------------------------------------------------------------------
       # Build GoForj binary
@@ -337,6 +341,11 @@ jobs:
 
       - name: Verify Docker runtime
         run: docker info
+
+      - name: Install native database clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-mysql-client postgresql-client
 
       - name: Install wire
         run: go install github.com/goforj/wire/cmd/wire@latest
