@@ -161,7 +161,6 @@ func TestGeneratedAccessors(t *testing.T) {
 	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
 	cmd := exec.Command("go", "test", pkgPath, "-run", "TestGeneratedAccessors", "-count=1")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/goforj-go-cache")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated storage package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
@@ -271,7 +270,6 @@ func TestObserverChain(t *testing.T) {
 	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
 	cmd := exec.Command("go", "test", pkgPath, "-run", "TestObserverChain", "-count=1")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/gocache")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated storage package observer-chain test failed: %v\n%s", err, strings.TrimSpace(string(output)))
@@ -432,7 +430,6 @@ func TestNewManagerCreatesMissingLocalRoots(t *testing.T) {
 	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
 	cmd := exec.Command("go", "test", pkgPath, "-run", "TestNewManagerCreatesMissingLocalRoots", "-count=1")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/goforj-go-cache")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated storage package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
