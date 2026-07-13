@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/project"
@@ -79,8 +80,12 @@ func TestWriteYAMLAppliesDefaultsWithoutMutatingComponents(t *testing.T) {
 	}
 
 	loaded := readWrittenConfig(t, path)
-	if loaded.Render.QueueDriver != "redis" {
-		t.Fatalf("queue driver = %q, want %q", loaded.Render.QueueDriver, "redis")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if strings.Contains(string(data), "queue_driver:") {
+		t.Fatalf("test render config persisted wizard-only queue choice:\n%s", data)
 	}
 	if !loaded.Render.Components.CLI || !loaded.Render.Components.WebAPI || !loaded.Render.Components.DatabaseMySQL {
 		t.Fatalf("render components changed unexpectedly: %#v", loaded.Render.Components)

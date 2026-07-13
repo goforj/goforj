@@ -841,10 +841,14 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 		t.Fatalf("expected legacy dev.run to be removed, got %#v", config.Dev.Run)
 	}
 	defaultApp, ok := config.Dev.Apps[project.DefaultAppName]
-	if !ok || defaultApp.Run != nil {
+	wantBuild := conventionalDevAppBuildCommand(config, project.DefaultApp())
+	wantRun := conventionalDevAppRuntimeCommand(project.DefaultApp())
+	wantSPA := conventionalDevSPAConfig("./cmd/app/frontend")
+	if !ok || defaultApp.Build == nil || !reflect.DeepEqual(*defaultApp.Build, wantBuild) ||
+		defaultApp.Run == nil || !reflect.DeepEqual(*defaultApp.Run, wantRun) {
 		t.Fatalf("expected native default app runtime, got %#v", defaultApp)
 	}
-	if spa := defaultApp.SPAs[generatedFrontendSPAName]; spa.Path != "./cmd/app/frontend" {
+	if spa := defaultApp.SPAs[generatedFrontendSPAName]; !reflect.DeepEqual(spa, wantSPA) {
 		t.Fatalf("expected default frontend ownership, got %#v", defaultApp.SPAs)
 	}
 	ship, ok := config.Dev.Apps["ship"]
@@ -858,8 +862,9 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal migrated config: %v", err)
 	}
-	if strings.Contains(string(encoded), "run: run") || !strings.Contains(string(encoded), "run: sync --once") {
-		t.Fatalf("expected migration to omit conventional run and retain the custom scalar:\n%s", encoded)
+	if strings.Contains(string(encoded), "run: run") || !strings.Contains(string(encoded), "exec: ./bin/app") ||
+		!strings.Contains(string(encoded), "run: sync --once") {
+		t.Fatalf("expected migration to expose the conventional runtime and retain the custom scalar:\n%s", encoded)
 	}
 }
 

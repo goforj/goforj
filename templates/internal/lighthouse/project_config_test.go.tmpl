@@ -93,6 +93,52 @@ apps:
 	}
 }
 
+// TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions verifies obsolete wizard state is removed without narrowing future settings.
+func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(t *testing.T) {
+	input := `project_name: Test
+module_name: example.com/test
+render:
+  components:
+    jobs: true
+  starter_kit: vue
+  queue_driver: nats
+  future_render_control:
+    mode: retained
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal project config: %v", err)
+	}
+	if _, ok := config.Render.Extra["queue_driver"]; ok {
+		t.Fatalf("legacy queue driver was retained as an extension: %#v", config.Render.Extra)
+	}
+	if _, ok := config.Render.Extra["future_render_control"]; !ok {
+		t.Fatalf("future render control was not captured: %#v", config.Render.Extra)
+	}
+
+	yamlEncoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal project config as YAML: %v", err)
+	}
+	if strings.Contains(string(yamlEncoded), "queue_driver:") {
+		t.Fatalf("YAML retained legacy queue driver:\n%s", yamlEncoded)
+	}
+	for _, expected := range []string{"future_render_control:", "mode: retained"} {
+		if !strings.Contains(string(yamlEncoded), expected) {
+			t.Fatalf("YAML omitted unknown render field %q:\n%s", expected, yamlEncoded)
+		}
+	}
+
+	jsonEncoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal project config as JSON: %v", err)
+	}
+	if strings.Contains(string(jsonEncoded), `"queue_driver"`) {
+		t.Fatalf("JSON retained legacy queue driver: %s", jsonEncoded)
+	}
+}
+
 // TestProjectConfigYAMLRoundTripPreservesEmptyLifecycleMaps keeps Lighthouse from restoring either discovery model.
 func TestProjectConfigYAMLRoundTripPreservesEmptyLifecycleMaps(t *testing.T) {
 	input := `project_name: Test

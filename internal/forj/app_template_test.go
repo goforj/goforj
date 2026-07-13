@@ -79,6 +79,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 		},
 		"project_config_test.go.tmpl": {
 			`func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(`,
+			`func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(`,
 			`func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(`,
 			`future_watch_control: retained`,
 			`native watcher controls were erased`,

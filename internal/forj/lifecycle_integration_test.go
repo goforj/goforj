@@ -29,8 +29,7 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 			GoModuleName: "example.com/lifecycleapp",
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "redis",
-				Components:  project.Components{},
+				Components: project.Components{},
 			},
 		},
 	})

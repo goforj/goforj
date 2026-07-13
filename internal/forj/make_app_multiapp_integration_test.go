@@ -121,7 +121,6 @@ func renderMakeAppSmokeProject(t *testing.T, dir string) {
 			GoModuleName: "example.com/makeappsmoke",
 			UpdatedAt:    "2026-06-10 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "workerpool",
 				Components: project.Components{
 					CLI:       true,
 					WebAPI:    true,
@@ -132,6 +131,12 @@ func renderMakeAppSmokeProject(t *testing.T, dir string) {
 			},
 		},
 	})
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(dir, ".env")}, map[string]string{
+		"QUEUE_DRIVER":            "workerpool",
+		"QUEUE_SUPPORTED_DRIVERS": "workerpool",
+	}); err != nil {
+		t.Fatalf("persist workerpool queue selection: %v", err)
+	}
 }
 
 // renderMakeAppMigrationSmokeProject enables SQLite so app migrations can run without external services.
@@ -143,7 +148,6 @@ func renderMakeAppMigrationSmokeProject(t *testing.T, dir string) {
 			GoModuleName: "example.com/makeappmigrationsmoke",
 			UpdatedAt:    "2026-06-10 00:00:00 UTC",
 			Render: project.RenderConfig{
-				QueueDriver: "workerpool",
 				Components: project.Components{
 					CLI:            true,
 					WebAPI:         true,

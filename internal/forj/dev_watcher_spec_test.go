@@ -223,6 +223,7 @@ func TestCompileStructuredRuntimeStates(t *testing.T) {
 		wantFull   bool
 	}{
 		{name: "runtime default", components: runtimeComponents, want: "./bin/app"},
+		{name: "explicit runtime default", components: runtimeComponents, app: project.DevApp{Run: &project.DevAppCommand{Exec: "./bin/app"}}, want: "./bin/app"},
 		{name: "CLI default", components: cliComponents},
 		{name: "disabled", components: runtimeComponents, app: project.DevApp{Run: &project.DevAppCommand{Disabled: true}}},
 		{name: "scalar App command", components: cliComponents, app: project.DevApp{Run: &project.DevAppCommand{Exec: "http:serve", Shorthand: true}}, want: "./bin/app http:serve"},

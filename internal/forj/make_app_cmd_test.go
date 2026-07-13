@@ -702,7 +702,13 @@ func TestMakeAppCmdCreatesAppVueStarterKit(t *testing.T) {
 		t.Fatalf("unexpected portal app config: %#v", appConfig)
 	}
 	devApp, ok := cfg.Dev.Apps["portal"]
-	if !ok || devApp.Run != nil || devApp.SPAs[generatedFrontendSPAName].Path != "./cmd/portal/frontend" {
+	portal := project.DefaultNamedApp("portal")
+	wantBuild := conventionalDevAppBuildCommand(cfg, portal)
+	wantRun := conventionalDevAppRuntimeCommand(portal)
+	wantSPA := conventionalDevSPAConfig("./cmd/portal/frontend")
+	if !ok || devApp.Build == nil || !reflect.DeepEqual(*devApp.Build, wantBuild) ||
+		devApp.Run == nil || !reflect.DeepEqual(*devApp.Run, wantRun) ||
+		!reflect.DeepEqual(devApp.SPAs[generatedFrontendSPAName], wantSPA) {
 		t.Fatalf("expected portal frontend in the native dev graph, got %#v", devApp)
 	}
 	wantTask := generatedDevFrontendInstallTask(project.DefaultNamedApp("portal"))

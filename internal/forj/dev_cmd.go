@@ -924,7 +924,6 @@ func devBuildExecutionForConfigApp(config *project.Config, app project.App) (str
 		configuredEnv = devApp.Build.Env
 	}
 	env := frameworkDevAppEnv(app, configuredEnv)
-	env["FORJ_BUILD_PROGRESS"] = "1"
 	return workDir, env
 }
 
@@ -1613,6 +1612,8 @@ func runDevSubprocessCommandInDir(outWriter io.Writer, errWriter io.Writer, comm
 	for key, value := range commandEnv {
 		env[key] = value
 	}
+	// Direct dev commands have no protocol consumer, so watcher-only progress must never reach their writers.
+	env["FORJ_BUILD_PROGRESS"] = "0"
 	if transcript {
 		devNull, err := os.Open(os.DevNull)
 		if err != nil {

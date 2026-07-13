@@ -37,23 +37,63 @@ func removeGeneratedDevFrontendInstallTask(tasks []project.DevTask, app project.
 	return kept, removed
 }
 
-// generatedDevAppConfig describes an app selected for framework-owned lifecycle
-// behavior without repeating the conventional bare-binary runtime command.
+// generatedDevAppConfig snapshots framework-owned lifecycle behavior into readable project configuration.
 func generatedDevAppConfig(config *project.Config, app project.App, runCommand string) project.DevApp {
+	app = normalizeRenderApp(app)
 	runCommand = strings.TrimSpace(runCommand)
-	configured := project.DevApp{}
-	if runCommand != "" && runCommand != "run" {
+	build := conventionalDevAppBuildCommand(config, app)
+	configured := project.DevApp{Build: &build}
+	components := appRenderComponents(config, app)
+	switch {
+	case runCommand != "" && runCommand != "run":
+		configured.Run = &project.DevAppCommand{Exec: runCommand, Shorthand: true}
+	case components.HasRuntime():
+		run := conventionalDevAppRuntimeCommand(app)
+		configured.Run = &run
+	case runCommand == "run":
 		configured.Run = &project.DevAppCommand{Exec: runCommand, Shorthand: true}
 	}
-	if config == nil || !appRenderComponents(config, app).WebUI || !project.StarterKitUsesNPM(appRenderStarterKit(config, app)) {
+	if config == nil || !components.WebUI || !project.StarterKitUsesNPM(appRenderStarterKit(config, app)) {
 		return configured
 	}
 	configured.SPAs = map[string]project.DevSPA{
-		generatedFrontendSPAName: {
-			Path: projectRelativeDevPath(appFrontendDir(app)),
-		},
+		generatedFrontendSPAName: conventionalDevSPAConfig(projectRelativeDevPath(appFrontendDir(app))),
 	}
 	return configured
+}
+
+// conventionalDevAppBuildCommand returns the editable build snapshot generated for a managed app.
+func conventionalDevAppBuildCommand(config *project.Config, app project.App) project.DevAppCommand {
+	app = normalizeRenderApp(app)
+	command := project.DevAppCommand{
+		Exec:        devBuildCommandForApp("forj build -o ./bin/app", app),
+		Watch:       []string{".go", ".env", ".env.*"},
+		Ignore:      []string{"forj", "_data", "wire_gen.go", ".git", ".hg", ".svn", ".idea", ".vscode", ".settings", "node_modules"},
+		Root:        ".",
+		Postpone:    true,
+		PostponeSet: true,
+	}
+	if appRenderStarterKit(config, app) == project.StarterKitTemplHTMX {
+		command.Watch = append(command.Watch, ".templ")
+		command.Ignore = append(command.Ignore, `re:.*_templ\.go$`)
+	}
+	return command
+}
+
+// conventionalDevAppRuntimeCommand returns the bare-binary runtime snapshot generated for a managed app.
+func conventionalDevAppRuntimeCommand(app project.App) project.DevAppCommand {
+	app = normalizeRenderApp(app)
+	return project.DevAppCommand{Exec: "./bin/" + app.Name}
+}
+
+// conventionalDevSPAConfig returns the editable frontend build snapshot generated for an app-owned SPA.
+func conventionalDevSPAConfig(path string) project.DevSPA {
+	return project.DevSPA{
+		Path:   path,
+		Build:  "npm run build -s -- --logLevel silent",
+		Watch:  []string{".ts", ".tsx", ".js", ".jsx", ".vue", ".css", ".html", "package.json", "package-lock.json"},
+		Ignore: []string{"_data", "node_modules", "dist"},
+	}
 }
 
 // projectRelativeDevPath keeps generated lifecycle paths recognizable as
