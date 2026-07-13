@@ -449,15 +449,19 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 	mailpitHTTPPort := freeTCPPort(t)
 	databasePort := freeTCPPort(t)
 	redisPort := freeTCPPort(t)
-	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, map[string]string{
+	portOverrides := map[string]string{
 		"OBSERVABILITY_VM_PORT": vmPort,
 		"GRAFANA_PORT":          grafanaPort,
 		"MAILPIT_SMTP_PORT":     mailpitSMTPPort,
 		"MAILPIT_HTTP_PORT":     mailpitHTTPPort,
 		"DB_MYSQL_PORT":         databasePort,
 		"REDIS_PORT":            redisPort,
-	}); err != nil {
+	}
+	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, portOverrides); err != nil {
 		t.Fatalf("set observability smoke ports: %v", err)
+	}
+	for key, value := range portOverrides {
+		t.Setenv(key, value)
 	}
 
 	projectName := fmt.Sprintf("goforj-observability-%d", time.Now().UnixNano())

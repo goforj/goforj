@@ -365,6 +365,13 @@ func IsReservedAppName(name string) bool {
 func IsNativeFrameworkCommandName(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "build",
+		"backup:create",
+		"backup:list",
+		"backup:plan",
+		"backup:prune",
+		"backup:restore",
+		"backup:status",
+		"backup:verify",
 		"dev",
 		"down",
 		"generate",

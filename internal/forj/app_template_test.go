@@ -194,6 +194,13 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`for _, check := range db.ReadinessChecks() {`,
 			`Check: check.Check,`,
 		},
+		filepath.Join(filepath.Dir(base), "cmd", "resources_cmd.go.tmpl"): {
+			`runtime.DiscoverDatabaseInstances()`,
+			`runtime.DiscoverStorageInstances()`,
+			`resources:describe`,
+			`config_keys`,
+			`_PASSWORD`,
+		},
 		filepath.Join(filepath.Dir(base), "..", "app", "commands.go.tmpl"): {
 			`AboutCmd cmd.AboutCmd ` + "`cmd:\"\"`",
 			`CacheShellCmd cmd.CacheShellCmd ` + "`cmd:\"\"`",
