@@ -786,6 +786,7 @@ func TestRunCommandTemplatesUseSharedRuntimeCapability(t *testing.T) {
 	}
 }
 
+// TestCommandMetadataLivesInSignatures verifies generated Kong command fields do not duplicate help metadata owned by command signatures.
 func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -849,6 +850,7 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "swagger.go.tmpl"): {
 			`func defaultOpenAPISpecPathForApp() string`,
+			`func isSafeOpenAPIAppName(name string) bool`,
 			`filepath.Join("build", app, "openapi.json")`,
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "app_identity.go.tmpl"): {
@@ -866,6 +868,60 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 			if !strings.Contains(source, snippet) {
 				t.Fatalf("expected %s to contain %q", file, snippet)
 			}
+		}
+	}
+}
+
+// TestSwaggerTemplatesRenderPinnedAndAppScoped guards the generated UI and serving contract at the renderer boundary.
+func TestSwaggerTemplatesRenderPinnedAndAppScoped(t *testing.T) {
+	root := t.TempDir()
+	renderer := &ProjectRenderer{stats: &renderStats{}}
+	config := &project.Config{
+		GoModuleName: "example.com/swaggerfixture",
+		Render: project.RenderConfig{
+			Components: project.Components{WebAPI: true},
+		},
+	}
+	files := map[string][]string{
+		"swagger.go": {
+			`const scalarAPIReferenceURL = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5"`,
+			`Scalar.createApiReference('#app'`,
+			`url: '/swagger/doc.json'`,
+			`func defaultOpenAPISpecPathForApp() string`,
+			`func isSafeOpenAPIAppName(name string) bool`,
+			`filepath.Join("build", app, "openapi.json")`,
+			`"error": "OpenAPI document is missing"`,
+			`func apiIndexBuildCommandForApp() string`,
+			`return "forj " + app + " build:api-index"`,
+		},
+		"swagger_test.go": {
+			`func TestSwaggerUIAndSpecRoutes(`,
+			`func TestSwaggerSpecUsesAppDefaultPath(`,
+			`func TestSwaggerSpecPreservesPathOverride(`,
+			`func TestSwaggerSpecMissingDoesNotFallBack(`,
+			`func TestSwaggerSpecRejectsUnsafeImplicitAppPath(`,
+			`/wrong-default`,
+		},
+	}
+
+	for name, snippets := range files {
+		templatePath := filepath.Join("internal", "http", name+".tmpl")
+		destination := filepath.Join(root, name)
+		if err := renderer.renderTemplateFile(destination, templatePath, config); err != nil {
+			t.Fatalf("render %s: %v", templatePath, err)
+		}
+		content, err := os.ReadFile(destination)
+		if err != nil {
+			t.Fatalf("read rendered %s: %v", name, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected rendered %s to contain %q:\n%s", name, snippet, source)
+			}
+		}
+		if strings.Contains(source, `src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"`) {
+			t.Fatalf("expected rendered %s not to use a floating Scalar CDN URL:\n%s", name, source)
 		}
 	}
 }

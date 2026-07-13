@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+// TestLoadProjectConfigAtDoesNotChangeWorkingDirectory verifies App-scoped build helpers can inspect an explicit project root safely.
+func TestLoadProjectConfigAtDoesNotChangeWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Rooted API\nmodule_name: example.com/rooted\n"), 0o644); err != nil {
+		t.Fatalf("write rooted config: %v", err)
+	}
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+
+	config, err := LoadProjectConfigAt(root)
+	if err != nil {
+		t.Fatalf("load rooted config: %v", err)
+	}
+	after, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory after load: %v", err)
+	}
+	if config.ProjectName != "Rooted API" || after != before {
+		t.Fatalf("rooted config = %#v, working directory before=%q after=%q", config, before, after)
+	}
+}
+
 func TestLoadProjectConfigSupportsWatcherEnv(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, ".goforj.yml")

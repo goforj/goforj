@@ -1,7 +1,6 @@
 package build
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -9,41 +8,42 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/logger"
 	"golang.org/x/term"
 )
 
 // RunCmd runs a generated app from source after framework generation steps complete.
 type RunCmd struct {
-	pipeline          Pipeline
-	Timings           bool     `help:"Print per-step timings for generate, api index, and go run"`
+	pipeline Pipeline
+	Timings  bool `help:"Print per-step timings for generate, API indexing, compilation, and app start"`
+	// APIIndexStrict fails before app start when API indexing reports warnings or errors.
+	APIIndexStrict    bool     `name:"api-index-strict" help:"Fail when API indexing reports warnings or errors"`
 	Root              string   `help:"Project root to run" default:"."`
-	Args              []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to the app after go run ./cmd/app"`
+	Args              []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to the compiled app"`
 	Env               []string `kong:"-"`
 	PreserveTTY       bool     `kong:"-"`
 	waitCh            chan error
 	process           *os.Process
 	outputGate        *firstOutputGate
-	stderrFilter      *goRunExitStatusFilter
 	transientProgress bool
 }
 
-// NewRunCmd creates the source-run command.
-func NewRunCmd(logger *logger.AppLogger, apiIndex *APIIndexRunner) *RunCmd {
+// NewRunCmd creates the command that compiles and launches an app from its selected source package.
+func NewRunCmd(logger *logger.AppLogger, apiIndex apiindex.Preparer) *RunCmd {
 	return &RunCmd{
 		pipeline: NewPipeline(logger, apiIndex),
 	}
 }
 
-// Signature returns CLI metadata for the source-run command.
+// Signature returns CLI metadata for the compiled app command.
 func (*RunCmd) Signature() string {
-	return `name:"run" help:"Run generate, API indexing, then go run ./cmd/app"`
+	return `name:"run" help:"Run generate, API indexing, then compile and start the app"`
 }
 
 // Run executes generation, API indexing, and the generated app command.
@@ -51,20 +51,17 @@ func (c *RunCmd) Run() error {
 	c.waitCh = nil
 	c.process = nil
 	c.outputGate = nil
-	c.stderrFilter = nil
 	c.transientProgress = shouldUseTransientRunProgress(c.Timings)
 	if err := c.pipeline.Run(c.Root, "run", Step{
 		Name: c.launchCommand(c.runArgs()),
 		Run:  c.runBinary,
 	}, RunOptions{
 		Timings:                  c.Timings,
+		APIIndexStrict:           c.APIIndexStrict,
 		TransientProgress:        c.transientProgress,
 		ClearProgressBeforeFinal: shouldClearRunProgressBeforeFinal(c.transientProgress, c.shouldPreserveTTY()),
 	}); err != nil {
-		if c.outputGate != nil {
-			c.outputGate.Release()
-		}
-		return err
+		return c.handlePipelineError(err)
 	}
 	if c.outputGate != nil {
 		c.outputGate.Release()
@@ -76,7 +73,7 @@ func (c *RunCmd) Run() error {
 		if code, ok := exitCodeFromError(err); ok {
 			return ChildExitError{Code: code, Err: err}
 		}
-		return fmt.Errorf("go run: %w", err)
+		return fmt.Errorf("run app: %w", err)
 	}
 	return nil
 }
@@ -84,7 +81,11 @@ func (c *RunCmd) Run() error {
 // runBinary starts the source app process without waiting for it to finish.
 func (c *RunCmd) runBinary() (string, error) {
 	args := c.runArgs()
-	cmd := exec.Command("go", append([]string{"run"}, args...)...)
+	executable, cleanup, err := c.preflightBinary(args[0])
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(executable, args[1:]...)
 	if c.shouldPreserveTTY() {
 		cmd.Stdin = os.Stdin
 	}
@@ -93,25 +94,24 @@ func (c *RunCmd) runBinary() (string, error) {
 		gate = newFirstOutputGate()
 		c.outputGate = gate
 		cmd.Stdout = gate.Writer(os.Stdout)
-		filter := newGoRunExitStatusFilter(gate.Writer(os.Stderr))
-		c.stderrFilter = filter
-		cmd.Stderr = filter
+		cmd.Stderr = gate.Writer(os.Stderr)
 	} else {
 		cmd.Stdout = os.Stdout
-		filter := newGoRunExitStatusFilter(os.Stderr)
-		c.stderrFilter = filter
-		cmd.Stderr = filter
+		cmd.Stderr = os.Stderr
 	}
 	if c.Env != nil {
 		cmd.Env = c.Env
 	}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("go run: %w", err)
+		cleanup()
+		return "", fmt.Errorf("start compiled app: %w", err)
 	}
 	c.process = cmd.Process
 	waitCh := make(chan error, 1)
 	go func() {
-		waitCh <- cmd.Wait()
+		err := cmd.Wait()
+		cleanup()
+		waitCh <- err
 	}()
 	c.waitCh = waitCh
 	if gate != nil {
@@ -128,6 +128,58 @@ func (c *RunCmd) runBinary() (string, error) {
 	return "started", nil
 }
 
+// preflightBinary proves the selected run package compiles before a candidate API contract can be published.
+func (c *RunCmd) preflightBinary(packagePath string) (string, func(), error) {
+	outputDir, err := os.MkdirTemp("", "forj-run-preflight-")
+	if err != nil {
+		return "", nil, fmt.Errorf("prepare app compilation: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(outputDir) }
+
+	executable := filepath.Join(outputDir, "app")
+	cmd := exec.Command("go", "build", "-o", executable, packagePath)
+	if c.Env != nil {
+		cmd.Env = c.Env
+	}
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return executable, cleanup, nil
+	}
+	cleanup()
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		printBuildFailureDetail(detail)
+	}
+	return "", nil, fmt.Errorf("compile app target: %w", err)
+}
+
+// handlePipelineError releases output and terminates any app started before a later publication error surfaced.
+func (c *RunCmd) handlePipelineError(pipelineErr error) error {
+	if c.outputGate != nil {
+		c.outputGate.Release()
+	}
+	if err := c.terminateStartedProcess(); err != nil {
+		return errors.Join(pipelineErr, fmt.Errorf("clean up started app after pipeline failure: %w", err))
+	}
+	return pipelineErr
+}
+
+// terminateStartedProcess kills the exact compiled app child and drains Cmd.Wait so failures cannot leak it or leave a zombie.
+func (c *RunCmd) terminateStartedProcess() error {
+	if c.process == nil {
+		return nil
+	}
+	process := c.process
+	if err := process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	if c.waitCh != nil {
+		<-c.waitCh
+	}
+	c.process = nil
+	c.waitCh = nil
+	return nil
+}
+
 // shouldPreserveTTY reports whether the generated app command should keep terminal streams attached.
 func (c *RunCmd) shouldPreserveTTY() bool {
 	return c.PreserveTTY || len(c.Args) > 0
@@ -140,8 +192,6 @@ func shouldClearRunProgressBeforeFinal(transientProgress bool, preserveTTY bool)
 
 // waitForRunProcess waits for the app process and forwards interrupts to it.
 func (c *RunCmd) waitForRunProcess() error {
-	defer c.closeStderrFilter()
-
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -150,6 +200,8 @@ func (c *RunCmd) waitForRunProcess() error {
 	for {
 		select {
 		case err := <-c.waitCh:
+			c.waitCh = nil
+			c.process = nil
 			if forwarded {
 				return nil
 			}
@@ -165,15 +217,6 @@ func (c *RunCmd) waitForRunProcess() error {
 			}
 		}
 	}
-}
-
-// closeStderrFilter flushes any pending stderr output held by the go run filter.
-func (c *RunCmd) closeStderrFilter() {
-	if c.stderrFilter == nil {
-		return
-	}
-	_ = c.stderrFilter.Close()
-	c.stderrFilter = nil
 }
 
 // ChildExitError reports that the app process exited non-zero after its output was already streamed.
@@ -213,7 +256,7 @@ func exitCodeFromError(err error) (int, bool) {
 	return 0, false
 }
 
-// runArgs returns the full go run argument list for the app command.
+// runArgs returns the selected source package followed by arguments for its compiled app.
 func (c *RunCmd) runArgs() []string {
 	args := make([]string, 0, len(c.Args)+1)
 	args = append(args, defaultRunPackage(c.Root))
@@ -223,7 +266,7 @@ func (c *RunCmd) runArgs() []string {
 
 // launchCommand formats the command shown in pipeline progress.
 func (c *RunCmd) launchCommand(args []string) string {
-	return "go run " + strings.Join(args, " ")
+	return "compile and start " + strings.Join(args, " ")
 }
 
 // shouldUseTransientRunProgress reports whether pipeline output should clear before app output.
@@ -246,7 +289,7 @@ func defaultRunPackage(root string) string {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
-	target := activeApp()
+	target := ActiveApp()
 	if packagePath := appPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
 		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
 			return packagePath
@@ -309,62 +352,4 @@ func (w firstOutputWriter) Write(p []byte) (int, error) {
 	w.gate.signalFirst()
 	<-w.gate.release
 	return w.dst.Write(p)
-}
-
-// goRunExitStatusFilter removes Go tool exit-status echoes while preserving app stderr.
-type goRunExitStatusFilter struct {
-	dst io.Writer
-	buf bytes.Buffer
-}
-
-// newGoRunExitStatusFilter creates an stderr writer for source-run app commands.
-func newGoRunExitStatusFilter(dst io.Writer) *goRunExitStatusFilter {
-	return &goRunExitStatusFilter{dst: dst}
-}
-
-// Write buffers stderr until complete lines can be checked for Go tool exit-status echoes.
-func (w *goRunExitStatusFilter) Write(p []byte) (int, error) {
-	for _, b := range p {
-		_ = w.buf.WriteByte(b)
-		if b != '\n' {
-			continue
-		}
-		if err := w.flushLine(); err != nil {
-			return 0, err
-		}
-	}
-	return len(p), nil
-}
-
-// Close flushes a final partial line if stderr did not end in a newline.
-func (w *goRunExitStatusFilter) Close() error {
-	if w.buf.Len() == 0 {
-		return nil
-	}
-	return w.flushLine()
-}
-
-// flushLine writes the buffered line unless it is a Go tool exit-status echo.
-func (w *goRunExitStatusFilter) flushLine() error {
-	line := w.buf.String()
-	w.buf.Reset()
-	if isGoRunExitStatusLine(line) {
-		return nil
-	}
-	_, err := io.WriteString(w.dst, line)
-	return err
-}
-
-// isGoRunExitStatusLine reports whether line is exactly a Go tool exit-status echo.
-func isGoRunExitStatusLine(line string) bool {
-	value := strings.TrimSpace(line)
-	if !strings.HasPrefix(value, "exit status ") {
-		return false
-	}
-	code := strings.TrimSpace(strings.TrimPrefix(value, "exit status "))
-	if code == "" {
-		return false
-	}
-	_, err := strconv.Atoi(code)
-	return err == nil
 }

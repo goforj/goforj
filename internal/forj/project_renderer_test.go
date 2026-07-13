@@ -87,6 +87,7 @@ replace github.com/goforj/cache => ../cache
 	}
 }
 
+// TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph verifies rendering can pin sibling modules before the generated dependency graph is complete.
 func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	root := t.TempDir()
 
@@ -105,7 +106,7 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
-		"github.com/goforj/web v0.5.2",
+		"github.com/goforj/web " + coredeps.MustVersionFor("github.com/goforj/web"),
 		"github.com/goforj/queue v0.2.1",
 		"github.com/goforj/cache v0.3.0",
 	} {

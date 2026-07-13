@@ -58,14 +58,17 @@ This package exposes two classes of health probes for deployment tooling:
 ```
 
 - `GET /swagger` and `GET /swagger/`
-  - serves Swagger UI
+  - serves the version-pinned Scalar API reference
   - loads spec from `/swagger/doc.json`
   - gated by `API_SWAGGER_ENABLED` (default: `true`)
   - legacy fallback: `SWAGGER_ENABLED`
 
 - `GET /swagger/doc.json`
-  - serves OpenAPI JSON from `build/openapi.json` by default
+  - serves the active App's OpenAPI JSON
+  - defaults to `build/openapi.json` for `app` and `build/<app>/openapi.json` for a named App
+  - accepts only a conventional lowercase App slug from `FORJ_APP`; unsafe path-like values fall back to `app`
   - can be overridden with `OPENAPI_SPEC_PATH`
+  - returns a JSON `404` with the exact indexing command when the artifact is missing
 
 {{- if .Components.Metrics }}
 - `GET /metrics`
@@ -123,14 +126,17 @@ Checks that are not active for current runtime configuration are treated as pass
 - Use `/-/ready` for load balancer / rollout readiness probes.
 - Do not use readiness for simple "process is running" checks.
 
-## Swagger Usage
+## API Reference Usage
 
-1. Build the application artifacts:
-   - `forj build`
-2. Start server:
-   - `forj http:serve`
-3. Open:
+1. Generate the OpenAPI artifact directly when you do not otherwise need to build or run:
+   - default App: `forj build:api-index`
+   - named App: `forj <app> build:api-index`
+2. Alternatively, use `forj build` or `forj run`; both index the active App and publish the artifact only after their final build or process-start boundary succeeds.
+3. Start the server if it is not already running.
+4. Open:
    - `http://localhost:3000/swagger`
+
+Use `build:api-index --strict`, or `--api-index-strict` with `build` and `run`, to make API-index warnings fail in CI. `OPENAPI_SPEC_PATH` is an explicit serving override; it does not change where GoForj publishes artifacts.
 
 ## Bind Address
 

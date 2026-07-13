@@ -9,31 +9,24 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/runtime"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
+// TestSwaggerUIAndSpecRoutes verifies the default App serves its artifact and a version-pinned Scalar page.
 func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "true")
+	t.Setenv("FORJ_APP", "app")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
 
 	root := t.TempDir()
-	buildDir := filepath.Join(root, "build")
-	require.NoError(t, os.MkdirAll(buildDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(buildDir, "openapi.json"), []byte(`{"openapi":"3.0.3","paths":{}}`), 0o644))
-
-	wd, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(root))
-	defer func() {
-		_ = os.Chdir(wd)
-	}()
-
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
-	e, err := s.bootstrap("")
-	require.NoError(t, err)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/default-app":{}}}`)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-app":{}}}`)
+	useSwaggerTestWorkingDirectory(t, root)
+	e := bootstrapSwaggerTestServer(t)
 
 	for _, path := range []string{"/swagger", "/swagger/"} {
 		t.Run(path, func(t *testing.T) {
@@ -41,8 +34,9 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 			rec := httptest.NewRecorder()
 			e.ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusOK, rec.Code)
-			assert.Contains(t, rec.Body.String(), "@scalar/api-reference")
-			assert.Contains(t, rec.Body.String(), "/swagger/doc.json")
+			assert.Contains(t, rec.Body.String(), "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5")
+			assert.Contains(t, rec.Body.String(), "Scalar.createApiReference('#app'")
+			assert.Contains(t, rec.Body.String(), "url: '/swagger/doc.json'")
 		})
 	}
 
@@ -50,42 +44,103 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{}}`, rec.Body.String())
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/default-app":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-app")
 }
 
+// TestSwaggerSpecUsesAppDefaultPath verifies a named App cannot silently serve the default App document.
 func TestSwaggerSpecUsesAppDefaultPath(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "true")
 	t.Setenv("FORJ_APP", "customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
 
 	root := t.TempDir()
-	buildDir := filepath.Join(root, "build", "customer-portal")
-	require.NoError(t, os.MkdirAll(buildDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(buildDir, "openapi.json"), []byte(`{"openapi":"3.0.3","paths":{"/target":{}}}`), 0o644))
-
-	wd, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(root))
-	defer func() {
-		_ = os.Chdir(wd)
-	}()
-
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
-	e, err := s.bootstrap("")
-	require.NoError(t, err)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/target":{}}}`)
+	useSwaggerTestWorkingDirectory(t, root)
+	e := bootstrapSwaggerTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/target":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-default")
 }
 
+// TestSwaggerSpecPreservesPathOverride verifies an explicit artifact path wins over every App-derived default.
+func TestSwaggerSpecPreservesPathOverride(t *testing.T) {
+	t.Setenv("API_SWAGGER_ENABLED", "true")
+	t.Setenv("FORJ_APP", "customer-portal")
+
+	root := t.TempDir()
+	overridePath := filepath.Join(root, "custom", "selected-openapi.json")
+	t.Setenv("OPENAPI_SPEC_PATH", overridePath)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-named":{}}}`)
+	writeSwaggerTestSpec(t, overridePath, `{"openapi":"3.0.3","paths":{"/override":{}}}`)
+	useSwaggerTestWorkingDirectory(t, root)
+	e := bootstrapSwaggerTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/override":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-default")
+	assert.NotContains(t, rec.Body.String(), "/wrong-named")
+}
+
+// TestSwaggerSpecMissingDoesNotFallBack verifies a stale default artifact cannot masquerade as a named App document.
+func TestSwaggerSpecMissingDoesNotFallBack(t *testing.T) {
+	t.Setenv("API_SWAGGER_ENABLED", "true")
+	t.Setenv("FORJ_APP", "customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+
+	root := t.TempDir()
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
+	useSwaggerTestWorkingDirectory(t, root)
+	e := bootstrapSwaggerTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	assert.JSONEq(t, `{
+		"error":"OpenAPI document is missing",
+		"app":"customer-portal",
+		"path":"build/customer-portal/openapi.json",
+		"hint":"Run \"forj customer-portal build:api-index\" before opening the API reference."
+	}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-default")
+}
+
+// TestSwaggerSpecRejectsUnsafeImplicitAppPath verifies FORJ_APP cannot become an undocumented filesystem-path override.
+func TestSwaggerSpecRejectsUnsafeImplicitAppPath(t *testing.T) {
+	t.Setenv("API_SWAGGER_ENABLED", "true")
+	t.Setenv("FORJ_APP", "../customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+
+	root := t.TempDir()
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/default-app":{}}}`)
+	writeSwaggerTestSpec(t, filepath.Join(root, "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/escaped":{}}}`)
+	useSwaggerTestWorkingDirectory(t, root)
+	e := bootstrapSwaggerTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/default-app":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/escaped")
+}
+
+// TestSwaggerRoutesDisabledByEnv verifies the current opt-out hides both the UI and its document endpoint.
 func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "false")
 
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
-	e, err := s.bootstrap("")
-	require.NoError(t, err)
+	e := bootstrapSwaggerTestServer(t)
 
 	for _, path := range []string{"/swagger", "/swagger/", "/swagger/doc.json"} {
 		t.Run(path, func(t *testing.T) {
@@ -97,15 +152,56 @@ func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 	}
 }
 
+// TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing verifies old projects retain their documented opt-out.
 func TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
+	unsetSwaggerTestEnv(t, "API_SWAGGER_ENABLED")
 	t.Setenv("SWAGGER_ENABLED", "false")
 
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
-	e, err := s.bootstrap("")
-	require.NoError(t, err)
+	e := bootstrapSwaggerTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/swagger", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// bootstrapSwaggerTestServer centralizes framework setup so route assertions stay focused on Swagger behavior.
+func bootstrapSwaggerTestServer(t *testing.T) http.Handler {
+	t.Helper()
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	e, err := s.bootstrap("")
+	require.NoError(t, err)
+	return e
+}
+
+// writeSwaggerTestSpec keeps competing App fixtures explicit in tests that guard against cross-App fallback.
+func writeSwaggerTestSpec(t *testing.T, path string, body string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+}
+
+// useSwaggerTestWorkingDirectory makes relative build artifacts behave exactly as they do in a launched project.
+func useSwaggerTestWorkingDirectory(t *testing.T, root string) {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(wd))
+	})
+}
+
+// unsetSwaggerTestEnv preserves absence semantics needed to exercise the legacy fallback branch.
+func unsetSwaggerTestEnv(t *testing.T, name string) {
+	t.Helper()
+	value, exists := os.LookupEnv(name)
+	require.NoError(t, os.Unsetenv(name))
+	t.Cleanup(func() {
+		if exists {
+			require.NoError(t, os.Setenv(name, value))
+			return
+		}
+		require.NoError(t, os.Unsetenv(name))
+	})
 }

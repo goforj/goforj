@@ -3,7 +3,6 @@ package build
 import (
 	"bytes"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,177 @@ func TestRunCmdRunArgsDefaultsToCurrentPackage(t *testing.T) {
 	cmd := &RunCmd{}
 	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"."}) {
 		t.Fatalf("expected default run args to target current package, got %#v", got)
+	}
+}
+
+// TestRunCmdCompileFailurePreventsStartAndAPIIndexPublication verifies an unbuildable source tree cannot start the app.
+func TestRunCmdCompileFailurePreventsStartAndAPIIndexPublication(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":          "module example.com/broken\n\ngo 1.25\n",
+		"cmd/app/main.go": "package main\nfunc main() { missing() }\n",
+	}
+	for relativePath, content := range files {
+		path := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create fixture directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", relativePath, err)
+		}
+	}
+	artifactPaths := []string{
+		filepath.Join(root, "build", "api_index.json"),
+		filepath.Join(root, "build", "api_index.diagnostics.json"),
+		filepath.Join(root, "build", "openapi.json"),
+	}
+	for _, path := range artifactPaths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create active artifact directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("{\"generation\":\"active\"}\n"), 0o644); err != nil {
+			t.Fatalf("write active artifact: %v", err)
+		}
+	}
+	published := false
+	pending := recordingAPIIndexCandidate{
+		publish: func() error {
+			published = true
+			for _, path := range artifactPaths {
+				if err := os.WriteFile(path, []byte("{\"generation\":\"candidate\"}\n"), 0o644); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		discard: func() {},
+	}
+
+	t.Chdir(root)
+	command := &RunCmd{Root: root}
+	_, err := runFinalAndPublishAPIIndex(Step{Name: "compile and start", Run: command.runBinary}, pending)
+	if err == nil || !strings.Contains(err.Error(), "compile app target") {
+		t.Fatalf("compile failure = %v, want preflight error", err)
+	}
+	if command.process != nil || command.waitCh != nil {
+		t.Fatal("app process started despite failed preflight compilation")
+	}
+	if published {
+		t.Fatal("API index candidate was published after compile failure")
+	}
+	for _, path := range artifactPaths {
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read active artifact: %v", readErr)
+		}
+		if string(content) != "{\"generation\":\"active\"}\n" {
+			t.Fatalf("active artifact was published after compile failure: %s", content)
+		}
+	}
+}
+
+// TestRunCmdPipelineErrorAfterStartTerminatesAndReapsProcess verifies publication failures cannot leak a started app.
+func TestRunCmdPipelineErrorAfterStartTerminatesAndReapsProcess(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/running\n\ngo 1.25\n",
+		"cmd/app/main.go": `package main
+
+import "time"
+
+func main() {
+	for {
+		time.Sleep(time.Second)
+	}
+}
+`,
+	}
+	for relativePath, content := range files {
+		path := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create fixture directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", relativePath, err)
+		}
+	}
+	t.Chdir(root)
+
+	command := &RunCmd{Root: root}
+	t.Cleanup(func() { _ = command.terminateStartedProcess() })
+	status, err := command.runBinary()
+	if err != nil {
+		t.Fatalf("start run command: %v", err)
+	}
+	if status != "started" || command.process == nil || command.waitCh == nil {
+		t.Fatalf("run state = %q, process %v, wait channel %v", status, command.process, command.waitCh)
+	}
+	process := command.process
+	pipelineErr := errors.New("publish API index")
+	if err := command.handlePipelineError(pipelineErr); !errors.Is(err, pipelineErr) {
+		t.Fatalf("pipeline error = %v, want publication error", err)
+	}
+	if command.process != nil || command.waitCh != nil {
+		t.Fatal("started process state remained after pipeline cleanup")
+	}
+	if err := process.Kill(); !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("started process was not reaped, kill returned %v", err)
+	}
+}
+
+// TestRunCmdCompiledBinaryReceivesAppArgsAndIsRemovedAfterWait verifies the temp executable preserves app arguments and cleanup semantics.
+func TestRunCmdCompiledBinaryReceivesAppArgsAndIsRemovedAfterWait(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/args\n\ngo 1.25\n",
+		"cmd/app/main.go": `package main
+
+import (
+	"os"
+	"strings"
+)
+
+func main() {
+	executable, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+	content := executable + "\n" + strings.Join(os.Args[2:], " ")
+	if err := os.WriteFile(os.Args[1], []byte(content), 0o644); err != nil {
+		panic(err)
+	}
+}
+`,
+	}
+	for relativePath, content := range files {
+		path := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create fixture directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", relativePath, err)
+		}
+	}
+	t.Chdir(root)
+
+	resultPath := filepath.Join(root, "run-result.txt")
+	command := &RunCmd{Root: root, Args: []string{resultPath, "hello", "portal"}}
+	if _, err := command.runBinary(); err != nil {
+		t.Fatalf("start compiled run binary: %v", err)
+	}
+	if err := command.waitForRunProcess(); err != nil {
+		t.Fatalf("wait for compiled run binary: %v", err)
+	}
+	content, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("read app argument result: %v", err)
+	}
+	parts := strings.SplitN(string(content), "\n", 2)
+	if len(parts) != 2 || parts[1] != "hello portal" {
+		t.Fatalf("app result = %q, want executable path and forwarded args", content)
+	}
+	if _, err := os.Stat(parts[0]); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("compiled run binary remained after Wait: %v", err)
 	}
 }
 
@@ -55,10 +225,11 @@ func TestRunCmdRunArgsPassesAppArgsAfterCurrentPackage(t *testing.T) {
 	}
 }
 
+// TestRunCmdLaunchCommand verifies watcher status identifies both compilation and the exact App command being launched.
 func TestRunCmdLaunchCommand(t *testing.T) {
 	cmd := &RunCmd{}
-	if got := cmd.launchCommand([]string{".", "route:list"}); got != "go run . route:list" {
-		t.Fatalf("launch command = %q, want %q", got, "go run . route:list")
+	if got := cmd.launchCommand([]string{".", "route:list"}); got != "compile and start . route:list" {
+		t.Fatalf("launch command = %q, want %q", got, "compile and start . route:list")
 	}
 }
 
@@ -179,37 +350,5 @@ func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
 	gotCode, ok := ChildExitCode(childErr)
 	if !ok || gotCode != 7 {
 		t.Fatalf("ChildExitCode() = %d, %v; want 7, true", gotCode, ok)
-	}
-}
-
-func TestGoRunExitStatusFilterDropsSyntheticExitLine(t *testing.T) {
-	var out bytes.Buffer
-	filter := newGoRunExitStatusFilter(&out)
-
-	if _, err := io.WriteString(filter, "✖ expected \"<name>\"\nexit status 1\n"); err != nil {
-		t.Fatalf("write filter: %v", err)
-	}
-	if err := filter.Close(); err != nil {
-		t.Fatalf("close filter: %v", err)
-	}
-
-	if got := out.String(); got != "✖ expected \"<name>\"\n" {
-		t.Fatalf("filtered output = %q", got)
-	}
-}
-
-func TestGoRunExitStatusFilterKeepsNormalExitText(t *testing.T) {
-	var out bytes.Buffer
-	filter := newGoRunExitStatusFilter(&out)
-
-	if _, err := io.WriteString(filter, "worker exit status changed\npartial"); err != nil {
-		t.Fatalf("write filter: %v", err)
-	}
-	if err := filter.Close(); err != nil {
-		t.Fatalf("close filter: %v", err)
-	}
-
-	if got := out.String(); got != "worker exit status changed\npartial" {
-		t.Fatalf("filtered output = %q", got)
 	}
 }
