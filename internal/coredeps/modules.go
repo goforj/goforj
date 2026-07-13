@@ -16,6 +16,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/cache/driver/sqlcore":          "v0.3.0",
 	"github.com/goforj/cache/driver/sqlitecache":      "v0.3.0",
 	"github.com/goforj/env/v2":                        "v2.3.0",
+	"github.com/goforj/goforj":                        "v0.20.0",
 	"github.com/goforj/events":                        "v0.1.2",
 	"github.com/goforj/events/eventscore":             "v0.1.2",
 	"github.com/goforj/httpx":                         "v1.1.0",
@@ -70,6 +71,7 @@ var rendererSyncModules = []string{
 	"github.com/goforj/web",
 	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
+	"github.com/goforj/goforj",
 }
 
 func VersionFor(module string) (string, bool) {

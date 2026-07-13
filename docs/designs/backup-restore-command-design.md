@@ -62,6 +62,8 @@ turn that knowledge into a consistent backup plan.
 - Use driver-aware backup and restore strategies.
 - Support multiple databases and multiple storage disks.
 - Produce a portable manifest-backed backup set.
+- Provide an explicit portable data format for cross-driver transfers.
+- Prove portable transfers across every supported database pair.
 - Keep restore operations explicit, inspectable, and hard to run accidentally.
 - Support local backup directories first, then object-storage repositories.
 - Keep secrets out of logs, manifests, and console output.
@@ -183,6 +185,12 @@ forj app backup:create
 
 The generated App owns the backup command behavior because it owns the effective
 resource configuration.
+
+Because `internal/backup` cannot be imported by an unrelated rendered module,
+the initial framework command surface is owned by `forj` itself. For an
+App-prefixed backup command, `forj` loads `.env`, promotes the selected App's
+prefixed keys, and runs the framework command in-process. It does not delegate
+to a generated binary that cannot import the framework's internal package.
 
 ## Backup Plan
 
@@ -367,6 +375,172 @@ Notes:
 - avoid raw file copy when the database may be live
 - include WAL-related behavior in the strategy documentation
 
+## Portable Database Backups
+
+Native database backups are the first-class production backup format. They
+preserve the semantics and features of their database engine and should be the
+default for disaster recovery:
+
+```bash
+forj backup:create
+```
+
+Portable backups are a separate, explicit format for moving application data
+between supported database drivers:
+
+```bash
+forj backup:create --portable
+forj backup:restore --portable --from ./portable-backup --target-driver sqlite
+```
+
+`--portable` must not convert a native dump after it has been created. It reads
+rows from the source database and writes a versioned GoForj logical data
+archive. This keeps native recovery artifacts faithful and makes portable
+conversion behavior inspectable.
+
+The portable workflow is:
+
+1. Resolve the source database and its migration stream.
+2. Read the source schema and migration fingerprint.
+3. Extract rows into GoForj canonical values.
+4. Write a portable manifest and table data artifacts.
+5. Run the target driver's migrations before restore. The generated command
+   validates the resulting migration fingerprint; migration execution remains
+   the App's existing migration command so backup does not invent a second
+   migration runner.
+6. Validate target schema compatibility.
+7. Restore rows in dependency order.
+8. Restore identity or sequence state and validate constraints.
+
+The target schema is always built from target-dialect migrations. Portable
+backup must not recreate arbitrary discovered schema because migrations are the
+application's schema contract.
+
+Portable manifests carry the ordered SQL migration fingerprint when the project
+has a `migrations/` directory. Restore compares that fingerprint before opening
+the write transaction, then performs the independent target-table and column
+compatibility checks.
+
+### Canonical Value Model
+
+Portable data should use a deliberately small type system rather than trying to
+translate vendor-specific SQL types directly:
+
+| Canonical type | Examples |
+| --- | --- |
+| `string` | text and character columns |
+| `integer` | signed integer values |
+| `decimal` | exact numeric values represented without floating point |
+| `boolean` | normalized true or false |
+| `timestamp` | normalized instants with an explicit timezone policy |
+| `date` | calendar dates |
+| `bytes` | binary and blob values |
+| `json` | structured JSON values |
+| `null` | SQL NULL |
+
+Driver-specific values are normalized before they enter the portable archive.
+For example, SQLite, MySQL, and Postgres boolean representations must all
+become the same canonical boolean value. Decimal values must remain exact, and
+binary values must remain byte-for-byte recoverable.
+
+The portable manifest should include:
+
+- portable format version
+- source driver and database identity without credentials
+- migration stream and schema fingerprint
+- included tables and row counts
+- canonical column types
+- conversion warnings
+- checksums for every data artifact
+
+Portable mode should explicitly report or reject features that do not have a
+safe common representation, including stored procedures, engine-specific
+indexes, collations, generated columns, extensions, arrays, spatial types,
+vendor-specific enums, and database permissions.
+
+## Portable Transfer Test Matrix
+
+Portable backup is not production-ready until it is tested as a transfer
+matrix, not only as a source-database round trip.
+
+For the initial SQLite, MySQL, and Postgres drivers, integration tests should
+cover every source-target pair:
+
+| Source | SQLite | MySQL | Postgres |
+| --- | ---: | ---: | ---: |
+| SQLite | yes | yes | yes |
+| MySQL | yes | yes | yes |
+| Postgres | yes | yes | yes |
+
+Each test should:
+
+1. Start a real source and target database using the supported test harness.
+2. Apply the source dialect's migrations.
+3. Load the shared compatibility fixture into the source.
+4. Apply the target dialect's migrations independently.
+5. Create a portable archive from the source.
+6. Restore the archive into the target.
+7. Compare source and target through canonical semantic values.
+8. Verify constraints, identity state, row counts, and checksums.
+
+The shared fixture should exercise the portable boundary deliberately:
+
+- signed and large integer values
+- exact decimal values, including trailing zeroes
+- booleans and nullable booleans
+- empty strings, Unicode, and long text
+- dates and timestamps with timezone information
+- UUIDs, JSON, and arbitrary binary data
+- foreign keys, nullable foreign keys, and composite keys
+- unique constraints and empty tables
+- auto-increment and sequence continuation
+
+Assertions must compare semantic values rather than raw driver return values.
+For example, a MySQL `1`, a Postgres `true`, and a SQLite integer boolean are
+equal only after canonicalization.
+
+### Round-Trip And Negative Tests
+
+The matrix should also include chained transfers:
+
+```text
+mysql -> sqlite -> postgres
+postgres -> mysql -> sqlite
+sqlite -> postgres -> mysql
+```
+
+The final canonical data must equal the original canonical data. After each
+restore, the test should insert a new row to prove that identity and sequence
+state continue correctly.
+
+The suite must include negative compatibility tests. Portable restore should
+fail clearly, or require an explicit override, when it encounters:
+
+- a missing target table or column
+- a non-null target column receiving source NULL
+- precision that exceeds the target schema
+- unsupported arrays, spatial values, or generated columns
+- incompatible migration fingerprints
+- foreign-key cycles that cannot be restored safely
+- unsupported enum, collation, or extension behavior
+
+Errors should identify the table, column, source type, target type, and
+recommended action. Silent truncation or lossy coercion is not acceptable.
+
+### Native Backup Tests
+
+Native backup tests remain separate from portable transfer tests:
+
+```text
+mysql -> mysqldump -> mysql
+postgres -> pg_dump -> postgres
+sqlite -> native backup -> sqlite
+```
+
+These tests validate engine-specific fidelity and production recovery. They
+should cover native features that portable mode intentionally does not promise,
+such as triggers, indexes, sequences, and engine-specific metadata.
+
 ### Multiple Connections
 
 Each configured connection should be backed up independently:
@@ -418,6 +592,11 @@ Later slice:
 S3-compatible storage can represent a large data set. The command should be
 explicit about whether it is backing up object metadata only or the object
 contents.
+
+The first implementation records a checksummed object inventory for configured
+S3 disks. The inventory is deliberately marked metadata-only; restore refuses
+to treat it as a complete object backup until an explicit materialization mode
+is implemented.
 
 ### Public And Private Disks
 
@@ -568,6 +747,11 @@ perfect distributed snapshot.
 
 Generated Apps should have optional lifecycle-style hooks for backup operations.
 
+The generated adapters call the public `github.com/goforj/goforj/backup`
+bridge. A GoForj release that enables these commands must publish that package
+in the pinned framework module version; local `forj --dev test:render` adds a
+temporary repository replace only while testing an unreleased checkout.
+
 Conceptual shape:
 
 ```text
@@ -698,6 +882,83 @@ and links. Backup needs a stricter resource inventory:
 These concepts can share resource IDs and labels, but backup should not depend
 on a UI-oriented registry if that would weaken restore safety.
 
+## Package Boundary
+
+Backup behavior should live in a framework-owned internal package:
+
+```text
+internal/backup/
+  plan.go
+  manifest.go
+  checksum.go
+  restore.go
+  native/
+    strategy.go
+    sqlite.go
+    mysql.go
+    postgres.go
+  portable/
+    archive.go
+    canonical.go
+    schema.go
+```
+
+The package owns backup planning, artifact creation, manifest validation,
+checksums, native strategies, portable conversion, and restore orchestration.
+It should not own CLI parsing, generated App wiring, or project rendering.
+
+The portable SQL layer should depend on Go's `database/sql` interfaces and a
+small dialect adapter, not on GORM. GORM is an App-level connection
+implementation, while backup must remain usable with native `database/sql`
+connections and future driver integrations. A generated adapter may unwrap a
+GORM connection to its underlying `*sql.DB`, but that dependency must stay
+outside `internal/backup`.
+
+Generated Apps should expose the command surface through templates and inject
+the configured database connections and environment-aware settings:
+
+```text
+generated App command
+  -> internal/backup service
+      -> database connection resolver
+      -> native or portable strategy
+      -> manifest/artifact repository
+```
+
+The generated command should remain a thin adapter responsible for flags,
+confirmation, output, and selecting the active App/resource scope. This keeps
+backup behavior testable without rendering a project and lets future Ship or
+Lighthouse integrations consume the same plan and manifest types.
+
+Because `internal/backup` cannot be imported by an unrelated rendered module,
+the initial framework command surface is owned by `forj` itself. App-prefixed
+invocation still selects the App environment before running the command:
+
+```bash
+forj backup:create
+forj billing backup:create
+```
+
+Rendered App binaries expose thin adapters that delegate to the same backup
+contracts rather than fork backup behavior.
+
+The generated adapter uses `FORJ_FRAMEWORK_BIN` when set, otherwise `forj`, and
+passes through the App's already-loaded environment. Deployments that expose
+`./bin/app backup:*` should package or place the matching framework CLI on the
+node and set `FORJ_FRAMEWORK_BIN` when it is not available on `PATH`.
+
+The first package interfaces should be small and driver-neutral:
+
+- `Planner` creates an inspectable backup plan.
+- `Strategy` creates or restores one database artifact.
+- `ArtifactStore` writes and reads local backup artifacts.
+- `Manifest` describes verified backup contents.
+- `PortableCodec` converts database rows to and from canonical values.
+
+Driver-specific code belongs behind these interfaces. The package may use the
+generated database connection manager through an injected resolver, but should
+not depend on generated App packages or project template paths.
+
 ## Milestones
 
 ### Milestone 1: Backup Plan And Manifest
@@ -719,6 +980,9 @@ Exit criteria:
 - generated Apps can print a deterministic backup plan without touching
   unrelated infrastructure
 
+Status: implemented and covered by plan, manifest, redaction, and generated
+render tests.
+
 ### Milestone 2: Local Database And Local Storage Backups
 
 Objective:
@@ -738,6 +1002,9 @@ Exit criteria:
 
 - a generated App can create and verify a local backup set containing logical
   database dumps and local storage archives
+
+Status: implemented. SQLite uses the native driver's `VACUUM INTO` path;
+MySQL/MariaDB and Postgres use their native dump tools.
 
 ### Milestone 3: Restore
 
@@ -759,7 +1026,38 @@ Exit criteria:
 
 - a backup set can be restored into a scratch/local environment and verified
 
-### Milestone 4: Retention And Repository Backends
+Status: implemented for native SQLite, MySQL/MariaDB, Postgres, and local
+storage, with destructive confirmation and dry-run coverage.
+
+### Milestone 4: Portable Database Transfers
+
+Objective:
+
+- support intentional cross-driver data movement with verified semantics
+
+Tasks:
+
+- define and version the portable archive format
+- implement canonical value encoding and decoding
+- implement source schema inspection and target migration validation
+- implement dependency-aware row export and restore
+- add the SQLite, MySQL, and Postgres integration test matrix
+- add chained round-trip and negative compatibility tests
+- document unsupported and lossy database features
+
+Exit criteria:
+
+- every supported source driver can restore into every supported target driver
+- the shared compatibility fixture has canonical data equality after transfer
+- identity and sequence values continue correctly after restore
+- unsupported or lossy conversions fail explicitly
+- portable archives can be verified independently through their manifest and
+  checksums
+
+Status: implemented. The integration suite exercises all 3x3 source/target
+transfers, chained round trips, identity continuation, and negative contracts.
+
+### Milestone 5: Retention And Repository Backends
 
 Objective:
 
@@ -778,7 +1076,12 @@ Exit criteria:
 - production can run scheduled backups to local or S3-compatible repositories
   with deterministic retention
 
-### Milestone 5: Operator Integration
+Status: implemented for local repositories and S3-compatible upload, download,
+list, delete, checksummed manifests, and calendar-bucket local retention.
+Remote object inventory restore is intentionally rejected until explicit
+materialization is requested.
+
+### Milestone 6: Operator Integration
 
 Objective:
 
@@ -795,14 +1098,19 @@ Exit criteria:
 
 - operators can inspect backup freshness without reading raw logs
 
+Status: implemented through `backup:status`, compact freshness output, and
+explicit before/after create and restore hook registries. Generated Apps and
+the framework CLI share the same command implementation.
+
 ## Open Questions
 
 - Should backup repository configuration live only in env, or should `.goforj.yml`
   also declare production backup policy?
 - Should client-side encryption be built into GoForj or delegated to repository
   backends such as restic/kopia?
-- Should S3 storage disks be materialized by default or represented by manifests
-  unless explicitly requested?
+- S3 storage disks are represented by a checksummed object inventory by
+  default. Native object materialization is an explicit future repository
+  operation; restore rejects metadata-only inventories today.
 - Should durable queues ever be backed up, or should they be treated as
   operational state outside the application backup contract?
 - How should multi-App projects coordinate shared resources that are configured
