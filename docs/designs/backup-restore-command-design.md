@@ -3,7 +3,7 @@
 Status:
 
 - proposed
-- intended for generated App command surfaces
+- intended for the framework operator command surface
 - focused first on application-level database and storage backups
 
 ## Purpose
@@ -11,20 +11,20 @@ Status:
 This document defines a framework-level model for backing up and restoring
 resources configured by a generated GoForj App.
 
-The goal is to make the common production operation feel simple for Apps that
-opt into the backup component:
+The goal is to make the common production operation feel simple for resources
+owned by a generated GoForj App:
 
 ```bash
-./bin/app backup:create
-./bin/app backup:list
-./bin/app backup:verify
-./bin/app backup:restore
+forj backup:create
+forj backup:list
+forj backup:verify
+forj backup:restore
 ```
 
 while preserving GoForj's normal model:
 
-- App-owned configuration
-- generated App command surfaces
+- App-owned resource configuration
+- framework-owned operator commands
 - explicit resource names
 - driver-aware behavior
 - safe defaults for destructive restore operations
@@ -147,21 +147,21 @@ application-level `backup:create`.
 
 ## Command Shape
 
-Use resource-first command names on an App that enables `backup: true`:
+Use resource-first command names on the framework operator CLI:
 
 ```bash
-./bin/app backup:create
-./bin/app backup:list
-./bin/app backup:verify
-./bin/app backup:restore
-./bin/app backup:prune
-./bin/app backup:plan
+forj backup:create
+forj backup:list
+forj backup:verify
+forj backup:restore
+forj backup:prune
+forj backup:plan
 ```
 
 Short aliases may be added later only if they stay clear:
 
 ```bash
-./bin/app backup
+forj backup
 ```
 
 The canonical shape should remain `backup:<action>` because it matches existing
@@ -175,19 +175,14 @@ make:model
 auth:create-user
 ```
 
-These are generated App commands. The framework CLI does not register or
-execute them:
+These are framework operator commands. Generated Apps expose resource metadata
+for the framework to consume, but do not embed backup behavior:
 
 ```bash
-./bin/app backup:create
+forj backup:create
 ```
 
-The generated App owns the backup command behavior because it owns the effective
-resource configuration.
-
-The framework publishes the reusable backup bridge used by opted-in generated
-Apps. The command surface remains App-owned so an App can be deployed and
-operated without treating the generator CLI as its runtime. For an
+The framework owns the backup implementation and command surface. For an
 App-prefixed backup command, `forj` loads `.env`, promotes the selected App's
 prefixed keys, and runs the framework command in-process. It does not delegate
 to a generated binary that cannot import the framework's internal package.
@@ -382,15 +377,15 @@ preserve the semantics and features of their database engine and should be the
 default for disaster recovery:
 
 ```bash
-./bin/app backup:create
+forj backup:create
 ```
 
 Portable backups are a separate, explicit format for moving application data
 between supported database drivers:
 
 ```bash
-./bin/app backup:create --portable
-./bin/app backup:restore --portable --from ./portable-backup --target-driver sqlite
+forj backup:create --portable
+forj backup:restore --portable --from ./portable-backup --target-driver sqlite
 ```
 
 `--portable` must not convert a native dump after it has been created. It reads
@@ -554,7 +549,7 @@ db.reporting
 Restore should allow:
 
 ```bash
-./bin/app backup:restore --resource db.reporting --from ./backup-...
+forj backup:restore --resource db.reporting --from ./backup-...
 ```
 
 ## Storage Strategies
@@ -616,7 +611,7 @@ Do not hardcode only one storage path.
 The first implementation should write to a local path:
 
 ```bash
-./bin/app backup:create --to ./storage/backups
+forj backup:create --to ./storage/backups
 ```
 
 Later repository backends can include:
@@ -653,14 +648,14 @@ useful for defaults and documentation.
 Retention should be explicit and separate from backup creation:
 
 ```bash
-./bin/app backup:prune
-./bin/app backup:prune --dry-run
+forj backup:prune
+forj backup:prune --dry-run
 ```
 
 `backup:create` may optionally run prune after a successful verified upload:
 
 ```bash
-./bin/app backup:create --prune
+forj backup:create --prune
 ```
 
 Important rule:
@@ -695,10 +690,10 @@ Required defaults:
 Suggested examples:
 
 ```bash
-./bin/app backup:restore --from ./backup-2026-07-09T030000Z --dry-run
-./bin/app backup:restore --from ./backup-2026-07-09T030000Z --resource db.default
-./bin/app backup:restore --from ./backup-2026-07-09T030000Z --target ./restore-test
-./bin/app backup:restore --from ./backup-2026-07-09T030000Z --confirm restore-production
+forj backup:restore --from ./backup-2026-07-09T030000Z --dry-run
+forj backup:restore --from ./backup-2026-07-09T030000Z --resource db.default
+forj backup:restore --from ./backup-2026-07-09T030000Z --target ./restore-test
+forj backup:restore --from ./backup-2026-07-09T030000Z --confirm restore-production
 ```
 
 The restore plan should show:
@@ -826,32 +821,21 @@ perform backups.
 
 ## App Ownership And Delegation
 
-Backup commands should be generated App commands.
+Backup commands should remain framework operator commands. Apps should expose
+only a stable, secret-free resource description contract.
 
 Reasons:
 
-- the App owns resource configuration
-- named Apps may have different resources
-- the built binary should work on a production node without source tooling
-- source-aware `forj` delegation can preserve one command surface
-
-Inside a generated App:
-
-```bash
-./bin/app backup:create
-```
-
-should use the same command implementation as:
-
-```bash
-./bin/app backup:create
-```
+- the App owns resource configuration while `forj` owns operator workflows;
+- named Apps may have different resources;
+- the backup implementation is absent from production App binaries;
+- one framework command surface avoids version drift between App binaries.
 
 For named Apps:
 
 ```bash
 forj marketplace backup:create
-./bin/marketplace backup:create
+forj marketplace backup:create
 ```
 
 should back up the `marketplace` App's configured resources.
@@ -863,7 +847,7 @@ shell commands:
 
 ```bash
 forj db reporting
-./bin/app backup:create --resource db.reporting
+forj backup:create --resource db.reporting
 ```
 
 The App-facing resource name is the selector. The backend driver is an
@@ -914,34 +898,27 @@ connections and future driver integrations. A generated adapter may unwrap a
 GORM connection to its underlying `*sql.DB`, but that dependency must stay
 outside `internal/backup`.
 
-Generated Apps should expose the command surface through templates and inject
-the configured database connections and environment-aware settings:
+Generated Apps should expose a stable, secret-free resource description
+contract through templates. `forj` consumes that contract and injects the
+selected App environment into the framework backup workflow:
 
 ```text
-generated App command
-  -> internal/backup service
+App resource description
+  -> forj backup command
+      -> internal/backup service
       -> database connection resolver
       -> native or portable strategy
       -> manifest/artifact repository
 ```
 
-The generated command should remain a thin adapter responsible for flags,
-confirmation, output, and selecting the active App/resource scope. This keeps
-backup behavior testable without rendering a project and lets future Ship or
-Lighthouse integrations consume the same plan and manifest types.
-
-The framework publishes the reusable backup bridge used by opted-in generated
-Apps. The command surface remains App-owned, and App-prefixed invocation uses
-the selected App's environment:
+The framework command is responsible for flags, confirmation, output, and
+selecting the active App/resource scope. It does not shell out to a generated
+App binary for backup execution.
 
 ```bash
-./bin/app backup:create
-./bin/billing backup:create
+forj backup:create
+forj billing backup:create
 ```
-
-Rendered App binaries expose thin adapters to the same backup contracts rather
-than fork backup behavior. They do not shell out to `forj` or require the
-generator CLI on the production node.
 
 The first package interfaces should be small and driver-neutral:
 
@@ -965,7 +942,7 @@ Objective:
 
 Tasks:
 
-- add generated App backup command skeletons
+- add generated App resource description contract
 - implement `backup:plan`
 - define `manifest.json` schema
 - define stable resource ID conventions
@@ -973,8 +950,8 @@ Tasks:
 
 Exit criteria:
 
-- generated Apps can print a deterministic backup plan without touching
-  unrelated infrastructure
+- `forj` can print a deterministic backup plan for a selected App without
+  embedding backup behavior in that App
 
 Status: implemented and covered by plan, manifest, redaction, and generated
 render tests.

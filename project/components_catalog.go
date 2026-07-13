@@ -36,8 +36,6 @@ const (
 	ComponentScheduler ComponentKey = "scheduler"
 	// ComponentJobs enables queue worker runtime support.
 	ComponentJobs ComponentKey = "jobs"
-	// ComponentBackup enables application-owned backup and restore commands.
-	ComponentBackup ComponentKey = "backup"
 )
 
 // ComponentDefinition describes a project component, its wizard display, and its dependency contract.
@@ -67,7 +65,6 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentDatabaseSQLite, Label: "Database (SQLite)", Description: "Store app data in SQLite", ExclusiveGroup: "database"},
 	{Key: ComponentScheduler, Label: "Scheduler", Description: "Run tasks on a schedule", DefaultSelected: true},
 	{Key: ComponentJobs, Label: "Jobs", Description: "Run background work", DefaultSelected: true},
-	{Key: ComponentBackup, Label: "Backup", Description: "Back up and restore application data", DefaultSelected: false},
 }
 
 // ComponentCatalog returns the canonical component definitions.

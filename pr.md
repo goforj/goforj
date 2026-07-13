@@ -2,26 +2,18 @@
 
 ## Summary
 
-This branch adds an opt-in framework-level backup and restore system to GoForj. It is
+This branch adds a framework-level backup and restore system to GoForj. It is
 designed for live service applications where operators need a verified local
 backup, a production repository, and a deliberate path for moving data between
 SQLite, MySQL/MariaDB, and Postgres.
 
-The feature is generated only when an App enables the `backup` component. The
-App binary owns the production command surface while using the shared framework
-implementation, so default Apps receive no backup commands or dependencies.
+The backup engine and command surface live in `forj`. Generated Apps expose a
+small resource contract so `forj` can discover their databases and storage
+without embedding backup code in production binaries.
 
 ## Commands
 
-Backup-enabled generated Apps expose:
-
-Enable the component in `.goforj.yml` before rendering:
-
-```yaml
-render:
-  components:
-    backup: true
-```
+The framework CLI exposes:
 
 ```text
 backup:plan
@@ -37,16 +29,22 @@ Native backup creation follows the configured database driver. Restore is
 destructive and requires an explicit confirmation token:
 
 ```bash
-./bin/app backup:create
-./bin/app backup:verify .goforj/backups/backup-20260712T120000Z
-./bin/app backup:restore --from .goforj/backups/backup-20260712T120000Z --dry-run
-./bin/app backup:restore \
+forj backup:create
+forj backup:verify .goforj/backups/backup-20260712T120000Z
+forj backup:restore --from .goforj/backups/backup-20260712T120000Z --dry-run
+forj backup:restore \
   --from .goforj/backups/backup-20260712T120000Z \
   --confirm restore-production
 ```
 
 `backup:status` reports the newest completed local backup in a compact form so
 operators do not need to inspect raw logs.
+
+Resource discovery is deliberately separate from backup execution. The App
+reports safe metadata such as resource IDs, drivers, and the environment keys
+that contain configuration. It does not emit passwords, tokens, or DSN values.
+`forj` consumes that contract and performs the backup using the selected App's
+environment.
 
 ## Native Backups
 

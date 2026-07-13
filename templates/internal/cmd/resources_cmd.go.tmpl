@@ -1,0 +1,80 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// ResourceDescription identifies an App-owned durable resource without exposing secret values.
+type ResourceDescription struct {
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	Name        string   `json:"name"`
+	Driver      string   `json:"driver"`
+	ConfigKeys  []string `json:"config_keys"`
+	IsDefault   bool     `json:"is_default"`
+}
+
+// ResourcesDescription is the stable resource discovery contract consumed by operator tooling.
+type ResourcesDescription struct {
+	App       string                 `json:"app"`
+	Resources []ResourceDescription `json:"resources"`
+}
+
+// ResourcesCmd describes App-owned resources as secret-free JSON.
+type ResourcesCmd struct{}
+
+// NewResourcesCmd creates a resource description command.
+func NewResourcesCmd() *ResourcesCmd { return &ResourcesCmd{} }
+
+// Signature defines CLI metadata for the resource description command.
+func (*ResourcesCmd) Signature() string {
+	return `name:"resources:describe" help:"Describe app resources for operator tooling"`
+}
+
+// Run prints the App resource contract as JSON.
+func (*ResourcesCmd) Run() error {
+	contract := ResourcesDescription{App: runtime.CurrentApp().Name}
+	for _, database := range runtime.DiscoverDatabaseInstances() {
+		contract.Resources = append(contract.Resources, ResourceDescription{
+			ID: "db." + database.Name, Kind: "database", Name: database.Name,
+			Driver: database.Driver, ConfigKeys: databaseConfigKeys(database.Name), IsDefault: database.IsDefault,
+		})
+	}
+	for _, storage := range runtime.DiscoverStorageInstances() {
+		contract.Resources = append(contract.Resources, ResourceDescription{
+			ID: "storage." + storage.Name, Kind: "storage", Name: storage.Name,
+			Driver: storage.Driver, ConfigKeys: storageConfigKeys(storage.Name), IsDefault: storage.IsDefault,
+		})
+	}
+	data, err := json.MarshalIndent(contract, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
+func databaseConfigKeys(name string) []string {
+	prefix := "DB"
+	if name != "default" {
+		prefix += "_" + resourceEnvName(name)
+	}
+	return []string{prefix + "_DRIVER", prefix + "_DSN", prefix + "_HOST", prefix + "_PORT", prefix + "_DATABASE", prefix + "_USERNAME", prefix + "_PASSWORD"}
+}
+
+func storageConfigKeys(name string) []string {
+	prefix := "STORAGE"
+	if name != "default" {
+		prefix += "_" + resourceEnvName(name)
+	}
+	return []string{prefix + "_DRIVER", prefix + "_ROOT", prefix + "_PREFIX", prefix + "_BUCKET", prefix + "_ENDPOINT"}
+}
+
+func resourceEnvName(name string) string {
+	return strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+}
+

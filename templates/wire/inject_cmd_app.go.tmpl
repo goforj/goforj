@@ -5,9 +5,6 @@ package wire
 
 import (
 	"github.com/goforj/wire"
-	{{- if .Components.Backup }}
-	"{{.GoModuleName}}/internal/backup"
-	{{- end }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/monitoring"
@@ -16,16 +13,8 @@ import (
 
 // appCommandSet is a wire set that provides app-owned command providers.
 var appCommandSet = wire.NewSet(
-	{{- if .Components.Backup }}
-	backup.NewPlanCmd,
-	backup.NewCreateCmd,
-	backup.NewListCmd,
-	backup.NewVerifyCmd,
-	backup.NewRestoreCmd,
-	backup.NewPruneCmd,
-	backup.NewStatusCmd,
-	{{- end }}
 	cmd.NewHelloWorldCmd,
+	cmd.NewResourcesCmd,
 	cmd.NewTestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	monitoring.NewPollCmd,
