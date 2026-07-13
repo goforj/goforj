@@ -331,10 +331,19 @@ For full escape-hatch control, custom watchers can allow raw regexes:
 dev:
   watches:
     - name: api index
-      exec: forj api-index
+      exec: forj build:api-index
       watch: [re:^internal/.+\.go$]
       ignore: [re:^internal/.+_test\.go$]
 ```
+
+`build:api-index` is the actual standalone command and publishes the active
+App's artifacts immediately. A named-App watcher uses
+`forj <app> build:api-index`; CI-like watcher policy can add `--strict` so any
+warning rejects the candidate without replacing the active artifacts. Ordinary
+`forj build` and `forj run` already include API indexing and delay publication
+until their final compile or process-start boundary succeeds, so a separate
+index watcher is only useful when the project wants contract refreshes without
+running either pipeline.
 
 The exact raw marker is open for design. The key requirement is that ordinary
 generated config should not require raw regexes.
