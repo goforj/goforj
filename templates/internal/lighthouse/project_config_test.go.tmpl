@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	"{{.GoModuleName}}/project"
 )
 
 // TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields verifies
@@ -62,7 +63,7 @@ apps:
     starter_kit: react
 `
 
-	var config Config
+	var config project.Config
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
 		t.Fatalf("unmarshal project config: %v", err)
 	}
@@ -106,7 +107,7 @@ render:
     mode: retained
 `
 
-	var config Config
+	var config project.Config
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
 		t.Fatalf("unmarshal project config: %v", err)
 	}
@@ -154,7 +155,7 @@ render:
   components: {}
 `
 
-	var config Config
+	var config project.Config
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
 		t.Fatalf("unmarshal project config: %v", err)
 	}
@@ -168,7 +169,7 @@ render:
 	if !strings.Contains(string(encoded), "run: {}") {
 		t.Fatalf("empty legacy runtime allowlist was erased:\n%s", encoded)
 	}
-	var roundTripped Config
+	var roundTripped project.Config
 	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
 		t.Fatalf("unmarshal round trip: %v", err)
 	}
@@ -187,7 +188,7 @@ render:
 // TestApplyDevConfigUpdatePreservesNativeLifecycleControls verifies that the
 // scalar Lighthouse editor cannot erase native fields it does not expose.
 func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(t *testing.T) {
-	current := DevConfig{
+	current := project.DevConfig{
 		WirePaths: []string{"app/wire"},
 		Apps: map[string]any{
 			"app": map[string]any{
@@ -196,17 +197,17 @@ func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(t *testing.T) {
 				},
 			},
 		},
-		Watches: []DevWatch{
+		Watches: []project.DevWatch{
 			{
 				Name:    "Native",
 				Watch:   []any{".go", ".env"},
 				Ignore:  []string{"generated"},
 				Roots:   []string{"internal", "schemas"},
 				WorkDir: "./tools",
-				Files: DevWatchMatchers{
+				Files: project.DevWatchMatchers{
 					Exclude: []string{"generated.go"},
 				},
-				Dirs: DevWatchMatchers{
+				Dirs: project.DevWatchMatchers{
 					Exclude: []string{"vendor"},
 				},
 				Exec:     "make native",
@@ -227,7 +228,7 @@ func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(t *testing.T) {
 		},
 	}
 	autoMigrate := true
-	updates := []DevWatch{
+	updates := []project.DevWatch{
 		{Name: "Legacy", Watch: "-file .md", Exec: "make legacy-docs"},
 		{Name: "Native", Watch: "invalid scalar replacement", Exec: "make native-updated"},
 	}
@@ -265,6 +266,47 @@ func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(t *testing.T) {
 	}
 }
 
+// TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex verifies that a
+// replacement row cannot inherit hidden native settings from a deleted watcher.
+func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(t *testing.T) {
+	current := []project.DevWatch{
+		{
+			Name:    "Native",
+			Watch:   []any{".go", ".env"},
+			Roots:   []string{"internal"},
+			Exec:    "make native",
+			Env:     map[string]string{"MODE": "native"},
+			Restart: true,
+		},
+		{
+			Name:  "Legacy",
+			Watch: "-file .go",
+			Exec:  "make legacy",
+			Env:   map[string]string{"KEEP": "1"},
+		},
+	}
+	updates := []project.DevWatch{
+		{Name: "Docs", Watch: "-file .md", Exec: "make docs"},
+		{Name: "Legacy", Watch: "-file .txt", Exec: "make legacy-text"},
+	}
+
+	merged := mergeLighthouseDevWatches(current, updates)
+	if len(merged) != 2 {
+		t.Fatalf("merged watcher count = %d, want 2", len(merged))
+	}
+	replacement := merged[0]
+	if replacement.Name != "Docs" || replacement.Watch != "-file .md" || replacement.Exec != "make docs" {
+		t.Fatalf("replacement watcher did not retain submitted fields: %#v", replacement)
+	}
+	if len(replacement.Roots) != 0 || len(replacement.Env) != 0 || replacement.Restart {
+		t.Fatalf("replacement watcher inherited deleted native controls: %#v", replacement)
+	}
+	legacy := merged[1]
+	if legacy.Watch != "-file .txt" || legacy.Exec != "make legacy-text" || legacy.Env["KEEP"] != "1" {
+		t.Fatalf("stable legacy watcher did not preserve hidden controls: %#v", legacy)
+	}
+}
+
 // TestMergeLighthouseComponentsPreservesUnknownSettings verifies that a JSON
 // settings update cannot erase component extensions the client never received.
 func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
@@ -275,11 +317,11 @@ func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
       enabled: true
       mode: isolated
 `
-	var current Config
+	var current project.Config
 	if err := yaml.Unmarshal([]byte(input), &current); err != nil {
 		t.Fatalf("decode project settings: %v", err)
 	}
-	var update Components
+	var update project.Components
 	if err := json.Unmarshal([]byte(`{"web_ui":true}`), &update); err != nil {
 		t.Fatalf("decode Lighthouse settings update: %v", err)
 	}
@@ -291,7 +333,7 @@ func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
 	if !reflect.DeepEqual(merged.Extra, current.Render.Components.Extra) {
 		t.Fatalf("unknown component settings were erased: %#v", merged.Extra)
 	}
-	encoded, err := yaml.Marshal(RenderConfig{Components: merged})
+	encoded, err := yaml.Marshal(project.RenderConfig{Components: merged})
 	if err != nil {
 		t.Fatalf("marshal merged component settings: %v", err)
 	}

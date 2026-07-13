@@ -1,6 +1,8 @@
 package project
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -77,6 +79,134 @@ func (m DevWatchMatchers) Empty() bool {
 // IsLegacy reports whether the watcher uses the historical wgo flag grammar.
 func (w DevWatch) IsLegacy() bool {
 	return w.Legacy || w.Watch != ""
+}
+
+// UnmarshalJSON selects legacy or native watcher semantics from the canonical watch value shape.
+func (w *DevWatch) UnmarshalJSON(data []byte) error {
+	type watchFields struct {
+		Name     string            `json:"name"`
+		Watch    json.RawMessage   `json:"watch"`
+		Include  json.RawMessage   `json:"include"`
+		Ignore   []string          `json:"ignore"`
+		Roots    []string          `json:"roots"`
+		WorkDir  string            `json:"workdir"`
+		Files    DevWatchMatchers  `json:"files"`
+		Dirs     DevWatchMatchers  `json:"dirs"`
+		Exec     string            `json:"exec"`
+		Env      map[string]string `json:"env"`
+		Debounce string            `json:"debounce"`
+		Poll     string            `json:"poll"`
+		Postpone bool              `json:"postpone"`
+		Restart  bool              `json:"restart"`
+		Exit     bool              `json:"exit"`
+		Stdin    bool              `json:"stdin"`
+	}
+
+	var fields watchFields
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode dev watcher: %w", err)
+	}
+	if fields.Include != nil {
+		return fmt.Errorf("decode dev watcher %q: include is invalid; use watch for native matchers", fields.Name)
+	}
+
+	decoded := DevWatch{
+		Name:     fields.Name,
+		Ignore:   fields.Ignore,
+		Roots:    fields.Roots,
+		WorkDir:  fields.WorkDir,
+		Files:    fields.Files,
+		Dirs:     fields.Dirs,
+		Exec:     fields.Exec,
+		Env:      fields.Env,
+		Debounce: fields.Debounce,
+		Poll:     fields.Poll,
+		Postpone: fields.Postpone,
+		Restart:  fields.Restart,
+		Exit:     fields.Exit,
+		Stdin:    fields.Stdin,
+	}
+	watch := bytes.TrimSpace(fields.Watch)
+	if len(watch) == 0 {
+		*w = decoded
+		return nil
+	}
+
+	switch watch[0] {
+	case '"':
+		if err := json.Unmarshal(watch, &decoded.Watch); err != nil {
+			return fmt.Errorf("decode dev watcher %q legacy watch: %w", fields.Name, err)
+		}
+		decoded.Legacy = decoded.Watch == ""
+	case '[':
+		var rawMatchers []json.RawMessage
+		if err := json.Unmarshal(watch, &rawMatchers); err != nil {
+			return fmt.Errorf("decode dev watcher %q native watch matchers: %w", fields.Name, err)
+		}
+		decoded.Include = make([]string, len(rawMatchers))
+		for index, rawMatcher := range rawMatchers {
+			matcher := bytes.TrimSpace(rawMatcher)
+			if len(matcher) == 0 || matcher[0] != '"' {
+				return fmt.Errorf("decode dev watcher %q native watch matcher %d: expected a string", fields.Name, index)
+			}
+			if err := json.Unmarshal(matcher, &decoded.Include[index]); err != nil {
+				return fmt.Errorf("decode dev watcher %q native watch matcher %d: %w", fields.Name, index, err)
+			}
+		}
+	default:
+		return fmt.Errorf("decode dev watcher %q: watch must be a legacy string or matcher list", fields.Name)
+	}
+
+	*w = decoded
+	return nil
+}
+
+// MarshalJSON emits one canonical watch field whose scalar or list shape identifies watcher mode.
+func (w DevWatch) MarshalJSON() ([]byte, error) {
+	type watchFields struct {
+		Name     string            `json:"name"`
+		Watch    any               `json:"watch,omitempty"`
+		Ignore   []string          `json:"ignore,omitempty"`
+		Roots    []string          `json:"roots,omitempty"`
+		WorkDir  string            `json:"workdir,omitempty"`
+		Files    DevWatchMatchers  `json:"files,omitempty"`
+		Dirs     DevWatchMatchers  `json:"dirs,omitempty"`
+		Exec     string            `json:"exec"`
+		Env      map[string]string `json:"env,omitempty"`
+		Debounce string            `json:"debounce,omitempty"`
+		Poll     string            `json:"poll,omitempty"`
+		Postpone bool              `json:"postpone,omitempty"`
+		Restart  bool              `json:"restart,omitempty"`
+		Exit     bool              `json:"exit,omitempty"`
+		Stdin    bool              `json:"stdin,omitempty"`
+	}
+
+	if w.IsLegacy() && w.Include != nil {
+		return nil, fmt.Errorf("encode dev watcher %q: legacy watch and native matchers cannot both be set", w.Name)
+	}
+	var watch any
+	if w.IsLegacy() {
+		watch = w.Watch
+	} else if w.Include != nil {
+		watch = w.Include
+	}
+	return json.Marshal(watchFields{
+		Name:     w.Name,
+		Watch:    watch,
+		Ignore:   w.Ignore,
+		Roots:    w.Roots,
+		WorkDir:  w.WorkDir,
+		Files:    w.Files,
+		Dirs:     w.Dirs,
+		Exec:     w.Exec,
+		Env:      w.Env,
+		Debounce: w.Debounce,
+		Poll:     w.Poll,
+		Postpone: w.Postpone,
+		Restart:  w.Restart,
+		Exit:     w.Exit,
+		Stdin:    w.Stdin,
+	})
 }
 
 // UnmarshalYAML preserves scalar watch values as legacy wgo input while list

@@ -1,4 +1,4 @@
-package lighthouse
+package project
 
 import (
 	"os"
@@ -28,8 +28,8 @@ type DevWatch struct {
 	Extra    map[string]any    `yaml:",inline" json:"-"`
 }
 
-// DevWatchMatchers preserves precise file or directory matcher controls that
-// are not exposed by Lighthouse's legacy watcher text field.
+// DevWatchMatchers preserves precise file or directory controls alongside the
+// shared matcher lists.
 type DevWatchMatchers struct {
 	Include []string `yaml:"include,omitempty" json:"include,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
@@ -56,7 +56,7 @@ type DevConfig struct {
 	appsConfigured    bool
 }
 
-// UnmarshalYAML preserves an explicit empty native App allowlist across Lighthouse edits.
+// UnmarshalYAML preserves an explicit empty native App allowlist across config round trips.
 func (c *DevConfig) UnmarshalYAML(value *yaml.Node) error {
 	type devConfigFields DevConfig
 	var fields devConfigFields
@@ -73,7 +73,7 @@ func (c *DevConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// MarshalYAML retains explicit empty lifecycle maps when Lighthouse saves project settings.
+// MarshalYAML retains explicit empty lifecycle maps whenever project settings are saved.
 func (c DevConfig) MarshalYAML() (any, error) {
 	type devConfigFields DevConfig
 	var node yaml.Node
@@ -95,91 +95,10 @@ func (c DevConfig) MarshalYAML() (any, error) {
 	return &node, nil
 }
 
-// devConfigUpdate represents the fields a Lighthouse client explicitly sends
-// so omitted framework lifecycle configuration survives settings saves.
-type devConfigUpdate struct {
-	Pre               *[]DevTask         `json:"pre"`
-	Down              *[]DevTask         `json:"down"`
-	Run               *map[string]string `json:"run"`
-	AutoMigrate       *bool              `json:"auto_migrate"`
-	DownOnExit        *bool              `json:"down_on_exit"`
-	SoundOnWatchError *bool              `json:"sound_on_watch_error"`
-	WirePaths         *[]string          `json:"wire_paths"`
-	Watches           *[]DevWatch        `json:"watches"`
-	Apps              *map[string]any    `json:"apps"`
-}
-
-// applyDevConfigUpdate applies an explicit Lighthouse patch without replacing
-// lifecycle fields that older clients do not understand.
-func applyDevConfigUpdate(current *DevConfig, update devConfigUpdate) {
-	if current == nil {
-		return
-	}
-	if update.Pre != nil {
-		current.Pre = *update.Pre
-	}
-	if update.Down != nil {
-		current.Down = *update.Down
-	}
-	if update.Run != nil {
-		current.Run = *update.Run
-	}
-	if update.AutoMigrate != nil {
-		current.AutoMigrate = *update.AutoMigrate
-	}
-	if update.DownOnExit != nil {
-		current.DownOnExit = *update.DownOnExit
-	}
-	if update.SoundOnWatchError != nil {
-		current.SoundOnWatchError = *update.SoundOnWatchError
-	}
-	if update.WirePaths != nil {
-		current.WirePaths = *update.WirePaths
-	}
-	if update.Watches != nil {
-		current.Watches = mergeLighthouseDevWatches(current.Watches, *update.Watches)
-	}
-	if update.Apps != nil {
-		current.Apps = *update.Apps
-		current.appsConfigured = len(current.Apps) == 0
-	}
-}
-
-// mergeLighthouseDevWatches preserves controls hidden by the scalar watcher
-// editor while still allowing legacy watcher names, commands, and patterns to change.
-func mergeLighthouseDevWatches(current []DevWatch, updates []DevWatch) []DevWatch {
-	merged := make([]DevWatch, 0, len(updates))
-	used := make(map[int]bool, len(current))
-	for updateIndex, update := range updates {
-		currentIndex := matchingLighthouseDevWatch(current, used, update.Name)
-		if currentIndex < 0 && updateIndex < len(current) && !used[updateIndex] {
-			currentIndex = updateIndex
-		}
-		if currentIndex < 0 {
-			merged = append(merged, update)
-			continue
-		}
-		used[currentIndex] = true
-		existing := current[currentIndex]
-		existing.Name = update.Name
-		existing.Exec = update.Exec
-		if _, scalar := existing.Watch.(string); scalar {
-			existing.Watch = update.Watch
-		}
-		merged = append(merged, existing)
-	}
-	return merged
-}
-
-// matchingLighthouseDevWatch prefers stable names so deleting one watcher does
-// not move another watcher's hidden controls to the wrong entry.
-func matchingLighthouseDevWatch(current []DevWatch, used map[int]bool, name string) int {
-	for index, watch := range current {
-		if !used[index] && watch.Name == name {
-			return index
-		}
-	}
-	return -1
+// SetApps replaces the native App allowlist while retaining explicit empty-map presence.
+func (c *DevConfig) SetApps(apps map[string]any) {
+	c.Apps = apps
+	c.appsConfigured = len(apps) == 0
 }
 
 // DefaultAppName is the implicit single-app name.
@@ -195,7 +114,7 @@ type RenderConfig struct {
 	Extra          map[string]any    `yaml:",inline" json:"-"`
 }
 
-// UnmarshalYAML consumes the obsolete wizard choice so Lighthouse cannot preserve it as an extension.
+// UnmarshalYAML consumes the obsolete wizard choice so config rewrites cannot preserve it as an extension.
 func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 	type renderConfigFields RenderConfig
 	var fields renderConfigFields
@@ -246,13 +165,6 @@ type Components struct {
 	Scheduler        bool           `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool           `yaml:"jobs" json:"jobs"`
 	Extra            map[string]any `yaml:",inline" json:"-"`
-}
-
-// mergeLighthouseComponents applies editable component switches while retaining
-// extension fields that are intentionally hidden from Lighthouse's JSON API.
-func mergeLighthouseComponents(current Components, update Components) Components {
-	update.Extra = current.Extra
-	return update
 }
 
 // HasDatabase reports whether any database component is enabled.
@@ -311,7 +223,7 @@ func LoadProjectConfig() (*Config, error) {
 	return config, nil
 }
 
-// defaultWireDir keeps Lighthouse pointed at app/wire while old projects still use root wire.
+// defaultWireDir keeps modern projects on app/wire while retaining the legacy root wire layout.
 func defaultWireDir() string {
 	if info, err := os.Stat("app/wire"); err == nil && info.IsDir() {
 		return "app/wire"

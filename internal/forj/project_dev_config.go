@@ -126,21 +126,16 @@ func migrateGeneratedDevWatchers(config *project.Config) bool {
 	}
 
 	runCommands := config.Dev.Run
-	if runCommands == nil {
-		runCommands = map[string]string{project.DefaultAppName: "run"}
-	}
-	if config.Dev.Apps == nil {
-		config.Dev.Apps = map[string]project.DevApp{}
-	}
-	for name, command := range runCommands {
-		name = strings.TrimSpace(name)
-		if name == "" || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
-			continue
+	config.Dev.Apps = make(map[string]project.DevApp)
+	for _, app := range configuredDevApps() {
+		command, run := legacyDevRunCommandForMigration(runCommands, app.Name)
+		configured := generatedDevAppConfig(config, app, command)
+		if !run {
+			// Legacy Build App discovery was independent of dev.run, so an omitted
+			// runtime must remain an explicit build-only participant after migration.
+			configured.Run = &project.DevAppCommand{Disabled: true}
 		}
-		if _, exists := config.Dev.Apps[name]; exists {
-			continue
-		}
-		config.Dev.Apps[name] = generatedDevAppConfig(config, project.DefaultNamedApp(name), command)
+		config.Dev.Apps[app.Name] = configured
 	}
 	remove := map[int]bool{
 		buildIndexes[0]: true,
@@ -156,6 +151,18 @@ func migrateGeneratedDevWatchers(config *project.Config) bool {
 	config.Dev.Watches = devWatchesWithoutIndexes(config.Dev.Watches, remove)
 	config.Dev.Run = nil
 	return true
+}
+
+// legacyDevRunCommandForMigration preserves the absent pre-allowlist model while treating a present map as the exact runtime allowlist.
+func legacyDevRunCommandForMigration(runCommands map[string]string, appName string) (string, bool) {
+	if runCommands == nil {
+		return "run", true
+	}
+	command, ok := runCommands[appName]
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(command), true
 }
 
 // legacyDevRunMapCanMigrate avoids discarding malformed allowlist entries that could carry project-specific meaning.

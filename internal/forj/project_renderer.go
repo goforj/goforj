@@ -612,7 +612,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/manager.go.tmpl",
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
-				"internal/lighthouse/project_config.go.tmpl",
+				"project/config.go.tmpl",
+				"internal/lighthouse/project_config_patch.go.tmpl",
 				"internal/lighthouse/project_config_test.go.tmpl",
 			},
 			renderOnceTemplates: []string{
@@ -2652,7 +2653,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "storage", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd_test.go"),
-		filepath.Join("project", "config.go"),
+		filepath.Join("internal", "lighthouse", "project_config.go"),
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
 		filepath.Join("internal", "cmd", "monitor_seed_cmd.go"),
 		filepath.Join("internal", "cmd", "monitor_reset_cmd.go"),
@@ -2754,9 +2755,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		if err := removeIfExists(path); err != nil {
 			return err
 		}
-	}
-	if err := os.Remove(filepath.Join("project")); err != nil && !os.IsNotExist(err) {
-		return err
 	}
 	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
 		return err
@@ -2949,13 +2947,15 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 			matches: []string{
 				`"/project"`,
 				"project.DevConfig",
-				"project.Components",
-				"var config project.Config",
+				"*DevConfig",
+				"func loadProjectConfig() (*Config, error)",
+				"var config Config",
 				`group.GET("/*"`,
 			},
 			requires: []string{
 				`"/auth/dev-session"`,
 				`group.GET("/*"`,
+				p.config.GoModuleName + "/project",
 			},
 		},
 		{
@@ -3003,15 +3003,29 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config.go")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join("project", "config.go")); os.IsNotExist(err) {
 		if err := p.renderTemplateFile(
-			filepath.Join("internal", "lighthouse", "project_config.go"),
-			"internal/lighthouse/project_config.go.tmpl",
+			filepath.Join("project", "config.go"),
+			"project/config.go.tmpl",
 			p.config,
 		); err != nil {
 			return err
 		}
 	} else if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config_patch.go")); os.IsNotExist(err) {
+		if err := p.renderTemplateFile(
+			filepath.Join("internal", "lighthouse", "project_config_patch.go"),
+			"internal/lighthouse/project_config_patch.go.tmpl",
+			p.config,
+		); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	if err := removeIfExists(filepath.Join("internal", "lighthouse", "project_config.go")); err != nil {
 		return err
 	}
 

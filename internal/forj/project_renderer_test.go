@@ -792,6 +792,8 @@ func TestRemoveLegacyInitialBuildTask(t *testing.T) {
 // TestMigrateGeneratedDevWatchersBuildsNativeAppGraph verifies the conservative
 // migration of a complete historical framework watcher set.
 func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
+	useProjectRendererMigrationRoot(t, "ship", "worker")
+	t.Setenv("FORJ_APP", "ship")
 	config := &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{WebAPI: true, WebUI: true},
@@ -805,6 +807,7 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 			Run: map[string]string{
 				project.DefaultAppName: "run",
 				"ship":                 "sync --once",
+				"ghost":                "run",
 			},
 			Watches: []project.DevWatch{
 				{
@@ -855,43 +858,59 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 	if !ok || ship.Run == nil || ship.Run.Exec != "sync --once" || !ship.Run.Shorthand {
 		t.Fatalf("expected named app run command to migrate, got %#v", ship)
 	}
-	if _, ok := config.Dev.Apps["worker"]; ok {
-		t.Fatalf("expected app outside the old allowlist to remain absent, got %#v", config.Dev.Apps["worker"])
+	worker, ok := config.Dev.Apps["worker"]
+	if !ok || worker.Build == nil || worker.Run == nil || !worker.Run.Disabled {
+		t.Fatalf("expected discovered app outside dev.run to remain build-only, got %#v", worker)
+	}
+	if _, ok := config.Dev.Apps["ghost"]; ok {
+		t.Fatalf("legacy dev.run key outside conventional discovery became a managed app: %#v", config.Dev.Apps["ghost"])
 	}
 	encoded, err := yaml.Marshal(config)
 	if err != nil {
 		t.Fatalf("marshal migrated config: %v", err)
 	}
 	if strings.Contains(string(encoded), "run: run") || !strings.Contains(string(encoded), "exec: ./bin/app") ||
-		!strings.Contains(string(encoded), "run: sync --once") {
-		t.Fatalf("expected migration to expose the conventional runtime and retain the custom scalar:\n%s", encoded)
+		!strings.Contains(string(encoded), "run: sync --once") || !strings.Contains(string(encoded), "run: false") {
+		t.Fatalf("expected migration to expose runtimes and retain build-only participation:\n%s", encoded)
 	}
 }
 
-// TestMigrateGeneratedDevWatchersKeepsEmptyLegacyAllowlistEmpty prevents render from enrolling an omitted default App.
-func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyAllowlistEmpty(t *testing.T) {
-	config := &project.Config{Dev: project.DevConfig{
-		Run: map[string]string{},
-		Watches: []project.DevWatch{
-			{
-				Name:  "Build App",
-				Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
-				Exec:  "forj build -o ./bin/app",
-			},
-			{
-				Name:  "Run App",
-				Watch: "-file ./bin/app -file .env -file .env.*",
-				Exec:  "./bin/app run",
-			},
-			{Name: "Docs", Include: []string{".md"}, Exec: "make docs"},
+// TestMigrateGeneratedDevWatchersKeepsEmptyLegacyRunBuildOnly preserves Build App discovery when no runtime is selected.
+func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyRunBuildOnly(t *testing.T) {
+	useProjectRendererMigrationRoot(t, "worker")
+	config := &project.Config{
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{CLI: true}},
 		},
-	}}
+		Dev: project.DevConfig{
+			Run: map[string]string{},
+			Watches: []project.DevWatch{
+				{
+					Name:  "Build App",
+					Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+					Exec:  "forj build -o ./bin/app",
+				},
+				{
+					Name:  "Run App",
+					Watch: "-file ./bin/app -file .env -file .env.*",
+					Exec:  "./bin/app run",
+				},
+				{Name: "Docs", Include: []string{".md"}, Exec: "make docs"},
+			},
+		},
+	}
 
 	if !migrateGeneratedDevWatchers(config) {
 		t.Fatal("expected explicit empty legacy allowlist to migrate")
 	}
-	if !config.Dev.UsesStructuredApps() || len(config.Dev.Apps) != 0 {
-		t.Fatalf("empty legacy allowlist enrolled Apps: %#v", config.Dev.Apps)
+	if !config.Dev.UsesStructuredApps() || len(config.Dev.Apps) != 2 {
+		t.Fatalf("empty legacy run map lost discovered build participants: %#v", config.Dev.Apps)
+	}
+	for _, name := range []string{project.DefaultAppName, "worker"} {
+		app := config.Dev.Apps[name]
+		if app.Build == nil || app.Run == nil || !app.Run.Disabled {
+			t.Fatalf("expected %s to migrate as build-only, got %#v", name, app)
+		}
 	}
 	if config.Dev.Run != nil {
 		t.Fatalf("legacy dev.run remained after migration: %#v", config.Dev.Run)
@@ -903,8 +922,66 @@ func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyAllowlistEmpty(t *testing.T)
 	if err != nil {
 		t.Fatalf("marshal migrated config: %v", err)
 	}
-	if !strings.Contains(string(encoded), "apps: {}") {
-		t.Fatalf("empty native allowlist was not serialized:\n%s", encoded)
+	if strings.Count(string(encoded), "run: false") != 2 {
+		t.Fatalf("build-only Apps were not serialized explicitly:\n%s", encoded)
+	}
+}
+
+// TestMigrateGeneratedDevWatchersPreservesAbsentLegacyRunDiscovery retains the pre-allowlist runtime graph without honoring FORJ_APP.
+func TestMigrateGeneratedDevWatchersPreservesAbsentLegacyRunDiscovery(t *testing.T) {
+	useProjectRendererMigrationRoot(t, "server", "ship")
+	t.Setenv("FORJ_APP", "ship")
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{WebAPI: true}},
+		Apps: map[string]project.AppConfig{
+			"server": {Components: project.Components{WebAPI: true}},
+			"ship":   {Components: project.Components{CLI: true}},
+		},
+		Dev: project.DevConfig{Watches: []project.DevWatch{
+			{
+				Name:  "Build App",
+				Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile app/wire/wire_gen\\.go$ -postpone",
+				Exec:  "forj build -o ./bin/app",
+			},
+			{
+				Name:  "Run App",
+				Watch: "-file ./bin/app -file .env -file .env.*",
+				Exec:  "./bin/app run",
+			},
+		}},
+	}
+
+	if !migrateGeneratedDevWatchers(config) {
+		t.Fatal("expected absent legacy dev.run model to migrate")
+	}
+	if len(config.Dev.Apps) != 3 {
+		t.Fatalf("absent dev.run did not preserve every discovered App: %#v", config.Dev.Apps)
+	}
+	for _, name := range []string{project.DefaultAppName, "server", "ship"} {
+		app := config.Dev.Apps[name]
+		if app.Build == nil || app.Run == nil || app.Run.Disabled {
+			t.Fatalf("expected %s to keep build and runtime participation, got %#v", name, app)
+		}
+	}
+	if ship := config.Dev.Apps["ship"]; ship.Run.Exec != "run" || !ship.Run.Shorthand {
+		t.Fatalf("CLI-only legacy runtime command changed shape: %#v", ship.Run)
+	}
+}
+
+// useProjectRendererMigrationRoot isolates conventional App discovery from the GoForj source tree.
+func useProjectRendererMigrationRoot(t *testing.T, appNames ...string) {
+	t.Helper()
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	for _, appName := range appNames {
+		writeProjectRendererTestFile(t, filepath.Join("cmd", appName, "main.go"), "package main\n")
 	}
 }
 

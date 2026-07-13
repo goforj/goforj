@@ -12,9 +12,9 @@ import (
 // DevWatch represents a command to be run in development mode.
 type DevWatch struct {
 	Name     string            `yaml:"name" json:"name"`
-	Watch    string            `yaml:"-" json:"watch,omitempty"`
+	Watch    string            `yaml:"-" json:"-"`
 	Legacy   bool              `yaml:"-" json:"-"`
-	Include  []string          `yaml:"-" json:"include,omitempty"`
+	Include  []string          `yaml:"-" json:"-"`
 	Ignore   []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
 	Roots    []string          `yaml:"roots,omitempty" json:"roots,omitempty"`
 	WorkDir  string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
