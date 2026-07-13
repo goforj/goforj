@@ -288,8 +288,7 @@ Named app config:
 ```yaml
 apps:
   admin:
-    components:
-      web_ui: true
+    components: [web_ui]
     starter_kit: templ_htmx
 ```
 

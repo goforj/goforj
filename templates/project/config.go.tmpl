@@ -1,7 +1,9 @@
 package project
 
 import (
+	"fmt"
 	"os"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -146,6 +148,49 @@ type ProjectConfig struct {
 // Config is the preferred name for project configuration.
 type Config = ProjectConfig
 
+// MarshalYAML preserves compact per-App component lists while leaving extension-shaped App settings untyped.
+func (c ProjectConfig) MarshalYAML() (any, error) {
+	type projectConfigFields ProjectConfig
+	var node yaml.Node
+	if err := node.Encode(projectConfigFields(c)); err != nil {
+		return nil, err
+	}
+	setCompactAppComponentSequenceStyle(&node)
+	return &node, nil
+}
+
+// setCompactAppComponentSequenceStyle restores the shared compact convention after untyped App maps are encoded.
+func setCompactAppComponentSequenceStyle(node *yaml.Node) {
+	root := node
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return
+	}
+	for index := 0; index+1 < len(root.Content); index += 2 {
+		if root.Content[index].Value != "apps" {
+			continue
+		}
+		apps := root.Content[index+1]
+		if apps.Kind != yaml.MappingNode {
+			break
+		}
+		for appIndex := 1; appIndex < len(apps.Content); appIndex += 2 {
+			app := apps.Content[appIndex]
+			if app.Kind != yaml.MappingNode {
+				continue
+			}
+			for fieldIndex := 0; fieldIndex+1 < len(app.Content); fieldIndex += 2 {
+				if app.Content[fieldIndex].Value == "components" && app.Content[fieldIndex+1].Kind == yaml.SequenceNode {
+					app.Content[fieldIndex+1].Style = yaml.FlowStyle
+				}
+			}
+		}
+		break
+	}
+}
+
 // Components represents the components of the project.
 type Components struct {
 	CLI              bool           `yaml:"cli" json:"cli"`
@@ -165,6 +210,167 @@ type Components struct {
 	Scheduler        bool           `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool           `yaml:"jobs" json:"jobs"`
 	Extra            map[string]any `yaml:",inline" json:"-"`
+}
+
+// UnmarshalYAML accepts legacy boolean mappings and compact enabled-name sequences.
+func (c *Components) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.MappingNode:
+		type componentFields Components
+		var fields componentFields
+		if err := value.Decode(&fields); err != nil {
+			return fmt.Errorf("decode component mapping: %w", err)
+		}
+		*c = Components(fields)
+		return nil
+	case yaml.SequenceNode:
+		var decoded Components
+		seen := make(map[string]struct{}, len(value.Content))
+		for _, item := range value.Content {
+			if item.Kind != yaml.ScalarNode || item.Tag != "!!str" {
+				return fmt.Errorf("decode component sequence: entries must be strings")
+			}
+			name := item.Value
+			if !isValidComponentName(name) {
+				return fmt.Errorf("decode component sequence: invalid component name %q", name)
+			}
+			if _, exists := seen[name]; exists {
+				return fmt.Errorf("decode component sequence: duplicate component %q", name)
+			}
+			seen[name] = struct{}{}
+			if decoded.setComponentEnabled(name) {
+				continue
+			}
+			if decoded.Extra == nil {
+				decoded.Extra = map[string]any{}
+			}
+			decoded.Extra[name] = true
+		}
+		*c = decoded
+		return nil
+	default:
+		return fmt.Errorf("decode components: expected a mapping or sequence")
+	}
+}
+
+// MarshalYAML uses the compact form only when every extension can be represented without loss.
+func (c Components) MarshalYAML() (any, error) {
+	names := c.enabledComponentNames()
+	unknown := make([]string, 0, len(c.Extra))
+	for name, value := range c.Extra {
+		enabled, ok := value.(bool)
+		if !ok || !enabled || isKnownComponentName(name) || !isValidComponentName(name) {
+			type componentFields Components
+			return componentFields(c), nil
+		}
+		unknown = append(unknown, name)
+	}
+	sort.Strings(unknown)
+	names = append(names, unknown...)
+
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+	for _, name := range names {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})
+	}
+	return node, nil
+}
+
+// setComponentEnabled enables a known component and reports whether the name is recognized.
+func (c *Components) setComponentEnabled(name string) bool {
+	switch name {
+	case "cli":
+		c.CLI = true
+	case "demo_app":
+		c.DemoApp = true
+	case "mail":
+		c.Mail = true
+	case "auth":
+		c.Auth = true
+	case "oauth":
+		c.OAuth = true
+	case "web_api":
+		c.WebAPI = true
+	case "web_ui":
+		c.WebUI = true
+	case "metrics":
+		c.Metrics = true
+	case "observability":
+		c.Observability = true
+	case "grafana":
+		c.Grafana = true
+	case "docker":
+		c.Docker = true
+	case "database_mysql":
+		c.DatabaseMySQL = true
+	case "database_postgres":
+		c.DatabasePostgres = true
+	case "database_sqlite":
+		c.DatabaseSQLite = true
+	case "scheduler":
+		c.Scheduler = true
+	case "jobs":
+		c.Jobs = true
+	default:
+		return false
+	}
+	return true
+}
+
+// enabledComponentNames returns known enabled names in canonical project order.
+func (c Components) enabledComponentNames() []string {
+	fields := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "cli", enabled: c.CLI},
+		{name: "demo_app", enabled: c.DemoApp},
+		{name: "mail", enabled: c.Mail},
+		{name: "auth", enabled: c.Auth},
+		{name: "oauth", enabled: c.OAuth},
+		{name: "web_api", enabled: c.WebAPI},
+		{name: "web_ui", enabled: c.WebUI},
+		{name: "metrics", enabled: c.Metrics},
+		{name: "observability", enabled: c.Observability},
+		{name: "grafana", enabled: c.Grafana},
+		{name: "docker", enabled: c.Docker},
+		{name: "database_mysql", enabled: c.DatabaseMySQL},
+		{name: "database_postgres", enabled: c.DatabasePostgres},
+		{name: "database_sqlite", enabled: c.DatabaseSQLite},
+		{name: "scheduler", enabled: c.Scheduler},
+		{name: "jobs", enabled: c.Jobs},
+	}
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field.enabled {
+			names = append(names, field.name)
+		}
+	}
+	return names
+}
+
+// isKnownComponentName reports whether name belongs to this generated project version.
+func isKnownComponentName(name string) bool {
+	var components Components
+	return components.setComponentEnabled(name)
+}
+
+// isValidComponentName reports whether name uses the lowercase snake-case component grammar.
+func isValidComponentName(name string) bool {
+	if name == "" || name[0] < 'a' || name[0] > 'z' || name[len(name)-1] == '_' {
+		return false
+	}
+	previousUnderscore := false
+	for _, char := range name {
+		switch {
+		case char >= 'a' && char <= 'z', char >= '0' && char <= '9':
+			previousUnderscore = false
+		case char == '_' && !previousUnderscore:
+			previousUnderscore = true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // HasDatabase reports whether any database component is enabled.

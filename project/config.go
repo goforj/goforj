@@ -187,6 +187,8 @@ type ProjectConfig struct {
 	Render       RenderConfig         `yaml:"render" json:"render"`
 	Apps         map[string]AppConfig `yaml:"apps,omitempty" json:"apps,omitempty"`
 
+	needsComponentMigration bool
+
 	// temporary
 	AppKey           string `yaml:"-" json:"-"`
 	AppDiagToken     string `yaml:"-" json:"-"`

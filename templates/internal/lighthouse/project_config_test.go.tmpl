@@ -82,15 +82,147 @@ apps:
 		"files:",
 		"dirs:",
 		"starter_kit: vue",
-		"metrics: true",
-		"observability: true",
-		"grafana: true",
+		"components: [web_ui, metrics, observability, grafana]",
 		"github.com/example/dependency: ../dependency",
 		"billing:",
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("round-tripped project config omitted %q:\n%s", expected, encoded)
 		}
+	}
+}
+
+// TestProjectConfigYAMLRoundTripPreservesCompactAppComponents verifies untyped
+// per-App settings retain the shared compact convention and future controls.
+func TestProjectConfigYAMLRoundTripPreservesCompactAppComponents(t *testing.T) {
+	input := `project_name: Test
+module_name: example.com/test
+apps:
+  billing:
+    components: [web_api, jobs]
+    future_app_control:
+      mode: retained
+`
+	var config project.Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal project config: %v", err)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal project config: %v", err)
+	}
+	for _, expected := range []string{
+		"components: [web_api, jobs]",
+		"future_app_control:",
+		"mode: retained",
+	} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("round-tripped App settings omitted %q:\n%s", expected, encoded)
+		}
+	}
+	var roundTripped project.Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal round-tripped project config: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped.Apps, config.Apps) {
+		t.Fatalf("round-tripped App extensions changed: got %#v, want %#v", roundTripped.Apps, config.Apps)
+	}
+}
+
+// TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames verifies an
+// older generated project can round-trip component names introduced later.
+func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing.T) {
+	input := `render:
+  components: [jobs, scheduler, database_sqlite, database_postgres, database_mysql, docker, grafana, observability, metrics, web_ui, web_api, oauth, auth, mail, demo_app, cli, future_search, future_audit]
+`
+	var config project.Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal compact components: %v", err)
+	}
+	components := config.Render.Components
+	if !components.CLI || !components.DemoApp || !components.Mail || !components.Auth || !components.OAuth ||
+		!components.WebAPI || !components.WebUI || !components.Metrics || !components.Observability ||
+		!components.Grafana || !components.Docker || !components.DatabaseMySQL ||
+		!components.DatabasePostgres || !components.DatabaseSQLite || !components.Scheduler || !components.Jobs {
+		t.Fatalf("known compact components were not enabled: %#v", components)
+	}
+	for _, name := range []string{"future_search", "future_audit"} {
+		if enabled, ok := components.Extra[name].(bool); !ok || !enabled {
+			t.Fatalf("unknown component %q was not preserved: %#v", name, components.Extra)
+		}
+	}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal compact components: %v", err)
+	}
+	if !strings.Contains(string(encoded), "components: [cli, demo_app, mail, auth, oauth, web_api, web_ui, metrics, observability, grafana, docker, database_mysql, database_postgres, database_sqlite, scheduler, jobs, future_audit, future_search]") {
+		t.Fatalf("components were not emitted in canonical compact order:\n%s", encoded)
+	}
+
+	jsonEncoded, err := json.Marshal(components)
+	if err != nil {
+		t.Fatalf("marshal components as JSON: %v", err)
+	}
+	var jsonFields map[string]any
+	if err := json.Unmarshal(jsonEncoded, &jsonFields); err != nil {
+		t.Fatalf("decode component JSON object: %v", err)
+	}
+	if len(jsonFields) != 16 || jsonFields["cli"] != true || jsonFields["web_api"] != true || jsonFields["jobs"] != true {
+		t.Fatalf("component JSON changed from its boolean object shape: %s", jsonEncoded)
+	}
+	for _, name := range []string{"future_search", "future_audit"} {
+		if _, exists := jsonFields[name]; exists {
+			t.Fatalf("unknown YAML compatibility name leaked into JSON: %s", jsonEncoded)
+		}
+	}
+}
+
+// TestComponentsYAMLMigratesLegacyMappingToCompactSequence verifies existing
+// boolean mappings remain readable and canonicalize without losing future names.
+func TestComponentsYAMLMigratesLegacyMappingToCompactSequence(t *testing.T) {
+	input := `render:
+  components:
+    jobs: false
+    cli: true
+    future_search: true
+`
+	var config project.Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal legacy component mapping: %v", err)
+	}
+	if !config.Render.Components.CLI || config.Render.Components.Jobs {
+		t.Fatalf("legacy component booleans changed: %#v", config.Render.Components)
+	}
+	if enabled, ok := config.Render.Components.Extra["future_search"].(bool); !ok || !enabled {
+		t.Fatalf("legacy unknown component was not retained: %#v", config.Render.Components.Extra)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal legacy component mapping: %v", err)
+	}
+	if !strings.Contains(string(encoded), "components: [cli, future_search]") {
+		t.Fatalf("legacy component mapping was not canonicalized:\n%s", encoded)
+	}
+}
+
+// TestComponentsYAMLRejectsMalformedSequences keeps the compact grammar
+// deterministic instead of silently correcting ambiguous component names.
+func TestComponentsYAMLRejectsMalformedSequences(t *testing.T) {
+	tests := map[string]string{
+		"duplicate":  "render:\n  components: [cli, cli]\n",
+		"uppercase":  "render:\n  components: [CLI]\n",
+		"hyphenated": "render:\n  components: [web-api]\n",
+		"non-string": "render:\n  components: [cli, 42]\n",
+		"scalar":     "render:\n  components: cli\n",
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			var config project.Config
+			if err := yaml.Unmarshal([]byte(input), &config); err == nil {
+				t.Fatalf("malformed component input decoded successfully: %s", input)
+			}
+		})
 	}
 }
 
@@ -337,7 +469,43 @@ func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal merged component settings: %v", err)
 	}
-	if !strings.Contains(string(encoded), "future_runtime:") || !strings.Contains(string(encoded), "mode: isolated") {
-		t.Fatalf("saved component settings omitted extension fields:\n%s", encoded)
+	for _, expected := range []string{"web_ui: true", "future_runtime:", "mode: isolated"} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("saved component settings omitted %q:\n%s", expected, encoded)
+		}
+	}
+	if strings.Contains(string(encoded), "components: [") {
+		t.Fatalf("lossy compact component form replaced extension metadata:\n%s", encoded)
+	}
+}
+
+// TestMergeLighthouseComponentsPreservesUnknownCompactNames verifies that a
+// future enabled name remains compact after a JSON settings update.
+func TestMergeLighthouseComponentsPreservesUnknownCompactNames(t *testing.T) {
+	input := `render:
+  components: [web_api, future_runtime]
+`
+	var current project.Config
+	if err := yaml.Unmarshal([]byte(input), &current); err != nil {
+		t.Fatalf("decode project settings: %v", err)
+	}
+	var update project.Components
+	if err := json.Unmarshal([]byte(`{"web_ui":true}`), &update); err != nil {
+		t.Fatalf("decode Lighthouse settings update: %v", err)
+	}
+
+	merged := mergeLighthouseComponents(current.Render.Components, update)
+	if merged.WebAPI || !merged.WebUI {
+		t.Fatalf("known component switches were not replaced: %#v", merged)
+	}
+	if !reflect.DeepEqual(merged.Extra, current.Render.Components.Extra) {
+		t.Fatalf("unknown component names were erased: %#v", merged.Extra)
+	}
+	encoded, err := yaml.Marshal(project.RenderConfig{Components: merged})
+	if err != nil {
+		t.Fatalf("marshal merged component settings: %v", err)
+	}
+	if !strings.Contains(string(encoded), "components: [web_ui, future_runtime]") {
+		t.Fatalf("saved component settings omitted the future component name:\n%s", encoded)
 	}
 }
