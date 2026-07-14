@@ -297,6 +297,7 @@ func TestGeneratedCacheManifestRejectsOmittedNativeFallback(t *testing.T) {
 		[]string{
 			"github.com/goforj/cache",
 			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
 			"github.com/goforj/cache/driver/rediscache",
 			"github.com/goforj/env/v2",
 			"github.com/goforj/str",
