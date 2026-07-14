@@ -11,8 +11,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestResourceTemplatesRenderNormalShapes verifies environment and Compose consume the same typed plan.
-func TestResourceTemplatesRenderNormalShapes(t *testing.T) {
+// TestResourceTemplatesRenderDefaultAndRedisPlans verifies environment and Compose consume the same concrete plan.
+func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 	components := project.Components{
 		CLI:           true,
 		Docker:        true,
@@ -22,15 +22,14 @@ func TestResourceTemplatesRenderNormalShapes(t *testing.T) {
 		Jobs:          true,
 	}
 	tests := []struct {
-		name       string
-		shape      project.StartingResourceShape
-		wantEnv    []string
-		forbidEnv  []string
-		redisLocal bool
+		name        string
+		redisActive bool
+		wantEnv     []string
+		forbidEnv   []string
+		redisLocal  bool
 	}{
 		{
-			name:  "standalone",
-			shape: project.ResourceShapeStandalone,
+			name: "default",
 			wantEnv: []string{
 				"CACHE_DRIVER=memory",
 				"CACHE_SUPPORTED_DRIVERS=memory,redis",
@@ -44,9 +43,9 @@ func TestResourceTemplatesRenderNormalShapes(t *testing.T) {
 			forbidEnv: []string{"COMPOSE_PROFILES=redis"},
 		},
 		{
-			name:       "shared",
-			shape:      project.ResourceShapeSharedRedis,
-			redisLocal: true,
+			name:        "Redis active",
+			redisActive: true,
+			redisLocal:  true,
 			wantEnv: []string{
 				"CACHE_DRIVER=redis",
 				"CACHE_SUPPORTED_DRIVERS=memory,redis",
@@ -62,9 +61,9 @@ func TestResourceTemplatesRenderNormalShapes(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			plan, err := project.ResolveResourcePlan(test.shape, components)
-			if err != nil {
-				t.Fatalf("ResolveResourcePlan returned error: %v", err)
+			plan := defaultResourcePlanForTest(t, components)
+			if test.redisActive {
+				plan = redisResourcePlanForTest(t, components)
 			}
 			intent := project.LocalServiceIntent{}
 			if test.redisLocal {
@@ -88,13 +87,10 @@ func TestResourceTemplatesRenderNormalShapes(t *testing.T) {
 	}
 }
 
-// TestResourceTemplatesKeepDatabaseIndependent verifies resource shape changes do not select the database.
+// TestResourceTemplatesKeepDatabaseIndependent verifies other resource defaults do not select the database.
 func TestResourceTemplatesKeepDatabaseIndependent(t *testing.T) {
 	components := project.Components{Docker: true, DatabasePostgres: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	for _, want := range []string{"DB_DRIVER=postgres", "DB_SUPPORTED_DRIVERS=postgres", "CACHE_DRIVER=memory"} {
 		if !strings.Contains(environment, want) {
@@ -109,8 +105,8 @@ func TestResourceTemplatesKeepDatabaseIndependent(t *testing.T) {
 	}
 }
 
-// TestResourceTemplatesRenderDatabaseShapeMatrix covers every normal database and starting-shape combination.
-func TestResourceTemplatesRenderDatabaseShapeMatrix(t *testing.T) {
+// TestResourceTemplatesRenderDatabasePlanMatrix covers every normal database with local and Redis-active defaults.
+func TestResourceTemplatesRenderDatabasePlanMatrix(t *testing.T) {
 	databases := []struct {
 		name       string
 		components project.Components
@@ -121,17 +117,21 @@ func TestResourceTemplatesRenderDatabaseShapeMatrix(t *testing.T) {
 		{name: "postgres", components: project.Components{DatabasePostgres: true}, driver: "postgres", service: "postgres"},
 		{name: "sqlite", components: project.Components{DatabaseSQLite: true}, driver: "sqlite"},
 	}
-	for _, shape := range []project.StartingResourceShape{project.ResourceShapeStandalone, project.ResourceShapeSharedRedis} {
+	for _, redisActive := range []bool{false, true} {
 		for _, database := range databases {
-			t.Run(string(shape)+"_"+database.name, func(t *testing.T) {
+			name := "default_" + database.name
+			if redisActive {
+				name = "redis_" + database.name
+			}
+			t.Run(name, func(t *testing.T) {
 				components := database.components
 				components.Docker = true
-				plan, err := project.ResolveResourcePlan(shape, components)
-				if err != nil {
-					t.Fatalf("resolve plan: %v", err)
+				plan := defaultResourcePlanForTest(t, components)
+				if redisActive {
+					plan = redisResourcePlanForTest(t, components)
 				}
 				intent := project.LocalServiceIntent{}
-				if shape == project.ResourceShapeSharedRedis {
+				if redisActive {
 					intent = intent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 				}
 				environment, compose := renderResourceTemplates(t, components, plan, intent)
@@ -146,7 +146,7 @@ func TestResourceTemplatesRenderDatabaseShapeMatrix(t *testing.T) {
 				}
 				wantCache := "CACHE_DRIVER=memory"
 				wantProfile := false
-				if shape == project.ResourceShapeSharedRedis {
+				if redisActive {
 					wantCache = "CACHE_DRIVER=redis"
 					wantProfile = true
 				}
@@ -161,10 +161,7 @@ func TestResourceTemplatesRenderDatabaseShapeMatrix(t *testing.T) {
 // TestResourceTemplatesOmitDisabledCapabilities keeps concise resource choices from introducing unrelated services.
 func TestResourceTemplatesOmitDisabledCapabilities(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal))
 	for _, forbidden := range []string{"QUEUE_DRIVER=", "MAIL_DRIVER=", "MAILPIT_"} {
 		if strings.Contains(environment, forbidden) {
@@ -181,10 +178,7 @@ func TestResourceTemplatesOmitDisabledCapabilities(t *testing.T) {
 // TestResourceTemplatesRetainLocalDatabaseForDockerProject keeps the first-slice database policy intentionally brainless.
 func TestResourceTemplatesRetainLocalDatabaseForDockerProject(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	consumers, err := effectiveResourceConsumersFromEnvironment([]byte("DB_DRIVER=mysql\nDB_HOST=db.example.internal\nDB_PORT=3306\n"), plan, components, nil)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
@@ -225,10 +219,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 	if err := os.WriteFile(".goforj.yml", encoded, 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := renderer.Render(ComponentRenderInput{renderAll: true, resourcePlan: plan, localServiceIntent: intent}); err != nil {

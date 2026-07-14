@@ -8,28 +8,28 @@ import (
 // TestResolveServicePlanRedisStates locks placement intent and Docker availability to the four Redis states.
 func TestResolveServicePlanRedisStates(t *testing.T) {
 	tests := []struct {
-		name       string
-		shape      StartingResourceShape
-		docker     bool
-		intent     LocalServiceIntent
-		wantState  ServiceState
-		wantExists bool
+		name        string
+		redisActive bool
+		docker      bool
+		intent      LocalServiceIntent
+		wantState   ServiceState
+		wantExists  bool
 	}{
-		{name: "active local", shape: ResourceShapeSharedRedis, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), wantState: ServiceStateActiveLocal, wantExists: true},
-		{name: "active external explicitly", shape: ResourceShapeSharedRedis, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeExternal), wantState: ServiceStateExternalRequired, wantExists: true},
-		{name: "active external without intent", shape: ResourceShapeSharedRedis, docker: true, wantState: ServiceStateExternalRequired, wantExists: true},
-		{name: "active without Docker", shape: ResourceShapeSharedRedis, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), wantState: ServiceStateExternalRequired, wantExists: true},
-		{name: "available local", shape: ResourceShapeStandalone, docker: true, wantState: ServiceStateAvailableLocal, wantExists: true},
-		{name: "local requested unused", shape: ResourceShapeStandalone, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), wantState: ServiceStateLocalRequestedUnused, wantExists: true},
-		{name: "support without Docker", shape: ResourceShapeStandalone, wantExists: false},
+		{name: "active local", redisActive: true, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), wantState: ServiceStateActiveLocal, wantExists: true},
+		{name: "active external explicitly", redisActive: true, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeExternal), wantState: ServiceStateExternalRequired, wantExists: true},
+		{name: "active external without intent", redisActive: true, docker: true, wantState: ServiceStateExternalRequired, wantExists: true},
+		{name: "active without Docker", redisActive: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), wantState: ServiceStateExternalRequired, wantExists: true},
+		{name: "available local", docker: true, wantState: ServiceStateAvailableLocal, wantExists: true},
+		{name: "local requested unused", docker: true, intent: LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), wantState: ServiceStateLocalRequestedUnused, wantExists: true},
+		{name: "support without Docker", wantExists: false},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			components := Components{DatabaseSQLite: true, Docker: test.docker, Jobs: true}
-			resourcePlan, err := ResolveResourcePlan(test.shape, components)
-			if err != nil {
-				t.Fatalf("ResolveResourcePlan returned error: %v", err)
+			resourcePlan := servicePlanTestDefaultPlan(t, components)
+			if test.redisActive {
+				resourcePlan = servicePlanTestRedisActivePlan(t, components)
 			}
 			servicePlan, err := ResolveServicePlan(resourcePlan, components, test.intent)
 			if err != nil {
@@ -49,10 +49,7 @@ func TestResolveServicePlanRedisStates(t *testing.T) {
 // TestResolveServicePlanDeduplicatesRedisConsumers verifies one service covers every normal shared Redis resource.
 func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
 	components := Components{Auth: true, DatabaseMySQL: true, Docker: true, Jobs: true}
-	resourcePlan, err := ResolveResourcePlan(ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceStorage, DriverSelection{Active: "redis", Supported: []string{"local", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
 	if err != nil {
@@ -78,10 +75,7 @@ func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
 // TestResolveServicePlanIncludesGeneratedAuthSessions verifies named generated resources affect infrastructure discovery.
 func TestResolveServicePlanIncludesGeneratedAuthSessions(t *testing.T) {
 	components := Components{Auth: true, DatabaseSQLite: true, Docker: true}
-	resourcePlan, err := ResolveResourcePlan(ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceCache, DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
 	if err != nil {
@@ -100,7 +94,7 @@ func TestResolveServicePlanIncludesGeneratedAuthSessions(t *testing.T) {
 	}
 }
 
-// TestResolveServicePlanDatabasePolicy keeps database service placement independent from the resource shape.
+// TestResolveServicePlanDatabasePolicy keeps database placement independent from cache, queue, and event selections.
 func TestResolveServicePlanDatabasePolicy(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -116,9 +110,9 @@ func TestResolveServicePlanDatabasePolicy(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			resourcePlan, err := ResolveResourcePlan(ResourceShapeStandalone, test.components)
+			resourcePlan, err := DefaultResourcePlan(test.components)
 			if err != nil {
-				t.Fatalf("ResolveResourcePlan returned error: %v", err)
+				t.Fatalf("DefaultResourcePlan returned error: %v", err)
 			}
 			servicePlan, err := ResolveServicePlan(resourcePlan, test.components, LocalServiceIntent{})
 			if err != nil {
@@ -138,9 +132,9 @@ func TestResolveServicePlanDatabasePolicy(t *testing.T) {
 // TestResolveServicePlanSQLiteAndLocalDriversNeedNoService verifies in-process resources produce no runtime dependency.
 func TestResolveServicePlanSQLiteAndLocalDriversNeedNoService(t *testing.T) {
 	components := Components{DatabaseSQLite: true}
-	resourcePlan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	resourcePlan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{})
 	if err != nil {
@@ -157,9 +151,9 @@ func TestResolveServicePlanSQLiteAndLocalDriversNeedNoService(t *testing.T) {
 // TestResolveServicePlanRejectsInvalidInput verifies transient planner inputs fail before generation consumes them.
 func TestResolveServicePlanRejectsInvalidInput(t *testing.T) {
 	components := Components{DatabaseSQLite: true}
-	resourcePlan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	resourcePlan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	_, err = ResolveServicePlan(resourcePlan, components, LocalServiceIntent{Modes: map[ServiceKey]LocalServiceMode{ServiceRedis: "somewhere"}})
 	if err == nil {
@@ -170,9 +164,9 @@ func TestResolveServicePlanRejectsInvalidInput(t *testing.T) {
 // TestResolveServicePlanRejectsUnknownIntentService prevents placement typos from becoming invisible transient state.
 func TestResolveServicePlanRejectsUnknownIntentService(t *testing.T) {
 	components := Components{DatabaseSQLite: true, Docker: true}
-	resourcePlan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	resourcePlan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	_, err = ResolveServicePlan(resourcePlan, components, LocalServiceIntent{Modes: map[ServiceKey]LocalServiceMode{
 		ServiceKey("redsi"): LocalServiceModeLocal,
@@ -185,9 +179,9 @@ func TestResolveServicePlanRejectsUnknownIntentService(t *testing.T) {
 // TestServicePlanRequirementReturnsDefensiveCopy protects derived plans from confirmation-layer mutations.
 func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
 	components := Components{DatabaseSQLite: true, Docker: true}
-	resourcePlan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	resourcePlan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{})
 	if err != nil {
@@ -207,9 +201,9 @@ func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
 // TestResolveServicePlanReportsEveryExternalAdvancedDriver verifies the published inventory cannot disappear from confirmation.
 func TestResolveServicePlanReportsEveryExternalAdvancedDriver(t *testing.T) {
 	components := Components{DatabaseMySQL: true, Docker: true, Jobs: true, Mail: true}
-	base, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	base, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	for _, definition := range ResourceCatalog() {
 		if !definition.AppliesTo(components) {
@@ -249,9 +243,9 @@ func TestResolveServicePlanReportsEveryExternalAdvancedDriver(t *testing.T) {
 // TestResolveServicePlanKeepsResourceSpecificEndpointsSeparate prevents apparent provider reuse without an explicit connection mapping.
 func TestResolveServicePlanKeepsResourceSpecificEndpointsSeparate(t *testing.T) {
 	components := Components{DatabasePostgres: true, Docker: true, Jobs: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	cache, _ := plan.Selection(ResourceCache)
 	cache.Active = "postgres"
@@ -284,9 +278,9 @@ func TestResolveServicePlanKeepsResourceSpecificEndpointsSeparate(t *testing.T) 
 func TestResolveServicePlanTreatsSMTPAsDevelopmentToolOnlyWithDocker(t *testing.T) {
 	for _, docker := range []bool{true, false} {
 		components := Components{DatabaseSQLite: true, Docker: docker, Mail: true}
-		plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+		plan, err := DefaultResourcePlan(components)
 		if err != nil {
-			t.Fatalf("ResolveResourcePlan returned error: %v", err)
+			t.Fatalf("DefaultResourcePlan returned error: %v", err)
 		}
 		mail, _ := plan.Selection(ResourceMail)
 		mail.Active = "smtp"
@@ -308,9 +302,9 @@ func TestResolveServicePlanTreatsSMTPAsDevelopmentToolOnlyWithDocker(t *testing.
 // TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS verifies endpoint affinity survives provider-name similarity.
 func TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS(t *testing.T) {
 	components := Components{DatabaseSQLite: true, Jobs: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	for _, key := range []ResourceKey{ResourceCache, ResourceQueue, ResourceEvents} {
 		selection, _ := plan.Selection(key)
@@ -332,9 +326,9 @@ func TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS(t *testing.T) {
 // TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis verifies user-authored named resources participate in discovery.
 func TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis(t *testing.T) {
 	components := Components{DatabaseSQLite: true, Docker: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	resolved, err := ResolveServicePlanWithConsumers(plan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), []EffectiveResourceConsumer{
 		{Resource: ResourceCache, Consumer: "cache:reports", Driver: "redis", LocalService: true},
@@ -354,9 +348,9 @@ func TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis(t *testing.T
 // TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints verifies affinity, rather than driver name, controls deduplication.
 func TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints(t *testing.T) {
 	components := Components{DatabaseSQLite: true, Docker: true}
-	plan, err := ResolveResourcePlan(ResourceShapeSharedRedis, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	resolved, err := ResolveServicePlanWithConsumers(plan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal), []EffectiveResourceConsumer{
 		{Resource: ResourceCache, Consumer: "cache", Driver: "redis", EndpointAffinity: "endpoint-cache"},
@@ -375,6 +369,38 @@ func TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints(t *testi
 	if got := len(resolved.RequirementsFor(ServiceRedis)); got != 3 {
 		t.Fatalf("all Redis requirements = %d, want two active endpoints plus the optional local build", got)
 	}
+}
+
+// servicePlanTestDefaultPlan returns the production default or fails the current test.
+func servicePlanTestDefaultPlan(t *testing.T, components Components) ResourcePlan {
+	t.Helper()
+	plan, err := DefaultResourcePlan(components)
+	if err != nil {
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
+	}
+	return plan
+}
+
+// servicePlanTestRedisActivePlan returns a valid plan with coordinated Redis consumers activated.
+func servicePlanTestRedisActivePlan(t *testing.T, components Components) ResourcePlan {
+	t.Helper()
+	plan := servicePlanTestDefaultPlan(t, components)
+	for _, key := range []ResourceKey{ResourceCache, ResourceQueue, ResourceEvents} {
+		selection, ok := plan.Selection(key)
+		if !ok {
+			continue
+		}
+		selection.Active = "redis"
+		plan = plan.WithSelection(key, selection)
+	}
+	if components.Auth {
+		plan = plan.WithNamedSelection("CACHE_SESSIONS_DRIVER", "redis")
+	}
+	normalized, err := plan.Normalized(components)
+	if err != nil {
+		t.Fatalf("normalize Redis-active test plan: %v", err)
+	}
+	return normalized
 }
 
 // servicePlanTestContainsDriver reports whether a test selection already includes one driver.

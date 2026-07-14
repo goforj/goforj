@@ -11,7 +11,7 @@ import (
 // TestPlanNewProjectServiceTasksSkipsAvailableRedis verifies a support-only profiled definition does not create an empty Compose startup.
 func TestPlanNewProjectServiceTasksSkipsAvailableRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeStandalone, components, project.LocalServiceIntent{})
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
 	requirement, exists := servicePlan.Requirement(project.ServiceRedis)
 	if !exists || requirement.State != project.ServiceStateAvailableLocal {
 		t.Fatalf("Redis requirement = %#v, exists %v; want available local", requirement, exists)
@@ -27,7 +27,7 @@ func TestPlanNewProjectServiceTasksSkipsAvailableRedis(t *testing.T) {
 func TestPlanNewProjectServiceTasksStartsActiveRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeSharedRedis, components, intent)
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, true)
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
 	wantPre := []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker-compose up -d"}}
@@ -44,7 +44,7 @@ func TestPlanNewProjectServiceTasksStartsActiveRedis(t *testing.T) {
 func TestPlanNewProjectServiceTasksHonorsRetainedUnusedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeStandalone, components, intent)
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, false)
 	requirement, exists := servicePlan.Requirement(project.ServiceRedis)
 	if !exists || requirement.State != project.ServiceStateLocalRequestedUnused {
 		t.Fatalf("Redis requirement = %#v, exists %v; want retained unused local service", requirement, exists)
@@ -60,7 +60,7 @@ func TestPlanNewProjectServiceTasksHonorsRetainedUnusedRedis(t *testing.T) {
 func TestPlanNewProjectServiceTasksSkipsExternalRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeSharedRedis, components, intent)
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, true)
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
 	if len(tasks.Pre) != 0 || len(tasks.Down) != 0 {
@@ -81,7 +81,7 @@ func TestPlanNewProjectServiceTasksStartsDockerBackedTools(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeStandalone, test.components, project.LocalServiceIntent{})
+			resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, test.components, project.LocalServiceIntent{}, false)
 			tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, test.components)
 			if len(tasks.Pre) != 1 || tasks.Pre[0].Name != "Run Docker Compose" {
 				t.Fatalf("pre tasks = %#v, want one Compose startup", tasks.Pre)
@@ -96,7 +96,7 @@ func TestPlanNewProjectServiceTasksStartsDockerBackedTools(t *testing.T) {
 // TestPlanNewProjectServiceTasksAddsMySQLWait verifies local MySQL readiness follows Compose startup.
 func TestPlanNewProjectServiceTasksAddsMySQLWait(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true}
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeStandalone, components, project.LocalServiceIntent{})
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
 	if len(tasks.Pre) != 2 {
@@ -110,7 +110,7 @@ func TestPlanNewProjectServiceTasksAddsMySQLWait(t *testing.T) {
 // TestPlanNewProjectServiceTasksAddsPostgresWait verifies local Postgres readiness follows Compose startup.
 func TestPlanNewProjectServiceTasksAddsPostgresWait(t *testing.T) {
 	components := project.Components{DatabasePostgres: true, Docker: true}
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeStandalone, components, project.LocalServiceIntent{})
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
 	if len(tasks.Pre) != 2 {
@@ -124,7 +124,7 @@ func TestPlanNewProjectServiceTasksAddsPostgresWait(t *testing.T) {
 // TestPlanNewProjectServiceTasksSkipsExternalDatabaseWait verifies a remote SQL service never receives a local Compose readiness command.
 func TestPlanNewProjectServiceTasksSkipsExternalDatabaseWait(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true}
-	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, project.ResourceShapeStandalone, components, project.LocalServiceIntent{})
+	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
 	if len(tasks.Pre) != 0 || len(tasks.Down) != 0 {
@@ -135,10 +135,7 @@ func TestPlanNewProjectServiceTasksSkipsExternalDatabaseWait(t *testing.T) {
 // TestNewProjectDatabaseWaitTaskRequiresMatchingResource verifies service state cannot add a wait for a database the App does not select.
 func TestNewProjectDatabaseWaitTaskRequiresMatchingResource(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	resourcePlan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	resourcePlan := defaultResourcePlanForTest(t, components)
 	servicePlan := project.ServicePlan{Requirements: []project.ServiceRequirement{{Key: project.ServiceMySQL, State: project.ServiceStateActiveLocal}}}
 
 	if task, ok := newProjectDatabaseWaitTask(resourcePlan, servicePlan); ok {
@@ -146,12 +143,12 @@ func TestNewProjectDatabaseWaitTaskRequiresMatchingResource(t *testing.T) {
 	}
 }
 
-// resolveNewProjectServiceTestPlans creates validated transient plans so task tests exercise only lifecycle policy.
-func resolveNewProjectServiceTestPlans(t *testing.T, shape project.StartingResourceShape, components project.Components, intent project.LocalServiceIntent) (project.ResourcePlan, project.ServicePlan) {
+// resolveNewProjectServiceTestPlans creates validated concrete plans so task tests exercise only lifecycle policy.
+func resolveNewProjectServiceTestPlans(t *testing.T, components project.Components, intent project.LocalServiceIntent, redisActive bool) (project.ResourcePlan, project.ServicePlan) {
 	t.Helper()
-	resourcePlan, err := project.ResolveResourcePlan(shape, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+	resourcePlan := defaultResourcePlanForTest(t, components)
+	if redisActive {
+		resourcePlan = redisResourcePlanForTest(t, components)
 	}
 	servicePlan, err := project.ResolveServicePlan(resourcePlan, components, intent)
 	if err != nil {

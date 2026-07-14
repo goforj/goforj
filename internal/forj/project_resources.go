@@ -125,7 +125,7 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 
 // compatibilityResourcePlan preserves pre-wizard render defaults when no explicit transient plan is supplied.
 func compatibilityResourcePlan(components project.Components, legacyQueueDriver string) (project.ResourcePlan, error) {
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	plan, err := project.DefaultResourcePlan(components)
 	if err != nil {
 		return project.ResourcePlan{}, err
 	}
@@ -240,14 +240,13 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 func localServiceIntentFromEnvironment(source []byte, fallback project.LocalServiceIntent) project.LocalServiceIntent {
 	lines := strings.Split(string(source), "\n")
 	profiles, profilesSet := envAssignment(lines, "COMPOSE_PROFILES")
-	if !profilesSet {
+	if profilesSet && exactCSVToken(profiles, string(project.ServiceRedis)) {
+		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
+	}
+	if _, selected := fallback.Mode(project.ServiceRedis); selected {
 		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
 	}
-	mode := project.LocalServiceModeExternal
-	if exactCSVToken(profiles, string(project.ServiceRedis)) {
-		mode = project.LocalServiceModeLocal
-	}
-	return fallback.WithMode(project.ServiceRedis, mode)
+	return fallback
 }
 
 // seedComposeProfiles appends Redis whenever explicit owner intent asks Compose to retain that local service.

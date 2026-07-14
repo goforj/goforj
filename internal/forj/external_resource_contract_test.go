@@ -10,13 +10,10 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestNormalResourceTemplatesOmitAdvancedPlaceholderWall keeps the brainless presets compact.
-func TestNormalResourceTemplatesOmitAdvancedPlaceholderWall(t *testing.T) {
+// TestDefaultResourceTemplatesOmitAdvancedPlaceholderWall keeps the brainless default compact.
+func TestDefaultResourceTemplatesOmitAdvancedPlaceholderWall(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true, Jobs: true, Mail: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	if strings.Contains(environment, "Advanced driver configuration") {
 		t.Fatalf("normal environment gained Advanced placeholders:\n%s", environment)
@@ -26,10 +23,7 @@ func TestNormalResourceTemplatesOmitAdvancedPlaceholderWall(t *testing.T) {
 // TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders verifies active and built-in opt-in drivers receive actionable dotenv hints.
 func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Mail: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	plan = resourceContractTestSelection(plan, project.ResourceCache, "memcached", "memcached")
 	plan = resourceContractTestSelection(plan, project.ResourceQueue, "workerpool", "sqs")
 	plan = resourceContractTestSelection(plan, project.ResourceEvents, "kafka", "kafka")
@@ -77,10 +71,7 @@ func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
 // TestDriverEnvironmentPlaceholdersDeduplicateSharedScopeKeys verifies SQL alternatives do not produce conflicting assignments.
 func TestDriverEnvironmentPlaceholdersDeduplicateSharedScopeKeys(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	cache, _ := plan.Selection(project.ResourceCache)
 	cache.Supported = append(cache.Supported, "mysql", "postgres")
 	plan = plan.WithSelection(project.ResourceCache, cache)
@@ -97,10 +88,7 @@ func TestDriverEnvironmentPlaceholdersDeduplicateSharedScopeKeys(t *testing.T) {
 // TestDriverEnvironmentPlaceholdersPreferActiveSharedKeyExample keeps transition support from advertising the wrong active endpoint.
 func TestDriverEnvironmentPlaceholdersPreferActiveSharedKeyExample(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Jobs: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	queue, _ := plan.Selection(project.ResourceQueue)
 	queue.Active = "rabbitmq"
 	queue.Supported = append(queue.Supported, "nats", "rabbitmq")
@@ -122,10 +110,7 @@ func TestDriverEnvironmentPlaceholdersPreferActiveSharedKeyExample(t *testing.T)
 func TestExternalResourceTemplatesDoNotInventLocalHosts(t *testing.T) {
 	t.Run("Redis", func(t *testing.T) {
 		components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
-		plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-		if err != nil {
-			t.Fatalf("ResolveResourcePlan returned error: %v", err)
-		}
+		plan := redisResourcePlanForTest(t, components)
 		intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
 		environment, _ := renderResourceTemplates(t, components, plan, intent)
 		hostEnvironment := renderResourceHostEnvironment(t, components, plan, intent)
@@ -145,10 +130,7 @@ func TestExternalResourceTemplatesDoNotInventLocalHosts(t *testing.T) {
 			} else {
 				components.DatabasePostgres = true
 			}
-			plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-			if err != nil {
-				t.Fatalf("ResolveResourcePlan returned error: %v", err)
-			}
+			plan := defaultResourcePlanForTest(t, components)
 			environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 			hostEnvironment := renderResourceHostEnvironment(t, components, plan, project.LocalServiceIntent{})
 			if !strings.Contains(environment, "\nDB_HOST=\n") || strings.Contains(environment, "\nDB_HOST="+database+"\n") {
@@ -164,10 +146,7 @@ func TestExternalResourceTemplatesDoNotInventLocalHosts(t *testing.T) {
 // TestPortableRedisTemplatesRetainLocalTransitionDefaults preserves the normal inactive bridge and explicit unused-local intent.
 func TestPortableRedisTemplatesRetainLocalTransitionDefaults(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	hostEnvironment := renderResourceHostEnvironment(t, components, plan, project.LocalServiceIntent{})
 	if !strings.Contains(environment, "\nREDIS_HOST=redis\n") || !strings.Contains(hostEnvironment, "REDIS_HOST=localhost") {
@@ -188,7 +167,7 @@ func TestPortableRedisTemplatesRetainLocalTransitionDefaults(t *testing.T) {
 func resourceContractTestSelection(plan project.ResourcePlan, key project.ResourceKey, active string, supported string) project.ResourcePlan {
 	selection, _ := plan.Selection(key)
 	selection.Active = active
-	if !newProjectResourceContainsDriver(selection.Supported, supported) {
+	if !stringSliceContainsFold(selection.Supported, supported) {
 		selection.Supported = append(selection.Supported, supported)
 	}
 	return plan.WithSelection(key, selection)

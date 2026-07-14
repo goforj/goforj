@@ -306,10 +306,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.resourcePlan = plan
 		p.explicitResourcePlan = true
 		p.localServiceIntent = input.localServiceIntent
-		if _, selected := p.localServiceIntent.Mode(project.ServiceRedis); !selected &&
-			p.config.Render.Components.Docker && plan.Shape == project.ResourceShapeSharedRedis {
-			p.localServiceIntent = p.localServiceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-		}
 	} else {
 		plan, err := compatibilityResourcePlan(p.config.Render.Components, p.queueDriver)
 		if err != nil {

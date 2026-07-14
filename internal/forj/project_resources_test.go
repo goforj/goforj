@@ -12,10 +12,7 @@ import (
 // TestReconcileResourceEnvironmentPreservesOwners verifies full resource ownership and portable initialization.
 func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true}
-	seed, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve seed: %v", err)
-	}
+	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCOMPOSE_PROFILES=metrics\n")
 	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, true)
 	if err != nil {
@@ -48,10 +45,7 @@ func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
 // TestReconcileResourceEnvironmentAcceptsDotenvSyntax keeps preview, rerender, and generation on one parsing contract.
 func TestReconcileResourceEnvironmentAcceptsDotenvSyntax(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true}
-	seed, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve seed: %v", err)
-	}
+	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("export CACHE_DRIVER=\"redis\"\nCACHE_SUPPORTED_DRIVERS='memory,redis' # portable pair\nEVENTS_DRIVER=\"inproc\"\nEVENTS_SUPPORTED_DRIVERS=\"inproc,redis\"\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nDB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite\nCACHE_PREFIX=\"owner#prefix\"\n")
 	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
 	if err != nil {
@@ -69,10 +63,7 @@ func TestReconcileResourceEnvironmentAcceptsDotenvSyntax(t *testing.T) {
 // TestReconcileResourceEnvironmentResolvesDotenvReferences prevents owner indirection from being mistaken for a missing value.
 func TestReconcileResourceEnvironmentResolvesDotenvReferences(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true}
-	seed, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve seed: %v", err)
-	}
+	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_SUPPORTED_DRIVERS=memory,redis\nEVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc,redis\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nDB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite\n")
 
 	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
@@ -91,10 +82,7 @@ func TestReconcileResourceEnvironmentResolvesDotenvReferences(t *testing.T) {
 // TestReconcileResourceEnvironmentPreservesDatabaseAliases keeps owner syntax while planning with canonical driver identities.
 func TestReconcileResourceEnvironmentPreservesDatabaseAliases(t *testing.T) {
 	components := project.Components{DatabasePostgres: true}
-	seed, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve seed: %v", err)
-	}
+	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=postgresql\nDB_SUPPORTED_DRIVERS=postgres\n")
 	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
 	if err != nil {
@@ -190,10 +178,7 @@ func TestPrepareResourceEnvironmentKeepsExplicitPlanAboveCommittedFallback(t *te
 		t.Fatalf("write environment example: %v", err)
 	}
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve explicit plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := &ProjectRenderer{
 		config:               &project.Config{Render: project.RenderConfig{Components: components}},
@@ -231,10 +216,7 @@ func TestPrepareResourceEnvironmentCarriesNamedAndAppConsumers(t *testing.T) {
 		t.Fatalf("write owner environment: %v", err)
 	}
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	renderer := &ProjectRenderer{
 		config: &project.Config{
 			Render: project.RenderConfig{Components: components},
@@ -282,10 +264,7 @@ func TestComposeRedisServiceWithoutProfile(t *testing.T) {
 // TestReconcileResourceEnvironmentRejectsOwnerMismatch verifies validation happens before any file write.
 func TestReconcileResourceEnvironmentRejectsOwnerMismatch(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true}
-	seed, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve seed: %v", err)
-	}
+	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory\n")
 	updated, _, changed, err := reconcileResourceEnvironment(source, seed, components, true)
 	if err == nil || !strings.Contains(err.Error(), "excludes active") {
@@ -299,10 +278,7 @@ func TestReconcileResourceEnvironmentRejectsOwnerMismatch(t *testing.T) {
 // TestSeedComposeProfilesPreservesTokens verifies local Redis activation edits one exact profile token.
 func TestSeedComposeProfilesPreservesTokens(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics,redis-debug\n"), plan, components, intent)
 	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis-debug,redis\n" {
@@ -317,10 +293,7 @@ func TestSeedComposeProfilesPreservesTokens(t *testing.T) {
 // TestSeedComposeProfilesHonorsRetainedUnusedRedis keeps explicit owner lifecycle intent independent of the active driver.
 func TestSeedComposeProfilesHonorsRetainedUnusedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics\n"), plan, components, intent)
 	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis\n" {
@@ -341,15 +314,16 @@ func TestLocalServiceIntentFromEnvironmentTreatsMissingRedisProfileAsExternal(t 
 	if !ok || mode != project.LocalServiceModeLocal {
 		t.Fatalf("Redis mode = %q selected=%t, want local", mode, ok)
 	}
+	intent = localServiceIntentFromEnvironment([]byte("APP_NAME=Existing\n"), project.LocalServiceIntent{})
+	if mode, ok = intent.Mode(project.ServiceRedis); ok {
+		t.Fatalf("ordinary environment invented Redis placement %q", mode)
+	}
 }
 
 // TestResourceRenderValuesIncludeNamedRedis verifies Auth sessions participate in Redis discovery.
 func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Auth: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	values := resourceRenderValuesForPlan(plan, components, intent)
 	if values.CacheSessionsDriver != "redis" || !values.RedisActive || !values.RedisSupported || !values.RedisLocal {
