@@ -26,6 +26,10 @@ var componentYAMLKeys = []ComponentKey{
 	ComponentJobs,
 }
 
+var retiredLegacyComponentYAMLKeys = map[ComponentKey]struct{}{
+	"stress_test": {},
+}
+
 // UnmarshalYAML accepts historical boolean mappings and canonical component-name sequences.
 func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
@@ -37,7 +41,7 @@ func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 				return fmt.Errorf("decode components: legacy mapping key %d must be a component name", index/2+1)
 			}
 			key := ComponentKey(entry.Value)
-			if !isComponentYAMLKey(key) {
+			if !isComponentYAMLKey(key) && !isRetiredLegacyComponentYAMLKey(key) {
 				return fmt.Errorf("decode components: unknown component %q in legacy mapping; valid components: %s", key, componentYAMLKeyNames())
 			}
 			if _, duplicate := seen[key]; duplicate {
@@ -113,6 +117,12 @@ func isComponentYAMLKey(key ComponentKey) bool {
 		}
 	}
 	return false
+}
+
+// isRetiredLegacyComponentYAMLKey keeps generated projects loadable after a component leaves the render catalog.
+func isRetiredLegacyComponentYAMLKey(key ComponentKey) bool {
+	_, ok := retiredLegacyComponentYAMLKeys[key]
+	return ok
 }
 
 // componentYAMLKeyNames formats the accepted sequence keys for configuration errors.
