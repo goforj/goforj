@@ -84,6 +84,34 @@ apps:
 	}
 }
 
+// TestComponentsYAMLDropsRetiredLegacyKeysDuringMigration keeps old generated configs renderable without reviving removed components.
+func TestComponentsYAMLDropsRetiredLegacyKeysDuringMigration(t *testing.T) {
+	input := `render:
+  components:
+    jobs: true
+    stress_test: true
+`
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal legacy component mapping: %v", err)
+	}
+	if !config.NeedsComponentMigration() {
+		t.Fatal("legacy component mapping was not marked for migration")
+	}
+	if !config.Render.Components.Jobs {
+		t.Fatal("current component was lost while loading retired legacy key")
+	}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal migrated component config: %v", err)
+	}
+	if strings.Contains(string(encoded), "stress_test") {
+		t.Fatalf("retired component survived migration:\n%s", encoded)
+	}
+}
+
 // TestProjectConfigNeedsComponentMigrationFindsEachScope verifies App-only legacy mappings cannot hide behind canonical render config.
 func TestProjectConfigNeedsComponentMigrationFindsEachScope(t *testing.T) {
 	tests := []struct {
@@ -203,6 +231,7 @@ func TestComponentsYAMLRejectsInvalidSequenceEntries(t *testing.T) {
 		want  string
 	}{
 		{name: "unknown", input: "render:\n  components: [cli, web]\n", want: `unknown component "web"; valid components:`},
+		{name: "retired canonical", input: "render:\n  components: [stress_test]\n", want: `unknown component "stress_test"; valid components:`},
 		{name: "duplicate", input: "render:\n  components: [cli, web_api, cli]\n", want: `duplicate component "cli"; list each component once`},
 		{name: "non string", input: "render:\n  components: [cli, true]\n", want: "entry 2 must be a component name"},
 		{name: "unknown legacy key", input: "render:\n  components:\n    cli: true\n    custom_plugin: true\n", want: `unknown component "custom_plugin" in legacy mapping; valid components:`},
