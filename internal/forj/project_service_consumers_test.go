@@ -1,0 +1,369 @@
+package forj
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/goforj/goforj/project"
+)
+
+// TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis verifies owner-authored named scopes join the local default endpoint.
+func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("CACHE_REPORTS_DRIVER=redis\nCACHE_REPORTS_ADDR=redis:6379\nREDIS_HOST=redis\nREDIS_PORT=6379\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal), consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	requirement, exists := resolved.Requirement(project.ServiceRedis)
+	if !exists || requirement.State != project.ServiceStateActiveLocal {
+		t.Fatalf("Redis requirement = %#v exists=%t, want active local", requirement, exists)
+	}
+	if !reflect.DeepEqual(requirement.ActiveConsumers, []string{"cache:reports"}) {
+		t.Fatalf("Redis consumers = %#v, want named reports cache", requirement.ActiveConsumers)
+	}
+}
+
+// TestEffectiveResourceConsumersSeparateExternalRedisEndpoints verifies root resource overrides do not collapse by driver name.
+func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("CACHE_DRIVER=redis\nCACHE_ADDR=cache.redis.example:6379\nEVENTS_DRIVER=redis\nEVENTS_ADDR=events.redis.example:6379\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal), consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	external := resolved.RequirementsInState(project.ServiceStateExternalRequired)
+	if len(external) != 2 {
+		t.Fatalf("external requirements = %#v, want two Redis endpoints", external)
+	}
+	if external[0].EndpointAffinity == external[1].EndpointAffinity {
+		t.Fatalf("external endpoints share affinity: %#v", external)
+	}
+	consumerSets := map[string]bool{}
+	for _, requirement := range external {
+		if len(requirement.ActiveConsumers) == 1 {
+			consumerSets[requirement.ActiveConsumers[0]] = true
+		}
+	}
+	if !consumerSets["cache"] || !consumerSets["events"] {
+		t.Fatalf("external consumers = %#v, want cache and events separated", external)
+	}
+	ui, err := newProjectResourceUIForComponents(components)
+	if err != nil {
+		t.Fatalf("create resource UI: %v", err)
+	}
+	ui.plan = plan
+	ui.localServiceIntent = project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
+	ui.effectiveConsumers = consumers
+	summary, err := ui.serviceSummary()
+	if err != nil {
+		t.Fatalf("summarize effective services: %v", err)
+	}
+	joined := strings.Join(summary.external, " · ")
+	if !strings.Contains(joined, "Redis (cache)") || !strings.Contains(joined, "Redis (events)") {
+		t.Fatalf("external service summary = %q, want endpoint consumers", joined)
+	}
+}
+
+// TestEffectiveResourceConsumersApplyNamedAppOverrides verifies runtime App overlay conventions participate in project-level discovery.
+func TestEffectiveResourceConsumersApplyNamedAppOverrides(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("BILLING_CACHE_DRIVER=redis\nBILLING_CACHE_ADDR=billing.redis.example:6379\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal), consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	external := resolved.RequirementsInState(project.ServiceStateExternalRequired)
+	if len(external) != 1 || !reflect.DeepEqual(external[0].ActiveConsumers, []string{"billing:cache"}) {
+		t.Fatalf("named App external requirement = %#v", external)
+	}
+}
+
+// TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers keeps App overlays aligned with generated manager fallbacks.
+func TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers(t *testing.T) {
+	components := project.Components{DatabaseMySQL: true, Docker: true, Jobs: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	database, _ := plan.Selection(project.ResourceDatabase)
+	database.Supported = append(database.Supported, "sqlite")
+	plan, err = plan.WithSelection(project.ResourceDatabase, database).Normalized(components)
+	if err != nil {
+		t.Fatalf("normalize resource plan: %v", err)
+	}
+
+	source := []byte("DB_DRIVER=mysql\nQUEUE_DRIVER=redis\nBILLING_DB_DRIVER=\nBILLING_QUEUE_DRIVER=\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+
+	drivers := map[string]string{}
+	for _, consumer := range consumers {
+		drivers[consumer.Consumer] = consumer.Driver
+	}
+	if got := drivers["billing:database"]; got != "sqlite" {
+		t.Fatalf("blank App database driver = %q, want runtime SQLite fallback", got)
+	}
+	if got := drivers["billing:queue"]; got != "workerpool" {
+		t.Fatalf("blank App queue driver = %q, want runtime workerpool fallback", got)
+	}
+}
+
+// TestEffectiveResourceConsumersCanonicalizeDatabaseAliases keeps root, named, and App overlays compatible with direct generation.
+func TestEffectiveResourceConsumersCanonicalizeDatabaseAliases(t *testing.T) {
+	components := project.Components{DatabasePostgres: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("DB_DRIVER=postgresql\nDB_REPORTS_DRIVER=sqlite3\nBILLING_DB_DRIVER=mariadb\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	if err != nil {
+		t.Fatalf("discover aliased database consumers: %v", err)
+	}
+	drivers := map[string]string{}
+	for _, consumer := range consumers {
+		drivers[consumer.Consumer] = consumer.Driver
+	}
+	for consumer, want := range map[string]string{
+		"database":                 "postgres",
+		"database:reports":         "sqlite",
+		"billing:database":         "mysql",
+		"billing:database:reports": "sqlite",
+	} {
+		if got := drivers[consumer]; got != want {
+			t.Fatalf("%s driver = %q, want %q; consumers=%#v", consumer, got, want, consumers)
+		}
+	}
+}
+
+// TestEffectiveResourceConsumersResolveDotenvReferences keeps endpoint planning on the generator's full-file parsing contract.
+func TestEffectiveResourceConsumersResolveDotenvReferences(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_ADDR=cache.redis.example:6379\n")
+
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	var cache project.EffectiveResourceConsumer
+	for _, consumer := range consumers {
+		if consumer.Consumer == "cache" {
+			cache = consumer
+			break
+		}
+	}
+	if cache.Driver != "redis" || cache.EndpointAffinity == "" || cache.LocalService {
+		t.Fatalf("interpolated cache consumer = %#v, want external Redis", cache)
+	}
+}
+
+// TestResourceAppPrefixesRequireTopologyEvidence prevents unrelated feature flags from inventing named Apps.
+func TestResourceAppPrefixesRequireTopologyEvidence(t *testing.T) {
+	prefixes := resourceAppPrefixes(map[string]string{
+		"METRICS_CACHE_ENABLED":    "true",
+		"BILLING_MAIL_SMTP_HOST":   "smtp.billing.example",
+		"REPORTING_CACHE_ADDR":     "reporting.redis.example:6379",
+		"WAREHOUSE_DB_HOST":        "warehouse.db.example",
+		"OBSERVABILITY_DB_ENABLED": "true",
+	}, nil)
+	want := []resourceAppPrefix{
+		{name: "billing", prefix: "BILLING"},
+		{name: "reporting", prefix: "REPORTING"},
+		{name: "warehouse", prefix: "WAREHOUSE"},
+	}
+	if !reflect.DeepEqual(prefixes, want) {
+		t.Fatalf("resource App prefixes = %#v, want %#v", prefixes, want)
+	}
+}
+
+// TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference protects names containing another resource marker.
+func TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("CACHE_REPORTING_DB_DRIVER=redis\nCACHE_REPORTING_DB_ADDR=redis:6379\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	if err != nil {
+		t.Fatalf("discover resource-first named consumer: %v", err)
+	}
+	found := false
+	for _, consumer := range consumers {
+		if consumer.Consumer == "cache:reporting_db" && consumer.Driver == "redis" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("consumers = %#v, want cache:reporting_db Redis consumer", consumers)
+	}
+}
+
+// TestResourceAppPrefixesUseTheFirstResourceMarker prevents one App-named resource key from inventing a second nested App.
+func TestResourceAppPrefixesUseTheFirstResourceMarker(t *testing.T) {
+	prefixes := resourceAppPrefixes(map[string]string{
+		"FOO_CACHE_DB_DRIVER": "redis",
+	}, nil)
+	want := []resourceAppPrefix{{name: "foo", prefix: "FOO"}}
+	if !reflect.DeepEqual(prefixes, want) {
+		t.Fatalf("resource App prefixes = %#v, want %#v", prefixes, want)
+	}
+}
+
+// TestEffectiveResourceConsumersRejectAlternateDatabaseWithoutEndpoint prevents plans for Compose services that are not rendered.
+func TestEffectiveResourceConsumersRejectAlternateDatabaseWithoutEndpoint(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	database, _ := plan.Selection(project.ResourceDatabase)
+	database.Supported = append(database.Supported, "mysql")
+	plan = plan.WithSelection(project.ResourceDatabase, database)
+
+	_, err = effectiveResourceConsumersFromEnvironment([]byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\n"), plan, components, []string{"billing"})
+	if err == nil || !strings.Contains(err.Error(), "BILLING_DB_HOST") {
+		t.Fatalf("alternate database error = %v, want explicit billing endpoint validation", err)
+	}
+}
+
+// TestEffectiveResourceConsumersSeparateAlternateAppDatabase keeps an explicitly external engine out of the local Compose slice.
+func TestEffectiveResourceConsumersSeparateAlternateAppDatabase(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	database, _ := plan.Selection(project.ResourceDatabase)
+	database.Supported = append(database.Supported, "mysql")
+	plan = plan.WithSelection(project.ResourceDatabase, database)
+	source := []byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\nBILLING_DB_HOST=mysql.billing.example\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}, consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	requirements := resolved.RequirementsFor(project.ServiceMySQL)
+	if len(requirements) != 1 || requirements[0].State != project.ServiceStateExternalRequired || !reflect.DeepEqual(requirements[0].ActiveConsumers, []string{"billing:database"}) {
+		t.Fatalf("MySQL requirements = %#v, want billing external only", requirements)
+	}
+	_, compose := renderResourceTemplatesWithConsumers(t, components, plan, project.LocalServiceIntent{}, consumers)
+	if strings.Contains(compose, "\n  mysql:\n") {
+		t.Fatalf("SQLite root emitted an unowned MySQL Compose service:\n%s", compose)
+	}
+}
+
+// TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase keeps same-engine App scopes on the root Compose service.
+func TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase(t *testing.T) {
+	components := project.Components{DatabaseMySQL: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nBILLING_DB_DRIVER=mysql\nBILLING_DB_DATABASE=billing\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}, consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	requirements := resolved.RequirementsFor(project.ServiceMySQL)
+	if len(requirements) != 1 || requirements[0].State != project.ServiceStateActiveLocal {
+		t.Fatalf("MySQL requirements = %#v, want one active local service", requirements)
+	}
+	wantConsumers := []string{"database", "billing:database"}
+	if !reflect.DeepEqual(requirements[0].ActiveConsumers, wantConsumers) {
+		t.Fatalf("MySQL consumers = %#v, want %#v", requirements[0].ActiveConsumers, wantConsumers)
+	}
+}
+
+// TestEffectiveResourceConsumersDiscoverEndpointOnlyNamedDatabase preserves named scopes that inherit the root driver.
+func TestEffectiveResourceConsumersDiscoverEndpointOnlyNamedDatabase(t *testing.T) {
+	components := project.Components{DatabaseMySQL: true, Docker: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_REPORTING_HOST=reporting.mysql.example\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}, consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	requirements := resolved.RequirementsFor(project.ServiceMySQL)
+	if len(requirements) != 2 {
+		t.Fatalf("MySQL requirements = %#v, want local root and external reporting endpoints", requirements)
+	}
+	if requirements[0].State != project.ServiceStateActiveLocal || !reflect.DeepEqual(requirements[0].ActiveConsumers, []string{"database"}) {
+		t.Fatalf("root MySQL requirement = %#v, want active local database", requirements[0])
+	}
+	if requirements[1].State != project.ServiceStateExternalRequired || !reflect.DeepEqual(requirements[1].ActiveConsumers, []string{"database:reporting"}) {
+		t.Fatalf("reporting MySQL requirement = %#v, want endpoint-only named external database", requirements[1])
+	}
+}
+
+// TestEffectiveResourceConsumersSeparateExternalAppSMTP keeps Mailpit local while reporting an App-owned SMTP endpoint.
+func TestEffectiveResourceConsumersSeparateExternalAppSMTP(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true, Mail: true}
+	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
+	if err != nil {
+		t.Fatalf("resolve resource plan: %v", err)
+	}
+	source := []byte("MAIL_DRIVER=smtp\nMAIL_SMTP_HOST=mailpit\nMAIL_SMTP_PORT=1025\nBILLING_MAIL_SMTP_HOST=smtp.billing.example\nBILLING_MAIL_SMTP_PORT=2525\n")
+	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	resolved, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}, consumers)
+	if err != nil {
+		t.Fatalf("resolve service plan: %v", err)
+	}
+	requirements := resolved.RequirementsFor(project.ServiceMailSMTP)
+	if len(requirements) != 1 || requirements[0].State != project.ServiceStateExternalRequired || requirements[0].EndpointAffinity == "" {
+		t.Fatalf("SMTP requirements = %#v, want one external endpoint", requirements)
+	}
+	if !reflect.DeepEqual(requirements[0].ActiveConsumers, []string{"billing:mail"}) {
+		t.Fatalf("SMTP consumers = %#v, want billing mail only", requirements[0].ActiveConsumers)
+	}
+}

@@ -41,6 +41,18 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	if !strings.Contains(source, `return newManagedBus(api, driver.Ready`) {
 		t.Fatal("expected generated events manager to wrap redis driver in managed bus")
 	}
+	if !strings.Contains(source, `"github.com/redis/go-redis/v9"`) {
+		t.Fatal("expected generated events manager to construct an authenticated Redis client")
+	}
+	if !strings.Contains(source, `Client: eventsRedisClient(scope)`) {
+		t.Fatal("expected Redis events to use the shared Redis client contract")
+	}
+	if !strings.Contains(source, `Password: env.Get("REDIS_PASSWORD", "")`) {
+		t.Fatal("expected Redis events to honor REDIS_PASSWORD")
+	}
+	if !strings.Contains(source, `DB:       env.GetInt("REDIS_DB", "0")`) {
+		t.Fatal("expected Redis events to honor REDIS_DB")
+	}
 	if !strings.Contains(source, `type Manager struct`) {
 		t.Fatal("expected generated events manager type")
 	}

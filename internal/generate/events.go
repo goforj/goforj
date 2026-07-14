@@ -14,7 +14,9 @@ import (
 )
 
 type eventConfigTemplateData struct {
+	CompiledDrivers  []string
 	Drivers          []eventDriverSpec
+	HasRedis         bool
 	HasNATSJetStream bool
 	Names            []eventAccessorName
 }
@@ -54,7 +56,7 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		ConfigType:  "redisevents.Config",
 		Constructor: "redisevents.New",
 		Fields: []eventConfigField{
-			{Name: "Addr", Value: `eventsRedisAddr(scope)`},
+			{Name: "Client", Value: `eventsRedisClient(scope)`},
 		},
 	},
 	"nats": {
@@ -164,8 +166,9 @@ var eventDriverKeys = map[string]map[string]struct{}{
 	"sns":           makeSet("REGION", "ENDPOINT", "TOPIC_NAME_PREFIX", "QUEUE_NAME_PREFIX", "WAIT_TIME_SECONDS", "VISIBILITY_TIMEOUT_SECONDS"),
 }
 
+// GenerateEventFiles writes event accessors whose runtime choices are bounded by the generated manifest.
 func GenerateEventFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(primitiveEnvContract{
+	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
 		Prefix:        "EVENTS",
 		DefaultDriver: "inproc",
 		RootKeys:      eventRootKeys,
@@ -175,10 +178,11 @@ func GenerateEventFiles(projectDir string) (int, error) {
 			return scope.ChildNames(eventRootKeys)
 		},
 		AllowInactiveRootKeys: true,
+		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderEventConfig()
+	manager, err := renderEventConfig(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -186,7 +190,7 @@ func GenerateEventFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated events driver config: %w", err)
 	}
-	accessors, err := renderEventAccessors()
+	accessors, err := renderEventAccessors(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -223,23 +227,30 @@ func GenerateEventFiles(projectDir string) (int, error) {
 	return written, nil
 }
 
-func renderEventConfig() ([]byte, error) {
-	names := discoverEventNames()
-	selectedDrivers, err := uniqueEventDrivers()
+// renderEventConfig derives imports and compiled choices from the same validated event-driver snapshot.
+func renderEventConfig(projectDir string) ([]byte, error) {
+	names := discoverEventNames(projectDir)
+	selectedDrivers, err := uniqueEventDrivers(projectDir)
 	if err != nil {
 		return nil, err
 	}
 	drivers := make([]eventDriverSpec, 0, len(selectedDrivers))
+	hasRedis := false
 	for _, name := range selectedDrivers {
 		spec, ok := eventDriverSpecs[name]
 		if !ok {
 			continue
 		}
+		if name == "redis" {
+			hasRedis = true
+		}
 		drivers = append(drivers, spec)
 	}
 	data := eventConfigTemplateData{
-		Drivers: drivers,
-		Names:   make([]eventAccessorName, 0, len(names)),
+		CompiledDrivers: selectedDrivers,
+		Drivers:         drivers,
+		HasRedis:        hasRedis,
+		Names:           make([]eventAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
 		data.Names = append(data.Names, eventAccessorName{
@@ -265,8 +276,9 @@ func renderEventConfig() ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func renderEventAccessors() ([]byte, error) {
-	names := discoverEventNames()
+// renderEventAccessors uses the project snapshot so App-only buses receive the same generated surface as root buses.
+func renderEventAccessors(projectDir string) ([]byte, error) {
+	names := discoverEventNames(projectDir)
 	data := eventAccessorTemplateData{
 		Names: make([]eventAccessorName, 0, len(names)),
 	}
@@ -289,26 +301,29 @@ func renderEventAccessors() ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func uniqueEventDrivers() ([]string, error) {
+// uniqueEventDrivers resolves the complete event build contract without allowing active App overlays to be omitted.
+func uniqueEventDrivers(projectDir string) ([]string, error) {
 	seen := map[string]struct{}{}
 	scope := env.WithPrefix("EVENTS")
-	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
-	if driver == "" {
-		driver = "inproc"
-	}
+	driver := effectivePrimitiveDriver(scope.Get("DRIVER", "inproc"), "inproc")
 	seen[driver] = struct{}{}
 	for _, child := range scope.ChildNames(eventRootKeys) {
-		driver := str.Of(scope.Child(child).Get("DRIVER", "")).TrimSpace().ToLower().String()
-		if driver == "" {
-			continue
-		}
+		driver := effectivePrimitiveDriver(scope.Child(child).Get("DRIVER", ""), "inproc")
 		seen[driver] = struct{}{}
+	}
+	for _, child := range discoverEventNames(projectDir) {
+		driver := effectivePrimitiveDriver(scope.Child(str.Of(child).Snake("_").ToUpper().String()).Get("DRIVER", ""), "inproc")
+		seen[driver] = struct{}{}
+	}
+	for _, active := range appPrefixedActiveDrivers(projectDir, "EVENTS", "inproc", false) {
+		seen[active.driver] = struct{}{}
 	}
 	return supportedDrivers("EVENTS", eventDriverKeys, sortStrings(seen))
 }
 
-func discoverEventNames() []string {
-	names := env.WithPrefix("EVENTS").ChildNames(eventRootKeys)
+// discoverEventNames includes event buses declared only through a configured App overlay.
+func discoverEventNames(projectDir string) []string {
+	names := discoverPrimitiveChildNames(projectDir, "EVENTS", eventRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -334,12 +349,21 @@ import (
 {{- range .Drivers }}
 	"{{ .ImportPath }}"
 {{- end }}
+{{- if .HasRedis }}
+	"github.com/redis/go-redis/v9"
+{{- end }}
 {{- if .HasNATSJetStream }}
 	"github.com/nats-io/nats.go/jetstream"
 {{- end }}
 )
 
 const defaultBusName = "default"
+
+var compiledEventDrivers = []string{
+{{- range .CompiledDrivers }}
+	"{{ . }}",
+{{- end }}
+}
 
 var eventRootKeys = []string{
 	"DRIVER",
@@ -522,8 +546,18 @@ func ActiveDriver() Driver {
 	return activeDriverForScope(env.WithPrefix("EVENTS"))
 }
 
-func activeDriverForScope(scope env.Scope) Driver {
+// activeDriverNameForScope preserves invalid runtime values so startup can report the actual selection.
+func activeDriverNameForScope(scope env.Scope) string {
 	value := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	if value == "" {
+		return "inproc"
+	}
+	return value
+}
+
+// activeDriverForScope maps validated environment names onto the runtime driver enumeration.
+func activeDriverForScope(scope env.Scope) Driver {
+	value := activeDriverNameForScope(scope)
 	switch value {
 	case "null":
 		return DriverNull
@@ -560,7 +594,12 @@ func newManagerFromEnv(ctx context.Context, eventsScope env.Scope) (*Manager, er
 	return manager, nil
 }
 
+// buildBus rejects drivers outside the artifact manifest before any infrastructure is initialized.
 func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
+	driverName := activeDriverNameForScope(scope)
+	if !eventDriverCompiled(driverName) {
+		return nil, fmt.Errorf("events: active driver %q is not built in; compiled choices: %s; run forj generate --events after updating EVENTS_SUPPORTED_DRIVERS", driverName, strings.Join(compiledEventDrivers, ", "))
+	}
 	switch activeDriverForScope(scope) {
 {{- range .Drivers }}
 	case {{ .CaseName }}:
@@ -608,6 +647,17 @@ func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
 	}
 }
 
+// eventDriverCompiled reports whether driver is selectable in this generated artifact.
+func eventDriverCompiled(driver string) bool {
+	for _, compiled := range compiledEventDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
+}
+
+// eventsRedisAddr preserves resource-specific endpoints while sharing the global Redis fallback contract.
 func eventsRedisAddr(scope env.Scope) string {
 	addr := str.Of(scope.Get("ADDR", "")).TrimSpace().String()
 	if addr != "" {
@@ -615,6 +665,17 @@ func eventsRedisAddr(scope env.Scope) string {
 	}
 	return fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379"))
 }
+
+{{- if .HasRedis }}
+// eventsRedisClient keeps events on the same authenticated Redis connection contract as other primitives.
+func eventsRedisClient(scope env.Scope) *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:     eventsRedisAddr(scope),
+		Password: env.Get("REDIS_PASSWORD", ""),
+		DB:       env.GetInt("REDIS_DB", "0"),
+	})
+}
+{{- end }}
 
 func eventsCSV(scope env.Scope, key string, fallback string) []string {
 	raw := str.Of(scope.Get(key, fallback)).TrimSpace().String()

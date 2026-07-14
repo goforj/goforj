@@ -2,14 +2,14 @@
 
 ## Status
 
-- Design status: proposed
+- Design status: accepted
 - Research date: 2026-07-13
+- Implementation date: 2026-07-14
 - Scope: `forj new`, initial resource-driver selection, generated environment
   defaults, and local service planning
 - Target repository: the permanent `goforj` repository
-- Implementation status: not started
-- Revalidation required: refresh the implementation facts in the final section
-  before work begins
+- Implementation status: implemented; the release checks in the final section
+  remain intentionally open
 
 ## Decision Summary
 
@@ -55,8 +55,8 @@ the project.
 
 The shape is a one-time wizard macro. It is expanded into concrete active and
 supported driver environment values and is never persisted as an architectural
-identity. Active drivers, supported drivers, and runtime mode do not belong in
-`.goforj.yml`.
+identity. Active drivers and supported drivers do not belong in `.goforj.yml`,
+and no shape or runtime-mode identity is persisted.
 
 ## Product Promise
 
@@ -144,9 +144,10 @@ A project may:
   resource shape;
 - use MySQL or Postgres while cache, queue, and events remain process-local.
 
-The resource shape does not set `RUNTIME_MODE`, select binaries, or claim that
-separate runtime orchestration is operational. Runtime topology remains a
-separate concern.
+The resource shape does not select binaries or claim that separate runtime
+orchestration is operational. Runtime topology is expressed by the command a
+deployment launches (`app run` or an explicit leaf runtime), not by a
+`RUNTIME_MODE` environment variable.
 
 ## Design Grounding
 
@@ -198,7 +199,8 @@ This design follows existing GoForj boundaries:
   event history.
 - Do not provision cloud accounts or managed infrastructure.
 - Do not redesign sibling-repository driver APIs.
-- Do not make `RUNTIME_MODE=distributed` operational as part of this work.
+- Do not introduce a runtime-mode environment switch; launched commands own
+  process topology.
 - Do not add topology selection to `make:app` in the first slice.
 - Do not persist a shape name that could later drift from concrete environment
   values.
@@ -337,6 +339,16 @@ MySQL remains the initial default so this design does not smuggle in an
 unrelated default change. SQLite stays one selection away for a self-contained
 App, while MySQL and Postgres support the common case of one real infrastructure
 component with otherwise process-local resources.
+
+MySQL and Postgres are database-driver identities, not placement identities.
+The wizard must not add `MySQL Local`, `MySQL External`, `Postgres Local`, or
+`Postgres External` as separate database choices. For a new Docker-enabled
+project, choosing MySQL or Postgres includes the conventional local Compose
+service. Without Docker the service is external, and a production deployment
+uses the same driver with its managed endpoint while simply not launching the
+development Compose service. Placement is deployment and service-planning
+context; encoding it in the driver name would duplicate choices and make later
+movement look like an application architecture change.
 
 The component stage should present Database as one capability rather than three
 peer capabilities. The App Resources stage owns its implementation choice.
@@ -603,19 +615,16 @@ services to optional local/external profiles is separate work.
 
 Redis cache, queue, events, sessions, and future locks share one service key.
 Multiple compatible consumers therefore produce exactly one Redis requirement.
-Today all three normal drivers reuse global `REDIS_HOST` and `REDIS_PORT`.
-Cache and queue also consume the global password and database settings, while
-the current Redis events integration does not yet have equivalent password or
-TLS configuration.
+Today all three normal drivers reuse global `REDIS_HOST`, `REDIS_PORT`,
+`REDIS_PASSWORD`, and `REDIS_DB` through their generated connection contracts.
+Equivalent cross-driver TLS configuration remains future work.
 
-Shared through Redis may ship only after the Redis connection contract is
-compatible across cache, queue, and events. At minimum, the events generator or
-sibling events driver must accept authenticated Redis through a configured
-client, and generated validation must reject a shared external configuration
-that one primitive cannot use. TLS is advertised only after all three drivers
-can express and verify the same TLS endpoint policy. The unauthenticated local
-Compose Redis path remains the baseline, not evidence that managed Redis is
-portable.
+Shared through Redis may ship only after its external Redis exercise confirms
+the generated authenticated client contract across cache, queue, and events,
+and generated validation must reject a configuration that one primitive cannot
+use. TLS is advertised only after all three drivers can express and verify the
+same TLS endpoint policy. The unauthenticated local Compose Redis path remains
+the baseline, not evidence that managed Redis is portable.
 
 App-scoped overrides are still included in discovery. `forj new` initializes
 only the default App, and this design does not add a topology question to
@@ -998,8 +1007,9 @@ A conceptual transient model is:
 
 ```go
 type ResourcePlan struct {
-	Shape      StartingResourceShape
-	Selections map[ResourceKey]DriverSelection
+	Shape           StartingResourceShape
+	Selections      map[ResourceKey]DriverSelection
+	NamedSelections map[string]string
 }
 
 type DriverSelection struct {
@@ -1178,6 +1188,11 @@ This preserves environment ownership while keeping generation deterministic.
 
 ## Implementation Sequence
 
+Implementation mechanics across all phases below landed together on
+2026-07-14. The sequence is retained to document dependency order and to make
+later changes easier to review; the final release proofs are tracked
+separately below.
+
 ### Phase 0: transient-state baseline
 
 - Make `queue_driver` load-only legacy state.
@@ -1209,8 +1224,9 @@ This preserves environment ownership while keeping generation deterministic.
   consume the canonical catalog or assert exact parity with it.
 - Embed the compiled driver manifest and validate effective runtime active
   drivers against that manifest.
-- Prove that one generated binary can change between built-in local and Redis
-  drivers using environment values.
+- Make one generated binary capable of changing between built-in local and
+  Redis drivers using environment values; retain the end-to-end proof as a
+  release gate.
 
 ### Phase 3: service planner and Compose bridge
 
@@ -1454,25 +1470,57 @@ writing committed before YAML cleanup.
 Mitigation: isolate resource policy, view state, and tests in focused files and
 keep the main wizard responsible only for stage orchestration.
 
-## Revalidation Before Implementation
+## Implementation Revalidation
 
-This design records product decisions, but the code may move before the work is
-picked up. The implementer must perform a short fact refresh:
+The implementation fact refresh was completed on 2026-07-14:
 
-1. Verify the current `forj new` stage order, component defaults, and whether the
-   stale Runtime stage still exists.
-2. Verify whether legacy `queue_driver` removal or migration has already landed.
-3. Refresh cache, queue, events, storage, mail, and database driver inventories
-   from the generators and sibling packages.
-4. Verify the current environment ownership and rerender behavior.
-5. Verify current Compose commands support the chosen `COMPOSE_PROFILES`
-   contract and adjust generated guidance if the command surface changed.
-6. Verify Redis drivers still share the global Redis endpoint fallback.
-7. Refresh generated named-resource keys and confirm their local/shared policy.
-8. Re-run the render matrix under `/tmp` before changing templates.
-9. Measure the binary-size, build-time, and module/dependency delta of compiling
-   all three Redis bridges so the bounded portability cost is understood.
+1. The current `forj new` stage order was verified and App Resources now sits
+   after Extras and before Atlas. The obsolete queue-only Runtime question was
+   removed rather than supplemented.
+2. Legacy `queue_driver` is load-only migration input. Environment publication
+   succeeds before YAML cleanup, and current config writers cannot recreate the
+   key.
+3. Cache, queue, events, storage, mail, and database inventories were refreshed
+   from their generators. The canonical project catalog and generator parity
+   tests now guard those inventories against drift.
+4. Existing `.env` values retain ownership during rerender. Missing resource
+   keys are initialized atomically, `.env.example` is generated through the
+   secret-redaction contract, and direct generation runs from one controlled
+   project environment snapshot.
+5. Compose profile behavior was verified. Portable Docker renders include an
+   inactive Redis profile, exact profile-token edits preserve unrelated tokens,
+   and service startup tasks are derived from actual local requirements.
+6. Redis cache, queue, and events retain the shared global endpoint fallback;
+   Redis events now use a configured client so password and database settings
+   follow the same connection contract.
+7. Generated named resources, arbitrary named scopes, and App-prefixed overlays
+   participate in accessor generation, compiled-driver validation, and
+   endpoint-aware service planning. App-only and config-only named scopes gain
+   accessors without promoting an App root overlay into a false resource name.
+   Framework-owned public and Demo favicon disks retain explicit named storage
+   requirements. Database compatibility aliases canonicalize before planning,
+   different database engines cannot silently attach to the root Compose
+   database, and external SMTP endpoints are not mistaken for Mailpit.
+8. Runtime topology was revalidated as a command concern. `app run` remains the
+   combined host, explicit leaf commands select split roles, and no
+   `RUNTIME_MODE` environment abstraction is generated.
+9. The complete Go test suite and `go vet ./...` passed with the required
+   temporary Go caches. The ten-combination smoke render profile rendered,
+   generated Wire code, and built every project under `/tmp`.
 
-Revalidation should update implementation facts, driver inventories, and file
-references. It should not reopen the core product decision unless a changed
-constraint makes the two-shape model or portable bridge incorrect.
+The following release gates remain open and do not change the implemented
+product shape:
+
+- measure binary size, clean-build time, and module/dependency deltas between a
+  narrowed local-only build and the normal portable Redis bridge;
+- run the network-backed authenticated external Redis exercise through cache,
+  queue, and events;
+- demonstrate the same built artifact starting once with process-local drivers
+  and once with Redis drivers using environment changes only;
+- run the broader release render profile in addition to the completed smoke
+  profile.
+
+If the work is picked up after sitting unreleased, rerun this section's tests
+and release evidence against the then-current generators. That refresh should
+not reopen the two-shape model unless a changed constraint makes the portable
+bridge incorrect.

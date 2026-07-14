@@ -74,8 +74,8 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 - `vmagent` reads that file through Prometheus file-based service discovery.
 - Target generation is controlled by `OBSERVABILITY_METRICS_TARGET_MODE`:
   - `auto`
-    - chooses `local-single` when `RUNTIME_MODE` is unset or `standalone`
-    - chooses `local-multi` when `RUNTIME_MODE=distributed` and multiple source roles are generated
+    - chooses `local-single`, matching the combined `app run` command
+    - use `local-multi` explicitly when launching HTTP, jobs, or scheduler commands as separate processes
   - `local-single`
     - one generated target per app
     - intended for standalone host mode

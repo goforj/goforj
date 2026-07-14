@@ -12,6 +12,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestWireAppTemplateUsesSingularDefaultAndPluralManagers protects the generated App resource-access contract.
 func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -27,9 +28,6 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	for _, snippet := range []string{
 		"func (a *App) Cache() *cache.Cache",
 		"return a.cache.Default()",
-		"func (a *App) Topology() runtime.RuntimeTopology",
-		"return a.topology.Normalized()",
-		`Mode: runtime.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
 		"func (a *App) Caches() *caches.Manager",
 		"func (a *App) Storage() *storages.Manager",
 		"func (a *App) Bus() events.Bus",

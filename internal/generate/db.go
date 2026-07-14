@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 )
 
 type dbTemplateData struct {
+	CompiledDrivers []string
 	HasNames        bool
 	NeedsGormImport bool
 	Names           []dbAccessorName
@@ -43,18 +45,24 @@ var dbRootKeys = []string{
 	"PASSWORD",
 	"PORT",
 	"QUERY_LOGGING",
+	"SLOW_QUERY_THRESHOLD",
 	"MAX_IDLE_CONNECTIONS",
 	"MAX_OPEN_CONNECTIONS",
 	"CONN_MAX_LIFETIME_MINUTES",
 	"ROOT_PASSWORD",
 }
 
+// GenerateDBFiles writes database accessors whose selectable drivers are fixed by the generation snapshot.
 func GenerateDBFiles(projectDir string) (int, error) {
-	drivers, err := discoverDBDrivers()
+	if err := validateAppPrefixedDBEnv(projectDir); err != nil {
+		return 0, err
+	}
+	names := discoverDBConnectionNames(projectDir)
+	drivers, compiledDrivers, err := discoverDBDrivers(projectDir, names)
 	if err != nil {
 		return 0, err
 	}
-	source, err := renderDBAccessors(discoverDBConnectionNames(), drivers)
+	source, err := renderDBAccessors(names, drivers, compiledDrivers)
 	if err != nil {
 		return 0, err
 	}
@@ -72,8 +80,9 @@ func GenerateDBFiles(projectDir string) (int, error) {
 	return 0, nil
 }
 
-func discoverDBConnectionNames() []string {
-	names := exactScopedChildNames("DB", dbRootKeys)
+// discoverDBConnectionNames includes connections declared only through a configured App overlay.
+func discoverDBConnectionNames(projectDir string) []string {
+	names := discoverPrimitiveChildNames(projectDir, "DB", dbRootKeys)
 	out := make([]string, 0, len(names))
 	for _, name := range names {
 		normalized := str.Of(name).TrimSpace().ToLower().String()
@@ -86,6 +95,29 @@ func discoverDBConnectionNames() []string {
 	return out
 }
 
+// validateAppPrefixedDBEnv rejects App-scoped keys that cannot become a root or named database setting at runtime.
+func validateAppPrefixedDBEnv(projectDir string) error {
+	problems := []string{}
+	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+		prefix := appPrefix + "_DB_"
+		for _, assignment := range os.Environ() {
+			key, _, ok := strings.Cut(assignment, "=")
+			if !ok || !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			if _, _, valid := splitScopedEnvKey(strings.TrimPrefix(key, prefix), dbRootKeys); valid {
+				continue
+			}
+			problems = append(problems, fmt.Sprintf("%s is not a supported database env var", key))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	sort.Strings(problems)
+	return fmt.Errorf("invalid database env:\n- %s", strings.Join(problems, "\n- "))
+}
+
 // dbHelperConnectionName skips driver-specific helper keys such as DB_SQLITE_DATABASE.
 func dbHelperConnectionName(name string) bool {
 	switch strings.TrimSpace(strings.ToLower(name)) {
@@ -96,8 +128,10 @@ func dbHelperConnectionName(name string) bool {
 	}
 }
 
-func renderDBAccessors(names []string, drivers []dbDriverSpec) ([]byte, error) {
+// renderDBAccessors keeps retained compatibility implementations separate from the authoritative compiled manifest.
+func renderDBAccessors(names []string, drivers []dbDriverSpec, compiledDrivers []string) ([]byte, error) {
 	data := dbTemplateData{
+		CompiledDrivers: compiledDrivers,
 		HasNames:        false,
 		NeedsGormImport: len(names) > 1 || len(drivers) > 0,
 		Names:           make([]dbAccessorName, 0, len(names)),
@@ -124,9 +158,33 @@ func renderDBAccessors(names []string, drivers []dbDriverSpec) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func discoverDBDrivers() ([]dbDriverSpec, error) {
+// discoverDBDrivers validates every active connection against the explicit build contract before source is emitted.
+func discoverDBDrivers(projectDir string, names []string) ([]dbDriverSpec, []string, error) {
 	drivers := map[string]dbDriverSpec{}
+	compiled := map[string]struct{}{}
 	recordDBDriver(drivers, "sqlite")
+	rootDriver := str.Of(env.WithPrefix("DB").Get("DRIVER", "sqlite")).TrimSpace().ToLower().String()
+	if rootDriver == "" {
+		rootDriver = "sqlite"
+	}
+	activeDrivers := []generationActiveDriver{
+		{
+			key:    "DB_DRIVER",
+			driver: rootDriver,
+		},
+	}
+	for _, name := range names {
+		scope := env.WithPrefix("DB").Child(str.Of(name).Snake("_").ToUpper().String())
+		driver := str.Of(scope.Get("DRIVER", "")).TrimSpace().ToLower().String()
+		if driver == "" {
+			continue
+		}
+		activeDrivers = append(activeDrivers, generationActiveDriver{
+			key:    "DB_" + str.Of(name).Snake("_").ToUpper().String() + "_DRIVER",
+			driver: driver,
+		})
+	}
+	activeDrivers = append(activeDrivers, appPrefixedActiveDrivers(projectDir, "DB", "sqlite", true)...)
 	rawSupported := str.Of(env.WithPrefix("DB").Get("SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
 	if rawSupported != "" {
 		for _, part := range strings.Split(rawSupported, ",") {
@@ -135,15 +193,24 @@ func discoverDBDrivers() ([]dbDriverSpec, error) {
 				continue
 			}
 			if !recordDBDriver(drivers, driver) {
-				return nil, fmt.Errorf("DB_SUPPORTED_DRIVERS includes unsupported driver %q", driver)
+				return nil, nil, fmt.Errorf("DB_SUPPORTED_DRIVERS includes unsupported driver %q", driver)
+			}
+			compiled[canonicalDBDriver(driver)] = struct{}{}
+		}
+		if len(compiled) == 0 {
+			return nil, nil, fmt.Errorf("DB_SUPPORTED_DRIVERS must include at least one driver")
+		}
+		for _, active := range activeDrivers {
+			if _, ok := compiled[canonicalDBDriver(active.driver)]; !ok {
+				return nil, nil, fmt.Errorf("%s selects driver %q not enabled by DB_SUPPORTED_DRIVERS", active.key, active.driver)
 			}
 		}
-	}
-	if rawSupported == "" {
-		recordDBDriver(drivers, str.Of(env.WithPrefix("DB").Get("DRIVER", "")).TrimSpace().ToLower().String())
-		for _, name := range discoverDBConnectionNames() {
-			scope := env.WithPrefix("DB").Child(str.Of(name).Snake("_").ToUpper().String())
-			recordDBDriver(drivers, str.Of(scope.Get("DRIVER", "")).TrimSpace().ToLower().String())
+	} else {
+		for _, active := range activeDrivers {
+			if !recordDBDriver(drivers, active.driver) {
+				return nil, nil, fmt.Errorf("%s selects unsupported driver %q", active.key, active.driver)
+			}
+			compiled[canonicalDBDriver(active.driver)] = struct{}{}
 		}
 	}
 	out := make([]dbDriverSpec, 0, len(drivers))
@@ -151,7 +218,21 @@ func discoverDBDrivers() ([]dbDriverSpec, error) {
 		out = append(out, driver)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Alias < out[j].Alias })
-	return out, nil
+	return out, sortStrings(compiled), nil
+}
+
+// canonicalDBDriver normalizes accepted compatibility aliases to the generated manifest name.
+func canonicalDBDriver(driver string) string {
+	switch strings.TrimSpace(strings.ToLower(driver)) {
+	case "mariadb":
+		return "mysql"
+	case "postgresql":
+		return "postgres"
+	case "sqlite3":
+		return "sqlite"
+	default:
+		return strings.TrimSpace(strings.ToLower(driver))
+	}
 }
 
 func recordDBDriver(drivers map[string]dbDriverSpec, driver string) bool {
@@ -196,6 +277,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"strings"
 	{{- if .Drivers }}
 	{{- range .Drivers }}
 	"{{ .ImportPath }}"
@@ -204,6 +286,12 @@ import (
 	"gorm.io/gorm"
 )
 {{ end }}
+var compiledDatabaseDrivers = []string{
+{{- range .CompiledDrivers }}
+	"{{ . }}",
+{{- end }}
+}
+
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
@@ -247,6 +335,10 @@ func (c *Connections) readinessCheck(ctx context.Context, name string) error {
 {{- if .Drivers }}
 
 func openDialector(driver, dsn string) (gorm.Dialector, error) {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if !databaseDriverCompiled(driver) {
+		return nil, fmt.Errorf("database: active driver %q is not built in; compiled choices: %s; run forj generate --db after updating DB_SUPPORTED_DRIVERS", driver, strings.Join(compiledDatabaseDrivers, ", "))
+	}
 	switch driver {
 	{{- range .Drivers }}
 	case {{ range $idx, $case := .SwitchCases }}{{ if $idx }}, {{ end }}"{{ $case }}"{{ end }}:
@@ -260,6 +352,24 @@ func openDialector(driver, dsn string) (gorm.Dialector, error) {
 	default:
 		return nil, fmt.Errorf("unsupported driver %q", driver)
 	}
+}
+
+// databaseDriverCompiled reports whether driver is selectable in this generated artifact.
+func databaseDriverCompiled(driver string) bool {
+	switch driver {
+	case "mariadb":
+		driver = "mysql"
+	case "postgresql":
+		driver = "postgres"
+	case "sqlite3":
+		driver = "sqlite"
+	}
+	for _, compiled := range compiledDatabaseDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
 }
 {{ end }}
 {{ range .Names }}

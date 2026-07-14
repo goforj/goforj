@@ -14,6 +14,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
+	"github.com/joho/godotenv"
 	"go/format"
 	"io"
 	"io/fs"
@@ -69,20 +70,31 @@ func (e *wireGenerateError) Unwrap() error {
 
 // ComponentRenderInput controls whether rendering uses explicit components or the stored project config.
 type ComponentRenderInput struct {
-	components  project.Components
-	renderAll   bool
-	queueDriver string
+	components         project.Components
+	renderAll          bool
+	queueDriver        string
+	resourcePlan       project.ResourcePlan
+	localServiceIntent project.LocalServiceIntent
+	serviceConsumers   []project.EffectiveResourceConsumer
 }
 
 // ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
-	logger                  *logger.AppLogger
-	config                  *project.Config
-	stats                   *renderStats
-	lines                   []string
-	timings                 bool
-	queueDriver             string
-	removeLegacyQueueDriver bool
+	logger                      *logger.AppLogger
+	config                      *project.Config
+	stats                       *renderStats
+	lines                       []string
+	timings                     bool
+	queueDriver                 string
+	resourcePlan                project.ResourcePlan
+	localServiceIntent          project.LocalServiceIntent
+	serviceConsumers            []project.EffectiveResourceConsumer
+	explicitResourcePlan        bool
+	pendingEnvironment          []byte
+	pendingEnvironmentWrite     bool
+	removeLegacyQueueDriver     bool
+	databaseCapabilitiesChanged bool
+	writeEnvironmentFile        func(string, []byte, fs.FileMode) error
 }
 
 type renderStats struct {
@@ -120,7 +132,7 @@ type templateRenderConfig struct {
 	ProjectComponents project.Components
 	StarterKit        project.StarterKit
 	HelpFormat        project.HelpFormat
-	QueueDriver       string
+	Resources         resourceRenderValues
 	HelpFormatterFunc string
 	HelpCommandFunc   string
 	App               project.App
@@ -236,17 +248,28 @@ func generateRandomToken(charset string, length int) (string, error) {
 	return string(buf), nil
 }
 
-// NewProjectRenderer creates a new ProjectRenderer instance
+// NewProjectRenderer creates a renderer with atomic environment publication enabled.
 func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
-	return &ProjectRenderer{logger: logger, stats: &renderStats{}}
+	return &ProjectRenderer{
+		logger:               logger,
+		stats:                &renderStats{},
+		writeEnvironmentFile: writeFileAtomically,
+	}
 }
 
-// Render is the main rendering function
+// Render reconciles project-owned inputs before publishing a complete scaffold.
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.stats = &renderStats{}
 	p.lines = nil
 	p.queueDriver = ""
+	p.resourcePlan = project.ResourcePlan{}
+	p.localServiceIntent = project.LocalServiceIntent{}
+	p.serviceConsumers = cloneEffectiveResourceConsumers(input.serviceConsumers)
+	p.explicitResourcePlan = false
+	p.pendingEnvironment = nil
+	p.pendingEnvironmentWrite = false
 	p.removeLegacyQueueDriver = false
+	p.databaseCapabilitiesChanged = false
 
 	if input.renderAll {
 		cfg, err := project.LoadProjectConfig()
@@ -265,23 +288,53 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.config.Render.Components.Auth = true
 		p.config.Render.StarterKit = project.StarterKitNone
 	}
-	// The wizard choice seeds .env only; legacy YAML is accepted once and removed when the config is rewritten.
-	p.queueDriver = resolveQueueDriverSeed(input.queueDriver, p.config.Render.LegacyQueueDriver())
 	p.config.Render.Components.ResolveDependencies()
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
 	}
+	selectedQueueDriver := input.queueDriver
+	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
+		selectedQueueDriver = selection.Active
+	}
+	// The transient plan seeds .env only; legacy YAML remains a migration source until environment initialization succeeds.
+	p.queueDriver = resolveQueueDriverSeed(selectedQueueDriver, p.config.Render.LegacyQueueDriver())
+	if len(input.resourcePlan.Selections) > 0 {
+		plan, err := normalizeExplicitResourcePlan(input.resourcePlan, p.config.Render.Components)
+		if err != nil {
+			return err
+		}
+		p.resourcePlan = plan
+		p.explicitResourcePlan = true
+		p.localServiceIntent = input.localServiceIntent
+		if _, selected := p.localServiceIntent.Mode(project.ServiceRedis); !selected &&
+			p.config.Render.Components.Docker && plan.Shape == project.ResourceShapeSharedRedis {
+			p.localServiceIntent = p.localServiceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
+		}
+	} else {
+		plan, err := compatibilityResourcePlan(p.config.Render.Components, p.queueDriver)
+		if err != nil {
+			return err
+		}
+		p.resourcePlan = plan
+	}
+	if input.renderAll {
+		if err := p.prepareResourceEnvironment(); err != nil {
+			return err
+		}
+	}
+	if _, err := project.ResolveServicePlanWithConsumers(p.resourcePlan, p.config.Render.Components, p.localServiceIntent, p.serviceConsumers); err != nil {
+		return fmt.Errorf("resolve effective App services: %w", err)
+	}
+	applyDatabaseRenderCapabilities(&p.config.Render.Components, p.resourcePlan)
+	configuredBeforeDatabasePromotion := configuredComponents
+	applyDatabaseRenderCapabilities(&configuredComponents, p.resourcePlan)
+	p.databaseCapabilitiesChanged = configuredComponents != configuredBeforeDatabasePromotion
 	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
 	if !p.config.Render.Components.WebUI {
 		p.config.Render.StarterKit = project.StarterKitNone
 	}
 	if err := project.ValidateStarterKitContract(p.config.Render.StarterKit, p.config.Render.Components); err != nil {
 		return err
-	}
-	if input.renderAll {
-		if err := p.syncProjectConfigForRender(configuredComponents); err != nil {
-			return err
-		}
 	}
 	if err := p.migrateAppOwnedWireFilenames(); err != nil {
 		return err
@@ -311,6 +364,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Environment Files Initialization",
 			enabled: input.renderAll,
 			action: func() error {
+				if p.pendingEnvironmentWrite {
+					if err := p.writeEnvironmentFile(".env", p.pendingEnvironment, 0o644); err != nil {
+						return fmt.Errorf("write resource environment: %w", err)
+					}
+					p.pendingEnvironmentWrite = false
+				}
 				envTemplates := []string{
 					".env.tmpl",
 					".env.host.tmpl",
@@ -470,7 +529,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if updated == text {
 						return nil
 					}
-					if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
+					if err := writeFileAtomically(path, []byte(updated), 0o644); err != nil {
 						return err
 					}
 					return nil
@@ -508,11 +567,30 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					p.config.AppDiagToken = appDiagToken
 					p.config.LighthouseSecret = secret
 					p.config.JWTSecretKey = jwtSecret
-					if err := p.writeTemplates(missingEnvTemplates); err != nil {
+					if err := p.writeEnvironmentTemplates(missingEnvTemplates); err != nil {
 						return err
 					}
 				}
-				return p.writeTemplates([]string{localEnvTemplate})
+				if err := p.writeEnvironmentTemplates([]string{localEnvTemplate}); err != nil {
+					return err
+				}
+				environment, err := os.ReadFile(".env")
+				if err != nil {
+					return fmt.Errorf("read environment contract source: %w", err)
+				}
+				existingExample, err := os.ReadFile(".env.example")
+				if err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("read existing environment example: %w", err)
+				}
+				mergedExample := MergeEnvironmentExample(existingExample, environment)
+				if err := WriteEnvironmentExampleAtomic(".env.example", mergedExample, 0o644); err != nil {
+					return fmt.Errorf("write environment example: %w", err)
+				}
+				p.stats.recordCreated(".env.example")
+				if err := ensureGitignoreEnvironmentRules(".gitignore"); err != nil {
+					return fmt.Errorf("update environment ignore rules: %w", err)
+				}
+				return p.syncProjectConfigForRender(configuredComponents)
 			},
 		},
 		{
@@ -1140,6 +1218,128 @@ func resolveQueueDriverSeed(selected string, legacy string) string {
 	return "redis"
 }
 
+// reconcileQueueDriverEnvironment migrates applicable queue state before the legacy YAML source can be removed.
+func (p *ProjectRenderer) reconcileQueueDriverEnvironment() error {
+	if !p.config.Render.Components.Jobs {
+		return nil
+	}
+	const path = ".env"
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read queue environment: %w", err)
+	}
+	updated, effective, changed, err := reconcileQueueDriverEnv(data, p.queueDriver)
+	if err != nil {
+		return err
+	}
+	p.queueDriver = effective
+	if !changed {
+		return nil
+	}
+	if err := p.writeEnvironmentFile(path, updated, 0o644); err != nil {
+		return fmt.Errorf("write queue environment: %w", err)
+	}
+	return nil
+}
+
+// reconcileQueueDriverEnv fills missing queue ownership keys without widening an existing build contract.
+func reconcileQueueDriverEnv(data []byte, seed string) ([]byte, string, bool, error) {
+	lines := strings.Split(string(data), "\n")
+	active, activeSet := envAssignment(lines, "QUEUE_DRIVER")
+	supported, supportedSet := envAssignment(lines, "QUEUE_SUPPORTED_DRIVERS")
+
+	effective := normalizeQueueDriver(active)
+	if activeSet && strings.TrimSpace(active) != "" && effective == "" {
+		return nil, "", false, fmt.Errorf("QUEUE_DRIVER in .env selects unsupported driver %q; choose a supported queue driver before rerendering", active)
+	}
+	if effective == "" {
+		effective = normalizeQueueDriver(seed)
+	}
+	if effective == "" {
+		effective = "redis"
+	}
+	if supportedSet && strings.TrimSpace(supported) != "" && !driverListContains(supported, effective) {
+		return nil, "", false, fmt.Errorf("QUEUE_SUPPORTED_DRIVERS in .env excludes active QUEUE_DRIVER %q; add %q before rerendering", effective, effective)
+	}
+
+	changed := false
+	if !activeSet || strings.TrimSpace(active) == "" {
+		lines = setFinalEnvAssignment(lines, "QUEUE_DRIVER", effective)
+		changed = true
+	}
+	if !supportedSet || strings.TrimSpace(supported) == "" {
+		lines = setFinalEnvAssignment(lines, "QUEUE_SUPPORTED_DRIVERS", effective)
+		changed = true
+	}
+	if !changed {
+		return data, effective, false, nil
+	}
+	updated := strings.Join(lines, "\n")
+	if !strings.HasSuffix(updated, "\n") {
+		updated += "\n"
+	}
+	return []byte(updated), effective, true, nil
+}
+
+// envAssignment returns the final concrete assignment for a key to match dotenv override ordering.
+func envAssignment(lines []string, want string) (string, bool) {
+	values, err := godotenv.Unmarshal(strings.Join(lines, "\n"))
+	if err == nil {
+		value, found := values[want]
+		return value, found
+	}
+
+	// A malformed unrelated line must not turn a concrete owner value into a
+	// missing key that the renderer is then allowed to replace.
+	var value string
+	found := false
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		key, _, candidate, ok := parseEnvironmentExampleAssignment(line)
+		if !ok || key != want {
+			continue
+		}
+		value = strings.TrimSpace(candidate)
+		found = true
+	}
+	return value, found
+}
+
+// setFinalEnvAssignment updates the assignment that controls dotenv precedence or appends a missing key.
+func setFinalEnvAssignment(lines []string, want string, value string) []string {
+	index := -1
+	for lineIndex, line := range lines {
+		key, _, ok := parseEnvLine(line)
+		if ok && key == want {
+			index = lineIndex
+		}
+	}
+	if index >= 0 {
+		lines[index] = want + "=" + value
+		return lines
+	}
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines[len(lines)-1] = want + "=" + value
+		return append(lines, "")
+	}
+	return append(lines, want+"="+value)
+}
+
+// driverListContains compares driver names using the normalized environment representation.
+func driverListContains(value string, want string) bool {
+	for _, driver := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(driver), want) {
+			return true
+		}
+	}
+	return false
+}
+
 // RenderAppOnly renders one named app without replaying the full project scaffold.
 func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
 	p.stats = &renderStats{}
@@ -1460,6 +1660,12 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 		envDefaults = mergeEnvDefaults(envDefaults, appDatabaseEnvDefaults(prefix, driver, baseDriver, false))
 	}
 	envGlobals, envAppDefaults := splitEnvDefaultsByPrefix(envDefaults, prefix)
+	if p.config != nil && p.config.Render.Components.DemoApp {
+		// Demo migrations still exercise SQLite, so a named-App render must not create a MySQL-only build contract before the full renderer runs.
+		if err := upsertEnvDefaults(".env", map[string]string{"DB_SUPPORTED_DRIVERS": "sqlite"}); err != nil {
+			return err
+		}
+	}
 	if err := upsertEnvDefaults(".env", envGlobals); err != nil {
 		return err
 	}
@@ -1902,22 +2108,21 @@ func upsertEnvLine(lines []string, key string, value string) []string {
 	return append(lines, key+"="+value)
 }
 
-// parseEnvLine reads simple env assignments while ignoring comments and blank lines.
+// parseEnvLine delegates dotenv syntax to the same parser generation uses while keeping line-oriented edits localized.
 func parseEnvLine(line string) (string, string, bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return "", "", false
 	}
-	key, value, ok := strings.Cut(trimmed, "=")
-	if !ok {
+	values, err := godotenv.Unmarshal(line)
+	if err != nil || len(values) != 1 {
 		return "", "", false
 	}
-	key = strings.TrimSpace(key)
-	value = strings.TrimSpace(value)
-	if comment := strings.Index(value, "#"); comment >= 0 {
-		value = strings.TrimSpace(value[:comment])
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		return key, value, key != ""
 	}
-	return key, value, key != ""
+	return "", "", false
 }
 
 // SetTimings controls whether render summaries include elapsed phase timings.
@@ -2020,6 +2225,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	if p.removeLegacyQueueDriver {
 		changed = true
 	}
+	if p.databaseCapabilitiesChanged {
+		changed = true
+	}
 	defaultApp := project.DefaultApp()
 	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
 		p.config.Dev.WirePaths = []string{defaultApp.WireDir}
@@ -2071,6 +2279,44 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 		p.config.Render.Components = effectiveComponents
 	}()
 	return writeProjectConfig(".goforj.yml", p.config)
+}
+
+// ensureGitignoreEnvironmentRules adds newly generated local environment files without replacing owner-authored ignore rules.
+func ensureGitignoreEnvironmentRules(path string) error {
+	source, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(source), "\n")
+	seen := map[string]bool{}
+	for _, line := range lines {
+		seen[strings.TrimSpace(line)] = true
+	}
+	changed := false
+	for _, rule := range []string{".env", ".env.host", ".env.local", ".env.staging", ".env.production", ".env.testing", "!.env.example"} {
+		if seen[rule] {
+			continue
+		}
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines[len(lines)-1] = rule
+			lines = append(lines, "")
+		} else {
+			lines = append(lines, rule)
+		}
+		seen[rule] = true
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	updated := strings.Join(lines, "\n")
+	if !strings.HasSuffix(updated, "\n") {
+		updated += "\n"
+	}
+	return writeFileAtomically(path, []byte(updated), 0o644)
 }
 
 func dockerComposeUpDevCommand(components project.Components) string {
@@ -2644,6 +2890,7 @@ func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 	return mappings
 }
 
+// writeProjectConfig persists renderer-owned YAML without exposing a partially written configuration.
 func writeProjectConfig(path string, cfg *project.Config) error {
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
@@ -2651,7 +2898,42 @@ func writeProjectConfig(path string, cfg *project.Config) error {
 	if err := encoder.Encode(cfg); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return writeFileAtomically(path, buf.Bytes(), 0o644)
+}
+
+// writeFileAtomically replaces a file only after its complete contents have reached a same-directory temporary file.
+func writeFileAtomically(path string, data []byte, defaultMode fs.FileMode) error {
+	mode := defaultMode.Perm()
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	temporary, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer func() {
+		_ = os.Remove(temporaryPath)
+	}()
+	if err := temporary.Chmod(mode); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
@@ -4140,8 +4422,18 @@ func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath
 	return nil
 }
 
-// renderTemplateFile renders templates based on project configuration settings
+// renderTemplateFile renders ordinary scaffold files while transactional environment files use the atomic variant.
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, false)
+}
+
+// renderTemplateFileAtomically renders a template through a same-directory replacement file.
+func (p *ProjectRenderer) renderTemplateFileAtomically(destPath, tmpl string, data any) error {
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true)
+}
+
+// renderTemplateFileWithAtomicWrite shares rendering while reserving atomic replacement for transactional files.
+func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl string, data any, atomic bool) error {
 	tmplBytes, err := templatesFS.ReadFile(tmpl)
 	if err != nil {
 		return err
@@ -4170,13 +4462,20 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(destPath, newContent, 0644); err != nil {
-		return err
+	if atomic {
+		if err := writeFileAtomically(destPath, newContent, 0o644); err != nil {
+			return err
+		}
+	} else {
+		if err := os.WriteFile(destPath, newContent, 0644); err != nil {
+			return err
+		}
 	}
 	p.stats.recordCreated(destPath)
 	return nil
 }
 
+// templateData projects durable project configuration into the established template-facing shape.
 func templateData(data any) any {
 	switch value := data.(type) {
 	case *project.Config:
@@ -4191,16 +4490,17 @@ func templateData(data any) any {
 	}
 }
 
-// templateData adds transient environment seeds without placing them in durable project configuration.
+// templateData adds transient environment and service decisions without placing them in durable project configuration.
 func (p *ProjectRenderer) templateData(data any) any {
 	value := templateData(data)
 	if config, ok := value.(templateRenderConfig); ok {
-		config.QueueDriver = p.queueDriver
+		config.Resources = resourceRenderValuesForPlanWithConsumers(p.resourcePlan, config.ProjectComponents, p.localServiceIntent, p.serviceConsumers)
 		return config
 	}
 	return value
 }
 
+// templateDataForApp keeps named-App package paths and capability projections isolated from project-level resource state.
 func templateDataForApp(config *project.Config, app project.App) templateRenderConfig {
 	if app.Name == "" {
 		app = project.DefaultApp()
@@ -4426,11 +4726,22 @@ func appEnvPrefix(name string) string {
 	return strings.Trim(builder.String(), "_")
 }
 
-// writeTemplates writes templates to the destination directory of the project
+// writeTemplates renders ordinary templates to their conventional suffix-free destinations.
 func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	for _, path := range tmpls {
 		dest := strings.TrimSuffix(path, ".tmpl")
 		if err := p.renderTemplateFile(dest, path, p.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeEnvironmentTemplates renders environment files atomically so config cleanup cannot outrun partial output.
+func (p *ProjectRenderer) writeEnvironmentTemplates(tmpls []string) error {
+	for _, path := range tmpls {
+		dest := strings.TrimSuffix(path, ".tmpl")
+		if err := p.renderTemplateFileAtomically(dest, path, p.config); err != nil {
 			return err
 		}
 	}

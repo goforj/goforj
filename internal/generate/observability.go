@@ -97,7 +97,7 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 	}
 	appNames := discoverObservabilityApps(projectDir, activeRoles)
 
-	mode, err := resolveObservabilityMetricsMode(activeRoles)
+	mode, err := resolveObservabilityMetricsMode()
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
@@ -347,22 +347,12 @@ func componentsFromMetricRoles(activeRoles []metricsTargetRole) project.Componen
 	return components
 }
 
-func resolveObservabilityMetricsMode(activeRoles []metricsTargetRole) (string, error) {
+// resolveObservabilityMetricsMode defaults to the combined App target because split roles are selected by explicit commands.
+func resolveObservabilityMetricsMode() (string, error) {
 	mode := strings.ToLower(envOrDefault("OBSERVABILITY_METRICS_TARGET_MODE", observabilityMetricsModeAuto))
 	switch mode {
 	case "", observabilityMetricsModeAuto:
-		runtimeMode := strings.ToLower(envOrDefault("RUNTIME_MODE", "standalone"))
-		switch runtimeMode {
-		case "", "standalone":
-			return observabilityMetricsModeLocalSingle, nil
-		case "distributed":
-			if len(activeRoles) <= 1 {
-				return observabilityMetricsModeLocalSingle, nil
-			}
-			return observabilityMetricsModeLocalMulti, nil
-		default:
-			return "", fmt.Errorf("unknown RUNTIME_MODE %q", runtimeMode)
-		}
+		return observabilityMetricsModeLocalSingle, nil
 	case observabilityMetricsModeLocalSingle, observabilityMetricsModeLocalMulti, observabilityMetricsModeCompose, observabilityMetricsModeDisabled:
 		return mode, nil
 	default:

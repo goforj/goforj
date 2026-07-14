@@ -58,6 +58,25 @@ render:
 	}
 }
 
+// TestProjectIgnoresLegacyQueueDriver keeps deployment state environment-owned during Atlas discovery.
+func TestProjectIgnoresLegacyQueueDriver(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: legacy
+module_name: example.com/legacy
+render:
+  queue_driver: nats
+  components:
+    cli: true
+    jobs: true
+`)
+
+	discovered := Project(root)
+	if discovered.QueueDriver == "nats" {
+		t.Fatal("Atlas treated legacy queue_driver YAML as active deployment state")
+	}
+}
+
 func TestInventoryDiscoversSafeProjectResources(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".goforj.yml"), `

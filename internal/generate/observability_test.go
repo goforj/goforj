@@ -38,13 +38,14 @@ func TestGenerateObservabilityFilesWritesSingleProcessTargetsByDefaultInStandalo
 	assertMetricsTargets(t, targets, "Observability Test App", "staging", want)
 }
 
-func TestGenerateObservabilityFilesWritesLocalMultiTargetsByDefaultInDistributedMode(t *testing.T) {
+// TestGenerateObservabilityFilesWritesLocalMultiTargetsWhenExplicitlySelected keeps process layout tied to the selected commands.
+func TestGenerateObservabilityFilesWritesLocalMultiTargetsWhenExplicitlySelected(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "staging")
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "metrics.internal")
-	t.Setenv("RUNTIME_MODE", "distributed")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "local-multi")
 
 	written, err := GenerateObservabilityFiles(projectDir)
 	if err != nil {

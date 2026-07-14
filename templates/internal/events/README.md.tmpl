@@ -40,6 +40,17 @@ EVENTS_AUDIT_DRIVER=redis
 
 That generates support for both in-process and Redis event buses, uses in-process for the default bus, and Redis for the `audit` bus.
 
+Redis event buses use the project-wide `REDIS_HOST`, `REDIS_PORT`,
+`REDIS_PASSWORD`, and `REDIS_DB` settings unless an `EVENTS_*_ADDR` override
+selects a different endpoint. This keeps cache, queue, and events on one
+authenticated Redis connection contract for the common shared-resource setup.
+
+## Switching Drivers
+
+`EVENTS_SUPPORTED_DRIVERS` is the set of drivers built into the app; `EVENTS_DRIVER` and the named `EVENTS_<NAME>_DRIVER` values select which of them are active. To switch an existing event bus to a driver already built in, configure its connection and required service, change the active driver, then restart or redeploy every publisher and subscriber. No regeneration or rebuild is needed.
+
+To use a driver that is not built in, add it to `EVENTS_SUPPORTED_DRIVERS`, run `forj generate --events`, and build a new artifact before selecting it. Event history is not moved, and delivery, ordering, replay, and durability semantics may change. In particular, cross-process Redis events are not durable event storage.
+
 ## API
 
 - `events.NewManager()`

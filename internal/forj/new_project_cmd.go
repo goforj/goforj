@@ -41,14 +41,14 @@ const (
 	StageStarterKit
 	// StageExtras collects optional project profiles that expand component selection.
 	StageExtras
+	// StageAppResources coordinates starting drivers and local service placement.
+	StageAppResources
 	// StageAtlasSupport collects optional AI agent support installation.
 	StageAtlasSupport
 	// StageAtlasAgents collects custom AI agent selections.
 	StageAtlasAgents
 	// StageAtlasSurfaces collects custom Atlas file surface selections.
 	StageAtlasSurfaces
-	// StageRuntime collects runtime driver choices that depend on selected components.
-	StageRuntime
 	// StageProjectPath collects the destination directory.
 	StageProjectPath
 	// StageConfirm shows the final project creation summary.
@@ -102,6 +102,9 @@ type ListItem struct {
 	Selected bool
 }
 
+// wizardDatabaseComponentKey projects the three render drivers as one wizard capability.
+const wizardDatabaseComponentKey project.ComponentKey = "database"
+
 // Title satisfies the Bubbles list item contract for project component rows.
 func (i ListItem) Title() string { return i.Name }
 
@@ -110,22 +113,6 @@ func (i ListItem) Description() string { return i.Desc }
 
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i ListItem) FilterValue() string { return i.Name }
-
-// QueueDriverItem adapts a queue driver option to the Bubbles list model.
-type QueueDriverItem struct {
-	Driver string
-	Label  string
-	Desc   string
-}
-
-// Title satisfies the Bubbles list item contract for queue driver rows.
-func (i QueueDriverItem) Title() string { return i.Label }
-
-// Description satisfies the Bubbles list item contract for queue driver rows.
-func (i QueueDriverItem) Description() string { return i.Desc }
-
-// FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
-func (i QueueDriverItem) FilterValue() string { return i.Label }
 
 // StarterKitItem adapts a starter-kit definition to the Bubbles list model.
 type StarterKitItem struct {
@@ -234,7 +221,21 @@ func (i AtlasSurfaceItem) FilterValue() string { return i.Label }
 // makeProjectComponentItems converts the shared component catalog into wizard rows.
 func makeProjectComponentItems() []list.Item {
 	items := make([]list.Item, 0, len(project.ComponentCatalog()))
+	databaseAdded := false
 	for _, component := range project.ComponentCatalog() {
+		if project.IsAppDatabaseComponent(component.Key) {
+			if databaseAdded {
+				continue
+			}
+			databaseAdded = true
+			items = append(items, ListItem{
+				Key:      wizardDatabaseComponentKey,
+				Name:     "Database",
+				Desc:     "Store app data in MySQL, Postgres, or SQLite",
+				Selected: defaultDatabaseCapabilitySelected(),
+			})
+			continue
+		}
 		items = append(items, ListItem{
 			Key:      component.Key,
 			Name:     component.Label,
@@ -243,6 +244,11 @@ func makeProjectComponentItems() []list.Item {
 		})
 	}
 	return items
+}
+
+// defaultDatabaseCapabilitySelected reports whether the canonical defaults enable any database implementation.
+func defaultDatabaseCapabilitySelected() bool {
+	return project.DefaultSelectedComponents().HasDatabase()
 }
 
 // makeStarterKitItems converts the shared starter-kit catalog into wizard rows.
@@ -311,60 +317,88 @@ func makeAtlasSurfaceItems() []list.Item {
 	}
 }
 
-type queueDriverOption struct {
-	Name  string
-	Title string
-	Desc  string
-}
-
-func queueDriverOptions() []queueDriverOption {
-	return []queueDriverOption{
-		{Name: "null", Title: "Null", Desc: "accept jobs and drop them immediately"},
-		{Name: "redis", Title: "Redis", Desc: "distributed async queue via Redis"},
-		{Name: "nats", Title: "NATS", Desc: "distributed async queue via NATS"},
-		{Name: "sqs", Title: "SQS", Desc: "distributed async queue via AWS SQS"},
-		{Name: "rabbitmq", Title: "RabbitMQ", Desc: "distributed async queue via RabbitMQ"},
-		{Name: "sqlite", Title: "SQLite", Desc: "SQL-backed queue via SQLite"},
-		{Name: "postgres", Title: "Postgres", Desc: "SQL-backed queue via Postgres"},
-		{Name: "mysql", Title: "MySQL", Desc: "SQL-backed queue via MySQL"},
-		{Name: "workerpool", Title: "Workerpool", Desc: "in-process async worker pool"},
-		{Name: "sync", Title: "Sync", Desc: "inline, in-process execution"},
-	}
-}
-
-func normalizeQueueDriver(value string) string {
+// normalizeDatabaseChoice accepts only the database implementations exposed by the new-project wizard.
+func normalizeDatabaseChoice(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
-	case "null", "redis", "nats", "sqs", "rabbitmq", "sqlite", "postgres", "mysql", "sync", "workerpool":
+	case "mysql", "postgres", "sqlite":
 		return normalized
 	default:
 		return ""
 	}
 }
 
+// databaseChoiceForComponentKey maps the transitional render flag back to its wizard-owned driver choice.
+func databaseChoiceForComponentKey(key project.ComponentKey) string {
+	switch key {
+	case project.ComponentDatabaseMySQL:
+		return "mysql"
+	case project.ComponentDatabasePostgres:
+		return "postgres"
+	case project.ComponentDatabaseSQLite:
+		return "sqlite"
+	default:
+		return ""
+	}
+}
+
+// effectiveDatabaseChoice returns the temporary Demo lock without overwriting the user's independent choice.
+func (m model) effectiveDatabaseChoice() string {
+	if m.demoAppEnabled {
+		return "mysql"
+	}
+	choice := normalizeDatabaseChoice(m.databaseChoice)
+	if choice == "" {
+		return "mysql"
+	}
+	return choice
+}
+
+// applyDatabaseChoiceToComponents maps the wizard capability back onto exactly one transitional render flag.
+func applyDatabaseChoiceToComponents(components *project.Components, choice string) {
+	components.DatabaseMySQL = false
+	components.DatabasePostgres = false
+	components.DatabaseSQLite = false
+	switch normalizeDatabaseChoice(choice) {
+	case "postgres":
+		components.DatabasePostgres = true
+	case "sqlite":
+		components.DatabaseSQLite = true
+	default:
+		components.DatabaseMySQL = true
+	}
+}
+
 type model struct {
-	stage              WizardStage
-	projectInput       textinput.Model
-	moduleInput        textinput.Model
-	pathInput          textinput.Model
-	componentList      list.Model
-	helpFormatList     list.Model
-	starterKitList     list.Model
-	queueDriverList    list.Model
-	queueDriver        string
-	atlasModeList      list.Model
-	atlasAgentList     list.Model
-	atlasSurfaceList   list.Model
-	selectedComponents []string
-	config             project.Config
-	cancelled          bool
-	errorMsg           string
-	targetPath         string
-	termWidth          int
-	allowNonEmpty      bool
-	extrasIndex        int
-	demoAppEnabled     bool
-	atlasMode          atlasMode
+	stage                WizardStage
+	projectInput         textinput.Model
+	moduleInput          textinput.Model
+	pathInput            textinput.Model
+	componentList        list.Model
+	helpFormatList       list.Model
+	starterKitList       list.Model
+	atlasModeList        list.Model
+	atlasAgentList       list.Model
+	atlasSurfaceList     list.Model
+	selectedComponents   []string
+	config               project.Config
+	cancelled            bool
+	errorMsg             string
+	targetPath           string
+	termWidth            int
+	allowNonEmpty        bool
+	extrasIndex          int
+	demoAppEnabled       bool
+	databaseChoice       string
+	starterKitApplicable bool
+	resourceUI           newProjectResourceUI
+	resourceUIReady      bool
+	effectiveResources   project.ResourcePlan
+	effectiveIntent      project.LocalServiceIntent
+	effectiveConsumers   []project.EffectiveResourceConsumer
+	resourceOverrides    string
+	resourcesReconciled  bool
+	atlasMode            atlasMode
 }
 
 const wizardWidth = 90
@@ -374,11 +408,24 @@ type newProjectModelOptions struct {
 	allowNonEmpty bool
 }
 
+// components returns the one mutable capability set shared by every wizard stage.
 func (m *model) components() *project.Components {
 	return &m.config.Render.Components
 }
 
-func (m *model) finalizeConfig() {
+// finalizeConfig derives development tasks only after the effective resource and service plans are valid.
+func (m *model) finalizeConfig() error {
+	if !m.resourceUIReady || m.resourceUI.components != *m.components() {
+		if err := m.prepareResourceUI(); err != nil {
+			return fmt.Errorf("resolve App Resources: %w", err)
+		}
+	}
+	resourcePlan := m.selectedResourcePlan()
+	servicePlan, err := project.ResolveServicePlanWithConsumers(resourcePlan, *m.components(), m.selectedResourceIntent(), m.selectedResourceConsumers())
+	if err != nil {
+		return fmt.Errorf("resolve App services: %w", err)
+	}
+
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	m.config.Render.GoForjVersion = version.Semver()
 	components := m.components()
@@ -387,13 +434,6 @@ func (m *model) finalizeConfig() {
 		m.config.Render.StarterKit = project.StarterKitNone
 	}
 	m.config.Render.HelpFormat = project.NormalizeHelpFormat(m.config.Render.HelpFormat)
-	if components.Jobs {
-		m.queueDriver = normalizeQueueDriver(m.queueDriver)
-		if m.queueDriver == "" {
-			m.queueDriver = "redis"
-		}
-	}
-
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
 		Pre:               []project.DevTask{},
@@ -403,27 +443,9 @@ func (m *model) finalizeConfig() {
 		DownOnExit:        true,
 		WirePaths:         []string{project.DefaultApp().WireDir},
 	}
-	if components.Docker {
-		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
-			Name: "Run Docker Compose",
-			Cmd:  dockerComposeUpDevCommand(*components),
-		})
-		m.config.Dev.Down = append(m.config.Dev.Down, project.DevTask{
-			Name: "Docker Compose Down",
-			Cmd:  "docker-compose down",
-		})
-
-		if components.HasDatabase() && !components.DatabaseSQLite {
-			waitCmd := "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done; mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'"
-			if components.DatabasePostgres {
-				waitCmd = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done; psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'"
-			}
-			m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
-				Name: "Waiting for Database to be ready",
-				Cmd:  waitCmd,
-			})
-		}
-	}
+	serviceTasks := planNewProjectServiceTasks(resourcePlan, servicePlan, *components)
+	m.config.Dev.Pre = append(m.config.Dev.Pre, serviceTasks.Pre...)
+	m.config.Dev.Down = append(m.config.Dev.Down, serviceTasks.Down...)
 
 	if components.WebUI && project.StarterKitUsesNPM(m.config.Render.StarterKit) {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultApp()))
@@ -442,6 +464,7 @@ func (m *model) finalizeConfig() {
 			Exec:  "npm run dev",
 		})
 	}
+	return nil
 }
 
 // frontendNPMWatch returns compatibility filters for an existing frontend whose
@@ -507,17 +530,6 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 	helpFormatList.SetShowStatusBar(false)
 	helpFormatList.SetShowPagination(false)
 
-	runtimeList := list.New(makeQueueDriverItems(), delegate, 42, 6)
-	runtimeList.Title = "Queue Driver"
-	runtimeList.SetShowFilter(false)
-	runtimeList.SetShowHelp(false)
-	runtimeList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
-	runtimeList.Styles.PaginationStyle = helpStyle
-	runtimeList.Styles.HelpStyle = helpStyle
-	runtimeList.Styles.StatusBar = helpStyle
-	runtimeList.SetShowStatusBar(false)
-	runtimeList.SetShowPagination(false)
-
 	atlasModeList := list.New(makeAtlasModeItems(), delegate, 42, 4)
 	atlasModeList.Title = "Atlas - Agent Support"
 	atlasModeList.SetShowFilter(false)
@@ -551,44 +563,39 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 	atlasSurfaceList.SetShowStatusBar(false)
 	atlasSurfaceList.SetShowPagination(false)
 
+	components := project.DefaultSelectedComponents()
+	resourceUI, resourceErr := newNewProjectResourceUI(components)
+	resourceErrorMessage := ""
+	if resourceErr != nil {
+		resourceErrorMessage = fmt.Sprintf("Could not initialize App Resources: %v", resourceErr)
+	}
 	return model{
-		stage:            StageProjectName,
-		projectInput:     ti,
-		moduleInput:      styledTextInput(),
-		pathInput:        pi,
-		componentList:    li,
-		helpFormatList:   helpFormatList,
-		starterKitList:   starterKitList,
-		queueDriverList:  runtimeList,
-		queueDriver:      "redis",
-		atlasModeList:    atlasModeList,
-		atlasAgentList:   atlasAgentList,
-		atlasSurfaceList: atlasSurfaceList,
-		atlasMode:        atlasModeRecommended,
-		allowNonEmpty:    options.allowNonEmpty,
+		stage:                StageProjectName,
+		projectInput:         ti,
+		moduleInput:          styledTextInput(),
+		pathInput:            pi,
+		componentList:        li,
+		helpFormatList:       helpFormatList,
+		starterKitList:       starterKitList,
+		databaseChoice:       "mysql",
+		starterKitApplicable: components.WebUI,
+		resourceUI:           resourceUI,
+		resourceUIReady:      resourceErr == nil,
+		atlasModeList:        atlasModeList,
+		atlasAgentList:       atlasAgentList,
+		atlasSurfaceList:     atlasSurfaceList,
+		atlasMode:            atlasModeRecommended,
+		allowNonEmpty:        options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
 				GoForjVersion: version.Semver(),
-				Components:    project.DefaultSelectedComponents(),
+				Components:    components,
 				StarterKit:    project.DefaultStarterKit(),
 				HelpFormat:    project.DefaultHelpFormat(),
 			},
 		},
+		errorMsg: resourceErrorMessage,
 	}
-}
-
-// makeQueueDriverItems converts queue driver options into wizard rows.
-func makeQueueDriverItems() []list.Item {
-	options := queueDriverOptions()
-	items := make([]list.Item, 0, len(options))
-	for _, option := range options {
-		items = append(items, QueueDriverItem{
-			Driver: option.Name,
-			Label:  option.Title,
-			Desc:   option.Desc,
-		})
-	}
-	return items
 }
 
 // Init satisfies tea.Model and starts cursor blinking for text inputs.
@@ -596,9 +603,10 @@ func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// applyComponentSelection commits wizard capabilities to their render-compatible component flags.
 func (m *model) applyComponentSelection() {
-	// Reset before applying current selections.
 	*m.components() = m.selectedComponentConfig().WithResolvedDependencies()
+	m.starterKitApplicable = m.components().WebUI
 	if !m.components().WebUI {
 		m.config.Render.StarterKit = project.StarterKitNone
 	}
@@ -619,6 +627,7 @@ func (m *model) applyHelpFormatSelection() {
 	m.config.Render.HelpFormat = project.NormalizeHelpFormat(item.Key)
 }
 
+// applyStarterKitSelection commits the highlighted kit while honoring the Web UI capability boundary.
 func (m *model) applyStarterKitSelection() {
 	if !m.config.Render.Components.WebUI {
 		m.config.Render.StarterKit = project.StarterKitNone
@@ -637,25 +646,98 @@ func (m *model) applyStarterKitSelection() {
 	m.config.Render.StarterKit = project.NormalizeStarterKit(item.Key)
 }
 
+// applyExtrasSelection applies Demo's temporary constraints without erasing the unlocked component choices.
 func (m *model) applyExtrasSelection() {
 	m.demoAppEnabled = m.extrasIndex == 1
 	components := m.components()
-	components.DemoApp = m.demoAppEnabled
 	if !m.demoAppEnabled {
+		*components = m.selectedComponentConfig().WithResolvedDependencies()
+		components.DemoApp = false
 		return
 	}
-	// Demo App profile requires core runtime surfaces.
+	components.DemoApp = true
+	// Demo owns a MySQL-only compatibility contract until its generated SQL supports every database driver.
 	components.CLI = true
 	components.Auth = true
 	components.WebAPI = true
 	components.WebUI = true
 	components.Scheduler = true
 	components.Jobs = true
-	components.DatabaseMySQL = true
-	components.DatabasePostgres = false
-	components.DatabaseSQLite = false
+	applyDatabaseChoiceToComponents(components, m.effectiveDatabaseChoice())
 	m.config.Render.StarterKit = project.StarterKitNone
 	components.ResolveDependencies()
+}
+
+// prepareResourceUI reconciles retained edits against capabilities finalized by earlier wizard stages.
+func (m *model) prepareResourceUI() error {
+	components := *m.components()
+	if !m.resourceUIReady {
+		resourceUI, err := newNewProjectResourceUI(components)
+		if err != nil {
+			return err
+		}
+		m.resourceUI = resourceUI
+		m.resourceUIReady = true
+	} else if err := m.resourceUI.reconcile(components); err != nil {
+		m.syncResourceUIState()
+		return err
+	}
+	m.syncResourceUIState()
+	return nil
+}
+
+// syncResourceUIState projects transient database choices while invalidating any prior target preview.
+func (m *model) syncResourceUIState() {
+	m.databaseChoice = m.resourceUI.databaseDriver()
+	*m.components() = m.resourceUI.componentsWithDatabase(*m.components())
+	m.effectiveResources = project.ResourcePlan{}
+	m.effectiveIntent = project.LocalServiceIntent{}
+	m.effectiveConsumers = nil
+	m.resourceOverrides = ""
+	m.resourcesReconciled = false
+}
+
+// selectedResourcePlan returns the owner-reconciled plan when Path has supplied one.
+func (m model) selectedResourcePlan() project.ResourcePlan {
+	if m.resourcesReconciled {
+		return m.effectiveResources.Clone()
+	}
+	return m.resourceUI.resourcePlan()
+}
+
+// selectedResourceIntent returns placement intent from the same source as selectedResourcePlan.
+func (m model) selectedResourceIntent() project.LocalServiceIntent {
+	if m.resourcesReconciled {
+		return cloneNewProjectLocalServiceIntent(m.effectiveIntent)
+	}
+	return m.resourceUI.serviceIntent()
+}
+
+// selectedResourceConsumers returns owner-discovered named and App-scoped consumers after Path reconciliation.
+func (m model) selectedResourceConsumers() []project.EffectiveResourceConsumer {
+	if !m.resourcesReconciled {
+		return nil
+	}
+	return cloneEffectiveResourceConsumers(m.effectiveConsumers)
+}
+
+// resourceConfirmationUI overlays owner-controlled target values on a defensive editor copy.
+func (m model) resourceConfirmationUI() newProjectResourceUI {
+	ui := m.resourceUI.clone()
+	if !m.resourcesReconciled {
+		return ui
+	}
+	ui.plan = m.effectiveResources.Clone()
+	ui.localServiceIntent = cloneNewProjectLocalServiceIntent(m.effectiveIntent)
+	ui.effectiveConsumers = cloneEffectiveResourceConsumers(m.effectiveConsumers)
+	classification := project.ClassifyResourcePlan(ui.plan, ui.components)
+	if classification.Shape != "" {
+		ui.baseShape = classification.Shape
+	}
+	if database, ok := ui.plan.Selection(project.ResourceDatabase); ok {
+		ui.databaseChoice = database.Active
+	}
+	return ui
 }
 
 func (m *model) applyAtlasModeSelection() {
@@ -784,9 +866,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
 			m.cancelled = true
 			return m, tea.Quit
+		case tea.KeyEsc:
+			if m.stage != StageAppResources {
+				m.cancelled = true
+				return m, tea.Quit
+			}
 		}
 
 		switch m.stage {
@@ -892,7 +979,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				m.applyHelpFormatSelection()
-				if m.config.Render.Components.WebUI {
+				if m.starterKitApplicable {
 					m.stage = StageStarterKit
 				} else {
 					m.config.Render.StarterKit = project.StarterKitNone
@@ -924,7 +1011,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageExtras:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				if m.config.Render.Components.WebUI {
+				if m.starterKitApplicable {
 					m.stage = StageStarterKit
 				} else {
 					m.stage = StageHelpFormat
@@ -947,15 +1034,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				m.applyExtrasSelection()
-				m.stage = StageAtlasSupport
-				m.pathInput.Focus()
+				resourceErr := m.prepareResourceUI()
+				m.resourceUI.screen = newProjectResourceScreenSummary
+				m.resourceUI.summaryFocus = newProjectResourceFocusContinue
+				m.stage = StageAppResources
+				if resourceErr != nil {
+					m.resourceUI.errorMessage = resourceErr.Error()
+					m.errorMsg = resourceErr.Error()
+				} else {
+					m.errorMsg = ""
+				}
 				return m, nil
 			}
+
+		case StageAppResources:
+			resourceUI, action, err := m.resourceUI.update(msg)
+			m.resourceUI = resourceUI
+			if err != nil {
+				m.resourceUI.errorMessage = err.Error()
+				m.errorMsg = err.Error()
+				return m, nil
+			}
+			m.syncResourceUIState()
+			m.errorMsg = ""
+			switch action {
+			case newProjectResourceActionBack:
+				m.stage = StageExtras
+			case newProjectResourceActionContinue:
+				m.stage = StageAtlasSupport
+			}
+			return m, nil
 
 		case StageAtlasSupport:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				m.stage = StageExtras
+				m.stage = StageAppResources
 				return m, nil
 			}
 			switch msg.String() {
@@ -1026,33 +1139,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.atlasSurfaceList, cmd = m.atlasSurfaceList.Update(msg)
 			return m, cmd
 
-		case StageRuntime:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				m.stage = StageExtras
-				return m, nil
-			}
-			switch msg.String() {
-			case "enter":
-				index := m.queueDriverList.Index()
-				if index < 0 || index >= len(m.queueDriverList.Items()) {
-					m.queueDriver = "redis"
-				} else {
-					if item, ok := m.queueDriverList.Items()[index].(QueueDriverItem); ok {
-						m.queueDriver = item.Driver
-					}
-				}
-				m.stage = StageProjectPath
-				if m.pathInput.Value() == "" {
-					m.pathInput.SetValue(m.defaultTargetPath())
-				}
-				m.pathInput.Focus()
-				return m, nil
-			}
-			var cmd tea.Cmd
-			m.queueDriverList, cmd = m.queueDriverList.Update(msg)
-			return m, cmd
-
 		case StageProjectPath:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
@@ -1070,8 +1156,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errorMsg = err.Error()
 					return m, nil
 				}
-				m.errorMsg = ""
 				m.targetPath = m.projectPath()
+				reconciliation, err := reconcileNewProjectTargetResources(
+					m.targetPath,
+					m.resourceUI.resourcePlan(),
+					m.config.Render.Components,
+					m.resourceUI.serviceIntent(),
+				)
+				if err != nil {
+					m.errorMsg = err.Error()
+					return m, nil
+				}
+				m.effectiveResources = reconciliation.plan.Clone()
+				m.effectiveIntent = cloneNewProjectLocalServiceIntent(reconciliation.serviceIntent)
+				m.effectiveConsumers = cloneEffectiveResourceConsumers(reconciliation.serviceConsumers)
+				m.resourceOverrides = reconciliation.overrideSummary
+				m.resourcesReconciled = true
+				m.errorMsg = ""
 				m.stage = StageConfirm
 				return m, nil
 			}
@@ -1098,7 +1199,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.targetPath = m.projectPath()
-				m.finalizeConfig()
+				if err := m.finalizeConfig(); err != nil {
+					m.errorMsg = err.Error()
+					return m, nil
+				}
 				m.errorMsg = ""
 				m.stage = StageDone
 				return m, tea.Quit
@@ -1176,7 +1280,7 @@ func (m model) View() string {
 	}
 
 	// Starter kit panel.
-	if m.stage >= StageStarterKit && m.config.Render.Components.WebUI {
+	if m.stage >= StageStarterKit && m.starterKitApplicable {
 		starterKitSummary := m.selectedStarterKitSummary()
 		if m.stage == StageStarterKit {
 			panels = append(panels, m.panelWithTitle("Starter Kit", lipgloss.JoinVertical(
@@ -1228,6 +1332,21 @@ func (m model) View() string {
 		}
 	}
 
+	// App Resources panel.
+	if m.stage >= StageAppResources {
+		if m.stage == StageAppResources {
+			panels = append(panels, m.panelWithTitle("App Resources", m.resourceUI.renderBody(m.termWidth), m.termWidth, true))
+			actions = resourceEditorFooterActions(m.resourceUI)
+		} else {
+			resourceUI := m.resourceConfirmationUI()
+			resourceSummary := resourceUI.classification().Label
+			if resourceUI.databaseEnabled {
+				resourceSummary += " · " + newProjectResourceDriverLabel(project.ResourceDatabase, resourceUI.databaseDriver())
+			}
+			panels = append(panels, m.panelWithTitle("App Resources", normalStyle.Render(resourceSummary), m.termWidth, false))
+		}
+	}
+
 	// Atlas panel.
 	if m.stage >= StageAtlasSupport {
 		switch m.stage {
@@ -1264,25 +1383,14 @@ func (m model) View() string {
 		}
 	}
 
-	// Runtime panel.
-	if m.stage >= StageRuntime && m.config.Render.Components.Jobs {
-		driver := selectedQueueDriverSummary(m)
-
-		if m.stage == StageRuntime {
-			panels = append(panels, m.panelWithTitle("Runtime · Queue Driver", lipgloss.JoinVertical(
-				lipgloss.Left,
-				m.renderQueueDriverList(m.termWidth),
-			), m.termWidth, true))
-			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
-		} else {
-			panels = append(panels, m.panelWithTitle("Runtime · Queue Driver", normalStyle.Render(driver), m.termWidth, false))
-		}
-	}
-
 	// Path panel.
 	if m.stage >= StageProjectPath {
 		if m.stage == StageProjectPath {
 			statusText, statusOK := m.pathStatus()
+			if strings.TrimSpace(m.errorMsg) != "" {
+				statusText = m.errorMsg
+				statusOK = false
+			}
 			statusLine := statusErrorStyle.Render("x " + statusText)
 			if statusOK {
 				statusLine = statusOKStyle.Render("✓ " + statusText)
@@ -1311,9 +1419,18 @@ func (m model) View() string {
 			{"Path", m.projectPath()},
 			{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
 			{"Starter kit", m.selectedStarterKitSummary()},
-			{"Queue driver", selectedQueueDriverSummary(m)},
 			{"Agent support", m.atlasSummary()},
 			{"Components", componentNames},
+		}
+		resourceRows, resourceErr := m.resourceConfirmationUI().confirmationRows()
+		if resourceErr == nil {
+			rows = append(rows, resourceRows...)
+		}
+		if tools := newProjectDevelopmentToolsSummary(m.config.Render.Components); tools != "" {
+			rows = append(rows, keyValue{"Development tools", tools})
+		}
+		if m.resourceOverrides != "" {
+			rows = append(rows, keyValue{"Existing target overrides", m.resourceOverrides})
 		}
 		rows = append(rows, keyValue{"Help format", m.selectedHelpFormatSummary()})
 		confirmBody := lipgloss.JoinVertical(lipgloss.Left, renderKeyValueTable(rows))
@@ -1458,47 +1575,6 @@ func (m model) renderComponentList(termWidth int) string {
 		}
 		label := labelStyle.Render(item.Name)
 		line := indent + caret + marker + " " + label
-		if strings.TrimSpace(item.Desc) != "" {
-			line += " " + descStyle.Render("· "+item.Desc)
-		}
-		rows = append(rows, line)
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, rows...)
-}
-
-func (m model) renderQueueDriverList(termWidth int) string {
-	items := m.queueDriverList.Items()
-	if len(items) == 0 {
-		return ""
-	}
-
-	var rows []string
-	for i, listItem := range items {
-		item, ok := listItem.(QueueDriverItem)
-		if !ok {
-			continue
-		}
-		isFocused := m.queueDriverList.Index() == i
-		caret := "  "
-		if isFocused {
-			caret = titleIndicatorStyle.Render("› ")
-		}
-
-		marker := normalStyle.Render("○")
-		if isFocused {
-			marker = lipgloss.NewStyle().Foreground(accentColor).Render("●")
-		}
-
-		labelStyle := listOptionMutedStyle
-		if isFocused {
-			labelStyle = listFocusedNameStyle
-		}
-		descStyle := listDescStyle
-		if isFocused {
-			descStyle = listFocusedDescStyle
-		}
-		label := labelStyle.Render(item.Label)
-		line := caret + marker + " " + label
 		if strings.TrimSpace(item.Desc) != "" {
 			line += " " + descStyle.Render("· "+item.Desc)
 		}
@@ -1909,31 +1985,6 @@ func (m model) selectedComponentNames() []string {
 	return comps
 }
 
-func selectedQueueDriverSummary(m model) string {
-	if !m.config.Render.Components.Jobs {
-		return "n/a"
-	}
-
-	driver := normalizeQueueDriver(m.queueDriver)
-	if driver == "" {
-		index := m.queueDriverList.Index()
-		if index >= 0 && index < len(m.queueDriverList.Items()) {
-			if item, ok := m.queueDriverList.Items()[index].(QueueDriverItem); ok {
-				driver = item.Driver
-			}
-		}
-		if driver == "" {
-			driver = "redis"
-		}
-	}
-	for _, option := range queueDriverOptions() {
-		if option.Name == driver {
-			return option.Title
-		}
-	}
-	return driver
-}
-
 func renderInputLine(input textinput.Model) string {
 	view := input.View()
 	width := input.Width
@@ -2064,6 +2115,7 @@ func styledTextInput() textinput.Model {
 	return ti
 }
 
+// renderProgress reflects the conditional route actually traversed so Back and progress never disagree.
 func (m model) renderProgress() string {
 	steps := []struct {
 		label string
@@ -2077,15 +2129,21 @@ func (m model) renderProgress() string {
 		label string
 		stage WizardStage
 	}{"Help", StageHelpFormat})
+	if m.starterKitApplicable {
+		steps = append(steps, struct {
+			label string
+			stage WizardStage
+		}{"Starter", StageStarterKit})
+	}
 	steps = append(steps,
 		struct {
 			label string
 			stage WizardStage
-		}{"Starter", StageStarterKit},
+		}{"Extras", StageExtras},
 		struct {
 			label string
 			stage WizardStage
-		}{"Extras", StageExtras},
+		}{"Resources", StageAppResources},
 		struct {
 			label string
 			stage WizardStage
@@ -2124,16 +2182,12 @@ func (m model) renderProgress() string {
 	return strings.Join(parts, " ")
 }
 
+// setAllComponents changes projected capabilities while retaining the current database implementation.
 func (m *model) setAllComponents(selected bool) {
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
 		if item.Name == "CLI" {
 			item.Selected = true
-			m.componentList.SetItem(idx, item)
-			continue
-		}
-		if item.Name == "Database (Postgres)" || item.Name == "Database (SQLite)" {
-			item.Selected = false
 			m.componentList.SetItem(idx, item)
 			continue
 		}
@@ -2156,7 +2210,14 @@ func (m *model) deselectComponent(name string) {
 	}
 }
 
+// setComponentSelected updates a projected wizard row and remembers a concrete database choice when supplied.
 func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
+	if choice := databaseChoiceForComponentKey(key); choice != "" {
+		if selected {
+			m.databaseChoice = choice
+		}
+		key = wizardDatabaseComponentKey
+	}
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
 		if item.Key != key {
@@ -2189,6 +2250,7 @@ func (m *model) deselectExclusiveComponents(selectedKey project.ComponentKey, gr
 	}
 }
 
+// deselectDependentComponents removes transitive children because leaving them selected would create invalid late-stage state.
 func (m *model) deselectDependentComponents(key project.ComponentKey) {
 	changed := true
 	disabled := map[project.ComponentKey]bool{key: true}
@@ -2216,9 +2278,17 @@ func (m *model) deselectDependentComponents(key project.ComponentKey) {
 	}
 }
 
+// blockedDeselectionMessage explains when normalization restores a required capability.
 func (m *model) blockedDeselectionMessage(key project.ComponentKey, nowSelected bool) (string, bool) {
 	if nowSelected {
 		return "", false
+	}
+	if key == wizardDatabaseComponentKey {
+		blockers := m.databaseCapabilityBlockers()
+		if len(blockers) == 0 {
+			return "", false
+		}
+		return fmt.Sprintf("Database remains enabled because %s requires it.", strings.Join(blockers, " or ")), true
 	}
 	current := m.selectedComponentConfig()
 	resolved := current.WithResolvedDependencies()
@@ -2250,23 +2320,58 @@ func (m *model) blockedDeselectionMessage(key project.ComponentKey, nowSelected 
 	return fmt.Sprintf("%s remains enabled because %s requires it.", definition.Label, strings.Join(blockers, ", ")), true
 }
 
+// databaseCapabilityBlockers returns wizard selections that require a database without prescribing its driver.
+func (m model) databaseCapabilityBlockers() []string {
+	blockers := make([]string, 0, 3)
+	for _, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if !item.Selected {
+			continue
+		}
+		switch item.Key {
+		case project.ComponentAuth:
+			blockers = append(blockers, "Auth")
+		case project.ComponentOAuth:
+			blockers = append(blockers, "OAuth")
+		}
+	}
+	if m.demoAppEnabled {
+		blockers = append(blockers, "Demo App")
+	}
+	return blockers
+}
+
+// selectedComponentConfig expands wizard capabilities into the existing render flags.
 func (m *model) selectedComponentConfig() project.Components {
 	var components project.Components
+	databaseSelected := false
 	for _, item := range m.componentList.Items() {
 		it := item.(ListItem)
 		if !it.Selected {
 			continue
 		}
+		if it.Key == wizardDatabaseComponentKey {
+			databaseSelected = true
+			continue
+		}
 		components.SetEnabled(it.Key, true)
+	}
+	if databaseSelected || components.Auth || components.OAuth || m.demoAppEnabled {
+		applyDatabaseChoiceToComponents(&components, m.effectiveDatabaseChoice())
 	}
 	return components
 }
 
+// normalizeComponentSelections reflects dependency resolution through synthetic wizard capabilities.
 func (m *model) normalizeComponentSelections() {
 	components := m.selectedComponentConfig().WithResolvedDependencies()
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
-		item.Selected = components.Enabled(item.Key)
+		if item.Key == wizardDatabaseComponentKey {
+			item.Selected = components.HasDatabase()
+		} else {
+			item.Selected = components.Enabled(item.Key)
+		}
 		m.componentList.SetItem(idx, item)
 	}
 }
@@ -2339,6 +2444,7 @@ func (m model) projectPath() string {
 	return filepath.Clean(filepath.Join(wd, input))
 }
 
+// validateBeforeConfirm blocks confirmation until path, resource, and service contracts describe one renderable project.
 func (m model) validateBeforeConfirm() error {
 	if strings.TrimSpace(m.projectInput.Value()) == "" {
 		return fmt.Errorf("Project name is required.")
@@ -2349,6 +2455,16 @@ func (m model) validateBeforeConfirm() error {
 
 	if err := m.validatePathInput(); err != nil {
 		return err
+	}
+	if !m.resourceUIReady {
+		return fmt.Errorf("App Resources are not initialized")
+	}
+	resourcePlan := m.selectedResourcePlan()
+	if err := resourcePlan.Validate(m.config.Render.Components); err != nil {
+		return fmt.Errorf("App Resources are invalid: %w", err)
+	}
+	if _, err := project.ResolveServicePlanWithConsumers(resourcePlan, m.config.Render.Components, m.selectedResourceIntent(), m.selectedResourceConsumers()); err != nil {
+		return fmt.Errorf("App services are invalid: %w", err)
 	}
 
 	return nil
@@ -2414,6 +2530,7 @@ func ensureNewProjectConfigCanBeWritten(configPath string) error {
 	return nil
 }
 
+// renderFooter keeps the action bar within the current terminal without shrinking the wizard's normal visual rhythm.
 func renderFooter(actions []string, termWidth int) string {
 	line := strings.Join(actions, " · ")
 	width := lipgloss.Width(line)
@@ -2428,6 +2545,39 @@ func renderFooter(actions []string, termWidth int) string {
 	}
 	bar := panelBorderStyle.Render(strings.Repeat("─", width))
 	return lipgloss.JoinVertical(lipgloss.Left, bar, panelBorderStyle.Render(line))
+}
+
+// resourceEditorFooterActions describes only the controls available on the current resource screen.
+func resourceEditorFooterActions(ui newProjectResourceUI) []string {
+	switch ui.screen {
+	case newProjectResourceScreenSummary:
+		return []string{"Enter to select", "Shift+Tab to go back", "a: advanced", "Esc to go back"}
+	case newProjectResourceScreenAdvanced:
+		actions := []string{"Enter: starting driver", "s: built-in drivers"}
+		if ui.focusedPlacementSelectable() {
+			actions = append(actions, "p: placement")
+		}
+		return append(actions, "r: reset", "Shift+Tab: back")
+	case newProjectResourceScreenSupported:
+		return []string{"Space to toggle", "Enter to finish", "Shift+Tab to go back"}
+	default:
+		return []string{"Enter to select", "Shift+Tab to go back"}
+	}
+}
+
+// newProjectDevelopmentToolsSummary lists generated Compose tooling separately from App services.
+func newProjectDevelopmentToolsSummary(components project.Components) string {
+	tools := []string{}
+	if components.Mail && components.Docker {
+		tools = append(tools, "Mailpit")
+	}
+	if components.Observability && components.Docker {
+		tools = append(tools, "VictoriaMetrics")
+	}
+	if components.Grafana && components.Docker {
+		tools = append(tools, "Grafana")
+	}
+	return strings.Join(tools, " · ")
 }
 
 func renderAtlasPanelBanner() string {
@@ -2526,7 +2676,9 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	// write .goforj.yml in target path using the model config
-	m.finalizeConfig()
+	if err := m.finalizeConfig(); err != nil {
+		return err
+	}
 	m.targetPath = targetPath
 
 	var buf bytes.Buffer
@@ -2544,7 +2696,12 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	// project renderer
-	i := ComponentRenderInput{renderAll: true, queueDriver: m.queueDriver}
+	i := ComponentRenderInput{
+		renderAll:          true,
+		resourcePlan:       m.selectedResourcePlan(),
+		localServiceIntent: m.selectedResourceIntent(),
+		serviceConsumers:   m.selectedResourceConsumers(),
+	}
 	err = runWithLoader("Rendering project files", func() error {
 		return c.renderer.Render(i)
 	})

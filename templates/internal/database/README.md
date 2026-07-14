@@ -85,6 +85,12 @@ That generates support for both MySQL and SQLite, uses MySQL for the default con
 
 When `DSN` is provided, it is used directly; otherwise DSN is built from host/database credentials.
 
+### Switching Drivers
+
+`DB_SUPPORTED_DRIVERS` is the set of drivers built into the app; `DB_DRIVER` and the named `DB_<NAME>_DRIVER` values select which of them are active. To switch an existing connection to a driver already built in, provision the destination, migrate its schema and data, configure the connection, then restart or redeploy the App. No source regeneration or rebuild is needed, although changing a locally managed MySQL or Postgres service may require rerendering the Compose setup.
+
+To use a driver that is not built in, add it to `DB_SUPPORTED_DRIVERS`, run `forj generate --db`, and build a new artifact before selecting it. GoForj does not translate schemas or copy database data between drivers.
+
 ## Generated Accessors
 
 `forj generate --db` creates typed accessors in `connections_gen.go`:
