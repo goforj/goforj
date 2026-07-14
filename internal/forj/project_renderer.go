@@ -5,17 +5,10 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/goforj/crypt"
-	"github.com/goforj/goforj/internal/console"
-	"github.com/goforj/goforj/internal/coredeps"
-	"github.com/goforj/goforj/internal/forj/makeapp"
-	"github.com/goforj/goforj/internal/generate"
-	"github.com/goforj/goforj/internal/logger"
-	"github.com/goforj/goforj/project"
-	"github.com/goforj/goforj/templates"
-	"github.com/joho/godotenv"
+	"go/ast"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
@@ -30,6 +23,16 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/goforj/crypt"
+	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/coredeps"
+	"github.com/goforj/goforj/internal/forj/makeapp"
+	"github.com/goforj/goforj/internal/generate"
+	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
+	"github.com/goforj/goforj/templates"
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -125,22 +128,25 @@ type renderCounts struct {
 	skipped int
 }
 
+// templateRenderConfig carries both App-local and project-envelope capability projections into generated templates.
 type templateRenderConfig struct {
 	*project.Config
-	Components        project.Components
-	ProjectComponents project.Components
-	StarterKit        project.StarterKit
-	HelpFormat        project.HelpFormat
-	Resources         resourceRenderValues
-	HelpFormatterFunc string
-	HelpCommandFunc   string
-	App               project.App
-	AppPackageName    string
-	AppImportPath     string
-	WireImportPath    string
-	AppIsDefault      bool
-	HasNamedApps      bool
-	RuntimeApps       []runtimeAppMetadata
+	Components                  project.Components
+	ProjectComponents           project.Components
+	StarterKit                  project.StarterKit
+	HelpFormat                  project.HelpFormat
+	Resources                   resourceRenderValues
+	HelpFormatterFunc           string
+	HelpCommandFunc             string
+	App                         project.App
+	AppPackageName              string
+	AppImportPath               string
+	WireImportPath              string
+	AppIsDefault                bool
+	HasNamedApps                bool
+	RuntimeApps                 []runtimeAppMetadata
+	LegacyEventPipelineField    bool
+	LegacyEventPipelineProvider bool
 }
 
 type runtimeAppMetadata struct {
@@ -294,6 +300,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	projectComponents := project.ProjectComponents(p.config)
 	if err := projectComponents.ValidateRenderContract(); err != nil {
 		return fmt.Errorf("project component envelope: %w", err)
+	}
+	if err := p.validateEventsRenderTransition(projectComponents); err != nil {
+		return err
 	}
 	selectedQueueDriver := input.queueDriver
 	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
@@ -609,9 +618,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Core Components Rendering",
 			enabled: input.renderAll,
 			templates: []string{
-				"internal/events/event.go.tmpl",
-				"internal/events/topics.go.tmpl",
-				"internal/events/bus_transport.go.tmpl",
 				"internal/makecmd/editor.go.tmpl",
 				"internal/makecmd/env_section_editor.go.tmpl",
 				"internal/makecmd/generator_helpers.go.tmpl",
@@ -621,14 +627,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/command_names.go.tmpl",
 				"internal/makecmd/make_command_cmd.go.tmpl",
 				"internal/makecmd/make_command_cmd_test.go.tmpl",
-				"internal/makecmd/make_event_cmd.go.tmpl",
-				"internal/makecmd/make_event_cmd_test.go.tmpl",
-				"internal/makecmd/make_subscriber_cmd.go.tmpl",
-				"internal/makecmd/make_subscriber_cmd_test.go.tmpl",
+				"internal/makecmd/README.md.tmpl",
 				"internal/makecmd/make_migration_cmd.go.tmpl",
 				"internal/makecmd/make_migration_cmd_test.go.tmpl",
-				"internal/events/bus_integration_test.go.tmpl",
-				"internal/events/README.md.tmpl",
 				"internal/runtime/lifecycle.go.tmpl",
 				"internal/runtime/lifecycle_test.go.tmpl",
 				"internal/runtime/runtime.go.tmpl",
@@ -643,7 +644,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/storages/README.md.tmpl",
 				"internal/observability/cache_observer.go.tmpl",
 				"internal/observability/cache_observer_test.go.tmpl",
-				"internal/observability/event_observer.go.tmpl",
 				"internal/observability/mail_observer.go.tmpl",
 				"internal/observability/queue_observer.go.tmpl",
 				"internal/observability/queue_observer_test.go.tmpl",
@@ -658,7 +658,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/cache_shell_cmd.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/json_helpers.go.tmpl",
-				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
 				"internal/cmd/resources_cmd.go.tmpl",
 				"internal/monitoring/seed_cmd.go.tmpl",
 				"internal/monitoring/reset_cmd.go.tmpl",
@@ -703,9 +702,27 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				".db-relationships.yaml.tmpl",
 			},
 			raw: []string{
-				"internal/makecmd/event.tmpl",
 				"internal/makecmd/make_command.tmpl",
-				"internal/makecmd/README.md",
+			},
+		},
+		{
+			title:   "Events Components Rendering",
+			enabled: projectComponents.Events,
+			templates: []string{
+				"internal/events/event.go.tmpl",
+				"internal/events/topics.go.tmpl",
+				"internal/events/bus_transport.go.tmpl",
+				"internal/events/bus_integration_test.go.tmpl",
+				"internal/events/README.md.tmpl",
+				"internal/makecmd/make_event_cmd.go.tmpl",
+				"internal/makecmd/make_event_cmd_test.go.tmpl",
+				"internal/makecmd/make_subscriber_cmd.go.tmpl",
+				"internal/makecmd/make_subscriber_cmd_test.go.tmpl",
+				"internal/observability/event_observer.go.tmpl",
+				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
+			},
+			raw: []string{
+				"internal/makecmd/event.tmpl",
 				"internal/makecmd/subscriber.tmpl",
 			},
 		},
@@ -857,12 +874,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/dashboards/lighthouse-inspects-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
-						"containers/observability/grafana/dashboards/events-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/auth-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
 					)
+					if projectComponents.Events {
+						templates = append(templates, "containers/observability/grafana/dashboards/events-overview.json.tmpl")
+					}
 					if projectComponents.Mail {
 						templates = append(templates, "containers/observability/grafana/dashboards/mail-overview.json.tmpl")
 					}
@@ -1368,13 +1387,11 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := project.ValidateStarterKitContract(p.config.Render.StarterKit, p.config.Render.Components); err != nil {
 		return err
 	}
-	if err := p.migrateAppOwnedWireFilenames(); err != nil {
-		return err
-	}
-	if err := p.syncLegacyGeneratedTemplates(); err != nil {
+	if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
 	projectCapabilitiesChanged := false
+	appConfigChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
 		if err := p.prepareDevAppsForAppMutation(); err != nil {
 			return err
@@ -1383,8 +1400,20 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		if err != nil {
 			return err
 		}
+		if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
 		projectCapabilitiesChanged = changed
+		appConfigChanged = true
 		p.setAppDevRun(app.Name, opts.DevRunCommand)
+	}
+	if err := p.migrateAppOwnedWireFilenames(); err != nil {
+		return err
+	}
+	if err := p.syncLegacyGeneratedTemplates(); err != nil {
+		return err
+	}
+	if appConfigChanged {
 		if err := p.writeAppEnvDefaults(app, appRenderComponents(p.config, app)); err != nil {
 			return err
 		}
@@ -1655,6 +1684,13 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	metadata := runtimeAppMetadataForConfiguredApp(p.config, app)
 	metadata.HTTPPort = nextAvailableAppHTTPPort(".env", prefix, metadata.HTTPPort)
 	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)
+	if components.Events {
+		eventsDriver, err := eventDriverDefaultFromEnv(".env")
+		if err != nil {
+			return err
+		}
+		envDefaults[prefix+"_EVENTS_DRIVER"] = eventsDriver
+	}
 	if driver := components.DatabaseDriver(); driver != "" {
 		baseDriver := ""
 		if p.config != nil {
@@ -1732,6 +1768,31 @@ func appRuntimeEnvDefaults(prefix string, metadata runtimeAppMetadata, component
 		values[prefix+"_API_HTTP_PORT"] = strconv.Itoa(metadata.HTTPPort)
 	}
 	return values
+}
+
+// eventDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Events transport.
+func eventDriverDefaultFromEnv(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read Events environment: %w", err)
+	}
+	driver, found := envAssignment(strings.Split(string(data), "\n"), "EVENTS_DRIVER")
+	if !found || strings.TrimSpace(driver) == "" {
+		return "inproc", nil
+	}
+	driver = project.CanonicalResourceDriver(project.ResourceEvents, driver)
+	definition, ok := project.ResourceDefinitionByKey(project.ResourceEvents)
+	if !ok {
+		return "", fmt.Errorf("Events resource definition is unavailable")
+	}
+	if _, ok := definition.Driver(driver); !ok {
+		return "", fmt.Errorf("EVENTS_DRIVER in %s selects unsupported driver %q", path, driver)
+	}
+	supported, supportedSet := envAssignment(strings.Split(string(data), "\n"), "EVENTS_SUPPORTED_DRIVERS")
+	if supportedSet && strings.TrimSpace(supported) != "" && !driverListContains(supported, driver) {
+		return "", fmt.Errorf("EVENTS_SUPPORTED_DRIVERS in %s excludes active EVENTS_DRIVER %q", path, driver)
+	}
+	return driver, nil
 }
 
 // nextAvailableAppHTTPPort keeps sequential make:app runs from reusing a port
@@ -2024,13 +2085,14 @@ func orderedEnvDefaultKeys(defaults map[string]string, prefix string) []string {
 		prefix + "_METRICS_API_PORT":       30,
 		prefix + "_METRICS_SCHEDULER_PORT": 40,
 		prefix + "_METRICS_JOBS_PORT":      50,
-		prefix + "_DB_DRIVER":              60,
-		prefix + "_DB_DATABASE":            70,
-		prefix + "_DB_SQLITE_DATABASE":     75,
-		prefix + "_DB_HOST":                80,
-		prefix + "_DB_PORT":                90,
-		prefix + "_DB_USERNAME":            100,
-		prefix + "_DB_PASSWORD":            110,
+		prefix + "_EVENTS_DRIVER":          60,
+		prefix + "_DB_DRIVER":              70,
+		prefix + "_DB_DATABASE":            80,
+		prefix + "_DB_SQLITE_DATABASE":     85,
+		prefix + "_DB_HOST":                90,
+		prefix + "_DB_PORT":                100,
+		prefix + "_DB_USERNAME":            110,
+		prefix + "_DB_PASSWORD":            120,
 	}
 	sort.Slice(keys, func(left, right int) bool {
 		leftRank, leftKnown := rank[keys[left]]
@@ -2829,6 +2891,284 @@ func oldFrontendDistPlaceholder(projectName string) string {
 </html>`, projectName)
 }
 
+// validateEventsRenderTransition rejects unsupported removal states before rendering can leave a stale Events surface behind.
+func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents project.Components) error {
+	if !projectComponents.Events {
+		for _, path := range projectEventsResiduePaths() {
+			if exists, err := renderPathExists(path); err != nil {
+				return err
+			} else if exists {
+				return fmt.Errorf("cannot disable Events while %s exists; automatic Events removal is not supported", path)
+			}
+		}
+	}
+	for _, app := range runtimeAppsForMetadata(p.config) {
+		if err := validateLegacyEventOwnerSource(app); err != nil {
+			return err
+		}
+		if appRenderComponents(p.config, app).Events {
+			continue
+		}
+		for _, path := range []string{
+			filepath.Join(app.WireDir, "inject_subscribers_app.go"),
+			filepath.Join(app.AppDir, "event_commands.go"),
+		} {
+			exists, err := renderPathExists(path)
+			if err != nil {
+				return err
+			}
+			if exists {
+				return fmt.Errorf("cannot disable Events for App %q while %s exists; automatic Events removal is not supported", app.Name, path)
+			}
+		}
+		for _, path := range legacyEventSubscriberOwnerPaths(app) {
+			exists, err := renderPathExists(path)
+			if err != nil {
+				return err
+			}
+			if exists {
+				return fmt.Errorf("cannot disable Events for App %q while legacy subscriber owner %s exists; migrate or reconcile that App-owned file first", app.Name, path)
+			}
+		}
+		if legacyEventPipelineField(app) {
+			path := filepath.Join(app.AppDir, "commands.go")
+			return fmt.Errorf("cannot disable Events for App %q while %s registers TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
+		}
+		if legacyEventPipelineProvider(app) {
+			path := filepath.Join(app.WireDir, "inject_cmd_app.go")
+			return fmt.Errorf("cannot disable Events for App %q while %s provides TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
+		}
+		if legacyEventMakeCommandProvider(app) {
+			path := filepath.Join(app.WireDir, "inject_services_app.go")
+			return fmt.Errorf("cannot disable Events for App %q while %s provides Events make commands; automatic Events removal is not supported", app.Name, path)
+		}
+	}
+	return nil
+}
+
+// projectEventsResiduePaths lists component-owned artifacts that a disabled render cannot safely remove or leave active.
+func projectEventsResiduePaths() []string {
+	return []string{
+		filepath.Join("internal", "events"),
+		filepath.Join("internal", "makecmd", "make_event_cmd.go"),
+		filepath.Join("internal", "makecmd", "make_event_cmd_test.go"),
+		filepath.Join("internal", "makecmd", "make_subscriber_cmd.go"),
+		filepath.Join("internal", "makecmd", "make_subscriber_cmd_test.go"),
+		filepath.Join("internal", "makecmd", "event.tmpl"),
+		filepath.Join("internal", "makecmd", "subscriber.tmpl"),
+		filepath.Join("internal", "observability", "event_observer.go"),
+		filepath.Join("internal", "cmd", "test_event_pipeline_cmd.go"),
+		filepath.Join("containers", "observability", "grafana", "dashboards", "events-overview.json"),
+	}
+}
+
+// validateLegacyEventOwnerSource ensures compatibility flags cannot silently misclassify malformed owner code.
+func validateLegacyEventOwnerSource(app project.App) error {
+	app = normalizeRenderApp(app)
+	for _, path := range []string{
+		filepath.Join(app.AppDir, "commands.go"),
+		filepath.Join(app.WireDir, "inject_cmd_app.go"),
+	} {
+		if _, _, err := parsedRenderGoFile(path); err != nil {
+			return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
+		}
+	}
+	return validateLegacyAppServiceInjectorOwnership(app)
+}
+
+// validateLegacyAppServiceInjectorOwnership rejects obsolete framework providers that cannot be removed without interpreting owner intent.
+func validateLegacyAppServiceInjectorOwnership(app project.App) error {
+	path := filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go")
+	file, exists, err := parsedRenderGoFile(path)
+	if err != nil {
+		return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
+	}
+	if !exists || !legacyAppServiceInjectorRequiresManualMigration(file) {
+		return nil
+	}
+	return fmt.Errorf("cannot automatically migrate legacy Events/Redis providers in App-owned %s; reconcile provideSharedRedisClient or the Redis-backed events.NewBus provider manually so custom providers remain intact", path)
+}
+
+// legacyAppServiceInjectorRequiresManualMigration identifies executable legacy providers without matching comments or string literals.
+func legacyAppServiceInjectorRequiresManualMigration(file *ast.File) bool {
+	if file == nil {
+		return false
+	}
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.FuncDecl:
+			if value.Name != nil && value.Name.Name == "provideSharedRedisClient" {
+				found = true
+				return false
+			}
+		case *ast.CallExpr:
+			if !selectorExpressionMatches(value.Fun, "events", "NewBus") {
+				return true
+			}
+			for _, argument := range value.Args {
+				identifier, ok := argument.(*ast.Ident)
+				if ok && identifier.Name == "redisClient" {
+					found = true
+					return false
+				}
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// legacyEventMakeCommandProvider reports whether an owner service set still references Events-only make commands.
+func legacyEventMakeCommandProvider(app project.App) bool {
+	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go"))
+	if err != nil || !exists {
+		return false
+	}
+	return astFileContainsSelector(file, "makecmd", "NewEventCmd", "NewSubscriberCmd")
+}
+
+// astFileContainsSelector reports whether parsed owner code references any requested qualified selector.
+func astFileContainsSelector(file *ast.File, packageName string, selectorNames ...string) bool {
+	if file == nil {
+		return false
+	}
+	wanted := make(map[string]struct{}, len(selectorNames))
+	for _, selectorName := range selectorNames {
+		wanted[selectorName] = struct{}{}
+	}
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		expression, ok := node.(ast.Expr)
+		if !ok {
+			return true
+		}
+		for selectorName := range wanted {
+			if selectorExpressionMatches(expression, packageName, selectorName) {
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// renderPathExists reports whether a render-owned or App-owned path remains without masking filesystem errors.
+func renderPathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect Events transition path %s: %w", path, err)
+}
+
+// legacyEventPipelineField reports whether an owner Commands struct still carries the pre-component Events command field.
+func legacyEventPipelineField(app project.App) bool {
+	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).AppDir, "commands.go"))
+	if err != nil || !exists {
+		return false
+	}
+	for _, declaration := range file.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range general.Specs {
+			typeSpec, ok := specification.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "Commands" {
+				continue
+			}
+			commands, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			for _, field := range commands.Fields.List {
+				if selectorExpressionMatches(field.Type, "cmd", "TestEventPipelineCmd") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// legacyEventPipelineProvider reports whether an owner command Wire set already supplies the pre-component Events command.
+func legacyEventPipelineProvider(app project.App) bool {
+	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_cmd_app.go"))
+	if err != nil || !exists {
+		return false
+	}
+	for _, declaration := range file.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.VAR {
+			continue
+		}
+		for _, specification := range general.Specs {
+			valueSpec, ok := specification.(*ast.ValueSpec)
+			if !ok || !astIdentifierListContains(valueSpec.Names, "appCommandSet") {
+				continue
+			}
+			found := false
+			for _, value := range valueSpec.Values {
+				ast.Inspect(value, func(node ast.Node) bool {
+					if expression, ok := node.(ast.Expr); ok && selectorExpressionMatches(expression, "cmd", "NewTestEventPipelineCmd") {
+						found = true
+						return false
+					}
+					return !found
+				})
+				if found {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// parsedRenderGoFile parses existing owner code so compatibility flags cannot be triggered by comments or unrelated text.
+func parsedRenderGoFile(path string) (*ast.File, bool, error) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, true, err
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return nil, true, err
+	}
+	return file, true, nil
+}
+
+// selectorExpressionMatches recognizes one qualified selector, including pointer-wrapped field types.
+func selectorExpressionMatches(expression ast.Expr, packageName string, selectorName string) bool {
+	if pointer, ok := expression.(*ast.StarExpr); ok {
+		expression = pointer.X
+	}
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != selectorName {
+		return false
+	}
+	identifier, ok := selector.X.(*ast.Ident)
+	return ok && identifier.Name == packageName
+}
+
+// astIdentifierListContains reports whether a declaration names the requested variable.
+func astIdentifierListContains(identifiers []*ast.Ident, want string) bool {
+	for _, identifier := range identifiers {
+		if identifier.Name == want {
+			return true
+		}
+	}
+	return false
+}
+
 // appFrameworkMappings returns files the CLI can safely refresh on every render.
 func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMapping {
 	components := appRenderComponents(p.config, app)
@@ -2856,6 +3196,9 @@ func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMappin
 	if components.Jobs {
 		mappings = append(mappings, mapTemplateTo("wire/inject_jobs.go.tmpl", filepath.Join(app.WireDir, "inject_jobs.go")))
 	}
+	if components.Events {
+		mappings = append(mappings, mapTemplateTo("app/event_commands.go.tmpl", filepath.Join(app.AppDir, "event_commands.go")))
+	}
 	return mappings
 }
 
@@ -2866,8 +3209,10 @@ func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 		mapTemplateTo("app/lifecycle.go.tmpl", filepath.Join(app.AppDir, "lifecycle.go")),
 		mapTemplateTo("app/commands.go.tmpl", filepath.Join(app.AppDir, "commands.go")),
 		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(app.WireDir, "inject_services_app.go")),
-		mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(app.WireDir, "inject_subscribers_app.go")),
 		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(app.WireDir, "inject_cmd_app.go")),
+	}
+	if components.Events {
+		mappings = append(mappings, mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(app.WireDir, "inject_subscribers_app.go")))
 	}
 	if components.WebUI {
 		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", appFrontendDistIndex(app)))
@@ -2940,6 +3285,7 @@ func writeFileAtomically(path string, data []byte, defaultMode fs.FileMode) erro
 	return os.Rename(temporaryPath, path)
 }
 
+// cleanupLegacyGeneratedFiles removes obsolete framework-owned artifacts while preserving App-owned source.
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
@@ -3017,8 +3363,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("wire", "inject_cache.go"),
 		filepath.Join("wire", "inject_cmd.go"),
 		filepath.Join("wire", "inject_db.go"),
-		filepath.Join("wire", "inject_event_subscribers.go"),
-		filepath.Join("wire", "inject_subscribers_app.go"),
 		filepath.Join("wire", "inject_http.go"),
 		filepath.Join("wire", "inject_http_controllers.go"),
 		filepath.Join("wire", "inject_controllers_app.go"),
@@ -3038,7 +3382,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("app", "wire", "inject_app_services.go"),
 		filepath.Join("app", "wire", "inject_cache.go"),
 		filepath.Join("app", "wire", "inject_events.go"),
-		filepath.Join("app", "wire", "inject_event_subscribers.go"),
 		filepath.Join("app", "wire", "inject_http_controllers.go"),
 		filepath.Join("app", "wire", "inject_inspects.go"),
 		filepath.Join("app", "wire", "inject_mail.go"),
@@ -3163,11 +3506,13 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
-	healthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
+	defaultHealthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
+	projectComponents := project.ProjectComponents(p.config)
+	projectHealthEnabled := projectComponents.WebAPI || projectComponents.WebUI
 	appCommandsPath := filepath.Join("app", "commands.go")
 	if data, err := os.ReadFile(appCommandsPath); err == nil {
 		updated := syncCommandsName(string(data))
-		updated = syncHealthCommands(updated, healthEnabled)
+		updated = syncHealthCommands(updated, defaultHealthEnabled)
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
@@ -3182,7 +3527,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 	cmdWirePath := filepath.Join("app", "wire", "inject_cmd.go")
 	if data, err := os.ReadFile(cmdWirePath); err == nil {
-		updated := syncHealthCommandWire(string(data), healthEnabled)
+		updated := syncHealthCommandWire(string(data), defaultHealthEnabled)
 		if updated != string(data) {
 			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
 				return err
@@ -3193,7 +3538,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 	prebootPath := filepath.Join("internal", "cmd", "preboot.go")
 	if data, err := os.ReadFile(prebootPath); err == nil {
-		updated := syncHealthPreboot(string(data), healthEnabled)
+		updated := syncHealthPreboot(string(data), projectHealthEnabled)
 		if updated != string(data) {
 			if err := os.WriteFile(prebootPath, []byte(updated), 0o644); err != nil {
 				return err
@@ -3202,7 +3547,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if healthEnabled {
+	if projectHealthEnabled {
 		if err := p.renderTemplateFile(filepath.Join("internal", "cmd", "health_cmd.go"), "internal/cmd/health_cmd.go.tmpl", p.config); err != nil {
 			return err
 		}
@@ -3220,6 +3565,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	return nil
 }
 
+// syncLegacyGeneratedTemplates refreshes only framework-owned templates whose historical shapes are unambiguous.
 func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	type templateSync struct {
 		dest     string
@@ -3228,15 +3574,11 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		requires []string
 	}
 
+	if err := validateLegacyAppServiceInjectorOwnership(project.DefaultApp()); err != nil {
+		return err
+	}
+
 	syncs := []templateSync{
-		{
-			dest: filepath.Join("app", "wire", "inject_services_app.go"),
-			tmpl: "wire/inject_services_app.go.tmpl",
-			matches: []string{
-				"provideSharedRedisClient",
-				"events.NewBus(context.Background(), redisClient)",
-			},
-		},
 		{
 			dest: "internal/lighthouse/server.go",
 			tmpl: "internal/lighthouse/server.go.tmpl",
@@ -3328,12 +3670,191 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	return nil
 }
 
+// eventSubscriberOwnerMigration describes one unambiguous legacy owner move.
+type eventSubscriberOwnerMigration struct {
+	source string
+	target string
+}
+
 // migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
 func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
+	eventMigrations, err := planEventSubscriberOwnerMigrations(p.config)
+	if err != nil {
+		return err
+	}
+	if err := applyEventSubscriberOwnerMigrations(eventMigrations); err != nil {
+		return err
+	}
+	if err := repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
+		return err
+	}
 	return migratePreservedFile(
 		filepath.Join("app", "wire", "inject_controllers_app.go"),
 		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
 	)
+}
+
+// eventSubscriberOwnerPath returns the current App-owned subscriber injector path.
+func eventSubscriberOwnerPath(app project.App) string {
+	app = normalizeRenderApp(app)
+	return filepath.Join(app.WireDir, "inject_subscribers_app.go")
+}
+
+// legacyEventSubscriberOwnerPaths returns historical subscriber injector paths that belong to one App.
+func legacyEventSubscriberOwnerPaths(app project.App) []string {
+	app = normalizeRenderApp(app)
+	paths := []string{filepath.Join(app.WireDir, "inject_event_subscribers.go")}
+	if app.Name == project.DefaultAppName {
+		paths = append(paths,
+			filepath.Join("wire", "inject_event_subscribers.go"),
+			filepath.Join("wire", "inject_subscribers_app.go"),
+		)
+	}
+	return paths
+}
+
+// planEventSubscriberOwnerMigrations rejects ambiguous ownership before moving any preserved file.
+func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscriberOwnerMigration, error) {
+	migrations := make([]eventSubscriberOwnerMigration, 0)
+	for _, app := range runtimeAppsForMetadata(config) {
+		if !appRenderComponents(config, app).Events {
+			continue
+		}
+		target := eventSubscriberOwnerPath(app)
+		sources := make([]string, 0)
+		for _, source := range legacyEventSubscriberOwnerPaths(app) {
+			exists, err := renderPathExists(source)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
+				sources = append(sources, source)
+			}
+		}
+		if len(sources) == 0 {
+			continue
+		}
+		targetExists, err := renderPathExists(target)
+		if err != nil {
+			return nil, err
+		}
+		if targetExists {
+			return nil, fmt.Errorf("cannot migrate legacy Events subscriber owner %s to %s because both exist; reconcile the App-owned files manually", strings.Join(sources, ", "), target)
+		}
+		if len(sources) > 1 {
+			return nil, fmt.Errorf("cannot migrate multiple legacy Events subscriber owners %s to %s; reconcile the App-owned files manually", strings.Join(sources, ", "), target)
+		}
+		if _, _, err := parsedRenderGoFile(sources[0]); err != nil {
+			return nil, fmt.Errorf("parse legacy Events subscriber owner %s: %w", sources[0], err)
+		}
+		migrations = append(migrations, eventSubscriberOwnerMigration{source: sources[0], target: target})
+	}
+	return migrations, nil
+}
+
+// applyEventSubscriberOwnerMigrations moves only plans whose destination remains unclaimed.
+func applyEventSubscriberOwnerMigrations(migrations []eventSubscriberOwnerMigration) error {
+	for _, migration := range migrations {
+		if err := os.MkdirAll(filepath.Dir(migration.target), 0o755); err != nil {
+			return fmt.Errorf("prepare Events subscriber owner destination %s: %w", migration.target, err)
+		}
+		targetExists, err := renderPathExists(migration.target)
+		if err != nil {
+			return err
+		}
+		if targetExists {
+			return fmt.Errorf("cannot migrate legacy Events subscriber owner %s to %s because the destination now exists; reconcile the App-owned files manually", migration.source, migration.target)
+		}
+		if err := os.Rename(migration.source, migration.target); err != nil {
+			return fmt.Errorf("migrate legacy Events subscriber owner %s to %s: %w", migration.source, migration.target, err)
+		}
+	}
+	return nil
+}
+
+// repairLegacyEventSubscriberOwnerSetNames updates only the historical package-level set identifier in preserved owner files.
+func repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
+	for _, app := range runtimeAppsForMetadata(config) {
+		if !appRenderComponents(config, app).Events {
+			continue
+		}
+		path := eventSubscriberOwnerPath(app)
+		source, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read Events subscriber owner %s: %w", path, err)
+		}
+		updated, changed, err := renameLegacyEventSubscriberSetIdentifier(path, source)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			continue
+		}
+		if err := writeFileAtomically(path, updated, 0o644); err != nil {
+			return fmt.Errorf("repair Events subscriber owner %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// renameLegacyEventSubscriberSetIdentifier rewrites bound identifiers while preserving owner formatting, comments, strings, and providers.
+func renameLegacyEventSubscriberSetIdentifier(path string, source []byte) ([]byte, bool, error) {
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, path, source, parser.ParseComments)
+	if err != nil {
+		return nil, false, fmt.Errorf("parse Events subscriber owner %s: %w", path, err)
+	}
+	legacyObject := file.Scope.Lookup("eventSubscriberSet")
+	if legacyObject == nil {
+		return source, false, nil
+	}
+	if legacyObject.Kind != ast.Var {
+		return nil, false, fmt.Errorf("cannot repair Events subscriber owner %s because eventSubscriberSet is not a package-level variable; reconcile the App-owned file manually", path)
+	}
+	if file.Scope.Lookup("appSubscriberSet") != nil {
+		return nil, false, fmt.Errorf("cannot repair Events subscriber owner %s because both eventSubscriberSet and appSubscriberSet are declared; reconcile the App-owned file manually", path)
+	}
+	tokenFile := fileSet.File(file.Pos())
+	if tokenFile == nil {
+		return nil, false, fmt.Errorf("locate Events subscriber owner source positions for %s", path)
+	}
+	type sourceRange struct {
+		start int
+		end   int
+	}
+	ranges := make([]sourceRange, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if !ok || identifier.Obj != legacyObject {
+			return true
+		}
+		ranges = append(ranges, sourceRange{
+			start: tokenFile.Offset(identifier.Pos()),
+			end:   tokenFile.Offset(identifier.End()),
+		})
+		return true
+	})
+	if len(ranges) == 0 {
+		return nil, false, fmt.Errorf("locate eventSubscriberSet declaration in Events subscriber owner %s", path)
+	}
+	sort.Slice(ranges, func(left int, right int) bool {
+		return ranges[left].start < ranges[right].start
+	})
+	var updated bytes.Buffer
+	cursor := 0
+	for _, sourceRange := range ranges {
+		if sourceRange.start < cursor || sourceRange.end > len(source) {
+			return nil, false, fmt.Errorf("repair overlapping eventSubscriberSet identifiers in Events subscriber owner %s", path)
+		}
+		updated.Write(source[cursor:sourceRange.start])
+		updated.WriteString("appSubscriberSet")
+		cursor = sourceRange.end
+	}
+	updated.Write(source[cursor:])
+	return updated.Bytes(), true, nil
 }
 
 // appOwnedWirePathsForApp lists render-once injectors that may need compatibility repairs.
@@ -3377,7 +3898,6 @@ func syncAppOwnedWireSetNames(content string) string {
 	updated = strings.ReplaceAll(updated, "httpControllerSet provides all HTTP route controllers.", "appHttpControllerSet provides all HTTP route controllers.")
 	updated = strings.ReplaceAll(updated, "jobAppSet", "appJobSet")
 	updated = strings.ReplaceAll(updated, "schedulerScheduleSet", "appScheduleSet")
-	updated = strings.ReplaceAll(updated, "eventSubscriberSet", "appSubscriberSet")
 	return updated
 }
 
@@ -3861,7 +4381,11 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 
 // syncCoreLibrariesInDir updates core goforj dependencies in a specific module without forcing callers to change process cwd.
 func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
-	modules := coredeps.SyncCoreLibraries()
+	components := project.Components{}
+	if p.config != nil {
+		components = project.ProjectComponents(p.config)
+	}
+	modules := coredeps.SyncCoreLibraries(components)
 	if p.config != nil && p.config.Render.StarterKit == project.StarterKitTemplHTMX {
 		modules = append(modules, "github.com/a-h/templ@"+coredeps.MustVersionFor("github.com/a-h/templ"))
 	}
@@ -4153,6 +4677,7 @@ func installWire() (string, error) {
 	return wirePath, nil
 }
 
+// runGenerateAll regenerates only the packages authorized by the durable project component contract.
 func (p *ProjectRenderer) runGenerateAll() error {
 	projectComponents := p.projectRenderComponents()
 	count, _, err := generate.GenerateProjectFiles(
@@ -4160,7 +4685,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		true,
 		true,
 		projectComponents.Jobs,
-		true,
+		projectComponents.Events,
 		projectComponents.HasDatabase(),
 		projectComponents.Observability,
 	)
@@ -4526,20 +5051,22 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 	helpFormat := appRenderHelpFormat(config, app)
 	runtimeApps := runtimeAppMetadataForRender(config)
 	return templateRenderConfig{
-		Config:            config,
-		Components:        components,
-		ProjectComponents: project.ProjectComponents(config),
-		StarterKit:        starterKit,
-		HelpFormat:        helpFormat,
-		HelpFormatterFunc: helpFormatterFunc(helpFormat),
-		HelpCommandFunc:   helpCommandFunc(helpFormat),
-		App:               app,
-		AppPackageName:    project.AppPackageName(app.Name),
-		AppImportPath:     appImportPath,
-		WireImportPath:    wireImportPath,
-		AppIsDefault:      app.Name == project.DefaultAppName,
-		HasNamedApps:      app.Name != project.DefaultAppName || len(runtimeApps) > 1,
-		RuntimeApps:       runtimeApps,
+		Config:                      config,
+		Components:                  components,
+		ProjectComponents:           project.ProjectComponents(config),
+		StarterKit:                  starterKit,
+		HelpFormat:                  helpFormat,
+		HelpFormatterFunc:           helpFormatterFunc(helpFormat),
+		HelpCommandFunc:             helpCommandFunc(helpFormat),
+		App:                         app,
+		AppPackageName:              project.AppPackageName(app.Name),
+		AppImportPath:               appImportPath,
+		WireImportPath:              wireImportPath,
+		AppIsDefault:                app.Name == project.DefaultAppName,
+		HasNamedApps:                app.Name != project.DefaultAppName || len(runtimeApps) > 1,
+		RuntimeApps:                 runtimeApps,
+		LegacyEventPipelineField:    legacyEventPipelineField(app),
+		LegacyEventPipelineProvider: legacyEventPipelineProvider(app),
 	}
 }
 

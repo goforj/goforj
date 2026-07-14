@@ -129,6 +129,7 @@ func readinessPayload(statusCode int, includeChecks bool, checks []readinessChec
 	return statusCode, payload
 }
 
+// readinessCheckDriver resolves the configured driver for one readiness-check resource.
 func readinessCheckDriver(checkType string, checkName string) string {
 	switch strings.ToLower(strings.TrimSpace(checkType)) {
 	case "cache":
@@ -137,8 +138,10 @@ func readinessCheckDriver(checkType string, checkName string) string {
 		return dbDriver(checkName)
 	case "storage":
 		return storageDriver(checkName)
+{{- if .ProjectComponents.Events }}
 	case "events":
 		return eventDriver(checkName)
+{{- end }}
 	case "queue":
 		return queueDriver(checkName)
 	default:
@@ -162,6 +165,7 @@ func dbDriver(name string) string {
 	return strings.TrimSpace(env.Get(key, env.Get("DB_DRIVER", "")))
 }
 
+// storageDriver resolves the configured driver for one Storage readiness check.
 func storageDriver(name string) string {
 	key := "STORAGE_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
@@ -170,6 +174,8 @@ func storageDriver(name string) string {
 	return strings.TrimSpace(env.Get(key, env.Get("STORAGE_DRIVER", "local")))
 }
 
+{{ if .ProjectComponents.Events }}
+// eventDriver resolves the configured driver for one Events readiness check.
 func eventDriver(name string) string {
 	key := "EVENTS_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
@@ -177,6 +183,7 @@ func eventDriver(name string) string {
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("EVENTS_DRIVER", "inproc")))
 }
+{{- end }}
 
 func queueDriver(name string) string {
 	key := "QUEUE_DRIVER"

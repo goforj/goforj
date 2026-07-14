@@ -31,7 +31,6 @@ type Commands struct {
 	HealthCmd cmd.HealthCmd `cmd:""`
 	{{- end }}
 	HelloWorldCmd cmd.HelloWorldCmd `cmd:""`
-	TestEventPipelineCmd cmd.TestEventPipelineCmd `cmd:""`
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	MonitorSeedCmd monitoring.SeedCmd `cmd:""`
 	MonitorResetCmd monitoring.ResetCmd `cmd:""`
@@ -61,7 +60,6 @@ func NewCommands(
 	healthCmd *cmd.HealthCmd,
 	{{- end }}
 	helloWorldCmd *cmd.HelloWorldCmd,
-	testEventPipelineCmd *cmd.TestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitorSeedCmd *monitoring.SeedCmd,
 	monitorResetCmd *monitoring.ResetCmd,
@@ -89,7 +87,6 @@ func NewCommands(
 		HealthCmd: *healthCmd,
 		{{- end }}
 		HelloWorldCmd: *helloWorldCmd,
-		TestEventPipelineCmd: *testEventPipelineCmd,
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
 		MonitorSeedCmd: *monitorSeedCmd,
 		MonitorResetCmd: *monitorResetCmd,

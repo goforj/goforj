@@ -28,7 +28,9 @@ type AppComponents struct {
 	DatabaseSQLite   bool
 	Scheduler        bool
 	Cache            bool
+{{- if .ProjectComponents.Events }}
 	Events           bool
+{{- end }}
 	Storage          bool
 	Jobs             bool
 }
@@ -70,7 +72,9 @@ var Apps = []AppInfo{
 			DatabaseSQLite:   {{ .Components.DatabaseSQLite }},
 			Scheduler:        {{ .Components.Scheduler }},
 			Cache:            {{ .Components.Cache }},
+{{- if $.ProjectComponents.Events }}
 			Events:           {{ .Components.Events }},
+{{- end }}
 			Storage:          {{ .Components.Storage }},
 			Jobs:             {{ .Components.Jobs }},
 		},

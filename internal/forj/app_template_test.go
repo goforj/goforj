@@ -292,11 +292,13 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd.go.tmpl"): {
 			`appCommandSet,`,
 			`{{.AppPackageName}}.NewCommands,`,
+			`{{.AppPackageName}}.NewGeneratedEventCommands,`,
 			`{{.AppPackageName}}.NewRootCmd,`,
 			`.Components.HasRuntime`,
 			`cmd.NewAboutCmd,`,
 			`cmd.NewCacheShellCmd,`,
 			`cmd.NewDBShellCmd,`,
+			`cmd.NewTestEventPipelineCmd,`,
 			`makecmd.NewCommandCmd,`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`cmd.NewHealthCmd,`,
@@ -306,7 +308,6 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd_app.go.tmpl"): {
 			`var appCommandSet = wire.NewSet(`,
 			`cmd.NewHelloWorldCmd,`,
-			`cmd.NewTestEventPipelineCmd,`,
 			`monitoring.NewPollCmd,`,
 			`monitoring.NewPushTriggerCmd,`,
 			`monitoring.NewResetCmd,`,
@@ -867,12 +868,10 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	for _, snippet := range []string{
 		`MakeCommandCmd    makecmd.CommandCmd    ` + "`cmd:\"\"`",
 		`MakeControllerCmd makecmd.ControllerCmd ` + "`cmd:\"\"`",
-		`MakeEventCmd     makecmd.EventCmd     ` + "`cmd:\"\"`",
 		`MakeJobCmd       makecmd.JobCmd       ` + "`cmd:\"\"`",
 		`MakeMigrationCmd makecmd.MigrationCmd ` + "`cmd:\"\"`",
 		`MakeQueueCmd makecmd.QueueCmd ` + "`cmd:\"\"`",
 		`MakeScheduleCmd makecmd.ScheduleCmd ` + "`cmd:\"\"`",
-		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
 		`BenchmarkRunCmd    jobs.BenchmarkRunCmd    ` + "`cmd:\"\"`",
 		`ExampleHelloJobCmd jobs.ExampleHelloJobCmd ` + "`cmd:\"\"`",
 		`HttpServeCmd http.ServeCmd ` + "`cmd:\"\"`",
@@ -883,6 +882,22 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected root command template to contain %q", snippet)
+		}
+	}
+
+	eventTemplatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "app", "event_commands.go.tmpl")
+	eventContent, err := os.ReadFile(eventTemplatePath)
+	if err != nil {
+		t.Fatalf("read event command template: %v", err)
+	}
+	eventSource := string(eventContent)
+	for _, snippet := range []string{
+		`MakeEventCmd      makecmd.EventCmd      ` + "`cmd:\"\"`",
+		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
+		`TestEventPipelineCmd cmd.TestEventPipelineCmd ` + "`cmd:\"\"`",
+	} {
+		if !strings.Contains(eventSource, snippet) {
+			t.Fatalf("expected event command template to contain %q", snippet)
 		}
 	}
 	for _, snippet := range []string{

@@ -7,7 +7,9 @@ import (
 	"github.com/goforj/wire"
 
 	"{{.GoModuleName}}/internal/caches"
+{{- if .Components.Events }}
 	"{{.GoModuleName}}/internal/events"
+{{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
@@ -31,7 +33,9 @@ var managerSet = wire.NewSet(
 	metrics.NewManager,
 {{- end }}
 	provideCacheManager,
+{{- if .Components.Events }}
 	provideEventManager,
+{{- end }}
 	provideInspectManager,
 	provideStorageManager,
 {{- if .Components.Mail }}
@@ -67,10 +71,11 @@ func provideInspectManager(cacheManager *caches.Manager) *inspects.Manager {
 	return manager
 }
 
+{{ if .Components.Events }}
 // provideEventManager attaches observability hooks without making the observability package construct managers.
 func provideEventManager(
 	inspectManager *inspects.Manager,
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*events.Manager, error) {
@@ -81,10 +86,15 @@ func provideEventManager(
 	return manager.WithObserver(observability.EventObserver(
 		inspectManager,
 {{- if .ProjectComponents.Metrics }}
+		{{- if .Components.Metrics }}
 		metricsManager,
+		{{- else }}
+		(*metrics.Manager)(nil),
+		{{- end }}
 {{- end }}
 	)), nil
 }
+{{- end }}
 
 // provideStorageManager attaches storage observers while leaving disk registration inside the storage manager.
 func provideStorageManager(

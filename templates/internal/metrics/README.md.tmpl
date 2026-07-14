@@ -45,7 +45,9 @@ Each framework-owned instrumentation surface can be enabled or disabled independ
 - `METRICS_HTTP_ENABLED`
 - `METRICS_CACHE_ENABLED`
 - `METRICS_STORAGE_ENABLED`
+{{- if .ProjectComponents.Events }}
 - `METRICS_EVENTS_ENABLED`
+{{- end }}
 {{- if .Components.Mail }}
 - `METRICS_MAIL_ENABLED`
 {{- end }}
@@ -62,7 +64,7 @@ Each framework-owned instrumentation surface can be enabled or disabled independ
 - `METRICS_SCHEDULER_ENABLED`
 {{- end }}
 
-All of these default to `true`. Observer-backed primitives such as cache, storage, events, mail, and queue avoid attaching metrics observers when their toggle is disabled.
+All of these default to `true`. Generated observer-backed primitives avoid attaching metrics observers when their toggle is disabled.
 
 ## Metric Families
 
@@ -74,7 +76,9 @@ Prometheus names use underscores and suffixes. For example, the GoForj metric `h
 | Auth | `auth_flows_total`, `auth_flow_duration_seconds` | `app`, `flow`, `status`, `reason`, `provider` |
 | Cache | `cache_operations_total`, `cache_operation_duration_seconds` | `app`, `source`, `cache`, `driver`, `operation`, `category`, `status`, `hit` |
 | Storage | `storage_operations_total`, `storage_operation_duration_seconds` | `app`, `source`, `disk`, `driver`, `operation`, `category`, `status` |
+{{- if .ProjectComponents.Events }}
 | Events | `events_publishes_total`, `events_publish_duration_seconds`, `events_subscriptions_total`, `events_subscribers_active`, `events_deliveries_total`, `events_deliveries_inflight`, `events_delivery_duration_seconds` | `app`, `source`, `bus`, `driver`, `topic`, `handler`, `status`, `reason` |
+{{- end }}
 | Mail | `mail_sends_total`, `mail_send_duration_seconds` | `app`, `source`, `mailer`, `driver`, `status`, `reason` |
 | Queue | `queue_jobs_enqueued_total`, `queue_jobs_scheduled_total`, `queue_jobs_processed_total`, `queue_jobs_failed_total`, `queue_jobs_retried_total`, `queue_jobs_archived_total`, `queue_jobs_by_job_total`, `queue_jobs_inflight`, `queue_jobs_inflight_by_job`, `queue_events_by_queue_total`, `queue_job_duration_by_queue_seconds`, `queue_job_duration_by_job_seconds` | `app`, `source`, `queue`, `job_name`, `driver`, `status`, `kind` |
 | Scheduler | `scheduler_started_total`, `scheduler_runs_total`, `scheduler_failures_total`, `scheduler_skips_total`, `scheduler_runs_by_job_total`, `scheduler_events_by_job_total`, `scheduler_jobs_inflight`, `scheduler_job_duration_by_job_seconds` | `app`, `source`, `job_name`, `target_kind`, `status`, `reason` |
@@ -87,11 +91,11 @@ The local observability stack adds a `process` label at scrape time. Typical val
 
 Every framework-owned metric family emits `app` directly. Use it as the top-level app selector in dashboards and alerts.
 
-Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache, storage, events, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
+Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache, storage{{ if .ProjectComponents.Events }}, events{{ end }}, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
 
 When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards. HTTP request metrics fall back to `source="http"` because route traffic is always attributable to the HTTP runtime surface. Inspect-store cache operations use `source="lighthouse"` because that cache traffic is Lighthouse persistence, not app business cache traffic.
 
-Component-specific metric families are emitted when the corresponding component is enabled. Core primitive metrics such as cache, storage, and events are available for generated sources that wire those primitives.
+Component-specific metric families are emitted when the corresponding component is enabled. Core primitive metrics are available for generated sources that wire those primitives.
 
 ## Labels
 
@@ -100,10 +104,12 @@ Labels are intentionally low-cardinality:
 - `app` is the generated app identity, such as `app`, `marketplace`, or `backstage`.
 - `source` is the runtime surface, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, `startup`, or `app`.
 - `route` uses the registered route pattern, such as `/api/users/:id`, not the raw URL.
-- `cache`, `disk`, `mailer`, `queue`, `connection`, and `bus` use named accessors or configured primitive names.
+- `cache`, `disk`, `mailer`, `queue`, `connection`{{ if .ProjectComponents.Events }}, and `bus`{{ end }} use named accessors or configured primitive names.
 - `target` for database metrics is the normalized table or query target when available.
 - `job_name` is a stable queue or scheduler job type/name.
+{{- if .ProjectComponents.Events }}
 - `handler` is the stable event handler identity.
+{{- end }}
 - `hit` uses `hit`, `miss`, or `na` instead of raw booleans.
 - `status`, `reason`, `operation`, and `category` are normalized framework-owned values.
 
@@ -538,6 +544,7 @@ sum by (job_name, reason) (
 )
 ```
 
+{{- if .ProjectComponents.Events }}
 ### Events
 
 Publish and delivery throughput by topic:
@@ -571,6 +578,7 @@ Handler latency P95:
   )
 )
 ```
+{{- end }}
 
 ### Mail
 

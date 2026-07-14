@@ -8,7 +8,7 @@ import (
 
 // TestDefaultResourcePlan locks the portable defaults and built-in transition drivers to concrete contracts.
 func TestDefaultResourcePlan(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true}
+	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -43,7 +43,27 @@ func TestDefaultResourcePlanOmitsDisabledCapabilities(t *testing.T) {
 	if _, ok := plan.Selection(ResourceMail); ok {
 		t.Fatal("Mail-disabled plan contains a mail selection")
 	}
+	if _, ok := plan.Selection(ResourceEvents); ok {
+		t.Fatal("Events-disabled plan contains an Events selection")
+	}
 	assertResourceSelection(t, plan, ResourceDatabase, "sqlite", []string{"sqlite"})
+}
+
+// TestResourcePlanNormalizationCannotResurrectDisabledEvents verifies stale transient selections are discarded by component applicability.
+func TestResourcePlanNormalizationCannotResurrectDisabledEvents(t *testing.T) {
+	components := Components{DatabaseSQLite: true}
+	plan, err := DefaultResourcePlan(components)
+	if err != nil {
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
+	}
+	plan = plan.WithSelection(ResourceEvents, DriverSelection{Active: "redis", Supported: []string{"redis"}})
+	normalized, err := plan.Normalized(components)
+	if err != nil {
+		t.Fatalf("Normalized rejected a stale disabled selection: %v", err)
+	}
+	if _, exists := normalized.Selection(ResourceEvents); exists {
+		t.Fatalf("normalized Events-disabled plan retained stale Events selection: %#v", normalized)
+	}
 }
 
 // TestResourcePlanNormalizationRejectsInvalidContracts proves active and built-in values cannot drift.

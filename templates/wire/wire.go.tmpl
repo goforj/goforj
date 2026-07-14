@@ -22,7 +22,9 @@ func InitializeApplication() (App, error) {
 {{ if .Components.HasDatabase -}}
 		databaseSet,
 {{ end -}}
+{{ if .Components.Events -}}
 		appSubscriberSet,
+{{ end -}}
 {{ if or .Components.WebAPI .Components.WebUI -}}
 		appHttpControllerSet,
 {{ end -}}

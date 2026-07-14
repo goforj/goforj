@@ -130,7 +130,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 Grafana is provisioned with:
 
 - datasource: VictoriaMetrics
-- dashboards: Cache Overview, Storage Overview, Events Overview, Auth Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
+- dashboards: Cache Overview, Storage Overview{{ if .ProjectComponents.Events }}, Events Overview{{ end }}, Auth Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
 - starred dashboards: the same generated overviews are starred automatically for the default admin user
 - home dashboard: Platform Overview
 
@@ -156,10 +156,12 @@ The most useful query dimensions are:
 - `app`: which App composition app emitted the metric, such as `app`, `billing`, or `customer-portal`.
 - `source`: which logical source emitted the metric, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, or `startup`.
 - `process`: which scrape target exposed the metric, such as `app`, `http`, `jobs`, or `scheduler`.
-- `cache`, `disk`, `mailer`, `queue`, `connection`, `bus`: which named primitive handled the work.
+- `cache`, `disk`, `mailer`, `queue`, `connection`{{ if .ProjectComponents.Events }}, `bus`{{ end }}: which named primitive handled the work.
 - `route`, `method`, `status`: which HTTP route and outcome generated traffic.
 - `job_name`, `target_kind`: which queue or scheduler job ran.
+{{- if .ProjectComponents.Events }}
 - `topic`, `handler`: which event topic or subscriber handled work.
+{{- end }}
 
 ## Production Notes
 

@@ -106,7 +106,7 @@ func TestReconcileNewProjectTargetResourcesPreviewsOwnerValues(t *testing.T) {
 
 // TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample verifies a committed fallback cannot replace wizard choices.
 func TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Events: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	target := t.TempDir()
@@ -142,7 +142,7 @@ func TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *
 
 // TestReconcileNewProjectTargetResourcesPrefersOwnerEnvironment verifies the safe example cannot replace concrete runtime ownership.
 func TestReconcileNewProjectTargetResourcesPrefersOwnerEnvironment(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	target := t.TempDir()

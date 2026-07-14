@@ -4,6 +4,12 @@
 
 - Plan status: accepted; implementation in progress
 - Planning date: 2026-07-14
+- Phase 1 status: complete; component contract, legacy migration, App/project
+  projections, and primitive-neutral Inspects observations are merged on this
+  branch
+- Phase 2 status: complete; Events has a truthful initial opt-out, mixed-App
+  projection, safe additive enablement, and an explicit no-removal contract
+- Next slice: Phase 3, File Storage
 - Scope: component modeling, project and App rendering, generated resource
   surfaces, configuration migration, and test-render coverage
 - Target repository: `goforj`

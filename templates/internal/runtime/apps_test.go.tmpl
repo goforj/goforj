@@ -35,7 +35,9 @@ func TestAppMetadataUsesPerAppComponents(t *testing.T) {
 		DatabaseSQLite:   {{ .Components.DatabaseSQLite }},
 		Scheduler:        {{ .Components.Scheduler }},
 		Cache:            {{ .Components.Cache }},
+{{- if $.ProjectComponents.Events }}
 		Events:           {{ .Components.Events }},
+{{- end }}
 		Storage:          {{ .Components.Storage }},
 		Jobs:             {{ .Components.Jobs }},
 	}); got != want {

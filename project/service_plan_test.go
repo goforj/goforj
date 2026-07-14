@@ -48,7 +48,7 @@ func TestResolveServicePlanRedisStates(t *testing.T) {
 
 // TestResolveServicePlanDeduplicatesRedisConsumers verifies one service covers every normal shared Redis resource.
 func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
-	components := Components{Auth: true, DatabaseMySQL: true, Docker: true, Jobs: true}
+	components := Components{Auth: true, DatabaseMySQL: true, Docker: true, Jobs: true, Events: true}
 	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceStorage, DriverSelection{Active: "redis", Supported: []string{"local", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
@@ -74,7 +74,7 @@ func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
 
 // TestResolveServicePlanIncludesGeneratedAuthSessions verifies named generated resources affect infrastructure discovery.
 func TestResolveServicePlanIncludesGeneratedAuthSessions(t *testing.T) {
-	components := Components{Auth: true, DatabaseSQLite: true, Docker: true}
+	components := Components{Auth: true, DatabaseSQLite: true, Docker: true, Events: true}
 	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceCache, DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
@@ -301,7 +301,7 @@ func TestResolveServicePlanTreatsSMTPAsDevelopmentToolOnlyWithDocker(t *testing.
 
 // TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS verifies endpoint affinity survives provider-name similarity.
 func TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Jobs: true}
+	components := Components{DatabaseSQLite: true, Jobs: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -325,7 +325,7 @@ func TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS(t *testing.T) {
 
 // TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis verifies user-authored named resources participate in discovery.
 func TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Docker: true}
+	components := Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -347,7 +347,7 @@ func TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis(t *testing.T
 
 // TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints verifies affinity, rather than driver name, controls deduplication.
 func TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Docker: true}
+	components := Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)

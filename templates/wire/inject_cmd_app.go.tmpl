@@ -15,7 +15,6 @@ import (
 var appCommandSet = wire.NewSet(
 	cmd.NewHelloWorldCmd,
 	cmd.NewResourcesCmd,
-	cmd.NewTestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	monitoring.NewPollCmd,
 	monitoring.NewPushTriggerCmd,

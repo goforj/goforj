@@ -10,7 +10,9 @@ import (
 {{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+{{- if .ProjectComponents.Events }}
 	"{{.GoModuleName}}/internal/events"
+{{- end }}
 	"{{.GoModuleName}}/internal/http"
 {{- if .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
@@ -31,10 +33,13 @@ var httpServerSet = wire.NewSet(
 	lighthouse.NewHub,
 )
 
+// provideReadinessChecks projects only this App's enabled resource managers into HTTP readiness checks.
 func provideReadinessChecks(
 	caches *caches.Manager,
 	storage *storages.Manager,
+{{- if and .ProjectComponents.Events .Components.Events }}
 	events *events.Manager,
+{{- end }}
 {{- if and .ProjectComponents.Jobs .Components.Jobs }}
 	queues *queues.Manager,
 {{- end }}
@@ -45,7 +50,13 @@ func provideReadinessChecks(
 	return http.ProvideReadinessChecks(
 		caches,
 		storage,
+{{- if .ProjectComponents.Events }}
+		{{- if .Components.Events }}
 		events,
+		{{- else }}
+		(*events.Manager)(nil),
+		{{- end }}
+{{- end }}
 {{- if .ProjectComponents.Jobs }}
 		{{- if .Components.Jobs }}
 		queues,
