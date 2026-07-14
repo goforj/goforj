@@ -4,12 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"github.com/goforj/env/v2"
+	"strings"
 )
 
 var goModTidyRunner = runGoModTidy
 
+// Cmd selects generated resource packages and derived project files.
 type Cmd struct {
 	Storage       bool `help:"Generate storage code"`
 	Cache         bool `help:"Generate cache code"`
@@ -20,18 +20,23 @@ type Cmd struct {
 	Observability bool `help:"Generate observability-derived files"`
 }
 
+// NewCmd returns a generate command with the conventional all-resources default.
 func NewCmd() *Cmd {
 	return &Cmd{}
 }
 
+// Signature declares the generated command name and help text.
 func (*Cmd) Signature() string {
 	return `name:"generate" help:"Generate application code and derived files"`
 }
 
+// Run regenerates the selected project resources from the project-owned environment snapshot.
 func (c *Cmd) Run() error {
-	if err := env.Load(); err != nil {
+	restoreEnvironment, err := loadGenerationEnvironment(".")
+	if err != nil {
 		return err
 	}
+	defer restoreEnvironment()
 	selected := c.Storage || c.Cache || c.Mail || c.Queue || c.Events || c.DB || c.Observability
 	ranStorage := false
 	ranCache := false
@@ -100,10 +105,13 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
+// GenerateProjectFiles regenerates selected resources beneath projectDir and reports total and changed files.
 func GenerateProjectFiles(projectDir string, includeStorage, includeCache, includeQueue, includeEvents, includeDB, includeObservability bool) (int, int, error) {
-	if err := env.Load(); err != nil {
+	restoreEnvironment, err := loadGenerationEnvironment(projectDir)
+	if err != nil {
 		return 0, 0, err
 	}
+	defer restoreEnvironment()
 	totalFiles := 0
 	changedFiles := 0
 	ranAny := false
@@ -194,6 +202,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 	return totalFiles, changedFiles, nil
 }
 
+// runGoModTidy refreshes dependencies without exposing project resource credentials to Go or invoked VCS processes.
 func runGoModTidy(projectDir string) error {
 	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err != nil {
 		if os.IsNotExist(err) {
@@ -203,9 +212,22 @@ func runGoModTidy(projectDir string) error {
 	}
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = projectDir
-	cmd.Env = os.Environ()
+	cmd.Env = generationSubprocessEnvironment()
 	if _, err := cmd.CombinedOutput(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// generationSubprocessEnvironment retains the developer's toolchain environment while removing temporary generator inputs.
+func generationSubprocessEnvironment() []string {
+	environment := make([]string, 0, len(os.Environ()))
+	for _, assignment := range os.Environ() {
+		key, _, _ := strings.Cut(assignment, "=")
+		if isGenerationEnvironmentKey(key) {
+			continue
+		}
+		environment = append(environment, assignment)
+	}
+	return environment
 }

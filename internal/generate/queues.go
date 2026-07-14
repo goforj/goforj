@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -25,14 +26,15 @@ type queueAccessorName struct {
 }
 
 type queueConfigTemplateData struct {
-	GoModuleName string
-	Drivers      []queueDriverSpec
-	HasOptional  bool
-	HasRedis     bool
-	HasSQL       bool
-	HasSQS       bool
-	HasURLBased  bool
-	Names        []queueAccessorName
+	CompiledDrivers []string
+	GoModuleName    string
+	Drivers         []queueDriverSpec
+	HasOptional     bool
+	HasRedis        bool
+	HasSQL          bool
+	HasSQS          bool
+	HasURLBased     bool
+	Names           []queueAccessorName
 }
 
 type queueDriverSpec struct {
@@ -198,8 +200,9 @@ var queueDriverKeys = map[string]map[string]struct{}{
 	"mysql":      makeSet("DSN", "PROCESSING_RECOVERY_GRACE_SECONDS", "PROCESSING_LEASE_NO_TIMEOUT_SECONDS"),
 }
 
+// GenerateQueueFiles writes queue accessors whose selectable transports are fixed by the generation snapshot.
 func GenerateQueueFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(primitiveEnvContract{
+	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
 		Prefix:        "QUEUE",
 		DefaultDriver: "workerpool",
 		RootKeys:      queueRootKeys,
@@ -221,7 +224,7 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated queue manager: %w", err)
 	}
-	accessors, err := renderQueueAccessors(projectDir, discoverQueueNames())
+	accessors, err := renderQueueAccessors(projectDir, discoverQueueNames(projectDir))
 	if err != nil {
 		return 0, err
 	}
@@ -251,8 +254,9 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 	return written, nil
 }
 
-func discoverQueueNames() []string {
-	names := env.WithPrefix("QUEUE").ChildNames(queueRootKeys)
+// discoverQueueNames includes queues declared only through a configured App overlay.
+func discoverQueueNames(projectDir string) []string {
+	names := discoverPrimitiveChildNames(projectDir, "QUEUE", queueRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -300,8 +304,9 @@ func readModuleName(projectDir string) (string, error) {
 	return "", fmt.Errorf("module name not found in go.mod")
 }
 
+// renderQueueConfig retains native worker execution code without widening the authoritative compiled manifest.
 func renderQueueConfig(projectDir string) ([]byte, error) {
-	names := discoverQueueNames()
+	names := discoverQueueNames(projectDir)
 	moduleName, err := readModuleName(projectDir)
 	if err != nil {
 		return nil, err
@@ -311,26 +316,29 @@ func renderQueueConfig(projectDir string) ([]byte, error) {
 		"sync":       {},
 		"workerpool": {},
 	}
-	defaultDriver := str.Of(env.Get("QUEUE_DRIVER", "workerpool")).TrimSpace().ToLower().String()
-	if defaultDriver != "" {
-		driverSet[defaultDriver] = struct{}{}
-	}
+	defaultDriver := effectivePrimitiveDriver(env.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
+	driverSet[defaultDriver] = struct{}{}
 	for _, child := range env.WithPrefix("QUEUE").ChildNames(queueRootKeys) {
 		driver := str.Of(env.Get("QUEUE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
 		if driver != "" {
 			driverSet[driver] = struct{}{}
 		}
 	}
+	for _, active := range appPrefixedActiveDrivers(projectDir, "QUEUE", "workerpool", true) {
+		driverSet[active.driver] = struct{}{}
+	}
 	drivers, err := supportedDrivers("QUEUE", queueDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
+	compiledDrivers := slices.Clone(drivers)
 	drivers = appendMissingString(drivers, "workerpool")
 
 	data := queueConfigTemplateData{
-		GoModuleName: moduleName,
-		Drivers:      make([]queueDriverSpec, 0, len(drivers)),
-		Names:        make([]queueAccessorName, 0, len(names)),
+		CompiledDrivers: compiledDrivers,
+		GoModuleName:    moduleName,
+		Drivers:         make([]queueDriverSpec, 0, len(drivers)),
+		Names:           make([]queueAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
 		data.Names = append(data.Names, queueAccessorName{
@@ -452,6 +460,12 @@ const (
 	driverSync       = "sync"
 	driverWorkerpool = "workerpool"
 )
+
+var compiledQueueDrivers = []string{
+{{- range .CompiledDrivers }}
+	"{{ . }}",
+{{- end }}
+}
 
 var queueRootKeys = []string{
 	"DRIVER",
@@ -682,10 +696,14 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 	return manager, nil
 }
 
+// buildQueue rejects transports outside the artifact manifest before workers or infrastructure are initialized.
 func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queue.Observer, logger queue.Logger) (*queue.Queue, error) {
 	driver := str.Of(queueString(scope, rootScope, "DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverWorkerpool
+	}
+	if !queueDriverCompiled(driver) {
+		return nil, fmt.Errorf("queue: active driver %q is not built in; compiled choices: %s; run forj generate --queue after updating QUEUE_SUPPORTED_DRIVERS", driver, strings.Join(compiledQueueDrivers, ", "))
 	}
 
 	defaultQueue := queueDefaultQueue(name, scope, rootScope)
@@ -725,6 +743,16 @@ func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queu
 	default:
 		return nil, fmt.Errorf("queue: unsupported driver %q", driver)
 	}
+}
+
+// queueDriverCompiled reports whether driver is selectable in this generated artifact.
+func queueDriverCompiled(driver string) bool {
+	for _, compiled := range compiledQueueDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
 }
 
 func queueWorkerCount(scope env.Scope, rootScope env.Scope) int {

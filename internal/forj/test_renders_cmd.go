@@ -506,6 +506,7 @@ func buildCuratedRenderCombos() []renderCombo {
 			Scheduler: feature.scheduler,
 			Jobs:      feature.jobs,
 		}
+		cfg.ResolveDependencies()
 		if err := cfg.ValidateRenderContract(); err != nil {
 			continue
 		}
@@ -529,6 +530,7 @@ func buildCuratedRenderCombos() []renderCombo {
 				Jobs:      feature.jobs,
 			}
 			variant.apply(&cfg)
+			cfg.ResolveDependencies()
 			if err := cfg.ValidateRenderContract(); err != nil {
 				continue
 			}

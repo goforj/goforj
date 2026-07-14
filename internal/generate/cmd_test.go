@@ -3,6 +3,7 @@ package generate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,11 +25,19 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 		}
 	}
 	writeQueueRuntimeFixture(t, projectDir)
-
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("MAIL_DRIVER", "log")
-	t.Setenv("QUEUE_DRIVER", "null")
-	t.Setenv("STORAGE_DRIVER", "local")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(strings.Join([]string{
+		"CACHE_DRIVER=memory",
+		"CACHE_SUPPORTED_DRIVERS=memory",
+		"MAIL_DRIVER=log",
+		"MAIL_SUPPORTED_DRIVERS=log",
+		"QUEUE_DRIVER=null",
+		"QUEUE_SUPPORTED_DRIVERS=null",
+		"STORAGE_DRIVER=local",
+		"STORAGE_SUPPORTED_DRIVERS=local",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	orig := goModTidyRunner
 	goModTidyRunner = func(dir string) error { return nil }
@@ -66,7 +75,9 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 		t.Fatalf("mkdir database dir: %v", err)
 	}
 
-	t.Setenv("DB_DRIVER", "mysql")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	called := 0
 	orig := goModTidyRunner
@@ -104,6 +115,9 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 	}
 
 	t.Setenv("DB_DRIVER", "mysql")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	if _, err := GenerateDBFiles(projectDir); err != nil {
 		t.Fatalf("seed generated db file: %v", err)
@@ -141,7 +155,9 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 		t.Fatalf("mkdir database dir: %v", err)
 	}
 
-	t.Setenv("DB_DRIVER", "mysql")
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	origWD, err := os.Getwd()
 	if err != nil {
@@ -180,11 +196,15 @@ func TestCmdRunGeneratesObservabilityTargetsWithoutGoModTidy(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "internal", "http"), 0o755); err != nil {
 		t.Fatalf("mkdir http dir: %v", err)
 	}
-
-	t.Setenv("APP_NAME", "Test App")
-	t.Setenv("APP_ENV", "local")
-	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "localhost")
-	t.Setenv("METRICS_API_PORT", "9100")
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(strings.Join([]string{
+		"APP_NAME=Test App",
+		"APP_ENV=local",
+		"OBSERVABILITY_METRICS_TARGET_HOST=localhost",
+		"METRICS_API_PORT=9100",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	origWD, err := os.Getwd()
 	if err != nil {
@@ -236,8 +256,15 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 
 	t.Setenv("STORAGE_DRIVER", "local")
-	t.Setenv("APP_NAME", "Test App")
-	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(strings.Join([]string{
+		"STORAGE_DRIVER=local",
+		"STORAGE_SUPPORTED_DRIVERS=local",
+		"APP_NAME=Test App",
+		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	if _, err := GenerateStorageFiles(projectDir); err != nil {
 		t.Fatalf("seed generated storage file: %v", err)

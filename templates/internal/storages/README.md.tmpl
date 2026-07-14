@@ -136,6 +136,12 @@ If a runtime disk selects a driver that is not listed in `STORAGE_SUPPORTED_DRIV
 
 `forj build` also runs storage generation automatically before building the app binary.
 
+## Switching Drivers
+
+`STORAGE_SUPPORTED_DRIVERS` is the set of drivers built into the app; `STORAGE_DRIVER` and the named `STORAGE_<NAME>_DRIVER` values select which of them are active. To switch an existing disk to a driver already built in, configure its credentials and required service, migrate existing objects, change the active driver, then restart or redeploy the App. No regeneration or rebuild is needed.
+
+To use a driver that is not built in, add it to `STORAGE_SUPPORTED_DRIVERS`, run `forj generate --storage`, and build a new artifact before selecting it. GoForj does not copy objects between backends; review object keys, prefixes, generated URLs, public/private visibility, and access policy during the migration.
+
 ## Usage
 
 ```go

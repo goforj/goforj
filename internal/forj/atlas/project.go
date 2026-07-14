@@ -28,7 +28,7 @@ func Project(root string) atlasproject.Project {
 	discovered.Components = componentNames(cfg.Render.Components)
 	discovered.FrontendKit = string(cfg.Render.StarterKit)
 	discovered.DatabaseDriver = cfg.Render.Components.DatabaseDriver()
-	discovered.QueueDriver = firstNonEmpty(loadAtlasEnv(root)["QUEUE_DRIVER"], cfg.Render.LegacyQueueDriver())
+	discovered.QueueDriver = loadAtlasEnv(root)["QUEUE_DRIVER"]
 	discovered.Apps = atlasAppsFromConfig(root, cfg, discovered.Apps)
 
 	return discovered.WithDiscoveredDefaults()

@@ -26,12 +26,13 @@ type cacheAccessorName struct {
 }
 
 type cacheConfigTemplateData struct {
-	Drivers       []cacheDriverSpec
-	HasNATS       bool
-	HasSessions   bool
-	Names         []cacheAccessorName
-	OtherNames    []cacheAccessorName
-	AccessorNames []cacheAccessorName
+	CompiledDrivers []string
+	Drivers         []cacheDriverSpec
+	HasNATS         bool
+	HasSessions     bool
+	Names           []cacheAccessorName
+	OtherNames      []cacheAccessorName
+	AccessorNames   []cacheAccessorName
 }
 
 type cacheDriverSpec struct {
@@ -188,8 +189,9 @@ var cacheDriverKeys = map[string]map[string]struct{}{
 	"nats":      makeSet("URL", "BUCKET", "BUCKET_TTL", "BUCKET_TTL_SECONDS", "DESCRIPTION", "HISTORY", "MAX_BYTES", "MAX_VALUE_SIZE", "REPLICAS", "STORAGE", "COMPRESSED"),
 }
 
+// GenerateCacheFiles writes cache accessors whose imports and manifest reflect the project-owned build contract.
 func GenerateCacheFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(primitiveEnvContract{
+	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
 		Prefix:        "CACHE",
 		DefaultDriver: "memory",
 		RootKeys:      cacheRootKeys,
@@ -199,10 +201,11 @@ func GenerateCacheFiles(projectDir string) (int, error) {
 			return scope.ChildNames(cacheRootKeys)
 		},
 		AllowInactiveRootKeys: true,
+		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderCacheConfig()
+	manager, err := renderCacheConfig(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -210,7 +213,7 @@ func GenerateCacheFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated cache manager: %w", err)
 	}
-	accessors, err := renderCacheAccessors(discoverCacheStoreNames())
+	accessors, err := renderCacheAccessors(discoverCacheStoreNames(projectDir))
 	if err != nil {
 		return 0, err
 	}
@@ -240,8 +243,9 @@ func GenerateCacheFiles(projectDir string) (int, error) {
 	return written, nil
 }
 
-func discoverCacheStoreNames() []string {
-	names := env.WithPrefix("CACHE").ChildNames(cacheRootKeys)
+// discoverCacheStoreNames includes names declared only through a configured App overlay.
+func discoverCacheStoreNames(projectDir string) []string {
+	names := discoverPrimitiveChildNames(projectDir, "CACHE", cacheRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -279,28 +283,29 @@ func renderCacheAccessors(names []string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func renderCacheConfig() ([]byte, error) {
-	names := discoverCacheStoreNames()
+// renderCacheConfig snapshots cache driver choices once so imports and the compiled manifest cannot diverge.
+func renderCacheConfig(projectDir string) ([]byte, error) {
+	names := discoverCacheStoreNames(projectDir)
 	driverSet := map[string]struct{}{}
-	defaultDriver := str.Of(env.Get("CACHE_DRIVER", "memory")).TrimSpace().ToLower().String()
-	if defaultDriver != "" {
-		driverSet[defaultDriver] = struct{}{}
+	defaultDriver := effectivePrimitiveDriver(env.Get("CACHE_DRIVER", "memory"), "memory")
+	driverSet[defaultDriver] = struct{}{}
+	for _, child := range names {
+		driver := effectivePrimitiveDriver(env.Get("CACHE_"+str.Of(child).Snake("_").ToUpper().String()+"_DRIVER", ""), "memory")
+		driverSet[driver] = struct{}{}
 	}
-	for _, child := range env.WithPrefix("CACHE").ChildNames(cacheRootKeys) {
-		driver := str.Of(env.Get("CACHE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
-		if driver != "" {
-			driverSet[driver] = struct{}{}
-		}
+	for _, active := range appPrefixedActiveDrivers(projectDir, "CACHE", "memory", false) {
+		driverSet[active.driver] = struct{}{}
 	}
 	drivers, err := supportedDrivers("CACHE", cacheDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
 	data := cacheConfigTemplateData{
-		Drivers:       make([]cacheDriverSpec, 0, len(drivers)),
-		OtherNames:    make([]cacheAccessorName, 0, len(names)),
-		Names:         make([]cacheAccessorName, 0, len(names)),
-		AccessorNames: make([]cacheAccessorName, 0, len(names)),
+		CompiledDrivers: drivers,
+		Drivers:         make([]cacheDriverSpec, 0, len(drivers)),
+		OtherNames:      make([]cacheAccessorName, 0, len(names)),
+		Names:           make([]cacheAccessorName, 0, len(names)),
+		AccessorNames:   make([]cacheAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
 		accessor := cacheAccessorName{
@@ -439,6 +444,12 @@ const (
 	driverRedis     = "redis"
 	driverSQLite    = "sqlite"
 )
+
+var compiledCacheDrivers = []string{
+{{- range .CompiledDrivers }}
+	"{{ . }}",
+{{- end }}
+}
 
 var cacheRootKeys = []string{
 	"DRIVER",
@@ -623,6 +634,9 @@ func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
 	if driver == "" {
 		driver = driverMemory
 	}
+	if !cacheDriverCompiled(driver) {
+		return nil, fmt.Errorf("cache: active driver %q is not built in; compiled choices: %s; run forj generate --cache after updating CACHE_SUPPORTED_DRIVERS", driver, strings.Join(compiledCacheDrivers, ", "))
+	}
 
 	baseConfig := cachecore.BaseConfig{
 		DefaultTTL:    cacheDefaultTTL(scope),
@@ -688,6 +702,16 @@ func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
 	default:
 		return nil, fmt.Errorf("cache: unsupported driver %q", driver)
 	}
+}
+
+// cacheDriverCompiled reports whether driver is selectable in this generated artifact.
+func cacheDriverCompiled(driver string) bool {
+	for _, compiled := range compiledCacheDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
 }
 
 func cacheDefaultTTL(scope env.Scope) time.Duration {

@@ -141,6 +141,12 @@ If a runtime cache selects a driver that is not listed in `CACHE_SUPPORTED_DRIVE
 
 `forj build` also runs cache generation automatically before building the app binary.
 
+## Switching Drivers
+
+`CACHE_SUPPORTED_DRIVERS` is the set of drivers built into the app; `CACHE_DRIVER` and the named `CACHE_<NAME>_DRIVER` values select which of them are active. To switch an existing cache to a driver already built in, configure its connection and required service, change the active driver, then restart or redeploy the App. No regeneration or rebuild is needed.
+
+To use a driver that is not built in, add it to `CACHE_SUPPORTED_DRIVERS`, run `forj generate --cache`, and build a new artifact before selecting it. Cache entries are not copied between backends, so expect a cold cache unless you migrate or warm the data separately.
+
 ## Cache Shell
 
 Generated Apps include `cache:shell`, with the short alias `cache`, for opening a shell against configured Redis cache stores.

@@ -53,7 +53,7 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentCLI, Label: "CLI", Description: "Add commands to run and manage your app", DefaultSelected: true},
 	{Key: ComponentDocker, Label: "Docker", Description: "Run databases and tools locally", DefaultSelected: true},
 	{Key: ComponentMail, Label: "Mail", Description: "Send email from your app", DefaultSelected: true},
-	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail}},
+	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail, ComponentWebAPI}},
 	{Key: ComponentOAuth, Label: "OAuth", Description: "Sign in with external providers", DefaultSelected: true, Requires: []ComponentKey{ComponentAuth}, Parent: ComponentAuth},
 	{Key: ComponentWebAPI, Label: "Web API", Description: "Build endpoints for clients and frontends", DefaultSelected: true},
 	{Key: ComponentWebUI, Label: "Web UI", Description: "Serve a browser frontend", DefaultSelected: true},

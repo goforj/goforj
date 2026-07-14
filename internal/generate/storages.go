@@ -25,8 +25,9 @@ type storageAccessorName struct {
 }
 
 type storageConfigTemplateData struct {
-	Drivers []storageDriverSpec
-	Names   []storageAccessorName
+	CompiledDrivers []string
+	Drivers         []storageDriverSpec
+	Names           []storageAccessorName
 }
 
 type storageDriverSpec struct {
@@ -208,8 +209,9 @@ var storageDriverKeys = map[string]map[string]struct{}{
 	"rclone":  makeSet("REMOTE", "RCLONE_CONFIG_PATH", "RCLONE_CONFIG_DATA"),
 }
 
+// GenerateStorageFiles writes disk accessors whose selectable backends are fixed by the generation snapshot.
 func GenerateStorageFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(primitiveEnvContract{
+	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
 		Prefix:        "STORAGE",
 		DefaultDriver: "local",
 		RootKeys:      storageRootKeys,
@@ -219,10 +221,11 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 			return exactScopedChildNames("STORAGE", storageRootKeys)
 		},
 		AllowInactiveRootKeys: true,
+		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderStorageConfig()
+	manager, err := renderStorageConfig(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -230,7 +233,7 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated storage manager: %w", err)
 	}
-	accessors, err := renderStorageAccessors(discoverStorageDiskNames())
+	accessors, err := renderStorageAccessors(discoverStorageDiskNames(projectDir))
 	if err != nil {
 		return 0, err
 	}
@@ -260,18 +263,21 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 	return written, nil
 }
 
-func discoverStorageDiskNames() []string {
-	names := discoverStorageChildren()
+// discoverStorageDiskNames normalizes App and resource-first scopes into generated accessor names.
+func discoverStorageDiskNames(projectDir string) []string {
+	names := discoverStorageChildren(projectDir)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
 	return names
 }
 
-func discoverStorageChildren() []string {
-	return exactScopedChildNames("STORAGE", storageRootKeys)
+// discoverStorageChildren includes disks declared only through a configured App overlay.
+func discoverStorageChildren(projectDir string) []string {
+	return discoverPrimitiveChildNames(projectDir, "STORAGE", storageRootKeys)
 }
 
+// exactScopedChildNames finds names only when their trailing key matches a complete resource key.
 func exactScopedChildNames(prefix string, rootKeys []string) []string {
 	prefix = strings.TrimSpace(strings.ToUpper(prefix))
 	if prefix == "" {
@@ -279,13 +285,18 @@ func exactScopedChildNames(prefix string, rootKeys []string) []string {
 	}
 
 	rootKeyParts := make(map[string][]string, len(rootKeys))
+	orderedRootKeys := make([]string, 0, len(rootKeys))
 	for _, key := range rootKeys {
 		normalized := strings.TrimSpace(strings.ToUpper(key))
 		if normalized == "" {
 			continue
 		}
 		rootKeyParts[normalized] = strings.Split(normalized, "_")
+		orderedRootKeys = append(orderedRootKeys, normalized)
 	}
+	sort.SliceStable(orderedRootKeys, func(left, right int) bool {
+		return len(rootKeyParts[orderedRootKeys[left]]) > len(rootKeyParts[orderedRootKeys[right]])
+	})
 
 	seen := map[string]struct{}{}
 	names := make([]string, 0)
@@ -301,8 +312,8 @@ func exactScopedChildNames(prefix string, rootKeys []string) []string {
 			continue
 		}
 		parts := strings.Split(strings.ToUpper(suffix), "_")
-		for _, root := range rootKeys {
-			rootParts := rootKeyParts[strings.TrimSpace(strings.ToUpper(root))]
+		for _, root := range orderedRootKeys {
+			rootParts := rootKeyParts[root]
 			if len(parts) <= len(rootParts) || !slices.Equal(parts[len(parts)-len(rootParts):], rootParts) {
 				continue
 			}
@@ -344,27 +355,39 @@ func renderStorageAccessors(names []string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func renderStorageConfig() ([]byte, error) {
-	names := discoverStorageDiskNames()
+// renderStorageConfig retains the native local backend without widening the authoritative compiled manifest.
+func renderStorageConfig(projectDir string) ([]byte, error) {
+	names := discoverStorageDiskNames(projectDir)
 	driverSet := map[string]struct{}{}
-	defaultDriver := str.Of(env.Get("STORAGE_DRIVER", "local")).TrimSpace().ToLower().String()
-	if defaultDriver != "" {
-		driverSet[defaultDriver] = struct{}{}
+	defaultDriver := effectivePrimitiveDriver(env.Get("STORAGE_DRIVER", "local"), "local")
+	driverSet[defaultDriver] = struct{}{}
+	for _, child := range discoverStorageChildren(projectDir) {
+		driver := effectivePrimitiveDriver(env.Get("STORAGE_"+child+"_DRIVER", ""), "local")
+		driverSet[driver] = struct{}{}
 	}
-	for _, child := range discoverStorageChildren() {
-		driver := str.Of(env.Get("STORAGE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
-		if driver != "" {
+	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+		resourcePrefix := appPrefix + "_STORAGE"
+		for _, child := range exactScopedChildNames(resourcePrefix, storageRootKeys) {
+			driver := effectiveAppPrimitiveChildDriver(resourcePrefix, primitiveEnvContract{
+				Prefix:        "STORAGE",
+				DefaultDriver: "local",
+			}, defaultDriver, defaultDriver, child)
 			driverSet[driver] = struct{}{}
 		}
+	}
+	for _, active := range appPrefixedActiveDrivers(projectDir, "STORAGE", "local", false) {
+		driverSet[active.driver] = struct{}{}
 	}
 	drivers, err := supportedDrivers("STORAGE", storageDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
+	compiledDrivers := slices.Clone(drivers)
 	drivers = appendMissingString(drivers, "local")
 	data := storageConfigTemplateData{
-		Drivers: make([]storageDriverSpec, 0, len(drivers)),
-		Names:   make([]storageAccessorName, 0, len(names)),
+		CompiledDrivers: compiledDrivers,
+		Drivers:         make([]storageDriverSpec, 0, len(drivers)),
+		Names:           make([]storageAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
 		data.Names = append(data.Names, storageAccessorName{
@@ -475,6 +498,12 @@ const (
 	driverS3      = "s3"
 	driverSFTP    = "sftp"
 )
+
+var compiledStorageDrivers = []string{
+{{- range .CompiledDrivers }}
+	"{{ . }}",
+{{- end }}
+}
 
 var storageRootKeys = []string{
 	"DRIVER",
@@ -778,10 +807,14 @@ func storageDriverNameFromScope(scope env.Scope) string {
 // buildDiskConfig is generated from the storage disks currently defined in env.
 // The supported driver cases and imports in this file are derived from
 // STORAGE_SUPPORTED_DRIVERS, or from active STORAGE_* and STORAGE_<NAME>_* values when unset.
+// buildDiskConfig rejects backends outside the artifact manifest before endpoint configuration is constructed.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverLocal
+	}
+	if !storageDriverCompiled(driver) {
+		return nil, fmt.Errorf("storage: active driver %q is not built in; compiled choices: %s; run forj generate --storage after updating STORAGE_SUPPORTED_DRIVERS", driver, strings.Join(compiledStorageDrivers, ", "))
 	}
 
 	localRoot := filepath.Join("storage", "app", "private")
@@ -804,6 +837,16 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 	default:
 		return nil, fmt.Errorf("storage: unsupported driver %q", driver)
 	}
+}
+
+// storageDriverCompiled reports whether driver is selectable in this generated artifact.
+func storageDriverCompiled(driver string) bool {
+	for _, compiled := range compiledStorageDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
 }
 
 func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {

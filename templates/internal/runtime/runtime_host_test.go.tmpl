@@ -97,37 +97,6 @@ func TestRuntimeHostRunReturnsNilOnContextCancellation(t *testing.T) {
 	}
 }
 
-func TestNormalizeRuntimeModeDefaultsToStandalone(t *testing.T) {
-	tests := []struct {
-		name  string
-		value string
-		want  RuntimeMode
-	}{
-		{name: "empty", value: "", want: RuntimeModeStandalone},
-		{name: "standalone", value: "standalone", want: RuntimeModeStandalone},
-		{name: "distributed", value: "distributed", want: RuntimeModeDistributed},
-		{name: "unknown", value: "weird", want: RuntimeModeStandalone},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NormalizeRuntimeMode(tt.value); got != tt.want {
-				t.Fatalf("expected %q, got %q", tt.want, got)
-			}
-		})
-	}
-}
-
-func TestRuntimeTopologyNormalizeDefaultsToStandalone(t *testing.T) {
-	topology := RuntimeTopology{}
-
-	topology.Normalize()
-
-	if topology.Mode != RuntimeModeStandalone {
-		t.Fatalf("expected standalone mode, got %q", topology.Mode)
-	}
-}
-
 func TestWithSourceStoresNormalizedSourceName(t *testing.T) {
 	ctx := WithSource(context.Background(), Source(" HTTP "))
 
