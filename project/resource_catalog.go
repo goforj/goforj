@@ -243,7 +243,7 @@ var resourceCatalog = []ResourceDefinition{
 				driverEnvironmentPlaceholder("EVENTS_ENDPOINT", "", "optional SNS endpoint override"),
 			}, Order: 80},
 		},
-		applicable: func(Components) bool { return true },
+		applicable: func(components Components) bool { return components.Events },
 	},
 	{
 		Key:         ResourceStorage,

@@ -10,7 +10,7 @@ import (
 
 // TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis verifies owner-authored named scopes join the local default endpoint.
 func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTS_DRIVER=redis\nCACHE_REPORTS_ADDR=redis:6379\nREDIS_HOST=redis\nREDIS_PORT=6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
@@ -32,7 +32,7 @@ func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
 
 // TestEffectiveResourceConsumersSeparateExternalRedisEndpoints verifies root resource overrides do not collapse by driver name.
 func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_ADDR=cache.redis.example:6379\nEVENTS_DRIVER=redis\nEVENTS_ADDR=events.redis.example:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
@@ -105,6 +105,29 @@ func TestEffectiveResourceConsumersRespectConfiguredAppComponents(t *testing.T) 
 	for _, consumer := range consumers {
 		if consumer.Consumer == "billing:database" || strings.HasPrefix(consumer.Consumer, "billing:database:") {
 			t.Fatalf("database-disabled billing App gained a consumer from stale environment: %#v", consumers)
+		}
+	}
+}
+
+// TestEffectiveResourceConsumersIgnoreStaleDisabledEvents verifies root and App overlays cannot invent Events participation.
+func TestEffectiveResourceConsumersIgnoreStaleDisabledEvents(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Docker: true}},
+		Apps: map[string]project.AppConfig{
+			"billing": {Components: project.Components{CLI: true}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	plan := defaultResourcePlanForTest(t, projectComponents)
+	source := []byte("EVENTS_DRIVER=redis\nEVENTS_ADDR=events.example:6379\nBILLING_EVENTS_DRIVER=redis\nBILLING_EVENTS_ADDR=billing-events.example:6379\n")
+
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	for _, consumer := range consumers {
+		if consumer.Resource == project.ResourceEvents {
+			t.Fatalf("stale owner env resurrected Events consumer: %#v", consumers)
 		}
 	}
 }

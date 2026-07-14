@@ -1,12 +1,14 @@
 # Make Commands
 
-This package powers generated App make commands such as `make:event`, `make:subscriber`, `make:job`, `make:queue`, `make:schedule`, and `make:model`.
+This package powers generated App make commands{{ if .ProjectComponents.Events }} such as `make:event` and `make:subscriber`, alongside{{ else }} such as{{ end }} `make:job`, `make:queue`, `make:schedule`, and `make:model`.
 
 ## Common Commands
 
 ```bash
+{{ if .ProjectComponents.Events }}
 forj make:event billing:invoice-paid
 forj make:subscriber billing:invoice-paid
+{{ end }}
 forj make:job reports:generate --queue reports
 forj make:queue reports --workers 2
 forj make:schedule reports:daily --every 24h

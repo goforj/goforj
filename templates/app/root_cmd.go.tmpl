@@ -25,6 +25,9 @@ import (
 // RootCmd owns the generated app command surface, including app-local make commands.
 type RootCmd struct {
 	Commands
+{{- if .Components.Events }}
+	GeneratedEventCommands
+{{- end }}
 
 {{- if .Components.Jobs }}
 	BenchmarkRunCmd    jobs.BenchmarkRunCmd    `cmd:""`
@@ -37,7 +40,6 @@ type RootCmd struct {
 {{- if or .Components.WebAPI .Components.WebUI }}
 	MakeControllerCmd makecmd.ControllerCmd `cmd:""`
 {{- end }}
-	MakeEventCmd     makecmd.EventCmd     `cmd:""`
 {{- if .Components.Jobs }}
 	MakeJobCmd       makecmd.JobCmd       `cmd:""`
 {{- end }}
@@ -51,7 +53,6 @@ type RootCmd struct {
 {{- if .Components.Scheduler }}
 	MakeScheduleCmd makecmd.ScheduleCmd `cmd:""`
 {{- end }}
-	MakeSubscriberCmd makecmd.SubscriberCmd `cmd:""`
 {{- if .Components.HasDatabase }}
 	MigrateCmd         migrations.MigrateCmd         `cmd:""`
 	MigrateRollbackCmd migrations.MigrateRollbackCmd `cmd:""`
@@ -70,9 +71,12 @@ type RootCmd struct {
 {{- end }}
 }
 
-// NewRootCmd keeps app-owned generators on the app command surface instead of the framework binary.
+// NewRootCmd assembles framework and app-owned commands on this App's command surface.
 func NewRootCmd(
 	commands *Commands,
+{{- if .Components.Events }}
+	generatedEventCommands *GeneratedEventCommands,
+{{- end }}
 {{- if .Components.Jobs }}
 	benchmarkRunCmd *jobs.BenchmarkRunCmd,
 	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
@@ -84,7 +88,6 @@ func NewRootCmd(
 {{- if or .Components.WebAPI .Components.WebUI }}
 	makeControllerCmd *makecmd.ControllerCmd,
 {{- end }}
-	makeEventCmd *makecmd.EventCmd,
 {{- if .Components.Jobs }}
 	makeJobCmd *makecmd.JobCmd,
 {{- end }}
@@ -98,7 +101,6 @@ func NewRootCmd(
 {{- if .Components.Scheduler }}
 	makeScheduleCmd *makecmd.ScheduleCmd,
 {{- end }}
-	makeSubscriberCmd *makecmd.SubscriberCmd,
 {{- if .Components.HasDatabase }}
 	migrateCmd *migrations.MigrateCmd,
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
@@ -118,6 +120,9 @@ func NewRootCmd(
 ) *RootCmd {
 	return &RootCmd{
 		Commands:          *commands,
+{{- if .Components.Events }}
+		GeneratedEventCommands: *generatedEventCommands,
+{{- end }}
 {{- if .Components.Jobs }}
 		BenchmarkRunCmd:    *benchmarkRunCmd,
 		ExampleHelloJobCmd: *exampleHelloJobCmd,
@@ -129,7 +134,6 @@ func NewRootCmd(
 {{- if or .Components.WebAPI .Components.WebUI }}
 		MakeControllerCmd: *makeControllerCmd,
 {{- end }}
-		MakeEventCmd:     *makeEventCmd,
 {{- if .Components.Jobs }}
 		MakeJobCmd:       *makeJobCmd,
 {{- end }}
@@ -143,7 +147,6 @@ func NewRootCmd(
 {{- if .Components.Scheduler }}
 		MakeScheduleCmd: *makeScheduleCmd,
 {{- end }}
-		MakeSubscriberCmd: *makeSubscriberCmd,
 {{- if .Components.HasDatabase }}
 		MigrateCmd:         *migrateCmd,
 		MigrateRollbackCmd: *migrateRollbackCmd,

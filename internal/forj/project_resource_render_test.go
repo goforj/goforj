@@ -20,6 +20,7 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 		Auth:          true,
 		DatabaseMySQL: true,
 		Jobs:          true,
+		Events:        true,
 	}
 	tests := []struct {
 		name        string
@@ -82,6 +83,62 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 			}
 			if !strings.Contains(compose, "  redis:\n    profiles: [redis]") {
 				t.Fatalf("portable Compose bridge omitted profiled Redis:\n%s", compose)
+			}
+		})
+	}
+}
+
+// TestEventsEnvironmentUsesProjectEnvelopeAndAppParticipation verifies initial renders omit Events only when every App disables it.
+func TestEventsEnvironmentUsesProjectEnvelopeAndAppParticipation(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     *project.Config
+		wantEvents bool
+	}{
+		{
+			name: "all Apps disabled",
+			config: &project.Config{
+				ProjectName:  "No Events",
+				GoModuleName: "example.test/no-events",
+				Render:       project.RenderConfig{Components: project.Components{CLI: true}},
+			},
+		},
+		{
+			name: "named App enabled",
+			config: &project.Config{
+				ProjectName:  "Named Events",
+				GoModuleName: "example.test/named-events",
+				Render:       project.RenderConfig{Components: project.Components{CLI: true}},
+				Apps: map[string]project.AppConfig{
+					"events-worker": {Components: project.Components{CLI: true, Events: true}},
+				},
+			},
+			wantEvents: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			components := project.ProjectComponents(test.config)
+			plan := defaultResourcePlanForTest(t, components)
+			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			renderer.config = test.config
+			renderer.resourcePlan = plan
+			renderer.stats = &renderStats{}
+			path := filepath.Join(t.TempDir(), ".env")
+			if err := renderer.renderTemplateFile(path, ".env.tmpl", test.config); err != nil {
+				t.Fatalf("render environment: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read environment: %v", err)
+			}
+			text := string(data)
+			if strings.Contains(text, "EVENTS_DRIVER=") != test.wantEvents {
+				t.Fatalf("root Events environment presence = %t, want %t:\n%s", strings.Contains(text, "EVENTS_DRIVER="), test.wantEvents, text)
+			}
+			if test.wantEvents && (!strings.Contains(text, "EVENTS_SUPPORTED_DRIVERS=inproc,redis") || !strings.Contains(text, "EVENTS_WORKER_EVENTS_DRIVER=inproc")) {
+				t.Fatalf("named-App Events environment omitted project support or App activation:\n%s", text)
 			}
 		})
 	}
@@ -206,7 +263,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 		t.Fatalf("change to render directory: %v", err)
 	}
 
-	components := project.Components{CLI: true, Docker: true, DatabaseSQLite: true, Jobs: true}
+	components := project.Components{CLI: true, Docker: true, DatabaseSQLite: true, Jobs: true, Events: true}
 	config := project.Config{
 		ProjectName:  "Shared Resource App",
 		GoModuleName: "example.com/shared-resource-app",

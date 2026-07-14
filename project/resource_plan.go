@@ -60,7 +60,9 @@ func DefaultResourcePlan(components Components) (ResourcePlan, error) {
 		plan.Selections[ResourceDatabase] = DriverSelection{Active: driver, Supported: supported}
 	}
 	plan.Selections[ResourceCache] = DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}}
-	plan.Selections[ResourceEvents] = DriverSelection{Active: "inproc", Supported: []string{"inproc", "redis"}}
+	if components.Events {
+		plan.Selections[ResourceEvents] = DriverSelection{Active: "inproc", Supported: []string{"inproc", "redis"}}
+	}
 	if components.Jobs {
 		plan.Selections[ResourceQueue] = DriverSelection{Active: "workerpool", Supported: []string{"workerpool", "redis"}}
 	}

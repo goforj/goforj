@@ -12,6 +12,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	config.Render.Components.WebAPI = true
 	config.Render.Components.WebUI = true
 	config.Render.Components.DatabaseSQLite = true
+	config.Render.Components.Events = true
 	config.Render.Components.Mail = true
 	config.Render.Components.Docker = true
 	config.Render.Components.Observability = true
@@ -76,8 +77,9 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	config := &project.Config{}
 	config.Render.Components.WebAPI = true
 	env := map[string]string{
-		"LIGHTHOUSE_ENABLED": "false",
-		"SWAGGER_ENABLED":    "false",
+		"LIGHTHOUSE_ENABLED":  "false",
+		"SWAGGER_ENABLED":     "false",
+		"EVENTS_AUDIT_DRIVER": "redis",
 	}
 
 	resources, err := RegistryForProject(config, env).List(t.Context())
@@ -90,8 +92,31 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	if _, ok := resourceByID(resources, "swagger"); ok {
 		t.Fatalf("disabled swagger present in %#v", resources)
 	}
+	if _, ok := resourceByID(resources, "events-audit"); ok {
+		t.Fatalf("stale Events env resurrected a disabled resource in %#v", resources)
+	}
 	if app, ok := resourceByID(resources, "app"); !ok || app.URL != "http://localhost:3000" {
 		t.Fatalf("app = %#v ok=%v", app, ok)
+	}
+}
+
+// TestRegistryUsesNamedAppEventsEnvelope verifies shared Events resources remain visible when only a named App participates.
+func TestRegistryUsesNamedAppEventsEnvelope(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			"events-worker": {Components: project.Components{CLI: true, Events: true}},
+		},
+	}
+	resources, err := RegistryForProject(config, map[string]string{"EVENTS_AUDIT_DRIVER": "inproc"}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if _, ok := resourceByID(resources, "events-audit"); !ok {
+		t.Fatalf("named Events App did not expose project Events resources: %#v", resources)
+	}
+	if config.Render.Components.Events {
+		t.Fatal("resource discovery widened the default App Events selection")
 	}
 }
 

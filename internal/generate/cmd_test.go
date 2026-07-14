@@ -188,6 +188,70 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 }
 
+// TestCmdRunRejectsExplicitEventsWhenComponentDisabled verifies stale package directories cannot authorize Events generation.
+func TestCmdRunRejectsExplicitEventsWhenComponentDisabled(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir stale Events package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    events: false\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("EVENTS_DRIVER=redis\nEVENTS_SUPPORTED_DRIVERS=redis\n"), 0o644); err != nil {
+		t.Fatalf("write stale Events environment: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	err = (&Cmd{Events: true}).Run()
+	if err == nil || !strings.Contains(err.Error(), "Events component is disabled") {
+		t.Fatalf("explicit disabled Events error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("internal", "events", "manager_gen.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("disabled Events generation wrote manager_gen.go: %v", statErr)
+	}
+}
+
+// TestCmdRunGeneratesEventsFromEnabledProjectConfig verifies config authorizes generation without directory-based selection.
+func TestCmdRunGeneratesEventsFromEnabledProjectConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir Events package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    events: true\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("EVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc\n"), 0o644); err != nil {
+		t.Fatalf("write Events environment: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	originalTidy := goModTidyRunner
+	goModTidyRunner = func(string) error { return nil }
+	t.Cleanup(func() { goModTidyRunner = originalTidy })
+	if err := (&Cmd{Events: true}).Run(); err != nil {
+		t.Fatalf("generate enabled Events: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("internal", "events", "manager_gen.go")); err != nil {
+		t.Fatalf("enabled Events manager was not generated: %v", err)
+	}
+}
+
 func TestCmdRunGeneratesObservabilityTargetsWithoutGoModTidy(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "containers", "observability", "vmagent"), 0o755); err != nil {

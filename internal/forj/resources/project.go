@@ -25,8 +25,10 @@ type ProjectResolver struct {
 func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 	env := r.Env
 	components := project.Components{}
+	projectComponents := project.Components{}
 	if r.Config != nil {
 		components = r.Config.Render.Components
+		projectComponents = project.ProjectComponents(r.Config)
 	}
 	webEnabled := r.Config == nil || components.WebAPI || components.WebUI
 	resources := []Resource{}
@@ -60,8 +62,10 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 		for _, name := range namedResources(env, "STORAGE") {
 			resources = append(resources, Resource{ID: "storage-" + name, Name: name, Category: "storage", Description: "Named storage disk resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
 		}
-		for _, name := range namedResources(env, "EVENTS") {
-			resources = append(resources, Resource{ID: "events-" + name, Name: name, Category: "events", Description: "Named event bus resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
+		if projectComponents.Events {
+			for _, name := range namedResources(env, "EVENTS") {
+				resources = append(resources, Resource{ID: "events-" + name, Name: name, Category: "events", Description: "Named event bus resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
+			}
 		}
 		if components.Mail && components.Docker {
 			resources = append(resources, Resource{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: urlWithPort(env, "MAILPIT_HTTP_PORT", "8025"), Description: "Local development inbox.", Enabled: true, Priority: 10, Source: "component", Owner: "goforj"})

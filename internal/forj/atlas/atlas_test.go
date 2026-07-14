@@ -136,6 +136,7 @@ render:
     web_api: true
     web_ui: true
     jobs: true
+    events: true
     scheduler: true
     metrics: true
     database_sqlite: true
@@ -184,6 +185,50 @@ func ProvideRoutes() {
 	if !ok || lighthouseResource.URL != "http://127.0.0.1:7777/lighthouse" ||
 		lighthouseResource.Category != "operator" || lighthouseResource.Source != "env" || lighthouseResource.Runtime != "operator" {
 		t.Fatalf("resources = %#v", inventory.Resources)
+	}
+}
+
+// TestInventoryIgnoresStaleDisabledEventBuses verifies Atlas follows project capability selection instead of owner env residue.
+func TestInventoryIgnoresStaleDisabledEventBuses(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+    events: false
+`)
+	writeFile(t, filepath.Join(root, ".env"), "EVENTS_AUDIT_DRIVER=redis\n")
+
+	inventory := Inventory(root)
+	if len(inventory.EventBuses) != 0 {
+		t.Fatalf("stale Events env resurrected Atlas event buses: %#v", inventory.EventBuses)
+	}
+}
+
+// TestInventoryUsesNamedAppEventsEnvelope verifies Atlas exposes shared buses when only a named App participates in Events.
+func TestInventoryUsesNamedAppEventsEnvelope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+apps:
+  events-worker:
+    components:
+      cli: true
+      events: true
+`)
+	writeFile(t, filepath.Join(root, ".env"), "EVENTS_AUDIT_DRIVER=inproc\n")
+
+	inventory := Inventory(root)
+	if !containsString(inventory.EventBuses, "audit") {
+		t.Fatalf("named Events App did not expose Atlas event buses: %#v", inventory.EventBuses)
 	}
 }
 

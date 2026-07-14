@@ -28,7 +28,7 @@ func TestGeneratedGitignoreIgnoresRuntimeStorage(t *testing.T) {
 }
 
 func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
-	modules := coredeps.SyncCoreLibraries()
+	modules := coredeps.SyncCoreLibraries(project.Components{Events: true})
 	expected := []string{
 		"github.com/goforj/queue@" + coredeps.MustVersionFor("github.com/goforj/queue"),
 		"github.com/goforj/queue/driver/redisqueue@" + coredeps.MustVersionFor("github.com/goforj/queue/driver/redisqueue"),
@@ -113,6 +113,9 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected go.mod to contain %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "github.com/goforj/events ") {
+		t.Fatalf("Events-disabled renderer added Events modules:\n%s", text)
 	}
 	if len(renderer.lines) != 1 || !strings.Contains(renderer.lines[0], "sync core libs") {
 		t.Fatalf("expected sync core libs render line, got %#v", renderer.lines)

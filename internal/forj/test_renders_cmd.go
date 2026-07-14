@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,6 +246,7 @@ type renderCombo struct {
 	id         string
 	components project.Components
 	starterKit project.StarterKit
+	apps       map[string]project.AppConfig
 	enabled    []string
 }
 
@@ -398,6 +400,26 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.DefaultSelectedComponents(),
 		},
 		{
+			id:  "sentinel_primitives_all_off",
+			cfg: project.Components{CLI: true, Docker: true},
+		},
+		{
+			id: "sentinel_primitives_all_on",
+			cfg: project.Components{
+				CLI: true, Docker: true, Cache: true, Events: true, Storage: true, Jobs: true,
+			},
+		},
+		{
+			id:  "sentinel_events_only",
+			cfg: project.Components{CLI: true, Docker: true, Events: true},
+		},
+		{
+			id: "sentinel_web_metrics_grafana_without_primitives",
+			cfg: project.Components{
+				CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
+			},
+		},
+		{
 			id: "sentinel_max_mysql",
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
@@ -449,6 +471,35 @@ func prSentinelRenderCombos() []renderCombo {
 			enabled:    componentLabels(cfg),
 		})
 	}
+
+	mixedDefault := project.Components{
+		CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
+	}
+	mixedDefault.ResolveDependencies()
+	mixedEvents := project.Components{CLI: true, Events: true}
+	mixedEvents.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_named_app_events_only",
+		components: mixedDefault,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"events-worker": {Components: mixedEvents},
+		},
+		enabled: append(componentLabels(mixedDefault), "App:events-worker(Events)"),
+	})
+	defaultEvents := project.Components{CLI: true, WebAPI: true, Metrics: true, Events: true, Docker: true}
+	defaultEvents.ResolveDependencies()
+	namedWithoutEvents := project.Components{CLI: true, WebAPI: true, Metrics: true}
+	namedWithoutEvents.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_default_events_named_app_off",
+		components: defaultEvents,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"api": {Components: namedWithoutEvents},
+		},
+		enabled: append(componentLabels(defaultEvents), "App:api(WebAPI,Metrics;Events-off)"),
+	})
 	return combos
 }
 
@@ -629,11 +680,17 @@ func initModule(dir, modCache, buildCache string) error {
 // runCombo renders and validates a single combo using a shared directory.
 func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, combo renderCombo) {
 	comboID := combo.id
+	apps, err := renderComboApps(combo)
+	if err != nil {
+		cmd.fail("invalid configured App", comboID, nil, err)
+		return
+	}
 	cfg := project.Config{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
 		GoModuleName: "github.com/test/project",
 		UpdatedAt:    time.Now().Format(time.RFC3339),
 		Dev:          project.DevConfig{},
+		Apps:         combo.apps,
 		Render: project.RenderConfig{
 			Components: combo.components,
 			StarterKit: combo.starterKit,
@@ -654,6 +711,12 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		return WriteYAML(ymlPath, cfg)
 	}); err != nil {
 		cmd.fail("failed to write config", comboID, &cfg, err)
+		return
+	}
+	if err := timer.Track("seed_apps", func() error {
+		return seedRenderComboApps(dir, apps)
+	}); err != nil {
+		cmd.fail("failed to seed configured Apps", comboID, &cfg, err)
 		return
 	}
 
@@ -706,14 +769,16 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 	}
 
 	if err := timer.Track("wire_gen", func() error {
-		wireCmd := exec.Command("wire")
-		wireCmd.Dir = filepath.Join(dir, "app", "wire")
-		wireCmd.Env = append(os.Environ(),
-			"GOMODCACHE="+modCache,
-			"GOCACHE="+buildCache,
-		)
-		if output, err := wireCmd.CombinedOutput(); err != nil {
-			return formatCommandFailure("wire generate", err, string(output), "")
+		for _, app := range apps {
+			wireCmd := exec.Command("wire")
+			wireCmd.Dir = filepath.Join(dir, app.WireDir)
+			wireCmd.Env = append(os.Environ(),
+				"GOMODCACHE="+modCache,
+				"GOCACHE="+buildCache,
+			)
+			if output, err := wireCmd.CombinedOutput(); err != nil {
+				return formatCommandFailure("wire generate "+app.Name, err, string(output), "")
+			}
 		}
 		return nil
 	}); err != nil {
@@ -726,23 +791,26 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		if err := os.MkdirAll(binDir, 0o755); err != nil {
 			return fmt.Errorf("create bin dir: %w", err)
 		}
-		args := []string{"build"}
-		if renderBuildTraceEnabled() {
-			args = append(args, "-x")
-		}
-		args = append(args, "-o", filepath.Join(binDir, "app"), "./cmd/app")
-		build := exec.Command("go", args...)
-		build.Dir = dir
-		build.Env = append(os.Environ(),
-			"GOMODCACHE="+modCache,
-			"GOCACHE="+buildCache,
-		)
-		output, err := build.CombinedOutput()
-		if err != nil {
-			return formatCommandFailure("go build", err, string(output), "")
-		}
-		if renderBuildTraceEnabled() {
-			console.Infof("go build trace for combo %s:\n%s", comboID, strings.TrimSpace(string(output)))
+		for _, app := range apps {
+			args := []string{"build"}
+			if renderBuildTraceEnabled() {
+				args = append(args, "-x")
+			}
+			target := "./" + filepath.ToSlash(filepath.Dir(app.Entrypoint))
+			args = append(args, "-o", filepath.Join(binDir, app.Name), target)
+			build := exec.Command("go", args...)
+			build.Dir = dir
+			build.Env = append(os.Environ(),
+				"GOMODCACHE="+modCache,
+				"GOCACHE="+buildCache,
+			)
+			output, err := build.CombinedOutput()
+			if err != nil {
+				return formatCommandFailure("go build "+app.Name, err, string(output), "")
+			}
+			if renderBuildTraceEnabled() {
+				console.Infof("go build trace for combo %s App %s:\n%s", comboID, app.Name, strings.TrimSpace(string(output)))
+			}
 		}
 		return nil
 	}); err != nil {
@@ -762,6 +830,43 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")))
 
 	console.Successf("Passed")
+}
+
+// renderComboApps returns every executable projection a render combo must compile.
+func renderComboApps(combo renderCombo) ([]project.App, error) {
+	names := make([]string, 0, len(combo.apps))
+	for name := range combo.apps {
+		if name == project.DefaultAppName {
+			continue
+		}
+		if !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
+			return nil, fmt.Errorf("unsafe App name %q", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	apps := []project.App{project.DefaultApp()}
+	for _, name := range names {
+		apps = append(apps, project.DefaultNamedApp(name))
+	}
+	return apps, nil
+}
+
+// seedRenderComboApps makes configured named Apps discoverable before the first clean render replaces their markers.
+func seedRenderComboApps(root string, apps []project.App) error {
+	for _, app := range apps {
+		if app.Name == project.DefaultAppName {
+			continue
+		}
+		entrypoint := filepath.Join(root, app.Entrypoint)
+		if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
+			return fmt.Errorf("create App %s entrypoint directory: %w", app.Name, err)
+		}
+		if err := os.WriteFile(entrypoint, []byte("package main\n"), 0o644); err != nil {
+			return fmt.Errorf("seed App %s entrypoint: %w", app.Name, err)
+		}
+	}
+	return nil
 }
 
 func runRenderedGoTests(dir, modCache, buildCache string) error {

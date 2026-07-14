@@ -75,8 +75,12 @@ func DiscoverStorageInstances() []PrimitiveInstance {
 	return out
 }
 
+{{ if .ProjectComponents.Events }}
 // DiscoverEventInstances returns configured event bus instances with normalized driver names.
 func DiscoverEventInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Events {
+		return nil
+	}
 	names := aboutScopedNames("EVENTS", aboutEventRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	for _, name := range names {
@@ -93,6 +97,7 @@ func DiscoverEventInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
 // DiscoverDatabaseInstances returns configured database connections with normalized driver names.
 func DiscoverDatabaseInstances() []PrimitiveInstance {
@@ -257,6 +262,8 @@ func NormalizeDBDriver(v string) string {
 	}
 }
 
+{{ if .ProjectComponents.Events }}
+// NormalizeEventDriver reduces Events driver aliases to their generated canonical names.
 func NormalizeEventDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -282,6 +289,7 @@ func NormalizeEventDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
 func aboutScopedNames(prefix string, rootKeys []string) []string {
 	scope := env.WithPrefix(prefix)

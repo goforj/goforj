@@ -22,7 +22,9 @@ import (
 {{- if .Components.Scheduler }}
 	"github.com/goforj/scheduler/v2"
 {{- end }}
+{{- if .ProjectComponents.Events }}
 	goforjevents "github.com/goforj/events"
+{{- end }}
 {{- if .Components.Mail }}
 	goforjmail "github.com/goforj/mail"
 {{- end }}
@@ -76,7 +78,9 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 {{- end }}
 	t.Setenv("METRICS_CACHE_ENABLED", "0")
 	t.Setenv("METRICS_STORAGE_ENABLED", "false")
+{{- if .ProjectComponents.Events }}
 	t.Setenv("METRICS_EVENTS_ENABLED", "false")
+{{- end }}
 {{- if .Components.Mail }}
 	t.Setenv("METRICS_MAIL_ENABLED", "false")
 {{- end }}
@@ -108,9 +112,11 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 	if cfg.Storage {
 		t.Fatal("expected storage metrics to be disabled")
 	}
+{{- if .ProjectComponents.Events }}
 	if cfg.Events {
 		t.Fatal("expected event metrics to be disabled")
 	}
+{{- end }}
 {{- if .Components.Mail }}
 	if cfg.Mail {
 		t.Fatal("expected mail metrics to be disabled")
@@ -1072,6 +1078,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 	}
 }
 
+{{- if .ProjectComponents.Events }}
 func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
@@ -1191,6 +1198,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event delivery duration count: got %d want 1", got)
 	}
 }
+{{- end }}
 
 {{- if .Components.Mail }}
 func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
@@ -1264,6 +1272,7 @@ func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 	}
 }
 
+{{- if .ProjectComponents.Events }}
 func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := runtime.WithSource(context.Background(), runtime.SourceScheduler)
@@ -1281,6 +1290,7 @@ func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 		t.Fatalf("event publish source-labeled count: got %d want 1", got)
 	}
 }
+{{- end }}
 
 {{- if .Components.Mail }}
 func TestRecordMailSendEmitsSourceLabel(t *testing.T) {

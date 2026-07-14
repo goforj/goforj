@@ -12,7 +12,7 @@ import (
 
 // TestReconcileResourceEnvironmentPreservesOwners verifies full resource ownership and portable initialization.
 func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
-	components := project.Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true}
+	components := project.Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true}
 	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCOMPOSE_PROFILES=metrics\n")
 	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, true)
@@ -40,6 +40,82 @@ func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("reconciled environment omitted %q:\n%s", want, text)
 		}
+	}
+}
+
+// TestReconcileResourceEnvironmentIgnoresStaleDisabledEvents verifies owner residue cannot reactivate an omitted Events resource.
+func TestReconcileResourceEnvironmentIgnoresStaleDisabledEvents(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true}
+	seed := defaultResourcePlanForTest(t, components)
+	source := []byte("EVENTS_DRIVER=redis\nEVENTS_SUPPORTED_DRIVERS=redis\n")
+	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
+	if err != nil {
+		t.Fatalf("reconcile resource environment: %v", err)
+	}
+	if _, exists := effective.Selection(project.ResourceEvents); exists {
+		t.Fatalf("Events-disabled plan was resurrected from owner env: %#v", effective)
+	}
+	if !strings.Contains(string(updated), "EVENTS_DRIVER=redis\n") {
+		t.Fatalf("reconciliation deleted owner Events residue instead of ignoring it:\n%s", updated)
+	}
+}
+
+// TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement verifies config-only activation compiles the common infrastructure transition.
+func TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement(t *testing.T) {
+	components := project.Components{CLI: true, Events: true}
+	seed, err := compatibilityResourcePlan(components, "")
+	if err != nil {
+		t.Fatalf("resolve compatibility plan: %v", err)
+	}
+	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n")
+
+	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, false)
+	if err != nil {
+		t.Fatalf("reconcile first Events enablement: %v", err)
+	}
+	if !changed {
+		t.Fatal("first Events enablement did not initialize owner environment keys")
+	}
+	if !strings.Contains(string(updated), "EVENTS_DRIVER=inproc\n") || !strings.Contains(string(updated), "EVENTS_SUPPORTED_DRIVERS=inproc,redis\n") {
+		t.Fatalf("first Events enablement omitted portable defaults:\n%s", updated)
+	}
+	events, ok := effective.Selection(project.ResourceEvents)
+	if !ok || events.Active != "inproc" || strings.Join(events.Supported, ",") != "inproc,redis" {
+		t.Fatalf("effective first Events selection = %#v selected=%t", events, ok)
+	}
+}
+
+// TestReconcileResourceEnvironmentKeepsExistingEventsCompatibility verifies an owner key retains the legacy active-only build contract.
+func TestReconcileResourceEnvironmentKeepsExistingEventsCompatibility(t *testing.T) {
+	components := project.Components{CLI: true, Events: true}
+	seed, err := compatibilityResourcePlan(components, "")
+	if err != nil {
+		t.Fatalf("resolve compatibility plan: %v", err)
+	}
+	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nEVENTS_DRIVER=redis\n")
+
+	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, false)
+	if err != nil {
+		t.Fatalf("reconcile owner Events selection: %v", err)
+	}
+	if !strings.Contains(string(updated), "EVENTS_DRIVER=redis\n") || !strings.Contains(string(updated), "EVENTS_SUPPORTED_DRIVERS=redis\n") {
+		t.Fatalf("owner Events selection was widened or replaced:\n%s", updated)
+	}
+	events, ok := effective.Selection(project.ResourceEvents)
+	if !ok || events.Active != "redis" || strings.Join(events.Supported, ",") != "redis" {
+		t.Fatalf("effective owner Events selection = %#v selected=%t", events, ok)
+	}
+}
+
+// TestCompatibilityResourcePlanKeepsPortableEventsDefaults verifies renders without an environment file retain additive Events support.
+func TestCompatibilityResourcePlanKeepsPortableEventsDefaults(t *testing.T) {
+	plan, err := compatibilityResourcePlan(project.Components{CLI: true, Events: true}, "")
+	if err != nil {
+		t.Fatalf("resolve compatibility plan: %v", err)
+	}
+	events, ok := plan.Selection(project.ResourceEvents)
+	if !ok || events.Active != "inproc" || strings.Join(events.Supported, ",") != "inproc,redis" {
+		t.Fatalf("Events compatibility defaults = %#v selected=%t", events, ok)
 	}
 }
 
@@ -136,7 +212,7 @@ func TestPrepareResourceEnvironmentUsesCommittedFallback(t *testing.T) {
 	if err := os.WriteFile(".env.example", example, 0o644); err != nil {
 		t.Fatalf("write environment example: %v", err)
 	}
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan, err := compatibilityResourcePlan(components, "")
 	if err != nil {
 		t.Fatalf("resolve compatibility plan: %v", err)
@@ -178,7 +254,7 @@ func TestPrepareResourceEnvironmentKeepsExplicitPlanAboveCommittedFallback(t *te
 	if err := os.WriteFile(".env.example", []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis\nEVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc,redis\nCOMPOSE_PROFILES=\n"), 0o644); err != nil {
 		t.Fatalf("write environment example: %v", err)
 	}
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := &ProjectRenderer{
@@ -216,7 +292,7 @@ func TestPrepareResourceEnvironmentCarriesNamedAndAppConsumers(t *testing.T) {
 	if err := os.WriteFile(".env", source, 0o600); err != nil {
 		t.Fatalf("write owner environment: %v", err)
 	}
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	plan := defaultResourcePlanForTest(t, components)
 	renderer := &ProjectRenderer{
 		config: &project.Config{

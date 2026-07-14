@@ -5,12 +5,12 @@ import (
 
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/inspects"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 // CacheMetricsObserver records cache metrics from cache manager observer events.
 func CacheMetricsObserver(metricsManager *metrics.Manager) caches.Observer {
 	return caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {

@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
+{{- if .ProjectComponents.Events }}
 	"github.com/goforj/str"
+{{- end }}
 	"gopkg.in/yaml.v3"
 )
 
@@ -97,6 +99,7 @@ var (
 		"RCLONE_CONFIG_PATH",
 		"RCLONE_CONFIG_DATA",
 	}
+{{- if .ProjectComponents.Events }}
 	aboutEventRootKeys = []string{
 		"DRIVER",
 		"ADDR",
@@ -120,6 +123,7 @@ var (
 		"INPROC_WORKERS",
 		"INPROC_BUFFER",
 	}
+{{- end }}
 	aboutDatabaseRootKeys = []string{
 		"DRIVER",
 		"DSN",
@@ -187,6 +191,7 @@ type AboutSectionData struct {
 	Connections []AboutConnectionData `json:"connections,omitempty"`
 }
 
+// AboutReport describes the generated App's enabled runtime and resource surface.
 type AboutReport struct {
 	App         string             `json:"app"`
 	Environment AboutEnvironment   `json:"environment"`
@@ -197,7 +202,9 @@ type AboutReport struct {
 	Mails       []AboutMail        `json:"mails,omitempty"`
 	Queues      []AboutQueue       `json:"queues,omitempty"`
 	Storages    []AboutStorage     `json:"storages"`
-	Events      []AboutEvent       `json:"events"`
+{{- if .ProjectComponents.Events }}
+	Events      []AboutEvent       `json:"events,omitempty"`
+{{- end }}
 	Sections    []AboutSectionData `json:"sections"`
 }
 
@@ -277,6 +284,8 @@ type AboutStorage struct {
 	Details   []AboutField `json:"details,omitempty"`
 }
 
+{{ if .ProjectComponents.Events }}
+// AboutEvent describes one configured Events bus without exposing credentials.
 type AboutEvent struct {
 	Name      string       `json:"name"`
 	IsDefault bool         `json:"is_default"`
@@ -285,13 +294,16 @@ type AboutEvent struct {
 	Summary   string       `json:"summary"`
 	Details   []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
+// NewAboutService constructs the runtime report service.
 func NewAboutService() *AboutService {
 	return &AboutService{}
 }
 
+// Build assembles a report from the capabilities enabled for the current App.
 func (s *AboutService) Build() AboutReport {
-{{- if or .ProjectComponents.WebUI .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.Jobs }}
+{{- if or .ProjectComponents.WebUI .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.Jobs .ProjectComponents.Events }}
 	appComponents := CurrentApp().Components
 {{- end }}
 	report := AboutReport{
@@ -314,8 +326,12 @@ func (s *AboutService) Build() AboutReport {
 		Caches:   aboutCacheReports(),
 		Mails:    aboutMailReports(),
 		Storages: aboutStorageReports(),
-		Events:   aboutEventReports(),
 	}
+{{- if .ProjectComponents.Events }}
+	if appComponents.Events {
+		report.Events = aboutEventReports()
+	}
+{{- end }}
 {{- if .ProjectComponents.WebUI }}
 	if appComponents.WebUI {
 		report.Build.FrontendDist = aboutPresence(filepath.Join("cmd", CurrentApp().Name, "frontend", "dist", "index.html"))
@@ -348,8 +364,9 @@ func (s *AboutService) Build() AboutReport {
 	return report
 }
 
+// sections converts the runtime report into the stable presentation sections consumed by the command.
 func (s *AboutService) sections(report AboutReport) []AboutSectionData {
-{{- if or .ProjectComponents.HasDatabase .ProjectComponents.Jobs }}
+{{- if or .ProjectComponents.HasDatabase .ProjectComponents.Jobs .ProjectComponents.Events }}
 	appComponents := CurrentApp().Components
 {{- end }}
 	sections := []AboutSectionData{
@@ -389,7 +406,11 @@ func (s *AboutService) sections(report AboutReport) []AboutSectionData {
 		sections = append(sections, AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)})
 	}
 {{- end }}
-	sections = append(sections, AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)})
+{{- if .ProjectComponents.Events }}
+	if appComponents.Events {
+		sections = append(sections, AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)})
+	}
+{{- end }}
 
 	return sections
 }
@@ -502,6 +523,8 @@ func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
 	return connections
 }
 
+{{ if .ProjectComponents.Events }}
+// aboutEventConnections projects Events reports into the shared About section shape.
 func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(events))
 	for _, event := range events {
@@ -513,12 +536,20 @@ func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 	}
 	return connections
 }
+{{- end }}
 
+// aboutComponents reports only the components enabled for the current App projection.
 func aboutComponents() []string {
-{{- if or .ProjectComponents.Metrics .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.WebUI .ProjectComponents.Scheduler .ProjectComponents.Jobs .ProjectComponents.DemoApp }}
+{{- if or .ProjectComponents.Metrics .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.WebUI .ProjectComponents.Scheduler .ProjectComponents.Jobs .ProjectComponents.DemoApp .ProjectComponents.Events }}
 	appComponents := CurrentApp().Components
 {{- end }}
-	components := []string{"cache", "storage", "events", "lighthouse"}
+	components := []string{"cache", "storage"}
+{{- if .ProjectComponents.Events }}
+	if appComponents.Events {
+		components = append(components, "events")
+	}
+{{- end }}
+	components = append(components, "lighthouse")
 {{- if .ProjectComponents.Metrics }}
 	if appComponents.Metrics {
 		components = append(components, "metrics")
@@ -710,6 +741,8 @@ func aboutStorageReports() []AboutStorage {
 	return reports
 }
 
+{{ if .ProjectComponents.Events }}
+// aboutEventReports describes only the active App's configured Events buses.
 func aboutEventReports() []AboutEvent {
 	instances := DiscoverEventInstances()
 	reports := make([]AboutEvent, 0, len(instances))
@@ -726,7 +759,9 @@ func aboutEventReports() []AboutEvent {
 	}
 	return reports
 }
+{{- end }}
 
+// aboutPrimitiveChildDefined distinguishes explicitly configured child resources from inherited defaults.
 func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 	switch prefix {
 	case "CACHE":
@@ -737,8 +772,10 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "NAME", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
 	case "STORAGE":
 		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
+{{- if .ProjectComponents.Events }}
 	case "EVENTS":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "BROKERS", "PROJECT_ID", "URI", "REGION", "ENDPOINT")
+{{- end }}
 	default:
 		return false
 	}
@@ -1029,6 +1066,8 @@ func aboutStorageDetails(name string) []AboutField {
 	return details
 }
 
+{{ if .ProjectComponents.Events }}
+// aboutEventDetails describes an Events bus without returning secret values.
 func aboutEventDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("EVENTS", name)
 	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
@@ -1084,6 +1123,7 @@ func aboutEventDetails(name string) []AboutField {
 	}
 	return details
 }
+{{- end }}
 
 func aboutRedisSummary(scope env.Scope, prefix string) string {
 	host := strings.TrimSpace(scope.Get("HOST", env.Get("REDIS_HOST", "")))

@@ -5,7 +5,7 @@ import (
 
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/inspects"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
@@ -13,13 +13,13 @@ import (
 // EventObserver records event bus activity through the configured observability sinks.
 func EventObserver(
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) events.Observer {
 	return eventObserver{
 		inspects: inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metrics: metricsManager,
 {{- end }}
 	}
@@ -27,7 +27,8 @@ func EventObserver(
 
 type eventObserver struct {
 	inspects *inspects.Manager
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
+	// metrics is optional because the shared observer serves Events Apps with independent Metrics participation.
 	metrics *metrics.Manager
 {{- end }}
 }
@@ -41,14 +42,16 @@ func (o eventObserver) OnEventPublish(ctx context.Context, event events.EventPub
 		Err:      event.Err,
 		Duration: event.Duration,
 	})
-{{- if .Components.Metrics }}
-	o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
-		Bus:      event.Bus,
-		Driver:   string(event.Driver),
-		Topic:    event.Topic,
-		Err:      event.Err,
-		Duration: event.Duration,
-	})
+{{- if .ProjectComponents.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+	}
 {{- end }}
 }
 
@@ -61,14 +64,16 @@ func (o eventObserver) OnEventSubscribe(ctx context.Context, event events.EventS
 		Handler: event.Handler,
 		Err:     event.Err,
 	})
-{{- if .Components.Metrics }}
-	o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
-		Bus:     event.Bus,
-		Driver:  string(event.Driver),
-		Topic:   event.Topic,
-		Handler: event.Handler,
-		Err:     event.Err,
-	})
+{{- if .ProjectComponents.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+			Err:     event.Err,
+		})
+	}
 {{- end }}
 }
 
@@ -80,13 +85,15 @@ func (o eventObserver) OnEventUnsubscribe(ctx context.Context, event events.Even
 		Topic:   event.Topic,
 		Handler: event.Handler,
 	})
-{{- if .Components.Metrics }}
-	o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
-		Bus:     event.Bus,
-		Driver:  string(event.Driver),
-		Topic:   event.Topic,
-		Handler: event.Handler,
-	})
+{{- if .ProjectComponents.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
+	}
 {{- end }}
 }
 
@@ -98,13 +105,15 @@ func (o eventObserver) OnEventDeliveryStart(ctx context.Context, event events.Ev
 		Topic:   event.Topic,
 		Handler: event.Handler,
 	})
-{{- if .Components.Metrics }}
-	o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
-		Bus:     event.Bus,
-		Driver:  string(event.Driver),
-		Topic:   event.Topic,
-		Handler: event.Handler,
-	})
+{{- if .ProjectComponents.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
+	}
 {{- end }}
 }
 
@@ -118,14 +127,16 @@ func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, event events.E
 		Err:      event.Err,
 		Duration: event.Duration,
 	})
-{{- if .Components.Metrics }}
-	o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
-		Bus:      event.Bus,
-		Driver:   string(event.Driver),
-		Topic:    event.Topic,
-		Handler:  event.Handler,
-		Err:      event.Err,
-		Duration: event.Duration,
-	})
+{{- if .ProjectComponents.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Handler:  event.Handler,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+	}
 {{- end }}
 }

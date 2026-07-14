@@ -1,6 +1,10 @@
 package coredeps
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/goforj/goforj/project"
+)
 
 // pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
 var pinnedModuleVersions = map[string]string{
@@ -64,8 +68,6 @@ var rendererSyncModules = []string{
 	"github.com/goforj/queue/driver/sqlitequeue",
 	"github.com/goforj/queue/driver/sqlqueuecore",
 	"github.com/goforj/queue/driver/sqsqueue",
-	"github.com/goforj/events",
-	"github.com/goforj/events/eventscore",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
 	"github.com/goforj/web",
@@ -73,11 +75,18 @@ var rendererSyncModules = []string{
 	"github.com/goforj/env/v2",
 }
 
+var eventsRendererSyncModules = []string{
+	"github.com/goforj/events",
+	"github.com/goforj/events/eventscore",
+}
+
+// VersionFor returns the framework-pinned version for module when it is known.
 func VersionFor(module string) (string, bool) {
 	version, ok := pinnedModuleVersions[module]
 	return version, ok
 }
 
+// MustVersionFor returns the framework-pinned version for module and panics when it is unknown.
 func MustVersionFor(module string) string {
 	version, ok := VersionFor(module)
 	if !ok {
@@ -86,14 +95,20 @@ func MustVersionFor(module string) string {
 	return version
 }
 
-func SyncCoreLibraries() []string {
-	out := make([]string, 0, len(rendererSyncModules))
-	for _, module := range rendererSyncModules {
+// SyncCoreLibraries returns the pinned renderer dependencies required by the selected project capabilities.
+func SyncCoreLibraries(components project.Components) []string {
+	modules := append([]string(nil), rendererSyncModules...)
+	if components.Events {
+		modules = append(modules, eventsRendererSyncModules...)
+	}
+	out := make([]string, 0, len(modules))
+	for _, module := range modules {
 		out = append(out, module+"@"+MustVersionFor(module))
 	}
 	return out
 }
 
+// AllPinnedModules returns a copy of the complete framework module version catalog.
 func AllPinnedModules() map[string]string {
 	out := make(map[string]string, len(pinnedModuleVersions))
 	for module, version := range pinnedModuleVersions {
@@ -102,6 +117,7 @@ func AllPinnedModules() map[string]string {
 	return out
 }
 
+// KnownModules returns all framework-pinned module paths in lexical order.
 func KnownModules() []string {
 	out := make([]string, 0, len(pinnedModuleVersions))
 	for module := range pinnedModuleVersions {

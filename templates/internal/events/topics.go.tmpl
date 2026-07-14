@@ -1,5 +1,7 @@
 package events
 
+{{- if .ProjectComponents.DemoApp }}
+
 const (
 	// MonitorPollingTopic is emitted when an explicit check-now poll starts or completes.
 	MonitorPollingTopic = "monitor.polling"
@@ -22,6 +24,7 @@ type MonitorPolling struct {
 	CheckedAt   string `json:"checked_at"`
 }
 
+// Topic returns the event bus topic for monitor polling lifecycle updates.
 func (MonitorPolling) Topic() string {
 	return MonitorPollingTopic
 }
@@ -41,6 +44,7 @@ type MonitorStatusChanged struct {
 	CheckedAt    string `json:"checked_at"`
 }
 
+// Topic returns the event bus topic for monitor display-status changes.
 func (MonitorStatusChanged) Topic() string {
 	return MonitorStatusChangedTopic
 }
@@ -60,6 +64,7 @@ type MonitorDown struct {
 	CheckedAt    string `json:"checked_at"`
 }
 
+// Topic returns the event bus topic for monitor-down transitions.
 func (MonitorDown) Topic() string {
 	return MonitorDownTopic
 }
@@ -79,6 +84,8 @@ type MonitorRecovered struct {
 	CheckedAt    string `json:"checked_at"`
 }
 
+// Topic returns the event bus topic for monitor recovery transitions.
 func (MonitorRecovered) Topic() string {
 	return MonitorRecoveredTopic
 }
+{{- end }}

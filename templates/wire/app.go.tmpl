@@ -24,7 +24,9 @@ import (
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+{{- if .Components.Events }}
 	"{{.GoModuleName}}/internal/events"
+{{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/konghelp"
 	"{{.GoModuleName}}/internal/logger"
@@ -51,7 +53,9 @@ type App struct {
 	logger  *logger.AppLogger
 	cache   *caches.Manager
 	storage *storages.Manager
+{{- if .Components.Events }}
 	events *events.Manager
+{{- end }}
 	inspects *inspects.Manager
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager
@@ -101,6 +105,7 @@ func (a *App) Mail() *mail.Manager {
 }
 {{- end }}
 
+{{- if .Components.Events }}
 // Bus returns the default event bus of the application.
 func (a *App) Bus() events.Bus {
 	return a.events.Default()
@@ -110,6 +115,7 @@ func (a *App) Bus() events.Bus {
 func (a *App) Events() *events.Manager {
 	return a.events
 }
+{{- end }}
 
 // Inspects returns the app inspect manager.
 func (a *App) Inspects() *inspects.Manager {
@@ -278,8 +284,10 @@ func NewApplication(
 	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
 	cacheManager *caches.Manager,
 	storage *storages.Manager,
+{{- if .Components.Events }}
 	eventsManager *events.Manager,
 	_ *EventSubscribersReady,
+{{- end }}
 	inspectManager *inspects.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
@@ -313,7 +321,9 @@ func NewApplication(
 {{- end }}
 	)
 {{- end }}
+{{- if .Components.Events }}
 	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
+{{- end }}
 	lifecycleRegistry.Register(lifecycleManager)
 
 	return App{
@@ -324,7 +334,9 @@ func NewApplication(
 		{{- end }}
 		cache: cacheManager,
 		storage: storage,
+{{- if .Components.Events }}
 		events: eventsManager,
+{{- end }}
 		inspects: inspectManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
@@ -408,6 +420,7 @@ func registerQueueHandlers(
 }
 {{- end }}
 
+{{ if .Components.Events }}
 // registerEventBusLifecycle starts and stops each unique event bus with the application lifecycle.
 func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, eventsManager *events.Manager) {
 	seenEventBuses := map[events.Bus]struct{}{}
@@ -440,6 +453,7 @@ func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *l
 		})
 	}
 }
+{{- end }}
 
 // shutdownTimeoutForOrigin gives scheduler subprocesses a shorter shutdown window than the parent runtime.
 func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {

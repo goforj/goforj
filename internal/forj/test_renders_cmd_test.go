@@ -187,6 +187,51 @@ func TestPRRenderProfileIncludesRecommendedAndLeanPrimitiveSentinels(t *testing.
 	}
 }
 
+// TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels keeps component gates covered at both project and App projections.
+func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	wants := map[string]bool{
+		"sentinel_primitives_all_off":                     false,
+		"sentinel_primitives_all_on":                      false,
+		"sentinel_events_only":                            false,
+		"sentinel_web_metrics_grafana_without_primitives": false,
+		"sentinel_named_app_events_only":                  false,
+		"sentinel_default_events_named_app_off":           false,
+	}
+	for _, combo := range combos {
+		if _, tracked := wants[combo.id]; tracked {
+			wants[combo.id] = true
+		}
+		if combo.id != "sentinel_named_app_events_only" && combo.id != "sentinel_default_events_named_app_off" {
+			continue
+		}
+		appName := "events-worker"
+		wantDefaultEvents := false
+		wantNamedEvents := true
+		if combo.id == "sentinel_default_events_named_app_off" {
+			appName = "api"
+			wantDefaultEvents = true
+			wantNamedEvents = false
+		}
+		if combo.components.Events != wantDefaultEvents {
+			t.Fatalf("%s default App Events = %t, want %t", combo.id, combo.components.Events, wantDefaultEvents)
+		}
+		configured, ok := combo.apps[appName]
+		if !ok || configured.Components.Events != wantNamedEvents {
+			t.Fatalf("%s named App Events shape mismatch: %#v", combo.id, combo.apps)
+		}
+		config := &project.Config{Render: project.RenderConfig{Components: combo.components}, Apps: combo.apps}
+		if !project.ProjectComponents(config).Events {
+			t.Fatalf("named-App sentinel did not promote Events into the project envelope: %#v", config)
+		}
+	}
+	for id, found := range wants {
+		if !found {
+			t.Fatalf("pr profile should include %q", id)
+		}
+	}
+}
+
 // TestComponentLabelsIncludeEnabledPrimitiveComponents keeps render diagnostics truthful about the selected matrix shape.
 func TestComponentLabelsIncludeEnabledPrimitiveComponents(t *testing.T) {
 	wants := []string{"Cache", "Events", "Storage"}
@@ -260,6 +305,46 @@ func TestRenderCombosHaveUniqueIDs(t *testing.T) {
 			}
 			seen[combo.id] = struct{}{}
 		}
+	}
+}
+
+// TestRenderComboAppsIncludesConfiguredAppsInStableOrder keeps multi-App compile validation deterministic.
+func TestRenderComboAppsIncludesConfiguredAppsInStableOrder(t *testing.T) {
+	apps, err := renderComboApps(renderCombo{apps: map[string]project.AppConfig{
+		"worker":    {},
+		"backstage": {},
+	}})
+	if err != nil {
+		t.Fatalf("renderComboApps() error: %v", err)
+	}
+	want := []string{"app", "backstage", "worker"}
+	if len(apps) != len(want) {
+		t.Fatalf("render Apps = %#v, want %v", apps, want)
+	}
+	for index, name := range want {
+		if apps[index].Name != name {
+			t.Fatalf("render App %d = %q, want %q", index, apps[index].Name, name)
+		}
+	}
+}
+
+// TestSeedRenderComboAppsCreatesNamedEntrypointMarkers verifies clean workspaces expose configured Apps to conventional discovery.
+func TestSeedRenderComboAppsCreatesNamedEntrypointMarkers(t *testing.T) {
+	root := t.TempDir()
+	apps := []project.App{project.DefaultApp(), project.DefaultNamedApp("events-worker")}
+	if err := seedRenderComboApps(root, apps); err != nil {
+		t.Fatalf("seedRenderComboApps() error: %v", err)
+	}
+	namedEntrypoint := filepath.Join(root, "cmd", "events-worker", "main.go")
+	content, err := os.ReadFile(namedEntrypoint)
+	if err != nil {
+		t.Fatalf("read named App marker: %v", err)
+	}
+	if string(content) != "package main\n" {
+		t.Fatalf("named App marker = %q", content)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cmd", "app", "main.go")); !os.IsNotExist(err) {
+		t.Fatalf("default App marker should be owned by the normal renderer: %v", err)
 	}
 }
 

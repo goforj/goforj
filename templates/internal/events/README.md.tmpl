@@ -80,14 +80,16 @@ defer bus.Close(context.Background())
 ### Publish and subscribe typed events
 
 ```go
-type MonitorDown struct {
-	MonitorID string `json:"monitor_id"`
+// UserRegistered carries the identity needed by registration subscribers.
+type UserRegistered struct {
+	UserID string `json:"user_id"`
 }
 
-func (MonitorDown) Topic() string { return "monitor.down" }
+// Topic returns the stable routing key for user registration events.
+func (UserRegistered) Topic() string { return "users.registered" }
 
-sub, err := bus.WithContext(ctx).Subscribe(func(_ context.Context, payload MonitorDown) error {
-	log.Printf("monitor down: %s", payload.MonitorID)
+sub, err := bus.WithContext(ctx).Subscribe(func(_ context.Context, payload UserRegistered) error {
+	log.Printf("user registered: %s", payload.UserID)
 	return nil
 })
 if err != nil {
@@ -95,7 +97,7 @@ if err != nil {
 }
 defer sub.Close()
 
-if err := bus.WithContext(ctx).Publish(MonitorDown{MonitorID: "monitor_123"}); err != nil {
+if err := bus.WithContext(ctx).Publish(UserRegistered{UserID: "user_123"}); err != nil {
 	return err
 }
 ```

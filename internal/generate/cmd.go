@@ -1,10 +1,13 @@
 package generate
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/goforj/goforj/project"
 )
 
 var goModTidyRunner = runGoModTidy
@@ -75,7 +78,14 @@ func (c *Cmd) Run() error {
 		}
 	}
 	if !selected || c.Events {
-		if _, err := os.Stat(filepath.Join("internal", "events")); err == nil {
+		eventsEnabled, err := projectEventsEnabled(".")
+		if err != nil && (!os.IsNotExist(err) || c.Events) {
+			return fmt.Errorf("load project Events selection: %w", err)
+		}
+		if c.Events && !eventsEnabled {
+			return fmt.Errorf("cannot generate Events: the Events component is disabled in .goforj.yml")
+		}
+		if eventsEnabled {
 			if _, err := GenerateEventFiles("."); err != nil {
 				return err
 			}
@@ -161,16 +171,14 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		}
 	}
 	if includeEvents {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "events")); err == nil {
-			written, err := GenerateEventFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles += 2
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
+		written, err := GenerateEventFiles(projectDir)
+		if err != nil {
+			return totalFiles, changedFiles, err
 		}
+		ranAny = true
+		totalFiles += 2
+		changedFiles += written
+		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if includeDB {
 		if _, err := os.Stat(filepath.Join(projectDir, "internal", "database")); err == nil {
@@ -200,6 +208,15 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		}
 	}
 	return totalFiles, changedFiles, nil
+}
+
+// projectEventsEnabled resolves Events participation from project configuration rather than generated-directory residue.
+func projectEventsEnabled(projectDir string) (bool, error) {
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err != nil {
+		return false, err
+	}
+	return project.ProjectComponents(config).Events, nil
 }
 
 // runGoModTidy refreshes dependencies without exposing project resource credentials to Go or invoked VCS processes.

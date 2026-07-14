@@ -462,6 +462,7 @@ func TestMakeAppCmdWiresMetricsRunCommandDependency(t *testing.T) {
 	}
 }
 
+// TestMakeAppCmdWiresProjectMetricsObserversForCLIOnlyApp verifies shared metrics support does not add observers for primitives the App did not select.
 func TestMakeAppCmdWiresProjectMetricsObserversForCLIOnlyApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -500,12 +501,14 @@ func TestMakeAppCmdWiresProjectMetricsObserversForCLIOnlyApp(t *testing.T) {
 		`"example.com/testapp/internal/metrics"`,
 		"metrics.NewManager",
 		"metricsManager *metrics.Manager",
-		"observability.EventObserver(\n\t\tinspectManager,\n\t\tmetricsManager,",
 		"observability.StorageObserver(\n\t\tinspectManager,\n\t\tmetricsManager,",
 	} {
 		if !strings.Contains(managersSrc, want) {
 			t.Fatalf("expected project metrics observer wiring %q in inject_managers.go:\n%s", want, managersSrc)
 		}
+	}
+	if strings.Contains(managersSrc, "observability.EventObserver(") {
+		t.Fatalf("expected CLI-only App not to wire an Events observer:\n%s", managersSrc)
 	}
 
 	appSetSrc := readMakeAppTestFile(t, filepath.Join("app", "ship", "wire", "inject_services_app.go"))
