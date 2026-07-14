@@ -415,6 +415,22 @@ func TestNextStepsIncludeVueAuthLoginHint(t *testing.T) {
 	}
 }
 
+// TestNextStepsUseQuietFrontendInstallCommand keeps the manual path aligned with generated dev setup.
+func TestNextStepsUseQuietFrontendInstallCommand(t *testing.T) {
+	renderer := &ProjectRenderer{config: &project.Config{
+		Render: project.RenderConfig{
+			StarterKit: project.StarterKitVue,
+			Components: project.Components{WebUI: true},
+		},
+	}}
+
+	steps := strings.Join(renderer.nextSteps(), "\n")
+	want := "cd cmd/app/frontend && " + generatedFrontendNPMInstallCommand
+	if !strings.Contains(steps, want) {
+		t.Fatalf("expected next steps to contain %q:\n%s", want, steps)
+	}
+}
+
 func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
 	renderer := &ProjectRenderer{config: &project.Config{
 		Render: project.RenderConfig{

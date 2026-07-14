@@ -811,7 +811,7 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 			},
 		},
 		Dev: project.DevConfig{
-			Pre: []project.DevTask{generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))},
+			Pre: []project.DevTask{legacyGeneratedDevFrontendInstallTask(project.DefaultNamedApp("billing"))},
 			Run: map[string]string{
 				"billing": "run",
 			},
@@ -898,7 +898,8 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 	if _, ok := cfg.Dev.Apps["billing"]; ok {
 		t.Fatalf("expected billing native dev app config to be removed")
 	}
-	if hasDevTask(cfg.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) {
+	if hasDevTask(cfg.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) ||
+		hasDevTask(cfg.Dev.Pre, legacyGeneratedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) {
 		t.Fatalf("expected billing frontend dependency task to be removed")
 	}
 	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))

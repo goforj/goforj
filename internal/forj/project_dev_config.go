@@ -7,10 +7,24 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-const generatedFrontendSPAName = "frontend"
+const (
+	generatedFrontendSPAName           = "frontend"
+	generatedFrontendNPMInstallCommand = "npm install --no-audit --no-fund --loglevel=error"
+	legacyFrontendNPMInstallCommand    = "npm install"
+)
 
 // generatedDevFrontendInstallTask keeps dependency setup aligned with each app-owned SPA root.
 func generatedDevFrontendInstallTask(app project.App) project.DevTask {
+	return devFrontendInstallTask(app, generatedFrontendNPMInstallCommand)
+}
+
+// legacyGeneratedDevFrontendInstallTask identifies only the install task emitted before quiet npm setup became the default.
+func legacyGeneratedDevFrontendInstallTask(app project.App) project.DevTask {
+	return devFrontendInstallTask(app, legacyFrontendNPMInstallCommand)
+}
+
+// devFrontendInstallTask builds the app-scoped task identity shared by generation and conservative migration.
+func devFrontendInstallTask(app project.App, installCommand string) project.DevTask {
 	app = normalizeRenderApp(app)
 	name := "Install Frontend Dependencies"
 	if app.Name != project.DefaultAppName {
@@ -18,23 +32,100 @@ func generatedDevFrontendInstallTask(app project.App) project.DevTask {
 	}
 	return project.DevTask{
 		Name: name,
-		Cmd:  "cd " + filepath.ToSlash(appFrontendDir(app)) + " && npm install",
+		Cmd:  "cd " + filepath.ToSlash(appFrontendDir(app)) + " && " + installCommand,
 	}
 }
 
 // removeGeneratedDevFrontendInstallTask removes only the exact framework task owned by a deleted app.
 func removeGeneratedDevFrontendInstallTask(tasks []project.DevTask, app project.App) ([]project.DevTask, bool) {
 	want := generatedDevFrontendInstallTask(app)
+	legacy := legacyGeneratedDevFrontendInstallTask(app)
 	kept := make([]project.DevTask, 0, len(tasks))
 	removed := false
 	for _, task := range tasks {
-		if task == want {
+		if task == want || task == legacy {
 			removed = true
 			continue
 		}
 		kept = append(kept, task)
 	}
 	return kept, removed
+}
+
+// migrateGeneratedDevFrontendInstallTask upgrades only the exact legacy task while collapsing generated duplicates.
+func migrateGeneratedDevFrontendInstallTask(tasks []project.DevTask, app project.App) ([]project.DevTask, bool) {
+	want := generatedDevFrontendInstallTask(app)
+	legacy := legacyGeneratedDevFrontendInstallTask(app)
+	hasReplacement := false
+	for _, task := range tasks {
+		if task == want || task != legacy && strings.TrimSpace(task.Name) == want.Name {
+			hasReplacement = true
+			break
+		}
+	}
+
+	migrated := make([]project.DevTask, 0, len(tasks))
+	changed := false
+	for _, task := range tasks {
+		if task != legacy {
+			migrated = append(migrated, task)
+			continue
+		}
+		changed = true
+		if !hasReplacement {
+			migrated = append(migrated, want)
+			hasReplacement = true
+		}
+	}
+	if !changed {
+		return tasks, false
+	}
+	return migrated, true
+}
+
+// hasDevFrontendInstallTask reports whether an App's generated task identity is already present, including an owner-customized command.
+func hasDevFrontendInstallTask(tasks []project.DevTask, app project.App) bool {
+	want := generatedDevFrontendInstallTask(app)
+	for _, task := range tasks {
+		if strings.TrimSpace(task.Name) == want.Name {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateGeneratedDevFrontendInstallTasks upgrades framework tasks for the default App and every configured named App.
+func migrateGeneratedDevFrontendInstallTasks(config *project.Config) bool {
+	if config == nil {
+		return false
+	}
+	apps := []project.App{project.DefaultApp()}
+	seen := map[string]bool{project.DefaultAppName: true}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if seen[name] || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
+			return
+		}
+		seen[name] = true
+		apps = append(apps, project.DefaultNamedApp(name))
+	}
+	for name := range config.Apps {
+		add(name)
+	}
+	for name := range config.Dev.Apps {
+		add(name)
+	}
+
+	changed := false
+	for _, app := range apps {
+		tasks, migrated := migrateGeneratedDevFrontendInstallTask(config.Dev.Pre, app)
+		if !migrated {
+			continue
+		}
+		config.Dev.Pre = tasks
+		changed = true
+	}
+	return changed
 }
 
 // generatedDevAppConfig snapshots framework-owned lifecycle behavior into readable project configuration.
