@@ -141,8 +141,9 @@ Every generated dashboard includes an App filter backed by the emitted `app` met
 If rendered dashboards do not refresh immediately:
 
 1. Re-render the project with `forj render`.
-2. Restart Grafana and the seed container:
-   - `docker-compose up -d --build grafana grafana-seed`
+2. Rebuild Grafana, then rerun the one-shot seeder explicitly:
+   - `docker-compose up -d --build grafana`
+   - `docker-compose run --rm --no-deps grafana-seed`
 3. Wait for Grafana provisioning to rescan dashboards.
 {{- end }}
 

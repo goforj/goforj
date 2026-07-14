@@ -149,11 +149,13 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	for _, token := range []string{
 		"FROM curlimages/curl:8.10.1",
 		"COPY seed-dashboards.sh /seed-dashboards.sh",
-		"COPY dashboards /dashboards",
 	} {
 		if !strings.Contains(grafanaSeedDockerfile, token) {
 			t.Fatalf("grafana seed Dockerfile missing %q\n%s", token, grafanaSeedDockerfile)
 		}
+	}
+	if strings.Contains(grafanaSeedDockerfile, "COPY dashboards") {
+		t.Fatalf("grafana seed Dockerfile should rely on Grafana provisioning for dashboards\n%s", grafanaSeedDockerfile)
 	}
 
 	prometheusYAML := readRenderedFile(t, projectDir, "containers/observability/vmagent/prometheus.yml")
@@ -205,11 +207,9 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	grafanaSeedScript := readRenderedFile(t, projectDir, "containers/observability/grafana/seed-dashboards.sh")
 	for _, token := range []string{
-		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health"`,
-		"/api/datasources/uid/goforj-victoriametrics",
-		"/api/dashboards/db",
-		"/dashboards/*.json",
-		`"overwrite":true`,
+		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/user"`,
+		`[ "${status}" = "200" ]`,
+		"dashboard_is_starred",
 		"-X PUT",
 		"-X POST",
 		"/api/user/stars/dashboard/uid/",
@@ -229,11 +229,17 @@ func TestRenderedObservabilityStack(t *testing.T) {
 			t.Fatalf("grafana seed script missing %q\n%s", token, grafanaSeedScript)
 		}
 	}
-	if strings.Contains(grafanaSeedScript, `curl -fsS "${grafana_url}/api/health"`) {
-		t.Fatalf("grafana seed script readiness check must use auth\n%s", grafanaSeedScript)
-	}
-	if strings.Contains(grafanaSeedScript, `curl -fsS -u "${auth}" "${grafana_url}/api/health"`) {
-		t.Fatalf("grafana seed script readiness check must not require a 2xx health response\n%s", grafanaSeedScript)
+	for _, token := range []string{
+		"/api/health",
+		"/api/datasources/uid/goforj-victoriametrics",
+		"/api/dashboards/db",
+		"/dashboards/*.json",
+		`"overwrite":true`,
+		"|| true",
+	} {
+		if strings.Contains(grafanaSeedScript, token) {
+			t.Fatalf("grafana seed script should not contain %q\n%s", token, grafanaSeedScript)
+		}
 	}
 
 	for _, dashboard := range []string{
@@ -468,15 +474,18 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 	runDockerCompose(t, projectDir, projectName, 3*time.Minute, "up", "-d")
 
 	assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/datasources/uid/goforj-victoriametrics", http.StatusOK)
-	for _, uid := range []string{
+	dashboardUIDs := []string{
 		"goforj-platform-overview",
 		"goforj-http-overview",
 		"goforj-database-overview",
 		"goforj-queue-overview",
 		"goforj-scheduler-overview",
-	} {
-		assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/dashboards/uid/"+uid, http.StatusOK)
 	}
+	for _, uid := range dashboardUIDs {
+		assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/dashboards/uid/"+uid, http.StatusOK)
+		assertGrafanaDashboardStarred(t, projectDir, projectName, uid)
+	}
+	assertGrafanaHomeDashboard(t, projectDir, projectName, "goforj-platform-overview")
 }
 
 func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
@@ -614,6 +623,58 @@ func assertGrafanaComposeAPIStatus(t *testing.T, projectDir string, projectName 
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatalf("GET grafana %s did not reach status %d\nlast response: %s\nlogs:\n%s", path, want, output, dockerComposeOutput(t, projectDir, projectName, "logs", "grafana", "grafana-seed"))
+}
+
+// assertGrafanaDashboardStarred waits because detached Compose startup does not wait for the one-shot seeder to finish.
+func assertGrafanaDashboardStarred(t *testing.T, projectDir string, projectName string, uid string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	var output string
+	for time.Now().Before(deadline) {
+		output = dockerComposeOutput(t, projectDir, projectName,
+			"run", "--rm", "--no-deps",
+			"--entrypoint", "curl",
+			"grafana-seed",
+			"-fsS",
+			"-u", "admin:admin",
+			"http://grafana:3000/api/dashboards/uid/"+uid,
+		)
+		var dashboard struct {
+			Meta struct {
+				IsStarred bool `json:"isStarred"`
+			} `json:"meta"`
+		}
+		if err := json.Unmarshal([]byte(output), &dashboard); err == nil && dashboard.Meta.IsStarred {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("Grafana dashboard %s was not starred by the seed container\nlast response: %s\nlogs:\n%s", uid, output, dockerComposeOutput(t, projectDir, projectName, "logs", "grafana-seed"))
+}
+
+// assertGrafanaHomeDashboard waits because the organization preference is written after every dashboard is starred.
+func assertGrafanaHomeDashboard(t *testing.T, projectDir string, projectName string, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	var output string
+	for time.Now().Before(deadline) {
+		output = dockerComposeOutput(t, projectDir, projectName,
+			"run", "--rm", "--no-deps",
+			"--entrypoint", "curl",
+			"grafana-seed",
+			"-fsS",
+			"-u", "admin:admin",
+			"http://grafana:3000/api/org/preferences",
+		)
+		var preferences struct {
+			HomeDashboardUID string `json:"homeDashboardUID"`
+		}
+		if err := json.Unmarshal([]byte(output), &preferences); err == nil && preferences.HomeDashboardUID == want {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("Grafana home dashboard UID did not become %q\nlast response: %s\nlogs:\n%s", want, output, dockerComposeOutput(t, projectDir, projectName, "logs", "grafana-seed"))
 }
 
 func readRenderedFile(t *testing.T, root string, rel string) string {

@@ -20,48 +20,21 @@ dashboard_uids="${dashboard_uids} goforj-queue-overview"
 dashboard_uids="${dashboard_uids} goforj-scheduler-overview"
 {{- end }}
 
-echo "Waiting for Grafana at ${grafana_url}..."
-until status="$(curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health" 2>/dev/null)" && [ "${status}" != "000" ]; do
-	sleep 2
-done
-
-datasource_body='{"name":"VictoriaMetrics","type":"prometheus","uid":"goforj-victoriametrics","url":"http://victoriametrics:8428","access":"proxy","isDefault":true,"jsonData":{"httpMethod":"POST"}}'
-if curl -fsS -u "${auth}" "${grafana_url}/api/datasources/uid/goforj-victoriametrics" >/dev/null 2>/dev/null; then
-	curl -fsS -u "${auth}" \
-		-H "Content-Type: application/json" \
-		-X PUT \
-		-d "${datasource_body}" \
-		"${grafana_url}/api/datasources/uid/goforj-victoriametrics" >/dev/null
-else
-	curl -fsS -u "${auth}" \
-		-H "Content-Type: application/json" \
-		-X POST \
-		-d "${datasource_body}" \
-		"${grafana_url}/api/datasources" >/dev/null
-fi
-echo "Grafana datasource ready."
-
-import_dashboard() {
-	file="$1"
-	payload="/tmp/dashboard-payload.json"
-	printf '{"dashboard":' > "${payload}"
-	cat "${file}" >> "${payload}"
-	printf ',"overwrite":true}' >> "${payload}"
-	curl -fsS -u "${auth}" \
-		-H "Content-Type: application/json" \
-		-X POST \
-		--data-binary @"${payload}" \
-		"${grafana_url}/api/dashboards/db" >/dev/null
-	rm -f "${payload}"
-	echo "Imported Grafana dashboard $(basename "${file}")"
+wait_for_grafana() {
+	attempts=0
+	status="000"
+	until status="$(curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/user" 2>/dev/null)" && [ "${status}" = "200" ]; do
+		attempts=$((attempts + 1))
+		if [ "${attempts}" -ge 60 ]; then
+			echo "Timed out waiting for authenticated Grafana API; last HTTP status was ${status}" >&2
+			return 1
+		fi
+		sleep 2
+	done
 }
 
-if [ -d /dashboards ]; then
-	for file in /dashboards/*.json; do
-		[ -f "${file}" ] || continue
-		import_dashboard "${file}"
-	done
-fi
+echo "Waiting for Grafana at ${grafana_url}..."
+wait_for_grafana
 
 wait_for_dashboard() {
 	uid="$1"
@@ -76,9 +49,23 @@ wait_for_dashboard() {
 	done
 }
 
+dashboard_is_starred() {
+	uid="$1"
+	curl -fsS -u "${auth}" "${grafana_url}/api/dashboards/uid/${uid}" \
+		| grep -Eq '"isStarred"[[:space:]]*:[[:space:]]*true'
+}
+
 for uid in ${dashboard_uids}; do
 	wait_for_dashboard "${uid}"
-	curl -fsS -u "${auth}" -X POST "${grafana_url}/api/user/stars/dashboard/uid/${uid}" >/dev/null || true
+	if dashboard_is_starred "${uid}"; then
+		echo "Grafana dashboard ${uid} is already starred"
+		continue
+	fi
+	curl -fsS -u "${auth}" -X POST "${grafana_url}/api/user/stars/dashboard/uid/${uid}" >/dev/null
+	if ! dashboard_is_starred "${uid}"; then
+		echo "Grafana dashboard ${uid} was not starred after the API request" >&2
+		exit 1
+	fi
 	echo "Starred Grafana dashboard ${uid}"
 done
 
@@ -86,6 +73,6 @@ curl -fsS -u "${auth}" \
 	-H "Content-Type: application/json" \
 	-X PUT \
 	-d '{"homeDashboardUID":"goforj-platform-overview","theme":"dark"}' \
-	"${grafana_url}/api/org/preferences" >/dev/null || true
+	"${grafana_url}/api/org/preferences" >/dev/null
 
 echo "Grafana dashboards seeded."

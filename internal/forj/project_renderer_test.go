@@ -239,7 +239,6 @@ func TestObservabilityDockerfilesBakeRuntimeAssets(t *testing.T) {
 			want: []string{
 				"FROM curlimages/curl:8.10.1",
 				"COPY seed-dashboards.sh /seed-dashboards.sh",
-				"COPY dashboards /dashboards",
 			},
 		},
 	}
@@ -274,32 +273,36 @@ func TestObservabilityDockerfilesBakeRuntimeAssets(t *testing.T) {
 	}
 }
 
-func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
+// TestGrafanaSeedScriptWaitsForProvisionedDashboards prevents the seeder from mutating Grafana's read-only provisioned resources.
+func TestGrafanaSeedScriptWaitsForProvisionedDashboards(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "containers", "observability", "grafana", "seed-dashboards.sh.tmpl"))
 	if err != nil {
 		t.Fatalf("read grafana seed script template: %v", err)
 	}
 	template := string(data)
 	for _, token := range []string{
-		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health"`,
-		"/api/datasources/uid/goforj-victoriametrics",
-		"-X PUT",
-		"-X POST",
-		"/api/datasources",
-		"/api/dashboards/db",
-		`"overwrite":true`,
-		"for file in /dashboards/*.json",
+		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/user"`,
+		`[ "${status}" = "200" ]`,
 		`/api/dashboards/uid/${uid}" >/dev/null 2>/dev/null`,
+		"dashboard_is_starred",
+		"/api/user/stars/dashboard/uid/",
+		"/api/org/preferences",
 	} {
 		if !strings.Contains(template, token) {
 			t.Fatalf("expected grafana seed script template to contain %q\n%s", token, template)
 		}
 	}
-	if strings.Contains(template, `curl -fsS "${grafana_url}/api/health"`) {
-		t.Fatalf("expected grafana seed readiness check to use auth\n%s", template)
-	}
-	if strings.Contains(template, `curl -fsS -u "${auth}" "${grafana_url}/api/health"`) {
-		t.Fatalf("expected grafana seed readiness check not to require a 2xx health response\n%s", template)
+	for _, token := range []string{
+		"/api/health",
+		"/api/datasources/uid/goforj-victoriametrics",
+		"/api/dashboards/db",
+		`"overwrite":true`,
+		"for file in /dashboards/*.json",
+		"|| true",
+	} {
+		if strings.Contains(template, token) {
+			t.Fatalf("expected grafana seed script template not to contain %q\n%s", token, template)
+		}
 	}
 	for _, token := range []string{
 		"curl -fsS -u \"${auth}\" \"${grafana_url}/api/dashboards/uid/${uid}\" >/dev/null; do",
