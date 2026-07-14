@@ -76,6 +76,7 @@ func TestCompiledEnvDefaultsCanSeedAppEnvBeforeEnvLoad(t *testing.T) {
 	}
 
 	dir := t.TempDir()
+	writeTestEnvFile(t, filepath.Join(dir, ".env"), "\n")
 	writeTestEnvFile(t, filepath.Join(dir, ".env.staging"), "APP_MARKER=from-staging\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestCompiledEnvDefaultsCanSeedAppEnvBeforeEnvLoad", dir, nil)
@@ -295,9 +296,11 @@ func runAppEnvOverlayHelper() {
 	os.Exit(0)
 }
 
+// runEnvDefaultsHelperProcess starts in the fixture directory so package initialization cannot load the rendered project's .env first.
 func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extraEnv map[string]string) string {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
+	cmd.Dir = dir
 	baseEnv := os.Environ()
 	filtered := make([]string, 0, len(baseEnv)+1)
 	for _, entry := range baseEnv {
