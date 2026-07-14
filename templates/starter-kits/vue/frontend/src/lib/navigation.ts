@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Blocks, LayoutDashboard } from 'lucide-vue-next'
+import { Blocks, LayoutDashboard } from '@lucide/vue'
 
 export type AppNavItem = {
   title: string

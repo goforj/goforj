@@ -52,6 +52,20 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(frontendDir, "node_modules")); !os.IsNotExist(err) {
 		t.Fatalf("expected node_modules to be excluded, stat err = %v", err)
 	}
+	packageJSON, err := os.ReadFile(filepath.Join(frontendDir, "package.json"))
+	if err != nil {
+		t.Fatalf("read Vue starter package: %v", err)
+	}
+	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite": "^7.3.6"`} {
+		if !strings.Contains(string(packageJSON), expected) {
+			t.Errorf("Vue starter package omitted %q:\n%s", expected, packageJSON)
+		}
+	}
+	for _, obsolete := range []string{"lucide-vue-next", `"shadcn-vue"`} {
+		if strings.Contains(string(packageJSON), obsolete) {
+			t.Errorf("Vue starter package retained obsolete install dependency %q:\n%s", obsolete, packageJSON)
+		}
+	}
 }
 
 func TestScaffoldReactStarterKit(t *testing.T) {

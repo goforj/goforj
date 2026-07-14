@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Settings } from 'lucide-vue-next'
+import { Settings } from '@lucide/vue'
 import { appNavMain } from '@/lib/navigation'
 import {
   CommandDialog,

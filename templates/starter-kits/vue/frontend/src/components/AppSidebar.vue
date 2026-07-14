@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { SidebarProps } from './ui/sidebar'
 import { computed } from 'vue'
-import { BookOpen, Command, Github } from 'lucide-vue-next'
+import { BookOpen, Command, GitFork } from '@lucide/vue'
 import TeamSwitcher from './TeamSwitcher.vue'
 import NavDocuments from './NavDocuments.vue'
 import NavMain from './NavMain.vue'
@@ -29,7 +29,7 @@ const sidebarProps = computed<SidebarProps>(() => ({
 }))
 
 const navDocuments = [
-  { title: 'Repository', url: 'https://github.com/goforj/goforj', icon: Github },
+  { title: 'Repository', url: 'https://github.com/goforj/goforj', icon: GitFork },
   { title: 'Documentation', url: 'https://goforj.dev', icon: BookOpen },
 ]
 

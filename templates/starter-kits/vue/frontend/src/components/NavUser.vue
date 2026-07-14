@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronsUpDown, LogOut, Settings } from "lucide-vue-next";
+import { ChevronsUpDown, LogOut, Settings } from "@lucide/vue";
 import { nextTick, ref } from "vue";
 import { RouterLink } from "vue-router";
 import {
