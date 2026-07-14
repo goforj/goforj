@@ -64,8 +64,9 @@ apps:
 		t.Fatalf("marshal migrated component config: %v", err)
 	}
 	for _, expected := range []string{
-		"components: [cli, auth, web_api]",
-		"components: [cli, jobs]",
+		"components: [cli, auth, web_api, cache, events, storage]",
+		"components: [cli, cache, events, storage, jobs]",
+		"component_contract: 1",
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("migrated YAML omitted %q:\n%s", expected, encoded)
@@ -144,6 +145,7 @@ apps:
 			name: "canonical sequences",
 			input: `render:
   components: [cli]
+  component_contract: 1
 apps:
   api:
     components: [web_api]
@@ -168,6 +170,7 @@ apps:
 func TestComponentsYAMLSequenceRoundTripUsesCanonicalOrder(t *testing.T) {
 	input := `render:
   components: [jobs, web_api, demo_app, cli, docker, mail]
+  component_contract: 1
 `
 
 	var config Config
@@ -198,6 +201,7 @@ func TestComponentsYAMLSequenceRoundTripUsesCanonicalOrder(t *testing.T) {
 func TestComponentsYAMLPreservesEmptySequence(t *testing.T) {
 	input := `render:
   components: []
+  component_contract: 1
 apps:
   ship:
     components: []
@@ -256,7 +260,7 @@ func TestComponentsJSONRemainsBooleanObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal component JSON: %v", err)
 	}
-	expected := `{"cli":true,"demo_app":true,"mail":false,"auth":false,"oauth":false,"web_api":true,"web_ui":false,"metrics":false,"observability":false,"grafana":false,"docker":false,"database_mysql":false,"database_postgres":false,"database_sqlite":false,"scheduler":false,"jobs":true}`
+	expected := `{"cli":true,"demo_app":true,"mail":false,"auth":false,"oauth":false,"web_api":true,"web_ui":false,"metrics":false,"observability":false,"grafana":false,"docker":false,"database_mysql":false,"database_postgres":false,"database_sqlite":false,"scheduler":false,"cache":false,"events":false,"storage":false,"jobs":true}`
 	if string(encoded) != expected {
 		t.Fatalf("component JSON = %s, want %s", encoded, expected)
 	}
@@ -266,5 +270,172 @@ func TestComponentsJSONRemainsBooleanObject(t *testing.T) {
 	}
 	if roundTripped != original {
 		t.Fatalf("component JSON round trip = %#v, want %#v", roundTripped, original)
+	}
+}
+
+// TestLegacyComponentContractEnablesPrimitiveCapabilitiesEverywhere verifies versionless configs preserve their previous generated App surface.
+func TestLegacyComponentContractEnablesPrimitiveCapabilitiesEverywhere(t *testing.T) {
+	input := `render:
+  components: [cli, jobs]
+apps:
+  api:
+    components: [cli, web_api]
+  worker:
+    components:
+      cli: true
+      jobs: true
+`
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal versionless component config: %v", err)
+	}
+	if !config.NeedsComponentMigration() {
+		t.Fatal("versionless component contract was not marked for migration")
+	}
+	if config.Render.ComponentContractVersion != CurrentComponentContractVersion {
+		t.Fatalf("component contract version = %d, want %d", config.Render.ComponentContractVersion, CurrentComponentContractVersion)
+	}
+	for scope, components := range map[string]Components{
+		"default App": config.Render.Components,
+		"api App":     config.Apps["api"].Components,
+		"worker App":  config.Apps["worker"].Components,
+	} {
+		if !components.Cache || !components.Events || !components.Storage {
+			t.Fatalf("%s lost legacy primitive capabilities: %#v", scope, components)
+		}
+	}
+	if !config.Render.Components.Jobs || !config.Apps["worker"].Components.Jobs || config.Apps["api"].Components.Jobs {
+		t.Fatalf("Jobs selection changed during component migration: %#v", config)
+	}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal migrated component contract: %v", err)
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("unmarshal migrated component contract: %v", err)
+	}
+	if roundTripped.NeedsComponentMigration() {
+		t.Fatal("current component contract requested a second migration")
+	}
+	if roundTripped.Render.Components != config.Render.Components ||
+		roundTripped.Apps["api"].Components != config.Apps["api"].Components ||
+		roundTripped.Apps["worker"].Components != config.Apps["worker"].Components {
+		t.Fatalf("component contract changed across migration round trip: %#v", roundTripped)
+	}
+}
+
+// TestLegacyComponentContractPreservesExtensionSettings verifies migration does not erase fields owned by newer GoForj versions or extensions.
+func TestLegacyComponentContractPreservesExtensionSettings(t *testing.T) {
+	input := `future_project:
+  enabled: true
+dev:
+  future_dev: retained
+  watches:
+    - name: Build
+      watch: ["./..."]
+      exec: go build
+      future_watch: retained
+      files:
+        include: ["**/*.go"]
+        future_matcher: retained
+  apps:
+    api:
+      future_dev_app: retained
+      build:
+        exec: go build ./cmd/api
+        future_command: retained
+      spas:
+        ui:
+          path: frontend
+          future_spa: retained
+render:
+  components: [cli]
+  future_runtime: canary
+apps:
+  api:
+    components: [cli, web_api]
+    future_routes: [audit]
+`
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal versionless config with extensions: %v", err)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal migrated config with extensions: %v", err)
+	}
+	for _, expected := range []string{
+		"future_project:",
+		"enabled: true",
+		"future_dev: retained",
+		"future_watch: retained",
+		"future_matcher: retained",
+		"future_dev_app: retained",
+		"future_command: retained",
+		"future_spa: retained",
+		"future_runtime: canary",
+		"future_routes:",
+		"- audit",
+		"component_contract: 1",
+	} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("migrated config omitted extension %q:\n%s", expected, encoded)
+		}
+	}
+
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("reload migrated config with extensions: %v", err)
+	}
+	if roundTripped.Extra["future_project"] == nil || roundTripped.Render.Extra["future_runtime"] != "canary" || roundTripped.Apps["api"].Extra["future_routes"] == nil {
+		t.Fatalf("extension settings changed across migration: %#v", roundTripped)
+	}
+	if len(roundTripped.Dev.Watches) != 1 || roundTripped.Dev.Apps["api"].Build == nil {
+		t.Fatalf("nested dev extension fixtures changed shape: %#v", roundTripped.Dev)
+	}
+	watch := roundTripped.Dev.Watches[0]
+	devApp := roundTripped.Dev.Apps["api"]
+	if roundTripped.Dev.Extra["future_dev"] != "retained" || watch.Extra["future_watch"] != "retained" || watch.Files.Extra["future_matcher"] != "retained" || devApp.Extra["future_dev_app"] != "retained" || devApp.Build.Extra["future_command"] != "retained" || devApp.SPAs["ui"].Extra["future_spa"] != "retained" {
+		t.Fatalf("nested dev extensions changed across migration: %#v", roundTripped.Dev)
+	}
+}
+
+// TestCurrentComponentContractPreservesPrimitiveDeselection verifies omission gains disabled meaning only after the schema marker exists.
+func TestCurrentComponentContractPreservesPrimitiveDeselection(t *testing.T) {
+	input := `render:
+  components: [cli]
+  component_contract: 1
+apps:
+  worker:
+    components: [cli, jobs]
+`
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal current component config: %v", err)
+	}
+	if config.NeedsComponentMigration() {
+		t.Fatal("current component contract requested migration")
+	}
+	for scope, components := range map[string]Components{
+		"default App": config.Render.Components,
+		"worker App":  config.Apps["worker"].Components,
+	} {
+		if components.Cache || components.Events || components.Storage {
+			t.Fatalf("%s primitive deselection was widened: %#v", scope, components)
+		}
+	}
+	if config.Render.Components.Jobs || !config.Apps["worker"].Components.Jobs {
+		t.Fatalf("Jobs selection changed under current contract: %#v", config)
+	}
+}
+
+// TestProjectConfigRejectsUnsupportedComponentContract avoids silently applying semantics from a newer config contract.
+func TestProjectConfigRejectsUnsupportedComponentContract(t *testing.T) {
+	var config Config
+	err := yaml.Unmarshal([]byte("render:\n  components: [cli]\n  component_contract: 2\n"), &config)
+	if err == nil || !strings.Contains(err.Error(), "unsupported component contract version 2") {
+		t.Fatalf("unmarshal error = %v, want unsupported component contract diagnostic", err)
 	}
 }

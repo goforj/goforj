@@ -98,17 +98,18 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	} else {
 		p.localServiceIntent = localServiceIntentFromEnvironment(source, p.localServiceIntent)
 	}
+	projectComponents := p.projectRenderComponents()
 	updated, effective, changed, err := reconcileResourceEnvironment(
 		source,
 		p.resourcePlan,
-		p.config.Render.Components,
+		projectComponents,
 		p.explicitResourcePlan,
 	)
 	if err != nil {
 		return err
 	}
 	p.resourcePlan = effective
-	consumers, err := effectiveResourceConsumersFromEnvironment(updated, effective, p.config.Render.Components, configuredResourceAppNames(p.config))
+	consumers, err := effectiveResourceConsumersFromProjectConfig(updated, effective, projectComponents, p.config)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}
@@ -162,6 +163,36 @@ func normalizeExplicitResourcePlan(plan project.ResourcePlan, components project
 		return project.ResourcePlan{}, fmt.Errorf("resource plan: %w", err)
 	}
 	return normalized, nil
+}
+
+// withProjectDatabaseCapabilities keeps the default App driver active while building every engine required by the project envelope.
+func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponents project.Components, projectComponents project.Components) (project.ResourcePlan, error) {
+	if !projectComponents.HasDatabase() {
+		return plan, nil
+	}
+	selection, ok := plan.Selection(project.ResourceDatabase)
+	if !ok {
+		return project.ResourcePlan{}, fmt.Errorf("project database capabilities require a database resource selection")
+	}
+	if projectComponents.DemoApp {
+		// Demo's migration contract keeps MySQL active while SQLite remains compiled as its portable fallback.
+		selection.Active = "mysql"
+	} else if driver := defaultComponents.DatabaseDriver(); driver != "" {
+		selection.Active = driver
+	}
+	for _, candidate := range []struct {
+		enabled bool
+		driver  string
+	}{
+		{enabled: projectComponents.DatabaseSQLite, driver: "sqlite"},
+		{enabled: projectComponents.DatabaseMySQL, driver: "mysql"},
+		{enabled: projectComponents.DatabasePostgres, driver: "postgres"},
+	} {
+		if candidate.enabled && !stringSliceContainsFold(selection.Supported, candidate.driver) {
+			selection.Supported = append(selection.Supported, candidate.driver)
+		}
+	}
+	return plan.WithSelection(project.ResourceDatabase, selection).Normalized(projectComponents)
 }
 
 // reconcileResourceEnvironment applies owner precedence and fills only missing initialization keys.

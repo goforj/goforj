@@ -1,0 +1,40 @@
+package observability
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/goforj/cache"
+	"github.com/goforj/cache/cachecore"
+
+	"{{.GoModuleName}}/internal/caches"
+)
+
+// TestCacheInspectEventPreservesObservedOperation verifies the observer adapter does not lose cache event fields.
+func TestCacheInspectEventPreservesObservedOperation(t *testing.T) {
+	expectedErr := errors.New("cache unavailable")
+	expectedDuration := 17 * time.Millisecond
+
+	event := cacheInspectEvent(caches.CacheOpEvent{
+		Name: "sessions",
+		CacheOpEvent: cache.CacheOpEvent{
+			Operation: "get",
+			Key:       "session:42",
+			Driver:    cachecore.DriverMemory,
+			Hit:       true,
+			Err:       expectedErr,
+			Duration:  expectedDuration,
+		},
+	})
+
+	if event.Name != "sessions" || event.Operation != "get" || event.Key != "session:42" {
+		t.Fatalf("cache inspect identity = %#v", event)
+	}
+	if event.Driver != string(cachecore.DriverMemory) || !event.Hit {
+		t.Fatalf("cache inspect driver/hit = %#v", event)
+	}
+	if !errors.Is(event.Err, expectedErr) || event.Duration != expectedDuration {
+		t.Fatalf("cache inspect error/duration = %#v", event)
+	}
+}

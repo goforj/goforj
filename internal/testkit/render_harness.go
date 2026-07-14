@@ -238,8 +238,10 @@ func LocalSiblingRepoPath(t *testing.T, name string) string {
 	return path
 }
 
+// WriteProjectConfigFile writes a current-contract configuration for an integration render.
 func WriteProjectConfigFile(t *testing.T, dir string, cfg project.Config) {
 	t.Helper()
+	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	body, err := yaml.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("marshal .goforj.yml: %v", err)

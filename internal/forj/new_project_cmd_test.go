@@ -372,6 +372,33 @@ func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 	}
 }
 
+// TestNewProjectKeepsPrimitiveDefaultsHiddenUntilGatingIsComplete verifies the foundation does not expose premature opt-outs.
+func TestNewProjectKeepsPrimitiveDefaultsHiddenUntilGatingIsComplete(t *testing.T) {
+	m := initialModel()
+	if m.config.Render.ComponentContractVersion != project.CurrentComponentContractVersion {
+		t.Fatalf("new project component contract = %d, want %d", m.config.Render.ComponentContractVersion, project.CurrentComponentContractVersion)
+	}
+	hidden := map[project.ComponentKey]bool{
+		project.ComponentCache:   true,
+		project.ComponentEvents:  true,
+		project.ComponentStorage: true,
+	}
+	for _, raw := range m.componentList.Items() {
+		item := raw.(ListItem)
+		if hidden[item.Key] {
+			t.Fatalf("primitive %q was exposed in forj new before its disabled contract", item.Key)
+		}
+	}
+	components := m.selectedComponentConfig()
+	if !components.Cache || !components.Events || !components.Storage {
+		t.Fatalf("hidden primitive defaults were lost while reading wizard selections: %#v", components)
+	}
+	m.applyComponentSelection()
+	if !m.config.Render.Components.Cache || !m.config.Render.Components.Events || !m.config.Render.Components.Storage {
+		t.Fatalf("hidden primitive defaults were lost while applying wizard selections: %#v", m.config.Render.Components)
+	}
+}
+
 // TestDatabaseEngineSelectionIsExclusive verifies the component checklist owns one concrete database engine.
 func TestDatabaseEngineSelectionIsExclusive(t *testing.T) {
 	m := initialModel()

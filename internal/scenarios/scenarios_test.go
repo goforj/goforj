@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goforj/goforj/project"
 )
 
 func TestLoadEmbeddedScenarioSpecs(t *testing.T) {
@@ -24,6 +26,47 @@ func TestLoadEmbeddedScenarioSpecs(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected json-api-route spec")
+	}
+}
+
+// TestScenarioSpecsDeclareCumulativePrimitiveDependencies keeps each independently rendered scenario truthful about the prior steps it applies.
+func TestScenarioSpecsDeclareCumulativePrimitiveDependencies(t *testing.T) {
+	specs, err := loadScenarioSpecs("")
+	if err != nil {
+		t.Fatalf("load specs: %v", err)
+	}
+	byID := make(map[string]ScenarioSpec, len(specs))
+	for _, spec := range specs {
+		byID[spec.ID] = spec
+	}
+
+	tests := []struct {
+		id   string
+		want project.Components
+	}{
+		{id: "json-api-route", want: project.Components{}},
+		{id: "cached-user-profile", want: project.Components{Cache: true}},
+		{id: "file-upload-storage", want: project.Components{Cache: true, Storage: true}},
+		{id: "users-created-event", want: project.Components{Cache: true, Events: true}},
+		{id: "reports-generate-job", want: project.Components{Cache: true, Events: true, Storage: true}},
+		{id: "reports-daily-schedule", want: project.Components{Cache: true, Events: true, Storage: true}},
+		{id: "runtime-observability", want: project.Components{Cache: true, Events: true, Storage: true}},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			spec, ok := byID[test.id]
+			if !ok {
+				t.Fatalf("scenario %q was not loaded", test.id)
+			}
+			got := project.Components{
+				Cache:   spec.App.Components.Cache,
+				Events:  spec.App.Components.Events,
+				Storage: spec.App.Components.Storage,
+			}
+			if got != test.want {
+				t.Fatalf("scenario primitive components = %#v, want %#v", got, test.want)
+			}
+		})
 	}
 }
 

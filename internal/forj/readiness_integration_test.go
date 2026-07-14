@@ -131,7 +131,10 @@ func renderReadinessTestApp(t *testing.T, dir string) {
 			Components: project.Components{
 				WebAPI:        true,
 				CLI:           true,
+				Cache:         true,
 				DatabaseMySQL: true,
+				Events:        true,
+				Storage:       true,
 			},
 		},
 	}

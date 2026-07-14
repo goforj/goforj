@@ -13,12 +13,43 @@ import (
 	"time"
 
 	"{{.GoModuleName}}/internal/runtime"
-	"{{.GoModuleName}}/internal/caches"
-	"{{.GoModuleName}}/internal/storages"
 	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/env/v2"
-	"github.com/goforj/queue"
 )
+
+// CacheOperationInspectEvent describes a cache operation without coupling Inspects to a cache implementation.
+type CacheOperationInspectEvent struct {
+	Name      string
+	Operation string
+	Key       string
+	Driver    string
+	Hit       bool
+	Err       error
+	Duration  time.Duration
+}
+
+// StorageOperationInspectEvent describes a storage operation without coupling Inspects to a storage implementation.
+type StorageOperationInspectEvent struct {
+	Operation string
+	Disk      string
+	Path      string
+	Driver    string
+	Err       error
+	Duration  time.Duration
+}
+
+// QueueInspectEvent describes queue activity without coupling Inspects to a queue implementation.
+type QueueInspectEvent struct {
+	Kind      string
+	Driver    string
+	Queue     string
+	JobName   string
+	JobKey    string
+	Attempt   int
+	Scheduled bool
+	Duration  time.Duration
+	Err       error
+}
 
 type EventPublishInspectEvent struct {
 	Bus      string
@@ -740,7 +771,7 @@ func (m *Manager) RecordLog(ctx context.Context, event LogInspectEvent) {
 }
 
 // RecordCacheEvent appends a normalized cache event to the current inspect.
-func (m *Manager) RecordCacheEvent(ctx context.Context, event caches.CacheOpEvent) {
+func (m *Manager) RecordCacheEvent(ctx context.Context, event CacheOperationInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -749,7 +780,7 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, event caches.CacheOpEven
 	attrs["cache"] = strings.TrimSpace(event.Name)
 	attrs["operation"] = strings.TrimSpace(event.Operation)
 	attrs["key"] = strings.TrimSpace(event.Key)
-	attrs["driver"] = strings.TrimSpace(string(event.Driver))
+	attrs["driver"] = strings.TrimSpace(event.Driver)
 	attrs["hit"] = event.Hit
 	attrs["duration_ms"] = durationMS(event.Duration)
 	attrs["duration_ns"] = durationNS(event.Duration)
@@ -766,7 +797,7 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, event caches.CacheOpEven
 }
 
 // RecordStorageEvent appends a normalized storage event to the current inspect.
-func (m *Manager) RecordStorageEvent(ctx context.Context, event storages.StorageOpEvent) {
+func (m *Manager) RecordStorageEvent(ctx context.Context, event StorageOperationInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -864,17 +895,17 @@ func (m *Manager) RecordMailEvent(ctx context.Context, event MailSendInspectEven
 }
 
 // RecordQueueEvent appends a normalized queue event to the current inspect.
-func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
+func (m *Manager) RecordQueueEvent(ctx context.Context, event QueueInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
 	}
 	attrs := make(map[string]any, 10)
 	attrs["queue"] = event.Queue
-	attrs["job_name"] = event.JobType
+	attrs["job_name"] = event.JobName
 	attrs["job_key"] = event.JobKey
-	attrs["kind"] = string(event.Kind)
-	attrs["driver"] = string(event.Driver)
+	attrs["kind"] = event.Kind
+	attrs["driver"] = event.Driver
 	attrs["attempt"] = event.Attempt
 	attrs["duration_ms"] = durationMS(event.Duration)
 	attrs["duration_ns"] = durationNS(event.Duration)
@@ -884,7 +915,7 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 	}
 	recorder.RecordEvent(InspectEvent{
 		Kind:       EventKindQueue,
-		Name:       string(event.Kind),
+		Name:       event.Kind,
 		Status:     statusFromError(event.Err),
 		Message:    "queue event",
 		Attributes: attrs,

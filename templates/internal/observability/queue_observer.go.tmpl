@@ -1,6 +1,6 @@
 package observability
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 import (
 	"context"
 	"time"
@@ -10,7 +10,7 @@ import (
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
@@ -19,17 +19,32 @@ import (
 func QueueObserver(
 	appLogger *logger.AppLogger,
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) queue.Observer {
 	return queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-		inspectManager.RecordQueueEvent(ctx, event)
-{{- if .Components.Metrics }}
+		inspectManager.RecordQueueEvent(ctx, queueInspectEvent(event))
+{{- if .ProjectComponents.Metrics }}
 		metricsManager.RecordQueueEvent(ctx, event)
 {{- end }}
 		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
 	})
+}
+
+// queueInspectEvent isolates Inspects from the queue observer contract.
+func queueInspectEvent(event queue.Event) inspects.QueueInspectEvent {
+	return inspects.QueueInspectEvent{
+		Kind:      string(event.Kind),
+		Driver:    string(event.Driver),
+		Queue:     event.Queue,
+		JobName:   event.JobType,
+		JobKey:    event.JobKey,
+		Attempt:   event.Attempt,
+		Scheduled: event.Scheduled,
+		Duration:  event.Duration,
+		Err:       event.Err,
+	}
 }
 
 // logQueueWorkflowEvent records terminal queue workflow outcomes in both logs and inspect timelines.

@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
 	"{{.GoModuleName}}/internal/events"
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
@@ -25,10 +25,10 @@ func ProvideReadinessChecks(
 	caches *caches.Manager,
 	storage *storages.Manager,
 	events *events.Manager,
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	queues *queues.Manager,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	db *database.Connections,
 {{- end }}
 ) []ReadinessCheck {
@@ -42,7 +42,7 @@ func ProvideReadinessChecks(
 		}
 	}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	if db != nil {
 		for _, check := range db.ReadinessChecks() {
 			checks = append(checks, ReadinessCheck{
@@ -71,7 +71,7 @@ func ProvideReadinessChecks(
 		}
 	}
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	if queues != nil {
 		for _, check := range queues.ReadinessChecks() {
 			checks = append(checks, ReadinessCheck{

@@ -87,12 +87,15 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:            true,
+				Cache:          true,
+				Events:         true,
 				WebAPI:         true,
 				Metrics:        true,
 				Auth:           true,
 				Mail:           true,
 				Jobs:           true,
 				Scheduler:      true,
+				Storage:        true,
 				DatabaseSQLite: true,
 			},
 		},

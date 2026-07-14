@@ -23,6 +23,9 @@ var componentYAMLKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentCache,
+	ComponentEvents,
+	ComponentStorage,
 	ComponentJobs,
 }
 
@@ -105,8 +108,29 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode project config: %w", err)
 	}
 	*c = ProjectConfig(fields)
-	c.needsComponentMigration = projectConfigNeedsComponentMigration(value)
+	legacyContract := c.Render.ComponentContractVersion < CurrentComponentContractVersion
+	if c.Render.ComponentContractVersion < 0 || c.Render.ComponentContractVersion > CurrentComponentContractVersion {
+		return fmt.Errorf("decode project config: unsupported component contract version %d; this GoForj release supports version %d", c.Render.ComponentContractVersion, CurrentComponentContractVersion)
+	}
+	if legacyContract {
+		c.migrateLegacyPrimitiveComponents()
+	}
+	c.needsComponentMigration = legacyContract || projectConfigNeedsComponentMigration(value)
 	return nil
+}
+
+// migrateLegacyPrimitiveComponents preserves capabilities that every App received before they became optional components.
+func (c *ProjectConfig) migrateLegacyPrimitiveComponents() {
+	c.Render.ComponentContractVersion = CurrentComponentContractVersion
+	c.Render.Components.Cache = true
+	c.Render.Components.Events = true
+	c.Render.Components.Storage = true
+	for name, app := range c.Apps {
+		app.Components.Cache = true
+		app.Components.Events = true
+		app.Components.Storage = true
+		c.Apps[name] = app
+	}
 }
 
 // isComponentYAMLKey reports whether a name belongs to the exact persisted component contract.

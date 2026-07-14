@@ -80,21 +80,20 @@ type ComponentRenderInput struct {
 
 // ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
-	logger                      *logger.AppLogger
-	config                      *project.Config
-	stats                       *renderStats
-	lines                       []string
-	timings                     bool
-	queueDriver                 string
-	resourcePlan                project.ResourcePlan
-	localServiceIntent          project.LocalServiceIntent
-	serviceConsumers            []project.EffectiveResourceConsumer
-	explicitResourcePlan        bool
-	pendingEnvironment          []byte
-	pendingEnvironmentWrite     bool
-	removeLegacyQueueDriver     bool
-	databaseCapabilitiesChanged bool
-	writeEnvironmentFile        func(string, []byte, fs.FileMode) error
+	logger                  *logger.AppLogger
+	config                  *project.Config
+	stats                   *renderStats
+	lines                   []string
+	timings                 bool
+	queueDriver             string
+	resourcePlan            project.ResourcePlan
+	localServiceIntent      project.LocalServiceIntent
+	serviceConsumers        []project.EffectiveResourceConsumer
+	explicitResourcePlan    bool
+	pendingEnvironment      []byte
+	pendingEnvironmentWrite bool
+	removeLegacyQueueDriver bool
+	writeEnvironmentFile    func(string, []byte, fs.FileMode) error
 }
 
 type renderStats struct {
@@ -150,6 +149,7 @@ type runtimeAppMetadata struct {
 	EnvPrefix   string
 	HTTPPort    int
 	RuntimeBase int
+	Components  project.Components
 }
 
 type templateMapping struct {
@@ -269,7 +269,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.pendingEnvironment = nil
 	p.pendingEnvironmentWrite = false
 	p.removeLegacyQueueDriver = false
-	p.databaseCapabilitiesChanged = false
 
 	if input.renderAll {
 		cfg, err := project.LoadProjectConfig()
@@ -292,6 +291,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
 	}
+	projectComponents := project.ProjectComponents(p.config)
+	if err := projectComponents.ValidateRenderContract(); err != nil {
+		return fmt.Errorf("project component envelope: %w", err)
+	}
 	selectedQueueDriver := input.queueDriver
 	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
 		selectedQueueDriver = selection.Active
@@ -299,7 +302,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	// The transient plan seeds .env only; legacy YAML remains a migration source until environment initialization succeeds.
 	p.queueDriver = resolveQueueDriverSeed(selectedQueueDriver, p.config.Render.LegacyQueueDriver())
 	if len(input.resourcePlan.Selections) > 0 {
-		plan, err := normalizeExplicitResourcePlan(input.resourcePlan, p.config.Render.Components)
+		plan, err := normalizeExplicitResourcePlan(input.resourcePlan, projectComponents)
 		if err != nil {
 			return err
 		}
@@ -307,24 +310,26 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.explicitResourcePlan = true
 		p.localServiceIntent = input.localServiceIntent
 	} else {
-		plan, err := compatibilityResourcePlan(p.config.Render.Components, p.queueDriver)
+		plan, err := compatibilityResourcePlan(projectComponents, p.queueDriver)
 		if err != nil {
 			return err
 		}
 		p.resourcePlan = plan
+	}
+	var err error
+	p.resourcePlan, err = withProjectDatabaseCapabilities(p.resourcePlan, p.config.Render.Components, projectComponents)
+	if err != nil {
+		return err
 	}
 	if input.renderAll {
 		if err := p.prepareResourceEnvironment(); err != nil {
 			return err
 		}
 	}
-	if _, err := project.ResolveServicePlanWithConsumers(p.resourcePlan, p.config.Render.Components, p.localServiceIntent, p.serviceConsumers); err != nil {
+	projectComponents = p.projectRenderComponents()
+	if _, err := project.ResolveServicePlanWithConsumers(p.resourcePlan, projectComponents, p.localServiceIntent, p.serviceConsumers); err != nil {
 		return fmt.Errorf("resolve effective App services: %w", err)
 	}
-	applyDatabaseRenderCapabilities(&p.config.Render.Components, p.resourcePlan)
-	configuredBeforeDatabasePromotion := configuredComponents
-	applyDatabaseRenderCapabilities(&configuredComponents, p.resourcePlan)
-	p.databaseCapabilitiesChanged = configuredComponents != configuredBeforeDatabasePromotion
 	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
 	if !p.config.Render.Components.WebUI {
 		p.config.Render.StarterKit = project.StarterKitNone
@@ -637,11 +642,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/caches/README.md.tmpl",
 				"internal/storages/README.md.tmpl",
 				"internal/observability/cache_observer.go.tmpl",
+				"internal/observability/cache_observer_test.go.tmpl",
 				"internal/observability/event_observer.go.tmpl",
 				"internal/observability/mail_observer.go.tmpl",
 				"internal/observability/queue_observer.go.tmpl",
 				"internal/observability/queue_observer_test.go.tmpl",
 				"internal/observability/storage_observer.go.tmpl",
+				"internal/observability/storage_observer_test.go.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/runtime/about.go.tmpl",
 				"internal/runtime/discovery.go.tmpl",
@@ -724,7 +731,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Dev Console Components Rendering",
-			enabled: p.config.Render.Components.HasRuntime(),
+			enabled: projectComponents.HasRuntime(),
 			templates: []string{
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
@@ -747,7 +754,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Web API Components Rendering",
-			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI,
+			enabled: projectComponents.WebAPI || projectComponents.WebUI,
 			templates: []string{
 				"internal/http/lighthouse.go.tmpl",
 				"internal/http/README.md.tmpl",
@@ -811,7 +818,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Metrics Components Rendering",
-			enabled: p.config.Render.Components.Metrics,
+			enabled: projectComponents.Metrics,
 			templates: []string{
 				"internal/metrics/README.md.tmpl",
 				"internal/metrics/endpoint.go.tmpl",
@@ -819,7 +826,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/metrics/manager_test.go.tmpl",
 			},
 			action: func() error {
-				if !p.config.Render.Components.WebAPI {
+				if !projectComponents.WebAPI {
 					return nil
 				}
 				return p.writeTemplates([]string{
@@ -856,10 +863,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
 					)
-					if p.config.Render.Components.Mail {
+					if projectComponents.Mail {
 						templates = append(templates, "containers/observability/grafana/dashboards/mail-overview.json.tmpl")
 					}
-					if p.config.Render.Components.HasDatabase() {
+					if projectComponents.HasDatabase() {
 						templates = append(templates, "containers/observability/grafana/dashboards/database-overview.json.tmpl")
 					}
 				}
@@ -871,14 +878,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Mail Components Rendering",
-			enabled: p.config.Render.Components.Mail,
+			enabled: projectComponents.Mail,
 			templates: []string{
 				"internal/mail/README.md.tmpl",
 			},
 		},
 		{
 			title:   "Auth Components Rendering",
-			enabled: p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase(),
+			enabled: projectComponents.Auth && projectComponents.HasDatabase(),
 			templates: []string{
 				"internal/mail/auth_delivery.go.tmpl",
 				"internal/auth/controller.go.tmpl",
@@ -944,7 +951,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "OAuth Components Rendering",
-			enabled: p.config.Render.Components.Auth && p.config.Render.Components.OAuth && p.config.Render.Components.HasDatabase(),
+			enabled: projectComponents.Auth && projectComponents.OAuth && projectComponents.HasDatabase(),
 			templates: []string{
 				"internal/auth/identity.go.tmpl",
 				"internal/auth/oauth_provider.go.tmpl",
@@ -1015,7 +1022,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Database Components Rendering",
-			enabled: p.config.Render.Components.HasDatabase(),
+			enabled: projectComponents.HasDatabase(),
 			templates: append([]string{
 				"internal/database/connections.go.tmpl",
 				"internal/database/fingerprinting.go.tmpl",
@@ -1029,7 +1036,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_model_sqlite_integration_test.go.tmpl",
 				"internal/makecmd/repository_wire_test.go.tmpl",
 			}, func() []string {
-				if p.config.Render.Components.Metrics {
+				if projectComponents.Metrics {
 					return []string{"internal/database/metrics_logger.go.tmpl"}
 				}
 				return nil
@@ -1061,7 +1068,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Scheduler Components Rendering",
-			enabled: p.config.Render.Components.Scheduler,
+			enabled: projectComponents.Scheduler,
 			templates: []string{
 				"internal/schedules/lighthouse.go.tmpl",
 				"internal/schedules/runtime.go.tmpl",
@@ -1089,7 +1096,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Job Components Rendering",
-			enabled: p.config.Render.Components.Jobs,
+			enabled: projectComponents.Jobs,
 			templates: []string{
 				"internal/queues/README.md.tmpl",
 				"internal/jobs/example_hello_job.go.tmpl",
@@ -1216,7 +1223,7 @@ func resolveQueueDriverSeed(selected string, legacy string) string {
 
 // reconcileQueueDriverEnvironment migrates applicable queue state before the legacy YAML source can be removed.
 func (p *ProjectRenderer) reconcileQueueDriverEnvironment() error {
-	if !p.config.Render.Components.Jobs {
+	if !p.projectRenderComponents().Jobs {
 		return nil
 	}
 	const path = ".env"
@@ -1367,16 +1374,16 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.syncLegacyGeneratedTemplates(); err != nil {
 		return err
 	}
-	promotedProjectComponents := false
+	projectCapabilitiesChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
 		if err := p.prepareDevAppsForAppMutation(); err != nil {
 			return err
 		}
-		promoted, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.HelpFormat)
+		changed, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.HelpFormat)
 		if err != nil {
 			return err
 		}
-		promotedProjectComponents = promoted
+		projectCapabilitiesChanged = changed
 		p.setAppDevRun(app.Name, opts.DevRunCommand)
 		if err := p.writeAppEnvDefaults(app, appRenderComponents(p.config, app)); err != nil {
 			return err
@@ -1389,7 +1396,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.renderApp(app); err != nil {
 		return err
 	}
-	if promotedProjectComponents {
+	if projectCapabilitiesChanged {
 		return p.Render(ComponentRenderInput{renderAll: true})
 	}
 	if err := p.writeTemplates([]string{
@@ -1398,7 +1405,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	}); err != nil {
 		return err
 	}
-	if p.config.Render.Components.HasDatabase() {
+	if p.projectRenderComponents().HasDatabase() {
 		if err := p.expandDefaultMigrationsForNamedApps(); err != nil {
 			return err
 		}
@@ -1540,10 +1547,12 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 	if p.config.Apps == nil {
 		p.config.Apps = map[string]project.AppConfig{}
 	}
+	before := project.ProjectComponents(p.config)
+	available := p.config.Render.Components.WithResolvedDependencies()
 	if components == (project.Components{}) {
-		components = project.AppDefaultComponents(p.config.Render.Components)
+		components = project.AppDefaultComponents(available)
 	}
-	components = project.NormalizeAppComponents(p.config.Render.Components, components)
+	components = project.NormalizeConfiguredAppComponents(p.config, components)
 	if err := components.ValidateRenderContract(); err != nil {
 		return false, err
 	}
@@ -1555,17 +1564,12 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 		return false, err
 	}
 	helpFormat = project.NormalizeHelpFormat(helpFormat)
-	before := p.config.Render.Components
-	p.config.Render.Components = project.PromoteAppComponents(p.config.Render.Components, components)
-	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
-		return false, err
-	}
 	p.config.Apps[name] = project.AppConfig{
 		Components: components,
 		StarterKit: starterKit,
 		HelpFormat: helpFormat,
 	}
-	return p.config.Render.Components != before, nil
+	return project.ProjectComponents(p.config) != before, nil
 }
 
 // prepareDevAppsForAppMutation establishes native App presence before make:app can change filesystem discovery.
@@ -2224,9 +2228,6 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	if p.removeLegacyQueueDriver {
 		changed = true
 	}
-	if p.databaseCapabilitiesChanged {
-		changed = true
-	}
 	defaultApp := project.DefaultApp()
 	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
 		p.config.Dev.WirePaths = []string{defaultApp.WireDir}
@@ -2480,7 +2481,7 @@ func (p *ProjectRenderer) renderNamedApps() error {
 			}
 		}
 	}
-	if len(apps) > 0 && p.config.Render.Components.HasDatabase() {
+	if len(apps) > 0 && p.projectRenderComponents().HasDatabase() {
 		if err := p.expandDefaultMigrationsForNamedApps(); err != nil {
 			return err
 		}
@@ -2894,6 +2895,7 @@ func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 
 // writeProjectConfig persists renderer-owned YAML without exposing a partially written configuration.
 func writeProjectConfig(path string, cfg *project.Config) error {
+	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
@@ -4152,14 +4154,15 @@ func installWire() (string, error) {
 }
 
 func (p *ProjectRenderer) runGenerateAll() error {
+	projectComponents := p.projectRenderComponents()
 	count, _, err := generate.GenerateProjectFiles(
 		".",
 		true,
 		true,
-		p.config.Render.Components.Jobs,
+		projectComponents.Jobs,
 		true,
-		p.config.Render.Components.HasDatabase(),
-		p.config.Render.Components.Observability,
+		projectComponents.HasDatabase(),
+		projectComponents.Observability,
 	)
 	if err != nil {
 		return err
@@ -4496,10 +4499,19 @@ func templateData(data any) any {
 func (p *ProjectRenderer) templateData(data any) any {
 	value := templateData(data)
 	if config, ok := value.(templateRenderConfig); ok {
+		config.ProjectComponents = project.ProjectComponents(config.Config)
+		applyDatabaseRenderCapabilities(&config.ProjectComponents, p.resourcePlan)
 		config.Resources = resourceRenderValuesForPlanWithConsumers(p.resourcePlan, config.ProjectComponents, p.localServiceIntent, p.serviceConsumers)
 		return config
 	}
 	return value
+}
+
+// projectRenderComponents derives shared capabilities and includes environment-owned database build support.
+func (p *ProjectRenderer) projectRenderComponents() project.Components {
+	components := project.ProjectComponents(p.config)
+	applyDatabaseRenderCapabilities(&components, p.resourcePlan)
+	return components
 }
 
 // templateDataForApp keeps named-App package paths and capability projections isolated from project-level resource state.
@@ -4512,11 +4524,11 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 	components := appRenderComponents(config, app)
 	starterKit := appRenderStarterKit(config, app)
 	helpFormat := appRenderHelpFormat(config, app)
-	runtimeApps := runtimeAppMetadataForRender()
+	runtimeApps := runtimeAppMetadataForRender(config)
 	return templateRenderConfig{
 		Config:            config,
 		Components:        components,
-		ProjectComponents: config.Render.Components,
+		ProjectComponents: project.ProjectComponents(config),
 		StarterKit:        starterKit,
 		HelpFormat:        helpFormat,
 		HelpFormatterFunc: helpFormatterFunc(helpFormat),
@@ -4580,7 +4592,7 @@ func appRenderComponents(config *project.Config, app project.App) project.Compon
 	components := config.Render.Components
 	appConfig, ok := config.Apps[app.Name]
 	if ok {
-		components = project.NormalizeAppComponents(config.Render.Components, appConfig.Components)
+		components = project.NormalizeConfiguredAppComponents(config, appConfig.Components)
 	}
 	return components
 }
@@ -4604,9 +4616,9 @@ func appRenderStarterKit(config *project.Config, app project.App) project.Starte
 	return starterKit
 }
 
-// runtimeAppMetadataForRender creates the compiled app table used by generated runtime defaults.
-func runtimeAppMetadataForRender() []runtimeAppMetadata {
-	apps := renderApps()
+// runtimeAppMetadataForRender creates the compiled App table with each App's stable component projection.
+func runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
+	apps := runtimeAppsForMetadata(config)
 	out := make([]runtimeAppMetadata, 0, len(apps))
 	for i, app := range apps {
 		out = append(out, runtimeAppMetadata{
@@ -4615,27 +4627,55 @@ func runtimeAppMetadataForRender() []runtimeAppMetadata {
 			EnvPrefix:   appEnvPrefix(app.Name),
 			HTTPPort:    3000 + i,
 			RuntimeBase: 10000 + i*10,
+			Components:  appRenderComponents(config, app),
 		})
 	}
 	return out
 }
 
-// runtimeAppMetadataForApp resolves deterministic ports even before a new app exists on disk.
-func runtimeAppMetadataForApp(app project.App) runtimeAppMetadata {
-	return runtimeAppMetadataForAppFromApps(app, append(renderApps(), app))
-}
-
 // runtimeAppMetadataForConfiguredApp includes persisted app config so make:app can
 // assign env defaults before the new conventional files are fully discoverable.
 func runtimeAppMetadataForConfiguredApp(config *project.Config, app project.App) runtimeAppMetadata {
-	apps := renderApps()
+	metadata := runtimeAppMetadataForAppFromApps(app, runtimeAppsForMetadata(config, app))
+	metadata.Components = appRenderComponents(config, app)
+	return metadata
+}
+
+// runtimeAppsForMetadata combines configured and discovered Apps before assigning deterministic runtime indexes.
+func runtimeAppsForMetadata(config *project.Config, extras ...project.App) []project.App {
+	seen := map[string]project.App{}
+	add := func(app project.App) {
+		app = normalizeRenderApp(app)
+		if app.Name == "" || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
+			return
+		}
+		seen[app.Name] = app
+	}
+
+	for _, app := range renderApps() {
+		add(app)
+	}
 	if config != nil {
 		for name := range config.Apps {
-			apps = append(apps, project.DefaultNamedApp(name))
+			add(project.DefaultNamedApp(name))
 		}
 	}
-	apps = append(apps, app)
-	return runtimeAppMetadataForAppFromApps(app, apps)
+	for _, app := range extras {
+		add(app)
+	}
+
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		if name != project.DefaultAppName {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	apps := []project.App{seen[project.DefaultAppName]}
+	for _, name := range names {
+		apps = append(apps, seen[name])
+	}
+	return apps
 }
 
 func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runtimeAppMetadata {

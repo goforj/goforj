@@ -2,6 +2,9 @@ package lighthouse
 
 import (
 	"encoding/json"
+{{ if .ProjectComponents.HasRuntime }}
+	"os"
+{{ end }}
 	"reflect"
 	"strings"
 	"testing"
@@ -51,6 +54,7 @@ dev:
       exec: make legacy
 render:
   starter_kit: vue
+  component_contract: 1
   components:
     web_ui: true
     metrics: true
@@ -97,6 +101,8 @@ apps:
 func TestProjectConfigYAMLRoundTripPreservesCompactAppComponents(t *testing.T) {
 	input := `project_name: Test
 module_name: example.com/test
+render:
+  component_contract: 1
 apps:
   billing:
     components: [web_api, jobs]
@@ -133,7 +139,8 @@ apps:
 // older generated project can round-trip component names introduced later.
 func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing.T) {
 	input := `render:
-  components: [jobs, scheduler, database_sqlite, database_postgres, database_mysql, docker, grafana, observability, metrics, web_ui, web_api, oauth, auth, mail, demo_app, cli, future_search, future_audit]
+  components: [jobs, storage, events, cache, scheduler, database_sqlite, database_postgres, database_mysql, docker, grafana, observability, metrics, web_ui, web_api, oauth, auth, mail, demo_app, cli, future_search, future_audit]
+  component_contract: 1
 `
 	var config project.Config
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
@@ -143,7 +150,8 @@ func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing
 	if !components.CLI || !components.DemoApp || !components.Mail || !components.Auth || !components.OAuth ||
 		!components.WebAPI || !components.WebUI || !components.Metrics || !components.Observability ||
 		!components.Grafana || !components.Docker || !components.DatabaseMySQL ||
-		!components.DatabasePostgres || !components.DatabaseSQLite || !components.Scheduler || !components.Jobs {
+		!components.DatabasePostgres || !components.DatabaseSQLite || !components.Scheduler ||
+		!components.Cache || !components.Events || !components.Storage || !components.Jobs {
 		t.Fatalf("known compact components were not enabled: %#v", components)
 	}
 	for _, name := range []string{"future_search", "future_audit"} {
@@ -156,7 +164,7 @@ func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing
 	if err != nil {
 		t.Fatalf("marshal compact components: %v", err)
 	}
-	if !strings.Contains(string(encoded), "components: [cli, demo_app, mail, auth, oauth, web_api, web_ui, metrics, observability, grafana, docker, database_mysql, database_postgres, database_sqlite, scheduler, jobs, future_audit, future_search]") {
+	if !strings.Contains(string(encoded), "components: [cli, demo_app, mail, auth, oauth, web_api, web_ui, metrics, observability, grafana, docker, database_mysql, database_postgres, database_sqlite, scheduler, cache, events, storage, jobs, future_audit, future_search]") {
 		t.Fatalf("components were not emitted in canonical compact order:\n%s", encoded)
 	}
 
@@ -168,7 +176,7 @@ func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing
 	if err := json.Unmarshal(jsonEncoded, &jsonFields); err != nil {
 		t.Fatalf("decode component JSON object: %v", err)
 	}
-	if len(jsonFields) != 16 || jsonFields["cli"] != true || jsonFields["web_api"] != true || jsonFields["jobs"] != true {
+	if len(jsonFields) != 19 || jsonFields["cli"] != true || jsonFields["web_api"] != true || jsonFields["cache"] != true || jsonFields["events"] != true || jsonFields["storage"] != true || jsonFields["jobs"] != true {
 		t.Fatalf("component JSON changed from its boolean object shape: %s", jsonEncoded)
 	}
 	for _, name := range []string{"future_search", "future_audit"} {
@@ -201,10 +209,97 @@ func TestComponentsYAMLMigratesLegacyMappingToCompactSequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal legacy component mapping: %v", err)
 	}
-	if !strings.Contains(string(encoded), "components: [cli, future_search]") {
+	if !strings.Contains(string(encoded), "components: [cli, cache, events, storage, future_search]") {
 		t.Fatalf("legacy component mapping was not canonicalized:\n%s", encoded)
 	}
 }
+
+// TestProjectConfigMigratesVersionlessPrimitivesForEveryApp protects the generated editor's side of the shared component contract.
+func TestProjectConfigMigratesVersionlessPrimitivesForEveryApp(t *testing.T) {
+	input := `render:
+  components: [cli, jobs]
+apps:
+  api:
+    components: [cli, web_api]
+  worker:
+    components:
+      cli: true
+      jobs: true
+`
+	var config project.Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal versionless component contract: %v", err)
+	}
+	if config.Render.ComponentContractVersion != project.CurrentComponentContractVersion ||
+		!config.Render.Components.Cache || !config.Render.Components.Events || !config.Render.Components.Storage {
+		t.Fatalf("default App was not migrated to the current primitive contract: %#v", config.Render)
+	}
+	for _, name := range []string{"api", "worker"} {
+		settings, ok := config.Apps[name].(map[string]any)
+		if !ok {
+			t.Fatalf("App %s settings type = %T, want map", name, config.Apps[name])
+		}
+		components, ok := settings["components"].(project.Components)
+		if !ok || !components.Cache || !components.Events || !components.Storage {
+			t.Fatalf("App %s primitive migration = %#v", name, settings["components"])
+		}
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal migrated component contract: %v", err)
+	}
+	for _, expected := range []string{
+		"component_contract: 1",
+		"components: [cli, cache, events, storage, jobs]",
+		"components: [cli, web_api, cache, events, storage]",
+	} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("migrated component contract omitted %q:\n%s", expected, encoded)
+		}
+	}
+}
+
+{{ if .ProjectComponents.HasRuntime }}
+// TestSaveProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts verifies settings saves cannot reinterpret omitted primitives as legacy defaults.
+func TestSaveProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t *testing.T) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("enter temporary project: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(workingDirectory); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	}()
+
+	config := &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{CLI: true},
+		},
+	}
+	if err := saveProjectConfig(config); err != nil {
+		t.Fatalf("save project config: %v", err)
+	}
+	source, err := os.ReadFile(".goforj.yml")
+	if err != nil {
+		t.Fatalf("read saved project config: %v", err)
+	}
+	if !strings.Contains(string(source), "component_contract: 1") {
+		t.Fatalf("saved project config omitted the component contract marker:\n%s", source)
+	}
+
+	var loaded project.Config
+	if err := yaml.Unmarshal(source, &loaded); err != nil {
+		t.Fatalf("reload saved project config: %v", err)
+	}
+	if loaded.Render.Components.Cache || loaded.Render.Components.Events || loaded.Render.Components.Storage {
+		t.Fatalf("saved primitive opt-outs changed after reload: %#v", loaded.Render.Components)
+	}
+}
+{{ end }}
 
 // TestComponentsYAMLRejectsMalformedSequences keeps the compact grammar
 // deterministic instead of silently correcting ambiguous component names.
@@ -231,6 +326,7 @@ func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(t *testing.
 	input := `project_name: Test
 module_name: example.com/test
 render:
+  component_contract: 1
   components:
     jobs: true
   starter_kit: vue
@@ -284,6 +380,7 @@ dev:
       watch: [.md]
       exec: make docs
 render:
+  component_contract: 1
   components: {}
 `
 
@@ -443,6 +540,7 @@ func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(t *testing.T) {
 // settings update cannot erase component extensions the client never received.
 func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
 	input := `render:
+  component_contract: 1
   components:
     web_api: true
     future_runtime:
@@ -483,6 +581,7 @@ func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
 // future enabled name remains compact after a JSON settings update.
 func TestMergeLighthouseComponentsPreservesUnknownCompactNames(t *testing.T) {
 	input := `render:
+  component_contract: 1
   components: [web_api, future_runtime]
 `
 	var current project.Config

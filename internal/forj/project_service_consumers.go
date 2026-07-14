@@ -12,6 +12,33 @@ import (
 
 // effectiveResourceConsumersFromEnvironment resolves root, named, and App-prefixed resource scopes without mutating owner input.
 func effectiveResourceConsumersFromEnvironment(source []byte, plan project.ResourcePlan, components project.Components, appNames []string) ([]project.EffectiveResourceConsumer, error) {
+	appComponents := make(map[string]project.Components, len(appNames))
+	for _, name := range appNames {
+		appComponents[strings.ToLower(strings.TrimSpace(name))] = components
+	}
+	return effectiveResourceConsumersFromAppComponents(source, plan, components, components, appNames, appComponents)
+}
+
+// effectiveResourceConsumersFromProjectConfig applies each configured App's actual participation to resource discovery.
+func effectiveResourceConsumersFromProjectConfig(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
+	defaultComponents := projectComponents
+	appNames := configuredResourceAppNames(config)
+	appComponents := make(map[string]project.Components, len(appNames))
+	if config != nil {
+		defaultComponents = config.Render.Components.WithResolvedDependencies()
+		for configuredName, appConfig := range config.Apps {
+			name := strings.ToLower(strings.TrimSpace(configuredName))
+			if name == "" || name == project.DefaultAppName {
+				continue
+			}
+			appComponents[name] = project.NormalizeConfiguredAppComponents(config, appConfig.Components)
+		}
+	}
+	return effectiveResourceConsumersFromAppComponents(source, plan, defaultComponents, projectComponents, appNames, appComponents)
+}
+
+// effectiveResourceConsumersFromAppComponents keeps applicability App-local while retaining project-wide service placement.
+func effectiveResourceConsumersFromAppComponents(source []byte, plan project.ResourcePlan, defaultComponents project.Components, projectComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
 	values, err := resourceEnvironmentAssignments(source)
 	if err != nil {
 		return nil, fmt.Errorf("parse effective resource environment: %w", err)
@@ -20,9 +47,9 @@ func effectiveResourceConsumersFromEnvironment(source []byte, plan project.Resou
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
 
-	addScope := func(appName string, appPrefix string) error {
+	addScope := func(appName string, appPrefix string, scopeComponents project.Components) error {
 		for _, definition := range project.ResourceCatalog() {
-			if !definition.AppliesTo(components) {
+			if !definition.AppliesTo(scopeComponents) {
 				continue
 			}
 			selection, ok := plan.Selection(definition.Key)
@@ -31,13 +58,13 @@ func effectiveResourceConsumersFromEnvironment(source []byte, plan project.Resou
 			}
 			rootDriver := effectiveResourceDriver(values, appPrefix, definition.Key, "", selection.Active)
 			rootConsumer := effectiveResourceConsumerName(appName, definition.Key, "")
-			consumer, err := effectiveResourceConsumer(values, appPrefix, definition.Key, "", rootConsumer, rootDriver, selection.Active, components)
+			consumer, err := effectiveResourceConsumer(values, appPrefix, definition.Key, "", rootConsumer, rootDriver, selection.Active, projectComponents)
 			if err != nil {
 				return err
 			}
 			consumers = appendEffectiveResourceConsumer(consumers, seen, consumer)
 
-			namedDrivers := effectiveNamedResourceDrivers(values, appPrefix, plan, components, definition.Key, rootDriver)
+			namedDrivers := effectiveNamedResourceDrivers(values, appPrefix, plan, scopeComponents, definition.Key, rootDriver)
 			names := make([]string, 0, len(namedDrivers))
 			for name := range namedDrivers {
 				names = append(names, name)
@@ -45,7 +72,7 @@ func effectiveResourceConsumersFromEnvironment(source []byte, plan project.Resou
 			sort.Strings(names)
 			for _, name := range names {
 				consumerName := effectiveResourceConsumerName(appName, definition.Key, name)
-				consumer, err := effectiveResourceConsumer(values, appPrefix, definition.Key, name, consumerName, namedDrivers[name], selection.Active, components)
+				consumer, err := effectiveResourceConsumer(values, appPrefix, definition.Key, name, consumerName, namedDrivers[name], selection.Active, projectComponents)
 				if err != nil {
 					return err
 				}
@@ -55,11 +82,15 @@ func effectiveResourceConsumersFromEnvironment(source []byte, plan project.Resou
 		return nil
 	}
 
-	if err := addScope("", ""); err != nil {
+	if err := addScope("", "", defaultComponents); err != nil {
 		return nil, err
 	}
 	for _, app := range appPrefixes {
-		if err := addScope(app.name, app.prefix); err != nil {
+		scopeComponents, ok := appComponents[app.name]
+		if !ok {
+			scopeComponents = projectComponents
+		}
+		if err := addScope(app.name, app.prefix, scopeComponents); err != nil {
 			return nil, err
 		}
 	}

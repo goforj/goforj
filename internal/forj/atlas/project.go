@@ -25,7 +25,7 @@ func Project(root string) atlasproject.Project {
 	}
 	discovered.Name = firstNonEmpty(cfg.ProjectName, discovered.Name)
 	discovered.GoForjVersion = firstNonEmpty(cfg.Render.GoForjVersion, discovered.GoForjVersion)
-	discovered.Components = componentNames(cfg.Render.Components)
+	discovered.Components = componentNames(project.ProjectComponents(cfg))
 	discovered.FrontendKit = string(cfg.Render.StarterKit)
 	discovered.DatabaseDriver = cfg.Render.Components.DatabaseDriver()
 	discovered.QueueDriver = loadAtlasEnv(root)["QUEUE_DRIVER"]

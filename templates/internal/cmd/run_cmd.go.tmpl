@@ -5,17 +5,17 @@ import (
 	"fmt"
 
 	"{{.GoModuleName}}/internal/runtime"
-{{- if or .Components.WebAPI .Components.WebUI }}
+{{- if or .ProjectComponents.WebAPI .ProjectComponents.WebUI }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	"{{.GoModuleName}}/internal/schedules"
 {{- end }}
 )
@@ -23,16 +23,16 @@ import (
 // RunCmd starts enabled app runtimes together in a single host process.
 type RunCmd struct {
 	logger *logger.AppLogger
-{{- if or .Components.WebAPI .Components.WebUI }}
+{{- if or .ProjectComponents.WebAPI .ProjectComponents.WebUI }}
 	httpRuntime *http.Runtime
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	schedulerRuntime *schedules.Runtime
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	jobsRuntime *jobs.Runtime
 {{- end }}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager
 {{- end }}
 }
@@ -40,31 +40,31 @@ type RunCmd struct {
 // NewRunCmd creates a new run command.
 func NewRunCmd(
 	logger *logger.AppLogger,
-{{- if or .Components.WebAPI .Components.WebUI }}
+{{- if or .ProjectComponents.WebAPI .ProjectComponents.WebUI }}
 	httpRuntime *http.Runtime,
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	schedulerRuntime *schedules.Runtime,
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	jobsRuntime *jobs.Runtime,
 {{- end }}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) *RunCmd {
 	return &RunCmd{
 		logger: logger,
-{{- if or .Components.WebAPI .Components.WebUI }}
+{{- if or .ProjectComponents.WebAPI .ProjectComponents.WebUI }}
 		httpRuntime: httpRuntime,
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 		schedulerRuntime: schedulerRuntime,
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 		jobsRuntime: jobsRuntime,
 {{- end }}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager: metricsManager,
 {{- end }}
 	}
@@ -77,7 +77,7 @@ func (*RunCmd) Signature() string {
 
 func (c *RunCmd) Run(ctx context.Context) error {
 	runtimes := make([]runtime.Runtime, 0, 3)
-{{- if or .Components.WebAPI .Components.WebUI }}
+{{- if or .ProjectComponents.WebAPI .ProjectComponents.WebUI }}
 	if c.httpRuntime != nil {
 		httpRuntime := c.httpRuntime
 		runtimes = append(runtimes, runtime.RuntimeFunc{
@@ -90,7 +90,7 @@ func (c *RunCmd) Run(ctx context.Context) error {
 		})
 	}
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	if c.schedulerRuntime != nil {
 		schedulerRuntime := c.schedulerRuntime
 		runtimes = append(runtimes, runtime.RuntimeFunc{
@@ -103,7 +103,7 @@ func (c *RunCmd) Run(ctx context.Context) error {
 		})
 	}
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	if c.jobsRuntime != nil {
 		jobsRuntime := c.jobsRuntime
 		runtimes = append(runtimes, runtime.RuntimeFunc{
@@ -120,7 +120,7 @@ func (c *RunCmd) Run(ctx context.Context) error {
 		return fmt.Errorf("run: no runtimes are enabled for this app")
 	}
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if c.metricsManager != nil && c.metricsManager.Registry() != nil && c.httpRuntime == nil {
 		metricsLogger := c.logger
 		if metricsLogger != nil {

@@ -215,8 +215,9 @@ func (i AtlasSurfaceItem) FilterValue() string { return i.Label }
 
 // makeProjectComponentItems converts the shared component catalog into wizard rows.
 func makeProjectComponentItems() []list.Item {
-	items := make([]list.Item, 0, len(project.ComponentCatalog()))
-	for _, component := range project.ComponentCatalog() {
+	definitions := project.ProjectWizardComponentDefinitions()
+	items := make([]list.Item, 0, len(definitions))
+	for _, component := range definitions {
 		items = append(items, ListItem{
 			Key:      component.Key,
 			Name:     component.Label,
@@ -499,10 +500,11 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		allowNonEmpty:        options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
-				GoForjVersion: version.Semver(),
-				Components:    components,
-				StarterKit:    project.DefaultStarterKit(),
-				HelpFormat:    project.DefaultHelpFormat(),
+				GoForjVersion:            version.Semver(),
+				Components:               components,
+				StarterKit:               project.DefaultStarterKit(),
+				HelpFormat:               project.DefaultHelpFormat(),
+				ComponentContractVersion: project.CurrentComponentContractVersion,
 			},
 		},
 	}
@@ -559,9 +561,10 @@ func (m *model) applyStarterKitSelection() {
 // applyExtrasSelection applies Demo's temporary constraints without erasing the unlocked component choices.
 func (m *model) applyExtrasSelection() {
 	m.demoAppEnabled = m.extrasIndex == 1
-	selected := m.selectedComponentConfig().WithResolvedDependencies()
+	selected := m.selectedComponentConfig()
 	if !m.demoAppEnabled {
 		selected.DemoApp = false
+		selected.ResolveDependencies()
 		*m.components() = selected
 		m.resetResourcePreview()
 		return
@@ -1825,8 +1828,9 @@ func (m model) renderSummary() string {
 // selectedComponentNames reports effective render choices so temporary Demo constraints are described truthfully.
 func (m model) selectedComponentNames() []string {
 	components := m.config.Render.Components
-	comps := make([]string, 0, len(project.ComponentCatalog()))
-	for _, definition := range project.ComponentCatalog() {
+	definitions := project.ProjectWizardComponentDefinitions()
+	comps := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
 		if components.Enabled(definition.Key) {
 			comps = append(comps, definition.Label)
 		}
@@ -2215,7 +2219,10 @@ func (m model) databaseCapabilityBlockers() []string {
 
 // selectedComponentConfig expands concrete wizard rows into render flags and supplies a database required by auth.
 func (m *model) selectedComponentConfig() project.Components {
-	var components project.Components
+	components := m.config.Render.Components
+	for _, definition := range project.ProjectWizardComponentDefinitions() {
+		components.SetEnabled(definition.Key, false)
+	}
 	for _, item := range m.componentList.Items() {
 		it := item.(ListItem)
 		if !it.Selected {

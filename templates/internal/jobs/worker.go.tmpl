@@ -12,7 +12,7 @@ import (
 	"time"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
-	{{- if .Components.Jobs }}
+	{{- if .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 	{{- end }}
 	"github.com/goforj/queue"
@@ -23,7 +23,7 @@ type Worker struct {
 	logger      *logger.AppLogger
 	lighthouse  *LighthouseRuntime
 	appTimeouts *runtime.Timeouts
-	{{- if .Components.Jobs }}
+	{{- if .ProjectComponents.Jobs }}
 	queues      *queues.Manager
 	{{- end }}
 }
@@ -33,7 +33,7 @@ func NewWorker(
 	logger *logger.AppLogger,
 	lighthouse *LighthouseRuntime,
 	appTimeouts *runtime.Timeouts,
-	{{- if .Components.Jobs }}
+	{{- if .ProjectComponents.Jobs }}
 	queues *queues.Manager,
 	{{- end }}
 ) *Worker {
@@ -45,7 +45,7 @@ func NewWorker(
 		logger:      componentLogger,
 		lighthouse:  lighthouse,
 		appTimeouts: appTimeouts,
-		{{- if .Components.Jobs }}
+		{{- if .ProjectComponents.Jobs }}
 		queues: queues,
 		{{- end }}
 	}

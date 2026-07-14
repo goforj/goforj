@@ -35,6 +35,8 @@ type DevWatch struct {
 type DevWatchMatchers struct {
 	Include []string `yaml:"include,omitempty" json:"include,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	// Extra preserves matcher controls introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // DevTask represents a task to be run in development mode.
@@ -106,14 +108,18 @@ func (c *DevConfig) SetApps(apps map[string]any) {
 // DefaultAppName is the implicit single-app name.
 const DefaultAppName = "app"
 
+// CurrentComponentContractVersion identifies configs where omitted primitive component keys mean disabled.
+const CurrentComponentContractVersion = 1
+
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components     Components        `yaml:"components" json:"components"`
-	StarterKit     string            `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat     string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion  string            `yaml:"goforj_version" json:"goforj_version"`
-	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
-	Extra          map[string]any    `yaml:",inline" json:"-"`
+	Components               Components        `yaml:"components" json:"components"`
+	StarterKit               string            `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat               string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion            string            `yaml:"goforj_version" json:"goforj_version"`
+	ComponentContractVersion int               `yaml:"component_contract,omitempty" json:"component_contract,omitempty"`
+	ModuleReplaces           map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+	Extra                    map[string]any    `yaml:",inline" json:"-"`
 }
 
 // UnmarshalYAML consumes the obsolete wizard choice so config rewrites cannot preserve it as an extension.
@@ -147,6 +153,29 @@ type ProjectConfig struct {
 
 // Config is the preferred name for project configuration.
 type Config = ProjectConfig
+
+// UnmarshalYAML migrates the component contract while preserving extension-shaped project settings.
+func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
+	type projectConfigFields ProjectConfig
+	var fields projectConfigFields
+	if err := value.Decode(&fields); err != nil {
+		return fmt.Errorf("decode project config: %w", err)
+	}
+	*c = ProjectConfig(fields)
+	version := c.Render.ComponentContractVersion
+	if version < 0 || version > CurrentComponentContractVersion {
+		return fmt.Errorf("decode project config: unsupported component contract version %d; this project supports version %d", version, CurrentComponentContractVersion)
+	}
+	if version == CurrentComponentContractVersion {
+		return nil
+	}
+	c.Render.ComponentContractVersion = CurrentComponentContractVersion
+	c.Render.Components.enableLegacyPrimitiveDefaults()
+	if err := migrateLegacyAppPrimitiveComponents(c.Apps); err != nil {
+		return err
+	}
+	return nil
+}
 
 // MarshalYAML preserves compact per-App component lists while leaving extension-shaped App settings untyped.
 func (c ProjectConfig) MarshalYAML() (any, error) {
@@ -208,6 +237,9 @@ type Components struct {
 	DatabasePostgres bool           `yaml:"database_postgres" json:"database_postgres"`
 	DatabaseSQLite   bool           `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool           `yaml:"scheduler" json:"scheduler"`
+	Cache            bool           `yaml:"cache" json:"cache"`
+	Events           bool           `yaml:"events" json:"events"`
+	Storage          bool           `yaml:"storage" json:"storage"`
 	Jobs             bool           `yaml:"jobs" json:"jobs"`
 	Extra            map[string]any `yaml:",inline" json:"-"`
 }
@@ -308,6 +340,12 @@ func (c *Components) setComponentEnabled(name string) bool {
 		c.DatabaseSQLite = true
 	case "scheduler":
 		c.Scheduler = true
+	case "cache":
+		c.Cache = true
+	case "events":
+		c.Events = true
+	case "storage":
+		c.Storage = true
 	case "jobs":
 		c.Jobs = true
 	default:
@@ -337,6 +375,9 @@ func (c Components) enabledComponentNames() []string {
 		{name: "database_postgres", enabled: c.DatabasePostgres},
 		{name: "database_sqlite", enabled: c.DatabaseSQLite},
 		{name: "scheduler", enabled: c.Scheduler},
+		{name: "cache", enabled: c.Cache},
+		{name: "events", enabled: c.Events},
+		{name: "storage", enabled: c.Storage},
 		{name: "jobs", enabled: c.Jobs},
 	}
 	names := make([]string, 0, len(fields))
@@ -346,6 +387,37 @@ func (c Components) enabledComponentNames() []string {
 		}
 	}
 	return names
+}
+
+// enableLegacyPrimitiveDefaults preserves capabilities that generated Apps received before they became optional.
+func (c *Components) enableLegacyPrimitiveDefaults() {
+	c.Cache = true
+	c.Events = true
+	c.Storage = true
+}
+
+// migrateLegacyAppPrimitiveComponents updates every named App without narrowing its extension-shaped settings.
+func migrateLegacyAppPrimitiveComponents(apps map[string]any) error {
+	for name, raw := range apps {
+		settings, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		var components Components
+		if rawComponents, exists := settings["components"]; exists {
+			var node yaml.Node
+			if err := node.Encode(rawComponents); err != nil {
+				return fmt.Errorf("encode App %s components for migration: %w", name, err)
+			}
+			if err := node.Decode(&components); err != nil {
+				return fmt.Errorf("decode App %s components for migration: %w", name, err)
+			}
+		}
+		components.enableLegacyPrimitiveDefaults()
+		settings["components"] = components
+		apps[name] = settings
+	}
+	return nil
 }
 
 // isKnownComponentName reports whether name belongs to this generated project version.

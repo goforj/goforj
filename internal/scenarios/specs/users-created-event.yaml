@@ -7,6 +7,8 @@ app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module
   components:
+    cache: true
+    events: true
     web_api: true
 markdown:
   path_position: 4

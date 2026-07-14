@@ -59,6 +59,8 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 	files := map[string][]string{
 		filepath.Join("project", "config.go.tmpl"): {
 			`package project`,
+			`CurrentComponentContractVersion`,
+			`ComponentContractVersion int`,
 			`Watch    any`,
 			`Root     string`,
 			`Roots    []string`,
@@ -68,6 +70,11 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Extra`,
 			`ModuleReplaces`,
 			`Observability`,
+			`Cache`,
+			`Events`,
+			`Storage`,
+			`func (c *ProjectConfig) UnmarshalYAML(`,
+			`func migrateLegacyAppPrimitiveComponents(`,
 			`func (c *DevConfig) SetApps(`,
 		},
 		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
@@ -83,10 +90,12 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Components   *project.Components`,
 			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
 			`func loadProjectConfig() (*project.Config, error)`,
+			`config.Render.ComponentContractVersion = project.CurrentComponentContractVersion`,
 		},
 		filepath.Join("internal", "lighthouse", "project_config_test.go.tmpl"): {
 			`func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(`,
 			`func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(`,
+			`func TestSaveProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(`,
 			`func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(`,
 			`func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(`,
 			`future_watch_control: retained`,

@@ -32,12 +32,15 @@ func TestRenderedObservabilityStack(t *testing.T) {
 			Render: project.RenderConfig{
 				Components: project.Components{
 					CLI:           true,
+					Cache:         true,
+					Events:        true,
 					WebAPI:        true,
 					Metrics:       true,
 					Mail:          true,
 					Docker:        true,
 					DatabaseMySQL: true,
 					Scheduler:     true,
+					Storage:       true,
 					Jobs:          true,
 					Observability: true,
 					Grafana:       true,
@@ -426,12 +429,15 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 			Render: project.RenderConfig{
 				Components: project.Components{
 					CLI:           true,
+					Cache:         true,
+					Events:        true,
 					WebAPI:        true,
 					Metrics:       true,
 					Mail:          true,
 					Docker:        true,
 					DatabaseMySQL: true,
 					Scheduler:     true,
+					Storage:       true,
 					Jobs:          true,
 					Observability: true,
 					Grafana:       true,
