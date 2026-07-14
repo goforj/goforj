@@ -39,6 +39,7 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, queueEnv); err != nil {
 		t.Fatalf("persist workerpool queue selection: %v", err)
 	}
+	generateRenderedProject(t, projectDir, queueEnv)
 
 	binPath := buildRenderedQueueSelectionApp(t, projectDir, queueEnv)
 

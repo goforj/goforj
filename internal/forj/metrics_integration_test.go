@@ -137,6 +137,7 @@ func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 			},
 		},
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered demo app")
 
@@ -209,6 +210,7 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 			},
 		},
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered monitoring metrics app")
 
@@ -343,6 +345,7 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 		},
 		EnvOverrides: queueEnv,
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered jobs app")
 
@@ -427,6 +430,7 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 		},
 		EnvOverrides: validQueueEnv,
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered scheduler app")
 
