@@ -18,9 +18,21 @@ func StorageObserver(
 {{- end }}
 ) storages.Observer {
 	return storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
-		inspectManager.RecordStorageEvent(ctx, event)
+		inspectManager.RecordStorageEvent(ctx, storageInspectEvent(event))
 {{- if .Components.Metrics }}
 		metricsManager.RecordStorageOperation(ctx, event)
 {{- end }}
 	})
+}
+
+// storageInspectEvent isolates Inspects from the storage manager's observer contract.
+func storageInspectEvent(event storages.StorageOpEvent) inspects.StorageOperationInspectEvent {
+	return inspects.StorageOperationInspectEvent{
+		Operation: event.Operation,
+		Disk:      event.Disk,
+		Path:      event.Path,
+		Driver:    event.Driver,
+		Err:       event.Err,
+		Duration:  event.Duration,
+	}
 }

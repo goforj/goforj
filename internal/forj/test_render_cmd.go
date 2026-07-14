@@ -59,11 +59,14 @@ func (cmd *TestRenderCmd) Run() error {
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:           true,
+				Cache:         true,
 				Docker:        true,
+				Events:        true,
 				WebAPI:        true,
 				WebUI:         true,
 				DatabaseMySQL: true,
 				Scheduler:     true,
+				Storage:       true,
 				Jobs:          true,
 			},
 		},
@@ -71,10 +74,13 @@ func (cmd *TestRenderCmd) Run() error {
 			"customer-portal": {
 				Components: project.Components{
 					CLI:           true,
+					Cache:         true,
+					Events:        true,
 					WebAPI:        true,
 					WebUI:         true,
 					DatabaseMySQL: true,
 					Scheduler:     true,
+					Storage:       true,
 					Jobs:          true,
 				},
 			},

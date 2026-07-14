@@ -28,6 +28,8 @@ type DevWatch struct {
 	Restart  bool              `yaml:"restart,omitempty" json:"restart,omitempty"`
 	Exit     bool              `yaml:"exit,omitempty" json:"exit,omitempty"`
 	Stdin    bool              `yaml:"stdin,omitempty" json:"stdin,omitempty"`
+	// Extra preserves watcher controls introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // DevTask represents a task to be run in development mode.
@@ -47,11 +49,16 @@ type DevConfig struct {
 	WirePaths         []string          `yaml:"wire_paths" json:"wire_paths"`
 	Watches           []DevWatch        `yaml:"watches,omitempty" json:"watches,omitempty"`
 	Apps              map[string]DevApp `yaml:"apps,omitempty" json:"apps,omitempty"`
-	appsConfigured    bool
+	// Extra preserves lifecycle settings introduced by newer GoForj versions during config migration.
+	Extra          map[string]any `yaml:",inline" json:"-"`
+	appsConfigured bool
 }
 
 // DefaultAppName is the conventional app name used when no named app is selected.
 const DefaultAppName = "app"
+
+// CurrentComponentContractVersion identifies configs where omitted primitive component keys mean disabled.
+const CurrentComponentContractVersion = 1
 
 // App describes one executable app in the project.
 type App struct {
@@ -131,14 +138,17 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components           Components `yaml:"components" json:"components"`
-	StarterKit           StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat           HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion        string     `yaml:"goforj_version" json:"goforj_version"`
-	legacyQueueDriverSet bool
-	legacyQueueDriver    string
+	Components               Components `yaml:"components" json:"components"`
+	StarterKit               StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat               HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion            string     `yaml:"goforj_version" json:"goforj_version"`
+	ComponentContractVersion int        `yaml:"component_contract,omitempty" json:"component_contract,omitempty"`
+	legacyQueueDriverSet     bool
+	legacyQueueDriver        string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+	// Extra preserves render settings introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // HasLegacyQueueDriver reports whether the obsolete render key was present, including an explicitly empty value.
@@ -159,6 +169,10 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode render config: %w", err)
 	}
 	*c = RenderConfig(fields)
+	delete(c.Extra, "queue_driver")
+	if len(c.Extra) == 0 {
+		c.Extra = nil
+	}
 	for index := 0; index+1 < len(value.Content); index += 2 {
 		if value.Content[index].Value == "queue_driver" {
 			c.legacyQueueDriverSet = true
@@ -176,6 +190,8 @@ type AppConfig struct {
 	Components Components `yaml:"components" json:"components"`
 	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
 	HelpFormat HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	// Extra preserves App settings introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // ProjectConfig represents the configuration for a project.
@@ -186,6 +202,8 @@ type ProjectConfig struct {
 	Dev          DevConfig            `yaml:"dev" json:"dev"`
 	Render       RenderConfig         `yaml:"render" json:"render"`
 	Apps         map[string]AppConfig `yaml:"apps,omitempty" json:"apps,omitempty"`
+	// Extra preserves project settings introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 
 	needsComponentMigration bool
 
@@ -216,6 +234,9 @@ type Components struct {
 	DatabasePostgres bool `yaml:"database_postgres" json:"database_postgres"`
 	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
+	Cache            bool `yaml:"cache" json:"cache"`
+	Events           bool `yaml:"events" json:"events"`
+	Storage          bool `yaml:"storage" json:"storage"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
 }
 
@@ -252,6 +273,12 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.DatabaseSQLite
 	case ComponentScheduler:
 		return c.Scheduler
+	case ComponentCache:
+		return c.Cache
+	case ComponentEvents:
+		return c.Events
+	case ComponentStorage:
+		return c.Storage
 	case ComponentJobs:
 		return c.Jobs
 	default:
@@ -295,6 +322,12 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.DatabaseSQLite = enabled
 	case ComponentScheduler:
 		c.Scheduler = enabled
+	case ComponentCache:
+		c.Cache = enabled
+	case ComponentEvents:
+		c.Events = enabled
+	case ComponentStorage:
+		c.Storage = enabled
 	case ComponentJobs:
 		c.Jobs = enabled
 	}
@@ -304,6 +337,12 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 func (c *Components) ResolveDependencies() {
 	if c == nil {
 		return
+	}
+	if c.DemoApp {
+		c.Cache = true
+		c.Events = true
+		c.Storage = true
+		c.Jobs = true
 	}
 	changed := true
 	for changed {

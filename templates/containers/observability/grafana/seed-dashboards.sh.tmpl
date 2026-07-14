@@ -7,16 +7,16 @@ grafana_password="${GRAFANA_ADMIN_PASSWORD:-admin}"
 auth="${grafana_user}:${grafana_password}"
 
 dashboard_uids="goforj-platform-overview goforj-lighthouse-inspects goforj-cache-overview goforj-storage-overview goforj-events-overview goforj-http-overview goforj-auth-overview"
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 dashboard_uids="${dashboard_uids} goforj-mail-overview"
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 dashboard_uids="${dashboard_uids} goforj-database-overview"
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 dashboard_uids="${dashboard_uids} goforj-queue-overview"
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 dashboard_uids="${dashboard_uids} goforj-scheduler-overview"
 {{- end }}
 

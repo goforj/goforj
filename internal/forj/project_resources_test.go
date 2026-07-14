@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -331,8 +332,8 @@ func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	}
 }
 
-// TestSyncProjectConfigPersistsPromotedDatabaseCapabilities protects clean-checkout regeneration after an environment build-contract edit.
-func TestSyncProjectConfigPersistsPromotedDatabaseCapabilities(t *testing.T) {
+// TestSyncProjectConfigDoesNotWidenDefaultAppForNamedDatabaseSupport verifies shared build support remains derived from App selections.
+func TestSyncProjectConfigDoesNotWidenDefaultAppForNamedDatabaseSupport(t *testing.T) {
 	root := t.TempDir()
 	previous, err := os.Getwd()
 	if err != nil {
@@ -348,21 +349,81 @@ func TestSyncProjectConfigPersistsPromotedDatabaseCapabilities(t *testing.T) {
 		config: &project.Config{
 			ProjectName:  "Example",
 			GoModuleName: "example.com/app",
-			Dev:          project.DevConfig{WirePaths: []string{project.DefaultApp().WireDir}},
+			Dev:          project.DevConfig{WirePaths: []string{"wire"}},
 			Render:       project.RenderConfig{Components: configured},
+			Apps: map[string]project.AppConfig{
+				"reporting": {Components: project.Components{CLI: true, DatabasePostgres: true}},
+			},
 		},
-		databaseCapabilitiesChanged: true,
 	}
-	promoted := configured
-	promoted.DatabasePostgres = true
-	if err := renderer.syncProjectConfigForRender(promoted); err != nil {
+	envelope := project.ProjectComponents(renderer.config)
+	if !envelope.DatabaseMySQL || !envelope.DatabasePostgres {
+		t.Fatalf("project envelope = %#v, want MySQL and Postgres support", envelope)
+	}
+	if err := renderer.syncProjectConfigForRender(configured); err != nil {
 		t.Fatalf("sync project config: %v", err)
 	}
-	data, err := os.ReadFile(".goforj.yml")
+	persisted, err := project.LoadProjectConfig()
 	if err != nil {
-		t.Fatalf("read project config: %v", err)
+		t.Fatalf("load project config: %v", err)
 	}
-	if !strings.Contains(string(data), "database_postgres") {
-		t.Fatalf("promoted database capability was not persisted:\n%s", data)
+	if !persisted.Render.Components.DatabaseMySQL || persisted.Render.Components.DatabasePostgres {
+		t.Fatalf("persisted default App components widened to shared support: %#v", persisted.Render.Components)
+	}
+	reporting := persisted.Apps["reporting"].Components
+	if !reporting.DatabasePostgres || reporting.DatabaseMySQL {
+		t.Fatalf("persisted reporting components = %#v, want Postgres only", reporting)
+	}
+}
+
+// TestWithProjectDatabaseCapabilitiesKeepsDefaultDriverActive verifies shared driver support cannot replace the root App choice.
+func TestWithProjectDatabaseCapabilitiesKeepsDefaultDriverActive(t *testing.T) {
+	defaultComponents := project.Components{DatabaseMySQL: true}
+	projectComponents := project.Components{DatabaseMySQL: true, DatabasePostgres: true}
+	plan, err := compatibilityResourcePlan(projectComponents, "workerpool")
+	if err != nil {
+		t.Fatalf("compatibilityResourcePlan returned error: %v", err)
+	}
+
+	plan, err = withProjectDatabaseCapabilities(plan, defaultComponents, projectComponents)
+	if err != nil {
+		t.Fatalf("withProjectDatabaseCapabilities returned error: %v", err)
+	}
+	selection, ok := plan.Selection(project.ResourceDatabase)
+	if !ok {
+		t.Fatal("project database selection is missing")
+	}
+	if selection.Active != "mysql" {
+		t.Fatalf("active database = %q, want default App mysql", selection.Active)
+	}
+	wantSupported := []string{"mysql", "postgres"}
+	if !reflect.DeepEqual(selection.Supported, wantSupported) {
+		t.Fatalf("supported databases = %#v, want %#v", selection.Supported, wantSupported)
+	}
+}
+
+// TestWithProjectDatabaseCapabilitiesPreservesDemoMySQLDriver verifies preserved alternate database choices cannot override Demo's runtime contract.
+func TestWithProjectDatabaseCapabilitiesPreservesDemoMySQLDriver(t *testing.T) {
+	components := project.Components{DemoApp: true, DatabasePostgres: true}.WithResolvedDependencies()
+	plan, err := compatibilityResourcePlan(components, "workerpool")
+	if err != nil {
+		t.Fatalf("compatibilityResourcePlan returned error: %v", err)
+	}
+
+	plan, err = withProjectDatabaseCapabilities(plan, components, components)
+	if err != nil {
+		t.Fatalf("withProjectDatabaseCapabilities returned error: %v", err)
+	}
+	selection, ok := plan.Selection(project.ResourceDatabase)
+	if !ok {
+		t.Fatal("Demo database selection is missing")
+	}
+	if selection.Active != "mysql" {
+		t.Fatalf("Demo active database = %q, want mysql", selection.Active)
+	}
+	for _, driver := range []string{"sqlite", "mysql", "postgres"} {
+		if !stringSliceContainsFold(selection.Supported, driver) {
+			t.Fatalf("Demo supported databases = %#v, want %q included", selection.Supported, driver)
+		}
 	}
 }

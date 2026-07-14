@@ -394,11 +394,15 @@ func prSentinelRenderCombos() []renderCombo {
 		cfg project.Components
 	}{
 		{
+			id:  "sentinel_recommended_default",
+			cfg: project.DefaultSelectedComponents(),
+		},
+		{
 			id: "sentinel_max_mysql",
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true,
 			},
 		},
 		{
@@ -406,7 +410,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabasePostgres: true,
-				Scheduler: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true,
 			},
 		},
 		{
@@ -589,6 +593,15 @@ func componentLabels(cfg project.Components) []string {
 	}
 	if cfg.Scheduler {
 		enabled = append(enabled, "Scheduler")
+	}
+	if cfg.Cache {
+		enabled = append(enabled, "Cache")
+	}
+	if cfg.Events {
+		enabled = append(enabled, "Events")
+	}
+	if cfg.Storage {
+		enabled = append(enabled, "Storage")
 	}
 	if cfg.Jobs {
 		enabled = append(enabled, "Jobs")
@@ -774,6 +787,7 @@ func runRenderedGoTests(dir, modCache, buildCache string) error {
 // WriteYAML writes a project config while preserving raw component selections.
 func WriteYAML(path string, cfg project.Config) error {
 	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
+	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
 		cfg.Render.GoForjVersion = version.Semver()
 	}

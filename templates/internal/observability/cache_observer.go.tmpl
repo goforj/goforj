@@ -25,6 +25,19 @@ func CacheInspectObserver(inspectManager *inspects.Manager) caches.Observer {
 		if inspects.IsInternalContext(ctx) {
 			return
 		}
-		inspectManager.RecordCacheEvent(ctx, event)
+		inspectManager.RecordCacheEvent(ctx, cacheInspectEvent(event))
 	})
+}
+
+// cacheInspectEvent isolates Inspects from the cache manager's observer contract.
+func cacheInspectEvent(event caches.CacheOpEvent) inspects.CacheOperationInspectEvent {
+	return inspects.CacheOperationInspectEvent{
+		Name:      event.Name,
+		Operation: event.Operation,
+		Key:       event.Key,
+		Driver:    string(event.Driver),
+		Hit:       event.Hit,
+		Err:       event.Err,
+		Duration:  event.Duration,
+	}
 }

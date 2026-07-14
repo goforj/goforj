@@ -156,9 +156,12 @@ func renderAppAtDir(t *testing.T, dir string) {
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
 				Components: project.Components{
+					Cache:     true,
+					Events:    true,
 					WebAPI:    true,
 					WebUI:     true,
 					Scheduler: true,
+					Storage:   true,
 					Jobs:      true,
 				},
 			},

@@ -175,6 +175,38 @@ func TestDefaultSelectedComponentsIncludeMetricsStack(t *testing.T) {
 	if !components.Metrics || !components.Observability || !components.Grafana {
 		t.Fatalf("expected metrics, observability, and grafana to be selected by default: %#v", components)
 	}
+	if !components.Cache || !components.Events || !components.Storage || !components.Jobs {
+		t.Fatalf("expected App primitives and Background Jobs to be selected by default: %#v", components)
+	}
+}
+
+// TestPrimitiveComponentsStayHiddenUntilTheirDisabledContractsAreProven keeps configuration support ahead of wizard exposure.
+func TestPrimitiveComponentsStayHiddenUntilTheirDisabledContractsAreProven(t *testing.T) {
+	visible := make(map[ComponentKey]bool)
+	for _, definition := range ProjectWizardComponentDefinitions() {
+		visible[definition.Key] = true
+	}
+	for _, key := range []ComponentKey{ComponentCache, ComponentEvents, ComponentStorage} {
+		definition, ok := ComponentDefinitionByKey(key)
+		if !ok || !definition.DefaultSelected || !definition.WizardHidden {
+			t.Fatalf("hidden primitive definition %q = %#v", key, definition)
+		}
+		if visible[key] {
+			t.Fatalf("primitive %q was exposed before its disabled render contract", key)
+		}
+	}
+	jobs, ok := ComponentDefinitionByKey(ComponentJobs)
+	if !ok || jobs.Label != "Background Jobs" || jobs.WizardHidden {
+		t.Fatalf("Jobs definition = %#v, want visible Background Jobs", jobs)
+	}
+}
+
+// TestDemoAppRequiresEveryPrimitiveComponent keeps the example feature set coherent across every dependency-resolution caller.
+func TestDemoAppRequiresEveryPrimitiveComponent(t *testing.T) {
+	components := Components{DemoApp: true}.WithResolvedDependencies()
+	if !components.Cache || !components.Events || !components.Storage || !components.Jobs {
+		t.Fatalf("Demo App dependency closure = %#v, want Cache, Events, Storage, and Background Jobs", components)
+	}
 }
 
 func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
@@ -398,6 +430,63 @@ func TestPromoteAppComponentsAddsProjectCapabilities(t *testing.T) {
 	}
 	if !promoted.Docker {
 		t.Fatalf("expected project-level docker capability to be preserved: %#v", promoted)
+	}
+}
+
+// TestProjectComponentsDerivesNamedAppCapabilitiesWithoutChangingDefaultApp verifies shared support does not mutate the default App.
+func TestProjectComponentsDerivesNamedAppCapabilitiesWithoutChangingDefaultApp(t *testing.T) {
+	defaultComponents := Components{
+		CLI:           true,
+		WebAPI:        true,
+		DatabaseMySQL: true,
+		Docker:        true,
+		Metrics:       true,
+	}
+	config := &Config{
+		Render: RenderConfig{Components: defaultComponents},
+		Apps: map[string]AppConfig{
+			"reporting": {
+				Components: Components{CLI: true, WebAPI: true, DatabasePostgres: true, Jobs: true},
+			},
+		},
+	}
+
+	envelope := ProjectComponents(config)
+	if !envelope.DatabaseMySQL || !envelope.DatabasePostgres || !envelope.Jobs {
+		t.Fatalf("project envelope missing named-App capabilities: %#v", envelope)
+	}
+	if !envelope.Docker || !envelope.Metrics {
+		t.Fatalf("project envelope lost project-only capabilities: %#v", envelope)
+	}
+	if config.Render.Components != defaultComponents {
+		t.Fatalf("default App components changed while deriving the project envelope: %#v", config.Render.Components)
+	}
+}
+
+// TestProjectComponentsNormalizesAppsAgainstStableDefaultCapabilities verifies sibling database choices cannot change implicit App dependencies.
+func TestProjectComponentsNormalizesAppsAgainstStableDefaultCapabilities(t *testing.T) {
+	config := &Config{
+		Render: RenderConfig{Components: Components{CLI: true}},
+		Apps: map[string]AppConfig{
+			"accounts": {
+				Components: Components{CLI: true, Auth: true},
+			},
+			"reporting": {
+				Components: Components{CLI: true, DatabasePostgres: true},
+			},
+		},
+	}
+
+	for range 20 {
+		envelope := ProjectComponents(config)
+		if !envelope.DatabaseMySQL || !envelope.DatabasePostgres {
+			t.Fatalf("project envelope depended on App map iteration: %#v", envelope)
+		}
+	}
+
+	accounts := NormalizeConfiguredAppComponents(config, config.Apps["accounts"].Components)
+	if !accounts.DatabaseMySQL || accounts.DatabasePostgres {
+		t.Fatalf("accounts App database leaked from reporting App: %#v", accounts)
 	}
 }
 

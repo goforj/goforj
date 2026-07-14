@@ -465,6 +465,7 @@ func loadProjectConfig() (*project.Config, error) {
 // saveProjectConfig persists the project config back to .goforj.yml.
 func saveProjectConfig(config *project.Config) error {
 	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
+	config.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)

@@ -80,6 +80,97 @@ func TestEffectiveResourceConsumersApplyNamedAppOverrides(t *testing.T) {
 	}
 }
 
+// TestEffectiveResourceConsumersRespectConfiguredAppComponents keeps stale overlays from inventing App capabilities.
+func TestEffectiveResourceConsumersRespectConfiguredAppComponents(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Docker: true, DatabaseMySQL: true}},
+		Apps: map[string]project.AppConfig{
+			"billing": {Components: project.Components{CLI: true}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	plan := defaultResourcePlanForTest(t, projectComponents)
+	database, _ := plan.Selection(project.ResourceDatabase)
+	database.Supported = append(database.Supported, "postgres")
+	plan, err := plan.WithSelection(project.ResourceDatabase, database).Normalized(projectComponents)
+	if err != nil {
+		t.Fatalf("normalize resource plan: %v", err)
+	}
+	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nBILLING_DB_DRIVER=postgres\nBILLING_DB_HOST=postgres.billing.example\n")
+
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	for _, consumer := range consumers {
+		if consumer.Consumer == "billing:database" || strings.HasPrefix(consumer.Consumer, "billing:database:") {
+			t.Fatalf("database-disabled billing App gained a consumer from stale environment: %#v", consumers)
+		}
+	}
+}
+
+// TestEffectiveResourceConsumersUseEachConfiguredAppDatabase verifies disjoint App database participation shares one build contract.
+func TestEffectiveResourceConsumersUseEachConfiguredAppDatabase(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Docker: true, DatabaseMySQL: true}},
+		Apps: map[string]project.AppConfig{
+			"reporting": {Components: project.Components{CLI: true, DatabasePostgres: true}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	plan := defaultResourcePlanForTest(t, projectComponents)
+	plan, err := withProjectDatabaseCapabilities(plan, config.Render.Components, projectComponents)
+	if err != nil {
+		t.Fatalf("build project database plan: %v", err)
+	}
+	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nREPORTING_DB_DRIVER=postgres\nREPORTING_DB_HOST=postgres.reporting.example\n")
+
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	drivers := map[string]string{}
+	for _, consumer := range consumers {
+		drivers[consumer.Consumer] = consumer.Driver
+	}
+	if drivers["database"] != "mysql" || drivers["reporting:database"] != "postgres" {
+		t.Fatalf("App database consumers = %#v, want mysql root and postgres reporting", drivers)
+	}
+}
+
+// TestEffectiveResourceConsumersKeepImplicitAppDatabaseStableAcrossSiblings verifies discovery uses the same App projection as rendering.
+func TestEffectiveResourceConsumersKeepImplicitAppDatabaseStableAcrossSiblings(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Docker: true}},
+		Apps: map[string]project.AppConfig{
+			"accounts":  {Components: project.Components{CLI: true, Auth: true}},
+			"reporting": {Components: project.Components{CLI: true, DatabasePostgres: true}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	plan := defaultResourcePlanForTest(t, projectComponents)
+	plan, err := withProjectDatabaseCapabilities(plan, config.Render.Components, projectComponents)
+	if err != nil {
+		t.Fatalf("build project database plan: %v", err)
+	}
+	source := []byte("ACCOUNTS_DB_DRIVER=mysql\nACCOUNTS_DB_HOST=mysql.accounts.example\nREPORTING_DB_DRIVER=postgres\nREPORTING_DB_HOST=postgres.reporting.example\n")
+
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	drivers := map[string]string{}
+	for _, consumer := range consumers {
+		drivers[consumer.Consumer] = consumer.Driver
+	}
+	if drivers["accounts:database"] != "mysql" || drivers["reporting:database"] != "postgres" {
+		t.Fatalf("App database consumers = %#v, want stable mysql accounts and postgres reporting", drivers)
+	}
+	if _, exists := drivers["database"]; exists {
+		t.Fatalf("database-disabled default App gained a consumer: %#v", drivers)
+	}
+}
+
 // TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers keeps App overlays aligned with generated manager fallbacks.
 func TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true, Jobs: true}

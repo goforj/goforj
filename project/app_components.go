@@ -15,6 +15,9 @@ var appComponentKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentCache,
+	ComponentEvents,
+	ComponentStorage,
 	ComponentJobs,
 }
 
@@ -167,7 +170,29 @@ func IsAppDatabaseComponent(key ComponentKey) bool {
 	}
 }
 
-// PromoteAppComponents adds selected app capabilities to the project-level render set.
+// ProjectComponents derives the shared render capability envelope without changing the default App selection.
+func ProjectComponents(config *Config) Components {
+	if config == nil {
+		return Components{}
+	}
+	available := config.Render.Components.WithResolvedDependencies()
+	envelope := available
+	for _, appConfig := range config.Apps {
+		selected := NormalizeConfiguredAppComponents(config, appConfig.Components)
+		envelope = PromoteAppComponents(envelope, selected)
+	}
+	return envelope
+}
+
+// NormalizeConfiguredAppComponents resolves one App against the default App so sibling selections cannot change its implicit dependencies.
+func NormalizeConfiguredAppComponents(config *Config, selected Components) Components {
+	if config == nil {
+		return NormalizeAppComponents(Components{}, selected)
+	}
+	return NormalizeAppComponents(config.Render.Components.WithResolvedDependencies(), selected)
+}
+
+// PromoteAppComponents adds selected App capabilities to an in-memory project envelope.
 func PromoteAppComponents(available Components, selected Components) Components {
 	promoted := available
 	for _, key := range appComponentKeys {

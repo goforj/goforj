@@ -291,6 +291,9 @@ func NewAboutService() *AboutService {
 }
 
 func (s *AboutService) Build() AboutReport {
+{{- if or .ProjectComponents.WebUI .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.Jobs }}
+	appComponents := CurrentApp().Components
+{{- end }}
 	report := AboutReport{
 		App: strings.TrimSpace(env.Get("APP_NAME", "app")),
 		Environment: AboutEnvironment{
@@ -304,27 +307,36 @@ func (s *AboutService) Build() AboutReport {
 		Build: AboutBuild{
 			Components:    aboutComponents(),
 			WireGenerated: aboutPresence(filepath.Join("app", "wire", "wire_gen.go")),
-{{- if .Components.WebUI }}
-			FrontendDist: aboutPresence(filepath.Join("cmd", CurrentApp().Name, "frontend", "dist", "index.html")),
-{{- end }}
-{{- if .Components.HasDatabase }}
-			MigrationsPath: aboutPresence("migrations"),
-{{- end }}
 		},
 		Network: AboutNetwork{
 			AppURL: env.Get("APP_URL", "http://localhost:3000"),
-{{- if .Components.WebAPI }}
-			APIURL: strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api",
-{{- end }}
 		},
 		Caches:   aboutCacheReports(),
 		Mails:    aboutMailReports(),
-{{- if .Components.Jobs }}
-		Queues:   aboutQueueReports(),
-{{- end }}
 		Storages: aboutStorageReports(),
 		Events:   aboutEventReports(),
 	}
+{{- if .ProjectComponents.WebUI }}
+	if appComponents.WebUI {
+		report.Build.FrontendDist = aboutPresence(filepath.Join("cmd", CurrentApp().Name, "frontend", "dist", "index.html"))
+	}
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+	if appComponents.HasDatabase() {
+		report.Build.MigrationsPath = aboutPresence("migrations")
+		report.Databases = aboutDatabaseReports()
+	}
+{{- end }}
+{{- if .ProjectComponents.WebAPI }}
+	if appComponents.WebAPI {
+		report.Network.APIURL = strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api"
+	}
+{{- end }}
+{{- if .ProjectComponents.Jobs }}
+	if appComponents.Jobs {
+		report.Queues = aboutQueueReports()
+	}
+{{- end }}
 	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_URL", "")); raw != "" {
 		if env.GetBool("LIGHTHOUSE_ENABLED", "true") {
 			report.Network.LighthouseURL = raw
@@ -332,14 +344,14 @@ func (s *AboutService) Build() AboutReport {
 			report.Network.LighthouseURL = "disabled"
 		}
 	}
-{{- if .Components.HasDatabase }}
-	report.Databases = aboutDatabaseReports()
-{{- end }}
 	report.Sections = s.sections(report)
 	return report
 }
 
 func (s *AboutService) sections(report AboutReport) []AboutSectionData {
+{{- if or .ProjectComponents.HasDatabase .ProjectComponents.Jobs }}
+	appComponents := CurrentApp().Components
+{{- end }}
 	sections := []AboutSectionData{
 		{
 			Title: "Environment",
@@ -362,18 +374,22 @@ func (s *AboutService) sections(report AboutReport) []AboutSectionData {
 		sections = append(sections, AboutSectionData{Title: "Network", Rows: rows})
 	}
 
-{{- if .Components.HasDatabase }}
-	sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
+{{- if .ProjectComponents.HasDatabase }}
+	if appComponents.HasDatabase() {
+		sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
+	}
 {{- end }}
 	sections = append(sections,
 		AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)},
 		AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)},
 		AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)},
-{{- if .Components.Jobs }}
-		AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)},
-{{- end }}
-		AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)},
 	)
+{{- if .ProjectComponents.Jobs }}
+	if appComponents.Jobs {
+		sections = append(sections, AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)})
+	}
+{{- end }}
+	sections = append(sections, AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)})
 
 	return sections
 }
@@ -499,33 +515,50 @@ func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 }
 
 func aboutComponents() []string {
-	components := []string{"cache", "storage", "events", "lighthouse"}
-{{- if .Components.Metrics }}
-	components = append(components, "metrics")
+{{- if or .ProjectComponents.Metrics .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.WebUI .ProjectComponents.Scheduler .ProjectComponents.Jobs .ProjectComponents.DemoApp }}
+	appComponents := CurrentApp().Components
 {{- end }}
-{{- if .Components.Observability }}
+	components := []string{"cache", "storage", "events", "lighthouse"}
+{{- if .ProjectComponents.Metrics }}
+	if appComponents.Metrics {
+		components = append(components, "metrics")
+	}
+{{- end }}
+{{- if .ProjectComponents.Observability }}
 	components = append(components, "observability")
 {{- end }}
-{{- if .Components.Grafana }}
+{{- if .ProjectComponents.Grafana }}
 	components = append(components, "grafana")
 {{- end }}
-{{- if .Components.HasDatabase }}
-	components = append(components, "database")
+{{- if .ProjectComponents.HasDatabase }}
+	if appComponents.HasDatabase() {
+		components = append(components, "database")
+	}
 {{- end }}
-{{- if .Components.WebAPI }}
-	components = append(components, "http")
+{{- if .ProjectComponents.WebAPI }}
+	if appComponents.WebAPI {
+		components = append(components, "http")
+	}
 {{- end }}
-{{- if .Components.WebUI }}
-	components = append(components, "ui")
+{{- if .ProjectComponents.WebUI }}
+	if appComponents.WebUI {
+		components = append(components, "ui")
+	}
 {{- end }}
-{{- if .Components.Scheduler }}
-	components = append(components, "scheduler")
+{{- if .ProjectComponents.Scheduler }}
+	if appComponents.Scheduler {
+		components = append(components, "scheduler")
+	}
 {{- end }}
-{{- if .Components.Jobs }}
-	components = append(components, "jobs")
+{{- if .ProjectComponents.Jobs }}
+	if appComponents.Jobs {
+		components = append(components, "jobs")
+	}
 {{- end }}
-{{- if .Components.DemoApp }}
-	components = append(components, "demo")
+{{- if .ProjectComponents.DemoApp }}
+	if appComponents.DemoApp {
+		components = append(components, "demo")
+	}
 {{- end }}
 	return components
 }

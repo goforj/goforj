@@ -81,7 +81,7 @@ func reconcileNewProjectTargetResources(
 	if configErr != nil && !os.IsNotExist(configErr) {
 		return newProjectTargetResourceReconciliation{}, fmt.Errorf("read existing target Apps: %w", configErr)
 	}
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, effective, components, configuredResourceAppNames(targetConfig))
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, effective, components, targetConfig)
 	if err != nil {
 		return newProjectTargetResourceReconciliation{}, fmt.Errorf("discover existing target resource consumers: %w", err)
 	}

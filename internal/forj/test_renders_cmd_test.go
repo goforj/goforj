@@ -159,6 +159,58 @@ func TestRenderProfilesHaveExpectedCoverageShape(t *testing.T) {
 	}
 }
 
+// TestPRRenderProfileIncludesRecommendedAndLeanPrimitiveSentinels keeps compatibility and opt-out coverage explicit.
+func TestPRRenderProfileIncludesRecommendedAndLeanPrimitiveSentinels(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	recommended := project.DefaultSelectedComponents()
+	foundRecommended := false
+	foundLean := false
+	for _, combo := range combos {
+		if combo.id == "sentinel_recommended_default" {
+			foundRecommended = true
+			if combo.components != recommended {
+				t.Fatalf("recommended sentinel = %#v, want %#v", combo.components, recommended)
+			}
+			if !combo.components.Cache || !combo.components.Events || !combo.components.Storage || !combo.components.Jobs {
+				t.Fatalf("recommended sentinel omitted a default primitive: %#v", combo.components)
+			}
+		}
+		if !combo.components.Cache && !combo.components.Events && !combo.components.Storage && !combo.components.Jobs {
+			foundLean = true
+		}
+	}
+	if !foundRecommended {
+		t.Fatal("pr profile should include the recommended-default sentinel")
+	}
+	if !foundLean {
+		t.Fatal("pr profile should include a lean primitive-free sentinel")
+	}
+}
+
+// TestComponentLabelsIncludeEnabledPrimitiveComponents keeps render diagnostics truthful about the selected matrix shape.
+func TestComponentLabelsIncludeEnabledPrimitiveComponents(t *testing.T) {
+	wants := []string{"Cache", "Events", "Storage"}
+	labels := componentLabels(project.Components{Cache: true, Events: true, Storage: true})
+	seen := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		seen[label] = true
+	}
+	for _, want := range wants {
+		if !seen[want] {
+			t.Fatalf("component labels = %#v, want %q", labels, want)
+		}
+	}
+
+	leanLabels := componentLabels(project.Components{})
+	for _, label := range leanLabels {
+		for _, unwanted := range wants {
+			if label == unwanted {
+				t.Fatalf("lean component labels unexpectedly include %q: %#v", unwanted, leanLabels)
+			}
+		}
+	}
+}
+
 func TestPRRenderProfileCoversComponentCatalog(t *testing.T) {
 	combos := buildRenderCombos(renderProfilePR)
 	requireRenderCombosCoverCatalog(t, renderProfilePR, combos)

@@ -66,8 +66,10 @@ func runStep(log *logger.AppLogger, silent bool, name, dir, modCache, buildCache
 	return nil
 }
 
+// writeYAML stamps the current component contract so omitted primitive names retain their disabled meaning.
 func writeYAML(path string, cfg project.Config) error {
 	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
+	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
 		cfg.Render.GoForjVersion = version.Semver()
 	}

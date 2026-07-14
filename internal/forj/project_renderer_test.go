@@ -548,6 +548,7 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	}
 }
 
+// TestRuntimeAppMetadataUsesCompiledAppOrder verifies filesystem discovery retains deterministic runtime defaults.
 func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -562,11 +563,13 @@ func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "customer-portal", "main.go"), "package main\n")
 
-	got := runtimeAppMetadataForRender()
+	components := project.Components{CLI: true, WebAPI: true}
+	config := &project.Config{Render: project.RenderConfig{Components: components}}
+	got := runtimeAppMetadataForRender(config)
 	want := []runtimeAppMetadata{
-		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000},
-		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010},
-		{Name: "customer-portal", Index: 2, EnvPrefix: "CUSTOMER_PORTAL", HTTPPort: 3002, RuntimeBase: 10020},
+		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000, Components: components},
+		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010, Components: components},
+		{Name: "customer-portal", Index: 2, EnvPrefix: "CUSTOMER_PORTAL", HTTPPort: 3002, RuntimeBase: 10020, Components: components},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("metadata length = %d, want %d: %#v", len(got), len(want), got)
@@ -575,6 +578,48 @@ func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("metadata[%d] = %#v, want %#v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestRuntimeAppMetadataUsesStableConfiguredAppComponents verifies configured Apps are present before discovery without leaking sibling choices.
+func TestRuntimeAppMetadataUsesStableConfiguredAppComponents(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			"accounts":  {Components: project.Components{CLI: true, Auth: true}},
+			"reporting": {Components: project.Components{CLI: true, DatabasePostgres: true}},
+		},
+	}
+
+	got := runtimeAppMetadataForRender(config)
+	wantNames := []string{"app", "accounts", "billing", "reporting"}
+	if len(got) != len(wantNames) {
+		t.Fatalf("metadata length = %d, want %d: %#v", len(got), len(wantNames), got)
+	}
+	for index, name := range wantNames {
+		if got[index].Name != name || got[index].Index != index {
+			t.Fatalf("metadata[%d] = %#v, want App %q at index %d", index, got[index], name, index)
+		}
+	}
+	if !got[1].Components.DatabaseMySQL || got[1].Components.DatabasePostgres {
+		t.Fatalf("accounts components leaked from reporting App: %#v", got[1].Components)
+	}
+	if got[2].Components != config.Render.Components {
+		t.Fatalf("discovered billing components = %#v, want default App components %#v", got[2].Components, config.Render.Components)
+	}
+	if !got[3].Components.DatabasePostgres || got[3].Components.DatabaseMySQL {
+		t.Fatalf("reporting components = %#v, want Postgres only", got[3].Components)
 	}
 }
 

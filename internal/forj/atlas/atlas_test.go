@@ -58,6 +58,53 @@ render:
 	}
 }
 
+// TestProjectUsesDerivedComponentEnvelopeWithoutWideningDefaultApp keeps project metadata complete while preserving App-local runtime and database choices.
+func TestProjectUsesDerivedComponentEnvelopeWithoutWideningDefaultApp(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: multi-app
+module_name: example.com/multi-app
+render:
+  components:
+    cli: true
+    database_sqlite: true
+apps:
+  worker:
+    components:
+      cli: true
+      jobs: true
+      database_postgres: true
+`)
+	writeFile(t, filepath.Join(root, "cmd", "app", "main.go"), "package main\n")
+	writeFile(t, filepath.Join(root, "cmd", "worker", "main.go"), "package main\n")
+	writeFile(t, filepath.Join(root, "app", "worker", "commands.go"), "package workerapp\n")
+
+	discovered := Project(root)
+	if !containsString(discovered.Components, "jobs") || !containsString(discovered.Components, "database-postgres") {
+		t.Fatalf("project component envelope = %#v", discovered.Components)
+	}
+	if discovered.DatabaseDriver != "sqlite" {
+		t.Fatalf("default App database driver = %q, want sqlite", discovered.DatabaseDriver)
+	}
+
+	var defaultApp atlasproject.App
+	var workerApp atlasproject.App
+	for _, app := range discovered.Apps {
+		switch app.Name {
+		case "app":
+			defaultApp = app
+		case "worker":
+			workerApp = app
+		}
+	}
+	if containsString(defaultApp.Runtimes, "jobs") || !containsString(defaultApp.Runtimes, "cli") {
+		t.Fatalf("default App runtimes = %#v, want only its CLI runtime", defaultApp.Runtimes)
+	}
+	if !containsString(workerApp.Runtimes, "jobs") {
+		t.Fatalf("worker App runtimes = %#v, want jobs", workerApp.Runtimes)
+	}
+}
+
 // TestProjectIgnoresLegacyQueueDriver keeps deployment state environment-owned during Atlas discovery.
 func TestProjectIgnoresLegacyQueueDriver(t *testing.T) {
 	root := t.TempDir()

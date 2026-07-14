@@ -15,6 +15,35 @@ func TestAppMetadataUsesDeterministicDefaults(t *testing.T) {
 {{- end }}
 }
 
+// TestAppMetadataUsesPerAppComponents verifies process selection retains each App's compiled capabilities.
+func TestAppMetadataUsesPerAppComponents(t *testing.T) {
+{{- range .RuntimeApps }}
+	if got, want := App("{{ .Name }}").Components, (AppComponents{
+		CLI:              {{ .Components.CLI }},
+		DemoApp:          {{ .Components.DemoApp }},
+		Mail:             {{ .Components.Mail }},
+		Auth:             {{ .Components.Auth }},
+		OAuth:            {{ .Components.OAuth }},
+		WebAPI:           {{ .Components.WebAPI }},
+		WebUI:            {{ .Components.WebUI }},
+		Metrics:          {{ .Components.Metrics }},
+		Observability:    {{ .Components.Observability }},
+		Grafana:          {{ .Components.Grafana }},
+		Docker:           {{ .Components.Docker }},
+		DatabaseMySQL:    {{ .Components.DatabaseMySQL }},
+		DatabasePostgres: {{ .Components.DatabasePostgres }},
+		DatabaseSQLite:   {{ .Components.DatabaseSQLite }},
+		Scheduler:        {{ .Components.Scheduler }},
+		Cache:            {{ .Components.Cache }},
+		Events:           {{ .Components.Events }},
+		Storage:          {{ .Components.Storage }},
+		Jobs:             {{ .Components.Jobs }},
+	}); got != want {
+		t.Fatalf("App {{ .Name }} components = %#v, want %#v", got, want)
+	}
+{{- end }}
+}
+
 func TestAppPortResolutionUsesAppScopedOverrides(t *testing.T) {
 	t.Setenv("FORJ_APP", "app")
 	t.Setenv("PORT", "3100")

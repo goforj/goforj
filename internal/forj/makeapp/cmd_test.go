@@ -342,6 +342,31 @@ func TestWizardShowsCLIComponentSelected(t *testing.T) {
 	}
 }
 
+// TestWizardPreservesHiddenPrimitiveDefaults keeps named Apps compatible before primitive rows are exposed.
+func TestWizardPreservesHiddenPrimitiveDefaults(t *testing.T) {
+	model := initialAppWizardModel("ship", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:     true,
+				Cache:   true,
+				Events:  true,
+				Storage: true,
+			},
+		},
+	})
+	for _, raw := range model.componentList.Items() {
+		item := raw.(componentItem)
+		switch item.Key {
+		case project.ComponentCache, project.ComponentEvents, project.ComponentStorage:
+			t.Fatalf("primitive %q was exposed before its disabled App contract", item.Key)
+		}
+	}
+	model.applyComponentSelection()
+	if !model.components.Cache || !model.components.Events || !model.components.Storage {
+		t.Fatalf("hidden App primitive defaults were lost: %#v", model.components)
+	}
+}
+
 // TestWizardUnselectingWebAPIRemovesDependents lets users reach CLI-only without hidden dependency re-selection.
 func TestWizardUnselectingWebAPIRemovesDependents(t *testing.T) {
 	model := initialAppWizardModel("ship", &project.Config{
