@@ -41,8 +41,6 @@ const (
 	StageStarterKit
 	// StageExtras collects optional project profiles that expand component selection.
 	StageExtras
-	// StageAppResources coordinates starting drivers and local service placement.
-	StageAppResources
 	// StageAtlasSupport collects optional AI agent support installation.
 	StageAtlasSupport
 	// StageAtlasAgents collects custom AI agent selections.
@@ -101,9 +99,6 @@ type ListItem struct {
 	Desc     string
 	Selected bool
 }
-
-// wizardDatabaseComponentKey projects the three render drivers as one wizard capability.
-const wizardDatabaseComponentKey project.ComponentKey = "database"
 
 // Title satisfies the Bubbles list item contract for project component rows.
 func (i ListItem) Title() string { return i.Name }
@@ -221,21 +216,7 @@ func (i AtlasSurfaceItem) FilterValue() string { return i.Label }
 // makeProjectComponentItems converts the shared component catalog into wizard rows.
 func makeProjectComponentItems() []list.Item {
 	items := make([]list.Item, 0, len(project.ComponentCatalog()))
-	databaseAdded := false
 	for _, component := range project.ComponentCatalog() {
-		if project.IsAppDatabaseComponent(component.Key) {
-			if databaseAdded {
-				continue
-			}
-			databaseAdded = true
-			items = append(items, ListItem{
-				Key:      wizardDatabaseComponentKey,
-				Name:     "Database",
-				Desc:     "Store app data in MySQL, Postgres, or SQLite",
-				Selected: defaultDatabaseCapabilitySelected(),
-			})
-			continue
-		}
 		items = append(items, ListItem{
 			Key:      component.Key,
 			Name:     component.Label,
@@ -244,11 +225,6 @@ func makeProjectComponentItems() []list.Item {
 		})
 	}
 	return items
-}
-
-// defaultDatabaseCapabilitySelected reports whether the canonical defaults enable any database implementation.
-func defaultDatabaseCapabilitySelected() bool {
-	return project.DefaultSelectedComponents().HasDatabase()
 }
 
 // makeStarterKitItems converts the shared starter-kit catalog into wizard rows.
@@ -317,58 +293,6 @@ func makeAtlasSurfaceItems() []list.Item {
 	}
 }
 
-// normalizeDatabaseChoice accepts only the database implementations exposed by the new-project wizard.
-func normalizeDatabaseChoice(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	switch normalized {
-	case "mysql", "postgres", "sqlite":
-		return normalized
-	default:
-		return ""
-	}
-}
-
-// databaseChoiceForComponentKey maps the transitional render flag back to its wizard-owned driver choice.
-func databaseChoiceForComponentKey(key project.ComponentKey) string {
-	switch key {
-	case project.ComponentDatabaseMySQL:
-		return "mysql"
-	case project.ComponentDatabasePostgres:
-		return "postgres"
-	case project.ComponentDatabaseSQLite:
-		return "sqlite"
-	default:
-		return ""
-	}
-}
-
-// effectiveDatabaseChoice returns the temporary Demo lock without overwriting the user's independent choice.
-func (m model) effectiveDatabaseChoice() string {
-	if m.demoAppEnabled {
-		return "mysql"
-	}
-	choice := normalizeDatabaseChoice(m.databaseChoice)
-	if choice == "" {
-		return "mysql"
-	}
-	return choice
-}
-
-// applyDatabaseChoiceToComponents maps the wizard capability back onto exactly one transitional render flag.
-func applyDatabaseChoiceToComponents(components *project.Components, choice string) {
-	components.DatabaseMySQL = false
-	components.DatabasePostgres = false
-	components.DatabaseSQLite = false
-	switch normalizeDatabaseChoice(choice) {
-	case "postgres":
-		components.DatabasePostgres = true
-	case "sqlite":
-		components.DatabaseSQLite = true
-	default:
-		components.DatabaseMySQL = true
-	}
-}
-
 type model struct {
 	stage                WizardStage
 	projectInput         textinput.Model
@@ -389,10 +313,7 @@ type model struct {
 	allowNonEmpty        bool
 	extrasIndex          int
 	demoAppEnabled       bool
-	databaseChoice       string
 	starterKitApplicable bool
-	resourceUI           newProjectResourceUI
-	resourceUIReady      bool
 	effectiveResources   project.ResourcePlan
 	effectiveIntent      project.LocalServiceIntent
 	effectiveConsumers   []project.EffectiveResourceConsumer
@@ -415,12 +336,10 @@ func (m *model) components() *project.Components {
 
 // finalizeConfig derives development tasks only after the effective resource and service plans are valid.
 func (m *model) finalizeConfig() error {
-	if !m.resourceUIReady || m.resourceUI.components != *m.components() {
-		if err := m.prepareResourceUI(); err != nil {
-			return fmt.Errorf("resolve App Resources: %w", err)
-		}
+	resourcePlan, err := m.selectedResourcePlan()
+	if err != nil {
+		return fmt.Errorf("resolve App resources: %w", err)
 	}
-	resourcePlan := m.selectedResourcePlan()
 	servicePlan, err := project.ResolveServicePlanWithConsumers(resourcePlan, *m.components(), m.selectedResourceIntent(), m.selectedResourceConsumers())
 	if err != nil {
 		return fmt.Errorf("resolve App services: %w", err)
@@ -564,11 +483,6 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 	atlasSurfaceList.SetShowPagination(false)
 
 	components := project.DefaultSelectedComponents()
-	resourceUI, resourceErr := newNewProjectResourceUI(components)
-	resourceErrorMessage := ""
-	if resourceErr != nil {
-		resourceErrorMessage = fmt.Sprintf("Could not initialize App Resources: %v", resourceErr)
-	}
 	return model{
 		stage:                StageProjectName,
 		projectInput:         ti,
@@ -577,10 +491,7 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		componentList:        li,
 		helpFormatList:       helpFormatList,
 		starterKitList:       starterKitList,
-		databaseChoice:       "mysql",
 		starterKitApplicable: components.WebUI,
-		resourceUI:           resourceUI,
-		resourceUIReady:      resourceErr == nil,
 		atlasModeList:        atlasModeList,
 		atlasAgentList:       atlasAgentList,
 		atlasSurfaceList:     atlasSurfaceList,
@@ -594,7 +505,6 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 				HelpFormat:    project.DefaultHelpFormat(),
 			},
 		},
-		errorMsg: resourceErrorMessage,
 	}
 }
 
@@ -649,47 +559,32 @@ func (m *model) applyStarterKitSelection() {
 // applyExtrasSelection applies Demo's temporary constraints without erasing the unlocked component choices.
 func (m *model) applyExtrasSelection() {
 	m.demoAppEnabled = m.extrasIndex == 1
-	components := m.components()
+	selected := m.selectedComponentConfig().WithResolvedDependencies()
 	if !m.demoAppEnabled {
-		*components = m.selectedComponentConfig().WithResolvedDependencies()
-		components.DemoApp = false
+		selected.DemoApp = false
+		*m.components() = selected
+		m.resetResourcePreview()
 		return
 	}
-	components.DemoApp = true
+	selected.DemoApp = true
 	// Demo owns a MySQL-only compatibility contract until its generated SQL supports every database driver.
-	components.CLI = true
-	components.Auth = true
-	components.WebAPI = true
-	components.WebUI = true
-	components.Scheduler = true
-	components.Jobs = true
-	applyDatabaseChoiceToComponents(components, m.effectiveDatabaseChoice())
+	selected.CLI = true
+	selected.Auth = true
+	selected.WebAPI = true
+	selected.WebUI = true
+	selected.Scheduler = true
+	selected.Jobs = true
+	selected.DatabaseMySQL = true
+	selected.DatabasePostgres = false
+	selected.DatabaseSQLite = false
 	m.config.Render.StarterKit = project.StarterKitNone
-	components.ResolveDependencies()
+	selected.ResolveDependencies()
+	*m.components() = selected
+	m.resetResourcePreview()
 }
 
-// prepareResourceUI reconciles retained edits against capabilities finalized by earlier wizard stages.
-func (m *model) prepareResourceUI() error {
-	components := *m.components()
-	if !m.resourceUIReady {
-		resourceUI, err := newNewProjectResourceUI(components)
-		if err != nil {
-			return err
-		}
-		m.resourceUI = resourceUI
-		m.resourceUIReady = true
-	} else if err := m.resourceUI.reconcile(components); err != nil {
-		m.syncResourceUIState()
-		return err
-	}
-	m.syncResourceUIState()
-	return nil
-}
-
-// syncResourceUIState projects transient database choices while invalidating any prior target preview.
-func (m *model) syncResourceUIState() {
-	m.databaseChoice = m.resourceUI.databaseDriver()
-	*m.components() = m.resourceUI.componentsWithDatabase(*m.components())
+// resetResourcePreview invalidates owner-derived state after an earlier wizard choice changes.
+func (m *model) resetResourcePreview() {
 	m.effectiveResources = project.ResourcePlan{}
 	m.effectiveIntent = project.LocalServiceIntent{}
 	m.effectiveConsumers = nil
@@ -698,19 +593,19 @@ func (m *model) syncResourceUIState() {
 }
 
 // selectedResourcePlan returns the owner-reconciled plan when Path has supplied one.
-func (m model) selectedResourcePlan() project.ResourcePlan {
+func (m model) selectedResourcePlan() (project.ResourcePlan, error) {
 	if m.resourcesReconciled {
-		return m.effectiveResources.Clone()
+		return m.effectiveResources.Clone(), nil
 	}
-	return m.resourceUI.resourcePlan()
+	return project.DefaultResourcePlan(m.config.Render.Components)
 }
 
-// selectedResourceIntent returns placement intent from the same source as selectedResourcePlan.
+// selectedResourceIntent returns owner intent only after the selected target has been reconciled.
 func (m model) selectedResourceIntent() project.LocalServiceIntent {
 	if m.resourcesReconciled {
-		return cloneNewProjectLocalServiceIntent(m.effectiveIntent)
+		return cloneNewProjectTargetServiceIntent(m.effectiveIntent)
 	}
-	return m.resourceUI.serviceIntent()
+	return project.LocalServiceIntent{}
 }
 
 // selectedResourceConsumers returns owner-discovered named and App-scoped consumers after Path reconciliation.
@@ -719,25 +614,6 @@ func (m model) selectedResourceConsumers() []project.EffectiveResourceConsumer {
 		return nil
 	}
 	return cloneEffectiveResourceConsumers(m.effectiveConsumers)
-}
-
-// resourceConfirmationUI overlays owner-controlled target values on a defensive editor copy.
-func (m model) resourceConfirmationUI() newProjectResourceUI {
-	ui := m.resourceUI.clone()
-	if !m.resourcesReconciled {
-		return ui
-	}
-	ui.plan = m.effectiveResources.Clone()
-	ui.localServiceIntent = cloneNewProjectLocalServiceIntent(m.effectiveIntent)
-	ui.effectiveConsumers = cloneEffectiveResourceConsumers(m.effectiveConsumers)
-	classification := project.ClassifyResourcePlan(ui.plan, ui.components)
-	if classification.Shape != "" {
-		ui.baseShape = classification.Shape
-	}
-	if database, ok := ui.plan.Selection(project.ResourceDatabase); ok {
-		ui.databaseChoice = database.Active
-	}
-	return ui
 }
 
 func (m *model) applyAtlasModeSelection() {
@@ -870,10 +746,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 		case tea.KeyEsc:
-			if m.stage != StageAppResources {
-				m.cancelled = true
-				return m, tea.Quit
-			}
+			m.cancelled = true
+			return m, tea.Quit
 		}
 
 		switch m.stage {
@@ -947,6 +821,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				item := m.componentList.Items()[index].(ListItem)
 				if item.Key == project.ComponentCLI {
 					return m, nil // prevent toggling CLI
+				}
+				if item.Selected {
+					if blockedMessage, blocked := m.blockedDatabaseDeselectionMessage(item.Key); blocked {
+						m.errorMsg = blockedMessage
+						return m, nil
+					}
 				}
 				definition, _ := project.ComponentDefinitionByKey(item.Key)
 				if !item.Selected && definition.ExclusiveGroup != "" {
@@ -1034,41 +914,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				m.applyExtrasSelection()
-				resourceErr := m.prepareResourceUI()
-				m.resourceUI.screen = newProjectResourceScreenSummary
-				m.resourceUI.summaryFocus = newProjectResourceFocusContinue
-				m.stage = StageAppResources
-				if resourceErr != nil {
-					m.resourceUI.errorMessage = resourceErr.Error()
-					m.errorMsg = resourceErr.Error()
-				} else {
-					m.errorMsg = ""
-				}
-				return m, nil
-			}
-
-		case StageAppResources:
-			resourceUI, action, err := m.resourceUI.update(msg)
-			m.resourceUI = resourceUI
-			if err != nil {
-				m.resourceUI.errorMessage = err.Error()
-				m.errorMsg = err.Error()
-				return m, nil
-			}
-			m.syncResourceUIState()
-			m.errorMsg = ""
-			switch action {
-			case newProjectResourceActionBack:
-				m.stage = StageExtras
-			case newProjectResourceActionContinue:
+				m.errorMsg = ""
 				m.stage = StageAtlasSupport
+				return m, nil
 			}
-			return m, nil
 
 		case StageAtlasSupport:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				m.stage = StageAppResources
+				m.stage = StageExtras
 				return m, nil
 			}
 			switch msg.String() {
@@ -1157,18 +1011,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.targetPath = m.projectPath()
+				resourcePlan, err := project.DefaultResourcePlan(m.config.Render.Components)
+				if err != nil {
+					m.errorMsg = fmt.Sprintf("resolve App resources: %v", err)
+					return m, nil
+				}
 				reconciliation, err := reconcileNewProjectTargetResources(
 					m.targetPath,
-					m.resourceUI.resourcePlan(),
+					resourcePlan,
 					m.config.Render.Components,
-					m.resourceUI.serviceIntent(),
+					project.LocalServiceIntent{},
 				)
 				if err != nil {
 					m.errorMsg = err.Error()
 					return m, nil
 				}
 				m.effectiveResources = reconciliation.plan.Clone()
-				m.effectiveIntent = cloneNewProjectLocalServiceIntent(reconciliation.serviceIntent)
+				m.effectiveIntent = cloneNewProjectTargetServiceIntent(reconciliation.serviceIntent)
 				m.effectiveConsumers = cloneEffectiveResourceConsumers(reconciliation.serviceConsumers)
 				m.resourceOverrides = reconciliation.overrideSummary
 				m.resourcesReconciled = true
@@ -1325,25 +1184,18 @@ func (m model) View() string {
 					return onMarker + " " + label
 				}(),
 			)
+			if onSelected {
+				extrasBody = lipgloss.JoinVertical(
+					lipgloss.Left,
+					extrasBody,
+					"",
+					listDescStyle.Render("Demo currently requires MySQL. Your database choice returns when Demo is turned off."),
+				)
+			}
 			panels = append(panels, m.panelWithTitle("Extras · Demo App", extrasBody, m.termWidth, true))
 			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 		} else {
 			panels = append(panels, m.panelWithTitle("Extras · Demo App", normalStyle.Render(extrasSummary), m.termWidth, false))
-		}
-	}
-
-	// App Resources panel.
-	if m.stage >= StageAppResources {
-		if m.stage == StageAppResources {
-			panels = append(panels, m.panelWithTitle("App Resources", m.resourceUI.renderBody(m.termWidth), m.termWidth, true))
-			actions = resourceEditorFooterActions(m.resourceUI)
-		} else {
-			resourceUI := m.resourceConfirmationUI()
-			resourceSummary := resourceUI.classification().Label
-			if resourceUI.databaseEnabled {
-				resourceSummary += " · " + newProjectResourceDriverLabel(project.ResourceDatabase, resourceUI.databaseDriver())
-			}
-			panels = append(panels, m.panelWithTitle("App Resources", normalStyle.Render(resourceSummary), m.termWidth, false))
 		}
 	}
 
@@ -1421,10 +1273,6 @@ func (m model) View() string {
 			{"Starter kit", m.selectedStarterKitSummary()},
 			{"Agent support", m.atlasSummary()},
 			{"Components", componentNames},
-		}
-		resourceRows, resourceErr := m.resourceConfirmationUI().confirmationRows()
-		if resourceErr == nil {
-			rows = append(rows, resourceRows...)
 		}
 		if tools := newProjectDevelopmentToolsSummary(m.config.Render.Components); tools != "" {
 			rows = append(rows, keyValue{"Development tools", tools})
@@ -1974,12 +1822,13 @@ func (m model) renderSummary() string {
 	)
 }
 
+// selectedComponentNames reports effective render choices so temporary Demo constraints are described truthfully.
 func (m model) selectedComponentNames() []string {
-	var comps []string
-	for _, item := range m.componentList.Items() {
-		it := item.(ListItem)
-		if it.Selected {
-			comps = append(comps, it.Name)
+	components := m.config.Render.Components
+	comps := make([]string, 0, len(project.ComponentCatalog()))
+	for _, definition := range project.ComponentCatalog() {
+		if components.Enabled(definition.Key) {
+			comps = append(comps, definition.Label)
 		}
 	}
 	return comps
@@ -2143,10 +1992,6 @@ func (m model) renderProgress() string {
 		struct {
 			label string
 			stage WizardStage
-		}{"Resources", StageAppResources},
-		struct {
-			label string
-			stage WizardStage
 		}{"Atlas", StageAtlasSupport},
 		struct {
 			label string
@@ -2184,6 +2029,7 @@ func (m model) renderProgress() string {
 
 // setAllComponents changes projected capabilities while retaining the current database implementation.
 func (m *model) setAllComponents(selected bool) {
+	databaseKey := m.selectedDatabaseComponentKey()
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
 		if item.Name == "CLI" {
@@ -2191,10 +2037,31 @@ func (m *model) setAllComponents(selected bool) {
 			m.componentList.SetItem(idx, item)
 			continue
 		}
+		if project.IsAppDatabaseComponent(item.Key) {
+			item.Selected = selected && item.Key == databaseKey
+			m.componentList.SetItem(idx, item)
+			continue
+		}
 		item.Selected = selected
 		m.componentList.SetItem(idx, item)
 	}
 	m.normalizeComponentSelections()
+}
+
+// selectedDatabaseComponentKey keeps an explicit engine selected and otherwise returns the catalog default.
+func (m model) selectedDatabaseComponentKey() project.ComponentKey {
+	for _, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if item.Selected && project.IsAppDatabaseComponent(item.Key) {
+			return item.Key
+		}
+	}
+	for _, definition := range project.ComponentCatalog() {
+		if definition.DefaultSelected && project.IsAppDatabaseComponent(definition.Key) {
+			return definition.Key
+		}
+	}
+	return project.ComponentDatabaseMySQL
 }
 
 // deselectComponent clears a component selection by name.
@@ -2210,14 +2077,8 @@ func (m *model) deselectComponent(name string) {
 	}
 }
 
-// setComponentSelected updates a projected wizard row and remembers a concrete database choice when supplied.
+// setComponentSelected updates one concrete wizard component row.
 func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
-	if choice := databaseChoiceForComponentKey(key); choice != "" {
-		if selected {
-			m.databaseChoice = choice
-		}
-		key = wizardDatabaseComponentKey
-	}
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
 		if item.Key != key {
@@ -2283,13 +2144,6 @@ func (m *model) blockedDeselectionMessage(key project.ComponentKey, nowSelected 
 	if nowSelected {
 		return "", false
 	}
-	if key == wizardDatabaseComponentKey {
-		blockers := m.databaseCapabilityBlockers()
-		if len(blockers) == 0 {
-			return "", false
-		}
-		return fmt.Sprintf("Database remains enabled because %s requires it.", strings.Join(blockers, " or ")), true
-	}
 	current := m.selectedComponentConfig()
 	resolved := current.WithResolvedDependencies()
 	if !resolved.Enabled(key) {
@@ -2320,6 +2174,24 @@ func (m *model) blockedDeselectionMessage(key project.ComponentKey, nowSelected 
 	return fmt.Sprintf("%s remains enabled because %s requires it.", definition.Label, strings.Join(blockers, ", ")), true
 }
 
+// blockedDatabaseDeselectionMessage prevents required capabilities from losing their last concrete database.
+func (m model) blockedDatabaseDeselectionMessage(key project.ComponentKey) (string, bool) {
+	if !project.IsAppDatabaseComponent(key) {
+		return "", false
+	}
+	for _, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if item.Key != key && item.Selected && project.IsAppDatabaseComponent(item.Key) {
+			return "", false
+		}
+	}
+	blockers := m.databaseCapabilityBlockers()
+	if len(blockers) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("Database remains enabled because %s requires it.", strings.Join(blockers, " or ")), true
+}
+
 // databaseCapabilityBlockers returns wizard selections that require a database without prescribing its driver.
 func (m model) databaseCapabilityBlockers() []string {
 	blockers := make([]string, 0, 3)
@@ -2341,37 +2213,28 @@ func (m model) databaseCapabilityBlockers() []string {
 	return blockers
 }
 
-// selectedComponentConfig expands wizard capabilities into the existing render flags.
+// selectedComponentConfig expands concrete wizard rows into render flags and supplies a database required by auth.
 func (m *model) selectedComponentConfig() project.Components {
 	var components project.Components
-	databaseSelected := false
 	for _, item := range m.componentList.Items() {
 		it := item.(ListItem)
 		if !it.Selected {
 			continue
 		}
-		if it.Key == wizardDatabaseComponentKey {
-			databaseSelected = true
-			continue
-		}
 		components.SetEnabled(it.Key, true)
 	}
-	if databaseSelected || components.Auth || components.OAuth || m.demoAppEnabled {
-		applyDatabaseChoiceToComponents(&components, m.effectiveDatabaseChoice())
+	if (components.Auth || components.OAuth || m.demoAppEnabled) && !components.HasDatabase() {
+		components.SetEnabled(m.selectedDatabaseComponentKey(), true)
 	}
 	return components
 }
 
-// normalizeComponentSelections reflects dependency resolution through synthetic wizard capabilities.
+// normalizeComponentSelections reflects resolved dependencies through concrete wizard rows.
 func (m *model) normalizeComponentSelections() {
 	components := m.selectedComponentConfig().WithResolvedDependencies()
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
-		if item.Key == wizardDatabaseComponentKey {
-			item.Selected = components.HasDatabase()
-		} else {
-			item.Selected = components.Enabled(item.Key)
-		}
+		item.Selected = components.Enabled(item.Key)
 		m.componentList.SetItem(idx, item)
 	}
 }
@@ -2456,12 +2319,12 @@ func (m model) validateBeforeConfirm() error {
 	if err := m.validatePathInput(); err != nil {
 		return err
 	}
-	if !m.resourceUIReady {
-		return fmt.Errorf("App Resources are not initialized")
+	resourcePlan, err := m.selectedResourcePlan()
+	if err != nil {
+		return fmt.Errorf("App resources are invalid: %w", err)
 	}
-	resourcePlan := m.selectedResourcePlan()
 	if err := resourcePlan.Validate(m.config.Render.Components); err != nil {
-		return fmt.Errorf("App Resources are invalid: %w", err)
+		return fmt.Errorf("App resources are invalid: %w", err)
 	}
 	if _, err := project.ResolveServicePlanWithConsumers(resourcePlan, m.config.Render.Components, m.selectedResourceIntent(), m.selectedResourceConsumers()); err != nil {
 		return fmt.Errorf("App services are invalid: %w", err)
@@ -2545,24 +2408,6 @@ func renderFooter(actions []string, termWidth int) string {
 	}
 	bar := panelBorderStyle.Render(strings.Repeat("─", width))
 	return lipgloss.JoinVertical(lipgloss.Left, bar, panelBorderStyle.Render(line))
-}
-
-// resourceEditorFooterActions describes only the controls available on the current resource screen.
-func resourceEditorFooterActions(ui newProjectResourceUI) []string {
-	switch ui.screen {
-	case newProjectResourceScreenSummary:
-		return []string{"Enter to select", "Shift+Tab to go back", "a: advanced", "Esc to go back"}
-	case newProjectResourceScreenAdvanced:
-		actions := []string{"Enter: starting driver", "s: built-in drivers"}
-		if ui.focusedPlacementSelectable() {
-			actions = append(actions, "p: placement")
-		}
-		return append(actions, "r: reset", "Shift+Tab: back")
-	case newProjectResourceScreenSupported:
-		return []string{"Space to toggle", "Enter to finish", "Shift+Tab to go back"}
-	default:
-		return []string{"Enter to select", "Shift+Tab to go back"}
-	}
 }
 
 // newProjectDevelopmentToolsSummary lists generated Compose tooling separately from App services.
@@ -2696,9 +2541,13 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	// project renderer
+	resourcePlan, err := m.selectedResourcePlan()
+	if err != nil {
+		return fmt.Errorf("resolve App resources: %w", err)
+	}
 	i := ComponentRenderInput{
 		renderAll:          true,
-		resourcePlan:       m.selectedResourcePlan(),
+		resourcePlan:       resourcePlan,
 		localServiceIntent: m.selectedResourceIntent(),
 		serviceConsumers:   m.selectedResourceConsumers(),
 	}

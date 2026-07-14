@@ -11,10 +11,7 @@ import (
 // TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis verifies owner-authored named scopes join the local default endpoint.
 func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTS_DRIVER=redis\nCACHE_REPORTS_ADDR=redis:6379\nREDIS_HOST=redis\nREDIS_PORT=6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
 	if err != nil {
@@ -36,10 +33,7 @@ func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
 // TestEffectiveResourceConsumersSeparateExternalRedisEndpoints verifies root resource overrides do not collapse by driver name.
 func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_ADDR=cache.redis.example:6379\nEVENTS_DRIVER=redis\nEVENTS_ADDR=events.redis.example:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
 	if err != nil {
@@ -65,30 +59,12 @@ func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) 
 	if !consumerSets["cache"] || !consumerSets["events"] {
 		t.Fatalf("external consumers = %#v, want cache and events separated", external)
 	}
-	ui, err := newProjectResourceUIForComponents(components)
-	if err != nil {
-		t.Fatalf("create resource UI: %v", err)
-	}
-	ui.plan = plan
-	ui.localServiceIntent = project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	ui.effectiveConsumers = consumers
-	summary, err := ui.serviceSummary()
-	if err != nil {
-		t.Fatalf("summarize effective services: %v", err)
-	}
-	joined := strings.Join(summary.external, " · ")
-	if !strings.Contains(joined, "Redis (cache)") || !strings.Contains(joined, "Redis (events)") {
-		t.Fatalf("external service summary = %q, want endpoint consumers", joined)
-	}
 }
 
 // TestEffectiveResourceConsumersApplyNamedAppOverrides verifies runtime App overlay conventions participate in project-level discovery.
 func TestEffectiveResourceConsumersApplyNamedAppOverrides(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("BILLING_CACHE_DRIVER=redis\nBILLING_CACHE_ADDR=billing.redis.example:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
 	if err != nil {
@@ -107,13 +83,10 @@ func TestEffectiveResourceConsumersApplyNamedAppOverrides(t *testing.T) {
 // TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers keeps App overlays aligned with generated manager fallbacks.
 func TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true, Jobs: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	database, _ := plan.Selection(project.ResourceDatabase)
 	database.Supported = append(database.Supported, "sqlite")
-	plan, err = plan.WithSelection(project.ResourceDatabase, database).Normalized(components)
+	plan, err := plan.WithSelection(project.ResourceDatabase, database).Normalized(components)
 	if err != nil {
 		t.Fatalf("normalize resource plan: %v", err)
 	}
@@ -139,10 +112,7 @@ func TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers(t *t
 // TestEffectiveResourceConsumersCanonicalizeDatabaseAliases keeps root, named, and App overlays compatible with direct generation.
 func TestEffectiveResourceConsumersCanonicalizeDatabaseAliases(t *testing.T) {
 	components := project.Components{DatabasePostgres: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=postgresql\nDB_REPORTS_DRIVER=sqlite3\nBILLING_DB_DRIVER=mariadb\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
 	if err != nil {
@@ -167,10 +137,7 @@ func TestEffectiveResourceConsumersCanonicalizeDatabaseAliases(t *testing.T) {
 // TestEffectiveResourceConsumersResolveDotenvReferences keeps endpoint planning on the generator's full-file parsing contract.
 func TestEffectiveResourceConsumersResolveDotenvReferences(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeSharedRedis, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_ADDR=cache.redis.example:6379\n")
 
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
@@ -211,10 +178,7 @@ func TestResourceAppPrefixesRequireTopologyEvidence(t *testing.T) {
 // TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference protects names containing another resource marker.
 func TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTING_DB_DRIVER=redis\nCACHE_REPORTING_DB_ADDR=redis:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
 	if err != nil {
@@ -246,15 +210,12 @@ func TestResourceAppPrefixesUseTheFirstResourceMarker(t *testing.T) {
 // TestEffectiveResourceConsumersRejectAlternateDatabaseWithoutEndpoint prevents plans for Compose services that are not rendered.
 func TestEffectiveResourceConsumersRejectAlternateDatabaseWithoutEndpoint(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	database, _ := plan.Selection(project.ResourceDatabase)
 	database.Supported = append(database.Supported, "mysql")
 	plan = plan.WithSelection(project.ResourceDatabase, database)
 
-	_, err = effectiveResourceConsumersFromEnvironment([]byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\n"), plan, components, []string{"billing"})
+	_, err := effectiveResourceConsumersFromEnvironment([]byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\n"), plan, components, []string{"billing"})
 	if err == nil || !strings.Contains(err.Error(), "BILLING_DB_HOST") {
 		t.Fatalf("alternate database error = %v, want explicit billing endpoint validation", err)
 	}
@@ -263,10 +224,7 @@ func TestEffectiveResourceConsumersRejectAlternateDatabaseWithoutEndpoint(t *tes
 // TestEffectiveResourceConsumersSeparateAlternateAppDatabase keeps an explicitly external engine out of the local Compose slice.
 func TestEffectiveResourceConsumersSeparateAlternateAppDatabase(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	database, _ := plan.Selection(project.ResourceDatabase)
 	database.Supported = append(database.Supported, "mysql")
 	plan = plan.WithSelection(project.ResourceDatabase, database)
@@ -292,10 +250,7 @@ func TestEffectiveResourceConsumersSeparateAlternateAppDatabase(t *testing.T) {
 // TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase keeps same-engine App scopes on the root Compose service.
 func TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nBILLING_DB_DRIVER=mysql\nBILLING_DB_DATABASE=billing\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
 	if err != nil {
@@ -318,10 +273,7 @@ func TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase(t *testing.T
 // TestEffectiveResourceConsumersDiscoverEndpointOnlyNamedDatabase preserves named scopes that inherit the root driver.
 func TestEffectiveResourceConsumersDiscoverEndpointOnlyNamedDatabase(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_REPORTING_HOST=reporting.mysql.example\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
 	if err != nil {
@@ -346,10 +298,7 @@ func TestEffectiveResourceConsumersDiscoverEndpointOnlyNamedDatabase(t *testing.
 // TestEffectiveResourceConsumersSeparateExternalAppSMTP keeps Mailpit local while reporting an App-owned SMTP endpoint.
 func TestEffectiveResourceConsumersSeparateExternalAppSMTP(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Mail: true}
-	plan, err := project.ResolveResourcePlan(project.ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("resolve resource plan: %v", err)
-	}
+	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("MAIL_DRIVER=smtp\nMAIL_SMTP_HOST=mailpit\nMAIL_SMTP_PORT=1025\nBILLING_MAIL_SMTP_HOST=smtp.billing.example\nBILLING_MAIL_SMTP_PORT=2525\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
 	if err != nil {

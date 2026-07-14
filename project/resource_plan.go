@@ -6,25 +6,14 @@ import (
 	"strings"
 )
 
-// StartingResourceShape identifies the transient normal preset applied by the project wizard.
-type StartingResourceShape string
-
-const (
-	// ResourceShapeStandalone keeps coordinated resources inside the App process.
-	ResourceShapeStandalone StartingResourceShape = "standalone"
-	// ResourceShapeSharedRedis shares coordinated resources through Redis.
-	ResourceShapeSharedRedis StartingResourceShape = "shared_redis"
-)
-
 // DriverSelection records the active implementation and the implementations compiled into an App.
 type DriverSelection struct {
 	Active    string
 	Supported []string
 }
 
-// ResourcePlan is transient wizard and renderer state and is never serialized into project YAML.
+// ResourcePlan records concrete resource selections used by generation and rendering.
 type ResourcePlan struct {
-	Shape           StartingResourceShape
 	Selections      map[ResourceKey]DriverSelection
 	NamedSelections map[string]string
 }
@@ -53,21 +42,9 @@ type LocalServiceIntent struct {
 	Modes map[ServiceKey]LocalServiceMode
 }
 
-// ResourcePlanClassification describes how closely an effective plan matches the normal presets.
-type ResourcePlanClassification struct {
-	Shape         StartingResourceShape
-	Label         string
-	Custom        bool
-	CustomSupport bool
-	Customized    bool
-}
-
-// ResolveResourcePlan expands a normal starting shape into concrete active and built-in drivers.
-func ResolveResourcePlan(shape StartingResourceShape, components Components) (ResourcePlan, error) {
-	if shape != ResourceShapeStandalone && shape != ResourceShapeSharedRedis {
-		return ResourcePlan{}, fmt.Errorf("unknown starting resource shape %q", shape)
-	}
-	plan := ResourcePlan{Shape: shape, Selections: map[ResourceKey]DriverSelection{}}
+// DefaultResourcePlan returns local starting drivers with the common Redis alternatives included.
+func DefaultResourcePlan(components Components) (ResourcePlan, error) {
+	plan := ResourcePlan{Selections: map[ResourceKey]DriverSelection{}}
 	if components.HasDatabase() {
 		driver := components.DatabaseDriver()
 		if components.DemoApp {
@@ -82,18 +59,10 @@ func ResolveResourcePlan(shape StartingResourceShape, components Components) (Re
 		}
 		plan.Selections[ResourceDatabase] = DriverSelection{Active: driver, Supported: supported}
 	}
-	if shape == ResourceShapeSharedRedis {
-		plan.Selections[ResourceCache] = DriverSelection{Active: "redis", Supported: []string{"memory", "redis"}}
-		plan.Selections[ResourceEvents] = DriverSelection{Active: "redis", Supported: []string{"inproc", "redis"}}
-		if components.Jobs {
-			plan.Selections[ResourceQueue] = DriverSelection{Active: "redis", Supported: []string{"workerpool", "redis"}}
-		}
-	} else {
-		plan.Selections[ResourceCache] = DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}}
-		plan.Selections[ResourceEvents] = DriverSelection{Active: "inproc", Supported: []string{"inproc", "redis"}}
-		if components.Jobs {
-			plan.Selections[ResourceQueue] = DriverSelection{Active: "workerpool", Supported: []string{"workerpool", "redis"}}
-		}
+	plan.Selections[ResourceCache] = DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}}
+	plan.Selections[ResourceEvents] = DriverSelection{Active: "inproc", Supported: []string{"inproc", "redis"}}
+	if components.Jobs {
+		plan.Selections[ResourceQueue] = DriverSelection{Active: "workerpool", Supported: []string{"workerpool", "redis"}}
 	}
 	plan.Selections[ResourceStorage] = DriverSelection{Active: "local", Supported: []string{"local"}}
 	if components.Mail {
@@ -103,14 +72,13 @@ func ResolveResourcePlan(shape StartingResourceShape, components Components) (Re
 		}
 		plan.Selections[ResourceMail] = DriverSelection{Active: active, Supported: []string{"log", "smtp"}}
 	}
-	plan.NamedSelections = defaultGeneratedNamedDrivers(plan.Shape, components, plan.Selections)
+	plan.NamedSelections = defaultGeneratedNamedDrivers(components)
 	return plan.Normalized(components)
 }
 
-// Clone returns a deep copy suitable for Bubble Tea value-model transitions.
+// Clone returns a deep copy so plan changes do not alias prior values.
 func (p ResourcePlan) Clone() ResourcePlan {
 	cloned := ResourcePlan{
-		Shape:           p.Shape,
 		Selections:      make(map[ResourceKey]DriverSelection, len(p.Selections)),
 		NamedSelections: make(map[string]string, len(p.NamedSelections)),
 	}
@@ -179,7 +147,7 @@ func (p ResourcePlan) Normalized(components Components) (ResourcePlan, error) {
 			return ResourcePlan{}, fmt.Errorf("resource plan contains unknown generated named resource %q", key)
 		}
 	}
-	normalized := ResourcePlan{Shape: p.Shape, Selections: map[ResourceKey]DriverSelection{}, NamedSelections: map[string]string{}}
+	normalized := ResourcePlan{Selections: map[ResourceKey]DriverSelection{}, NamedSelections: map[string]string{}}
 	for _, definition := range resourceCatalog {
 		selection, exists := p.Selections[definition.Key]
 		if !definition.AppliesTo(components) {
@@ -237,26 +205,20 @@ func (p ResourcePlan) Validate(components Components) error {
 	return err
 }
 
-// GeneratedNamedSelections resolves framework-owned named resources from the plan's current base shape.
+// GeneratedNamedSelections resolves framework-owned named resources from concrete overrides or catalog defaults.
 func (p ResourcePlan) GeneratedNamedSelections(components Components) []GeneratedNamedResourceSelection {
 	selections := []GeneratedNamedResourceSelection{}
 	for _, definition := range resourceCatalog {
 		if !definition.AppliesTo(components) {
 			continue
 		}
-		root, rootExists := p.Selections[definition.Key]
 		for _, named := range definition.NamedResources {
 			if named.RequiredComponent != "" && !components.Enabled(named.RequiredComponent) {
 				continue
 			}
 			driver, explicit := p.NamedSelections[named.EnvironmentKey]
 			if !explicit {
-				driver = named.StandaloneDriver
-				if named.InheritRoot && rootExists {
-					driver = root.Active
-				} else if p.Shape == ResourceShapeSharedRedis {
-					driver = named.SharedDriver
-				}
+				driver = named.DefaultDriver
 			}
 			selections = append(selections, GeneratedNamedResourceSelection{
 				Resource:       named.Resource,
@@ -270,10 +232,10 @@ func (p ResourcePlan) GeneratedNamedSelections(components Components) []Generate
 	return selections
 }
 
-// defaultGeneratedNamedDrivers resolves preset-owned named selections before user or environment overrides exist.
-func defaultGeneratedNamedDrivers(shape StartingResourceShape, components Components, roots map[ResourceKey]DriverSelection) map[string]string {
+// defaultGeneratedNamedDrivers resolves catalog-owned defaults before user or environment overrides exist.
+func defaultGeneratedNamedDrivers(components Components) map[string]string {
 	drivers := map[string]string{}
-	plan := ResourcePlan{Shape: shape, Selections: roots}
+	plan := ResourcePlan{}
 	for _, selection := range plan.GeneratedNamedSelections(components) {
 		drivers[selection.EnvironmentKey] = selection.Active
 	}
@@ -296,44 +258,7 @@ func (i LocalServiceIntent) WithMode(key ServiceKey, mode LocalServiceMode) Loca
 	return LocalServiceIntent{Modes: modes}
 }
 
-// ClassifyResourcePlan derives a truthful normal, custom-support, or custom display label.
-func ClassifyResourcePlan(plan ResourcePlan, components Components) ResourcePlanClassification {
-	normalized, err := plan.Normalized(components)
-	if err != nil {
-		return ResourcePlanClassification{Label: "Custom", Custom: true}
-	}
-	for _, shape := range []StartingResourceShape{ResourceShapeStandalone, ResourceShapeSharedRedis} {
-		preset, presetErr := ResolveResourcePlan(shape, components)
-		if presetErr != nil || !shapeManagedActiveEqual(normalized, preset, components) {
-			continue
-		}
-		classification := ResourcePlanClassification{Shape: shape, Label: shape.Label()}
-		classification.CustomSupport = !shapeManagedSupportEqual(normalized, preset, components)
-		classification.Customized = independentResourcesDiffer(normalized, preset, components)
-		if classification.CustomSupport {
-			classification.Label += " · custom support"
-		}
-		if classification.Customized {
-			classification.Label += " · customized"
-		}
-		return classification
-	}
-	return ResourcePlanClassification{Label: "Custom", Custom: true}
-}
-
-// Label returns the user-facing name for a normal starting resource shape.
-func (s StartingResourceShape) Label() string {
-	switch s {
-	case ResourceShapeSharedRedis:
-		return "Shared through Redis"
-	case ResourceShapeStandalone:
-		return "Standalone resources"
-	default:
-		return "Custom"
-	}
-}
-
-// cloneDriverSelection prevents supported-driver slices from aliasing across wizard states.
+// cloneDriverSelection prevents supported-driver slices from aliasing across plan values.
 func cloneDriverSelection(selection DriverSelection) DriverSelection {
 	return DriverSelection{Active: selection.Active, Supported: append([]string(nil), selection.Supported...)}
 }
@@ -378,66 +303,4 @@ func containsDriver(drivers []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// shapeManagedActiveEqual compares only the resources and generated names owned by a normal shape.
-func shapeManagedActiveEqual(left ResourcePlan, right ResourcePlan, components Components) bool {
-	for _, key := range []ResourceKey{ResourceCache, ResourceQueue, ResourceEvents} {
-		leftSelection, leftOK := left.Selections[key]
-		rightSelection, rightOK := right.Selections[key]
-		if leftOK != rightOK || (leftOK && leftSelection.Active != rightSelection.Active) {
-			return false
-		}
-	}
-	leftNamed := left.GeneratedNamedSelections(components)
-	rightNamed := right.GeneratedNamedSelections(components)
-	if len(leftNamed) != len(rightNamed) {
-		return false
-	}
-	for index := range leftNamed {
-		if leftNamed[index].EnvironmentKey != rightNamed[index].EnvironmentKey || leftNamed[index].Active != rightNamed[index].Active {
-			return false
-		}
-	}
-	return true
-}
-
-// shapeManagedSupportEqual detects portability edits without treating independent resources as shape changes.
-func shapeManagedSupportEqual(left ResourcePlan, right ResourcePlan, _ Components) bool {
-	for _, key := range []ResourceKey{ResourceCache, ResourceQueue, ResourceEvents} {
-		leftSelection, leftOK := left.Selections[key]
-		rightSelection, rightOK := right.Selections[key]
-		if leftOK != rightOK || (leftOK && !driverSlicesEqual(leftSelection.Supported, rightSelection.Supported)) {
-			return false
-		}
-	}
-	return true
-}
-
-// independentResourcesDiffer records Advanced Mail or Storage edits without allowing Database to rename the shape.
-func independentResourcesDiffer(left ResourcePlan, right ResourcePlan, _ Components) bool {
-	for _, key := range []ResourceKey{ResourceStorage, ResourceMail} {
-		leftSelection, leftOK := left.Selections[key]
-		rightSelection, rightOK := right.Selections[key]
-		if leftOK != rightOK {
-			return true
-		}
-		if leftOK && (leftSelection.Active != rightSelection.Active || !driverSlicesEqual(leftSelection.Supported, rightSelection.Supported)) {
-			return true
-		}
-	}
-	return false
-}
-
-// driverSlicesEqual compares normalized ordered build contracts.
-func driverSlicesEqual(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }

@@ -67,7 +67,7 @@ func reconcileNewProjectTargetResources(
 		}
 		if legacyApplied {
 			result.hasOverrides = true
-			result.overrideSummary = "Queue active: " + legacyQueueDriver + " (legacy config)"
+			result.overrideSummary = "Jobs default: " + legacyQueueDriver + " (legacy config)"
 		}
 		return result, nil
 	}
@@ -98,7 +98,7 @@ func reconcileNewProjectTargetResources(
 		queue, queueExists := effective.Selection(project.ResourceQueue)
 		if queueExists && queue.Active == strings.ToLower(strings.TrimSpace(legacyQueueDriver)) {
 			if active, activeSet := envAssignment(strings.Split(string(source), "\n"), "QUEUE_DRIVER"); !activeSet || strings.TrimSpace(active) == "" {
-				overrides = append(overrides, "Queue active: "+queue.Active+" (legacy config)")
+				overrides = append(overrides, "Jobs default: "+queue.Active+" (legacy config)")
 			}
 		}
 	}
@@ -175,11 +175,7 @@ func completeNewProjectTargetResourceSeed(
 	legacyApplied := false
 	if components.Jobs {
 		if _, queueSelected := seed.Selection(project.ResourceQueue); !queueSelected {
-			shape := seed.Shape
-			if shape == "" {
-				shape = project.ResourceShapeStandalone
-			}
-			fallback, err := project.ResolveResourcePlan(shape, components)
+			fallback, err := project.DefaultResourcePlan(components)
 			if err != nil {
 				return project.ResourcePlan{}, false, fmt.Errorf("resolve target queue fallback: %w", err)
 			}
@@ -218,10 +214,10 @@ func describeNewProjectTargetResourceOverrides(
 			continue
 		}
 		if proposedSelection.Active != effectiveSelection.Active {
-			overrides = append(overrides, definition.Label+" active: "+effectiveSelection.Active)
+			overrides = append(overrides, newProjectResourceDisplayLabel(definition)+" default: "+newProjectResourceDriverLabel(definition.Key, effectiveSelection.Active))
 		}
 		if !newProjectTargetDriverListsEqual(proposedSelection.Supported, effectiveSelection.Supported) {
-			overrides = append(overrides, definition.Label+" built in: "+strings.Join(effectiveSelection.Supported, ","))
+			overrides = append(overrides, newProjectResourceDisplayLabel(definition)+" included: "+newProjectResourceSupportedLabels(definition, effectiveSelection.Supported))
 		}
 	}
 
@@ -232,7 +228,7 @@ func describeNewProjectTargetResourceOverrides(
 	for _, named := range effective.GeneratedNamedSelections(components) {
 		previous, ok := proposedNamed[named.EnvironmentKey]
 		if ok && previous.Active != named.Active {
-			overrides = append(overrides, named.Label+" active: "+named.Active)
+			overrides = append(overrides, named.Label+" default: "+newProjectResourceDriverLabel(named.Resource, named.Active))
 		}
 	}
 
@@ -347,6 +343,41 @@ func newProjectTargetDriverListsEqual(left []string, right []string) bool {
 		}
 	}
 	return true
+}
+
+// newProjectResourceDriverLabel resolves catalog labels so target overrides use the same language as Components.
+func newProjectResourceDriverLabel(key project.ResourceKey, driver string) string {
+	definition, ok := project.ResourceDefinitionByKey(key)
+	if ok {
+		if driverDefinition, exists := definition.Driver(driver); exists {
+			return driverDefinition.Label
+		}
+	}
+	if driver == "" {
+		return "<pending>"
+	}
+	return strings.ToUpper(driver[:1]) + driver[1:]
+}
+
+// newProjectResourceDisplayLabel uses application language where the catalog retains an implementation-oriented name.
+func newProjectResourceDisplayLabel(definition project.ResourceDefinition) string {
+	if definition.Key == project.ResourceQueue {
+		return "Jobs"
+	}
+	return definition.Label
+}
+
+// newProjectResourceSupportedLabels formats included drivers using their catalog labels.
+func newProjectResourceSupportedLabels(definition project.ResourceDefinition, supported []string) string {
+	labels := make([]string, 0, len(supported))
+	for _, driver := range supported {
+		if driverDefinition, ok := definition.Driver(driver); ok {
+			labels = append(labels, driverDefinition.Label)
+			continue
+		}
+		labels = append(labels, driver)
+	}
+	return strings.Join(labels, ", ")
 }
 
 // cloneNewProjectTargetServiceIntent prevents target reconciliation from mutating the wizard's proposed placement map.

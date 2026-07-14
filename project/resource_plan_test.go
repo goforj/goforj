@@ -6,51 +6,36 @@ import (
 	"testing"
 )
 
-// TestResolveResourcePlanNormalShapes locks the compact wizard presets to concrete driver contracts.
-func TestResolveResourcePlanNormalShapes(t *testing.T) {
+// TestDefaultResourcePlan locks the portable defaults and built-in transition drivers to concrete contracts.
+func TestDefaultResourcePlan(t *testing.T) {
 	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true}
-	tests := []struct {
-		name        string
-		shape       StartingResourceShape
-		wantCache   string
-		wantQueue   string
-		wantEvents  string
-		wantSession string
-	}{
-		{name: "standalone", shape: ResourceShapeStandalone, wantCache: "memory", wantQueue: "workerpool", wantEvents: "inproc", wantSession: "memory"},
-		{name: "shared", shape: ResourceShapeSharedRedis, wantCache: "redis", wantQueue: "redis", wantEvents: "redis", wantSession: "redis"},
+	plan, err := DefaultResourcePlan(components)
+	if err != nil {
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			plan, err := ResolveResourcePlan(test.shape, components)
-			if err != nil {
-				t.Fatalf("ResolveResourcePlan returned error: %v", err)
-			}
-			assertResourceSelection(t, plan, ResourceCache, test.wantCache, []string{"memory", "redis"})
-			assertResourceSelection(t, plan, ResourceQueue, test.wantQueue, []string{"workerpool", "redis"})
-			assertResourceSelection(t, plan, ResourceEvents, test.wantEvents, []string{"inproc", "redis"})
-			assertResourceSelection(t, plan, ResourceStorage, "local", []string{"local"})
-			assertResourceSelection(t, plan, ResourceMail, "smtp", []string{"log", "smtp"})
-			assertResourceSelection(t, plan, ResourceDatabase, "mysql", []string{"mysql"})
-			named := namedResourceSelectionsByKey(plan.GeneratedNamedSelections(components))
-			if named["CACHE_SESSIONS_DRIVER"].Active != test.wantSession {
-				t.Fatalf("sessions driver = %q, want %q", named["CACHE_SESSIONS_DRIVER"].Active, test.wantSession)
-			}
-			if named["CACHE_INSPECTS_DRIVER"].Active != "memory" || named["CACHE_LIGHTHOUSE_DRIVER"].Active != "memory" {
-				t.Fatalf("diagnostic named caches must remain memory: %#v", named)
-			}
-			if named["STORAGE_PUBLIC_DRIVER"].Active != "local" {
-				t.Fatalf("public storage must retain its generated local default: %#v", named)
-			}
-		})
+	assertResourceSelection(t, plan, ResourceCache, "memory", []string{"memory", "redis"})
+	assertResourceSelection(t, plan, ResourceQueue, "workerpool", []string{"workerpool", "redis"})
+	assertResourceSelection(t, plan, ResourceEvents, "inproc", []string{"inproc", "redis"})
+	assertResourceSelection(t, plan, ResourceStorage, "local", []string{"local"})
+	assertResourceSelection(t, plan, ResourceMail, "smtp", []string{"log", "smtp"})
+	assertResourceSelection(t, plan, ResourceDatabase, "mysql", []string{"mysql"})
+
+	named := namedResourceSelectionsByKey(plan.GeneratedNamedSelections(components))
+	for _, key := range []string{"CACHE_SESSIONS_DRIVER", "CACHE_INSPECTS_DRIVER", "CACHE_LIGHTHOUSE_DRIVER"} {
+		if named[key].Active != "memory" {
+			t.Fatalf("named cache %s = %q, want memory", key, named[key].Active)
+		}
+	}
+	if named["STORAGE_PUBLIC_DRIVER"].Active != "local" {
+		t.Fatalf("public storage must retain its generated local default: %#v", named)
 	}
 }
 
-// TestResolveResourcePlanOmitsDisabledCapabilities keeps dormant resources out of generation and service planning.
-func TestResolveResourcePlanOmitsDisabledCapabilities(t *testing.T) {
-	plan, err := ResolveResourcePlan(ResourceShapeSharedRedis, Components{DatabaseSQLite: true})
+// TestDefaultResourcePlanOmitsDisabledCapabilities keeps dormant resources out of generation and service planning.
+func TestDefaultResourcePlanOmitsDisabledCapabilities(t *testing.T) {
+	plan, err := DefaultResourcePlan(Components{DatabaseSQLite: true})
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	if _, ok := plan.Selection(ResourceQueue); ok {
 		t.Fatal("Jobs-disabled plan contains a queue selection")
@@ -64,9 +49,9 @@ func TestResolveResourcePlanOmitsDisabledCapabilities(t *testing.T) {
 // TestResourcePlanNormalizationRejectsInvalidContracts proves active and built-in values cannot drift.
 func TestResourcePlanNormalizationRejectsInvalidContracts(t *testing.T) {
 	components := Components{DatabaseMySQL: true, Jobs: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	selection, _ := plan.Selection(ResourceQueue)
 	selection.Active = "redis"
@@ -87,9 +72,9 @@ func TestResourcePlanNormalizationRejectsInvalidContracts(t *testing.T) {
 // TestResourcePlanNormalizationRejectsUnknownKeys prevents misspelled transient state from disappearing during normalization.
 func TestResourcePlanNormalizationRejectsUnknownKeys(t *testing.T) {
 	components := Components{DatabaseMySQL: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	withUnknownResource := plan.Clone()
 	withUnknownResource.Selections[ResourceKey("cahce")] = DriverSelection{Active: "memory", Supported: []string{"memory"}}
@@ -106,9 +91,9 @@ func TestResourcePlanNormalizationRejectsUnknownKeys(t *testing.T) {
 // TestResourcePlanNormalizationCanonicalizesDatabaseAliases preserves generator-compatible owner values at the catalog boundary.
 func TestResourcePlanNormalizationCanonicalizesDatabaseAliases(t *testing.T) {
 	components := Components{DatabasePostgres: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	database, _ := plan.Selection(ResourceDatabase)
 	database.Active = "postgresql"
@@ -120,15 +105,15 @@ func TestResourcePlanNormalizationCanonicalizesDatabaseAliases(t *testing.T) {
 	assertResourceSelection(t, normalized, ResourceDatabase, "postgres", []string{"sqlite", "postgres"})
 }
 
-// TestResourcePlanNamedRequirementsLockRootSupport protects generated Auth session portability.
+// TestResourcePlanNamedRequirementsLockRootSupport protects generated named-resource portability.
 func TestResourcePlanNamedRequirementsLockRootSupport(t *testing.T) {
 	components := Components{DatabaseMySQL: true, Auth: true}
-	plan, err := ResolveResourcePlan(ResourceShapeSharedRedis, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
+	plan = plan.WithNamedSelection("CACHE_SESSIONS_DRIVER", "redis")
 	cache, _ := plan.Selection(ResourceCache)
-	cache.Active = "memory"
 	cache.Supported = []string{"memory"}
 	err = plan.WithSelection(ResourceCache, cache).Validate(components)
 	if err == nil || !strings.Contains(err.Error(), "Auth sessions") {
@@ -144,47 +129,12 @@ func TestResourcePlanNamedRequirementsLockRootSupport(t *testing.T) {
 	}
 }
 
-// TestClassifyResourcePlan distinguishes normal, support-only, independent, and active-driver edits.
-func TestClassifyResourcePlan(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
-	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
-	}
-	classification := ClassifyResourcePlan(plan, components)
-	if classification.Label != "Standalone resources" || classification.Custom {
-		t.Fatalf("classification = %#v", classification)
-	}
-
-	cache, _ := plan.Selection(ResourceCache)
-	cache.Supported = append(cache.Supported, "file")
-	classification = ClassifyResourcePlan(plan.WithSelection(ResourceCache, cache), components)
-	if classification.Label != "Standalone resources · custom support" {
-		t.Fatalf("support classification = %#v", classification)
-	}
-
-	storage, _ := plan.Selection(ResourceStorage)
-	storage.Active = "memory"
-	storage.Supported = []string{"local", "memory"}
-	classification = ClassifyResourcePlan(plan.WithSelection(ResourceStorage, storage), components)
-	if classification.Label != "Standalone resources · customized" {
-		t.Fatalf("storage classification = %#v", classification)
-	}
-
-	events, _ := plan.Selection(ResourceEvents)
-	events.Active = "redis"
-	classification = ClassifyResourcePlan(plan.WithSelection(ResourceEvents, events), components)
-	if classification.Label != "Custom" || !classification.Custom {
-		t.Fatalf("active classification = %#v", classification)
-	}
-}
-
-// TestResolveResourcePlanPreservesDemoDatabaseContract keeps the current starter migration compatibility explicit.
-func TestResolveResourcePlanPreservesDemoDatabaseContract(t *testing.T) {
+// TestDefaultResourcePlanPreservesDemoDatabaseContract keeps the current starter migration compatibility explicit.
+func TestDefaultResourcePlanPreservesDemoDatabaseContract(t *testing.T) {
 	components := Components{DemoApp: true, DatabaseMySQL: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	assertResourceSelection(t, plan, ResourceDatabase, "mysql", []string{"sqlite", "mysql"})
 }
@@ -192,9 +142,9 @@ func TestResolveResourcePlanPreservesDemoDatabaseContract(t *testing.T) {
 // TestResourcePlanNormalizationRequiresDemoSQLiteFallback keeps Advanced edits from narrowing the Demo database build contract.
 func TestResourcePlanNormalizationRequiresDemoSQLiteFallback(t *testing.T) {
 	components := Components{DemoApp: true, DatabaseMySQL: true}
-	plan, err := ResolveResourcePlan(ResourceShapeStandalone, components)
+	plan, err := DefaultResourcePlan(components)
 	if err != nil {
-		t.Fatalf("ResolveResourcePlan returned error: %v", err)
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
 	database, _ := plan.Selection(ResourceDatabase)
 	database.Supported = []string{"mysql"}

@@ -114,25 +114,22 @@ type DriverDefinition struct {
 	Service              ServiceKey
 	ServiceLabel         string
 	LocallyProvisionable bool
-	PlacementSelectable  bool
 	EndpointEnvironment  []DriverEnvironmentPlaceholder
 	Environment          []DriverEnvironmentPlaceholder
 	Order                int
 }
 
-// GeneratedNamedResourceDefinition describes a framework-owned named resource seeded by the wizard.
+// GeneratedNamedResourceDefinition describes a framework-owned named resource seeded during generation.
 type GeneratedNamedResourceDefinition struct {
 	Resource          ResourceKey
 	Name              string
 	Label             string
 	EnvironmentKey    string
 	RequiredComponent ComponentKey
-	StandaloneDriver  string
-	SharedDriver      string
-	InheritRoot       bool
+	DefaultDriver     string
 }
 
-// ResourceDefinition describes one resource, its driver inventory, and its normal preset policy.
+// ResourceDefinition describes one resource and its driver inventory.
 type ResourceDefinition struct {
 	Key            ResourceKey
 	Label          string
@@ -162,7 +159,7 @@ var resourceCatalog = []ResourceDefinition{
 			{Name: "memory", Label: "Memory", Description: "runs inside the App process", Group: DriverGroupLocal, Order: 10},
 			{Name: "file", Label: "File", Description: "writes cache entries to the local filesystem", Group: DriverGroupLocal, Order: 20},
 			{Name: "null", Label: "Null", Description: "discards cached values", Group: DriverGroupDevelopment, Order: 30},
-			{Name: "redis", Label: "Redis", Description: "shares cache entries across App processes", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, PlacementSelectable: true, Order: 40},
+			{Name: "redis", Label: "Redis", Description: "shares cache entries across App processes", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 40},
 			{Name: "memcached", Label: "Memcached", Description: "requires an external Memcached service", Group: DriverGroupShared, Service: ServiceCacheMemcached, ServiceLabel: "Memcached for cache", Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("CACHE_ADDRESSES", "", "comma-separated Memcached addresses"),
 			}, Order: 50},
@@ -182,10 +179,10 @@ var resourceCatalog = []ResourceDefinition{
 			}, Order: 100},
 		},
 		NamedResources: []GeneratedNamedResourceDefinition{
-			{Resource: ResourceCache, Name: "inspects", Label: "Inspection cache", EnvironmentKey: "CACHE_INSPECTS_DRIVER", StandaloneDriver: "memory", SharedDriver: "memory"},
-			{Resource: ResourceCache, Name: "lighthouse", Label: "Lighthouse cache", EnvironmentKey: "CACHE_LIGHTHOUSE_DRIVER", StandaloneDriver: "memory", SharedDriver: "memory"},
-			{Resource: ResourceCache, Name: "settings", Label: "Demo settings cache", EnvironmentKey: "CACHE_SETTINGS_DRIVER", RequiredComponent: ComponentDemoApp, StandaloneDriver: "memory", SharedDriver: "memory"},
-			{Resource: ResourceCache, Name: "sessions", Label: "Auth sessions", EnvironmentKey: "CACHE_SESSIONS_DRIVER", RequiredComponent: ComponentAuth, StandaloneDriver: "memory", SharedDriver: "redis"},
+			{Resource: ResourceCache, Name: "inspects", Label: "Inspection cache", EnvironmentKey: "CACHE_INSPECTS_DRIVER", DefaultDriver: "memory"},
+			{Resource: ResourceCache, Name: "lighthouse", Label: "Lighthouse cache", EnvironmentKey: "CACHE_LIGHTHOUSE_DRIVER", DefaultDriver: "memory"},
+			{Resource: ResourceCache, Name: "settings", Label: "Demo settings cache", EnvironmentKey: "CACHE_SETTINGS_DRIVER", RequiredComponent: ComponentDemoApp, DefaultDriver: "memory"},
+			{Resource: ResourceCache, Name: "sessions", Label: "Auth sessions", EnvironmentKey: "CACHE_SESSIONS_DRIVER", RequiredComponent: ComponentAuth, DefaultDriver: "memory"},
 		},
 		applicable: func(Components) bool { return true },
 	},
@@ -197,7 +194,7 @@ var resourceCatalog = []ResourceDefinition{
 			{Name: "null", Label: "Null", Description: "accepts and discards jobs", Group: DriverGroupDevelopment, Order: 10},
 			{Name: "sync", Label: "Sync", Description: "runs jobs inline", Group: DriverGroupDevelopment, Order: 20},
 			{Name: "workerpool", Label: "Workerpool", Description: "runs jobs inside the App process", Group: DriverGroupLocal, Order: 30},
-			{Name: "redis", Label: "Redis", Description: "shares jobs across App processes", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, PlacementSelectable: true, Order: 40},
+			{Name: "redis", Label: "Redis", Description: "shares jobs across App processes", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 40},
 			{Name: "nats", Label: "NATS", Description: "requires a NATS service", Group: DriverGroupShared, Service: ServiceQueueNATS, ServiceLabel: "NATS for queue", Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("QUEUE_URL", "nats://127.0.0.1:4222", "resource-specific NATS URL"),
 			}, Order: 50},
@@ -227,7 +224,7 @@ var resourceCatalog = []ResourceDefinition{
 		Drivers: []DriverDefinition{
 			{Name: "inproc", Label: "In-process", Description: "runs inside the App process", Group: DriverGroupLocal, Order: 10},
 			{Name: "null", Label: "Null", Description: "discards events", Group: DriverGroupDevelopment, Order: 20},
-			{Name: "redis", Label: "Redis", Description: "shares events across App processes", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, PlacementSelectable: true, Order: 30},
+			{Name: "redis", Label: "Redis", Description: "shares events across App processes", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 30},
 			{Name: "nats", Label: "NATS", Description: "requires a NATS service", Group: DriverGroupShared, Service: ServiceEventsNATS, ServiceLabel: "NATS for events", Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("EVENTS_URL", "nats://127.0.0.1:4222", "resource-specific NATS URL"),
 			}, Order: 40},
@@ -255,7 +252,7 @@ var resourceCatalog = []ResourceDefinition{
 		Drivers: []DriverDefinition{
 			{Name: "local", Label: "Local", Description: "writes files to the local filesystem", Group: DriverGroupLocal, Order: 10},
 			{Name: "memory", Label: "Memory", Description: "keeps files inside the App process", Group: DriverGroupLocal, Order: 20},
-			{Name: "redis", Label: "Redis", Description: "stores files in Redis", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, PlacementSelectable: true, Order: 30},
+			{Name: "redis", Label: "Redis", Description: "stores files in Redis", Group: DriverGroupShared, Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 30},
 			{Name: "ftp", Label: "FTP", Description: "requires an external FTP service", Group: DriverGroupShared, Service: ServiceStorageFTP, ServiceLabel: "FTP for storage", Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("STORAGE_HOST", "", "FTP host"),
 				driverEnvironmentPlaceholder("STORAGE_USER", "", "FTP user"),
@@ -289,8 +286,8 @@ var resourceCatalog = []ResourceDefinition{
 			}, Order: 90},
 		},
 		NamedResources: []GeneratedNamedResourceDefinition{
-			{Resource: ResourceStorage, Name: "public", Label: "Public storage", EnvironmentKey: "STORAGE_PUBLIC_DRIVER", StandaloneDriver: "local", SharedDriver: "local"},
-			{Resource: ResourceStorage, Name: "favicons", Label: "Demo favicon storage", EnvironmentKey: "STORAGE_FAVICONS_DRIVER", RequiredComponent: ComponentDemoApp, StandaloneDriver: "local", SharedDriver: "local"},
+			{Resource: ResourceStorage, Name: "public", Label: "Public storage", EnvironmentKey: "STORAGE_PUBLIC_DRIVER", DefaultDriver: "local"},
+			{Resource: ResourceStorage, Name: "favicons", Label: "Demo favicon storage", EnvironmentKey: "STORAGE_FAVICONS_DRIVER", RequiredComponent: ComponentDemoApp, DefaultDriver: "local"},
 		},
 		applicable: func(Components) bool { return true },
 	},
@@ -385,7 +382,7 @@ func CanonicalResourceDriver(resource ResourceKey, name string) string {
 	}
 }
 
-// cloneResourceDefinition prevents wizard edits from mutating the process-wide catalog.
+// cloneResourceDefinition prevents callers from mutating the process-wide catalog.
 func cloneResourceDefinition(definition ResourceDefinition) ResourceDefinition {
 	cloned := definition
 	cloned.Drivers = make([]DriverDefinition, len(definition.Drivers))
