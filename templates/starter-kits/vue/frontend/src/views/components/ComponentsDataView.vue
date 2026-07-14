@@ -280,7 +280,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { getLocalTimeZone, parseDate, today } from '@internationalized/date'
-import { Search } from 'lucide-vue-next'
+import { Search } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'

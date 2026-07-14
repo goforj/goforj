@@ -199,7 +199,7 @@
 
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
-import { ArrowRight, CircleCheckBig, Database, Layers3, LayoutTemplate, LoaderCircle, MousePointerClick, Plus, Sparkles, Workflow } from 'lucide-vue-next'
+import { ArrowRight, CircleCheckBig, Database, Layers3, LayoutTemplate, LoaderCircle, MousePointerClick, Plus, Sparkles, Workflow } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
