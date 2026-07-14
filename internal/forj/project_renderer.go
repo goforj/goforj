@@ -1611,6 +1611,9 @@ func (p *ProjectRenderer) setAppDevRun(name string, command string) {
 		delete(p.config.Dev.Run, name)
 	}
 	app := project.DefaultNamedApp(name)
+	if tasks, migrated := migrateGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); migrated {
+		p.config.Dev.Pre = tasks
+	}
 	if command == "" {
 		if p.config.Dev.Apps != nil {
 			delete(p.config.Dev.Apps, name)
@@ -1631,7 +1634,7 @@ func (p *ProjectRenderer) setAppDevRun(name string, command string) {
 	p.config.Dev.Apps[name] = configured
 	if len(configured.SPAs) > 0 {
 		task := generatedDevFrontendInstallTask(app)
-		if !hasDevTask(p.config.Dev.Pre, task) {
+		if !hasDevFrontendInstallTask(p.config.Dev.Pre, app) {
 			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
 		}
 	} else if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); removed {
@@ -2247,6 +2250,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	if migrateGeneratedDevWatchers(p.config) {
 		changed = true
 	}
+	if migrateGeneratedDevFrontendInstallTasks(p.config) {
+		changed = true
+	}
 	for i := range p.config.Dev.Watches {
 		normalized := p.config.Dev.Watches[i].Watch
 		if isGeneratedLegacyBuildWatcher(p.config.Dev.Watches[i]) {
@@ -2265,7 +2271,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	}
 	if p.config.Render.Components.WebUI && project.StarterKitUsesNPM(p.config.Render.StarterKit) && !p.config.Render.Components.DemoApp {
 		task := generatedDevFrontendInstallTask(project.DefaultApp())
-		if !hasDevTask(p.config.Dev.Pre, task) {
+		if !hasDevFrontendInstallTask(p.config.Dev.Pre, project.DefaultApp()) {
 			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
 			changed = true
 		}
@@ -5036,7 +5042,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 
 	if p.config != nil {
 		if p.config.Render.Components.WebUI {
-			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && npm install"
+			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && " + generatedFrontendNPMInstallCommand
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render(cmd)))
 		}
 		if p.config.Render.StarterKit != project.StarterKitNone && p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {

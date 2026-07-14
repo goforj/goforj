@@ -999,7 +999,7 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 
 	foundInstall := false
 	for _, task := range m.config.Dev.Pre {
-		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd cmd/app/frontend && npm install" {
+		if task == generatedDevFrontendInstallTask(project.DefaultApp()) {
 			foundInstall = true
 			break
 		}
