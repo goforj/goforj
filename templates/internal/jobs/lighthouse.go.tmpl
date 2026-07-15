@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"math/rand"
 {{- end }}
 	"net"
@@ -29,13 +29,13 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/inspects"
@@ -47,15 +47,15 @@ import (
 
 // LighthouseRuntime boots the dev console agent for the jobs process.
 type LighthouseRuntime struct {
-	agent       *lighthouse.Agent
-	logger      *logger.AppLogger
-	queues      *queues.Manager
+	agent        *lighthouse.Agent
+	logger       *logger.AppLogger
+	queues       *queues.Manager
 	defaultQueue *queue.Queue
-	timeline    *queueTimeline
-	benchmarks  *benchmarkRunner
-	inspects    *inspects.Manager
-{{- if .Components.Metrics }}
-	metrics     *metrics.Manager
+	timeline     *queueTimeline
+	benchmarks   *benchmarkRunner
+	inspects     *inspects.Manager
+{{- if .ProjectComponents.Metrics }}
+	metrics      *metrics.Manager
 {{- end }}
 }
 
@@ -73,10 +73,10 @@ func NewLighthouseRuntime(
 {{- end }}
 	queues *queues.Manager,
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
 ) *LighthouseRuntime {
@@ -94,14 +94,14 @@ func NewLighthouseRuntime(
 		defaultQueue: queues.Default(),
 		timeline:     newQueueTimeline(lighthouseCacheStore),
 		inspects:     inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metrics:      metricsManager,
 {{- end }}
 		benchmarks: newBenchmarkRunner(caches, queues,
 {{- if .ProjectComponents.Storage }}
 			storage,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 			dbConnections,
 {{- else }}
 			nil,
@@ -116,7 +116,7 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
-	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .ProjectComponents.Metrics }}, {{- if .Components.Metrics }} c.metrics{{- else }} nil{{- end }}{{- end }})
+	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .ProjectComponents.Metrics }}, c.metrics{{- end }})
 	c.inspects.SetPublisher(publisher)
 	c.inspects.SetPublishOnly(true)
 	c.inspects.SetCaptureGate(c.agent.InspectActive)
@@ -1446,17 +1446,19 @@ func waitForQueuePauseState(
 	}
 }
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 type lighthouseBenchmarkDBRecord struct {
 	ID          uint64 `gorm:"primaryKey;autoIncrement:false"`
 	Value       string `gorm:"size:512;not null"`
 	UpdatedAtMS int64  `gorm:"column:updated_at_ms;not null"`
 }
 
+// TableName isolates benchmark records from application-owned tables.
 func (lighthouseBenchmarkDBRecord) TableName() string {
 	return "lighthouse_benchmark_records"
 }
 
+// runDBBenchmark selects a generated connection before starting a bounded benchmark run.
 func runDBBenchmark(
 	ctx context.Context,
 	dbConnections *database.Connections,
@@ -1598,6 +1600,7 @@ func runDBBenchmark(
 	return result, nil
 }
 
+// runDBBenchmarkConnection confines writes to run-owned identifiers and records bounded latency samples.
 func runDBBenchmarkConnection(
 	ctx context.Context,
 	dbConnections *database.Connections,
@@ -1821,6 +1824,7 @@ func runDBBenchmarkConnection(
 	return result, nil
 }
 
+// cleanupDBBenchmarkRun removes only records created by the current benchmark identifier range.
 func cleanupDBBenchmarkRun(ctx context.Context, db *gorm.DB, firstID, lastID uint64) {
 	if db == nil || firstID == 0 || lastID < firstID {
 		return
@@ -1830,6 +1834,7 @@ func cleanupDBBenchmarkRun(ctx context.Context, db *gorm.DB, firstID, lastID uin
 		Delete(&lighthouseBenchmarkDBRecord{}).Error
 }
 
+// detectDBDriver reconciles generated connection metadata with the active dialect.
 func detectDBDriver(connectionName, dialect string) string {
 	key := "DB_DRIVER"
 	if connectionName != "" && connectionName != "default" {

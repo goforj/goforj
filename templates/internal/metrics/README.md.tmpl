@@ -15,7 +15,7 @@ Direct source commands keep their dedicated listeners:
 {{- if or .Components.WebAPI .Components.WebUI }}
 - HTTP metrics: `http://localhost:10000/metrics`
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 - Jobs metrics: `http://localhost:10002/metrics`
 {{- end }}
 {{- if .Components.Scheduler }}
@@ -29,12 +29,12 @@ Direct source commands keep their dedicated listeners:
 
 In standalone host mode, `app run` uses one shared metrics endpoint and hosts multiple logical sources in one process.
 
-Direct source commands keep dedicated metrics listeners so HTTP, jobs, and scheduler can still be scraped independently in distributed or process-split layouts.
+Each enabled direct source command keeps a dedicated metrics listener so process-split layouts remain independently scrapeable.
 
 Framework-owned metric families should be queried by `source` when that label is present. The generated observability stack also adds scrape-time `process` labels so host mode and direct source commands remain easy to distinguish operationally:
 
 - standalone host mode: `process=app`
-- direct source mode: `process=http`, `process=jobs`, `process=scheduler`
+- direct source mode: `process` matches the source command, such as `http` or `scheduler`
 
 Dedicated metrics listeners are intentionally separate from normal application traffic. This keeps scrape traffic out of HTTP request metrics and preserves clean source-specific scrape topology when you run leaf commands directly.
 
@@ -53,7 +53,7 @@ Each framework-owned instrumentation surface can be enabled or disabled independ
 {{- if .Components.Mail }}
 - `METRICS_MAIL_ENABLED`
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 - `METRICS_QUEUE_ENABLED`
 {{- end }}
 {{- if .Components.HasDatabase }}
@@ -84,18 +84,20 @@ Prometheus names use underscores and suffixes. For example, the GoForj metric `h
 | Events | `events_publishes_total`, `events_publish_duration_seconds`, `events_subscriptions_total`, `events_subscribers_active`, `events_deliveries_total`, `events_deliveries_inflight`, `events_delivery_duration_seconds` | `app`, `source`, `bus`, `driver`, `topic`, `handler`, `status`, `reason` |
 {{- end }}
 | Mail | `mail_sends_total`, `mail_send_duration_seconds` | `app`, `source`, `mailer`, `driver`, `status`, `reason` |
+{{- if .ProjectComponents.Jobs }}
 | Queue | `queue_jobs_enqueued_total`, `queue_jobs_scheduled_total`, `queue_jobs_processed_total`, `queue_jobs_failed_total`, `queue_jobs_retried_total`, `queue_jobs_archived_total`, `queue_jobs_by_job_total`, `queue_jobs_inflight`, `queue_jobs_inflight_by_job`, `queue_events_by_queue_total`, `queue_job_duration_by_queue_seconds`, `queue_job_duration_by_job_seconds` | `app`, `source`, `queue`, `job_name`, `driver`, `status`, `kind` |
+{{- end }}
 | Scheduler | `scheduler_started_total`, `scheduler_runs_total`, `scheduler_failures_total`, `scheduler_skips_total`, `scheduler_runs_by_job_total`, `scheduler_events_by_job_total`, `scheduler_jobs_inflight`, `scheduler_job_duration_by_job_seconds` | `app`, `source`, `job_name`, `target_kind`, `status`, `reason` |
 | Database | `database_operations_total`, `database_operation_duration_seconds`, `database_queries_by_fingerprint_total`, `database_query_fingerprint_info`, `database_slow_queries_total`, `database_slow_query_duration_seconds`, `database_pool_open`, `database_pool_in_use`, `database_pool_idle`, `database_pool_wait_count_total`, `database_pool_wait_duration_total`, `database_pool_closed_max_idle_total`, `database_pool_closed_max_idle_time_total`, `database_pool_closed_max_lifetime_total` | `app`, `connection`, `driver`, `operation`, `target`, `status`, `fingerprint`, `query_shape` |
 
 The local observability stack adds a `process` label at scrape time. Typical values are:
 
 - `app` for standalone host mode
-- `http`, `jobs`, and `scheduler` for direct source mode
+- the source command name for direct source mode
 
 Every framework-owned metric family emits `app` directly. Use it as the top-level app selector in dashboards and alerts.
 
-Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache{{ if .ProjectComponents.Storage }}, storage{{ end }}{{ if .ProjectComponents.Events }}, events{{ end }}, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
+Some framework-owned metric families also emit a `source` label when the logical runtime surface is known at emission time. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
 
 When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards. HTTP request metrics fall back to `source="http"` because route traffic is always attributable to the HTTP runtime surface. Inspect-store cache operations use `source="lighthouse"` because that cache traffic is Lighthouse persistence, not app business cache traffic.
 
@@ -106,11 +108,11 @@ Component-specific metric families are emitted when the corresponding component 
 Labels are intentionally low-cardinality:
 
 - `app` is the generated app identity, such as `app`, `marketplace`, or `backstage`.
-- `source` is the runtime surface, such as `http`, `jobs`, `scheduler`, `cli`, `lighthouse`, `startup`, or `app`.
+- `source` is the logical runtime surface, such as `http`, `scheduler`, `cli`, `lighthouse`, `startup`, or `app`.
 - `route` uses the registered route pattern, such as `/api/users/:id`, not the raw URL.
-- `cache`, `disk`, `mailer`, `queue`, `connection`{{ if .ProjectComponents.Events }}, and `bus`{{ end }} use named accessors or configured primitive names.
+- Primitive labels use named accessors or configured primitive names.
 - `target` for database metrics is the normalized table or query target when available.
-- `job_name` is a stable queue or scheduler job type/name.
+- `job_name` is a stable framework work type or name.
 {{- if .ProjectComponents.Events }}
 - `handler` is the stable event handler identity.
 {{- end }}
@@ -121,7 +123,7 @@ Avoid adding labels for user IDs, emails, session IDs, cache keys, filenames, re
 
 ## Custom App Metrics
 
-The generated framework metrics cover platform behavior such as HTTP, auth, queue, scheduler, cache{{ if .ProjectComponents.Storage }}, storage{{ end }}, and database activity. Your application can add its own business metrics on top through the same `github.com/goforj/metrics` registry.
+The generated framework metrics cover enabled platform behavior. Your application can add its own business metrics on top through the same `github.com/goforj/metrics` registry.
 
 The flow is:
 
@@ -512,6 +514,7 @@ topk(10,
 The slow query threshold is controlled by `DB_SLOW_QUERY_THRESHOLD`. Fingerprints are derived from normalized SQL shape, not raw SQL text, so similar statements group together without exposing literals as metric labels.
 For Grafana lookup, `database_query_fingerprint_info` exposes a bounded `query_shape` label. Long shapes are truncated, and normalized parameter placeholders are preserved so every grouped query still has a readable shape.
 
+{{ if .ProjectComponents.Jobs }}
 ### Queue
 
 Completed jobs by queue and job type:
@@ -531,6 +534,7 @@ topk(10,
   )
 )
 ```
+{{- end }}
 
 ### Scheduler
 

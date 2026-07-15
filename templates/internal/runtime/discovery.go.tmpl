@@ -38,6 +38,9 @@ func DiscoverCacheInstances() []PrimitiveInstance {
 
 // DiscoverQueueInstances returns configured queue instances with normalized driver names.
 func DiscoverQueueInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Jobs {
+		return nil
+	}
 	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	rootScope := env.WithPrefix("QUEUE")

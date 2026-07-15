@@ -56,15 +56,6 @@ var rendererSyncModules = []string{
 	"github.com/goforj/cache",
 	"github.com/goforj/cache/cachecore",
 	"github.com/goforj/cache/driver/rediscache",
-	"github.com/goforj/queue",
-	"github.com/goforj/queue/driver/mysqlqueue",
-	"github.com/goforj/queue/driver/natsqueue",
-	"github.com/goforj/queue/driver/postgresqueue",
-	"github.com/goforj/queue/driver/rabbitmqqueue",
-	"github.com/goforj/queue/driver/redisqueue",
-	"github.com/goforj/queue/driver/sqlitequeue",
-	"github.com/goforj/queue/driver/sqlqueuecore",
-	"github.com/goforj/queue/driver/sqsqueue",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
 	"github.com/goforj/web",
@@ -81,6 +72,18 @@ var storageRendererSyncModules = []string{
 	"github.com/goforj/storage",
 	"github.com/goforj/storage/storagecore",
 	"github.com/goforj/storage/driver/localstorage",
+}
+
+var jobsRendererSyncModules = []string{
+	"github.com/goforj/queue",
+	"github.com/goforj/queue/driver/mysqlqueue",
+	"github.com/goforj/queue/driver/natsqueue",
+	"github.com/goforj/queue/driver/postgresqueue",
+	"github.com/goforj/queue/driver/rabbitmqqueue",
+	"github.com/goforj/queue/driver/redisqueue",
+	"github.com/goforj/queue/driver/sqlitequeue",
+	"github.com/goforj/queue/driver/sqlqueuecore",
+	"github.com/goforj/queue/driver/sqsqueue",
 }
 
 // VersionFor returns the framework-pinned version for module when it is known.
@@ -106,6 +109,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	}
 	if components.Storage {
 		modules = append(modules, storageRendererSyncModules...)
+	}
+	if components.Jobs {
+		modules = append(modules, jobsRendererSyncModules...)
 	}
 	out := make([]string, 0, len(modules))
 	for _, module := range modules {

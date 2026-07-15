@@ -450,6 +450,7 @@ func shouldRetryWire(detail string) bool {
 func (p Pipeline) generateProjectFiles() (string, error) {
 	storageEnabled := hasDir(filepath.Join(".", "internal", "storages"))
 	eventsEnabled := hasDir(filepath.Join(".", "internal", "events"))
+	jobsEnabled := hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues"))
 	config, err := project.LoadProjectConfig()
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load project generation config: %w", err)
@@ -458,12 +459,13 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 		components := project.ProjectComponents(config)
 		storageEnabled = components.Storage
 		eventsEnabled = components.Events
+		jobsEnabled = components.Jobs
 	}
 	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
 		".",
 		storageEnabled,
 		hasDir(filepath.Join(".", "internal", "caches")),
-		hasDir(filepath.Join(".", "internal", "queues")),
+		jobsEnabled,
 		eventsEnabled,
 		hasDir(filepath.Join(".", "internal", "database")),
 		hasDir(filepath.Join(".", "containers", "observability", "vmagent")),

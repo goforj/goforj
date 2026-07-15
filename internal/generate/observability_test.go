@@ -228,6 +228,46 @@ func TestGenerateObservabilityFilesWritesComposeTargetsUsingSharedPort(t *testin
 	assertMetricsTargets(t, targets, "Observability Test App", "prod", want)
 }
 
+// TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled verifies stale worker packages cannot restore a Jobs metrics target.
+func TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled(t *testing.T) {
+	projectDir := observabilityTestProjectDir(t, "http", "jobs")
+	config := []byte(strings.Join([]string{
+		"project_name: Observability Test App",
+		"render:",
+		"  component_contract: 1",
+		"  components:",
+		"    web_api: true",
+		"    metrics: true",
+		"    observability: true",
+		"    jobs: false",
+		"",
+	}, "\n"))
+	if err := os.WriteFile(filepath.Join(projectDir, ".goforj.yml"), config, 0o644); err != nil {
+		t.Fatalf("write .goforj.yml: %v", err)
+	}
+
+	t.Setenv("APP_NAME", "Observability Test App")
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "compose")
+	t.Setenv("METRICS_PORT", "9400")
+	t.Setenv("OBSERVABILITY_API_METRICS_HOST", "api")
+	t.Setenv("OBSERVABILITY_JOBS_METRICS_HOST", "stale-jobs-worker")
+
+	written, err := GenerateObservabilityFiles(projectDir)
+	if err != nil {
+		t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
+	}
+	if written != 1 {
+		t.Fatalf("written files = %d, want 1", written)
+	}
+
+	targets := readMetricsTargets(t, projectDir)
+	want := []metricsTargetWant{
+		{process: "api", target: "api:9400"},
+	}
+	assertMetricsTargets(t, targets, "Observability Test App", "prod", want)
+}
+
 func TestGenerateObservabilityFilesDoesNotTouchTargetsWhenLocalHostEscapeHatchIsEmpty(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs")
 	targetsPath := filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json")

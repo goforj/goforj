@@ -18,7 +18,7 @@ import (
 	gmetrics "github.com/goforj/metrics"
 	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
 {{- if .Components.Scheduler }}
@@ -90,7 +90,7 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 {{- if .ProjectComponents.Mail }}
 	t.Setenv("METRICS_MAIL_ENABLED", "false")
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	t.Setenv("METRICS_QUEUE_ENABLED", "false")
 {{- end }}
 {{- if .Components.HasDatabase }}
@@ -130,7 +130,7 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 		t.Fatal("expected mail metrics to be disabled")
 	}
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	if cfg.Queue {
 		t.Fatal("expected queue metrics to be disabled")
 	}
@@ -459,9 +459,10 @@ func TestRecordAuthFlowTracksOutcomeAndLatency(t *testing.T) {
 }
 {{- end }}
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
+// TestRecordQueueEventTracksLifecycleAndDuration verifies Queue metrics retain bounded lifecycle and latency dimensions.
 func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Queue: true})
 
 	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Scheduled: true})
 	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessStarted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
@@ -560,8 +561,9 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 	}
 }
 
+// TestRecordQueueEventTracksFailuresAndRetries verifies terminal Queue outcomes update their bounded counters.
 func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Queue: true})
 
 	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessStarted, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
 	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessFailed, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool, Duration: 500})
@@ -618,8 +620,9 @@ func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 	}
 }
 
+// TestRecordQueueEventEmitsSourceLabel verifies Jobs runtime observations retain their source dimension.
 func TestRecordQueueEventEmitsSourceLabel(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Queue: true})
 	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
 
 	manager.RecordQueueEvent(ctx, queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})

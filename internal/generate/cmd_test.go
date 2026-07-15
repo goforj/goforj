@@ -282,6 +282,89 @@ func TestCmdRunGeneratesStorageFromEnabledProjectConfig(t *testing.T) {
 	}
 }
 
+// TestCmdRunUsesJobsIntentForQueueGeneration verifies config intent wins over stale directories while legacy projects retain directory fallback.
+func TestCmdRunUsesJobsIntentForQueueGeneration(t *testing.T) {
+	disabledConfig := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    jobs: false\n"
+	enabledConfig := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    jobs: true\n"
+	tests := []struct {
+		name          string
+		config        string
+		staleJobs     bool
+		staleQueue    bool
+		explicitQueue bool
+		wantError     string
+		wantGenerated bool
+	}{
+		{name: "disabled config ignores stale directories", config: disabledConfig, staleJobs: true, staleQueue: true},
+		{name: "explicit Queue rejects disabled config", config: disabledConfig, staleQueue: true, explicitQueue: true, wantError: "Background Jobs component is disabled"},
+		{name: "enabled config creates Queue package", config: enabledConfig, wantGenerated: true},
+		{name: "legacy project uses Queue directory", staleQueue: true, wantGenerated: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.staleJobs {
+				if err := os.MkdirAll(filepath.Join(root, "internal", "jobs"), 0o755); err != nil {
+					t.Fatalf("create stale Jobs package: %v", err)
+				}
+			}
+			if test.staleQueue {
+				if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
+					t.Fatalf("create Queue package: %v", err)
+				}
+			}
+			if test.config != "" {
+				if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(test.config), 0o644); err != nil {
+					t.Fatalf("write project config: %v", err)
+				}
+			}
+			environment := "QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool\n"
+			if !test.wantGenerated {
+				environment = "QUEUE_DRIVER=unknown\nQUEUE_SUPPORTED_DRIVERS=unknown\n"
+			}
+			if err := os.WriteFile(filepath.Join(root, ".env"), []byte(environment), 0o644); err != nil {
+				t.Fatalf("write Queue environment: %v", err)
+			}
+			if test.wantGenerated {
+				if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+					t.Fatalf("write go.mod: %v", err)
+				}
+			}
+
+			originalWD, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("get working directory: %v", err)
+			}
+			if err := os.Chdir(root); err != nil {
+				t.Fatalf("change working directory: %v", err)
+			}
+			originalTidy := goModTidyRunner
+			goModTidyRunner = func(string) error { return nil }
+			t.Cleanup(func() {
+				goModTidyRunner = originalTidy
+				_ = os.Chdir(originalWD)
+			})
+
+			cmd := &Cmd{Queue: test.explicitQueue}
+			err = cmd.Run()
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("Queue generation error = %v, want %q", err, test.wantError)
+				}
+			} else if err != nil {
+				t.Fatalf("generate Queue surface: %v", err)
+			}
+			for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
+				_, statErr := os.Stat(filepath.Join("internal", "queues", name))
+				if got := statErr == nil; got != test.wantGenerated {
+					t.Fatalf("generated Queue file %s presence = %t, want %t: %v", name, got, test.wantGenerated, statErr)
+				}
+			}
+		})
+	}
+}
+
 // TestCmdRunRejectsExplicitEventsWhenComponentDisabled verifies stale package directories cannot authorize Events generation.
 func TestCmdRunRejectsExplicitEventsWhenComponentDisabled(t *testing.T) {
 	root := t.TempDir()

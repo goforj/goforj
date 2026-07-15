@@ -26,7 +26,9 @@ func QueueObserver(
 	return queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
 		inspectManager.RecordQueueEvent(ctx, queueInspectEvent(event))
 {{- if .ProjectComponents.Metrics }}
-		metricsManager.RecordQueueEvent(ctx, event)
+		if metricsManager != nil {
+			metricsManager.RecordQueueEvent(ctx, event)
+		}
 {{- end }}
 		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
 	})

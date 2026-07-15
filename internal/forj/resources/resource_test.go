@@ -14,6 +14,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	config.Render.Components.DatabaseSQLite = true
 	config.Render.Components.Events = true
 	config.Render.Components.Storage = true
+	config.Render.Components.Jobs = true
 	config.Render.Components.Mail = true
 	config.Render.Components.Docker = true
 	config.Render.Components.Observability = true
@@ -150,6 +151,55 @@ func TestRegistryUsesNamedAppStorageEnvelope(t *testing.T) {
 	}
 	if config.Render.Components.Storage {
 		t.Fatal("resource discovery widened the default App Storage selection")
+	}
+}
+
+// TestRegistryIgnoresStaleDisabledQueueResources verifies Queue env cannot invent Background Jobs participation.
+func TestRegistryIgnoresStaleDisabledQueueResources(t *testing.T) {
+	config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true}}}
+	resources, err := RegistryForProject(config, map[string]string{
+		"QUEUE_DRIVER":           "redis",
+		"QUEUE_REPORTS_DRIVER":   "redis",
+		"WORKER_QUEUE_DRIVER":    "redis",
+		"WORKER_QUEUE_FAST_NAME": "fast",
+	}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if queues := Filter(resources, Category("queue")); len(queues) != 0 {
+		t.Fatalf("stale Queue env resurrected disabled Background Jobs resources: %#v", queues)
+	}
+}
+
+// TestRegistryKeepsQueueResourcesAppLocal verifies named Jobs Apps own their logical queues without widening siblings.
+func TestRegistryKeepsQueueResourcesAppLocal(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			"api":    {Components: project.Components{CLI: true, WebAPI: true}},
+			"worker": {Components: project.Components{CLI: true, Jobs: true}},
+		},
+	}
+	resources, err := RegistryForProject(config, map[string]string{
+		"QUEUE_DRIVER":               "workerpool",
+		"QUEUE_REPORTS_DRIVER":       "workerpool",
+		"API_QUEUE_EXPORTS_DRIVER":   "redis",
+		"WORKER_QUEUE_EMAILS_DRIVER": "redis",
+	}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+
+	for _, id := range []string{"queue-worker-default", "queue-worker-emails", "queue-worker-reports"} {
+		resource, ok := resourceByID(resources, id)
+		if !ok || resource.App != "worker" || resource.Runtime != "jobs" {
+			t.Fatalf("named App queue %s = %#v ok=%v resources=%#v", id, resource, ok, resources)
+		}
+	}
+	for _, id := range []string{"queue-default", "queue-reports", "queue-api-exports"} {
+		if _, ok := resourceByID(resources, id); ok {
+			t.Fatalf("Queue resource %s leaked onto a disabled App: %#v", id, resources)
+		}
 	}
 }
 

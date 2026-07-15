@@ -2,11 +2,13 @@ package jobs
 
 import (
 	"context"
+{{- if .ProjectComponents.Metrics }}
 	"strings"
+{{- end }}
 
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
@@ -15,7 +17,7 @@ import (
 type RuntimeConfig struct {
 	DisableMetricsEndpoint bool
 	Queues                 []string
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	MetricsPort string
 {{- end }}
 }
@@ -24,7 +26,7 @@ type RuntimeConfig struct {
 type Runtime struct {
 	logger *logger.AppLogger
 	worker *Worker
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager
 {{- end }}
 	config RuntimeConfig
@@ -34,14 +36,14 @@ type Runtime struct {
 func NewRuntime(
 	logger *logger.AppLogger,
 	worker *Worker,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) *Runtime {
 	return &Runtime{
 		logger: logger,
 		worker: worker,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager: metricsManager,
 {{- end }}
 		config: defaultRuntimeConfig(),
@@ -66,7 +68,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	ctx = runtime.WithSource(ctx, runtime.SourceJobs)
 	cfg = normalizeRuntimeConfig(cfg)
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.QueueEnabled() && r.metricsManager.Registry() != nil {
 		if err := metrics.StartPrometheusEndpoint(ctx, r.logger, "jobs", cfg.MetricsPort, r.metricsManager.Registry()); err != nil {
 			return err
@@ -76,22 +78,22 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	return r.worker.StartWithContext(ctx, cfg.Queues...)
 }
 
+// defaultRuntimeConfig builds the Jobs defaults shared by direct and hosted execution.
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		MetricsPort: runtime.WorkerMetricsPort(),
 {{- end }}
 	})
 }
 
+// normalizeRuntimeConfig prevents empty command flags from erasing environment-derived Jobs defaults.
 func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
 		cfg.MetricsPort = runtime.WorkerMetricsPort()
 	}
-{{- else }}
-	_ = strings.TrimSpace("")
 {{- end }}
 	return cfg
 }

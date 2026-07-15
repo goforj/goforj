@@ -500,6 +500,37 @@ func prSentinelRenderCombos() []renderCombo {
 		},
 		enabled: append(componentLabels(defaultEvents), "App:api(WebAPI,Metrics;Events-off)"),
 	})
+	namedJobsDefault := project.Components{CLI: true, WebAPI: true, DatabaseSQLite: true, Storage: true}
+	namedJobsDefault.ResolveDependencies()
+	namedJobsWorker := project.Components{CLI: true, Jobs: true}
+	namedJobsWorker.ResolveDependencies()
+	namedJobsMetricsAPI := project.Components{CLI: true, WebAPI: true, Metrics: true}
+	namedJobsMetricsAPI.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_named_app_jobs_only",
+		components: namedJobsDefault,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"metrics-api": {Components: namedJobsMetricsAPI},
+			"worker":      {Components: namedJobsWorker},
+		},
+		enabled: append(componentLabels(namedJobsDefault), "App:metrics-api(WebAPI,Metrics;Jobs-off)", "App:worker(Jobs)"),
+	})
+	defaultJobs := project.Components{
+		CLI: true, WebAPI: true, Metrics: true, DatabaseSQLite: true, Cache: true, Jobs: true,
+	}
+	defaultJobs.ResolveDependencies()
+	namedJobsOff := project.Components{CLI: true, WebAPI: true, Metrics: true, DatabaseSQLite: true, Cache: true}
+	namedJobsOff.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_default_jobs_named_app_off",
+		components: defaultJobs,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"api": {Components: namedJobsOff},
+		},
+		enabled: append(componentLabels(defaultJobs), "App:api(WebAPI,Metrics,SQLite,Cache;Jobs-off)"),
+	})
 	return combos
 }
 

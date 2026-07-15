@@ -27,25 +27,6 @@ func TestGeneratedGitignoreIgnoresRuntimeStorage(t *testing.T) {
 	}
 }
 
-func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
-	modules := coredeps.SyncCoreLibraries(project.Components{Events: true})
-	expected := []string{
-		"github.com/goforj/queue@" + coredeps.MustVersionFor("github.com/goforj/queue"),
-		"github.com/goforj/queue/driver/redisqueue@" + coredeps.MustVersionFor("github.com/goforj/queue/driver/redisqueue"),
-		"github.com/goforj/events/eventscore@" + coredeps.MustVersionFor("github.com/goforj/events/eventscore"),
-		"github.com/goforj/web@" + coredeps.MustVersionFor("github.com/goforj/web"),
-	}
-	seen := make(map[string]struct{}, len(modules))
-	for _, module := range modules {
-		seen[module] = struct{}{}
-	}
-	for _, module := range expected {
-		if _, ok := seen[module]; !ok {
-			t.Fatalf("expected syncCoreLibraries to include %s", module)
-		}
-	}
-}
-
 func TestCoreModulesNeedingSyncSkipsPinnedAndReplacedModules(t *testing.T) {
 	root := t.TempDir()
 	goModPath := filepath.Join(root, "go.mod")
@@ -107,7 +88,6 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"github.com/goforj/web " + coredeps.MustVersionFor("github.com/goforj/web"),
-		"github.com/goforj/queue v0.2.1",
 		"github.com/goforj/cache v0.3.0",
 	} {
 		if !strings.Contains(text, want) {
@@ -116,6 +96,9 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	}
 	if strings.Contains(text, "github.com/goforj/events ") {
 		t.Fatalf("Events-disabled renderer added Events modules:\n%s", text)
+	}
+	if strings.Contains(text, "github.com/goforj/queue ") {
+		t.Fatalf("Jobs-disabled renderer added Queue modules:\n%s", text)
 	}
 	if len(renderer.lines) != 1 || !strings.Contains(renderer.lines[0], "sync core libs") {
 		t.Fatalf("expected sync core libs render line, got %#v", renderer.lines)

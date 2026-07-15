@@ -197,6 +197,8 @@ func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing
 		"sentinel_web_metrics_grafana_without_primitives": false,
 		"sentinel_named_app_events_only":                  false,
 		"sentinel_default_events_named_app_off":           false,
+		"sentinel_named_app_jobs_only":                    false,
+		"sentinel_default_jobs_named_app_off":             false,
 	}
 	for _, combo := range combos {
 		if _, tracked := wants[combo.id]; tracked {

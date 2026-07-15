@@ -42,8 +42,8 @@ That generates support for both in-process and Redis event buses, uses in-proces
 
 Redis event buses use the project-wide `REDIS_HOST`, `REDIS_PORT`,
 `REDIS_PASSWORD`, and `REDIS_DB` settings unless an `EVENTS_*_ADDR` override
-selects a different endpoint. This keeps cache, queue, and events on one
-authenticated Redis connection contract for the common shared-resource setup.
+selects a different endpoint. This lets enabled Redis-backed primitives share
+one authenticated connection contract for the common infrastructure setup.
 
 ## Switching Drivers
 
