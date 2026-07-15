@@ -24,10 +24,12 @@ import (
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/inspects"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 // Server is a struct that represents an HTTP server.
@@ -38,10 +40,12 @@ type Server struct {
 	consoleHub      *lighthouse.Hub
 	httpAccessLogs  bool
 	appTimeouts     *runtime.Timeouts
+{{- if .ProjectComponents.Storage }}
 	storage         *storages.Manager
+{{- end }}
 	inspectManager  *inspects.Manager
 	inspectEnabled  bool
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metrics         *metrics.Manager
 {{- end }}
 }
@@ -53,9 +57,11 @@ func NewServer(
 	groups []web.RouteGroup,
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
+{{- end }}
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) *Server {
@@ -69,10 +75,12 @@ func NewServer(
 		consoleHub:      consoleHub,
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 		appTimeouts:     appTimeouts,
+{{- if .ProjectComponents.Storage }}
 		storage:         storage,
+{{- end }}
 		inspectManager:  inspectManager,
 		inspectEnabled:  inspectManager != nil && inspectManager.Enabled(),
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metrics:         metricsManager,
 {{- end }}
 	}
@@ -80,11 +88,12 @@ func NewServer(
 	return s
 }
 
+// frameworkRouteGroups keeps project-wide route types available while optional App dependencies decide whether they contribute routes.
 func (s *Server) frameworkRouteGroups() []web.RouteGroup {
 	groups := make([]web.RouteGroup, 0, 2)
 	groups = append(groups, s.healthRoutes()...)
 	groups = append(groups, s.swaggerRoutes()...)
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	groups = append(groups, s.metricsRoutes()...)
 {{- end }}
 	return groups
@@ -130,7 +139,7 @@ func (s *Server) GetRoutes() []web.RouteGroup {
 // Log is a middleware function that logs HTTP requests.
 func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	isInternalDevwatch := strings.HasPrefix(v.URI, "/lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source")
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() && !isInternalDevwatch {
 		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
 	}
@@ -328,6 +337,7 @@ func (s *Server) mountSinglePageApplications(router web.Router) error {
 	return nil
 }
 
+// routerMounts composes optional framework routes only when their runtime dependencies are available.
 func (s *Server) routerMounts() []web.RouterMount {
 	mounts := []web.RouterMount{
 		s.mountSinglePageApplications,
@@ -336,10 +346,18 @@ func (s *Server) routerMounts() []web.RouterMount {
 	}
 	if s.consoleHub != nil && lighthouse.Enabled() {
 		mounts = append(mounts, func(router web.Router) error {
+{{- if .ProjectComponents.Storage }}
+			var storageDownload func(web.Context, string, string) error
+			if s.storage != nil {
+				storageDownload = s.lighthouseStorageDownload
+			}
+{{- end }}
 			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
-				Secret:          lighthouse.SharedSecretFromEnv(),
-				StorageDownload: s.lighthouseStorageDownload,
-				Inspects:        s.inspectManager,
+				Secret: lighthouse.SharedSecretFromEnv(),
+{{- if .ProjectComponents.Storage }}
+				StorageDownload: storageDownload,
+{{- end }}
+				Inspects: s.inspectManager,
 			})
 			return nil
 		})
@@ -347,13 +365,14 @@ func (s *Server) routerMounts() []web.RouterMount {
 	return mounts
 }
 
+// mountRuntimeMiddleware activates only middleware backed by dependencies enabled for this App.
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 	if s.inspectEnabled {
 		router.Use(s.inspectContextMiddleware())
 	} else {
 		router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))
 	}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
 	}

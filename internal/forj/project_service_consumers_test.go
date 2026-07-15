@@ -132,6 +132,73 @@ func TestEffectiveResourceConsumersIgnoreStaleDisabledEvents(t *testing.T) {
 	}
 }
 
+// TestEffectiveResourceConsumersIgnoreStaleDisabledStorage verifies root and App overlays cannot invent Storage participation.
+func TestEffectiveResourceConsumersIgnoreStaleDisabledStorage(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Docker: true}},
+		Apps: map[string]project.AppConfig{
+			"billing": {Components: project.Components{CLI: true}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	plan := defaultResourcePlanForTest(t, projectComponents)
+	source := []byte("STORAGE_DRIVER=redis\nSTORAGE_ADDR=storage.example:6379\nBILLING_STORAGE_DRIVER=redis\nBILLING_STORAGE_ADDR=billing-storage.example:6379\n")
+
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	for _, consumer := range consumers {
+		if consumer.Resource == project.ResourceStorage {
+			t.Fatalf("stale owner env resurrected Storage consumer: %#v", consumers)
+		}
+	}
+}
+
+// TestEffectiveResourceConsumersUseNamedAppStorageEnvelope verifies App-local Storage participates in project service discovery.
+func TestEffectiveResourceConsumersUseNamedAppStorageEnvelope(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			"files": {Components: project.Components{CLI: true, Storage: true}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	plan := defaultResourcePlanForTest(t, projectComponents)
+	storage, ok := plan.Selection(project.ResourceStorage)
+	if !ok {
+		t.Fatal("project Storage envelope did not create a Storage selection")
+	}
+	storage.Supported = []string{"local", "redis", "s3"}
+	var err error
+	plan, err = plan.WithSelection(project.ResourceStorage, storage).Normalized(projectComponents)
+	if err != nil {
+		t.Fatalf("normalize Storage resource plan: %v", err)
+	}
+	source := []byte("STORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local,redis,s3\nFILES_STORAGE_DRIVER=redis\nFILES_STORAGE_ADDR=files.redis.example:6379\nAPI_STORAGE_DRIVER=s3\nAPI_STORAGE_BUCKET=stale-api\n")
+
+	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+	drivers := map[string]string{}
+	for _, consumer := range consumers {
+		if consumer.Resource != project.ResourceStorage {
+			continue
+		}
+		drivers[consumer.Consumer] = consumer.Driver
+		if !strings.HasPrefix(consumer.Consumer, "files:storage") {
+			t.Fatalf("Storage-disabled default App gained a consumer: %#v", consumers)
+		}
+	}
+	if drivers["files:storage"] != "redis" {
+		t.Fatalf("named Storage App consumers = %#v, want files root using Redis", drivers)
+	}
+	if config.Render.Components.Storage {
+		t.Fatal("consumer discovery widened the default App Storage selection")
+	}
+}
+
 // TestEffectiveResourceConsumersUseEachConfiguredAppDatabase verifies disjoint App database participation shares one build contract.
 func TestEffectiveResourceConsumersUseEachConfiguredAppDatabase(t *testing.T) {
 	config := &project.Config{

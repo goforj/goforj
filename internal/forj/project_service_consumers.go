@@ -88,7 +88,8 @@ func effectiveResourceConsumersFromAppComponents(source []byte, plan project.Res
 	for _, app := range appPrefixes {
 		scopeComponents, ok := appComponents[app.name]
 		if !ok {
-			scopeComponents = projectComponents
+			// Environment-only prefixes follow the default App; using the project union would invent capabilities owned by a sibling.
+			scopeComponents = defaultComponents
 		}
 		if err := addScope(app.name, app.prefix, scopeComponents); err != nil {
 			return nil, err

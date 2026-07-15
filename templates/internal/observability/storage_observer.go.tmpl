@@ -20,7 +20,9 @@ func StorageObserver(
 	return storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
 		inspectManager.RecordStorageEvent(ctx, storageInspectEvent(event))
 {{- if .ProjectComponents.Metrics }}
-		metricsManager.RecordStorageOperation(ctx, event)
+		if metricsManager != nil {
+			metricsManager.RecordStorageOperation(ctx, event)
+		}
 {{- end }}
 	})
 }

@@ -66,7 +66,9 @@ func DefaultResourcePlan(components Components) (ResourcePlan, error) {
 	if components.Jobs {
 		plan.Selections[ResourceQueue] = DriverSelection{Active: "workerpool", Supported: []string{"workerpool", "redis"}}
 	}
-	plan.Selections[ResourceStorage] = DriverSelection{Active: "local", Supported: []string{"local"}}
+	if components.Storage {
+		plan.Selections[ResourceStorage] = DriverSelection{Active: "local", Supported: []string{"local"}}
+	}
 	if components.Mail {
 		active := "log"
 		if components.Docker {

@@ -56,8 +56,12 @@ func DiscoverQueueInstances() []PrimitiveInstance {
 	return out
 }
 
-// DiscoverStorageInstances returns configured storage instances with normalized driver names.
+{{ if .ProjectComponents.Storage }}
+// DiscoverStorageInstances returns configured storage instances with normalized driver names for participating Apps.
 func DiscoverStorageInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Storage {
+		return nil
+	}
 	names := aboutScopedNames("STORAGE", aboutStorageRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	for _, name := range names {
@@ -74,6 +78,7 @@ func DiscoverStorageInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
 {{ if .ProjectComponents.Events }}
 // DiscoverEventInstances returns configured event bus instances with normalized driver names.
@@ -218,6 +223,8 @@ func NormalizeQueueDriver(v string) string {
 	}
 }
 
+{{ if .ProjectComponents.Storage }}
+// NormalizeStorageDriver reduces Storage driver aliases to their generated canonical names.
 func NormalizeStorageDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -245,6 +252,7 @@ func NormalizeStorageDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
 func NormalizeDBDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))

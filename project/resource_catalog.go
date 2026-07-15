@@ -289,7 +289,7 @@ var resourceCatalog = []ResourceDefinition{
 			{Resource: ResourceStorage, Name: "public", Label: "Public storage", EnvironmentKey: "STORAGE_PUBLIC_DRIVER", DefaultDriver: "local"},
 			{Resource: ResourceStorage, Name: "favicons", Label: "Demo favicon storage", EnvironmentKey: "STORAGE_FAVICONS_DRIVER", RequiredComponent: ComponentDemoApp, DefaultDriver: "local"},
 		},
-		applicable: func(Components) bool { return true },
+		applicable: func(components Components) bool { return components.Storage },
 	},
 	{
 		Key:         ResourceMail,

@@ -24,7 +24,9 @@ import (
 	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+{{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
+{{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
@@ -38,7 +40,9 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/queues"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 // LighthouseRuntime boots the dev console agent for the jobs process.
@@ -64,7 +68,9 @@ var (
 func NewLighthouseRuntime(
 	logger *logger.AppLogger,
 	caches *caches.Manager,
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
+{{- end }}
 	queues *queues.Manager,
 	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
@@ -91,7 +97,10 @@ func NewLighthouseRuntime(
 {{- if .Components.Metrics }}
 		metrics:      metricsManager,
 {{- end }}
-		benchmarks: newBenchmarkRunner(caches, queues, storage,
+		benchmarks: newBenchmarkRunner(caches, queues,
+{{- if .ProjectComponents.Storage }}
+			storage,
+{{- end }}
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}
@@ -107,7 +116,7 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
-	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .Components.Metrics }}, c.metrics{{- end }})
+	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .ProjectComponents.Metrics }}, {{- if .Components.Metrics }} c.metrics{{- else }} nil{{- end }}{{- end }})
 	c.inspects.SetPublisher(publisher)
 	c.inspects.SetPublishOnly(true)
 	c.inspects.SetCaptureGate(c.agent.InspectActive)
@@ -466,6 +475,7 @@ func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
 	return string(cachecore.DriverMemory)
 }
 
+// enforceBenchmarkDriver reconciles benchmark metadata with each generated runtime driver contract.
 func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 	if report.Extra == nil {
 		report.Extra = map[string]any{}
@@ -501,6 +511,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 			report.Extra["driver"] = driver
 			report.Extra["configured_driver"] = driver
 		}
+{{- if .ProjectComponents.Storage }}
 	case "storage":
 		driver := runtime.NormalizeStorageDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
@@ -510,6 +521,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 			report.Driver = driver
 			report.Extra["driver"] = driver
 		}
+{{- end }}
 	case "db":
 		driver := runtime.NormalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
@@ -1079,6 +1091,8 @@ func benchmarkQueueDrainTimeout(duration time.Duration) time.Duration {
 	return timeout
 }
 
+{{- if .ProjectComponents.Storage }}
+// runStorageBenchmark selects the default generated disk before starting a bounded benchmark run.
 func runStorageBenchmark(ctx context.Context, manager *storages.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	if manager == nil {
 		return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
@@ -1199,6 +1213,7 @@ func runStorageBenchmark(ctx context.Context, manager *storages.Manager, duratio
 	return result, nil
 }
 
+// runStorageBenchmarkDisk isolates benchmark objects under a run prefix so cleanup never touches App data.
 func runStorageBenchmarkDisk(ctx context.Context, disk storage.Storage, diskName string, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
 	payload := bytes.Repeat([]byte{'s'}, payloadSize)
 	var ops int64
@@ -1314,6 +1329,7 @@ func runStorageBenchmarkDisk(ctx context.Context, disk storage.Storage, diskName
 	return result
 }
 
+// cleanupStorageBenchmarkRun removes only entries created beneath the benchmark run prefix.
 func cleanupStorageBenchmarkRun(ctx context.Context, disk storage.Storage, prefix string) {
 	disk = disk.WithContext(ctx)
 	paths := storageBenchmarkPaths(disk, prefix)
@@ -1322,6 +1338,7 @@ func cleanupStorageBenchmarkRun(ctx context.Context, disk storage.Storage, prefi
 	}
 }
 
+// storageBenchmarkPaths orders run-owned entries deepest first so directory cleanup is safe.
 func storageBenchmarkPaths(disk storage.Storage, prefix string) []string {
 	if strings.TrimSpace(prefix) == "" {
 		return nil
@@ -1351,6 +1368,7 @@ func storageBenchmarkPaths(disk storage.Storage, prefix string) []string {
 	return paths
 }
 
+// storageBenchmarkPathsRecursive bounds traversal to the benchmark prefix while avoiding duplicate backend entries.
 func storageBenchmarkPathsRecursive(disk storage.Storage, prefix string, seen map[string]struct{}) []string {
 	if prefix == "" {
 		return nil
@@ -1385,12 +1403,14 @@ func storageBenchmarkPathsRecursive(disk storage.Storage, prefix string, seen ma
 	return append(paths, prefix)
 }
 
+// depth supplies deterministic deepest-first ordering for Storage benchmark cleanup.
 func depth(path string) int {
 	if path == "" {
 		return 0
 	}
 	return strings.Count(path, "/")
 }
+{{- end }}
 
 func isQueuePausedDispatchErr(err error) bool {
 	if err == nil {
@@ -2138,6 +2158,7 @@ func enrichBenchmarkResult(report *BenchmarkSuiteResult) {
 	report.Extra["stability_grade"] = stabilityGrade(errRate)
 }
 
+// performanceGrade applies suite-specific thresholds so unlike backends receive meaningful grades.
 func performanceGrade(report BenchmarkSuiteResult) string {
 	opsPerSec := report.OpsPerSec
 	p95 := report.P95MS
@@ -2161,10 +2182,12 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 		aThreshold = 20000
 		bThreshold = 8000
 		cThreshold = 2000
+{{- if .ProjectComponents.Storage }}
 	case "storage":
 		aThreshold = 3000
 		bThreshold = 1200
 		cThreshold = 300
+{{- end }}
 	case "http":
 		aThreshold = 20000
 		bThreshold = 6000

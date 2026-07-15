@@ -113,6 +113,201 @@ func TestSharedRunCommandUsesProjectCapabilitiesAndAppParticipation(t *testing.T
 	}
 }
 
+// TestSharedMetricsUsesProjectCapabilitiesAndAppParticipation verifies a named App can enable Metrics without changing the default App's runtime wiring.
+func TestSharedMetricsUsesProjectCapabilitiesAndAppParticipation(t *testing.T) {
+	config := &project.Config{
+		GoModuleName: "example.com/mixed-metrics",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, WebAPI: true, Cache: true, Storage: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{
+				CLI: true, WebAPI: true, Cache: true, Metrics: true,
+			}},
+		},
+	}
+	projectComponents := project.ProjectComponents(config)
+	sharedData := templateRenderConfig{
+		Config:            config,
+		Components:        config.Render.Components,
+		ProjectComponents: projectComponents,
+	}
+	sharedPaths := []string{
+		"internal/http/server.go.tmpl",
+		"internal/http/runtime.go.tmpl",
+		"internal/http/lighthouse.go.tmpl",
+		"internal/http/serve_cmd.go.tmpl",
+		"internal/http/health_test.go.tmpl",
+		"internal/http/swagger_test.go.tmpl",
+		"internal/http/inspect_child_event_test.go.tmpl",
+		"internal/http/inspects_bench_test.go.tmpl",
+		"internal/http/runtime_bench_test.go.tmpl",
+		"internal/lighthouse/inspects.go.tmpl",
+		"internal/lighthouse/inspects_test.go.tmpl",
+	}
+	for _, path := range sharedPaths {
+		source := renderSharedTemplate(t, path, sharedData)
+		assertFormattedGoTemplate(t, path, source)
+	}
+	for _, appMetrics := range []bool{false, true} {
+		data := sharedData
+		data.Components = project.Components{CLI: true, Cache: true, Jobs: true, Scheduler: true, Metrics: appMetrics}
+		for _, path := range []string{"internal/jobs/lighthouse.go.tmpl", "internal/schedules/lighthouse.go.tmpl"} {
+			source := renderSharedTemplate(t, path, data)
+			assertFormattedGoTemplate(t, path, source)
+		}
+	}
+
+	server := renderSharedTemplate(t, "internal/http/server.go.tmpl", sharedData)
+	for _, want := range []string{
+		`"example.com/mixed-metrics/internal/metrics"`,
+		"metrics         *metrics.Manager",
+		"metricsManager *metrics.Manager",
+		"groups = append(groups, s.metricsRoutes()...)",
+	} {
+		if !strings.Contains(server, want) {
+			t.Fatalf("shared HTTP server missing project Metrics shape %q:\n%s", want, server)
+		}
+	}
+
+	defaultWiring := renderSharedTemplate(t, "wire/inject_managers.go.tmpl", appTemplateDataForProjectionTest(config, project.DefaultApp(), config.Render.Components))
+	assertFormattedGoTemplate(t, "wire/inject_managers.go.tmpl (default App)", defaultWiring)
+	for _, want := range []string{"provideDisabledMetricsManager", "func provideCacheManager("} {
+		if !strings.Contains(defaultWiring, want) {
+			t.Fatalf("default App manager wiring missing %q:\n%s", want, defaultWiring)
+		}
+	}
+	if strings.Contains(defaultWiring, "\tmetrics.NewManager,") || strings.Contains(defaultWiring, "metricsManager.CacheEnabled()") {
+		t.Fatalf("default App unexpectedly enabled or dereferenced Metrics:\n%s", defaultWiring)
+	}
+
+	worker := project.DefaultNamedApp("worker")
+	workerComponents := project.NormalizeConfiguredAppComponents(config, config.Apps[worker.Name].Components)
+	workerWiring := renderSharedTemplate(t, "wire/inject_managers.go.tmpl", appTemplateDataForProjectionTest(config, worker, workerComponents))
+	assertFormattedGoTemplate(t, "wire/inject_managers.go.tmpl (worker App)", workerWiring)
+	for _, want := range []string{"metrics.NewManager", "metricsManager *metrics.Manager", "metricsManager.CacheEnabled()"} {
+		if !strings.Contains(workerWiring, want) {
+			t.Fatalf("Metrics-enabled worker wiring missing %q:\n%s", want, workerWiring)
+		}
+	}
+	if strings.Contains(workerWiring, "provideDisabledMetricsManager") {
+		t.Fatalf("Metrics-enabled worker unexpectedly received the disabled provider:\n%s", workerWiring)
+	}
+}
+
+// TestSharedMailMetricsUsesProjectEnvelopeAndAppParticipation verifies shared Mail metrics retain project support while each App wires only its own Metrics manager.
+func TestSharedMailMetricsUsesProjectEnvelopeAndAppParticipation(t *testing.T) {
+	namedMailMetricsConfig := &project.Config{
+		GoModuleName: "example.com/mixed-mail-metrics",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{
+				CLI: true, Auth: true, Metrics: true,
+			}},
+		},
+	}
+	projectComponents := project.ProjectComponents(namedMailMetricsConfig)
+	if namedMailMetricsConfig.Render.Components.Mail || !projectComponents.Mail || !projectComponents.Metrics {
+		t.Fatalf("named Auth and Metrics did not produce the expected project envelope: default=%+v project=%+v", namedMailMetricsConfig.Render.Components, projectComponents)
+	}
+	sharedData := templateRenderConfig{
+		Config:            namedMailMetricsConfig,
+		Components:        namedMailMetricsConfig.Render.Components,
+		ProjectComponents: projectComponents,
+	}
+
+	observer := renderSharedTemplate(t, "internal/observability/mail_observer.go.tmpl", sharedData)
+	assertFormattedGoTemplate(t, "internal/observability/mail_observer.go.tmpl", observer)
+	for _, want := range []string{
+		"metricsManager *metrics.Manager",
+		"if metricsManager != nil {",
+		"metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{",
+	} {
+		if !strings.Contains(observer, want) {
+			t.Fatalf("shared Mail observer missing project Metrics shape %q:\n%s", want, observer)
+		}
+	}
+
+	manager := renderSharedTemplate(t, "internal/metrics/manager.go.tmpl", sharedData)
+	assertFormattedGoTemplate(t, "internal/metrics/manager.go.tmpl", manager)
+	for _, want := range []string{
+		"Mail      bool",
+		`runtime.CurrentApp().Components.Mail && env.GetBool("METRICS_MAIL_ENABLED", "true")`,
+		"type MailSendMetricEvent struct {",
+		"func (m *Manager) RecordMailSend(ctx context.Context, event MailSendMetricEvent)",
+	} {
+		if !strings.Contains(manager, want) {
+			t.Fatalf("shared Metrics manager missing project Mail shape %q:\n%s", want, manager)
+		}
+	}
+
+	defaultMailConfig := &project.Config{
+		GoModuleName: "example.com/default-mail",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, Mail: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{
+				CLI: true, WebAPI: true, Metrics: true,
+			}},
+		},
+	}
+	defaultWiring := renderSharedTemplate(t, "wire/inject_managers.go.tmpl", appTemplateDataForProjectionTest(defaultMailConfig, project.DefaultApp(), defaultMailConfig.Render.Components))
+	assertFormattedGoTemplate(t, "wire/inject_managers.go.tmpl (Mail default without Metrics)", defaultWiring)
+	providerStart := strings.Index(defaultWiring, "func provideMailManager(")
+	if providerStart < 0 {
+		t.Fatalf("default App manager wiring omitted Mail provider:\n%s", defaultWiring)
+	}
+	providerEnd := strings.Index(defaultWiring[providerStart:], "\n}\n")
+	if providerEnd < 0 {
+		t.Fatalf("default App Mail provider has no closing boundary:\n%s", defaultWiring[providerStart:])
+	}
+	defaultProvider := defaultWiring[providerStart : providerStart+providerEnd+3]
+	if strings.Contains(defaultProvider, "metricsManager *metrics.Manager") || !strings.Contains(defaultProvider, "(*metrics.Manager)(nil)") {
+		t.Fatalf("Metrics-disabled default App did not use the Mail typed-nil seam:\n%s", defaultProvider)
+	}
+
+	defaultMetricsConfig := &project.Config{
+		GoModuleName: "example.com/default-mail-metrics",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, Mail: true, Metrics: true,
+		}},
+	}
+	enabledWiring := renderSharedTemplate(t, "wire/inject_managers.go.tmpl", appTemplateDataForProjectionTest(defaultMetricsConfig, project.DefaultApp(), defaultMetricsConfig.Render.Components))
+	assertFormattedGoTemplate(t, "wire/inject_managers.go.tmpl (Mail default with Metrics)", enabledWiring)
+	enabledStart := strings.Index(enabledWiring, "func provideMailManager(")
+	if enabledStart < 0 {
+		t.Fatalf("Metrics-enabled default App manager wiring omitted Mail provider:\n%s", enabledWiring)
+	}
+	enabledEnd := strings.Index(enabledWiring[enabledStart:], "\n}\n")
+	if enabledEnd < 0 {
+		t.Fatalf("Metrics-enabled default App Mail provider has no closing boundary:\n%s", enabledWiring[enabledStart:])
+	}
+	enabledProvider := enabledWiring[enabledStart : enabledStart+enabledEnd+3]
+	if !strings.Contains(enabledProvider, "metricsManager *metrics.Manager") || strings.Contains(enabledProvider, "(*metrics.Manager)(nil)") {
+		t.Fatalf("Metrics-enabled default App did not wire the real manager into Mail:\n%s", enabledProvider)
+	}
+
+	mailer := project.DefaultNamedApp("mailer")
+	mailerComponents := project.Components{CLI: true, Mail: true}
+	disabledWiring := renderSharedTemplate(t, "wire/inject_managers.go.tmpl", appTemplateDataForProjectionTest(defaultMetricsConfig, mailer, mailerComponents))
+	assertFormattedGoTemplate(t, "wire/inject_managers.go.tmpl (named Mail App without Metrics)", disabledWiring)
+	disabledStart := strings.Index(disabledWiring, "func provideMailManager(")
+	if disabledStart < 0 {
+		t.Fatalf("Metrics-disabled named App manager wiring omitted Mail provider:\n%s", disabledWiring)
+	}
+	disabledEnd := strings.Index(disabledWiring[disabledStart:], "\n}\n")
+	if disabledEnd < 0 {
+		t.Fatalf("Metrics-disabled named App Mail provider has no closing boundary:\n%s", disabledWiring[disabledStart:])
+	}
+	disabledProvider := disabledWiring[disabledStart : disabledStart+disabledEnd+3]
+	if strings.Contains(disabledProvider, "metricsManager *metrics.Manager") || !strings.Contains(disabledProvider, "(*metrics.Manager)(nil)") {
+		t.Fatalf("Metrics-disabled named App did not use the Mail typed-nil seam:\n%s", disabledProvider)
+	}
+}
+
 // TestRuntimeAboutUsesCompiledAppComponents verifies shared About support is project-shaped while report inclusion is selected at runtime.
 func TestRuntimeAboutUsesCompiledAppComponents(t *testing.T) {
 	config := mixedAppSharedTemplateConfig()

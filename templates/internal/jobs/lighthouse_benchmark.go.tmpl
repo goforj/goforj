@@ -11,14 +11,18 @@ import (
 
 	"github.com/goforj/cache"
 	"github.com/goforj/queue"
+{{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
+{{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
 	"{{.GoModuleName}}/internal/queues"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 const lighthouseBenchmarkQueueJobType = "lighthouse:benchmark"
@@ -31,7 +35,9 @@ type benchmarkCatalogItem struct {
 type benchmarkRunner struct {
 	caches   *caches.Manager
 	queues   *queues.Manager
+{{- if .ProjectComponents.Storage }}
 	storages *storages.Manager
+{{- end }}
 {{- if .Components.HasDatabase }}
 	db *database.Connections
 {{- else }}
@@ -39,10 +45,13 @@ type benchmarkRunner struct {
 {{- end }}
 }
 
+// newBenchmarkRunner retains only the managers available in the current App projection.
 func newBenchmarkRunner(
 	caches *caches.Manager,
 	queues *queues.Manager,
+{{- if .ProjectComponents.Storage }}
 	storages *storages.Manager,
+{{- end }}
 {{- if .Components.HasDatabase }}
 	db *database.Connections,
 {{- else }}
@@ -52,7 +61,9 @@ func newBenchmarkRunner(
 	return &benchmarkRunner{
 		caches:   caches,
 		queues:   queues,
+{{- if .ProjectComponents.Storage }}
 		storages: storages,
+{{- end }}
 {{- if .Components.HasDatabase }}
 		db: db,
 {{- end }}
@@ -137,16 +148,14 @@ type BenchmarkSuiteResult struct {
 	Extra       map[string]any `json:"extra,omitempty"`
 }
 
+// catalog advertises only suites whose required managers are available to this App.
 func (r *benchmarkRunner) catalog() map[string]any {
-	return map[string]any{
+	catalog := map[string]any{
 		"cache": map[string]any{
 			"instances": benchmarkCacheCatalog(),
 		},
 		"queue": map[string]any{
 			"instances": benchmarkQueueCatalog(r.queues),
-		},
-		"storage": map[string]any{
-			"instances": benchmarkStorageCatalog(),
 		},
 {{- if .Components.HasDatabase }}
 		"db": map[string]any{
@@ -154,6 +163,14 @@ func (r *benchmarkRunner) catalog() map[string]any {
 		},
 {{- end }}
 	}
+{{- if .ProjectComponents.Storage }}
+	if r.storages != nil {
+		catalog["storage"] = map[string]any{
+			"instances": benchmarkStorageCatalog(),
+		}
+	}
+{{- end }}
+	return catalog
 }
 
 func benchmarkCacheCatalog() []benchmarkCatalogItem {
@@ -198,6 +215,8 @@ func benchmarkQueueCatalogDriver(runtimeDrivers map[string]string, instanceName,
 	return runtime.NormalizeQueueDriver(fallback)
 }
 
+{{- if .ProjectComponents.Storage }}
+// benchmarkStorageCatalog projects generated disks into the bounded Lighthouse benchmark catalog.
 func benchmarkStorageCatalog() []benchmarkCatalogItem {
 	instances := runtime.DiscoverStorageInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
@@ -209,6 +228,7 @@ func benchmarkStorageCatalog() []benchmarkCatalogItem {
 	}
 	return items
 }
+{{- end }}
 
 {{- if .Components.HasDatabase }}
 func benchmarkDBCatalog() []benchmarkCatalogItem {
@@ -224,6 +244,7 @@ func benchmarkDBCatalog() []benchmarkCatalogItem {
 }
 {{- end }}
 
+// run dispatches one normalized benchmark request without widening the App's component surface.
 func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (BenchmarkSuiteResult, error) {
 	if req.Sweep {
 		return r.runSweep(ctx, req)
@@ -252,8 +273,10 @@ func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (Ben
 {{- else }}
 		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
 {{- end }}
+{{- if .ProjectComponents.Storage }}
 	case "storage":
 		return r.runStorage(ctx, instanceName, duration, req.Concurrency, payloadSize, started)
+{{- end }}
 	case "http":
 		return runHTTPBenchmark(ctx, duration, benchmarkConcurrency(req.Concurrency, 8, 512), started), nil
 	default:
@@ -261,11 +284,14 @@ func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (Ben
 	}
 }
 
+// runBenchmark shares the Lighthouse runner contract with the generated CLI benchmark command.
 func runBenchmark(
 	ctx context.Context,
 	caches *caches.Manager,
 	queues *queues.Manager,
+{{- if .ProjectComponents.Storage }}
 	storages *storages.Manager,
+{{- end }}
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- else }}
@@ -276,7 +302,9 @@ func runBenchmark(
 	return newBenchmarkRunner(
 		caches,
 		queues,
+{{- if .ProjectComponents.Storage }}
 		storages,
+{{- end }}
 {{- if .Components.HasDatabase }}
 		dbConnections,
 {{- else }}
@@ -321,6 +349,8 @@ func (r *benchmarkRunner) queueInstances() map[string]*queue.Queue {
 	return out
 }
 
+{{- if .ProjectComponents.Storage }}
+// storageInstances omits nil disks so an unavailable backend is never advertised as runnable.
 func (r *benchmarkRunner) storageInstances() map[string]storage.Storage {
 	out := map[string]storage.Storage{}
 	if r.storages == nil {
@@ -334,6 +364,7 @@ func (r *benchmarkRunner) storageInstances() map[string]storage.Storage {
 	}
 	return out
 }
+{{- end }}
 
 func (r *benchmarkRunner) runCache(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	concurrency = benchmarkConcurrency(concurrency, 8, 256)
@@ -390,6 +421,8 @@ func (r *benchmarkRunner) runDB(ctx context.Context, instanceName string, durati
 }
 {{- end }}
 
+{{- if .ProjectComponents.Storage }}
+// runStorage rejects unavailable App-local Storage before invoking the shared benchmark implementation.
 func (r *benchmarkRunner) runStorage(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	concurrency = benchmarkConcurrency(concurrency, 8, 128)
 	if r.storages == nil || r.storages.Default() == nil {
@@ -404,6 +437,7 @@ func (r *benchmarkRunner) runStorage(ctx context.Context, instanceName string, d
 	}
 	return runStorageBenchmark(ctx, r.storages, duration, concurrency, payloadSize, started)
 }
+{{- end }}
 
 func benchmarkConcurrency(value, fallback, max int) int {
 	if value <= 0 {

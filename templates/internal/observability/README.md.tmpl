@@ -130,13 +130,13 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 Grafana is provisioned with:
 
 - datasource: VictoriaMetrics
-- dashboards: Cache Overview, Storage Overview{{ if .ProjectComponents.Events }}, Events Overview{{ end }}, Auth Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
+- dashboards: Cache Overview{{ if .ProjectComponents.Storage }}, Storage Overview{{ end }}{{ if .ProjectComponents.Events }}, Events Overview{{ end }}, Auth Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
 - starred dashboards: the same generated overviews are starred automatically for the default admin user
 - home dashboard: Platform Overview
 
 The dashboards are authored against GoForj's metric contract rather than generic third-party dashboard imports.
 
-Every generated dashboard includes an App filter backed by the emitted `app` metric label. Most primitive dashboards also include filters for named accessors. For example, the Cache Overview can be filtered to one named cache, the Storage Overview can be filtered to one disk, and the Database Overview can be filtered to one connection or table.
+Every generated dashboard includes an App filter backed by the emitted `app` metric label. Most primitive dashboards also include filters for named accessors. For example, the Cache Overview can be filtered to one named cache{{ if .ProjectComponents.Storage }}, the Storage Overview can be filtered to one disk{{ end }}, and the Database Overview can be filtered to one connection or table.
 
 If rendered dashboards do not refresh immediately:
 

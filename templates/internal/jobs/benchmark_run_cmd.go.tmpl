@@ -15,12 +15,14 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/queues"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 // BenchmarkRunCmd runs infrastructure benchmarks from the CLI.
 type BenchmarkRunCmd struct {
-	Suites      string `help:"Comma-separated suites (cache,queue,storage,db,http,all)" default:"all"`
+	Suites      string `help:"Comma-separated suites (cache,queue{{if .ProjectComponents.Storage}},storage{{end}},db,http,all)" default:"all"`
 	DurationMS  int    `help:"Duration per suite in milliseconds" default:"15000"`
 	Concurrency int    `help:"Concurrent workers per suite" default:"8"`
 	PayloadSize int    `help:"Payload size in bytes" default:"512"`
@@ -32,7 +34,9 @@ type BenchmarkRunCmd struct {
 	logger  *logger.AppLogger
 	caches  *caches.Manager
 	queues  *queues.Manager
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager
+{{- end }}
 {{- if .Components.HasDatabase }}
 	db      *database.Connections
 {{- end }}
@@ -48,7 +52,9 @@ func NewBenchmarkRunCmd(
 	logger *logger.AppLogger,
 	caches *caches.Manager,
 	queues *queues.Manager,
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
+{{- end }}
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
@@ -57,7 +63,9 @@ func NewBenchmarkRunCmd(
 		logger: logger,
 		caches: caches,
 		queues: queues,
+{{- if .ProjectComponents.Storage }}
 		storage: storage,
+{{- end }}
 {{- if .Components.HasDatabase }}
 		db:    dbConnections,
 {{- end }}
@@ -66,7 +74,14 @@ func NewBenchmarkRunCmd(
 
 // Run executes the benchmark command.
 func (c *BenchmarkRunCmd) Run(ctx context.Context) error {
-	suites := parseSuites(c.Suites)
+	storageEnabled := false
+{{- if .ProjectComponents.Storage }}
+	storageEnabled = c.storage != nil
+{{- end }}
+	suites, err := parseSuites(c.Suites, storageEnabled)
+	if err != nil {
+		return err
+	}
 	if len(suites) == 0 {
 		return fmt.Errorf("no benchmark suites selected")
 	}
@@ -74,7 +89,10 @@ func (c *BenchmarkRunCmd) Run(ctx context.Context) error {
 	runErrors := make(map[string]string)
 	system := collectSystemBenchmarkInfo(ctx)
 	for _, suite := range suites {
-		report, err := runBenchmark(ctx, c.caches, c.queues, c.storage,
+		report, err := runBenchmark(ctx, c.caches, c.queues,
+{{- if .ProjectComponents.Storage }}
+			c.storage,
+{{- end }}
 {{- if .Components.HasDatabase }}
 			c.db,
 {{- else }}
@@ -193,9 +211,11 @@ func (c *BenchmarkRunCmd) Run(ctx context.Context) error {
 	return nil
 }
 
-func parseSuites(raw string) []string {
+// parseSuites expands aliases while keeping unavailable App-local suites out of execution.
+func parseSuites(raw string, storageEnabled bool) ([]string, error) {
+	available := availableBenchmarkSuites(storageEnabled)
 	if strings.TrimSpace(raw) == "" {
-		return []string{"cache", "queue", "storage", "db", "http"}
+		return available, nil
 	}
 	items := strings.Split(raw, ",")
 	seen := map[string]struct{}{}
@@ -204,14 +224,25 @@ func parseSuites(raw string) []string {
 		key := strings.ToLower(strings.TrimSpace(item))
 		switch key {
 		case "", "all":
-			for _, suite := range []string{"cache", "queue", "storage", "db", "http"} {
+			for _, suite := range available {
 				if _, ok := seen[suite]; ok {
 					continue
 				}
 				seen[suite] = struct{}{}
 				out = append(out, suite)
 			}
-		case "cache", "queue", "storage", "db", "http":
+{{- if .ProjectComponents.Storage }}
+		case "storage":
+			if !storageEnabled {
+				return nil, fmt.Errorf("storage benchmark unavailable: Storage is not enabled for this App")
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, key)
+{{- end }}
+		case "cache", "queue", "db", "http":
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -219,7 +250,18 @@ func parseSuites(raw string) []string {
 			out = append(out, key)
 		}
 	}
-	return out
+	return out, nil
+}
+
+// availableBenchmarkSuites returns the suites supported by the current App runtime.
+func availableBenchmarkSuites(storageEnabled bool) []string {
+	suites := []string{"cache", "queue"}
+{{- if .ProjectComponents.Storage }}
+	if storageEnabled {
+		suites = append(suites, "storage")
+	}
+{{- end }}
+	return append(suites, "db", "http")
 }
 
 func humanBytes(value uint64) string {

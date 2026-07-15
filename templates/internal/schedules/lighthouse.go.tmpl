@@ -62,7 +62,7 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
-	publisher := lighthouse.NewInspectPublisher(r.agent{{- if .Components.Metrics }}, r.metrics{{- end }})
+	publisher := lighthouse.NewInspectPublisher(r.agent{{- if .ProjectComponents.Metrics }}, {{- if .Components.Metrics }} r.metrics{{- else }} nil{{- end }}{{- end }})
 	r.inspects.SetPublisher(publisher)
 	r.inspects.SetPublishOnly(true)
 	r.inspects.SetCaptureGate(r.agent.InspectActive)

@@ -62,8 +62,16 @@ func Inventory(root string) mcp.Inventory {
 	env := loadAtlasEnv(root)
 	atlasProject := Project(root).WithDiscoveredDefaults()
 	apps := atlasProject.Apps
+	projectComponents := project.Components{}
+	if cfg != nil {
+		projectComponents = project.ProjectComponents(cfg)
+	}
+	disks := []string(nil)
+	if projectComponents.Storage {
+		disks = resourceNames(env, "STORAGE", storageEnvKeys)
+	}
 	eventBuses := []string(nil)
-	if cfg != nil && project.ProjectComponents(cfg).Events {
+	if projectComponents.Events {
 		eventBuses = resourceNames(env, "EVENTS", eventEnvKeys)
 	}
 	return mcp.Inventory{
@@ -72,7 +80,7 @@ func Inventory(root string) mcp.Inventory {
 		Commands:   discoverAppSymbols(root, apps, "commands.go", commandFieldPattern, identityLabel),
 		Queues:     resourceNames(env, "QUEUE", queueEnvKeys),
 		Caches:     resourceNames(env, "CACHE", cacheEnvKeys),
-		Disks:      resourceNames(env, "STORAGE", storageEnvKeys),
+		Disks:      disks,
 		EventBuses: eventBuses,
 		Resources:  resourceLinks(cfg, env),
 	}

@@ -9,7 +9,10 @@
   branch
 - Phase 2 status: complete; Events has a truthful initial opt-out, mixed-App
   projection, safe additive enablement, and an explicit no-removal contract
-- Next slice: Phase 3, File Storage
+- Phase 3 status: complete; File Storage now has a truthful initial opt-out,
+  mixed-App projection, safe additive enablement, and an explicit no-removal
+  contract that never treats runtime file data as generated residue
+- Next slice: Phase 4, Background Jobs and Queue closure
 - Scope: component modeling, project and App rendering, generated resource
   surfaces, configuration migration, and test-render coverage
 - Target repository: `goforj`
@@ -394,21 +397,99 @@ Exit criteria:
 
 ### Phase 4: Background Jobs and Queue closure
 
-- Move every Queue surface under the existing Jobs component.
-- Gate queue observers currently emitted by core rendering.
-- Gate manager generation, App accessors, worker runtime, environment,
-  readiness, About, discovery, metrics, dashboards, Lighthouse, commands,
-  documentation, and dependencies together.
-- Keep runtime deployment choices independent: an App with Jobs may run only
-  `api`, only `worker`, or a combined development runtime.
+Queue remains implementation machinery owned wholly by the existing Jobs
+component. This phase closes the remaining Queue surface without introducing a
+second component or coupling component selection to whether a deployment runs
+an `api`, a `worker`, or both.
+
+Implement the closure in this order:
+
+1. Add a Jobs transition preflight before changing generated output. It must
+   recognize project-owned and per-App Jobs residue, reject unsafe removal
+   before configuration or owner files are written, and protect legacy
+   App-owned Jobs injectors from cleanup. User-authored files under
+   `internal/jobs` and queued runtime data are never deletion candidates.
+2. Move queue observers, queue dashboards, generated managers and accessors,
+   make commands and raw templates, worker support, and Jobs integration files
+   beneath the Jobs render boundary. Shared Jobs files follow
+   `ProjectComponents.Jobs`; App APIs and framework injectors follow that
+   App's `Components.Jobs`.
+3. Make Queue environment and dependency output truthful. Root driver and
+   supported-driver keys exist only when the project envelope contains Jobs;
+   App-prefixed active-driver keys exist only for participating Apps. Queue and
+   queue-driver modules are synchronized only for a Jobs-enabled project.
+4. Close mixed-App constructor seams. Shared Jobs code must not be shaped by
+   the default App's Database, Metrics, Storage, or other optional selections.
+   Framework-owned App wrappers provide real collaborators only for an App
+   that selected them and otherwise provide the intentional typed-nil boundary
+   used by shared constructors.
+5. Make every generation entry point component-aware. Full render, App-only
+   render, build generation, bare `forj generate`, explicit `--queue`
+   generation, and observability-role discovery must use configuration intent
+   when it is available. Stale directories and environment keys must not
+   recreate Queue support.
+6. Gate Queue participation in readiness, About, runtime discovery, Atlas and
+   resource projections, metrics, Lighthouse registration and benchmarks,
+   Grafana panels, service consumers, and generated documentation. A shared
+   package may exist for another App, but an App without Jobs must not
+   advertise, wire, or execute it.
+7. Preserve enabled behavior and deployment flexibility. Jobs-enabled Apps may
+   dispatch and process work using any supported runtime topology, and the
+   existing worker, driver, Lighthouse, metrics, Demo, and multi-App behavior
+   remains covered.
+
+The mixed-App boundary is the highest-risk part of this phase. A named App may
+be the only App with Jobs, so shared templates cannot branch on the default
+App's components. Conversely, a Jobs-disabled named App must not receive Queue
+managers merely because another App widened the project envelope. Database and
+Metrics constructor shapes need explicit per-App wrappers; Storage follows the
+same optional pattern. Jobs still has a known Cache dependency in its
+Lighthouse benchmark and inspection plumbing. Removing that dependency belongs
+to Phase 5 and must not be hidden by making Cache an implicit Jobs requirement.
+
+The removal preflight must distinguish source ownership from runtime state.
+Framework-owned Jobs files can be reconciled only after the preflight proves
+the transition safe. App-owned injectors, generated-job source edited by the
+user, arbitrary files in Jobs directories, external queue contents, and local
+queue data are preserved. Legacy owner-file migration must be conflict-aware;
+cleanup must never silently delete the former top-level Jobs injector.
+
+The Jobs-disabled absence contract applies to Queue-owned generated and runtime
+surface. The persisted Jobs component field, primitive-neutral inspection
+observations, generic runtime source vocabulary, and dormant embedded
+Lighthouse client code may remain shared when they import no Queue package and
+do not advertise or register the capability.
 
 Exit criteria:
 
-- Jobs disabled produces no queue surface anywhere;
-- Jobs enabled works while Events and Storage are disabled;
-- existing enabled Jobs behavior remains covered by its current integration
-  tests;
-- no Queue or Job Workers component is introduced.
+- A fresh Jobs-disabled render has no `internal/jobs` or `internal/queues`
+  package, Queue observer, App Queue accessor, job or queue make command,
+  worker command, `QUEUE_*` environment, Queue metric toggle, Queue dashboard
+  or platform panel, Queue service consumer, Queue runtime advertisement, or
+  Queue and driver module retained by generated code.
+- A Jobs-enabled render with Events and Storage disabled compiles every App,
+  runs generated tests, generates Wire output, and retains workerpool as the
+  active default with workerpool and Redis included.
+- Both mixed-App directions are proven: default App disabled with a named App
+  enabled, and default App enabled with a named App disabled. Shared Queue
+  support is rendered once, each App binary contains only its selected
+  participation, and only enabled Apps receive prefixed Queue environment.
+- With Jobs disabled, stale `QUEUE_*` values and stale Jobs or Queue
+  directories do not affect service planning, About, discovery, Atlas,
+  metrics, build generation, bare generation, or rerender. An explicit
+  `forj generate --queue` fails with an actionable component-disabled error.
+- Enabling Jobs through full render and App-only render creates the missing
+  framework boundary, persists component intent, generates Queue accessors,
+  and preserves byte-for-byte every existing App-owned mapping.
+- Disabling Jobs when user-owned or App-owned Jobs residue remains fails before
+  any configuration, environment, migration, entrypoint, or owner-file write.
+  Detection recognizes receiver methods such as `Queue()` and `Queues()`
+  without false positives from comments, strings, fields, or free functions;
+  removing the last Jobs-enabled App follows the same rule.
+- Existing Queue driver, worker selection, Lighthouse queue health, Jobs
+  metrics, observability, Demo, generator, and multi-App integration tests stay
+  green, and rerender plus generation is idempotent.
+- No Queue or Job Workers component is introduced.
 
 ### Phase 5: Cache and Inspects vertical slice
 

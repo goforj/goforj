@@ -323,11 +323,14 @@ func TestEventManagerMetricsParticipationIsAppLocal(t *testing.T) {
 		wiring := renderSharedTemplate(t, "wire/inject_managers.go.tmpl", data)
 		assertFormattedGoTemplate(t, "wire/inject_managers.go.tmpl", wiring)
 		start := strings.Index(wiring, "func provideEventManager(")
-		end := strings.Index(wiring, "// provideStorageManager")
-		if start < 0 || end <= start {
+		if start < 0 {
 			t.Fatalf("rendered wiring omitted the Events manager provider\n%s", wiring)
 		}
-		provider := wiring[start:end]
+		end := strings.Index(wiring[start:], "\n}\n")
+		if end < 0 {
+			t.Fatalf("rendered wiring omitted the Events manager provider terminator\n%s", wiring)
+		}
+		provider := wiring[start : start+end+3]
 		if got := strings.Contains(provider, "metricsManager *metrics.Manager"); got != metricsEnabled {
 			t.Fatalf("metricsEnabled=%t Events provider parameter presence=%t\n%s", metricsEnabled, got, provider)
 		}

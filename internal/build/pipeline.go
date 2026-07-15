@@ -446,19 +446,22 @@ func shouldRetryWire(detail string) bool {
 		strings.Contains(detail, "could not import")
 }
 
-// generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate Events.
+// generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate optional primitives.
 func (p Pipeline) generateProjectFiles() (string, error) {
+	storageEnabled := hasDir(filepath.Join(".", "internal", "storages"))
 	eventsEnabled := hasDir(filepath.Join(".", "internal", "events"))
 	config, err := project.LoadProjectConfig()
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load project generation config: %w", err)
 	}
 	if config != nil {
-		eventsEnabled = project.ProjectComponents(config).Events
+		components := project.ProjectComponents(config)
+		storageEnabled = components.Storage
+		eventsEnabled = components.Events
 	}
 	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
 		".",
-		true,
+		storageEnabled,
 		hasDir(filepath.Join(".", "internal", "caches")),
 		hasDir(filepath.Join(".", "internal", "queues")),
 		eventsEnabled,

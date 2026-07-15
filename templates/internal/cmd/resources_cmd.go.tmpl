@@ -47,12 +47,14 @@ func (*ResourcesCmd) Run() error {
 			Driver: database.Driver, ConfigKeys: databaseConfigKeys(database.Name), IsDefault: database.IsDefault,
 		})
 	}
+{{- if .ProjectComponents.Storage }}
 	for _, storage := range runtime.DiscoverStorageInstances() {
 		contract.Resources = append(contract.Resources, ResourceDescription{
 			ID: "storage." + storage.Name, Kind: "storage", Name: storage.Name,
 			Driver: storage.Driver, ConfigKeys: storageConfigKeys(storage.Name), IsDefault: storage.IsDefault,
 		})
 	}
+{{- end }}
 	data, err := json.MarshalIndent(contract, "", "  ")
 	if err != nil {
 		return err
@@ -70,6 +72,7 @@ func databaseConfigKeys(name string) []string {
 	return []string{prefix + "_DRIVER", prefix + "_DSN", prefix + "_HOST", prefix + "_PORT", prefix + "_DATABASE", prefix + "_USERNAME", prefix + "_PASSWORD"}
 }
 
+{{ if .ProjectComponents.Storage }}
 // storageConfigKeys returns names of environment keys used by one storage disk.
 func storageConfigKeys(name string) []string {
 	prefix := "STORAGE"
@@ -78,6 +81,7 @@ func storageConfigKeys(name string) []string {
 	}
 	return []string{prefix + "_DRIVER", prefix + "_ROOT", prefix + "_PREFIX", prefix + "_BUCKET", prefix + "_ENDPOINT"}
 }
+{{- end }}
 
 // resourceEnvName converts a resource name to the generated environment convention.
 func resourceEnvName(name string) string {

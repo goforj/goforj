@@ -232,6 +232,56 @@ apps:
 	}
 }
 
+// TestInventoryIgnoresStaleDisabledStorageDisks verifies Atlas follows project capability selection instead of owner env residue.
+func TestInventoryIgnoresStaleDisabledStorageDisks(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+    storage: false
+`)
+	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=s3\n")
+
+	inventory := Inventory(root)
+	if len(inventory.Disks) != 0 {
+		t.Fatalf("stale Storage env resurrected Atlas disks: %#v", inventory.Disks)
+	}
+	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); ok {
+		t.Fatalf("stale Storage env resurrected an Atlas resource link: %#v", inventory.Resources)
+	}
+}
+
+// TestInventoryUsesNamedAppStorageEnvelope verifies Atlas exposes shared disks when only a named App participates in Storage.
+func TestInventoryUsesNamedAppStorageEnvelope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+apps:
+  files:
+    components:
+      cli: true
+      storage: true
+`)
+	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=local\n")
+
+	inventory := Inventory(root)
+	if !containsString(inventory.Disks, "public") {
+		t.Fatalf("named Storage App did not expose Atlas disks: %#v", inventory.Disks)
+	}
+	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); !ok {
+		t.Fatalf("named Storage App did not expose Atlas resource links: %#v", inventory.Resources)
+	}
+}
+
 func TestDiagnosticsDiscoversSafeAtlasMetadata(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".goforj.yml"), `

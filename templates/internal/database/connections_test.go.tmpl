@@ -354,8 +354,12 @@ func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testin
 	manager := metrics.NewManagerWithConfig(metrics.Config{
 		HTTP:     true,
 		Cache:    true,
+		{{- if .ProjectComponents.Storage }}
 		Storage:  true,
+		{{- end }}
+		{{- if .ProjectComponents.Events }}
 		Events:   true,
+		{{- end }}
 		Database: false,
 		{{- if .Components.Auth }}
 		Auth:     true,

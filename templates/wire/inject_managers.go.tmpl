@@ -25,19 +25,27 @@ import (
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 var managerSet = wire.NewSet(
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	metrics.NewManager,
+{{- else if .ProjectComponents.Metrics }}
+	provideDisabledMetricsManager,
 {{- end }}
 	provideCacheManager,
 {{- if .Components.Events }}
 	provideEventManager,
 {{- end }}
 	provideInspectManager,
+{{- if and .ProjectComponents.Storage .Components.Storage }}
 	provideStorageManager,
+{{- else if .ProjectComponents.Storage }}
+	provideDisabledStorageManager,
+{{- end }}
 {{- if .Components.Mail }}
 	provideMailManager,
 {{- end }}
@@ -46,9 +54,16 @@ var managerSet = wire.NewSet(
 {{- end }}
 )
 
+{{ if and .ProjectComponents.Metrics (not .Components.Metrics) }}
+// provideDisabledMetricsManager satisfies shared project-envelope constructors without enabling Metrics for this App.
+func provideDisabledMetricsManager() *metrics.Manager {
+	return nil
+}
+{{- end }}
+
 // provideCacheManager attaches cache metrics during manager construction so app-owned injectors stay focused on registrations.
 func provideCacheManager(
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*caches.Manager, error) {
@@ -56,7 +71,7 @@ func provideCacheManager(
 	if err != nil {
 		return nil, err
 	}
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	if metricsManager.CacheEnabled() {
 		manager = manager.WithObserver(observability.CacheMetricsObserver(metricsManager))
 	}
@@ -96,10 +111,11 @@ func provideEventManager(
 }
 {{- end }}
 
+{{ if and .ProjectComponents.Storage .Components.Storage }}
 // provideStorageManager attaches storage observers while leaving disk registration inside the storage manager.
 func provideStorageManager(
 	inspectManager *inspects.Manager,
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*storages.Manager, error) {
@@ -110,23 +126,37 @@ func provideStorageManager(
 	return manager.WithObserver(observability.StorageObserver(
 		inspectManager,
 {{- if .ProjectComponents.Metrics }}
+		{{- if .Components.Metrics }}
 		metricsManager,
+		{{- else }}
+		(*metrics.Manager)(nil),
+		{{- end }}
 {{- end }}
 	)), nil
 }
+{{- else if .ProjectComponents.Storage }}
+// provideDisabledStorageManager satisfies shared project-envelope constructors without initializing Storage for this App.
+func provideDisabledStorageManager() *storages.Manager {
+	return nil
+}
+{{- end }}
 
 {{ if .Components.Mail }}
 // provideMailManager attaches mail observers at the framework wiring boundary.
 func provideMailManager(
 	inspectManager *inspects.Manager,
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*mail.Manager, error) {
 	return mail.NewManagerWithObserver(observability.MailObserver(
 		inspectManager,
 {{- if .ProjectComponents.Metrics }}
+		{{- if .Components.Metrics }}
 		metricsManager,
+		{{- else }}
+		(*metrics.Manager)(nil),
+		{{- end }}
 {{- end }}
 	))
 }

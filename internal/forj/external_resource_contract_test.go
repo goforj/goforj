@@ -22,7 +22,7 @@ func TestDefaultResourceTemplatesOmitAdvancedPlaceholderWall(t *testing.T) {
 
 // TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders verifies active and built-in opt-in drivers receive actionable dotenv hints.
 func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Mail: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Mail: true, Storage: true}
 	plan := defaultResourcePlanForTest(t, components)
 	plan = resourceContractTestSelection(plan, project.ResourceCache, "memcached", "memcached")
 	plan = resourceContractTestSelection(plan, project.ResourceQueue, "workerpool", "sqs")

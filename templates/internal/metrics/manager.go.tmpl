@@ -4,7 +4,9 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
@@ -26,10 +28,12 @@ import (
 {{- if .ProjectComponents.Events }}
 	goforjevents "github.com/goforj/events"
 {{- end }}
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 	goforjmail "github.com/goforj/mail"
 {{- end }}
+{{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
+{{- end }}
 	"github.com/goforj/web"
 )
 
@@ -106,8 +110,10 @@ type Manager struct {
 {{- end }}
 	cacheOperations         *metricCounterVec
 	cacheOperationLatency   *metricHistogramVec
+{{- if .ProjectComponents.Storage }}
 	storageOperations       *metricCounterVec
 	storageOperationLatency *metricHistogramVec
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	eventPublishes          *metricCounterVec
 	eventPublishLatency     *metricHistogramVec
@@ -123,7 +129,7 @@ type Manager struct {
 	lighthouseInspectFlushErrors  *metricCounterVec
 	lighthouseInspectFlushSize    *metricHistogramVec
 	lighthouseInspectFlushLatency *metricHistogramVec
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 	mailSends        *metricCounterVec
 	mailSendLatency  *metricHistogramVec
 {{- end }}
@@ -136,11 +142,13 @@ type Config struct {
 	Monitoring bool
 {{- end }}
 	Cache     bool
+{{- if .ProjectComponents.Storage }}
 	Storage   bool
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	Events    bool
 {{- end }}
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 	Mail      bool
 {{- end }}
 {{- if .Components.Jobs }}
@@ -247,12 +255,14 @@ func NewConfig() Config {
 		Monitoring: env.GetBool("METRICS_MONITORING_ENABLED", "true"),
 {{- end }}
 		Cache:     env.GetBool("METRICS_CACHE_ENABLED", "true"),
-		Storage:   env.GetBool("METRICS_STORAGE_ENABLED", "true"),
+{{- if .ProjectComponents.Storage }}
+		Storage:   runtime.CurrentApp().Components.Storage && env.GetBool("METRICS_STORAGE_ENABLED", "true"),
+{{- end }}
 {{- if .ProjectComponents.Events }}
 		Events:    env.GetBool("METRICS_EVENTS_ENABLED", "true"),
 {{- end }}
-{{- if .Components.Mail }}
-		Mail:      env.GetBool("METRICS_MAIL_ENABLED", "true"),
+{{- if .ProjectComponents.Mail }}
+		Mail:      runtime.CurrentApp().Components.Mail && env.GetBool("METRICS_MAIL_ENABLED", "true"),
 {{- end }}
 {{- if .Components.Jobs }}
 		Queue:     env.GetBool("METRICS_QUEUE_ENABLED", "true"),
@@ -566,6 +576,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("source", "cache", "driver", "operation", "category"), gmetrics.DurationBounds(cacheDurationBounds())),
+{{- if .ProjectComponents.Storage }}
 		storageOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "storage.operations",
 			Help: "Total storage operations by source, disk, driver, operation, category, and status.",
@@ -577,6 +588,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("source", "disk", "driver", "operation", "category"), gmetrics.DurationBounds(storageDurationBounds())),
+{{- end }}
 {{- if .ProjectComponents.Events }}
 		eventPublishes: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "events.publishes",
@@ -647,7 +659,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("source"), gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "mail.sends",
 			Help: "Total mail send attempts by source, mailer, driver, status, and reason.",
@@ -693,9 +705,12 @@ func (m *Manager) CacheEnabled() bool {
 	return m.config.Cache
 }
 
+{{ if .ProjectComponents.Storage }}
+// StorageEnabled reports whether Storage metrics are enabled for this runtime.
 func (m *Manager) StorageEnabled() bool {
 	return m.config.Storage
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 // EventsEnabled reports whether Events metrics are enabled for this runtime.
@@ -704,7 +719,8 @@ func (m *Manager) EventsEnabled() bool {
 }
 {{- end }}
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
+// MailEnabled reports whether Mail metrics are enabled for this runtime.
 func (m *Manager) MailEnabled() bool {
 	return m.config.Mail
 }
@@ -1058,6 +1074,8 @@ func (m *Manager) RecordCacheOperation(ctx context.Context, event caches.CacheOp
 	m.observeDuration(m.cacheOperationLatency, event.Duration, labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category)
 }
 
+{{ if .ProjectComponents.Storage }}
+// storageMetricLabelSet contains bounded Storage dimensions for metric instruments.
 type storageMetricLabelSet struct {
 	Source    string
 	Disk      string
@@ -1066,6 +1084,7 @@ type storageMetricLabelSet struct {
 	Category  string
 	Status    string
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 type eventMetricLabelSet struct {
@@ -1084,7 +1103,8 @@ type eventHandlerMetricLabelSet struct {
 }
 {{- end }}
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
+// mailMetricLabelSet contains bounded Mail dimensions for metric instruments.
 type mailMetricLabelSet struct {
 	Source string
 	Name   string
@@ -1093,6 +1113,7 @@ type mailMetricLabelSet struct {
 	Reason string
 }
 
+// MailSendMetricEvent contains the bounded Mail operation data recorded by the observer seam.
 type MailSendMetricEvent struct {
 	Name     string
 	Driver   string
@@ -1153,7 +1174,8 @@ type EventDeliveryMetricEvent struct {
 }
 {{- end }}
 
-// RecordStorageOperation updates framework-owned storage metrics from storage observer events.
+{{ if .ProjectComponents.Storage }}
+// RecordStorageOperation updates framework-owned Storage metrics from observer events.
 func (m *Manager) RecordStorageOperation(ctx context.Context, event storages.StorageOpEvent) {
 	if !m.StorageEnabled() {
 		return
@@ -1162,6 +1184,7 @@ func (m *Manager) RecordStorageOperation(ctx context.Context, event storages.Sto
 	m.storageOperations.WithLabelValues(labels.Source, labels.Disk, labels.Driver, labels.Operation, labels.Category, labels.Status).Inc()
 	m.observeDuration(m.storageOperationLatency, event.Duration, labels.Source, labels.Disk, labels.Driver, labels.Operation, labels.Category)
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 // RecordEventPublish updates framework-owned event metrics from event bus observer events.
@@ -1262,7 +1285,7 @@ func (m *Manager) RecordLighthouseInspectFlush(source string, batchSize int, dur
 	}
 }
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 // RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
 func (m *Manager) RecordMailSend(ctx context.Context, event MailSendMetricEvent) {
 	if !m.MailEnabled() {
@@ -1392,6 +1415,8 @@ func (m *Manager) cacheMetricLabels(ctx context.Context, event caches.CacheOpEve
 	return labels
 }
 
+{{ if .ProjectComponents.Storage }}
+// storageMetricLabels normalizes Storage operation dimensions into bounded metric labels.
 func (m *Manager) storageMetricLabels(ctx context.Context, event storages.StorageOpEvent) storageMetricLabelSet {
 	labels := storageMetricLabelSet{
 		Source:    m.metricSource(ctx),
@@ -1403,6 +1428,7 @@ func (m *Manager) storageMetricLabels(ctx context.Context, event storages.Storag
 	labels.Category = storageCategoryLabel(labels.Operation)
 	return labels
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 // eventMetricLabels normalizes publication dimensions into bounded metric labels.
@@ -1428,7 +1454,8 @@ func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus string, driv
 }
 {{- end }}
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
+// mailMetricLabels normalizes Mail operation dimensions into bounded metric labels.
 func (m *Manager) mailMetricLabels(ctx context.Context, event MailSendMetricEvent) mailMetricLabelSet {
 	return mailMetricLabelSet{
 		Source: m.metricSource(ctx),
@@ -1897,6 +1924,8 @@ func cacheHitLabel(operation string, hit bool, err error) string {
 	}
 }
 
+{{ if .ProjectComponents.Storage }}
+// storageDiskLabel supplies a stable label for the default Storage disk.
 func storageDiskLabel(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1905,6 +1934,7 @@ func storageDiskLabel(name string) string {
 	return name
 }
 
+// storageDriverLabel normalizes absent Storage drivers without introducing an empty label.
 func storageDriverLabel(driver string) string {
 	driver = strings.TrimSpace(strings.ToLower(driver))
 	if driver == "" {
@@ -1913,6 +1943,7 @@ func storageDriverLabel(driver string) string {
 	return driver
 }
 
+// storageOperationLabel normalizes absent Storage operations into a bounded fallback.
 func storageOperationLabel(operation string) string {
 	operation = strings.TrimSpace(strings.ToLower(operation))
 	if operation == "" {
@@ -1921,6 +1952,7 @@ func storageOperationLabel(operation string) string {
 	return operation
 }
 
+// storageCategoryLabel maps Storage operations to the bounded dashboard category vocabulary.
 func storageCategoryLabel(operation string) string {
 	switch operation {
 	case "get", "stat", "exists":
@@ -1940,6 +1972,7 @@ func storageCategoryLabel(operation string) string {
 	}
 }
 
+// storageStatusLabel maps Storage outcomes to the bounded metric status vocabulary.
 func storageStatusLabel(err error) string {
 	switch {
 	case err == nil:
@@ -1960,6 +1993,7 @@ func storageStatusLabel(err error) string {
 		return "error"
 	}
 }
+{{- end }}
 
 func lighthouseInspectReasonLabel(value string) string {
 	normalized := strings.TrimSpace(strings.ToLower(value))
@@ -1980,6 +2014,8 @@ func lighthouseInspectReasonLabel(value string) string {
 	}
 }
 
+{{ if .ProjectComponents.Storage }}
+// storageDurationBounds defines the histogram resolution shared by Storage latency instruments.
 func storageDurationBounds() []time.Duration {
 	return []time.Duration{
 		100 * time.Nanosecond,
@@ -2004,6 +2040,7 @@ func storageDurationBounds() []time.Duration {
 		250 * time.Millisecond,
 	}
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 // eventBusLabel supplies a stable label for the default Events bus.
@@ -2154,7 +2191,8 @@ func eventDurationBounds() []time.Duration {
 }
 {{- end }}
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
+// mailerNameLabel supplies a stable label for the default Mail sender.
 func mailerNameLabel(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
@@ -2163,6 +2201,7 @@ func mailerNameLabel(name string) string {
 	return name
 }
 
+// mailDriverLabel normalizes absent Mail drivers without introducing an empty label.
 func mailDriverLabel(driver string) string {
 	driver = strings.TrimSpace(strings.ToLower(driver))
 	if driver == "" {
@@ -2171,6 +2210,7 @@ func mailDriverLabel(driver string) string {
 	return driver
 }
 
+// mailStatusLabel maps Mail outcomes to the bounded metric status vocabulary.
 func mailStatusLabel(err error) string {
 	switch {
 	case err == nil:
@@ -2196,6 +2236,7 @@ func mailStatusLabel(err error) string {
 	}
 }
 
+// mailReasonLabel maps Mail errors to a bounded diagnostic reason.
 func mailReasonLabel(err error) string {
 	switch {
 	case err == nil:

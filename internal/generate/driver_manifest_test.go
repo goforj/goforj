@@ -407,6 +407,59 @@ func TestAppPrefixedActiveDriversDoNotClassifyResourceFirstScopes(t *testing.T) 
 	}
 }
 
+// TestGenerateStorageFilesIgnoresDisabledAppOverlays verifies stale App env cannot widen a shared Storage manifest or accessor set.
+func TestGenerateStorageFilesIgnoresDisabledAppOverlays(t *testing.T) {
+	root := t.TempDir()
+	prepareManifestPackage(filepath.Join("internal", "storages"), false)(t, root)
+	config := `project_name: Storage overlays
+module_name: example.com/storage-overlays
+render:
+  component_contract: 1
+  components:
+    cli: true
+    storage: true
+apps:
+  api:
+    components:
+      cli: true
+  files:
+    components:
+      cli: true
+      storage: true
+`
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_SUPPORTED_DRIVERS", "local,s3")
+	t.Setenv("FILES_STORAGE_DRIVER", "s3")
+	t.Setenv("API_STORAGE_REPORTS_DRIVER", "ftp")
+
+	if _, err := GenerateStorageFiles(root); err != nil {
+		t.Fatalf("generate Storage with stale disabled-App overlay: %v", err)
+	}
+	manager, err := os.ReadFile(filepath.Join(root, "internal", "storages", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read generated Storage manager: %v", err)
+	}
+	manifest := generatedDriverManifest(t, string(manager), "compiledStorageDrivers")
+	for _, driver := range []string{"local", "s3"} {
+		if !strings.Contains(manifest, `"`+driver+`"`) {
+			t.Fatalf("Storage manifest omitted participating driver %q: %s", driver, manifest)
+		}
+	}
+	if strings.Contains(manifest, `"ftp"`) || strings.Contains(string(manager), "ftpstorage") {
+		t.Fatalf("Storage manifest retained a disabled-App driver:\n%s", manager)
+	}
+	accessors, err := os.ReadFile(filepath.Join(root, "internal", "storages", "accessors_gen.go"))
+	if err != nil {
+		t.Fatalf("read generated Storage accessors: %v", err)
+	}
+	if strings.Contains(string(accessors), "Reports") {
+		t.Fatalf("Storage accessors retained a disabled-App disk:\n%s", accessors)
+	}
+}
+
 // resourceAppDriverManifestTest describes one generator's App-overlay manifest contract.
 type resourceAppDriverManifestTest struct {
 	name         string

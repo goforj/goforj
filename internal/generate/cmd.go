@@ -48,10 +48,19 @@ func (c *Cmd) Run() error {
 	ranEvents := false
 	ranDB := false
 	if !selected || c.Storage {
-		if _, err := GenerateStorageFiles("."); err != nil {
-			return err
+		storageEnabled, err := projectStorageEnabled(".")
+		if err != nil && (!os.IsNotExist(err) || c.Storage) {
+			return fmt.Errorf("load project Storage selection: %w", err)
 		}
-		ranStorage = true
+		if c.Storage && !storageEnabled {
+			return fmt.Errorf("cannot generate Storage: the Storage component is disabled in .goforj.yml")
+		}
+		if storageEnabled {
+			if _, err := GenerateStorageFiles("."); err != nil {
+				return err
+			}
+			ranStorage = true
+		}
 	}
 	if !selected || c.Cache {
 		if _, err := os.Stat(filepath.Join("internal", "caches")); err == nil {
@@ -217,6 +226,15 @@ func projectEventsEnabled(projectDir string) (bool, error) {
 		return false, err
 	}
 	return project.ProjectComponents(config).Events, nil
+}
+
+// projectStorageEnabled resolves Storage participation from project configuration rather than generated-directory residue.
+func projectStorageEnabled(projectDir string) (bool, error) {
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err != nil {
+		return false, err
+	}
+	return project.ProjectComponents(config).Storage, nil
 }
 
 // runGoModTidy refreshes dependencies without exposing project resource credentials to Go or invoked VCS processes.

@@ -36,7 +36,7 @@ func discoverPrimitiveChildNames(projectDir string, resourcePrefix string, rootK
 		}
 	}
 	add(resourcePrefix)
-	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, resourcePrefix) {
 		add(appPrefix + "_" + resourcePrefix)
 	}
 	return sortStrings(names)
@@ -184,7 +184,7 @@ func validateEagerNamedPrimitiveDrivers(projectDir string, contract primitiveEnv
 // validateAppPrefixedPrimitiveEnv applies the root contract after resolving each App value as an overlay of base resource state.
 func validateAppPrefixedPrimitiveEnv(projectDir string, contract primitiveEnvContract, supportedDrivers map[string]struct{}, rootDriver string, baseChildren []string) []string {
 	problems := []string{}
-	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, contract.Prefix) {
 		resourcePrefix := appPrefix + "_" + contract.Prefix
 		appRootDriver := rootDriver
 		if value, set := os.LookupEnv(resourcePrefix + "_DRIVER"); set {
@@ -282,7 +282,7 @@ func appPrefixedActiveDrivers(projectDir string, resourcePrefix string, defaultD
 	baseRootDriver := effectivePrimitiveDriver(env.WithPrefix(resourcePrefix).Get("DRIVER", defaultDriver), defaultDriver)
 	drivers := make([]generationActiveDriver, 0)
 	seen := map[string]struct{}{}
-	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, resourcePrefix) {
 		keyPrefix := appPrefix + "_" + resourcePrefix + "_"
 		appRootDriver := baseRootDriver
 		if value, ok := os.LookupEnv(keyPrefix + "DRIVER"); ok {
@@ -360,6 +360,71 @@ func generationAppEnvPrefixes(projectDir string) []string {
 		prefixes[prefix] = struct{}{}
 	}
 	return sortStrings(prefixes)
+}
+
+// generationAppEnvPrefixesForResource keeps stale overlays from Apps that do not participate in a component out of generated manifests.
+func generationAppEnvPrefixesForResource(projectDir string, resourcePrefix string) []string {
+	prefixes := generationAppEnvPrefixes(projectDir)
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err != nil {
+		return prefixes
+	}
+	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	enabled := map[string]struct{}{}
+	configured := map[string]struct{}{}
+	for name, appConfig := range config.Apps {
+		prefix := generationAppEnvPrefix(name)
+		if prefix == "" {
+			continue
+		}
+		configured[name] = struct{}{}
+		components := project.NormalizeConfiguredAppComponents(config, appConfig.Components)
+		if generationComponentsSupportResource(components, resourcePrefix) {
+			enabled[prefix] = struct{}{}
+		}
+	}
+	defaultComponents := config.Render.Components.WithResolvedDependencies()
+	addDefaultProjection := func(name string) {
+		if _, exists := configured[name]; exists || !generationComponentsSupportResource(defaultComponents, resourcePrefix) {
+			return
+		}
+		if prefix := generationAppEnvPrefix(name); prefix != "" {
+			enabled[prefix] = struct{}{}
+		}
+	}
+	for name := range config.Dev.Apps {
+		addDefaultProjection(name)
+	}
+	for name := range config.Dev.Run {
+		addDefaultProjection(name)
+	}
+	filtered := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if _, exists := enabled[prefix]; exists {
+			filtered = append(filtered, prefix)
+		}
+	}
+	return filtered
+}
+
+// generationComponentsSupportResource maps generated resource prefixes to their owning App component.
+func generationComponentsSupportResource(components project.Components, resourcePrefix string) bool {
+	switch resourcePrefix {
+	case "CACHE":
+		return components.Cache
+	case "DB":
+		return components.HasDatabase()
+	case "EVENTS":
+		return components.Events
+	case "MAIL":
+		return components.Mail
+	case "QUEUE":
+		return components.Jobs
+	case "STORAGE":
+		return components.Storage
+	default:
+		return true
+	}
 }
 
 // generationAppEnvPrefix mirrors the generated runtime's normalization for named App overlays.

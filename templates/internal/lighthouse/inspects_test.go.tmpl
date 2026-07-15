@@ -38,7 +38,7 @@ func TestInspectPublisherFlushesBatch(t *testing.T) {
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
 
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
 			TraceID:   "inspect-1",
@@ -200,7 +200,7 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 	agent.inspectActive.Store(true)
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
@@ -288,7 +288,7 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 func TestInspectPublisherRetainsBatchWhenNotConnected(t *testing.T) {
 	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
 	agent.inspectActive.Store(true)
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
@@ -404,7 +404,7 @@ func TestInspectPublisherSkipsWhenInactive(t *testing.T) {
 	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{

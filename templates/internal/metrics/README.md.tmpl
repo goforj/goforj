@@ -44,7 +44,9 @@ Each framework-owned instrumentation surface can be enabled or disabled independ
 
 - `METRICS_HTTP_ENABLED`
 - `METRICS_CACHE_ENABLED`
+{{- if .ProjectComponents.Storage }}
 - `METRICS_STORAGE_ENABLED`
+{{- end }}
 {{- if .ProjectComponents.Events }}
 - `METRICS_EVENTS_ENABLED`
 {{- end }}
@@ -75,7 +77,9 @@ Prometheus names use underscores and suffixes. For example, the GoForj metric `h
 | HTTP | `http_requests_total`, `http_requests_by_route_total`, `http_request_duration_seconds`, `http_request_duration_by_route_seconds`, `http_requests_inflight`, `http_responses_client_errors_total`, `http_responses_server_errors_total` | `app`, `source`, `method`, `route`, `status` |
 | Auth | `auth_flows_total`, `auth_flow_duration_seconds` | `app`, `flow`, `status`, `reason`, `provider` |
 | Cache | `cache_operations_total`, `cache_operation_duration_seconds` | `app`, `source`, `cache`, `driver`, `operation`, `category`, `status`, `hit` |
+{{- if .ProjectComponents.Storage }}
 | Storage | `storage_operations_total`, `storage_operation_duration_seconds` | `app`, `source`, `disk`, `driver`, `operation`, `category`, `status` |
+{{- end }}
 {{- if .ProjectComponents.Events }}
 | Events | `events_publishes_total`, `events_publish_duration_seconds`, `events_subscriptions_total`, `events_subscribers_active`, `events_deliveries_total`, `events_deliveries_inflight`, `events_delivery_duration_seconds` | `app`, `source`, `bus`, `driver`, `topic`, `handler`, `status`, `reason` |
 {{- end }}
@@ -91,7 +95,7 @@ The local observability stack adds a `process` label at scrape time. Typical val
 
 Every framework-owned metric family emits `app` directly. Use it as the top-level app selector in dashboards and alerts.
 
-Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache, storage{{ if .ProjectComponents.Events }}, events{{ end }}, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
+Some framework-owned metric families also emit a `source` label directly when the logical runtime surface is known at emission time. Today that includes HTTP, queue, scheduler, cache{{ if .ProjectComponents.Storage }}, storage{{ end }}{{ if .ProjectComponents.Events }}, events{{ end }}, mail, and Lighthouse inspect transport metrics. Prefer `source` for logical runtime attribution and `process` for scrape-target topology.
 
 When a framework observer path cannot preserve source context truthfully, source-aware metric families fall back to `source="app"` rather than surfacing noisy placeholder labels in dashboards. HTTP request metrics fall back to `source="http"` because route traffic is always attributable to the HTTP runtime surface. Inspect-store cache operations use `source="lighthouse"` because that cache traffic is Lighthouse persistence, not app business cache traffic.
 
@@ -117,7 +121,7 @@ Avoid adding labels for user IDs, emails, session IDs, cache keys, filenames, re
 
 ## Custom App Metrics
 
-The generated framework metrics cover platform behavior such as HTTP, auth, queue, scheduler, cache, storage, and database activity. Your application can add its own business metrics on top through the same `github.com/goforj/metrics` registry.
+The generated framework metrics cover platform behavior such as HTTP, auth, queue, scheduler, cache{{ if .ProjectComponents.Storage }}, storage{{ end }}, and database activity. Your application can add its own business metrics on top through the same `github.com/goforj/metrics` registry.
 
 The flow is:
 
@@ -434,6 +438,7 @@ topk(10,
 )
 ```
 
+{{ if .ProjectComponents.Storage }}
 ### Storage
 
 Read/list pressure by disk:
@@ -461,6 +466,7 @@ topk(10,
   )
 )
 ```
+{{- end }}
 
 ### Database
 

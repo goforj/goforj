@@ -25,9 +25,11 @@ import (
 
 // ServerConfig configures the dev console server.
 type ServerConfig struct {
-	Secret          string
+	Secret string
+{{- if .ProjectComponents.Storage }}
 	StorageDownload func(r web.Context, disk string, path string) error
-	Inspects        *inspects.Manager
+{{- end }}
+	Inspects *inspects.Manager
 }
 
 const lighthouseAuthCookie = "lighthouse_token"
@@ -158,12 +160,13 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		local := ip == "127.0.0.1" || ip == "::1"
 		return r.JSON(http.StatusOK, map[string]any{"local": local})
 	})
-	apiGroup.GET("/storage/download", func(r web.Context) error {
-		if config.StorageDownload == nil {
-			return r.NoContent(http.StatusNotFound)
-		}
-		return config.StorageDownload(r, r.Query("disk"), r.Query("path"))
-	})
+{{- if .ProjectComponents.Storage }}
+	if config.StorageDownload != nil {
+		apiGroup.GET("/storage/download", func(r web.Context) error {
+			return config.StorageDownload(r, r.Query("disk"), r.Query("path"))
+		})
+	}
+{{- end }}
 	apiGroup.GET("/env", func(r web.Context) error {
 		name := strings.TrimSpace(r.Query("file"))
 		if name == "" {

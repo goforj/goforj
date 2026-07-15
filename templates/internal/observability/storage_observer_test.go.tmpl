@@ -1,10 +1,18 @@
 package observability
 
 import (
+{{- if .ProjectComponents.Metrics }}
+	"context"
+{{- end }}
 	"errors"
 	"testing"
 	"time"
 
+{{- if .ProjectComponents.Metrics }}
+	"github.com/goforj/cache"
+
+	"{{.GoModuleName}}/internal/inspects"
+{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 )
 
@@ -32,3 +40,17 @@ func TestStorageInspectEventPreservesObservedOperation(t *testing.T) {
 		t.Fatalf("storage inspect error/duration = %#v", event)
 	}
 }
+
+{{ if .ProjectComponents.Metrics }}
+// TestStorageObserverAllowsAppMetricsOptOut verifies the shared observer accepts the intentional mixed-App nil Metrics seam.
+func TestStorageObserverAllowsAppMetricsOptOut(t *testing.T) {
+	store := cache.NewCacheWithTTL(cache.NewMemoryStore(context.Background()), time.Minute)
+	observer := StorageObserver(inspects.NewManager(store), nil)
+	observer.OnStorageOp(t.Context(), storages.StorageOpEvent{
+		Operation: "put",
+		Disk:      "public",
+		Path:      "avatars/42.png",
+		Driver:    "local",
+	})
+}
+{{- end }}

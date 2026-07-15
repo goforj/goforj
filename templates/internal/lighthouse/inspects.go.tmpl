@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"{{.GoModuleName}}/internal/inspects"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"github.com/goforj/env/v2"
@@ -25,7 +25,7 @@ const (
 // InspectPublisher buffers finished inspects and flushes them to Lighthouse in batches.
 type InspectPublisher struct {
 	agent          *Agent
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metrics        *metrics.Manager
 {{- end }}
 	buffer         chan *inspects.Record
@@ -36,7 +36,7 @@ type InspectPublisher struct {
 }
 
 // NewInspectPublisher creates a new Lighthouse inspect publisher.
-func NewInspectPublisher(agent *Agent{{- if .Components.Metrics }}, metricsManager *metrics.Manager{{- end }}) *InspectPublisher {
+func NewInspectPublisher(agent *Agent{{- if .ProjectComponents.Metrics }}, metricsManager *metrics.Manager{{- end }}) *InspectPublisher {
 	bufferSize := env.GetInt("LIGHTHOUSE_INSPECT_BUFFER_SIZE", strconv.Itoa(defaultInspectBufferSize))
 	if bufferSize <= 0 {
 		bufferSize = defaultInspectBufferSize
@@ -53,7 +53,7 @@ func NewInspectPublisher(agent *Agent{{- if .Components.Metrics }}, metricsManag
 	}
 	return &InspectPublisher{
 		agent:          agent,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metrics:        metricsManager,
 {{- end }}
 		buffer:         make(chan *inspects.Record, bufferSize),
@@ -210,8 +210,9 @@ func (p *InspectPublisher) logDrop(reason string) {
 	log.Printf("lighthouse inspect drop; reason=%s dropped_total=%d", reason, p.dropped.Load())
 }
 
+// recordDepth reports publisher pressure only when this App participates in project Metrics.
 func (p *InspectPublisher) recordDepth() {
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if p == nil || p.metrics == nil {
 		return
 	}
@@ -219,8 +220,9 @@ func (p *InspectPublisher) recordDepth() {
 {{- end }}
 }
 
+// recordDrop reports discarded inspects only when this App participates in project Metrics.
 func (p *InspectPublisher) recordDrop(reason string, count int) {
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if p == nil || p.metrics == nil {
 		return
 	}
@@ -228,8 +230,9 @@ func (p *InspectPublisher) recordDrop(reason string, count int) {
 {{- end }}
 }
 
+// recordFlush reports Lighthouse delivery outcomes only when this App participates in project Metrics.
 func (p *InspectPublisher) recordFlush(batchSize int, duration time.Duration, err error) {
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if p == nil || p.metrics == nil {
 		return
 	}

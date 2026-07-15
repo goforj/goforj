@@ -10,7 +10,7 @@ import (
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	goforjcache "github.com/goforj/cache"
@@ -20,7 +20,7 @@ type httpRuntimeBenchmarkMode struct {
 	name       string
 	accessLogs bool
 	inspect    bool
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metrics    bool
 {{- end }}
 }
@@ -39,11 +39,11 @@ func BenchmarkHTTPRuntimeModes(b *testing.B) {
 			name:       "baseline",
 			accessLogs: false,
 			inspect:    false,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 			metrics:    false,
 {{- end }}
 		},
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		{
 			name:       "metrics_only",
 			accessLogs: false,
@@ -55,7 +55,7 @@ func BenchmarkHTTPRuntimeModes(b *testing.B) {
 			name:       "logging_only",
 			accessLogs: true,
 			inspect:    false,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 			metrics:    false,
 {{- end }}
 		},
@@ -63,7 +63,7 @@ func BenchmarkHTTPRuntimeModes(b *testing.B) {
 			name:       "inspect_only",
 			accessLogs: false,
 			inspect:    true,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 			metrics:    false,
 {{- end }}
 		},
@@ -71,7 +71,7 @@ func BenchmarkHTTPRuntimeModes(b *testing.B) {
 			name:       "full_stack",
 			accessLogs: true,
 			inspect:    true,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 			metrics:    true,
 {{- end }}
 		},
@@ -97,6 +97,7 @@ func BenchmarkHTTPRuntimeModes(b *testing.B) {
 	})
 }
 
+// newHTTPRuntimeBenchmarkServer isolates each benchmark mode's optional runtime dependencies.
 func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) http.Handler {
 	b.Helper()
 
@@ -106,7 +107,7 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 		b.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
 	}
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if mode.metrics {
 		b.Setenv("METRICS_HTTP_ENABLED", "true")
 	} else {
@@ -122,7 +123,7 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 		inspectManager.SetPublishOnly(true)
 	}
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	var metricsManager *metrics.Manager
 	if mode.metrics {
 		metricsManager = metrics.NewManager()
@@ -135,9 +136,11 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 		nil,
 		nil,
 		nil,
+{{- if .ProjectComponents.Storage }}
 		nil,
+{{- end }}
 		inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager,
 {{- end }}
 	)
