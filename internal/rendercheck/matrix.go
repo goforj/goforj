@@ -9,11 +9,13 @@ import (
 
 // renderCombo describes a single component combination to render.
 type renderCombo struct {
-	id         string
-	components project.Components
-	starterKit project.StarterKit
-	apps       map[string]project.AppConfig
-	enabled    []string
+	id                  string
+	components          project.Components
+	starterKit          project.StarterKit
+	apps                map[string]project.AppConfig
+	enabled             []string
+	legacyConfig        bool
+	validateIdempotence bool
 }
 
 // featureCombo captures toggles for non-database components.
@@ -235,12 +237,14 @@ func prSentinelRenderCombos() []renderCombo {
 			continue
 		}
 		combos = append(combos, renderCombo{
-			id:         tc.id,
-			components: cfg,
-			starterKit: project.StarterKitNone,
-			enabled:    componentLabels(cfg),
+			id:                  tc.id,
+			components:          cfg,
+			starterKit:          project.StarterKitNone,
+			enabled:             componentLabels(cfg),
+			validateIdempotence: tc.id == "sentinel_primitives_all_on" || tc.id == "sentinel_web_metrics_grafana_without_primitives",
 		})
 	}
+	combos = append(combos, legacyComponentMappingRenderCombo())
 
 	mixedDefault := project.Components{
 		CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
@@ -326,6 +330,32 @@ func prSentinelRenderCombos() []renderCombo {
 		enabled: append(componentLabels(defaultJobs), "App:api(WebAPI,Metrics,SQLite,Cache;Jobs-off)"),
 	})
 	return combos
+}
+
+// legacyComponentMappingRenderCombo proves historical omission defaults migrate at both App scopes without widening later runs.
+func legacyComponentMappingRenderCombo() renderCombo {
+	defaultComponents := project.Components{
+		CLI: true, WebAPI: true, Docker: true, Cache: true, Events: true, Storage: true,
+	}
+	defaultComponents.ResolveDependencies()
+	workerComponents := project.Components{
+		CLI: true, Cache: true, Events: true, Storage: true, Jobs: true,
+	}
+	workerComponents.ResolveDependencies()
+	return renderCombo{
+		id:         "sentinel_legacy_component_mappings",
+		components: defaultComponents,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"worker": {Components: workerComponents},
+		},
+		enabled: append(
+			componentLabels(defaultComponents),
+			"App:worker("+strings.Join(componentLabels(workerComponents), ",")+";legacy-mapping)",
+		),
+		legacyConfig:        true,
+		validateIdempotence: true,
+	}
 }
 
 // namedComponentRenderCombo keeps the default App lean while compiling one component through a named App.
