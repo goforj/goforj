@@ -74,9 +74,6 @@ func (c *RunCmd) Run() error {
 	if c.outputGate != nil {
 		c.outputGate.Release()
 	}
-	if c.waitCh == nil {
-		return nil
-	}
 	if err := c.waitForRunProcess(); err != nil {
 		if code, ok := exitCodeFromError(err); ok {
 			return ChildExitError{Code: code, Err: err}
@@ -214,6 +211,9 @@ func shouldClearRunProgressBeforeFinal(transientProgress bool, preserveTTY bool)
 
 // waitForRunProcess waits for the app process and forwards interrupts to it.
 func (c *RunCmd) waitForRunProcess() error {
+	if c.waitCh == nil {
+		return errors.New("wait for app process: process was not started")
+	}
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)

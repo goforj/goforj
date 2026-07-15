@@ -322,6 +322,14 @@ func TestWaitForRunProcessReturnsChildErrorWithoutInterrupt(t *testing.T) {
 	}
 }
 
+// TestWaitForRunProcessRequiresStartedProcess verifies invalid run state fails instead of reporting success or blocking.
+func TestWaitForRunProcessRequiresStartedProcess(t *testing.T) {
+	err := (&RunCmd{}).waitForRunProcess()
+	if err == nil || !strings.Contains(err.Error(), "process was not started") {
+		t.Fatalf("waitForRunProcess error = %v, want missing process state", err)
+	}
+}
+
 func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
 	child := exec.Command("sh", "-c", "exit 7")
 	err := child.Run()
