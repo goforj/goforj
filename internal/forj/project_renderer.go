@@ -2926,15 +2926,23 @@ func writeFileAtomically(path string, data []byte, defaultMode fs.FileMode) erro
 	return os.Rename(temporaryPath, path)
 }
 
-// createGoMod initializes the go.mod for the project
+// createGoMod initializes go.mod without hiding command failures behind the existing-file path.
 func (p *ProjectRenderer) createGoMod() error {
+	exists, err := p.workspace.exists("go.mod")
+	if err != nil {
+		return err
+	}
+	if exists {
+		p.stats.recordSkipped("go.mod (exists)")
+		return nil
+	}
+
 	cmd := exec.Command("go", "mod", "init", p.config.GoModuleName)
 	cmd.Dir = p.workspace.path()
 	if err := p.workspace.logicalError(cmd.Run()); err != nil {
-		p.stats.recordSkipped("go.mod (exists)")
-	} else {
-		p.stats.recordCreated("go.mod")
+		return fmt.Errorf("initialize go.mod: %w", err)
 	}
+	p.stats.recordCreated("go.mod")
 	return nil
 }
 
