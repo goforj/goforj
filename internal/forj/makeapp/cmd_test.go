@@ -47,7 +47,7 @@ func TestAppSelectionAllowsExternalHelpFormatWithOtherComponents(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "ship", Components: "web-api,jobs", HelpFormat: string(project.HelpFormatExternalCLI)}
-	components, starterKit, helpFormat, _, err := cmd.appSelection(&project.Config{
+	selection, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true, WebAPI: true, Jobs: true},
 		},
@@ -55,14 +55,15 @@ func TestAppSelectionAllowsExternalHelpFormatWithOtherComponents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appSelection() error = %v", err)
 	}
-	if !components.CLI || !components.WebAPI || !components.Jobs {
-		t.Fatalf("expected CLI, WebAPI, and Jobs components, got %+v", components)
+	wantComponents := project.Components{CLI: true, WebAPI: true, Jobs: true}
+	if selection.Components != wantComponents {
+		t.Fatalf("Components = %+v, want %+v", selection.Components, wantComponents)
 	}
-	if starterKit != project.StarterKitNone {
-		t.Fatalf("starterKit = %q, want none", starterKit)
+	if selection.StarterKit != project.StarterKitNone {
+		t.Fatalf("StarterKit = %q, want none", selection.StarterKit)
 	}
-	if helpFormat != project.HelpFormatExternalCLI {
-		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatExternalCLI)
+	if selection.HelpFormat != project.HelpFormatExternalCLI {
+		t.Fatalf("HelpFormat = %q, want %q", selection.HelpFormat, project.HelpFormatExternalCLI)
 	}
 }
 
@@ -71,7 +72,7 @@ func TestAppSelectionAllowsGuidedHelpFormatWithOtherComponents(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "tasks", Components: "scheduler,database_sqlite", HelpFormat: string(project.HelpFormatGuided)}
-	components, starterKit, helpFormat, _, err := cmd.appSelection(&project.Config{
+	selection, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true, Scheduler: true, DatabaseSQLite: true},
 		},
@@ -79,14 +80,15 @@ func TestAppSelectionAllowsGuidedHelpFormatWithOtherComponents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appSelection() error = %v", err)
 	}
-	if !components.CLI || !components.Scheduler || !components.DatabaseSQLite {
-		t.Fatalf("expected CLI, Scheduler, and SQLite components, got %+v", components)
+	wantComponents := project.Components{CLI: true, Scheduler: true, DatabaseSQLite: true}
+	if selection.Components != wantComponents {
+		t.Fatalf("Components = %+v, want %+v", selection.Components, wantComponents)
 	}
-	if starterKit != project.StarterKitNone {
-		t.Fatalf("starterKit = %q, want none", starterKit)
+	if selection.StarterKit != project.StarterKitNone {
+		t.Fatalf("StarterKit = %q, want none", selection.StarterKit)
 	}
-	if helpFormat != project.HelpFormatGuided {
-		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatGuided)
+	if selection.HelpFormat != project.HelpFormatGuided {
+		t.Fatalf("HelpFormat = %q, want %q", selection.HelpFormat, project.HelpFormatGuided)
 	}
 }
 
@@ -96,7 +98,7 @@ func TestAppSelectionAllowsExplicitCLIOnlyApp(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "ship", Components: "cli", HelpFormat: string(project.HelpFormatExternalCLI)}
-	components, starterKit, helpFormat, _, err := cmd.appSelection(&project.Config{
+	selection, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				CLI:              true,
@@ -115,17 +117,15 @@ func TestAppSelectionAllowsExplicitCLIOnlyApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appSelection() error = %v", err)
 	}
-	if !components.CLI {
-		t.Fatalf("expected CLI to be enabled, got %+v", components)
+	wantComponents := project.Components{CLI: true}
+	if selection.Components != wantComponents {
+		t.Fatalf("Components = %+v, want %+v", selection.Components, wantComponents)
 	}
-	if components.WebAPI || components.WebUI || components.Auth || components.OAuth || components.HasDatabase() || components.Scheduler || components.Jobs {
-		t.Fatalf("expected CLI-only app components, got %+v", components)
+	if selection.StarterKit != project.StarterKitNone {
+		t.Fatalf("StarterKit = %q, want none", selection.StarterKit)
 	}
-	if starterKit != project.StarterKitNone {
-		t.Fatalf("starterKit = %q, want none", starterKit)
-	}
-	if helpFormat != project.HelpFormatExternalCLI {
-		t.Fatalf("helpFormat = %q, want %q", helpFormat, project.HelpFormatExternalCLI)
+	if selection.HelpFormat != project.HelpFormatExternalCLI {
+		t.Fatalf("HelpFormat = %q, want %q", selection.HelpFormat, project.HelpFormatExternalCLI)
 	}
 }
 
@@ -134,14 +134,14 @@ func TestAppSelectionLeavesDevRunDisabledByDefault(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "ship", Components: "cli"}
-	_, _, _, devRun, err := cmd.appSelection(&project.Config{
+	selection, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{Components: project.Components{CLI: true}},
 	})
 	if err != nil {
 		t.Fatalf("appSelection() error = %v", err)
 	}
-	if devRun != "" {
-		t.Fatalf("expected default make:app dev run to be disabled, got %q", devRun)
+	if selection.DevRunCommand != "" {
+		t.Fatalf("expected default make:app dev run to be disabled, got %q", selection.DevRunCommand)
 	}
 }
 
@@ -150,14 +150,14 @@ func TestAppSelectionSupportsDevRunCommand(t *testing.T) {
 	defer restore()
 
 	cmd := &Cmd{Name: "ship", Components: "cli", DevRun: "sync --once"}
-	_, _, _, devRun, err := cmd.appSelection(&project.Config{
+	selection, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{Components: project.Components{CLI: true}},
 	})
 	if err != nil {
 		t.Fatalf("appSelection() error = %v", err)
 	}
-	if devRun != "sync --once" {
-		t.Fatalf("expected custom dev run command, got %q", devRun)
+	if selection.DevRunCommand != "sync --once" {
+		t.Fatalf("expected custom dev run command, got %q", selection.DevRunCommand)
 	}
 }
 
@@ -199,8 +199,8 @@ render:
 	}
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error) {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", true, nil
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (RenderOptions, error) {
+		return RenderOptions{}, errAppCreationCancelled
 	})
 	defer restoreWizard()
 	renderer := &recordingRenderer{}
@@ -278,13 +278,13 @@ func TestCmdRunTreatsMissingRemoveAppAsNormalExit(t *testing.T) {
 func TestAppSelectionReturnsCancellationSentinel(t *testing.T) {
 	restoreTerminal := stubInteractiveTerminal(t, true)
 	defer restoreTerminal()
-	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error) {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", true, nil
+	restoreWizard := stubAppWizardRunner(t, func(string, *project.Config) (RenderOptions, error) {
+		return RenderOptions{}, errAppCreationCancelled
 	})
 	defer restoreWizard()
 
 	cmd := &Cmd{Name: "reporting"}
-	_, _, _, _, err := cmd.appSelection(&project.Config{
+	_, err := cmd.appSelection(&project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				WebAPI: true,
@@ -729,7 +729,7 @@ func stubInteractiveTerminal(t *testing.T, interactive bool) func() {
 	}
 }
 
-func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error)) func() {
+func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (RenderOptions, error)) func() {
 	t.Helper()
 	original := appWizardRunner
 	appWizardRunner = runner
