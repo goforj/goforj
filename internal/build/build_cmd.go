@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/internal/apiindex"
+	"github.com/goforj/goforj/internal/compileprofile"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -29,7 +30,7 @@ type Cmd struct {
 
 	Root            string   `help:"Project root to build" default:"."`
 	Args            []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
-	compileProfile  CompileProfileReport
+	compileProfile  compileprofile.Report
 	lastBuildStatus string
 	goGetFunc       func([]string) error
 }
