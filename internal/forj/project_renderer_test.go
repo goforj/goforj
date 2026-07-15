@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -523,15 +522,6 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 		t.Fatalf("write fake wire: %v", err)
 	}
 	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	wireInstallOnce = sync.Once{}
-	wireInstallErr = nil
-	wireBinaryPath = ""
-	defer func() {
-		wireInstallOnce = sync.Once{}
-		wireInstallErr = nil
-		wireBinaryPath = ""
-	}()
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := renderer.beginRenderInvocation(root); err != nil {

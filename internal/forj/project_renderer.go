@@ -44,10 +44,6 @@ var (
 	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("·")
 	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	boxBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
-	wireInstallOnce sync.Once
-	wireInstallErr  error
-	wireBinaryPath  string
 )
 
 var templatesFS = templates.FS
@@ -59,10 +55,12 @@ type wireGenerateError struct {
 	stale  bool
 }
 
+// Error retains the App-local Wire directory and captured output needed to repair generation failures.
 func (e *wireGenerateError) Error() string {
 	return fmt.Sprintf("wire generate %s: %v (%s)", e.dir, e.err, e.output)
 }
 
+// Unwrap preserves the underlying process failure for stale-toolchain classification.
 func (e *wireGenerateError) Unwrap() error {
 	return e.err
 }
@@ -87,6 +85,42 @@ type resourceRenderState struct {
 	pendingEnvironmentWrite bool
 }
 
+// wireTool keeps Wire discovery and replacement scoped to one renderer invocation owner.
+type wireTool struct {
+	mu       sync.Mutex
+	resolved bool
+	path     string
+	err      error
+}
+
+// resolve reuses one Wire lookup or installation without sharing mutable state across renderers.
+func (tool *wireTool) resolve() (string, error) {
+	tool.mu.Lock()
+	defer tool.mu.Unlock()
+	if !tool.resolved {
+		tool.path, tool.err = exec.LookPath("wire")
+		if tool.err != nil {
+			tool.path, tool.err = installWire()
+		}
+		tool.resolved = true
+	}
+	return tool.path, tool.err
+}
+
+// reinstall replaces a stale Wire binary using the active Go toolchain for this renderer.
+func (tool *wireTool) reinstall() (string, error) {
+	tool.mu.Lock()
+	defer tool.mu.Unlock()
+	path, err := installWire()
+	if err != nil {
+		return "", err
+	}
+	tool.path = path
+	tool.err = nil
+	tool.resolved = true
+	return path, nil
+}
+
 // ProjectRenderer renders project files from the current config and template set.
 type ProjectRenderer struct {
 	logger                  *logger.AppLogger
@@ -96,6 +130,7 @@ type ProjectRenderer struct {
 	lines                   []string
 	timings                 bool
 	resources               resourceRenderState
+	wire                    wireTool
 	removeLegacyQueueDriver bool
 	writeEnvironmentFile    func(string, []byte, fs.FileMode) error
 }
@@ -2971,28 +3006,21 @@ func (p *ProjectRenderer) runTemplGenerate() error {
 
 // runWireGenerate refreshes Wire output for the default app and every discovered named app.
 func (p *ProjectRenderer) runWireGenerate() error {
-	wireInstallOnce.Do(func() {
-		if path, err := exec.LookPath("wire"); err == nil {
-			wireBinaryPath = path
-			return
-		}
-		wireBinaryPath, wireInstallErr = installWire()
-	})
-	if wireInstallErr != nil {
-		return wireInstallErr
+	wirePath, err := p.wire.resolve()
+	if err != nil {
+		return err
 	}
 
 	wireDirs := p.wireGenerateDirs()
-	if err := firstWireGenerateError(p.runWireGenerateDirs(wireBinaryPath, wireDirs)); err != nil {
+	if err := firstWireGenerateError(p.runWireGenerateDirs(wirePath, wireDirs)); err != nil {
 		// If a stale wire binary was built with an older Go toolchain, reinstall
 		// wire with the current toolchain and retry all app-local graphs once.
 		if wireGenerateErr, ok := err.(*wireGenerateError); ok && wireGenerateErr.stale {
-			path, installErr := installWire()
+			path, installErr := p.wire.reinstall()
 			if installErr != nil {
 				return installErr
 			}
-			wireBinaryPath = path
-			if retryErr := firstWireGenerateError(p.runWireGenerateDirs(wireBinaryPath, wireDirs)); retryErr != nil {
+			if retryErr := firstWireGenerateError(p.runWireGenerateDirs(path, wireDirs)); retryErr != nil {
 				return retryErr
 			}
 		} else {
@@ -3082,6 +3110,7 @@ func (p *ProjectRenderer) runWireCommand(wirePath string, dir string) ([]byte, e
 	return output, p.workspace.logicalError(err)
 }
 
+// installWire builds the pinned Wire command with the caller's active Go toolchain in an isolated directory.
 func installWire() (string, error) {
 	toolDir, err := os.MkdirTemp("", "forj-wire-*")
 	if err != nil {
