@@ -1,6 +1,9 @@
 package backup
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // HookEvent identifies a lifecycle point around a backup operation.
 type HookEvent string
@@ -27,16 +30,20 @@ type HookRegistry struct {
 	AfterRestore  []Hook
 }
 
-// Run executes hooks for an event in registration order.
+// Run rejects unknown lifecycle values before executing the selected hooks in registration order.
 func (r HookRegistry) Run(ctx context.Context, event HookEvent) error {
-	hooks := r.AfterCreate
+	var hooks []Hook
 	switch event {
 	case HookBeforeCreate:
 		hooks = r.BeforeCreate
+	case HookAfterCreate:
+		hooks = r.AfterCreate
 	case HookBeforeRestore:
 		hooks = r.BeforeRestore
 	case HookAfterRestore:
 		hooks = r.AfterRestore
+	default:
+		return fmt.Errorf("unsupported backup hook event %q", event)
 	}
 	for _, hook := range hooks {
 		if err := hook(ctx, event); err != nil {
