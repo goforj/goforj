@@ -622,35 +622,6 @@ func TestRuntimeAppMetadataUsesStableConfiguredAppComponents(t *testing.T) {
 	}
 }
 
-func TestMigrateGeneratedEnvDefaultOnlyUpdatesOldDefault(t *testing.T) {
-	lines := []string{
-		"APP_NAME=test",
-		"GRAFANA_PORT=3001",
-		"GRAFANA_ADMIN_USER=admin",
-	}
-
-	got, changed := migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
-	if !changed {
-		t.Fatal("expected old generated default to be migrated")
-	}
-	if got[1] != "GRAFANA_PORT=13001" {
-		t.Fatalf("migrated line = %q", got[1])
-	}
-	if lines[1] != "GRAFANA_PORT=3001" {
-		t.Fatalf("migrateGeneratedEnvDefault mutated input slice: %#v", lines)
-	}
-
-	custom, changed := migrateGeneratedEnvDefault([]string{"GRAFANA_PORT=3100"}, "GRAFANA_PORT", "3001", "13001")
-	if changed {
-		t.Fatalf("custom value should not be migrated: %#v", custom)
-	}
-
-	commented, changed := migrateGeneratedEnvDefault([]string{"# GRAFANA_PORT=3001"}, "GRAFANA_PORT", "3001", "13001")
-	if changed {
-		t.Fatalf("commented value should not be migrated: %#v", commented)
-	}
-}
-
 func TestExpandDefaultMigrationsForNamedApps(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()

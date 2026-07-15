@@ -477,6 +477,8 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 			`"internal/makecmd/make_controller_cmd_test.go.tmpl"`,
 			`"internal/makecmd/make_migration_cmd_test.go.tmpl"`,
 			`"internal/makecmd/make_subscriber_cmd_test.go.tmpl"`,
+		},
+		filepath.Join(root, "internal", "forj", "project_renderer_environment_defaults.go"): {
 			`needsForjMakeOpen`,
 			`needsForjEditor`,
 		},
