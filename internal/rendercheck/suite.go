@@ -86,6 +86,7 @@ func (suite *Suite) Run(runTests bool) error {
 				buildCache:     buildCache,
 				forjExecutable: forjExec,
 				runTests:       runTests,
+				filesystem:     osRenderWorkspaceFS{},
 			}
 			for combo := range jobs {
 				if failure := worker.run(combo); failure != nil {
