@@ -13,6 +13,7 @@ import (
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -64,6 +65,7 @@ func (cmd *LoggerOverheadMeasureCmd) Run() error {
 	if !cmd.Keep {
 		defer os.RemoveAll(dir)
 	}
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, testexec.NewGoCaches(modCache, buildCache))
 
 	if !cmd.Silent {
 		testkit.PrintSection("Logger Overhead")
@@ -90,10 +92,10 @@ func (cmd *LoggerOverheadMeasureCmd) Run() error {
 	}
 	defer cleanup()
 
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
+	if err := workspace.Run("build", "go", "build", "./..."); err != nil {
 		return err
 	}
 

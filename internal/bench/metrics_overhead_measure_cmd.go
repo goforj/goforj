@@ -14,6 +14,7 @@ import (
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -74,6 +75,7 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	if !cmd.Keep {
 		defer os.RemoveAll(dir)
 	}
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, testexec.NewGoCaches(modCache, buildCache))
 
 	if !cmd.Silent {
 		testkit.PrintSection("Metrics Overhead")
@@ -111,7 +113,7 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	}
 	defer cleanup()
 
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
 	queueEnv := map[string]string{
@@ -121,7 +123,7 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(dir, ".env")}, queueEnv); err != nil {
 		return fmt.Errorf("set metrics benchmark queue driver: %w", err)
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "generate queue", dir, modCache, buildCache, []string{forjExec, "generate", "--queue"}); err != nil {
+	if err := workspace.Run("generate queue", forjExec, "generate", "--queue"); err != nil {
 		return err
 	}
 
