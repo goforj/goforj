@@ -2,6 +2,7 @@ package rendercheck
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -126,17 +127,23 @@ func aggregateRenderComboFailures(failures []*renderComboFailure, total int, sha
 	}
 }
 
-// reportRenderComboFailure prints the same detailed diagnostics once workers have finished.
+// reportRenderComboFailure preserves the CLI's stderr failure heading while delegating deterministic details to a writer boundary.
 func reportRenderComboFailure(failure *renderComboFailure) {
 	console.Errorf("Failure")
-	console.Infof("reason: %s", failure.reason)
-	console.Infof("combo: %s", failure.comboID)
+	writeRenderComboFailure(os.Stdout, failure)
+}
+
+// writeRenderComboFailure writes one failure's details without requiring tests or other callers to replace process output.
+func writeRenderComboFailure(writer io.Writer, failure *renderComboFailure) {
+	diagnostics := console.New(console.Config{Stdout: writer})
+	diagnostics.Infof("reason: %s", failure.reason)
+	diagnostics.Infof("combo: %s", failure.comboID)
 	if failure.err != nil {
-		console.Infof("error: %v", failure.err)
+		diagnostics.Infof("error: %v", failure.err)
 	}
 	if failure.config != nil {
 		if yamlDump, yerr := yaml.Marshal(failure.config); yerr == nil {
-			console.Infof("config:\n%s", string(yamlDump))
+			diagnostics.Infof("config:\n%s", string(yamlDump))
 		}
 	}
 }

@@ -2,7 +2,6 @@ package rendercheck
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,12 +71,11 @@ func TestRenderComboFailuresRetainEveryCause(t *testing.T) {
 	}
 }
 
-// TestReportRenderComboFailurePreservesDiagnostics verifies deferred reporting keeps the established failure details.
-func TestReportRenderComboFailurePreservesDiagnostics(t *testing.T) {
+// TestWriteRenderComboFailurePreservesDiagnostics verifies deferred reporting keeps the established failure details.
+func TestWriteRenderComboFailurePreservesDiagnostics(t *testing.T) {
 	cfg := &project.Config{ProjectName: "FailureFixture"}
-	output := captureStdout(t, func() {
-		reportRenderComboFailure(newRenderComboFailure("render failed", "combo_a", cfg, errors.New("boom")))
-	})
+	var output strings.Builder
+	writeRenderComboFailure(&output, newRenderComboFailure("render failed", "combo_a", cfg, errors.New("boom")))
 
 	for _, want := range []string{
 		"reason: render failed",
@@ -85,8 +83,8 @@ func TestReportRenderComboFailurePreservesDiagnostics(t *testing.T) {
 		"error: boom",
 		"project_name: FailureFixture",
 	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("failure output missing %q:\n%s", want, output)
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("failure output missing %q:\n%s", want, output.String())
 		}
 	}
 }
@@ -416,33 +414,4 @@ func renderCombosInclude(combos []renderCombo, matches func(project.Components) 
 		}
 	}
 	return false
-}
-
-// captureStdout redirects package-level console output because failure reporting intentionally uses the shared CLI console.
-func captureStdout(t *testing.T, run func()) string {
-	t.Helper()
-
-	original := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stdout pipe: %v", err)
-	}
-	os.Stdout = writer
-	defer func() {
-		os.Stdout = original
-	}()
-
-	run()
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close stdout pipe: %v", err)
-	}
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read stdout pipe: %v", err)
-	}
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close stdout reader: %v", err)
-	}
-	return string(data)
 }
