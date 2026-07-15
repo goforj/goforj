@@ -2356,15 +2356,6 @@ func removeLegacyInitialBuildTask(tasks *[]project.DevTask) bool {
 	return removed
 }
 
-func hasDevTask(tasks []project.DevTask, want project.DevTask) bool {
-	for _, task := range tasks {
-		if strings.TrimSpace(task.Name) == want.Name && strings.TrimSpace(task.Cmd) == want.Cmd {
-			return true
-		}
-	}
-	return false
-}
-
 // renderNamedApps renders every non-default app discovered from conventional project layout.
 func (p *ProjectRenderer) renderNamedApps() error {
 	apps := projectlayout.DiscoveredNamedApps(p.workspace.discoveryRoot())
@@ -3119,11 +3110,6 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	return nil
 }
 
-func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
-}
-
 func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 	frontendDir := projectlayout.FrontendDir(".", project.DefaultApp())
 	if err := p.copyRawPathToDest("demo/frontend", frontendDir); err != nil {
@@ -3175,7 +3161,7 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 	if err != nil {
 		return err
 	}
-	if err := p.copyRawPathToDestFiltered(sourceRoot, frontendDir, starterKitFrontendFilter(starterKit)); err != nil {
+	if err := p.copyRawPathToDestFiltered(sourceRoot, frontendDir, skipFrontendDependencyDirectory); err != nil {
 		return err
 	}
 	if starterKit == project.StarterKitTemplHTMX {
@@ -3236,35 +3222,9 @@ func starterKitFrontendSource(starterKit project.StarterKit) (string, error) {
 	}
 }
 
-func skipFrontendBuildArtifact(rel string, d fs.DirEntry) bool {
-	name := filepath.Base(rel)
-	return d.IsDir() && (name == "node_modules" || name == "dist")
-}
-
-func starterKitFrontendFilter(starterKit project.StarterKit) func(string, fs.DirEntry) bool {
-	return func(rel string, d fs.DirEntry) bool {
-		return d.IsDir() && filepath.Base(rel) == "node_modules"
-	}
-}
-
-func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
-	newContent := []byte(content)
-	if existingContent, err := p.workspace.readFile(path); err == nil {
-		if bytes.Equal(existingContent, newContent) {
-			p.stats.recordSkipped(path)
-			return nil
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := p.workspace.ensureDir(filepath.Dir(path)); err != nil {
-		return err
-	}
-	if err := p.workspace.writeFile(path, newContent, 0644); err != nil {
-		return err
-	}
-	p.stats.recordCreated(path)
-	return nil
+// skipFrontendDependencyDirectory keeps local dependency trees out of copied starter-kit assets.
+func skipFrontendDependencyDirectory(rel string, entry fs.DirEntry) bool {
+	return entry.IsDir() && filepath.Base(rel) == "node_modules"
 }
 
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
@@ -3909,22 +3869,6 @@ func (p *ProjectRenderer) printOverallSummary() {
 		}
 	}
 	fmt.Printf("\n%s\n", renderBox(title, lines))
-}
-
-func topNUnique(paths []string, limit int) []string {
-	seen := make(map[string]bool, len(paths))
-	var out []string
-	for _, p := range paths {
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, p)
-		if len(out) == limit {
-			break
-		}
-	}
-	return out
 }
 
 func (p *ProjectRenderer) nextSteps() []string {
