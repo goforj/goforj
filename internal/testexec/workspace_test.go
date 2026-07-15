@@ -68,6 +68,25 @@ func TestWorkspaceRunStreamingReturnsCommandFailure(t *testing.T) {
 	}
 }
 
+// TestWorkspaceExecutionRejectsEmptyCommands keeps invalid command state on the error path instead of panicking at the process boundary.
+func TestWorkspaceExecutionRejectsEmptyCommands(t *testing.T) {
+	workspace := testexec.NewWorkspace(logger.NewSilentLogger(), true, t.TempDir(), testexec.GoCaches{})
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "ordinary", run: func() error { return workspace.Run("ordinary") }},
+		{name: "streaming", run: func() error { return workspace.RunStreaming(testexec.StreamingStep{Name: "streaming"}) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); err == nil || !strings.Contains(err.Error(), "command is required") {
+				t.Fatalf("empty command error = %v, want required-command diagnostic", err)
+			}
+		})
+	}
+}
+
 // TestWorkspaceHelperProcess provides a subprocess that can inspect the execution policy applied by Workspace.
 func TestWorkspaceHelperProcess(t *testing.T) {
 	switch os.Getenv(helperModeEnv) {
