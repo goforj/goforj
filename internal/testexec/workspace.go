@@ -72,6 +72,9 @@ func (workspace *Workspace) RunStreaming(step StreamingStep) error {
 
 // execute keeps cache, output, and failure policy identical across every workspace command.
 func (workspace *Workspace) execute(command workspaceCommand) error {
+	if len(command.args) == 0 || strings.TrimSpace(command.args[0]) == "" {
+		return fmt.Errorf("%s: command is required", command.name)
+	}
 	cmd := execx.Command(command.args[0], command.args[1:]...).
 		Dir(workspace.dir).
 		EnvAppend(map[string]string{
