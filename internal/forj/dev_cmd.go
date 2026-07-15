@@ -128,7 +128,6 @@ func (c *DevCmd) Run() error {
 	cleanupDevTerminal := func() {
 		cleanupOnce.Do(func() {
 			shutdownWriters()
-			shutdownWriters = func() {}
 			restoreDevTerminalState(nil, nil)
 		})
 	}
@@ -191,8 +190,6 @@ func (c *DevCmd) Run() error {
 	defer stopEnvWatch()
 	stopTargetWatch := startDevAppWatcher(runCtx, requestBuild, 500*time.Millisecond)
 	defer stopTargetWatch()
-	var outWriter io.Writer
-	var errWriter io.Writer
 	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
@@ -216,14 +213,12 @@ func (c *DevCmd) Run() error {
 			return fmt.Errorf("post-SPA forj build failed: %w", err)
 		}
 	}
-	if outWriter == nil || errWriter == nil {
-		output := buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
-		outWriter = output.stdout
-		errWriter = output.stderr
-		shutdownWriters = output.shutdown
-		runtimeState.refreshWriters = output.refresh
-		runtimeState.refreshWriters()
-	}
+	output := buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
+	outWriter := output.stdout
+	errWriter := output.stderr
+	shutdownWriters = output.shutdown
+	runtimeState.refreshWriters = output.refresh
+	runtimeState.refreshWriters()
 
 	session := &devWatchSession{
 		config:        config,
@@ -242,9 +237,7 @@ func (c *DevCmd) Run() error {
 	if err := c.runWatchersLoop(session); err != nil {
 		if errors.Is(err, errDevInterrupted) {
 			cleanupDevTerminal()
-			outWriter = nil
-			errWriter = nil
-			if config != nil && config.Dev.DownOnExit {
+			if config.Dev.DownOnExit {
 				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
 				if err := runDevDownTasks(config.Dev.Down); err != nil {
 					console.Errorf("forj down failed: %v", err)
@@ -261,14 +254,8 @@ func (c *DevCmd) Run() error {
 	return fmt.Errorf("dev watchers exited unexpectedly")
 }
 
-func ensureDevDatabaseExists(config *project.Config) error {
-	return ensureDevDatabaseExistsWithWriters(config, os.Stdout, os.Stderr)
-}
-
+// ensureDevDatabaseExistsWithWriters provisions only service-backed databases because SQLite needs no external preparation.
 func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	if config == nil {
-		return nil
-	}
 	databases, err := devDatabasesForApps(config, activeDevAppsForConfig(config))
 	if err != nil {
 		return err
@@ -316,9 +303,6 @@ type devDatabase struct {
 
 // devDatabasesForApps discovers every server database the current dev session must create.
 func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatabase, error) {
-	if config == nil {
-		return nil, nil
-	}
 	seen := map[string]bool{}
 	databases := make([]devDatabase, 0, len(apps))
 	for _, app := range apps {
@@ -521,10 +505,8 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
+// runPreDevSetup orders configured tasks around migration so setup commands see the current schema.
 func runPreDevSetup(config *project.Config) error {
-	if config == nil {
-		return nil
-	}
 	preTasks := config.Dev.Pre
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
 	if shouldRunDevAutoMigrate(config) {
@@ -583,7 +565,7 @@ func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 
 // shouldRunDevAutoMigrate checks app-local components, not only the root app selection.
 func shouldRunDevAutoMigrate(config *project.Config) bool {
-	if config == nil || !config.Dev.AutoMigrate {
+	if !config.Dev.AutoMigrate {
 		return false
 	}
 	for _, target := range activeDevAppsForConfig(config) {
@@ -715,10 +697,8 @@ func normalizeDevWatchEnvFileTriggers(watch string) string {
 	})
 }
 
+// configUsesTemplHTMX identifies generated templ output so build watchers can avoid feedback loops.
 func configUsesTemplHTMX(config *project.Config) bool {
-	if config == nil {
-		return false
-	}
 	if project.NormalizeStarterKit(config.Render.StarterKit) == project.StarterKitTemplHTMX {
 		return true
 	}
@@ -754,7 +734,7 @@ func activeDevApps() []project.App {
 
 // activeDevAppsForConfig uses structured dev.apps as the authority and falls back to legacy discovery.
 func activeDevAppsForConfig(config *project.Config) []project.App {
-	if config == nil || !config.Dev.UsesStructuredApps() {
+	if !config.Dev.UsesStructuredApps() {
 		return activeDevApps()
 	}
 	selected := selectedStructuredDevApps(config)
@@ -846,9 +826,6 @@ func devBuildJobs(config *project.Config) []devBuildJob {
 
 // devBuildExecutionForConfigApp carries structured workdir and environment overrides into every build path.
 func devBuildExecutionForConfigApp(config *project.Config, app project.App) (string, map[string]string) {
-	if config == nil {
-		return "", nil
-	}
 	devApp, ok := config.Dev.Apps[app.Name]
 	if !ok {
 		return "", nil
@@ -865,14 +842,12 @@ func devBuildExecutionForConfigApp(config *project.Config, app project.App) (str
 
 // devBuildCommandForConfigApp applies a structured per-app override before legacy template rewriting.
 func devBuildCommandForConfigApp(config *project.Config, baseCommand string, app project.App) string {
-	if config != nil {
-		if devApp, ok := config.Dev.Apps[app.Name]; ok && devApp.Build != nil {
-			if devApp.Build.Disabled {
-				return ""
-			}
-			if command := strings.TrimSpace(devApp.Build.Exec); command != "" {
-				return command
-			}
+	if devApp, ok := config.Dev.Apps[app.Name]; ok && devApp.Build != nil {
+		if devApp.Build.Disabled {
+			return ""
+		}
+		if command := strings.TrimSpace(devApp.Build.Exec); command != "" {
+			return command
 		}
 	}
 	return devBuildCommandForApp(baseCommand, app)
@@ -880,19 +855,17 @@ func devBuildCommandForConfigApp(config *project.Config, baseCommand string, app
 
 // devBaseBuildCommand uses the configured default build watcher as the template for app builds.
 func devBaseBuildCommand(config *project.Config) string {
-	if config != nil {
-		if len(config.Dev.Apps) > 0 {
-			return "forj build -o ./bin/app"
+	if len(config.Dev.Apps) > 0 {
+		return "forj build -o ./bin/app"
+	}
+	for _, watch := range config.Dev.Watches {
+		if watch.Name == "Build App" && strings.TrimSpace(watch.Exec) != "" {
+			return watch.Exec
 		}
-		for _, watch := range config.Dev.Watches {
-			if watch.Name == "Build App" && strings.TrimSpace(watch.Exec) != "" {
-				return watch.Exec
-			}
-		}
-		for _, watch := range config.Dev.Watches {
-			if isDevBuildWatcher(watch.Name) && strings.TrimSpace(watch.Exec) != "" {
-				return watch.Exec
-			}
+	}
+	for _, watch := range config.Dev.Watches {
+		if isDevBuildWatcher(watch.Name) && strings.TrimSpace(watch.Exec) != "" {
+			return watch.Exec
 		}
 	}
 	return "forj build -o ./bin/app"
@@ -1247,9 +1220,6 @@ func shouldReconcileStructuredDevApps(config *project.Config) bool {
 
 // runDevFrontendDependencySetup runs only generated frontend installation tasks after render introduces a new SPA.
 func runDevFrontendDependencySetup(config *project.Config) error {
-	if config == nil {
-		return nil
-	}
 	tasks := make([]project.DevTask, 0)
 	for _, selected := range selectedStructuredDevApps(config) {
 		if len(selected.config.SPAs) == 0 {
@@ -1269,9 +1239,6 @@ func runDevFrontendDependencySetup(config *project.Config) error {
 // structuredDevSPARoots snapshots configured frontend roots so render can identify newly generated workspaces.
 func structuredDevSPARoots(config *project.Config) map[string]bool {
 	roots := map[string]bool{}
-	if config == nil {
-		return roots
-	}
 	for _, app := range config.Dev.Apps {
 		for _, spa := range app.SPAs {
 			root := filepath.Clean(strings.TrimSpace(spa.Path))
@@ -1315,7 +1282,14 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 			continue
 		}
 		writeDevActionLine(outWriter, "Building "+watcher.App+" frontend")
-		if err := runDevSubprocessCommandInDir(outWriter, errWriter, watcher.Command.Shell, watcher.Command.Dir, watcher.Command.Env, true); err != nil {
+		if err := runDevSubprocess(devSubprocessRun{
+			command:    watcher.Command.Shell,
+			dir:        watcher.Command.Dir,
+			env:        watcher.Command.Env,
+			stdout:     outWriter,
+			stderr:     errWriter,
+			transcript: true,
+		}); err != nil {
 			return false, fmt.Errorf("initial SPA build %q failed: %w", watcher.Name, err)
 		}
 		built = true
@@ -1383,7 +1357,14 @@ func runDevBuildJobBuffered(job devBuildJob) devBuildResult {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	start := time.Now()
-	err := runDevSubprocessCommandInDir(&stdout, &stderr, job.command, job.dir, job.env, true)
+	err := runDevSubprocess(devSubprocessRun{
+		command:    job.command,
+		dir:        job.dir,
+		env:        job.env,
+		stdout:     &stdout,
+		stderr:     &stderr,
+		transcript: true,
+	})
 	if err == nil {
 		err = publishDevBuildReadyStamp(job.app)
 	}
@@ -1438,14 +1419,17 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
 
-	if _, ok := outWriter.(*devBubbleWriter); ok {
-		if err := runDevSubprocessCommandInDir(outWriter, errWriter, job.command, job.dir, job.env, true); err != nil {
-			return err
-		}
-		return publishDevBuildReadyStamp(job.app)
-	}
-	if _, ok := errWriter.(*devBubbleWriter); ok {
-		if err := runDevSubprocessCommandInDir(outWriter, errWriter, job.command, job.dir, job.env, true); err != nil {
+	_, stdoutIsBubble := outWriter.(*devBubbleWriter)
+	_, stderrIsBubble := errWriter.(*devBubbleWriter)
+	if stdoutIsBubble || stderrIsBubble {
+		if err := runDevSubprocess(devSubprocessRun{
+			command:    job.command,
+			dir:        job.dir,
+			env:        job.env,
+			stdout:     outWriter,
+			stderr:     errWriter,
+			transcript: true,
+		}); err != nil {
 			return err
 		}
 		return publishDevBuildReadyStamp(job.app)
@@ -1455,7 +1439,13 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 	disableDevFooter(errWriter)
 	defer enableDevFooter(outWriter)
 	defer enableDevFooter(errWriter)
-	if err := runDevSubprocessCommandInDir(os.Stdout, os.Stderr, job.command, job.dir, job.env, false); err != nil {
+	if err := runDevSubprocess(devSubprocessRun{
+		command: job.command,
+		dir:     job.dir,
+		env:     job.env,
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+	}); err != nil {
 		return err
 	}
 	return publishDevBuildReadyStamp(job.app)
@@ -1496,21 +1486,26 @@ func publishDevBuildReadyStamp(app project.App) error {
 	return nil
 }
 
-// runDevSubprocessCommand centralizes dev subprocess environment and exit handling.
-func runDevSubprocessCommand(outWriter io.Writer, errWriter io.Writer, command string, transcript bool) error {
-	return runDevSubprocessCommandInDir(outWriter, errWriter, command, "", nil, transcript)
+// devSubprocessRun keeps command execution context together so callers cannot confuse positional strings, maps, and mode flags.
+type devSubprocessRun struct {
+	command    string
+	dir        string
+	env        map[string]string
+	stdout     io.Writer
+	stderr     io.Writer
+	transcript bool
 }
 
-// runDevSubprocessCommandInDir extends the shared transcript contract to commands owned by an app subdirectory.
-func runDevSubprocessCommandInDir(outWriter io.Writer, errWriter io.Writer, command string, dir string, commandEnv map[string]string, transcript bool) error {
+// runDevSubprocess keeps watcher-only progress records out of commands whose output is meant for people.
+func runDevSubprocess(run devSubprocessRun) error {
 	stdin := io.Reader(os.Stdin)
 	env := map[string]string{"CLICOLOR_FORCE": "1"}
-	for key, value := range commandEnv {
+	for key, value := range run.env {
 		env[key] = value
 	}
 	// Direct dev commands have no protocol consumer, so watcher-only progress must never reach their writers.
 	env["FORJ_BUILD_PROGRESS"] = "0"
-	if transcript {
+	if run.transcript {
 		devNull, err := os.Open(os.DevNull)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", os.DevNull, err)
@@ -1521,19 +1516,19 @@ func runDevSubprocessCommandInDir(outWriter io.Writer, errWriter io.Writer, comm
 		env["FORJ_COMMAND_ORIGIN"] = "dev_command"
 		env["TERM"] = "dumb"
 	}
-	cmd := execx.Command("bash", "-c", command).
+	cmd := execx.Command("bash", "-c", run.command).
 		EnvInherit().
 		EnvAppend(env).
-		Dir(dir).
+		Dir(run.dir).
 		StdinReader(stdin).
-		StdoutWriter(outWriter).
-		StderrWriter(errWriter)
+		StdoutWriter(run.stdout).
+		StderrWriter(run.stderr)
 	res, err := cmd.Run()
 	if err != nil {
 		return err
 	}
 	if !res.OK() {
-		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
+		return fmt.Errorf("%s exited with code %d", run.command, res.ExitCode)
 	}
 	return nil
 }
@@ -1542,7 +1537,12 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	writeDevCommandLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
-	if err := runDevSubprocessCommand(outWriter, errWriter, command, true); err != nil {
+	if err := runDevSubprocess(devSubprocessRun{
+		command:    command,
+		stdout:     outWriter,
+		stderr:     errWriter,
+		transcript: true,
+	}); err != nil {
 		return err
 	}
 	writeDevCommandBoundary(outWriter)
@@ -1566,23 +1566,21 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 	defer enableDevFooter(outWriter)
 	defer enableDevFooter(errWriter)
 
-	return runDevSubprocessCommand(os.Stdout, os.Stderr, command, false)
+	return runDevSubprocess(devSubprocessRun{
+		command: command,
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+	})
 }
 
+// writeDevActionLine uses the session writer so plain terminals and the TUI preserve one action format.
 func writeDevActionLine(out io.Writer, message string) {
-	if out == nil {
-		console.Actionf("%s", message)
-		return
-	}
 	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
 }
 
+// writeDevTimingLine keeps secondary duration details visually quieter than the action they describe.
 func writeDevTimingLine(out io.Writer, message string) {
 	line := console.Colorize(console.ColorGray, "  "+strings.TrimSpace(message))
-	if out == nil {
-		_, _ = io.WriteString(os.Stdout, line+"\n")
-		return
-	}
 	_, _ = io.WriteString(out, line+"\n")
 }
 
@@ -1619,20 +1617,14 @@ func devAppBuildNames(apps []project.App) []string {
 	return names
 }
 
+// writeDevCommandLine frames ad hoc commands so their output remains distinct in the shared transcript.
 func writeDevCommandLine(out io.Writer, message string) {
-	if out == nil {
-		console.Actionf("%s", message)
-		return
-	}
 	label := console.Colorize(console.ColorBoldWhite, strings.TrimSpace(message))
 	_, _ = io.WriteString(out, buildDevSectionSeparatorLine(label)+"\n")
 }
 
+// writeDevCommandBoundary restores a clear visual edge before watcher output resumes.
 func writeDevCommandBoundary(out io.Writer) {
-	if out == nil {
-		_, _ = io.WriteString(os.Stdout, buildDevFooterSeparatorLine()+"\n")
-		return
-	}
 	_, _ = io.WriteString(out, buildDevFooterSeparatorLine()+"\n")
 }
 
@@ -1668,6 +1660,7 @@ func buildDevReadySummaryLines(config *project.Config, env map[string]string) []
 	return lines
 }
 
+// collectDevToolLinks advertises only resources enabled by the current project configuration.
 func collectDevToolLinks(config *project.Config, env map[string]string) []devToolLink {
 	tools := []devToolLink{}
 
@@ -1679,10 +1672,6 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 	}
 	if swaggerURL := resolveSwaggerUIURL(env); swaggerURL != "" {
 		tools = append(tools, devToolLink{Label: "Swagger", URL: swaggerURL})
-	}
-
-	if config == nil {
-		return tools
 	}
 
 	components := config.Render.Components
@@ -2102,17 +2091,6 @@ func mapToEnv(vars map[string]string) []string {
 	out := make([]string, 0, len(vars))
 	for key, value := range vars {
 		out = append(out, key+"="+value)
-	}
-	return out
-}
-
-func copyEnvMap(vars map[string]string) map[string]string {
-	if len(vars) == 0 {
-		return map[string]string{}
-	}
-	out := make(map[string]string, len(vars))
-	for key, value := range vars {
-		out[key] = value
 	}
 	return out
 }

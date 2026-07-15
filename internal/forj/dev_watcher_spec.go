@@ -79,9 +79,6 @@ func compileDevWatchers(config *project.Config) ([]devCompiledWatcher, error) {
 
 // validateStructuredDevAppNames prevents lifecycle configuration from escaping conventional app-owned paths.
 func validateStructuredDevAppNames(config *project.Config) error {
-	if config == nil {
-		return nil
-	}
 	names := make([]string, 0, len(config.Dev.Apps))
 	for name := range config.Dev.Apps {
 		names = append(names, name)
@@ -146,7 +143,7 @@ type selectedStructuredDevApp struct {
 
 // selectedStructuredDevApps respects explicit app selection while keeping generated app ordering stable.
 func selectedStructuredDevApps(config *project.Config) []selectedStructuredDevApp {
-	if config == nil || len(config.Dev.Apps) == 0 {
+	if len(config.Dev.Apps) == 0 {
 		return nil
 	}
 	requested := requestedDevAppName()
