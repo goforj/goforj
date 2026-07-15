@@ -2,6 +2,7 @@ package apiindex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -68,8 +69,8 @@ type Options struct {
 type Candidate interface {
 	// Publish atomically promotes the candidate or returns an App-scoped rejection error.
 	Publish() error
-	// Discard removes staged artifacts without changing the active generation.
-	Discard()
+	// Discard removes staged artifacts without changing the active generation and reports leaks callers may need to retry.
+	Discard() error
 }
 
 // Preparation keeps a staged candidate and its user-facing status together as one indexing outcome.
@@ -131,12 +132,13 @@ func (r *Runner) runDefault(options runOptions) (runReport, error) {
 	if prepared.candidate == nil {
 		return prepared.report, nil
 	}
-	defer prepared.candidate.discard()
-	if err := prepared.candidate.publish(); err != nil {
+	publishErr := prepared.candidate.publish()
+	discardErr := prepared.candidate.Discard()
+	if publishErr != nil {
 		prepared.report.outcome = outcomeRejected
-		return prepared.report, err
+		return prepared.report, errors.Join(publishErr, discardErr)
 	}
-	return prepared.report, nil
+	return prepared.report, discardErr
 }
 
 // prepareDefault builds a complete candidate without changing the active artifacts used by a running app.
@@ -232,13 +234,11 @@ func (r *Runner) prepareDefaultPaths(paths paths, options runOptions) (prepared 
 	manifest, err := r.runIndex(candidate.stagedPaths, options)
 	prepared.report = reportFromManifest(paths.appName, outcomeChanged, manifest)
 	if err != nil {
-		candidate.discard()
-		return prepared, err
+		return prepared, errors.Join(err, candidate.Discard())
 	}
 	candidate.candidates, err = readValidatedSnapshots(candidate.stagedPaths)
 	if err != nil {
-		candidate.discard()
-		return prepared, err
+		return prepared, errors.Join(err, candidate.Discard())
 	}
 	if before.equal(candidate.candidates) {
 		prepared.report.outcome = outcomeUnchanged

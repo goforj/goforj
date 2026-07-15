@@ -59,7 +59,7 @@ func TestRunCmdCompileFailurePreventsStartAndAPIIndexPublication(t *testing.T) {
 			}
 			return nil
 		},
-		discard: func() {},
+		discard: func() error { return nil },
 	}
 
 	command := &RunCmd{Root: root}
