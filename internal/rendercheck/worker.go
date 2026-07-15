@@ -1,7 +1,9 @@
 package rendercheck
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,25 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// renderWorkspaceFS isolates the destructive preparation checks that workers must report rather than ignore.
+type renderWorkspaceFS interface {
+	removeAll(string) error
+	stat(string) (fs.FileInfo, error)
+}
+
+// osRenderWorkspaceFS provides the production workspace operations.
+type osRenderWorkspaceFS struct{}
+
+// removeAll keeps destructive cleanup behind the worker's narrow filesystem boundary.
+func (osRenderWorkspaceFS) removeAll(path string) error {
+	return os.RemoveAll(path)
+}
+
+// stat keeps go.mod inspection behind the same boundary as workspace cleanup.
+func (osRenderWorkspaceFS) stat(path string) (fs.FileInfo, error) {
+	return os.Stat(path)
+}
+
 // renderComboWorker owns the filesystem and toolchain dependencies reused by one render worker.
 type renderComboWorker struct {
 	workspaceRoot  string
@@ -21,18 +42,21 @@ type renderComboWorker struct {
 	buildCache     string
 	forjExecutable string
 	runTests       bool
+	filesystem     renderWorkspaceFS
 }
 
 // initModule creates the go.mod once for the shared render directory.
-func initModule(dir, modCache, buildCache string) error {
-	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+func (worker renderComboWorker) initModule() error {
+	if _, err := worker.filesystem.stat(filepath.Join(worker.workspaceRoot, "go.mod")); err == nil {
 		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("inspect go.mod: %w", err)
 	}
 	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
-	goMod.Dir = dir
+	goMod.Dir = worker.workspaceRoot
 	goMod.Env = append(os.Environ(),
-		"GOMODCACHE="+modCache,
-		"GOCACHE="+buildCache,
+		"GOMODCACHE="+worker.moduleCache,
+		"GOCACHE="+worker.buildCache,
 	)
 	if err := goMod.Run(); err != nil {
 		return err
@@ -48,15 +72,17 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 		return newRenderComboFailure("invalid configured App", comboID, nil, err)
 	}
 
-	_ = os.RemoveAll(worker.workspaceRoot)
+	if err := worker.filesystem.removeAll(worker.workspaceRoot); err != nil {
+		return newRenderComboFailure("workspace cleanup failed", comboID, nil, fmt.Errorf("remove prior workspace: %w", err))
+	}
 	if err := os.MkdirAll(worker.workspaceRoot, 0o755); err != nil {
 		return newRenderComboFailure("workspace dir failed", comboID, nil, err)
 	}
 	defer func() {
-		_ = os.RemoveAll(worker.workspaceRoot)
+		_ = worker.filesystem.removeAll(worker.workspaceRoot)
 	}()
 
-	if err := initModule(worker.workspaceRoot, worker.moduleCache, worker.buildCache); err != nil {
+	if err := worker.initModule(); err != nil {
 		return newRenderComboFailure("go mod init failed", comboID, nil, err)
 	}
 	cfg := project.Config{

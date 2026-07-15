@@ -3,6 +3,7 @@ package rendercheck
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,22 @@ import (
 type failAfterWriter struct {
 	writes    int
 	failAfter int
+}
+
+// stubRenderWorkspaceFS returns controlled preparation failures without mutating the test workspace.
+type stubRenderWorkspaceFS struct {
+	removeAllErr error
+	statErr      error
+}
+
+// removeAll returns the cleanup result selected by the test case.
+func (filesystem stubRenderWorkspaceFS) removeAll(string) error {
+	return filesystem.removeAllErr
+}
+
+// stat returns the inspection result selected by the test case.
+func (filesystem stubRenderWorkspaceFS) stat(string) (fs.FileInfo, error) {
+	return nil, filesystem.statErr
 }
 
 // Write returns a closed-pipe error after the configured successful write count.
@@ -35,6 +52,7 @@ func TestRenderComboWorkerReturnsInvalidAppFailure(t *testing.T) {
 		buildCache:     "/tmp/gocache",
 		forjExecutable: "forj",
 		runTests:       false,
+		filesystem:     osRenderWorkspaceFS{},
 	}
 	failure := worker.run(renderCombo{
 		id: "invalid_app",
@@ -57,6 +75,53 @@ func TestRenderComboWorkerReturnsInvalidAppFailure(t *testing.T) {
 	}
 	if !strings.Contains(failure.err.Error(), wantCause) {
 		t.Fatalf("failure error = %q, want substring %q", failure.err, wantCause)
+	}
+}
+
+// TestRenderComboWorkerReturnsWorkspacePreparationFailures keeps stale or unreadable workspaces from reaching the renderer.
+func TestRenderComboWorkerReturnsWorkspacePreparationFailures(t *testing.T) {
+	cleanupErr := errors.New("cleanup denied")
+	statErr := errors.New("stat denied")
+	tests := []struct {
+		name       string
+		reason     string
+		filesystem stubRenderWorkspaceFS
+		cause      error
+	}{
+		{
+			name:       "cleanup",
+			reason:     "workspace cleanup failed",
+			filesystem: stubRenderWorkspaceFS{removeAllErr: cleanupErr},
+			cause:      cleanupErr,
+		},
+		{
+			name:       "go_mod_stat",
+			reason:     "go mod init failed",
+			filesystem: stubRenderWorkspaceFS{statErr: statErr},
+			cause:      statErr,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			worker := renderComboWorker{
+				workspaceRoot: filepath.Join(t.TempDir(), "worker"),
+				filesystem:    test.filesystem,
+			}
+			failure := worker.run(renderCombo{id: test.name})
+
+			if failure == nil {
+				t.Fatal("worker.run() failure = nil, want workspace preparation failure")
+			}
+			if failure.reason != test.reason {
+				t.Fatalf("failure reason = %q, want %q", failure.reason, test.reason)
+			}
+			if !errors.Is(failure, test.cause) {
+				t.Fatalf("failure error = %v, want cause %v", failure.err, test.cause)
+			}
+			if failure.config != nil {
+				t.Fatalf("failure config = %#v, want nil before config construction", failure.config)
+			}
+		})
 	}
 }
 
