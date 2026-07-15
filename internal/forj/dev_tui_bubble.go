@@ -79,13 +79,13 @@ type devBubbleModel struct {
 }
 
 type devAppendLinesMsg struct{ lines []string }
-type devSetFooterMsg struct{ line string }
-type devResetFooterMsg struct{}
+
+// devResetFooterMsg carries the refreshed default into Bubble's independently owned model state.
+type devResetFooterMsg struct{ line string }
 type devSetStatusMsg struct{ line string }
 type devClearStatusMsg struct{}
 type devMarkStatusDoneMsg struct{}
 type devSetFooterEnabledMsg struct{ enabled bool }
-type devClearTranscriptMsg struct{}
 type devRefreshEnvMsg struct {
 	apiURL        string
 	lighthouseURL string
@@ -312,19 +312,13 @@ func (w *devBubbleWriter) EnableFooter() {
 	w.program.Send(devSetFooterEnabledMsg{enabled: true})
 }
 
-func (w *devBubbleWriter) SetFooterLine(line string) {
-	w.mu.Lock()
-	w.footerLine = line
-	w.mu.Unlock()
-	w.program.Send(devSetFooterMsg{line: line})
-}
-
+// ResetFooterLine restores the latest environment-derived footer after transient dev work completes.
 func (w *devBubbleWriter) ResetFooterLine() {
 	w.mu.Lock()
 	line := w.defaultLine
 	w.footerLine = line
 	w.mu.Unlock()
-	w.program.Send(devResetFooterMsg{})
+	w.program.Send(devResetFooterMsg{line: line})
 }
 
 func (w *devBubbleWriter) SetStatusLine(line string) {
@@ -356,14 +350,6 @@ func (w *devBubbleWriter) HasStatusLine() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return strings.TrimSpace(w.statusLine) != ""
-}
-
-func (w *devBubbleWriter) ClearBuffer() {
-	w.mu.Lock()
-	w.partial = ""
-	w.ansiTail = ""
-	w.mu.Unlock()
-	w.program.Send(devClearTranscriptMsg{})
 }
 
 func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
@@ -403,6 +389,7 @@ func loadDevBubbleRuntimeState(config *project.Config) devBubbleRuntimeState {
 
 func (m devBubbleModel) Init() tea.Cmd { return nil }
 
+// Update serializes terminal events through Bubble Tea so transcript and control state stay synchronized.
 func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -416,22 +403,14 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lines = append(m.lines, msg.lines...)
 		m.invalidateVisibleTranscriptCache()
 		m.updateSearchMatches()
-	case devSetFooterMsg:
-		m.footerLine = msg.line
 	case devResetFooterMsg:
+		m.footerLine = msg.line
 	case devSetStatusMsg:
 		m.statusLine = msg.line
 	case devClearStatusMsg, devMarkStatusDoneMsg:
 		m.statusLine = ""
 	case devSetFooterEnabledMsg:
 		m.footerEnabled = msg.enabled
-	case devClearTranscriptMsg:
-		m.lines = nil
-		m.viewportTop = 0
-		m.unreadCount = 0
-		m.searchMatches = nil
-		m.searchIndex = -1
-		m.invalidateVisibleTranscriptCache()
 	case devRefreshEnvMsg:
 		m.apiURL = msg.apiURL
 		m.lighthouseURL = msg.lighthouseURL
@@ -520,7 +499,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commandArgsFocus = false
 			case "enter":
 				req := m.selectedCommandRequest()
-				if req.ShellCommand != "" && m.requestCommand != nil {
+				if req.ShellCommand != "" {
 					m.commandVisible = false
 					m.commandArgs = ""
 					m.commandArgsFocus = false
@@ -596,21 +575,17 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end", "G", "l":
 			m.scrollToBottom()
 		case "r":
-			if m.requestRestart != nil {
-				if helpVisible {
-					m.helpVisible = false
-				}
-				m.requestRestart()
-				m.lines = append(m.lines, console.ActionMark()+" Restart requested")
+			if helpVisible {
+				m.helpVisible = false
 			}
+			m.requestRestart()
+			m.lines = append(m.lines, console.ActionMark()+" Restart requested")
 		case "ctrl+r":
-			if m.requestRender != nil {
-				if helpVisible {
-					m.helpVisible = false
-				}
-				m.requestRender()
-				m.lines = append(m.lines, console.ActionMark()+" Render requested")
+			if helpVisible {
+				m.helpVisible = false
 			}
+			m.requestRender()
+			m.lines = append(m.lines, console.ActionMark()+" Render requested")
 		case "c":
 			if helpVisible {
 				m.helpVisible = false
@@ -781,12 +756,11 @@ func (m *devBubbleModel) bodyHeight() int {
 	return bodyHeight
 }
 
+// applyRuntimeSettingChange restarts the App so the process and newly persisted footer state agree.
 func (m *devBubbleModel) applyRuntimeSettingChange(successLine string) {
 	m.dbQuery, m.appDebug = loadDevRuntimeSettings()
 	m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
-	if m.requestRestart != nil {
-		m.requestRestart()
-	}
+	m.requestRestart()
 	m.lines = append(m.lines, successLine)
 }
 
