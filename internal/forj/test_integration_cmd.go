@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testexec"
@@ -121,7 +120,10 @@ func (cmd *TestIntegrationCmd) Run() error {
 		logger:  cmd.logger,
 		silent:  cmd.Silent,
 		verbose: cmd.Verbose,
-		caches:  testexec.NewGoCaches(modCache, buildCache),
+		caches: testexec.GoCaches{
+			ModulePath: modCache,
+			BuildPath:  buildCache,
+		},
 	}
 	suite := strings.TrimSpace(strings.ToLower(cmd.Suite))
 	target := strings.TrimSpace(strings.ToLower(cmd.Target))
@@ -151,7 +153,7 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 	if target != "" && target != "all" {
 		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
 	}
-	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath(), executor.caches.BuildPath())
+	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath, executor.caches.BuildPath)
 	if err != nil {
 		return err
 	}
@@ -174,7 +176,7 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 		name: "framework preflight",
 		args: []string{"go", "test", "-run", "^$", "-tags=integration", "./internal/forj", "-count=1"},
 	}
-	if err := executor.runFrameworkStep(".", preflight, frameworkEnv); err != nil {
+	if err := executor.runStep(".", preflight, frameworkEnvironment(frameworkEnv)); err != nil {
 		if !executor.silent {
 			console.Warnf("framework preflight failed, attempting integration-tagged tidy")
 		}
@@ -183,10 +185,10 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 			"FORJ_INTEGRATION_FORJ_PATH": forjExec,
 		}
 		tidy := integrationStep{name: "framework tidy", args: []string{"go", "mod", "tidy"}}
-		if err := executor.runFrameworkStep(".", tidy, tidyEnv); err != nil {
+		if err := executor.runStep(".", tidy, frameworkEnvironment(tidyEnv)); err != nil {
 			return err
 		}
-		if err := executor.runFrameworkStep(".", preflight, frameworkEnv); err != nil {
+		if err := executor.runStep(".", preflight, frameworkEnvironment(frameworkEnv)); err != nil {
 			return err
 		}
 	}
@@ -197,7 +199,7 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 	if !executor.silent {
 		testkit.PrintSubsection("Framework integration tests")
 	}
-	if err := executor.runFrameworkStep(".", integrationStep{name: "framework", args: args}, frameworkEnv); err != nil {
+	if err := executor.runStep(".", integrationStep{name: "framework", args: args}, frameworkEnvironment(frameworkEnv)); err != nil {
 		return err
 	}
 	return nil
@@ -315,7 +317,7 @@ func (executor integrationExecutor) runRenderedTaggedTests(dir, tag, target stri
 		if !executor.silent {
 			testkit.PrintSubsection(fmt.Sprintf("%s integration tests", step.name))
 		}
-		if err := executor.runGoTestStep(dir, step, extraEnv); err != nil {
+		if err := executor.runStep(dir, step, extraEnv); err != nil {
 			return err
 		}
 	}
@@ -347,7 +349,7 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 	if err := cmd.writeRenderedIntegrationConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
-	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath(), executor.caches.BuildPath())
+	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath, executor.caches.BuildPath)
 	if err != nil {
 		return err
 	}
@@ -380,63 +382,14 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 	return nil
 }
 
-// runGoTestStep runs one rendered-package test with shared caches and preserves detailed package failure context.
-func (executor integrationExecutor) runGoTestStep(dir string, step integrationStep, extraEnv map[string]string) error {
+// runStep delegates streaming integration commands to the shared workspace execution policy.
+func (executor integrationExecutor) runStep(dir string, step integrationStep, environment map[string]string) error {
 	args := ensureGoTestVerbose(step.args)
-	command := execx.Command(args[0], args[1:]...).
-		Dir(dir).
-		EnvAppend(map[string]string{
-			"GOMODCACHE": executor.caches.ModulePath(),
-			"GOCACHE":    executor.caches.BuildPath(),
-		}).
-		EnvAppend(extraEnv)
-
-	if !executor.silent {
-		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
-	}
-
-	if !executor.silent {
-		command = command.ShadowPrint(
-			execx.WithFormatter(func(ev execx.ShadowEvent) string {
-				switch ev.Phase {
-				case execx.ShadowBefore:
-					return fmt.Sprintf("%s %s", console.ActionMark(), ev.Command)
-				case execx.ShadowAfter:
-					return fmt.Sprintf("%s %s (%s)", console.InfoMark(), ev.Command, ev.Duration)
-				default:
-					return fmt.Sprintf("%s %s", console.InfoMark(), ev.Command)
-				}
-			}),
-		)
-	}
-
-	res, err := command.Run()
-	if err != nil || !res.OK() {
-		if !executor.silent {
-			console.Errorf("%s failed", step.name)
-		}
-		if err != nil {
-			stderr := strings.TrimSpace(res.Stderr)
-			stdout := strings.TrimSpace(res.Stdout)
-			if stderr != "" {
-				return fmt.Errorf("%s: %w (%s)", step.name, err, stderr)
-			}
-			if stdout != "" {
-				return fmt.Errorf("%s: %w (%s)", step.name, err, stdout)
-			}
-			return fmt.Errorf("%s: %w", step.name, err)
-		}
-		stderr := strings.TrimSpace(res.Stderr)
-		stdout := strings.TrimSpace(res.Stdout)
-		if stderr != "" {
-			return fmt.Errorf("%s failed with exit code %d (%s)", step.name, res.ExitCode, stderr)
-		}
-		if stdout != "" {
-			return fmt.Errorf("%s failed with exit code %d (%s)", step.name, res.ExitCode, stdout)
-		}
-		return fmt.Errorf("%s failed with exit code %d", step.name, res.ExitCode)
-	}
-	return nil
+	return executor.workspace(dir).RunStreaming(testexec.StreamingStep{
+		Name:        step.name,
+		Command:     args,
+		Environment: environment,
+	})
 }
 
 // ensureGoTestVerbose keeps long integration runs observable even when the command flag is omitted.
@@ -455,62 +408,19 @@ func ensureGoTestVerbose(args []string) []string {
 	return updated
 }
 
-// runFrameworkStep runs one repository command in the isolated integration module environment.
-func (executor integrationExecutor) runFrameworkStep(dir string, step integrationStep, extraEnv map[string]string) error {
-	args := ensureGoTestVerbose(step.args)
-	cmd := execx.Command(args[0], args[1:]...).
-		Dir(dir).
-		EnvAppend(map[string]string{
-			"GOMODCACHE": executor.caches.ModulePath(),
-			"GOCACHE":    executor.caches.BuildPath(),
-			"GOFLAGS":    "",
-			"GOWORK":     "off",
-		}).
-		EnvAppend(extraEnv)
-
-	if !executor.silent {
-		cmd = cmd.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
+// frameworkEnvironment isolates framework tests from caller Go flags and workspaces while preserving step-specific overrides.
+func frameworkEnvironment(overrides map[string]string) map[string]string {
+	environment := map[string]string{
+		"GOFLAGS": "",
+		"GOWORK":  "off",
 	}
-
-	if !executor.silent {
-		cmd = cmd.ShadowPrint(
-			execx.WithFormatter(func(ev execx.ShadowEvent) string {
-				switch ev.Phase {
-				case execx.ShadowBefore:
-					return fmt.Sprintf("%s %s", console.ActionMark(), ev.Command)
-				case execx.ShadowAfter:
-					return fmt.Sprintf("%s %s (%s)", console.InfoMark(), ev.Command, ev.Duration)
-				default:
-					return fmt.Sprintf("%s %s", console.InfoMark(), ev.Command)
-				}
-			}),
-		)
+	for key, value := range overrides {
+		environment[key] = value
 	}
-
-	res, err := cmd.Run()
-	if err != nil || !res.OK() {
-		if !executor.silent {
-			console.Errorf("%s failed", step.name)
-		}
-		if err == nil {
-			err = fmt.Errorf("command failed with exit code %d", res.ExitCode)
-		}
-		stderr := strings.TrimSpace(res.Stderr)
-		stdout := strings.TrimSpace(res.Stdout)
-		rawOutput := strings.TrimSpace(strings.Join([]string{stdout, stderr}, "\n"))
-		switch {
-		case rawOutput != "":
-			return fmt.Errorf("%s", rawOutput)
-		case err != nil:
-			return err
-		default:
-			return fmt.Errorf("command failed")
-		}
-	}
-	return nil
+	return environment
 }
 
-// workspace binds non-streaming integration commands to the executor's shared policy.
+// workspace binds integration commands to the executor's shared policy.
 func (executor integrationExecutor) workspace(dir string) *testexec.Workspace {
 	return testexec.NewWorkspace(executor.logger, executor.silent, dir, executor.caches)
 }
