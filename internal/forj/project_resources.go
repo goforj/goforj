@@ -165,7 +165,7 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		return err
 	}
 	p.resources.plan = reconciled.EffectivePlan
-	consumers, err := effectiveResourceConsumersFromProjectConfig(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config)
+	consumers, err := resourceenv.ResolveConsumers(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}

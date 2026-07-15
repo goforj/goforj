@@ -68,7 +68,7 @@ func prepareNewProjectTargetResources(
 	if configErr != nil && !os.IsNotExist(configErr) {
 		return newProjectResourcePreparation{}, fmt.Errorf("read existing target Apps: %w", configErr)
 	}
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, effective, components, targetConfig)
+	consumers, err := resourceenv.ResolveConsumers(source, effective, components, targetConfig)
 	if err != nil {
 		return newProjectResourcePreparation{}, fmt.Errorf("discover existing target resource consumers: %w", err)
 	}
