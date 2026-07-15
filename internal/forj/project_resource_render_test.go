@@ -18,6 +18,7 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 		Docker:        true,
 		Mail:          true,
 		Auth:          true,
+		Cache:         true,
 		DatabaseMySQL: true,
 		Jobs:          true,
 		Events:        true,
@@ -41,7 +42,7 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 				"CACHE_SESSIONS_DRIVER=memory",
 				"MAIL_SUPPORTED_DRIVERS=log,smtp",
 			},
-			forbidEnv: []string{"COMPOSE_PROFILES=redis"},
+			forbidEnv: []string{"COMPOSE_PROFILES=redis", "CACHE_LIGHTHOUSE_DRIVER="},
 		},
 		{
 			name:        "Redis active",
@@ -57,6 +58,7 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 				"CACHE_SESSIONS_DRIVER=redis",
 				"COMPOSE_PROFILES=redis",
 			},
+			forbidEnv: []string{"CACHE_LIGHTHOUSE_DRIVER="},
 		},
 	}
 
@@ -146,7 +148,7 @@ func TestEventsEnvironmentUsesProjectEnvelopeAndAppParticipation(t *testing.T) {
 
 // TestResourceTemplatesKeepDatabaseIndependent verifies other resource defaults do not select the database.
 func TestResourceTemplatesKeepDatabaseIndependent(t *testing.T) {
-	components := project.Components{Docker: true, DatabasePostgres: true}
+	components := project.Components{Docker: true, DatabasePostgres: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	for _, want := range []string{"DB_DRIVER=postgres", "DB_SUPPORTED_DRIVERS=postgres", "CACHE_DRIVER=memory"} {
@@ -170,9 +172,9 @@ func TestResourceTemplatesRenderDatabasePlanMatrix(t *testing.T) {
 		driver     string
 		service    string
 	}{
-		{name: "mysql", components: project.Components{DatabaseMySQL: true}, driver: "mysql", service: "mysql"},
-		{name: "postgres", components: project.Components{DatabasePostgres: true}, driver: "postgres", service: "postgres"},
-		{name: "sqlite", components: project.Components{DatabaseSQLite: true}, driver: "sqlite"},
+		{name: "mysql", components: project.Components{DatabaseMySQL: true, Cache: true}, driver: "mysql", service: "mysql"},
+		{name: "postgres", components: project.Components{DatabasePostgres: true, Cache: true}, driver: "postgres", service: "postgres"},
+		{name: "sqlite", components: project.Components{DatabaseSQLite: true, Cache: true}, driver: "sqlite"},
 	}
 	for _, redisActive := range []bool{false, true} {
 		for _, database := range databases {
@@ -263,7 +265,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 		t.Fatalf("change to render directory: %v", err)
 	}
 
-	components := project.Components{CLI: true, Docker: true, DatabaseSQLite: true, Jobs: true, Events: true}
+	components := project.Components{CLI: true, Docker: true, DatabaseSQLite: true, Jobs: true, Events: true, Cache: true}
 	config := project.Config{
 		ProjectName:  "Shared Resource App",
 		GoModuleName: "example.com/shared-resource-app",

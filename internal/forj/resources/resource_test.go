@@ -12,6 +12,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	config.Render.Components.WebAPI = true
 	config.Render.Components.WebUI = true
 	config.Render.Components.DatabaseSQLite = true
+	config.Render.Components.Cache = true
 	config.Render.Components.Events = true
 	config.Render.Components.Storage = true
 	config.Render.Components.Jobs = true
@@ -79,9 +80,10 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	config := &project.Config{}
 	config.Render.Components.WebAPI = true
 	env := map[string]string{
-		"LIGHTHOUSE_ENABLED":  "false",
-		"SWAGGER_ENABLED":     "false",
-		"EVENTS_AUDIT_DRIVER": "redis",
+		"LIGHTHOUSE_ENABLED":    "false",
+		"SWAGGER_ENABLED":       "false",
+		"CACHE_SESSIONS_DRIVER": "redis",
+		"EVENTS_AUDIT_DRIVER":   "redis",
 	}
 
 	resources, err := RegistryForProject(config, env).List(t.Context())
@@ -96,6 +98,9 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	}
 	if _, ok := resourceByID(resources, "events-audit"); ok {
 		t.Fatalf("stale Events env resurrected a disabled resource in %#v", resources)
+	}
+	if _, ok := resourceByID(resources, "cache-sessions"); ok {
+		t.Fatalf("stale Cache env resurrected a disabled resource in %#v", resources)
 	}
 	if app, ok := resourceByID(resources, "app"); !ok || app.URL != "http://localhost:3000" {
 		t.Fatalf("app = %#v ok=%v", app, ok)

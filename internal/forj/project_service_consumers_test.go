@@ -10,7 +10,7 @@ import (
 
 // TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis verifies owner-authored named scopes join the local default endpoint.
 func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTS_DRIVER=redis\nCACHE_REPORTS_ADDR=redis:6379\nREDIS_HOST=redis\nREDIS_PORT=6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
@@ -32,7 +32,7 @@ func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
 
 // TestEffectiveResourceConsumersSeparateExternalRedisEndpoints verifies root resource overrides do not collapse by driver name.
 func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_ADDR=cache.redis.example:6379\nEVENTS_DRIVER=redis\nEVENTS_ADDR=events.redis.example:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
@@ -63,7 +63,7 @@ func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) 
 
 // TestEffectiveResourceConsumersApplyNamedAppOverrides verifies runtime App overlay conventions participate in project-level discovery.
 func TestEffectiveResourceConsumersApplyNamedAppOverrides(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("BILLING_CACHE_DRIVER=redis\nBILLING_CACHE_ADDR=billing.redis.example:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
@@ -317,7 +317,7 @@ func TestEffectiveResourceConsumersCanonicalizeDatabaseAliases(t *testing.T) {
 
 // TestEffectiveResourceConsumersResolveDotenvReferences keeps endpoint planning on the generator's full-file parsing contract.
 func TestEffectiveResourceConsumersResolveDotenvReferences(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_ADDR=cache.redis.example:6379\n")
 
@@ -358,7 +358,7 @@ func TestResourceAppPrefixesRequireTopologyEvidence(t *testing.T) {
 
 // TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference protects names containing another resource marker.
 func TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTING_DB_DRIVER=redis\nCACHE_REPORTING_DB_ADDR=redis:6379\n")
 	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)

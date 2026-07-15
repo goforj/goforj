@@ -12,7 +12,7 @@ import (
 
 // TestReconcileResourceEnvironmentPreservesOwners verifies full resource ownership and portable initialization.
 func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
-	components := project.Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true}
+	components := project.Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true, Cache: true}
 	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCOMPOSE_PROFILES=metrics\n")
 	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, true)
@@ -39,6 +39,28 @@ func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("reconciled environment omitted %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestReconcileResourceEnvironmentRemovesObsoleteDiagnosticCaches verifies upgrades stop regenerating retired framework stores.
+func TestReconcileResourceEnvironmentRemovesObsoleteDiagnosticCaches(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Jobs: true}
+	seed := defaultResourcePlanForTest(t, components)
+	source := []byte("CACHE_INSPECTS_DRIVER=memory\nCACHE_LIGHTHOUSE_DRIVER=redis\n# CACHE_LIGHTHOUSE_DRIVER=memory\n")
+	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, true)
+	if err != nil {
+		t.Fatalf("reconcile resource environment: %v", err)
+	}
+	if !changed {
+		t.Fatal("obsolete diagnostic cache settings did not request an environment write")
+	}
+	if strings.Contains(string(updated), "CACHE_INSPECTS_DRIVER") || strings.Contains(string(updated), "CACHE_LIGHTHOUSE_DRIVER") {
+		t.Fatalf("reconciled environment retained an obsolete diagnostic cache:\n%s", updated)
+	}
+	for _, named := range effective.GeneratedNamedSelections(components) {
+		if named.EnvironmentKey == "CACHE_INSPECTS_DRIVER" || named.EnvironmentKey == "CACHE_LIGHTHOUSE_DRIVER" {
+			t.Fatalf("effective resource plan retained an obsolete diagnostic cache: %#v", effective)
 		}
 	}
 }
@@ -191,7 +213,7 @@ func TestCompatibilityResourcePlanKeepsPortableEventsDefaults(t *testing.T) {
 
 // TestReconcileResourceEnvironmentAcceptsDotenvSyntax keeps preview, rerender, and generation on one parsing contract.
 func TestReconcileResourceEnvironmentAcceptsDotenvSyntax(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true}
+	components := project.Components{DatabaseSQLite: true, Cache: true}
 	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("export CACHE_DRIVER=\"redis\"\nCACHE_SUPPORTED_DRIVERS='memory,redis' # portable pair\nEVENTS_DRIVER=\"inproc\"\nEVENTS_SUPPORTED_DRIVERS=\"inproc,redis\"\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nDB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite\nCACHE_PREFIX=\"owner#prefix\"\n")
 	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
@@ -209,7 +231,7 @@ func TestReconcileResourceEnvironmentAcceptsDotenvSyntax(t *testing.T) {
 
 // TestReconcileResourceEnvironmentResolvesDotenvReferences prevents owner indirection from being mistaken for a missing value.
 func TestReconcileResourceEnvironmentResolvesDotenvReferences(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true}
+	components := project.Components{DatabaseSQLite: true, Cache: true}
 	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_SUPPORTED_DRIVERS=memory,redis\nEVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc,redis\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nDB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite\n")
 
@@ -282,7 +304,7 @@ func TestPrepareResourceEnvironmentUsesCommittedFallback(t *testing.T) {
 	if err := os.WriteFile(".env.example", example, 0o644); err != nil {
 		t.Fatalf("write environment example: %v", err)
 	}
-	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan, err := compatibilityResourcePlan(components, "")
 	if err != nil {
 		t.Fatalf("resolve compatibility plan: %v", err)
@@ -324,7 +346,7 @@ func TestPrepareResourceEnvironmentKeepsExplicitPlanAboveCommittedFallback(t *te
 	if err := os.WriteFile(".env.example", []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis\nEVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc,redis\nCOMPOSE_PROFILES=\n"), 0o644); err != nil {
 		t.Fatalf("write environment example: %v", err)
 	}
-	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := &ProjectRenderer{
@@ -362,7 +384,7 @@ func TestPrepareResourceEnvironmentCarriesNamedAndAppConsumers(t *testing.T) {
 	if err := os.WriteFile(".env", source, 0o600); err != nil {
 		t.Fatalf("write owner environment: %v", err)
 	}
-	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	renderer := &ProjectRenderer{
 		config: &project.Config{
@@ -410,7 +432,7 @@ func TestComposeRedisServiceWithoutProfile(t *testing.T) {
 
 // TestReconcileResourceEnvironmentRejectsOwnerMismatch verifies validation happens before any file write.
 func TestReconcileResourceEnvironmentRejectsOwnerMismatch(t *testing.T) {
-	components := project.Components{DatabaseMySQL: true}
+	components := project.Components{DatabaseMySQL: true, Cache: true}
 	seed := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory\n")
 	updated, _, changed, err := reconcileResourceEnvironment(source, seed, components, true)
@@ -439,7 +461,7 @@ func TestSeedComposeProfilesPreservesTokens(t *testing.T) {
 
 // TestSeedComposeProfilesHonorsRetainedUnusedRedis keeps explicit owner lifecycle intent independent of the active driver.
 func TestSeedComposeProfilesHonorsRetainedUnusedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics\n"), plan, components, intent)
@@ -469,7 +491,7 @@ func TestLocalServiceIntentFromEnvironmentTreatsMissingRedisProfileAsExternal(t 
 
 // TestResourceRenderValuesIncludeNamedRedis verifies Auth sessions participate in Redis discovery.
 func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Auth: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Auth: true, Cache: true}
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	values := resourceRenderValuesForPlan(plan, components, intent)

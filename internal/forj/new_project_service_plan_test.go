@@ -10,7 +10,7 @@ import (
 
 // TestPlanNewProjectServiceTasksSkipsAvailableRedis verifies a support-only profiled definition does not create an empty Compose startup.
 func TestPlanNewProjectServiceTasksSkipsAvailableRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
 	requirement, exists := servicePlan.Requirement(project.ServiceRedis)
 	if !exists || requirement.State != project.ServiceStateAvailableLocal {
@@ -25,7 +25,7 @@ func TestPlanNewProjectServiceTasksSkipsAvailableRedis(t *testing.T) {
 
 // TestPlanNewProjectServiceTasksStartsActiveRedis verifies a locally managed active Redis resource starts one Compose lifecycle.
 func TestPlanNewProjectServiceTasksStartsActiveRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, true)
 
@@ -42,7 +42,7 @@ func TestPlanNewProjectServiceTasksStartsActiveRedis(t *testing.T) {
 
 // TestPlanNewProjectServiceTasksHonorsRetainedUnusedRedis verifies explicit owner intent remains an actual Compose lifecycle.
 func TestPlanNewProjectServiceTasksHonorsRetainedUnusedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, false)
 	requirement, exists := servicePlan.Requirement(project.ServiceRedis)
@@ -58,7 +58,7 @@ func TestPlanNewProjectServiceTasksHonorsRetainedUnusedRedis(t *testing.T) {
 
 // TestPlanNewProjectServiceTasksSkipsExternalRedis verifies Docker capability alone does not start an externally placed active resource.
 func TestPlanNewProjectServiceTasksSkipsExternalRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
 	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, true)
 
