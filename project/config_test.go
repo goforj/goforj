@@ -175,6 +175,39 @@ func TestDefaultSelectedComponentsIncludeMetricsStack(t *testing.T) {
 	if !components.Metrics || !components.Observability || !components.Grafana {
 		t.Fatalf("expected metrics, observability, and grafana to be selected by default: %#v", components)
 	}
+	if !components.Cache || !components.Events || !components.Storage || !components.Jobs {
+		t.Fatalf("expected App primitives and Background Jobs to be selected by default: %#v", components)
+	}
+}
+
+// TestPrimitiveComponentsAreVisibleRecommendedDefaults keeps the component catalog aligned with the single-stage wizard experience.
+func TestPrimitiveComponentsAreVisibleRecommendedDefaults(t *testing.T) {
+	visible := make(map[ComponentKey]bool)
+	for _, definition := range ProjectWizardComponentDefinitions() {
+		visible[definition.Key] = true
+	}
+	for key, label := range map[ComponentKey]string{
+		ComponentCache:   "Cache",
+		ComponentEvents:  "Events",
+		ComponentStorage: "File Storage",
+		ComponentJobs:    "Background Jobs",
+	} {
+		definition, ok := ComponentDefinitionByKey(key)
+		if !ok || definition.Label != label || !definition.DefaultSelected {
+			t.Fatalf("primitive definition %q = %#v", key, definition)
+		}
+		if !visible[key] {
+			t.Fatalf("primitive %q is missing from the project component wizard", key)
+		}
+	}
+}
+
+// TestDemoAppRequiresEveryPrimitiveComponent keeps the example feature set coherent across every dependency-resolution caller.
+func TestDemoAppRequiresEveryPrimitiveComponent(t *testing.T) {
+	components := Components{DemoApp: true}.WithResolvedDependencies()
+	if !components.Cache || !components.Events || !components.Storage || !components.Jobs {
+		t.Fatalf("Demo App dependency closure = %#v, want Cache, Events, Storage, and Background Jobs", components)
+	}
 }
 
 func TestComponentCatalogDefinitionsHaveDescriptions(t *testing.T) {
@@ -262,13 +295,13 @@ func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 
 	normalized := components.WithResolvedDependencies()
 
-	if !normalized.OAuth || !normalized.Auth || !normalized.Mail {
-		t.Fatalf("expected oauth normalization to enable auth and mail: %#v", normalized)
+	if !normalized.OAuth || !normalized.Auth || !normalized.Mail || !normalized.Cache {
+		t.Fatalf("expected oauth normalization to enable auth, mail, and cache: %#v", normalized)
 	}
 	if !normalized.Grafana || !normalized.Observability || !normalized.Metrics || !normalized.WebAPI || !normalized.Docker {
 		t.Fatalf("expected grafana normalization to enable observability, metrics, web api, and docker: %#v", normalized)
 	}
-	if components.Auth || components.Mail || components.Jobs || components.WebAPI || components.Observability || components.Metrics || components.Docker {
+	if components.Auth || components.Mail || components.Cache || components.Jobs || components.WebAPI || components.Observability || components.Metrics || components.Docker {
 		t.Fatalf("expected Normalized to leave the original value unchanged: %#v", components)
 	}
 }
@@ -343,7 +376,7 @@ func TestAppComponentsFromKeysUsesProjectCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppComponentsFromKeys returned error: %v", err)
 	}
-	if !components.Auth || !components.WebAPI || !components.DatabaseMySQL || !components.Mail || !components.Jobs || !components.Metrics {
+	if !components.Auth || !components.WebAPI || !components.DatabaseMySQL || !components.Mail || !components.Cache || !components.Jobs || !components.Metrics {
 		t.Fatalf("app components missing expected dependencies: %#v", components)
 	}
 	if components.WebUI || components.Docker || components.Observability || components.Grafana || components.DemoApp {
@@ -393,11 +426,68 @@ func TestPromoteAppComponentsAddsProjectCapabilities(t *testing.T) {
 	}
 
 	promoted := PromoteAppComponents(available, selected)
-	if !promoted.WebAPI || !promoted.Auth || !promoted.Mail || !promoted.DatabaseMySQL || !promoted.DatabasePostgres || !promoted.Jobs {
+	if !promoted.WebAPI || !promoted.Auth || !promoted.Mail || !promoted.Cache || !promoted.DatabaseMySQL || !promoted.DatabasePostgres || !promoted.Jobs {
 		t.Fatalf("promoted components missing expected capabilities: %#v", promoted)
 	}
 	if !promoted.Docker {
 		t.Fatalf("expected project-level docker capability to be preserved: %#v", promoted)
+	}
+}
+
+// TestProjectComponentsDerivesNamedAppCapabilitiesWithoutChangingDefaultApp verifies shared support does not mutate the default App.
+func TestProjectComponentsDerivesNamedAppCapabilitiesWithoutChangingDefaultApp(t *testing.T) {
+	defaultComponents := Components{
+		CLI:           true,
+		WebAPI:        true,
+		DatabaseMySQL: true,
+		Docker:        true,
+		Metrics:       true,
+	}
+	config := &Config{
+		Render: RenderConfig{Components: defaultComponents},
+		Apps: map[string]AppConfig{
+			"reporting": {
+				Components: Components{CLI: true, Mail: true, WebAPI: true, DatabasePostgres: true, Jobs: true},
+			},
+		},
+	}
+
+	envelope := ProjectComponents(config)
+	if !envelope.Mail || !envelope.DatabaseMySQL || !envelope.DatabasePostgres || !envelope.Jobs {
+		t.Fatalf("project envelope missing named-App capabilities: %#v", envelope)
+	}
+	if !envelope.Docker || !envelope.Metrics {
+		t.Fatalf("project envelope lost project-only capabilities: %#v", envelope)
+	}
+	if config.Render.Components != defaultComponents {
+		t.Fatalf("default App components changed while deriving the project envelope: %#v", config.Render.Components)
+	}
+}
+
+// TestProjectComponentsNormalizesAppsAgainstStableDefaultCapabilities verifies sibling database choices cannot change implicit App dependencies.
+func TestProjectComponentsNormalizesAppsAgainstStableDefaultCapabilities(t *testing.T) {
+	config := &Config{
+		Render: RenderConfig{Components: Components{CLI: true}},
+		Apps: map[string]AppConfig{
+			"accounts": {
+				Components: Components{CLI: true, Auth: true},
+			},
+			"reporting": {
+				Components: Components{CLI: true, DatabasePostgres: true},
+			},
+		},
+	}
+
+	for range 20 {
+		envelope := ProjectComponents(config)
+		if !envelope.DatabaseMySQL || !envelope.DatabasePostgres {
+			t.Fatalf("project envelope depended on App map iteration: %#v", envelope)
+		}
+	}
+
+	accounts := NormalizeConfiguredAppComponents(config, config.Apps["accounts"].Components)
+	if !accounts.DatabaseMySQL || accounts.DatabasePostgres {
+		t.Fatalf("accounts App database leaked from reporting App: %#v", accounts)
 	}
 }
 
@@ -425,6 +515,7 @@ func TestLoadProjectConfigPreservesRawComponentSelections(t *testing.T) {
 module_name: example.com/test
 updated_at: 2026-03-14 00:00:00 CDT
 render:
+  component_contract: 1
   components:
     auth: true
     web_api: true
@@ -449,8 +540,12 @@ render:
 	if !cfg.Render.Components.Auth {
 		t.Fatalf("expected auth to be loaded")
 	}
-	if cfg.Render.Components.Mail {
-		t.Fatalf("expected raw config load to preserve mail=false, got %#v", cfg.Render.Components)
+	if cfg.Render.Components.Mail || cfg.Render.Components.Cache {
+		t.Fatalf("expected raw config load to preserve unresolved dependencies, got %#v", cfg.Render.Components)
+	}
+	effective := cfg.Render.Components.WithResolvedDependencies()
+	if !effective.Mail || !effective.Cache {
+		t.Fatalf("expected effective Auth dependencies to include Mail and Cache, got %#v", effective)
 	}
 }
 

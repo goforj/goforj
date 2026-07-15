@@ -1,13 +1,15 @@
 package jobs
 
 import (
+{{- if or .ProjectComponents.Cache .ProjectComponents.Storage .ProjectComponents.HasDatabase }}
 	"bytes"
+{{- end }}
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"math/rand"
 {{- end }}
 	"net"
@@ -20,38 +22,45 @@ import (
 	"sync/atomic"
 	"time"
 
+{{- if .ProjectComponents.Cache }}
 	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
+{{- end }}
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+{{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
-	"{{.GoModuleName}}/internal/runtime"
+{{- end }}
+{{- if .ProjectComponents.Cache }}
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.HasDatabase }}
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/runtime"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 // LighthouseRuntime boots the dev console agent for the jobs process.
 type LighthouseRuntime struct {
-	agent       *lighthouse.Agent
-	logger      *logger.AppLogger
-	queues      *queues.Manager
+	agent        *lighthouse.Agent
+	logger       *logger.AppLogger
+	queues       *queues.Manager
 	defaultQueue *queue.Queue
-	timeline    *queueTimeline
-	benchmarks  *benchmarkRunner
-	inspects    *inspects.Manager
-{{- if .Components.Metrics }}
-	metrics     *metrics.Manager
+	benchmarks   *benchmarkRunner
+	inspects     *inspects.Manager
+{{- if .ProjectComponents.Metrics }}
+	metrics      *metrics.Manager
 {{- end }}
 }
 
@@ -63,36 +72,34 @@ var (
 // NewLighthouseRuntime creates the Lighthouse runtime for the jobs process.
 func NewLighthouseRuntime(
 	logger *logger.AppLogger,
-	caches *caches.Manager,
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
+{{- end }}
 	queues *queues.Manager,
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
 ) *LighthouseRuntime {
 	componentLogger := logger.WithComponent("Jobs")
-	var lighthouseCacheStore cachecore.Store
-	if caches != nil {
-		if instance := caches.Lighthouse(); instance != nil {
-			lighthouseCacheStore = instance.Store()
-		}
-	}
 	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
 		logger:       componentLogger,
 		queues:       queues,
 		defaultQueue: queues.Default(),
-		timeline:     newQueueTimeline(lighthouseCacheStore),
 		inspects:     inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metrics:      metricsManager,
 {{- end }}
-		benchmarks: newBenchmarkRunner(caches, queues, storage,
-{{- if .Components.HasDatabase }}
+		benchmarks: newBenchmarkRunner(
+			queues,
+{{- if .ProjectComponents.Storage }}
+			storage,
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
 			dbConnections,
 {{- else }}
 			nil,
@@ -101,13 +108,49 @@ func NewLighthouseRuntime(
 	}
 }
 
+{{- if .ProjectComponents.Cache }}
+// NewCachedLighthouseRuntime creates the Jobs Lighthouse runtime with Cache benchmarks enabled for this App.
+func NewCachedLighthouseRuntime(
+	logger *logger.AppLogger,
+	cacheManager *caches.Manager,
+{{- if .ProjectComponents.Storage }}
+	storage *storages.Manager,
+{{- end }}
+	queues *queues.Manager,
+	inspectManager *inspects.Manager,
+{{- if .ProjectComponents.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+	dbConnections *database.Connections,
+{{- end }}
+) *LighthouseRuntime {
+	runtime := NewLighthouseRuntime(
+		logger,
+{{- if .ProjectComponents.Storage }}
+		storage,
+{{- end }}
+		queues,
+		inspectManager,
+{{- if .ProjectComponents.Metrics }}
+		metricsManager,
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+		dbConnections,
+{{- end }}
+	)
+	runtime.benchmarks.caches = cacheManager
+	return runtime
+}
+{{- end }}
+
 // Start boots the dev console agent for the jobs process.
 func (c *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
 	}
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
-	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .Components.Metrics }}, c.metrics{{- end }})
+	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .ProjectComponents.Metrics }}, c.metrics{{- end }})
 	c.inspects.SetPublisher(publisher)
 	c.inspects.SetPublishOnly(true)
 	c.inspects.SetCaptureGate(c.agent.InspectActive)
@@ -127,25 +170,6 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 		queueInstance.Register(lighthouseBenchmarkQueueJobType, handleLighthouseBenchmarkQueueTask)
 	}
 
-	if c.defaultQueue != nil {
-		go func() {
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					snapshot, err := queueStats(ctx, c.defaultQueue)
-					if err != nil {
-						continue
-					}
-					c.recordSnapshot(snapshot)
-				}
-			}
-		}()
-	}
-
 	c.registerCLICommands(ctx)
 	c.registerQueueCommands(ctx)
 	c.registerBenchmarkCommands(ctx)
@@ -153,10 +177,6 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 	go func() {
 		_ = c.agent.Start(ctx)
 	}()
-}
-
-func (c *LighthouseRuntime) recordSnapshot(snapshot queue.StatsSnapshot) {
-	c.timeline.Record(time.Now(), snapshot)
 }
 
 func (c *LighthouseRuntime) registerCLICommands(ctx context.Context) {
@@ -226,6 +246,7 @@ func optionalBenchmarkName(name string) string {
 	return value
 }
 
+{{- if .ProjectComponents.Cache }}
 func runCacheBenchmark(ctx context.Context, manager *caches.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	if manager == nil {
 		return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
@@ -465,12 +486,15 @@ func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
 	}
 	return string(cachecore.DriverMemory)
 }
+{{- end }}
 
+// enforceBenchmarkDriver reconciles benchmark metadata with each generated runtime driver contract.
 func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 	if report.Extra == nil {
 		report.Extra = map[string]any{}
 	}
 	switch report.Suite {
+{{- if .ProjectComponents.Cache }}
 	case "cache":
 		driver := runtime.NormalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {
@@ -488,6 +512,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 		report.Driver = driver
 		report.Extra["driver"] = driver
 		report.Extra["configured_driver"] = driver
+{{- end }}
 	case "queue":
 		driver := runtime.NormalizeQueueDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {
@@ -501,6 +526,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 			report.Extra["driver"] = driver
 			report.Extra["configured_driver"] = driver
 		}
+{{- if .ProjectComponents.Storage }}
 	case "storage":
 		driver := runtime.NormalizeStorageDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
@@ -510,6 +536,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 			report.Driver = driver
 			report.Extra["driver"] = driver
 		}
+{{- end }}
 	case "db":
 		driver := runtime.NormalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
@@ -1079,6 +1106,8 @@ func benchmarkQueueDrainTimeout(duration time.Duration) time.Duration {
 	return timeout
 }
 
+{{- if .ProjectComponents.Storage }}
+// runStorageBenchmark selects the default generated disk before starting a bounded benchmark run.
 func runStorageBenchmark(ctx context.Context, manager *storages.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	if manager == nil {
 		return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
@@ -1199,6 +1228,7 @@ func runStorageBenchmark(ctx context.Context, manager *storages.Manager, duratio
 	return result, nil
 }
 
+// runStorageBenchmarkDisk isolates benchmark objects under a run prefix so cleanup never touches App data.
 func runStorageBenchmarkDisk(ctx context.Context, disk storage.Storage, diskName string, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
 	payload := bytes.Repeat([]byte{'s'}, payloadSize)
 	var ops int64
@@ -1314,6 +1344,7 @@ func runStorageBenchmarkDisk(ctx context.Context, disk storage.Storage, diskName
 	return result
 }
 
+// cleanupStorageBenchmarkRun removes only entries created beneath the benchmark run prefix.
 func cleanupStorageBenchmarkRun(ctx context.Context, disk storage.Storage, prefix string) {
 	disk = disk.WithContext(ctx)
 	paths := storageBenchmarkPaths(disk, prefix)
@@ -1322,6 +1353,7 @@ func cleanupStorageBenchmarkRun(ctx context.Context, disk storage.Storage, prefi
 	}
 }
 
+// storageBenchmarkPaths orders run-owned entries deepest first so directory cleanup is safe.
 func storageBenchmarkPaths(disk storage.Storage, prefix string) []string {
 	if strings.TrimSpace(prefix) == "" {
 		return nil
@@ -1351,6 +1383,7 @@ func storageBenchmarkPaths(disk storage.Storage, prefix string) []string {
 	return paths
 }
 
+// storageBenchmarkPathsRecursive bounds traversal to the benchmark prefix while avoiding duplicate backend entries.
 func storageBenchmarkPathsRecursive(disk storage.Storage, prefix string, seen map[string]struct{}) []string {
 	if prefix == "" {
 		return nil
@@ -1385,12 +1418,14 @@ func storageBenchmarkPathsRecursive(disk storage.Storage, prefix string, seen ma
 	return append(paths, prefix)
 }
 
+// depth supplies deterministic deepest-first ordering for Storage benchmark cleanup.
 func depth(path string) int {
 	if path == "" {
 		return 0
 	}
 	return strings.Count(path, "/")
 }
+{{- end }}
 
 func isQueuePausedDispatchErr(err error) bool {
 	if err == nil {
@@ -1426,17 +1461,19 @@ func waitForQueuePauseState(
 	}
 }
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 type lighthouseBenchmarkDBRecord struct {
 	ID          uint64 `gorm:"primaryKey;autoIncrement:false"`
 	Value       string `gorm:"size:512;not null"`
 	UpdatedAtMS int64  `gorm:"column:updated_at_ms;not null"`
 }
 
+// TableName isolates benchmark records from application-owned tables.
 func (lighthouseBenchmarkDBRecord) TableName() string {
 	return "lighthouse_benchmark_records"
 }
 
+// runDBBenchmark selects a generated connection before starting a bounded benchmark run.
 func runDBBenchmark(
 	ctx context.Context,
 	dbConnections *database.Connections,
@@ -1578,6 +1615,7 @@ func runDBBenchmark(
 	return result, nil
 }
 
+// runDBBenchmarkConnection confines writes to run-owned identifiers and records bounded latency samples.
 func runDBBenchmarkConnection(
 	ctx context.Context,
 	dbConnections *database.Connections,
@@ -1801,6 +1839,7 @@ func runDBBenchmarkConnection(
 	return result, nil
 }
 
+// cleanupDBBenchmarkRun removes only records created by the current benchmark identifier range.
 func cleanupDBBenchmarkRun(ctx context.Context, db *gorm.DB, firstID, lastID uint64) {
 	if db == nil || firstID == 0 || lastID < firstID {
 		return
@@ -1810,6 +1849,7 @@ func cleanupDBBenchmarkRun(ctx context.Context, db *gorm.DB, firstID, lastID uin
 		Delete(&lighthouseBenchmarkDBRecord{}).Error
 }
 
+// detectDBDriver reconciles generated connection metadata with the active dialect.
 func detectDBDriver(connectionName, dialect string) string {
 	key := "DB_DRIVER"
 	if connectionName != "" && connectionName != "default" {
@@ -2138,6 +2178,7 @@ func enrichBenchmarkResult(report *BenchmarkSuiteResult) {
 	report.Extra["stability_grade"] = stabilityGrade(errRate)
 }
 
+// performanceGrade applies suite-specific thresholds so unlike backends receive meaningful grades.
 func performanceGrade(report BenchmarkSuiteResult) string {
 	opsPerSec := report.OpsPerSec
 	p95 := report.P95MS
@@ -2161,10 +2202,12 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 		aThreshold = 20000
 		bThreshold = 8000
 		cThreshold = 2000
+{{- if .ProjectComponents.Storage }}
 	case "storage":
 		aThreshold = 3000
 		bThreshold = 1200
 		cThreshold = 300
+{{- end }}
 	case "http":
 		aThreshold = 20000
 		bThreshold = 6000

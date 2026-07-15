@@ -286,6 +286,63 @@ func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
 	}
 }
 
+// TestGeneratedCacheManifestRejectsOmittedNativeFallback proves runtime environment changes cannot expand one generated artifact.
+func TestGeneratedCacheManifestRejectsOmittedNativeFallback(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "redis")
+	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-manifest-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cachedrivermanifest",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/cache/driver/rediscache",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
+	if _, err := GenerateCacheFiles(root); err != nil {
+		t.Fatalf("GenerateCacheFiles returned error: %v", err)
+	}
+
+	testSource := `package caches
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestRuntimeManifestAuthority verifies runtime environment cannot expand the embedded driver manifest.
+func TestRuntimeManifestAuthority(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SUPPORTED_DRIVERS", "memory,redis")
+	_, err := NewManager()
+	if err == nil {
+		t.Fatal("expected omitted memory driver to be rejected")
+	}
+	for _, expected := range []string{
+		"active driver \"memory\"",
+		"compiled choices: redis",
+		"forj generate --cache",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("manifest error %q does not contain %q", err, expected)
+		}
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "driver_manifest_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated manifest test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/caches", "TestRuntimeManifestAuthority", nil)
+}
+
 func TestGenerateCacheFilesAlwaysExposesSessionsAccessor(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 

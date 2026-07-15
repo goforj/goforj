@@ -60,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { Database, Layers3, ShieldCheck } from 'lucide-vue-next'
+import { Database, Layers3, ShieldCheck } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardDescription, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 

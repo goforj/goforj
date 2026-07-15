@@ -81,15 +81,25 @@ Default ports are derived from the app index:
 - runtime port block: `10000 + (appIndex * 10)`
 - HTTP/app metrics port: `runtimeBase + 0`
 - scheduler metrics port: `runtimeBase + 1`
+{{- if .ProjectComponents.Jobs }}
 - worker metrics port: `runtimeBase + 2`
+{{- end }}
 
 Example generated apps:
 
+{{ if .ProjectComponents.Jobs -}}
 | App | Index | HTTP | Metrics | Scheduler metrics | Worker metrics |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `app` | `0` | `3000` | `10000` | `10001` | `10002` |
 | `marketplace` | `1` | `3001` | `10010` | `10011` | `10012` |
 | `backstage` | `2` | `3002` | `10020` | `10021` | `10022` |
+{{ else -}}
+| App | Index | HTTP | Metrics | Scheduler metrics |
+| --- | ---: | ---: | ---: | ---: |
+| `app` | `0` | `3000` | `10000` | `10001` |
+| `marketplace` | `1` | `3001` | `10010` | `10011` |
+| `backstage` | `2` | `3002` | `10020` | `10021` |
+{{ end -}}
 
 Bundled local development tools avoid the app HTTP range. For example, Grafana defaults to `13001`, leaving `3001` available for the first named app.
 
@@ -99,7 +109,9 @@ Use the runtime helpers when framework or app code needs the current app's defau
 runtime.HTTPPort()
 runtime.MetricsPort()
 runtime.SchedulerMetricsPort()
+{{- if .ProjectComponents.Jobs }}
 runtime.WorkerMetricsPort()
+{{- end }}
 ```
 
 Use `ForApp` helpers only when tooling needs to inspect another app:
@@ -111,8 +123,11 @@ runtime.MetricsPortForApp("backstage")
 
 Environment variables remain the override path:
 
-- default app: `PORT`, `API_HTTP_PORT`, `METRICS_PORT`, `API_METRICS_PORT`, `METRICS_API_PORT`, `SCHEDULER_METRICS_PORT`, `METRICS_SCHEDULER_PORT`, `WORKER_METRICS_PORT`, `JOBS_METRICS_PORT`, and `METRICS_JOBS_PORT`
-- named apps: `<APP>_PORT`, `<APP>_API_HTTP_PORT`, `<APP>_METRICS_PORT`, `<APP>_API_METRICS_PORT`, `<APP>_METRICS_API_PORT`, `<APP>_SCHEDULER_METRICS_PORT`, `<APP>_METRICS_SCHEDULER_PORT`, `<APP>_WORKER_METRICS_PORT`, `<APP>_JOBS_METRICS_PORT`, and `<APP>_METRICS_JOBS_PORT`
+- default app: `PORT`, `API_HTTP_PORT`, `METRICS_PORT`, `API_METRICS_PORT`, `METRICS_API_PORT`, `SCHEDULER_METRICS_PORT`, and `METRICS_SCHEDULER_PORT`
+- named apps: `<APP>_PORT`, `<APP>_API_HTTP_PORT`, `<APP>_METRICS_PORT`, `<APP>_API_METRICS_PORT`, `<APP>_METRICS_API_PORT`, `<APP>_SCHEDULER_METRICS_PORT`, and `<APP>_METRICS_SCHEDULER_PORT`
+{{ if .ProjectComponents.Jobs }}
+- Jobs metrics: `WORKER_METRICS_PORT`, `JOBS_METRICS_PORT`, and `METRICS_JOBS_PORT`, with the same `<APP>_` prefix for named apps
+{{ end }}
 
 Named app prefixes use uppercase snake case. For example, `marketplace` uses `MARKETPLACE_PORT`.
 
@@ -120,6 +135,7 @@ Named app metrics env vars are not generated into `.env`. The compiled app manif
 
 Named apps intentionally do not consume default-app globals such as `API_HTTP_PORT=3000`; otherwise existing single-app `.env` files would make every app try to bind the same listeners.
 
+{{ if .ProjectComponents.Jobs }}
 ## Apps and Queue Names
 
 Queue names are physicalized from the current app at runtime.
@@ -139,6 +155,7 @@ Named apps add the app name as a deterministic prefix:
 App code should continue to use logical queue names such as `default`, `reports`, or `emails`. GoForj applies the app prefix at the queue boundary so multiple apps can share the same Redis, RabbitMQ, NATS, SQS, or SQL queue backend without workers consuming each other's jobs.
 
 Do not add a separate queue namespace env var for normal apps. The namespace is the app name.
+{{- end }}
 
 ## Lighthouse Agent Identity
 
@@ -147,11 +164,11 @@ Lighthouse uses runtime app metadata to identify each connected process without 
 Each agent reports:
 
 - `app`: the App, such as `app`, `billing`, or `customer-portal`
-- `source`: the runtime surface, such as `http`, `jobs`, or `scheduler`
+- `source`: the logical runtime surface
 - `group_key`: the logical runtime group
 - `instance_key`: the concrete process instance
 
-The default app keeps compact group keys such as `http`, `jobs`, and `scheduler`. Named apps use `<app>/<source>`, such as `billing/http`.
+The default app keeps compact group keys named after each source. Named apps use `<app>/<source>`, such as `billing/http`.
 
 Instance keys are resolved in this order:
 

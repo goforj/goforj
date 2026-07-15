@@ -6,23 +6,33 @@ package wire
 import (
 	"github.com/goforj/wire"
 	"{{.GoModuleName}}/{{.AppImportPath}}"
+{{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
-{{- if .ProjectComponents.HasDatabase }}
+{{- end }}
+{{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+{{- if .Components.Events }}
 	"{{.GoModuleName}}/internal/events"
+{{- end }}
 	"{{.GoModuleName}}/internal/http"
-{{- if .ProjectComponents.Jobs }}
+{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
+{{- if .Components.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 // httpServerSet is a wire set that provides the HTTP server and its routes.
 var httpServerSet = wire.NewSet(
 	{{.AppPackageName}}.ProvideRoutes,
+{{- if .Components.Cache }}
+	http.NewCachedLighthouseRuntime,
+{{- else }}
 	http.NewLighthouseRuntime,
+{{- end }}
 	http.NewRouteListCmd,
 	http.NewRuntime,
 	http.NewServeCmd,
@@ -31,34 +41,64 @@ var httpServerSet = wire.NewSet(
 	lighthouse.NewHub,
 )
 
+// provideReadinessChecks projects only this App's enabled resource managers into HTTP readiness checks.
 func provideReadinessChecks(
-	caches *caches.Manager,
+{{- if .Components.Cache }}
+	cacheManager *caches.Manager,
+{{- end }}
+{{- if .Components.Storage }}
 	storage *storages.Manager,
+{{- end }}
+{{- if .Components.Events }}
 	events *events.Manager,
-{{- if and .ProjectComponents.Jobs .Components.Jobs }}
+{{- end }}
+{{- if .Components.Jobs }}
 	queues *queues.Manager,
 {{- end }}
-{{- if and .ProjectComponents.HasDatabase .Components.HasDatabase }}
+{{- if .Components.HasDatabase }}
 	db *database.Connections,
 {{- end }}
 ) []http.ReadinessCheck {
-	return http.ProvideReadinessChecks(
-		caches,
-		storage,
-		events,
-{{- if .ProjectComponents.Jobs }}
-		{{- if .Components.Jobs }}
-		queues,
-		{{- else }}
-		(*queues.Manager)(nil),
-		{{- end }}
+	checks := make([]http.ReadinessCheck, 0)
+{{- if .Components.Cache }}
+	for _, check := range cacheManager.ReadinessChecks() {
+		checks = append(checks, http.ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
 {{- end }}
-{{- if .ProjectComponents.HasDatabase }}
-		{{- if .Components.HasDatabase }}
-		db,
-		{{- else }}
-		(*database.Connections)(nil),
-		{{- end }}
+{{- if .Components.HasDatabase }}
+	for _, check := range db.ReadinessChecks() {
+		checks = append(checks, http.ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
 {{- end }}
-	)
+{{- if .Components.Storage }}
+	for _, check := range storage.ReadinessChecks() {
+		checks = append(checks, http.ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
+{{- end }}
+{{- if .Components.Events }}
+	for _, check := range events.ReadinessChecks() {
+		checks = append(checks, http.ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
+{{- end }}
+{{- if .Components.Jobs }}
+	for _, check := range queues.ReadinessChecks() {
+		checks = append(checks, http.ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
+{{- end }}
+	return checks
 }

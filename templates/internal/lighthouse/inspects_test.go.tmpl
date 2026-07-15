@@ -12,7 +12,6 @@ import (
 	"{{.GoModuleName}}/internal/inspects"
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
-	goforjcache "github.com/goforj/cache"
 )
 
 type captureWSConnection struct {
@@ -38,7 +37,7 @@ func TestInspectPublisherFlushesBatch(t *testing.T) {
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
 
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
 			TraceID:   "inspect-1",
@@ -107,8 +106,7 @@ func TestIngestInspectBatchPersistsRecords(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := inspects.NewManager(store)
+	manager := inspects.NewManager()
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
 			TraceID:   "inspect-2",
@@ -150,8 +148,7 @@ func TestIngestInspectBatchRejectsUnsupportedVersion(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := inspects.NewManager(store)
+	manager := inspects.NewManager()
 	err := ingestInspectBatch(manager, mustJSON(t, InspectBatchEnvelope{
 		Version: inspectBatchEnvelopeVersion + 1,
 		Records: []inspects.Record{
@@ -178,8 +175,7 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
 	secret := "test-secret"
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := inspects.NewManager(store)
+	manager := inspects.NewManager()
 	hub := NewHub()
 	server, err := echoweb.NewServer(echoweb.ServerConfig{
 		Mounts: []web.RouterMount{
@@ -200,7 +196,7 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 	agent.inspectActive.Store(true)
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
@@ -288,7 +284,7 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 func TestInspectPublisherRetainsBatchWhenNotConnected(t *testing.T) {
 	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
 	agent.inspectActive.Store(true)
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{
@@ -404,7 +400,7 @@ func TestInspectPublisherSkipsWhenInactive(t *testing.T) {
 	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
 	conn := &captureWSConnection{}
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
-	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	publisher := NewInspectPublisher(agent{{- if .ProjectComponents.Metrics }}, nil{{- end }})
 
 	record := inspects.Record{
 		Summary: inspects.InspectSummary{

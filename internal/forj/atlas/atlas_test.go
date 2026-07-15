@@ -11,6 +11,7 @@ import (
 	atlasproject "github.com/goforj/atlas/project"
 	"github.com/goforj/atlas/skills"
 	"github.com/goforj/atlas/workflows"
+	"github.com/goforj/goforj/project"
 )
 
 func TestProjectUsesGoForjConfig(t *testing.T) {
@@ -58,6 +59,76 @@ render:
 	}
 }
 
+// TestProjectUsesDerivedComponentEnvelopeWithoutWideningDefaultApp keeps project metadata complete while preserving App-local runtime and database choices.
+func TestProjectUsesDerivedComponentEnvelopeWithoutWideningDefaultApp(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: multi-app
+module_name: example.com/multi-app
+render:
+  components:
+    cli: true
+    database_sqlite: true
+apps:
+  worker:
+    components:
+      cli: true
+      jobs: true
+      database_postgres: true
+`)
+	writeFile(t, filepath.Join(root, "cmd", "app", "main.go"), "package main\n")
+	writeFile(t, filepath.Join(root, "cmd", "worker", "main.go"), "package main\n")
+	writeFile(t, filepath.Join(root, "app", "worker", "commands.go"), "package workerapp\n")
+	writeFile(t, filepath.Join(root, ".env"), "QUEUE_DRIVER=redis\n")
+
+	discovered := Project(root)
+	if !containsString(discovered.Components, "jobs") || !containsString(discovered.Components, "database-postgres") {
+		t.Fatalf("project component envelope = %#v", discovered.Components)
+	}
+	if discovered.DatabaseDriver != "sqlite" {
+		t.Fatalf("default App database driver = %q, want sqlite", discovered.DatabaseDriver)
+	}
+	if discovered.QueueDriver != "" {
+		t.Fatalf("default App queue driver = %q, want none for its disabled Jobs component", discovered.QueueDriver)
+	}
+
+	var defaultApp atlasproject.App
+	var workerApp atlasproject.App
+	for _, app := range discovered.Apps {
+		switch app.Name {
+		case "app":
+			defaultApp = app
+		case "worker":
+			workerApp = app
+		}
+	}
+	if containsString(defaultApp.Runtimes, "jobs") || !containsString(defaultApp.Runtimes, "cli") {
+		t.Fatalf("default App runtimes = %#v, want only its CLI runtime", defaultApp.Runtimes)
+	}
+	if !containsString(workerApp.Runtimes, "jobs") {
+		t.Fatalf("worker App runtimes = %#v, want jobs", workerApp.Runtimes)
+	}
+}
+
+// TestProjectIgnoresLegacyQueueDriver keeps deployment state environment-owned during Atlas discovery.
+func TestProjectIgnoresLegacyQueueDriver(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: legacy
+module_name: example.com/legacy
+render:
+  queue_driver: nats
+  components:
+    cli: true
+    jobs: true
+`)
+
+	discovered := Project(root)
+	if discovered.QueueDriver == "nats" {
+		t.Fatal("Atlas treated legacy queue_driver YAML as active deployment state")
+	}
+}
+
 func TestInventoryDiscoversSafeProjectResources(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".goforj.yml"), `
@@ -70,6 +141,7 @@ render:
     web_api: true
     web_ui: true
     jobs: true
+    events: true
     scheduler: true
     metrics: true
     database_sqlite: true
@@ -118,6 +190,206 @@ func ProvideRoutes() {
 	if !ok || lighthouseResource.URL != "http://127.0.0.1:7777/lighthouse" ||
 		lighthouseResource.Category != "operator" || lighthouseResource.Source != "env" || lighthouseResource.Runtime != "operator" {
 		t.Fatalf("resources = %#v", inventory.Resources)
+	}
+}
+
+// TestInventoryIgnoresStaleDisabledEventBuses verifies Atlas follows project capability selection instead of owner env residue.
+func TestInventoryIgnoresStaleDisabledEventBuses(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+    cache: false
+    events: false
+`)
+	writeFile(t, filepath.Join(root, ".env"), "CACHE_SESSIONS_DRIVER=redis\nEVENTS_AUDIT_DRIVER=redis\n")
+
+	inventory := Inventory(root)
+	if len(inventory.Caches) != 0 {
+		t.Fatalf("stale Cache env resurrected Atlas caches: %#v", inventory.Caches)
+	}
+	if len(inventory.EventBuses) != 0 {
+		t.Fatalf("stale Events env resurrected Atlas event buses: %#v", inventory.EventBuses)
+	}
+}
+
+// TestInventoryUsesNamedAppEventsEnvelope verifies Atlas exposes shared buses when only a named App participates in Events.
+func TestInventoryUsesNamedAppEventsEnvelope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+apps:
+  events-worker:
+    components:
+      cli: true
+      cache: true
+      events: true
+`)
+	writeFile(t, filepath.Join(root, ".env"), "CACHE_REPORTS_DRIVER=memory\nEVENTS_AUDIT_DRIVER=inproc\n")
+
+	inventory := Inventory(root)
+	if !containsString(inventory.Caches, "reports") {
+		t.Fatalf("named Cache App did not expose Atlas caches: %#v", inventory.Caches)
+	}
+	if !containsString(inventory.EventBuses, "audit") {
+		t.Fatalf("named Events App did not expose Atlas event buses: %#v", inventory.EventBuses)
+	}
+}
+
+// TestInventoryIgnoresStaleDisabledStorageDisks verifies Atlas follows project capability selection instead of owner env residue.
+func TestInventoryIgnoresStaleDisabledStorageDisks(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+    storage: false
+`)
+	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=s3\n")
+
+	inventory := Inventory(root)
+	if len(inventory.Disks) != 0 {
+		t.Fatalf("stale Storage env resurrected Atlas disks: %#v", inventory.Disks)
+	}
+	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); ok {
+		t.Fatalf("stale Storage env resurrected an Atlas resource link: %#v", inventory.Resources)
+	}
+}
+
+// TestInventoryUsesNamedAppStorageEnvelope verifies Atlas exposes shared disks when only a named App participates in Storage.
+func TestInventoryUsesNamedAppStorageEnvelope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+apps:
+  files:
+    components:
+      cli: true
+      storage: true
+`)
+	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=local\n")
+
+	inventory := Inventory(root)
+	if !containsString(inventory.Disks, "public") {
+		t.Fatalf("named Storage App did not expose Atlas disks: %#v", inventory.Disks)
+	}
+	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); !ok {
+		t.Fatalf("named Storage App did not expose Atlas resource links: %#v", inventory.Resources)
+	}
+}
+
+// TestInventoryIgnoresStaleDisabledQueues verifies Atlas does not turn Queue env residue into Background Jobs capability.
+func TestInventoryIgnoresStaleDisabledQueues(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+    jobs: false
+`)
+	writeFile(t, filepath.Join(root, ".env"), `
+QUEUE_DRIVER=redis
+QUEUE_REPORTS_DRIVER=redis
+WORKER_QUEUE_EMAILS_DRIVER=redis
+`)
+
+	inventory := Inventory(root)
+	if len(inventory.Queues) != 0 {
+		t.Fatalf("stale Queue env resurrected Atlas queues: %#v", inventory.Queues)
+	}
+	for _, resource := range inventory.Resources {
+		if resource.Category == "queue" {
+			t.Fatalf("stale Queue env resurrected an Atlas resource link: %#v", inventory.Resources)
+		}
+	}
+}
+
+// TestInventoryKeepsNamedAppQueuesLocal verifies Atlas projects Queue resources only through participating Jobs Apps.
+func TestInventoryKeepsNamedAppQueuesLocal(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+apps:
+  api:
+    components:
+      cli: true
+      web_api: true
+  worker:
+    components:
+      cli: true
+      jobs: true
+`)
+	writeFile(t, filepath.Join(root, ".env"), `
+QUEUE_DRIVER=workerpool
+QUEUE_REPORTS_DRIVER=workerpool
+API_QUEUE_EXPORTS_DRIVER=redis
+WORKER_QUEUE_EMAILS_DRIVER=redis
+`)
+
+	inventory := Inventory(root)
+	if len(inventory.Queues) != 3 {
+		t.Fatalf("named Jobs App queues = %#v, want exactly default, emails, and reports", inventory.Queues)
+	}
+	for _, name := range []string{"default", "emails", "reports"} {
+		if !containsString(inventory.Queues, name) {
+			t.Fatalf("named Jobs App queue %q missing from Atlas inventory: %#v", name, inventory.Queues)
+		}
+	}
+	if containsString(inventory.Queues, "exports") {
+		t.Fatalf("disabled API App Queue overlay leaked into Atlas inventory: %#v", inventory.Queues)
+	}
+}
+
+// TestMetricsMetadataKeepsJobsProjectionAppLocal verifies Jobs counters are advertised only for participating Apps.
+func TestMetricsMetadataKeepsJobsProjectionAppLocal(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, WebAPI: true, Metrics: true, Cache: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{CLI: true, Jobs: true}},
+		},
+	}
+	metadata := metricsMetadata([]atlasproject.App{
+		{Name: project.DefaultAppName, Default: true},
+		{Name: "worker"},
+	}, config, nil)
+	if counters := metadata["app/http"].Counters; containsString(counters, "queue_jobs_total") {
+		t.Fatalf("default App advertised Jobs counters without Jobs: %#v", counters)
+	}
+	if counters := metadata["app/http"].Counters; !containsString(counters, "cache_operations_total") {
+		t.Fatalf("default App omitted its Cache counters: %#v", counters)
+	}
+	if counters := metadata["worker/jobs"].Counters; !containsString(counters, "queue_jobs_total") {
+		t.Fatalf("worker App omitted its Jobs counters: %#v", counters)
+	}
+	if counters := metadata["worker/jobs"].Counters; containsString(counters, "cache_operations_total") {
+		t.Fatalf("worker App advertised Cache counters without Cache: %#v", counters)
 	}
 }
 

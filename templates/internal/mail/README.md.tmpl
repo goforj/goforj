@@ -105,6 +105,12 @@ For local Docker-based development, generated apps default to Mailpit:
 - AWS-backed delivery
 - heavier dependency surface than the other API drivers
 
+## Switching Drivers
+
+`MAIL_SUPPORTED_DRIVERS` is the set of drivers built into the app; `MAIL_DRIVER` and the named `MAIL_<NAME>_DRIVER` values select which of them are active. To switch an existing mailer to a driver already built in, configure its credentials, sender identity, and endpoint, change the active driver, then restart or redeploy the App. No regeneration or rebuild is needed.
+
+To use a driver that is not built in, add it to `MAIL_SUPPORTED_DRIVERS`, run `forj generate --mail`, and build a new artifact before selecting it. Verify provider credentials and sender/domain authorization, and review retry, rate-limit, bounce, and delivery semantics before sending production traffic.
+
 ## Usage
 
 The generated app exposes the configured mail manager through `App.Mail()`.

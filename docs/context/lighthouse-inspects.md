@@ -61,6 +61,7 @@ The important product distinction is:
 
 Backend capture and store:
 - `templates/internal/inspects/manager.go.tmpl`
+- `templates/internal/inspects/store.go.tmpl`
 - `templates/internal/http/server.go.tmpl`
 
 Lighthouse UI:
@@ -82,13 +83,13 @@ Related generated/runtime glue:
 
 - Product surface is `inspect`
 - Correlation field remains `trace_id`
-- Named cache accessor for inspect storage is `caches.Inspects()`
+- Inspect history is retained in a private, bounded in-memory store owned by Lighthouse
 - Lighthouse runtime/dashboard state uses `caches.Lighthouse()`
 
 Do not reintroduce env-driven cache indirection like:
 - `LIGHTHOUSE_INSPECT_CACHE`
 
-Named accessors are the right abstraction.
+Inspect retention does not depend on App Cache or a cache driver.
 
 ### Request/Response Capture
 

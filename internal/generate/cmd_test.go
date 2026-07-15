@@ -3,6 +3,7 @@ package generate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,7 +15,6 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 
 	for _, dir := range []string{
 		filepath.Join(projectDir, "internal", "caches"),
-		filepath.Join(projectDir, "internal", "mail"),
 		filepath.Join(projectDir, "internal", "queues"),
 		filepath.Join(projectDir, "internal", "runtime"),
 		filepath.Join(projectDir, "internal", "storages"),
@@ -24,17 +24,30 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 		}
 	}
 	writeQueueRuntimeFixture(t, projectDir)
-
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("MAIL_DRIVER", "log")
-	t.Setenv("QUEUE_DRIVER", "null")
-	t.Setenv("STORAGE_DRIVER", "local")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(strings.Join([]string{
+		"CACHE_DRIVER=memory",
+		"CACHE_SUPPORTED_DRIVERS=memory",
+		"MAIL_DRIVER=log",
+		"MAIL_SUPPORTED_DRIVERS=log",
+		"QUEUE_DRIVER=null",
+		"QUEUE_SUPPORTED_DRIVERS=null",
+		"STORAGE_DRIVER=local",
+		"STORAGE_SUPPORTED_DRIVERS=local",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	orig := goModTidyRunner
 	goModTidyRunner = func(dir string) error { return nil }
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, true, true, true, false, false, false)
+	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{
+		Storage: true,
+		Cache:   true,
+		Mail:    true,
+		Queue:   true,
+	})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -62,11 +75,9 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(projectDir, "internal", "database"), 0o755); err != nil {
-		t.Fatalf("mkdir database dir: %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
 	}
-
-	t.Setenv("DB_DRIVER", "mysql")
 
 	called := 0
 	orig := goModTidyRunner
@@ -79,7 +90,7 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true, false)
+	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -99,11 +110,10 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(projectDir, "internal", "database"), 0o755); err != nil {
-		t.Fatalf("mkdir database dir: %v", err)
-	}
-
 	t.Setenv("DB_DRIVER", "mysql")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	if _, err := GenerateDBFiles(projectDir); err != nil {
 		t.Fatalf("seed generated db file: %v", err)
@@ -117,7 +127,7 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true, false)
+	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -141,7 +151,9 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 		t.Fatalf("mkdir database dir: %v", err)
 	}
 
-	t.Setenv("DB_DRIVER", "mysql")
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\n"), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	origWD, err := os.Getwd()
 	if err != nil {
@@ -172,6 +184,150 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 }
 
+// primitiveGenerationResource describes the test boundary shared by generated optional primitives.
+type primitiveGenerationResource struct {
+	name                    string
+	componentKey            string
+	generatedPackage        string
+	stalePackages           []string
+	environment             string
+	disabledError           string
+	legacyDirectoryFallback bool
+	selectExplicitly        func(*Cmd)
+}
+
+// TestCmdRunFollowsPrimitiveComponentIntent exercises one durable generation contract across every optional primitive.
+func TestCmdRunFollowsPrimitiveComponentIntent(t *testing.T) {
+	disabled := false
+	enabled := true
+	resources := []primitiveGenerationResource{
+		{
+			name: "Cache", componentKey: "cache", generatedPackage: filepath.Join("internal", "caches"),
+			stalePackages: []string{filepath.Join("internal", "caches")},
+			environment:   "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n",
+			disabledError: "Cache component is disabled", legacyDirectoryFallback: true,
+			selectExplicitly: func(cmd *Cmd) { cmd.Cache = true },
+		},
+		{
+			name: "Storage", componentKey: "storage", generatedPackage: filepath.Join("internal", "storages"),
+			stalePackages:    []string{filepath.Join("internal", "storages")},
+			environment:      "STORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n",
+			disabledError:    "Storage component is disabled",
+			selectExplicitly: func(cmd *Cmd) { cmd.Storage = true },
+		},
+		{
+			name: "Events", componentKey: "events", generatedPackage: filepath.Join("internal", "events"),
+			stalePackages:    []string{filepath.Join("internal", "events")},
+			environment:      "EVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc\n",
+			disabledError:    "Events component is disabled",
+			selectExplicitly: func(cmd *Cmd) { cmd.Events = true },
+		},
+		{
+			name: "Background Jobs", componentKey: "jobs", generatedPackage: filepath.Join("internal", "queues"),
+			stalePackages: []string{filepath.Join("internal", "jobs"), filepath.Join("internal", "queues")},
+			environment:   "QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool\n",
+			disabledError: "Background Jobs component is disabled", legacyDirectoryFallback: true,
+			selectExplicitly: func(cmd *Cmd) { cmd.Queue = true },
+		},
+	}
+	scenarios := []struct {
+		name          string
+		configEnabled *bool
+		stalePackage  bool
+		explicit      bool
+		wantError     bool
+		wantGenerated bool
+		useLegacyRule bool
+	}{
+		{name: "disabled config ignores stale packages", configEnabled: &disabled, stalePackage: true},
+		{name: "explicit request rejects disabled config", configEnabled: &disabled, stalePackage: true, explicit: true, wantError: true},
+		{name: "enabled config creates generated package", configEnabled: &enabled, wantGenerated: true},
+		{name: "legacy project follows directory policy", stalePackage: true, useLegacyRule: true},
+	}
+
+	for _, resource := range resources {
+		t.Run(resource.name, func(t *testing.T) {
+			for _, scenario := range scenarios {
+				t.Run(scenario.name, func(t *testing.T) {
+					root := t.TempDir()
+					if scenario.stalePackage {
+						for _, path := range resource.stalePackages {
+							if err := os.MkdirAll(filepath.Join(root, path), 0o755); err != nil {
+								t.Fatalf("create stale %s package %s: %v", resource.name, path, err)
+							}
+						}
+					}
+					if scenario.configEnabled != nil {
+						writePrimitiveGenerationConfig(t, root, resource.componentKey, *scenario.configEnabled)
+					}
+					if err := os.WriteFile(filepath.Join(root, ".env"), []byte(resource.environment), 0o644); err != nil {
+						t.Fatalf("write %s environment: %v", resource.name, err)
+					}
+					if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+						t.Fatalf("write go.mod: %v", err)
+					}
+
+					restoreWorkingDirectory := useGenerationTestRoot(t, root)
+					defer restoreWorkingDirectory()
+					originalTidy := goModTidyRunner
+					goModTidyRunner = func(string) error { return nil }
+					defer func() { goModTidyRunner = originalTidy }()
+
+					cmd := &Cmd{}
+					if scenario.explicit {
+						resource.selectExplicitly(cmd)
+					}
+					err := cmd.Run()
+					if scenario.wantError {
+						if err == nil || !strings.Contains(err.Error(), resource.disabledError) {
+							t.Fatalf("generation error = %v, want %q", err, resource.disabledError)
+						}
+					} else if err != nil {
+						t.Fatalf("generate %s surface: %v", resource.name, err)
+					}
+
+					wantGenerated := scenario.wantGenerated
+					if scenario.useLegacyRule {
+						wantGenerated = resource.legacyDirectoryFallback
+					}
+					for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
+						_, statErr := os.Stat(filepath.Join(resource.generatedPackage, name))
+						if got := statErr == nil; got != wantGenerated {
+							t.Fatalf("generated file %s presence = %t, want %t: %v", name, got, wantGenerated, statErr)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// writePrimitiveGenerationConfig writes the compact durable component selection consumed by generation.
+func writePrimitiveGenerationConfig(t *testing.T, root string, component string, enabled bool) {
+	t.Helper()
+	components := "cli"
+	if enabled {
+		components += ", " + component
+	}
+	contents := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components: [" + components + "]\n"
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(contents), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+}
+
+// useGenerationTestRoot changes into an isolated generation fixture and returns its restoration function.
+func useGenerationTestRoot(t *testing.T, root string) func() {
+	t.Helper()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	return func() { _ = os.Chdir(originalWD) }
+}
+
 func TestCmdRunGeneratesObservabilityTargetsWithoutGoModTidy(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "containers", "observability", "vmagent"), 0o755); err != nil {
@@ -180,11 +336,15 @@ func TestCmdRunGeneratesObservabilityTargetsWithoutGoModTidy(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "internal", "http"), 0o755); err != nil {
 		t.Fatalf("mkdir http dir: %v", err)
 	}
-
-	t.Setenv("APP_NAME", "Test App")
-	t.Setenv("APP_ENV", "local")
-	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "localhost")
-	t.Setenv("METRICS_API_PORT", "9100")
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(strings.Join([]string{
+		"APP_NAME=Test App",
+		"APP_ENV=local",
+		"OBSERVABILITY_METRICS_TARGET_HOST=localhost",
+		"METRICS_API_PORT=9100",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	origWD, err := os.Getwd()
 	if err != nil {
@@ -224,7 +384,6 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	projectDir := t.TempDir()
 	for _, dir := range []string{
 		filepath.Join(projectDir, "internal", "storages"),
-		filepath.Join(projectDir, "containers", "observability", "vmagent"),
 		filepath.Join(projectDir, "internal", "http"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -236,8 +395,15 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 
 	t.Setenv("STORAGE_DRIVER", "local")
-	t.Setenv("APP_NAME", "Test App")
-	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(strings.Join([]string{
+		"STORAGE_DRIVER=local",
+		"STORAGE_SUPPORTED_DRIVERS=local",
+		"APP_NAME=Test App",
+		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
 
 	if _, err := GenerateStorageFiles(projectDir); err != nil {
 		t.Fatalf("seed generated storage file: %v", err)
@@ -251,7 +417,10 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, true, false, false, false, false, true)
+	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{
+		Storage:       true,
+		Observability: true,
+	})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}

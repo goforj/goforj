@@ -17,8 +17,12 @@ type PrimitiveInstance struct {
 	IsDefault bool   `json:"is_default"`
 }
 
+{{ if .ProjectComponents.Cache }}
 // DiscoverCacheInstances returns configured cache instances with normalized driver names.
 func DiscoverCacheInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Cache {
+		return nil
+	}
 	names := aboutScopedNames("CACHE", aboutCacheRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	for _, name := range names {
@@ -35,9 +39,14 @@ func DiscoverCacheInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
+{{ if .ProjectComponents.Jobs }}
 // DiscoverQueueInstances returns configured queue instances with normalized driver names.
 func DiscoverQueueInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Jobs {
+		return nil
+	}
 	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	rootScope := env.WithPrefix("QUEUE")
@@ -55,9 +64,14 @@ func DiscoverQueueInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
-// DiscoverStorageInstances returns configured storage instances with normalized driver names.
+{{ if .ProjectComponents.Storage }}
+// DiscoverStorageInstances returns configured storage instances with normalized driver names for participating Apps.
 func DiscoverStorageInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Storage {
+		return nil
+	}
 	names := aboutScopedNames("STORAGE", aboutStorageRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	for _, name := range names {
@@ -74,9 +88,14 @@ func DiscoverStorageInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
+{{ if .ProjectComponents.Events }}
 // DiscoverEventInstances returns configured event bus instances with normalized driver names.
 func DiscoverEventInstances() []PrimitiveInstance {
+	if !CurrentApp().Components.Events {
+		return nil
+	}
 	names := aboutScopedNames("EVENTS", aboutEventRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
 	for _, name := range names {
@@ -93,6 +112,7 @@ func DiscoverEventInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
 // DiscoverDatabaseInstances returns configured database connections with normalized driver names.
 func DiscoverDatabaseInstances() []PrimitiveInstance {
@@ -109,6 +129,7 @@ func DiscoverDatabaseInstances() []PrimitiveInstance {
 	return out
 }
 
+{{ if .ProjectComponents.Jobs }}
 // QueueDefaultQueue returns the backend queue name for the named queue instance.
 func QueueDefaultQueue(name string) string {
 	name = normalizedAppInstanceName(name)
@@ -143,6 +164,7 @@ func QueuePhysicalName(name string) string {
 	return prefix + name
 }
 
+// normalizedAppInstanceName keeps Queue instance lookup consistent with environment key normalization.
 func normalizedAppInstanceName(name string) string {
 	value := strings.ToLower(strings.TrimSpace(name))
 	if value == "" {
@@ -150,7 +172,10 @@ func normalizedAppInstanceName(name string) string {
 	}
 	return value
 }
+{{- end }}
 
+{{ if .ProjectComponents.Cache }}
+// NormalizeCacheDriver reduces Cache driver aliases to their generated canonical names.
 func NormalizeCacheDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -182,7 +207,10 @@ func NormalizeCacheDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// NormalizeQueueDriver reduces Queue driver aliases to their generated canonical names.
 func NormalizeQueueDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -212,7 +240,10 @@ func NormalizeQueueDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
+{{ if .ProjectComponents.Storage }}
+// NormalizeStorageDriver reduces Storage driver aliases to their generated canonical names.
 func NormalizeStorageDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -240,6 +271,7 @@ func NormalizeStorageDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
 func NormalizeDBDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
@@ -257,6 +289,8 @@ func NormalizeDBDriver(v string) string {
 	}
 }
 
+{{ if .ProjectComponents.Events }}
+// NormalizeEventDriver reduces Events driver aliases to their generated canonical names.
 func NormalizeEventDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -282,6 +316,7 @@ func NormalizeEventDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
 func aboutScopedNames(prefix string, rootKeys []string) []string {
 	scope := env.WithPrefix(prefix)

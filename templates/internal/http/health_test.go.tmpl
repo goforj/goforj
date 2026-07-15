@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
@@ -19,7 +19,7 @@ import (
 func TestHealthAndReadinessEndpoints(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil,{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -48,7 +48,7 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{
 			{
-				Name: "cache_default",
+				Name: "dependency_default",
 				Check: func(_ context.Context) error {
 					return nil
 				},
@@ -59,7 +59,7 @@ func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+		}, nil,{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -87,7 +87,7 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+		}, nil,{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 

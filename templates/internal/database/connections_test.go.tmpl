@@ -9,7 +9,6 @@ import (
 
 	"github.com/goforj/env/v2"
 {{- if .Components.Metrics }}
-	goforjcache "github.com/goforj/cache"
 	"{{.GoModuleName}}/internal/metrics"
 	"{{.GoModuleName}}/internal/inspects"
 	gmetrics "github.com/goforj/metrics"
@@ -233,7 +232,7 @@ func TestClassifyDBTarget(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
-	manager := metrics.NewManager()
+	manager := metrics.NewManagerWithConfig(metrics.Config{Database: true})
 	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, nil, "default", "mysql", 250*time.Millisecond)
 
 	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
@@ -302,7 +301,7 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerRecordsSlowQueryFingerprint(t *testing.T) {
-	manager := metrics.NewManager()
+	manager := metrics.NewManagerWithConfig(metrics.Config{Database: true})
 	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, nil, "default", "mysql", 250*time.Millisecond)
 
 	sql := "SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42"
@@ -353,9 +352,12 @@ func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testin
 	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
 	manager := metrics.NewManagerWithConfig(metrics.Config{
 		HTTP:     true,
-		Cache:    true,
+		{{- if .ProjectComponents.Storage }}
 		Storage:  true,
+		{{- end }}
+		{{- if .ProjectComponents.Events }}
 		Events:   true,
+		{{- end }}
 		Database: false,
 		{{- if .Components.Auth }}
 		Auth:     true,
@@ -370,8 +372,7 @@ func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testin
 		Mail:     true,
 		{{- end }}
 	})
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	inspectManager := inspects.NewManager(store)
+	inspectManager := inspects.NewManager()
 	conns := NewConnections(manager, inspectManager)
 	if conns.metrics == nil {
 		t.Fatal("expected metrics manager to be stored on connections")

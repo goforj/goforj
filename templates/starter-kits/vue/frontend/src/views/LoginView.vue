@@ -85,7 +85,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { LoaderCircle } from 'lucide-vue-next'
+import { LoaderCircle } from '@lucide/vue'
 import { loginWithPassword } from '@/lib/auth'
 import logoMark from '@/assets/goforj-logo.png'
 import Button from '@/components/ui/button/Button.vue'

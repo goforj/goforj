@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"{{.GoModuleName}}/internal/runtime"
-	goforjcache "github.com/goforj/cache"
 )
 
 func BenchmarkInspectBeginFinish(b *testing.B) {
@@ -67,10 +66,9 @@ func newBenchmarkManager(b *testing.B) *Manager {
 	b.Helper()
 	b.Setenv("LIGHTHOUSE_ENABLED", "true")
 	b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
-	manager := NewManager(store)
+	b.Setenv("LIGHTHOUSE_INSPECT_MAX_TOTAL", "1000000")
+	manager := NewManager()
 	manager.config.Enabled = true
-	manager.config.MaxTotal = 1000000
 	manager.config.MaxEvents = 256
 	return manager
 }

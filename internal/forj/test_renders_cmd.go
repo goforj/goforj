@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,6 +246,7 @@ type renderCombo struct {
 	id         string
 	components project.Components
 	starterKit project.StarterKit
+	apps       map[string]project.AppConfig
 	enabled    []string
 }
 
@@ -394,11 +396,39 @@ func prSentinelRenderCombos() []renderCombo {
 		cfg project.Components
 	}{
 		{
+			id:  "sentinel_recommended_default",
+			cfg: project.DefaultSelectedComponents(),
+		},
+		{
+			id: "sentinel_primitives_all_on",
+			cfg: project.Components{
+				CLI: true, Docker: true, Cache: true, Events: true, Storage: true, Jobs: true,
+			},
+		},
+		{
+			id:  "sentinel_cache_only",
+			cfg: project.Components{CLI: true, Docker: true, Cache: true},
+		},
+		{
+			id:  "sentinel_events_only",
+			cfg: project.Components{CLI: true, Docker: true, Events: true},
+		},
+		{
+			id:  "sentinel_storage_only",
+			cfg: project.Components{CLI: true, Docker: true, Storage: true},
+		},
+		{
+			id: "sentinel_web_metrics_grafana_without_primitives",
+			cfg: project.Components{
+				CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
+			},
+		},
+		{
 			id: "sentinel_max_mysql",
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true,
 			},
 		},
 		{
@@ -406,7 +436,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabasePostgres: true,
-				Scheduler: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true,
 			},
 		},
 		{
@@ -445,7 +475,107 @@ func prSentinelRenderCombos() []renderCombo {
 			enabled:    componentLabels(cfg),
 		})
 	}
+
+	mixedDefault := project.Components{
+		CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
+	}
+	mixedDefault.ResolveDependencies()
+	for _, sentinel := range []struct {
+		id      string
+		appName string
+		key     project.ComponentKey
+	}{
+		{id: "sentinel_named_app_storage_only", appName: "storage-worker", key: project.ComponentStorage},
+		{id: "sentinel_named_app_mail_only", appName: "mailer", key: project.ComponentMail},
+		{id: "sentinel_named_app_database_only", appName: "database-worker", key: project.ComponentDatabaseSQLite},
+		{id: "sentinel_named_app_auth_only", appName: "auth-api", key: project.ComponentAuth},
+		{id: "sentinel_named_app_scheduler_only", appName: "scheduler-worker", key: project.ComponentScheduler},
+	} {
+		combos = append(combos, namedComponentRenderCombo(mixedDefault, sentinel.id, sentinel.appName, sentinel.key))
+	}
+	mixedEvents := project.Components{CLI: true, Events: true}
+	mixedEvents.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_named_app_events_only",
+		components: mixedDefault,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"events-worker": {Components: mixedEvents},
+		},
+		enabled: append(componentLabels(mixedDefault), "App:events-worker(Events)"),
+	})
+	mixedCache := project.Components{CLI: true, Cache: true}
+	mixedCache.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_named_app_cache_only",
+		components: mixedDefault,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"cache-worker": {Components: mixedCache},
+		},
+		enabled: append(componentLabels(mixedDefault), "App:cache-worker(Cache)"),
+	})
+	defaultEvents := project.Components{CLI: true, WebAPI: true, Metrics: true, Events: true, Docker: true}
+	defaultEvents.ResolveDependencies()
+	namedWithoutEvents := project.Components{CLI: true, WebAPI: true, Metrics: true}
+	namedWithoutEvents.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_default_events_named_app_off",
+		components: defaultEvents,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"api": {Components: namedWithoutEvents},
+		},
+		enabled: append(componentLabels(defaultEvents), "App:api(WebAPI,Metrics;Events-off)"),
+	})
+	namedJobsDefault := project.Components{CLI: true, WebAPI: true, DatabaseSQLite: true, Storage: true}
+	namedJobsDefault.ResolveDependencies()
+	namedJobsWorker := project.Components{CLI: true, Jobs: true}
+	namedJobsWorker.ResolveDependencies()
+	namedJobsMetricsAPI := project.Components{CLI: true, WebAPI: true, Metrics: true}
+	namedJobsMetricsAPI.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_named_app_jobs_only",
+		components: namedJobsDefault,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"metrics-api": {Components: namedJobsMetricsAPI},
+			"worker":      {Components: namedJobsWorker},
+		},
+		enabled: append(componentLabels(namedJobsDefault), "App:metrics-api(WebAPI,Metrics;Jobs-off)", "App:worker(Jobs)"),
+	})
+	defaultJobs := project.Components{
+		CLI: true, WebAPI: true, Metrics: true, DatabaseSQLite: true, Cache: true, Jobs: true,
+	}
+	defaultJobs.ResolveDependencies()
+	namedJobsOff := project.Components{CLI: true, WebAPI: true, Metrics: true, DatabaseSQLite: true, Cache: true}
+	namedJobsOff.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_default_jobs_named_app_off",
+		components: defaultJobs,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"api": {Components: namedJobsOff},
+		},
+		enabled: append(componentLabels(defaultJobs), "App:api(WebAPI,Metrics,SQLite,Cache;Jobs-off)"),
+	})
 	return combos
+}
+
+// namedComponentRenderCombo keeps the default App lean while compiling one component through a named App.
+func namedComponentRenderCombo(defaultComponents project.Components, id string, appName string, key project.ComponentKey) renderCombo {
+	namedComponents := project.Components{CLI: true}
+	namedComponents.SetEnabled(key, true)
+	namedComponents = project.NormalizeAppComponents(defaultComponents, namedComponents)
+	return renderCombo{
+		id:         id,
+		components: defaultComponents,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			appName: {Components: namedComponents},
+		},
+		enabled: append(componentLabels(defaultComponents), "App:"+appName+"("+strings.Join(componentLabels(namedComponents), ",")+")"),
+	}
 }
 
 func starterKitRenderCombos() []renderCombo {
@@ -506,6 +636,7 @@ func buildCuratedRenderCombos() []renderCombo {
 			Scheduler: feature.scheduler,
 			Jobs:      feature.jobs,
 		}
+		cfg.ResolveDependencies()
 		if err := cfg.ValidateRenderContract(); err != nil {
 			continue
 		}
@@ -529,6 +660,7 @@ func buildCuratedRenderCombos() []renderCombo {
 				Jobs:      feature.jobs,
 			}
 			variant.apply(&cfg)
+			cfg.ResolveDependencies()
 			if err := cfg.ValidateRenderContract(); err != nil {
 				continue
 			}
@@ -548,48 +680,11 @@ func buildCuratedRenderCombos() []renderCombo {
 
 // componentLabels returns the human-friendly component labels for logging.
 func componentLabels(cfg project.Components) []string {
-	enabled := []string{"CLI", "Docker"}
-	if cfg.DemoApp {
-		enabled = append(enabled, "Demo App")
-	}
-	if cfg.Mail {
-		enabled = append(enabled, "Mail")
-	}
-	if cfg.Auth {
-		enabled = append(enabled, "Auth")
-	}
-	if cfg.OAuth {
-		enabled = append(enabled, "OAuth")
-	}
-	if cfg.WebAPI {
-		enabled = append(enabled, "WebAPI")
-	}
-	if cfg.WebUI {
-		enabled = append(enabled, "WebUI")
-	}
-	if cfg.Metrics {
-		enabled = append(enabled, "Metrics")
-	}
-	if cfg.Observability {
-		enabled = append(enabled, "Observability")
-	}
-	if cfg.Grafana {
-		enabled = append(enabled, "Grafana")
-	}
-	if cfg.DatabaseMySQL {
-		enabled = append(enabled, "Database (MySQL)")
-	}
-	if cfg.DatabasePostgres {
-		enabled = append(enabled, "Database (Postgres)")
-	}
-	if cfg.DatabaseSQLite {
-		enabled = append(enabled, "Database (SQLite)")
-	}
-	if cfg.Scheduler {
-		enabled = append(enabled, "Scheduler")
-	}
-	if cfg.Jobs {
-		enabled = append(enabled, "Jobs")
+	enabled := make([]string, 0)
+	for _, definition := range project.ComponentCatalog() {
+		if cfg.Enabled(definition.Key) {
+			enabled = append(enabled, definition.Label)
+		}
 	}
 	return enabled
 }
@@ -614,11 +709,17 @@ func initModule(dir, modCache, buildCache string) error {
 // runCombo renders and validates a single combo using a shared directory.
 func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, combo renderCombo) {
 	comboID := combo.id
+	apps, err := renderComboApps(combo)
+	if err != nil {
+		cmd.fail("invalid configured App", comboID, nil, err)
+		return
+	}
 	cfg := project.Config{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
 		GoModuleName: "github.com/test/project",
 		UpdatedAt:    time.Now().Format(time.RFC3339),
 		Dev:          project.DevConfig{},
+		Apps:         combo.apps,
 		Render: project.RenderConfig{
 			Components: combo.components,
 			StarterKit: combo.starterKit,
@@ -639,6 +740,12 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		return WriteYAML(ymlPath, cfg)
 	}); err != nil {
 		cmd.fail("failed to write config", comboID, &cfg, err)
+		return
+	}
+	if err := timer.Track("seed_apps", func() error {
+		return seedRenderComboApps(dir, apps)
+	}); err != nil {
+		cmd.fail("failed to seed configured Apps", comboID, &cfg, err)
 		return
 	}
 
@@ -691,14 +798,16 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 	}
 
 	if err := timer.Track("wire_gen", func() error {
-		wireCmd := exec.Command("wire")
-		wireCmd.Dir = filepath.Join(dir, "app", "wire")
-		wireCmd.Env = append(os.Environ(),
-			"GOMODCACHE="+modCache,
-			"GOCACHE="+buildCache,
-		)
-		if output, err := wireCmd.CombinedOutput(); err != nil {
-			return formatCommandFailure("wire generate", err, string(output), "")
+		for _, app := range apps {
+			wireCmd := exec.Command("wire")
+			wireCmd.Dir = filepath.Join(dir, app.WireDir)
+			wireCmd.Env = append(os.Environ(),
+				"GOMODCACHE="+modCache,
+				"GOCACHE="+buildCache,
+			)
+			if output, err := wireCmd.CombinedOutput(); err != nil {
+				return formatCommandFailure("wire generate "+app.Name, err, string(output), "")
+			}
 		}
 		return nil
 	}); err != nil {
@@ -711,23 +820,26 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		if err := os.MkdirAll(binDir, 0o755); err != nil {
 			return fmt.Errorf("create bin dir: %w", err)
 		}
-		args := []string{"build"}
-		if renderBuildTraceEnabled() {
-			args = append(args, "-x")
-		}
-		args = append(args, "-o", filepath.Join(binDir, "app"), "./cmd/app")
-		build := exec.Command("go", args...)
-		build.Dir = dir
-		build.Env = append(os.Environ(),
-			"GOMODCACHE="+modCache,
-			"GOCACHE="+buildCache,
-		)
-		output, err := build.CombinedOutput()
-		if err != nil {
-			return formatCommandFailure("go build", err, string(output), "")
-		}
-		if renderBuildTraceEnabled() {
-			console.Infof("go build trace for combo %s:\n%s", comboID, strings.TrimSpace(string(output)))
+		for _, app := range apps {
+			args := []string{"build"}
+			if renderBuildTraceEnabled() {
+				args = append(args, "-x")
+			}
+			target := "./" + filepath.ToSlash(filepath.Dir(app.Entrypoint))
+			args = append(args, "-o", filepath.Join(binDir, app.Name), target)
+			build := exec.Command("go", args...)
+			build.Dir = dir
+			build.Env = append(os.Environ(),
+				"GOMODCACHE="+modCache,
+				"GOCACHE="+buildCache,
+			)
+			output, err := build.CombinedOutput()
+			if err != nil {
+				return formatCommandFailure("go build "+app.Name, err, string(output), "")
+			}
+			if renderBuildTraceEnabled() {
+				console.Infof("go build trace for combo %s App %s:\n%s", comboID, app.Name, strings.TrimSpace(string(output)))
+			}
 		}
 		return nil
 	}); err != nil {
@@ -747,6 +859,43 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")))
 
 	console.Successf("Passed")
+}
+
+// renderComboApps returns every executable projection a render combo must compile.
+func renderComboApps(combo renderCombo) ([]project.App, error) {
+	names := make([]string, 0, len(combo.apps))
+	for name := range combo.apps {
+		if name == project.DefaultAppName {
+			continue
+		}
+		if !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
+			return nil, fmt.Errorf("unsafe App name %q", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	apps := []project.App{project.DefaultApp()}
+	for _, name := range names {
+		apps = append(apps, project.DefaultNamedApp(name))
+	}
+	return apps, nil
+}
+
+// seedRenderComboApps makes configured named Apps discoverable before the first clean render replaces their markers.
+func seedRenderComboApps(root string, apps []project.App) error {
+	for _, app := range apps {
+		if app.Name == project.DefaultAppName {
+			continue
+		}
+		entrypoint := filepath.Join(root, app.Entrypoint)
+		if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
+			return fmt.Errorf("create App %s entrypoint directory: %w", app.Name, err)
+		}
+		if err := os.WriteFile(entrypoint, []byte("package main\n"), 0o644); err != nil {
+			return fmt.Errorf("seed App %s entrypoint: %w", app.Name, err)
+		}
+	}
+	return nil
 }
 
 func runRenderedGoTests(dir, modCache, buildCache string) error {
@@ -772,6 +921,7 @@ func runRenderedGoTests(dir, modCache, buildCache string) error {
 // WriteYAML writes a project config while preserving raw component selections.
 func WriteYAML(path string, cfg project.Config) error {
 	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
+	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
 		cfg.Render.GoForjVersion = version.Semver()
 	}

@@ -1,6 +1,11 @@
 package runtime
 
-import "testing"
+import (
+{{- if .ProjectComponents.Mail }}
+	"slices"
+{{- end }}
+	"testing"
+)
 
 func TestAppMetadataUsesDeterministicDefaults(t *testing.T) {
 	app := App("app")
@@ -14,6 +19,73 @@ func TestAppMetadataUsesDeterministicDefaults(t *testing.T) {
 	}
 {{- end }}
 }
+
+// TestAppMetadataUsesPerAppComponents verifies process selection retains each App's compiled capabilities.
+func TestAppMetadataUsesPerAppComponents(t *testing.T) {
+{{- range .RuntimeApps }}
+	if got, want := App("{{ .Name }}").Components, (AppComponents{
+		CLI:              {{ .Components.CLI }},
+		DemoApp:          {{ .Components.DemoApp }},
+		Mail:             {{ .Components.Mail }},
+		Auth:             {{ .Components.Auth }},
+		OAuth:            {{ .Components.OAuth }},
+		WebAPI:           {{ .Components.WebAPI }},
+		WebUI:            {{ .Components.WebUI }},
+		Metrics:          {{ .Components.Metrics }},
+		Observability:    {{ .Components.Observability }},
+		Grafana:          {{ .Components.Grafana }},
+		Docker:           {{ .Components.Docker }},
+		DatabaseMySQL:    {{ .Components.DatabaseMySQL }},
+		DatabasePostgres: {{ .Components.DatabasePostgres }},
+		DatabaseSQLite:   {{ .Components.DatabaseSQLite }},
+		Scheduler:        {{ .Components.Scheduler }},
+		Cache:            {{ .Components.Cache }},
+{{- if $.ProjectComponents.Events }}
+		Events:           {{ .Components.Events }},
+{{- end }}
+{{- if $.ProjectComponents.Storage }}
+		Storage:          {{ .Components.Storage }},
+{{- end }}
+		Jobs:             {{ .Components.Jobs }},
+	}); got != want {
+		t.Fatalf("App {{ .Name }} components = %#v, want %#v", got, want)
+	}
+{{- end }}
+}
+
+{{- if .ProjectComponents.Mail }}
+// TestAboutServiceFollowsCurrentAppMailComponent verifies shared runtime reporting stays scoped to the selected App.
+func TestAboutServiceFollowsCurrentAppMailComponent(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+{{- range .RuntimeApps }}
+		{name: "{{ .Name }}", want: {{ .Components.Mail }}},
+{{- end }}
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FORJ_APP", test.name)
+			report := NewAboutService().Build()
+
+			if got := len(report.Mails) > 0; got != test.want {
+				t.Fatalf("Mail reports present = %t, want %t", got, test.want)
+			}
+			if got := slices.Contains(report.Build.Components, "mail"); got != test.want {
+				t.Fatalf("Mail build component present = %t, want %t", got, test.want)
+			}
+			hasSection := slices.ContainsFunc(report.Sections, func(section AboutSectionData) bool {
+				return section.Title == "Mail"
+			})
+			if hasSection != test.want {
+				t.Fatalf("Mail section present = %t, want %t", hasSection, test.want)
+			}
+		})
+	}
+}
+{{- end }}
 
 func TestAppPortResolutionUsesAppScopedOverrides(t *testing.T) {
 	t.Setenv("FORJ_APP", "app")

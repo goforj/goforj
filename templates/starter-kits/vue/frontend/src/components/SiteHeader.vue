@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Github, LogIn } from 'lucide-vue-next'
+import { GitFork, LogIn } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
@@ -21,7 +21,7 @@ const title = computed(() => (typeof route.meta.title === 'string' ? route.meta.
       </div>
       <div class="ml-auto flex items-center gap-2">
         <Button variant="ghost" size="sm" class="hidden gap-2 sm:inline-flex">
-          <Github class="size-4" />
+          <GitFork class="size-4" />
           Repository
         </Button>
         <Button variant="outline" size="sm" as-child>

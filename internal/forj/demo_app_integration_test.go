@@ -196,23 +196,14 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
 		},
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 	if err := testkit.ReplaceOrAppendEnvValues(
 		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
 		map[string]string{"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool"},
 	); err != nil {
 		t.Fatalf("set queue supported drivers: %v", err)
 	}
-	generateCtx, generateCancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer generateCancel()
-	generateCmd := exec.CommandContext(generateCtx, testkit.EnsureIntegrationForjBinary(t), "generate")
-	generateCmd.Dir = projectDir
-	generateCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
-	var generateOut bytes.Buffer
-	generateCmd.Stdout = &generateOut
-	generateCmd.Stderr = &generateOut
-	if err := generateCmd.Run(); err != nil {
-		t.Fatalf("generate app failed: %v\n%s", err, generateOut.String())
-	}
+	generateRenderedProject(t, projectDir, nil)
 
 	buildRenderedDefaultAppTo(t, projectDir, filepath.Join(projectDir, "bin", "app"), nil, "build app")
 

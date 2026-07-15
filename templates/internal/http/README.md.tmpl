@@ -23,7 +23,7 @@ This package exposes two classes of health probes for deployment tooling:
 ```
 
   - when authorized with `Authorization: Bearer $APP_DIAG_TOKEN`, includes the structured checks, drivers, and raw dependency errors
-  - authorized payload shape:
+  - representative authorized payload shape; actual checks follow the App's enabled components:
 
 ```json
 {
@@ -45,7 +45,7 @@ This package exposes two classes of health probes for deployment tooling:
 ```
 
   - when authorized with `Authorization: Bearer $APP_DIAG_TOKEN`, includes the structured checks, drivers, and raw dependency errors
-  - authorized payload shape:
+  - representative authorized payload shape; actual checks follow the App's enabled components:
 
 ```json
 {
@@ -70,7 +70,7 @@ This package exposes two classes of health probes for deployment tooling:
   - can be overridden with `OPENAPI_SPEC_PATH`
   - returns a JSON `404` with the exact indexing command when the artifact is missing
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 - `GET /metrics`
   - serves Prometheus text exposition
   - includes framework-owned HTTP request metrics
@@ -80,8 +80,7 @@ This package exposes two classes of health probes for deployment tooling:
 ## How Readiness Checks Are Wired
 
 - The server receives checks through DI as `[]http.ReadinessCheck`.
-- Checks are provided by `http.ProvideReadinessChecks`.
-- Wire registration is in `wire/inject_http.go`.
+- Checks are assembled from the App's enabled managers in `wire/inject_http.go`.
 
 Each check has:
 
@@ -106,7 +105,7 @@ Readiness automatically includes infrastructure checks based on enabled/configur
   - included when database support is enabled
   - verifies default DB connectivity via ping
 - `cache_redis`
-  - always registered, active only when `CACHE_DRIVER=redis`
+  - included when Cache is enabled and active only when `CACHE_DRIVER=redis`
   - verifies Redis connectivity for cache
 - `queue_redis`
   - included when Jobs component is enabled

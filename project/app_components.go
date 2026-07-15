@@ -7,6 +7,7 @@ import (
 
 var appComponentKeys = []ComponentKey{
 	ComponentCLI,
+	ComponentMail,
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -15,30 +16,22 @@ var appComponentKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
-	ComponentJobs,
-}
-
-var appWizardComponentKeys = []ComponentKey{
-	ComponentCLI,
-	ComponentWebAPI,
-	ComponentWebUI,
-	ComponentAuth,
-	ComponentOAuth,
-	ComponentDatabaseMySQL,
-	ComponentDatabasePostgres,
-	ComponentDatabaseSQLite,
-	ComponentScheduler,
+	ComponentCache,
+	ComponentEvents,
+	ComponentStorage,
 	ComponentJobs,
 }
 
 // AppComponentDefinitions returns catalog entries that can participate in an app graph.
-func AppComponentDefinitions(available Components) []ComponentDefinition {
+func AppComponentDefinitions(_ Components) []ComponentDefinition {
 	return appDefinitionsForKeys(appComponentKeys)
 }
 
-// AppWizardComponentDefinitions returns app entries that belong in the interactive app wizard.
+// AppWizardComponentDefinitions returns the unified App component inventory used by interactive selection.
+//
+// Deprecated: Use AppComponentDefinitions.
 func AppWizardComponentDefinitions(available Components) []ComponentDefinition {
-	return appDefinitionsForKeys(appWizardComponentKeys)
+	return AppComponentDefinitions(available)
 }
 
 // appDefinitionsForKeys keeps app component ordering stable while ignoring catalog entries that no longer exist.
@@ -167,7 +160,29 @@ func IsAppDatabaseComponent(key ComponentKey) bool {
 	}
 }
 
-// PromoteAppComponents adds selected app capabilities to the project-level render set.
+// ProjectComponents derives the shared render capability envelope without changing the default App selection.
+func ProjectComponents(config *Config) Components {
+	if config == nil {
+		return Components{}
+	}
+	available := config.Render.Components.WithResolvedDependencies()
+	envelope := available
+	for _, appConfig := range config.Apps {
+		selected := NormalizeConfiguredAppComponents(config, appConfig.Components)
+		envelope = PromoteAppComponents(envelope, selected)
+	}
+	return envelope
+}
+
+// NormalizeConfiguredAppComponents resolves one App against the default App so sibling selections cannot change its implicit dependencies.
+func NormalizeConfiguredAppComponents(config *Config, selected Components) Components {
+	if config == nil {
+		return NormalizeAppComponents(Components{}, selected)
+	}
+	return NormalizeAppComponents(config.Render.Components.WithResolvedDependencies(), selected)
+}
+
+// PromoteAppComponents adds selected App capabilities to an in-memory project envelope.
 func PromoteAppComponents(available Components, selected Components) Components {
 	promoted := available
 	for _, key := range appComponentKeys {

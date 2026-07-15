@@ -137,6 +137,7 @@ func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 			},
 		},
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered demo app")
 
@@ -209,6 +210,7 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 			},
 		},
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered monitoring metrics app")
 
@@ -343,11 +345,15 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 		},
 		EnvOverrides: queueEnv,
 	})
+	selectRenderedDemoSQLite(t, projectDir)
+	for key, value := range queueEnv {
+		setRenderedEnvValue(t, projectDir, key, value)
+	}
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered jobs app")
 
 	runCommandSuccess(t, projectDir, binPath, queueEnv, "migrate")
-	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed")
+	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed", "--count=1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -427,6 +433,7 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 		},
 		EnvOverrides: validQueueEnv,
 	})
+	selectRenderedDemoSQLite(t, projectDir)
 
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered scheduler app")
 

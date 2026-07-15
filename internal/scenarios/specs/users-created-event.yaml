@@ -7,6 +7,8 @@ app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module
   components:
+    cache: true
+    events: true
     web_api: true
 markdown:
   path_position: 4
@@ -583,10 +585,11 @@ steps:
       path: app/wire/inject_services_app.go
       language: go
       old: |
-                "{{module}}/internal/makecmd"
+                "{{module}}/internal/runtime"
       new: |
-                "{{module}}/internal/makecmd"
+                "{{module}}/internal/events"
                 "{{module}}/internal/notifications"
+                "{{module}}/internal/runtime"
 
   - title: Add Event Providers
     explain: |

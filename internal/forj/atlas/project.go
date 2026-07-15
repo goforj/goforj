@@ -25,10 +25,14 @@ func Project(root string) atlasproject.Project {
 	}
 	discovered.Name = firstNonEmpty(cfg.ProjectName, discovered.Name)
 	discovered.GoForjVersion = firstNonEmpty(cfg.Render.GoForjVersion, discovered.GoForjVersion)
-	discovered.Components = componentNames(cfg.Render.Components)
+	discovered.Components = componentNames(project.ProjectComponents(cfg))
 	discovered.FrontendKit = string(cfg.Render.StarterKit)
 	discovered.DatabaseDriver = cfg.Render.Components.DatabaseDriver()
-	discovered.QueueDriver = firstNonEmpty(loadAtlasEnv(root)["QUEUE_DRIVER"], cfg.Render.LegacyQueueDriver())
+	if cfg.Render.Components.WithResolvedDependencies().Jobs {
+		discovered.QueueDriver = loadAtlasEnv(root)["QUEUE_DRIVER"]
+	} else {
+		discovered.QueueDriver = ""
+	}
 	discovered.Apps = atlasAppsFromConfig(root, cfg, discovered.Apps)
 
 	return discovered.WithDiscoveredDefaults()

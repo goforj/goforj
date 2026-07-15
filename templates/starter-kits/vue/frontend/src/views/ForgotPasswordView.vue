@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { LoaderCircle } from 'lucide-vue-next'
+import { LoaderCircle } from '@lucide/vue'
 import { requestPasswordReset } from '@/lib/auth'
 import logoMark from '@/assets/goforj-logo.png'
 import Button from '@/components/ui/button/Button.vue'

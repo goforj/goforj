@@ -462,7 +462,8 @@ func TestMakeAppCmdWiresMetricsRunCommandDependency(t *testing.T) {
 	}
 }
 
-func TestMakeAppCmdWiresProjectMetricsObserversForCLIOnlyApp(t *testing.T) {
+// TestMakeAppCmdProjectsDisabledMetricsIntoCLIOnlyApp verifies shared Metrics constructors receive a typed nil without enabling App-local observers.
+func TestMakeAppCmdProjectsDisabledMetricsIntoCLIOnlyApp(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -498,13 +499,15 @@ func TestMakeAppCmdWiresProjectMetricsObserversForCLIOnlyApp(t *testing.T) {
 	managersSrc := readMakeAppTestFile(t, filepath.Join("app", "ship", "wire", "inject_managers.go"))
 	for _, want := range []string{
 		`"example.com/testapp/internal/metrics"`,
-		"metrics.NewManager",
-		"metricsManager *metrics.Manager",
-		"observability.EventObserver(\n\t\tinspectManager,\n\t\tmetricsManager,",
-		"observability.StorageObserver(\n\t\tinspectManager,\n\t\tmetricsManager,",
+		"provideDisabledMetricsManager",
 	} {
 		if !strings.Contains(managersSrc, want) {
-			t.Fatalf("expected project metrics observer wiring %q in inject_managers.go:\n%s", want, managersSrc)
+			t.Fatalf("expected project Metrics boundary %q in inject_managers.go:\n%s", want, managersSrc)
+		}
+	}
+	for _, unwanted := range []string{"metrics.NewManager", "metricsManager.CacheEnabled()", "observability.EventObserver(", "observability.StorageObserver(", `/internal/storages`} {
+		if strings.Contains(managersSrc, unwanted) {
+			t.Fatalf("expected CLI-only App not to enable Metrics or primitive observer %q:\n%s", unwanted, managersSrc)
 		}
 	}
 
@@ -811,7 +814,7 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 			},
 		},
 		Dev: project.DevConfig{
-			Pre: []project.DevTask{generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))},
+			Pre: []project.DevTask{legacyGeneratedDevFrontendInstallTask(project.DefaultNamedApp("billing"))},
 			Run: map[string]string{
 				"billing": "run",
 			},
@@ -898,7 +901,8 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 	if _, ok := cfg.Dev.Apps["billing"]; ok {
 		t.Fatalf("expected billing native dev app config to be removed")
 	}
-	if hasDevTask(cfg.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) {
+	if hasDevTask(cfg.Dev.Pre, generatedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) ||
+		hasDevTask(cfg.Dev.Pre, legacyGeneratedDevFrontendInstallTask(project.DefaultNamedApp("billing"))) {
 		t.Fatalf("expected billing frontend dependency task to be removed")
 	}
 	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))

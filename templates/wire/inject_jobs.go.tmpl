@@ -5,15 +5,31 @@ package wire
 
 import (
 	"github.com/goforj/wire"
+{{- if .ProjectComponents.HasDatabase }}
+{{- if not .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/database"
+{{- end }}
+{{- end }}
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/makecmd"
 )
 
 // jobSet is a wire set that provides the queue worker and its dependencies.
 var jobSet = wire.NewSet(
+{{- if .Components.Cache }}
+	jobs.NewCachedBenchmarkRunCmd,
+	jobs.NewCachedLighthouseRuntime,
+{{- else }}
 	jobs.NewBenchmarkRunCmd,
 	jobs.NewLighthouseRuntime,
+{{- end }}
 	jobs.NewRuntime,
+{{- if .ProjectComponents.HasDatabase }}
+{{- if not .Components.HasDatabase }}
+	// Database is optional for Jobs; another App is the only Database owner in this build.
+	wire.Value((*database.Connections)(nil)),
+{{- end }}
+{{- end }}
 	jobs.NewWorker,
 	jobs.NewWorkerCmd,
 	makecmd.NewJobCmd,

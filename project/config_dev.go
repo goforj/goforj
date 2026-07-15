@@ -69,11 +69,13 @@ func (c DevConfig) MarshalYAML() (any, error) {
 type DevWatchMatchers struct {
 	Include []string `yaml:"include,omitempty" json:"include,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	// Extra preserves matcher controls introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // Empty reports whether the matcher set has no configured rules.
 func (m DevWatchMatchers) Empty() bool {
-	return len(m.Include) == 0 && len(m.Exclude) == 0
+	return len(m.Include) == 0 && len(m.Exclude) == 0 && len(m.Extra) == 0
 }
 
 // IsLegacy reports whether the watcher uses the historical wgo flag grammar.
@@ -230,6 +232,7 @@ func (w *DevWatch) UnmarshalYAML(value *yaml.Node) error {
 		Restart  bool              `yaml:"restart"`
 		Exit     bool              `yaml:"exit"`
 		Stdin    bool              `yaml:"stdin"`
+		Extra    map[string]any    `yaml:",inline"`
 	}
 
 	var fields watchFields
@@ -256,6 +259,7 @@ func (w *DevWatch) UnmarshalYAML(value *yaml.Node) error {
 		Restart:  fields.Restart,
 		Exit:     fields.Exit,
 		Stdin:    fields.Stdin,
+		Extra:    fields.Extra,
 	}
 	if fields.Root != "" {
 		if len(w.Roots) > 0 {
@@ -305,6 +309,7 @@ func (w DevWatch) MarshalYAML() (any, error) {
 		Restart  bool              `yaml:"restart,omitempty"`
 		Exit     bool              `yaml:"exit,omitempty"`
 		Stdin    bool              `yaml:"stdin,omitempty"`
+		Extra    map[string]any    `yaml:",inline"`
 	}
 
 	var watch any
@@ -329,6 +334,7 @@ func (w DevWatch) MarshalYAML() (any, error) {
 		Restart:  w.Restart,
 		Exit:     w.Exit,
 		Stdin:    w.Stdin,
+		Extra:    w.Extra,
 	}, nil
 }
 
@@ -337,6 +343,8 @@ type DevApp struct {
 	Build *DevAppCommand    `yaml:"build,omitempty" json:"build,omitempty"`
 	Run   *DevAppCommand    `yaml:"run,omitempty" json:"run,omitempty"`
 	SPAs  map[string]DevSPA `yaml:"spas,omitempty" json:"spas,omitempty"`
+	// Extra preserves App lifecycle settings introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // UnmarshalYAML accepts true as the concise default app or an app override mapping.
@@ -360,12 +368,13 @@ func (a *DevApp) UnmarshalYAML(value *yaml.Node) error {
 			Build *DevAppCommand    `yaml:"build"`
 			Run   *DevAppCommand    `yaml:"run"`
 			SPAs  map[string]DevSPA `yaml:"spas"`
+			Extra map[string]any    `yaml:",inline"`
 		}
 		var fields appFields
 		if err := value.Decode(&fields); err != nil {
 			return fmt.Errorf("decode dev app: %w", err)
 		}
-		*a = DevApp{Build: fields.Build, Run: fields.Run, SPAs: fields.SPAs}
+		*a = DevApp{Build: fields.Build, Run: fields.Run, SPAs: fields.SPAs, Extra: fields.Extra}
 		return nil
 	default:
 		return fmt.Errorf("decode dev app: expected true or an app mapping")
@@ -374,31 +383,34 @@ func (a *DevApp) UnmarshalYAML(value *yaml.Node) error {
 
 // MarshalYAML keeps default-only apps concise while retaining explicit lifecycle overrides.
 func (a DevApp) MarshalYAML() (any, error) {
-	if a.Build == nil && a.Run == nil && len(a.SPAs) == 0 {
+	if a.Build == nil && a.Run == nil && len(a.SPAs) == 0 && len(a.Extra) == 0 {
 		return true, nil
 	}
 	type appFields struct {
 		Build *DevAppCommand    `yaml:"build,omitempty"`
 		Run   *DevAppCommand    `yaml:"run,omitempty"`
 		SPAs  map[string]DevSPA `yaml:"spas,omitempty"`
+		Extra map[string]any    `yaml:",inline"`
 	}
-	return appFields{Build: a.Build, Run: a.Run, SPAs: a.SPAs}, nil
+	return appFields{Build: a.Build, Run: a.Run, SPAs: a.SPAs, Extra: a.Extra}, nil
 }
 
 // DevAppCommand describes a build or runtime command override for an app.
 type DevAppCommand struct {
-	Disabled     bool              `yaml:"-" json:"disabled,omitempty"`
-	Shorthand    bool              `yaml:"-" json:"-"`
-	Exec         string            `yaml:"exec,omitempty" json:"exec,omitempty"`
-	Watch        []string          `yaml:"watch,omitempty" json:"watch,omitempty"`
-	Ignore       []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
-	Root         string            `yaml:"root,omitempty" json:"root,omitempty"`
-	WorkDir      string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
-	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Debounce     string            `yaml:"debounce,omitempty" json:"debounce,omitempty"`
-	Poll         string            `yaml:"poll,omitempty" json:"poll,omitempty"`
-	Postpone     bool              `yaml:"postpone,omitempty" json:"postpone,omitempty"`
-	PostponeSet  bool              `yaml:"-" json:"-"`
+	Disabled    bool              `yaml:"-" json:"disabled,omitempty"`
+	Shorthand   bool              `yaml:"-" json:"-"`
+	Exec        string            `yaml:"exec,omitempty" json:"exec,omitempty"`
+	Watch       []string          `yaml:"watch,omitempty" json:"watch,omitempty"`
+	Ignore      []string          `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	Root        string            `yaml:"root,omitempty" json:"root,omitempty"`
+	WorkDir     string            `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Debounce    string            `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+	Poll        string            `yaml:"poll,omitempty" json:"poll,omitempty"`
+	Postpone    bool              `yaml:"postpone,omitempty" json:"postpone,omitempty"`
+	PostponeSet bool              `yaml:"-" json:"-"`
+	// Extra preserves command controls introduced by newer GoForj versions during config migration.
+	Extra        map[string]any `yaml:",inline" json:"-"`
 	conventional bool
 }
 
@@ -460,10 +472,10 @@ func (c DevAppCommand) MarshalYAML() (any, error) {
 	if c.Disabled {
 		return false, nil
 	}
-	if c.IsConventional() {
+	if c.IsConventional() && len(c.Extra) == 0 {
 		return true, nil
 	}
-	if c.Shorthand && c.Exec != "" && len(c.Watch) == 0 && len(c.Ignore) == 0 && c.Root == "" && c.WorkDir == "" && len(c.Env) == 0 && c.Debounce == "" && c.Poll == "" && !c.PostponeSet {
+	if c.Shorthand && c.Exec != "" && len(c.Watch) == 0 && len(c.Ignore) == 0 && c.Root == "" && c.WorkDir == "" && len(c.Env) == 0 && c.Debounce == "" && c.Poll == "" && !c.PostponeSet && len(c.Extra) == 0 {
 		return c.Exec, nil
 	}
 	type commandFields struct {
@@ -476,6 +488,7 @@ func (c DevAppCommand) MarshalYAML() (any, error) {
 		Debounce string            `yaml:"debounce,omitempty"`
 		Poll     string            `yaml:"poll,omitempty"`
 		Postpone *bool             `yaml:"postpone,omitempty"`
+		Extra    map[string]any    `yaml:",inline"`
 	}
 	var postpone *bool
 	if c.PostponeSet {
@@ -485,7 +498,7 @@ func (c DevAppCommand) MarshalYAML() (any, error) {
 	return commandFields{
 		Exec: c.Exec, Watch: devFlowStrings(c.Watch), Ignore: devFlowStrings(c.Ignore), Root: c.Root,
 		WorkDir: c.WorkDir, Env: c.Env, Debounce: c.Debounce, Poll: c.Poll,
-		Postpone: postpone,
+		Postpone: postpone, Extra: c.Extra,
 	}, nil
 }
 
@@ -495,6 +508,8 @@ type DevSPA struct {
 	Build  string   `yaml:"build,omitempty" json:"build,omitempty"`
 	Watch  []string `yaml:"watch,omitempty" json:"watch,omitempty"`
 	Ignore []string `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	// Extra preserves frontend controls introduced by newer GoForj versions during config migration.
+	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
 // UnmarshalYAML accepts a path scalar for conventional SPAs or an override mapping.
@@ -523,7 +538,7 @@ func (s *DevSPA) UnmarshalYAML(value *yaml.Node) error {
 
 // MarshalYAML emits conventional path-only SPAs as scalars.
 func (s DevSPA) MarshalYAML() (any, error) {
-	if s.Build == "" && len(s.Watch) == 0 && len(s.Ignore) == 0 {
+	if s.Build == "" && len(s.Watch) == 0 && len(s.Ignore) == 0 && len(s.Extra) == 0 {
 		return s.Path, nil
 	}
 	type spaFields struct {
@@ -531,9 +546,11 @@ func (s DevSPA) MarshalYAML() (any, error) {
 		Build  string         `yaml:"build,omitempty"`
 		Watch  devFlowStrings `yaml:"watch,omitempty"`
 		Ignore devFlowStrings `yaml:"ignore,omitempty"`
+		Extra  map[string]any `yaml:",inline"`
 	}
 	return spaFields{
 		Path: s.Path, Build: s.Build,
 		Watch: devFlowStrings(s.Watch), Ignore: devFlowStrings(s.Ignore),
+		Extra: s.Extra,
 	}, nil
 }

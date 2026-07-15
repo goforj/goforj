@@ -2,61 +2,126 @@ package http
 
 import (
 	"context"
+	{{- if or .ProjectComponents.Cache .ProjectComponents.Storage }}
 	"fmt"
-	cachepkg "github.com/goforj/cache"
+	{{- end }}
+{{- if .ProjectComponents.Cache }}
+	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
+{{- end }}
+{{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
+{{- end }}
 	"github.com/goforj/web"
+{{- if .ProjectComponents.Storage }}
 	"net/http"
 	pathpkg "path"
+{{- end }}
+	{{- if or .ProjectComponents.Cache .ProjectComponents.Storage }}
 	"sort"
 	"strings"
+	{{- end }}
+	{{- if .ProjectComponents.Cache }}
 	"time"
 	"{{.GoModuleName}}/internal/caches"
+	{{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/inspects"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
+{{- if or .ProjectComponents.Cache .ProjectComponents.Storage }}
 const (
+{{- if .ProjectComponents.Storage }}
 	lighthouseStoragePreviewMaxBytes  int64 = 2 << 20  // 2 MiB
 	lighthouseStorageUploadMaxBytes   int64 = 10 << 20 // 10 MiB
 	lighthouseStorageDownloadMaxBytes int64 = 32 << 20 // 32 MiB
+{{- end }}
+	{{- if .ProjectComponents.Cache }}
 	lighthouseCachePreviewMaxBytes    int64 = 1 << 20  // 1 MiB
+	{{- end }}
 )
+{{- end }}
 
 // LighthouseRuntime boots the dev console agent for the HTTP process.
 type LighthouseRuntime struct {
 	agent   *lighthouse.Agent
 	logger  *logger.AppLogger
 	server  *Server
+	{{- if .ProjectComponents.Cache }}
 	caches  *caches.Manager
+	{{- end }}
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager
+{{- end }}
 	inspects *inspects.Manager
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metrics *metrics.Manager
 {{- end }}
 }
 
 // NewLighthouseRuntime creates the Lighthouse runtime for the HTTP process.
-func NewLighthouseRuntime(logger *logger.AppLogger, server *Server, caches *caches.Manager, storage *storages.Manager, inspectManager *inspects.Manager{{- if .Components.Metrics }}, metricsManager *metrics.Manager{{- end }}) *LighthouseRuntime {
+func NewLighthouseRuntime(
+	logger *logger.AppLogger,
+	server *Server,
+{{- if .ProjectComponents.Storage }}
+	storage *storages.Manager,
+{{- end }}
+	inspectManager *inspects.Manager,
+{{- if .ProjectComponents.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) *LighthouseRuntime {
 	componentLogger := logger.WithComponent("HTTP")
 	return &LighthouseRuntime{
 		agent:   lighthouse.NewAgent(lighthouse.LoadAgentConfig("http")),
 		logger:  componentLogger,
 		server:  server,
-		caches:  caches,
+{{- if .ProjectComponents.Storage }}
 		storage: storage,
+{{- end }}
 		inspects: inspectManager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metrics: metricsManager,
 {{- end }}
 	}
 }
+
+{{- if .ProjectComponents.Cache }}
+// NewCachedLighthouseRuntime creates the Lighthouse runtime with Cache browsing enabled for this App.
+func NewCachedLighthouseRuntime(
+	logger *logger.AppLogger,
+	server *Server,
+	cacheManager *caches.Manager,
+{{- if .ProjectComponents.Storage }}
+	storage *storages.Manager,
+{{- end }}
+	inspectManager *inspects.Manager,
+{{- if .ProjectComponents.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) *LighthouseRuntime {
+	runtime := NewLighthouseRuntime(
+		logger,
+		server,
+{{- if .ProjectComponents.Storage }}
+		storage,
+{{- end }}
+		inspectManager,
+{{- if .ProjectComponents.Metrics }}
+		metricsManager,
+{{- end }}
+	)
+	runtime.caches = cacheManager
+	return runtime
+}
+{{- end }}
 
 // Start boots the dev console agent for the HTTP process.
 func (r *LighthouseRuntime) Start(ctx context.Context) {
@@ -64,7 +129,7 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
-	publisher := lighthouse.NewInspectPublisher(r.agent{{- if .Components.Metrics }}, r.metrics{{- end }})
+	publisher := lighthouse.NewInspectPublisher(r.agent{{- if .ProjectComponents.Metrics }}, r.metrics{{- end }})
 	r.inspects.SetPublisher(publisher)
 	r.inspects.SetPublishOnly(true)
 	r.inspects.SetCaptureGate(r.agent.InspectActive)
@@ -72,66 +137,68 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 	r.agent.RegisterCapability("inspects")
 	r.agent.RegisterCapability("cli")
 	r.agent.RegisterCapability("routes")
+	{{- if .ProjectComponents.Cache }}
 	if len(r.cacheStores()) > 0 {
 		r.agent.RegisterCapability("cache")
+		r.agent.RegisterCommand("cache:list", func(cmd lighthouse.Command) (any, error) {
+			params, err := lighthouse.Decode[struct {
+				Store  string `json:"store"`
+				Query  string `json:"query"`
+				Prefix string `json:"prefix"`
+				Offset int    `json:"offset"`
+				Limit  int    `json:"limit"`
+			}](cmd)
+			if err != nil {
+				return nil, err
+			}
+			query := strings.TrimSpace(params.Query)
+			if query == "" {
+				query = strings.TrimSpace(params.Prefix)
+			}
+			return r.cacheListPayload(ctx, params.Store, query, params.Offset, params.Limit)
+		})
+		r.agent.RegisterCommand("cache:get", func(cmd lighthouse.Command) (any, error) {
+			params, err := lighthouse.Decode[struct {
+				Store string `json:"store"`
+				Key   string `json:"key"`
+			}](cmd)
+			if err != nil {
+				return nil, err
+			}
+			return r.cacheGetPayload(ctx, params.Store, params.Key)
+		})
+		r.agent.RegisterCommand("cache:delete", func(cmd lighthouse.Command) (any, error) {
+			params, err := lighthouse.Decode[struct {
+				Store string `json:"store"`
+				Key   string `json:"key"`
+			}](cmd)
+			if err != nil {
+				return nil, err
+			}
+			return r.cacheDeletePayload(ctx, params.Store, params.Key)
+		})
+		r.agent.RegisterCommand("cache:set", func(cmd lighthouse.Command) (any, error) {
+			params, err := lighthouse.Decode[struct {
+				Store      string `json:"store"`
+				Key        string `json:"key"`
+				Data       string `json:"data"`
+				TTLSeconds int    `json:"ttl_seconds"`
+			}](cmd)
+			if err != nil {
+				return nil, err
+			}
+			return r.cacheSetPayload(ctx, params.Store, params.Key, []byte(params.Data), params.TTLSeconds)
+		})
 	}
-	if len(r.storageDisks()) > 0 {
-		r.agent.RegisterCapability("storage")
-	}
+	{{- end }}
 	r.agent.RegisterCommand("routes:list", func(cmd lighthouse.Command) (any, error) {
 		return map[string]any{
 			"routes": web.BuildRouteEntries(r.server.GetRoutes()),
 		}, nil
 	})
-	r.agent.RegisterCommand("cache:list", func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Store  string `json:"store"`
-			Query  string `json:"query"`
-			Prefix string `json:"prefix"`
-			Offset int    `json:"offset"`
-			Limit  int    `json:"limit"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		query := strings.TrimSpace(params.Query)
-		if query == "" {
-			query = strings.TrimSpace(params.Prefix)
-		}
-		return r.cacheListPayload(ctx, params.Store, query, params.Offset, params.Limit)
-	})
-	r.agent.RegisterCommand("cache:get", func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Store string `json:"store"`
-			Key   string `json:"key"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		return r.cacheGetPayload(ctx, params.Store, params.Key)
-	})
-	r.agent.RegisterCommand("cache:delete", func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Store string `json:"store"`
-			Key   string `json:"key"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		return r.cacheDeletePayload(ctx, params.Store, params.Key)
-	})
-	r.agent.RegisterCommand("cache:set", func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Store      string `json:"store"`
-			Key        string `json:"key"`
-			Data       string `json:"data"`
-			TTLSeconds int    `json:"ttl_seconds"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		return r.cacheSetPayload(ctx, params.Store, params.Key, []byte(params.Data), params.TTLSeconds)
-	})
+{{- if .ProjectComponents.Storage }}
+	if len(r.storageDisks()) > 0 {
+		r.agent.RegisterCapability("storage")
 	r.agent.RegisterCommand("storage:list", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Disk   string `json:"disk"`
@@ -207,6 +274,8 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 		}
 		return r.storageMovePayload(ctx, params.Disk, params.From, params.To)
 	})
+	}
+{{- end }}
 	r.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
@@ -233,6 +302,7 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 	}()
 }
 
+{{- if .ProjectComponents.Cache }}
 type cacheStoreInfo struct {
 	Name        string `json:"name"`
 	Driver      string `json:"driver"`
@@ -249,10 +319,12 @@ type cacheEntryInfo struct {
 	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
+// cacheStores projects the runtime manager into the bounded Lighthouse store contract.
 func (r *LighthouseRuntime) cacheStores() []cacheStoreInfo {
 	return cacheStores(r.caches)
 }
 
+// cacheStores omits unavailable stores before advertising Cache capability to Lighthouse.
 func cacheStores(manager *caches.Manager) []cacheStoreInfo {
 	if manager == nil {
 		return nil
@@ -290,6 +362,7 @@ func cacheStores(manager *caches.Manager) []cacheStoreInfo {
 	return stores
 }
 
+// cacheListPayload returns one bounded cache entry page for Lighthouse.
 func (r *LighthouseRuntime) cacheListPayload(ctx context.Context, storeName string, query string, offset int, limit int) (map[string]any, error) {
 	selectedStore, cacheStore, err := resolveCacheStore(r.caches, storeName)
 	if err != nil {
@@ -343,6 +416,7 @@ func (r *LighthouseRuntime) cacheListPayload(ctx context.Context, storeName stri
 	}, nil
 }
 
+// cacheGetPayload bounds cache previews so Lighthouse cannot load arbitrarily large values into memory.
 func (r *LighthouseRuntime) cacheGetPayload(ctx context.Context, storeName string, key string) (map[string]any, error) {
 	selectedStore, cacheStore, err := resolveCacheStore(r.caches, storeName)
 	if err != nil {
@@ -369,6 +443,7 @@ func (r *LighthouseRuntime) cacheGetPayload(ctx context.Context, storeName strin
 	}, nil
 }
 
+// cacheDeletePayload deletes one explicitly selected cache key.
 func (r *LighthouseRuntime) cacheDeletePayload(ctx context.Context, storeName string, key string) (map[string]any, error) {
 	selectedStore, cacheStore, err := resolveCacheStore(r.caches, storeName)
 	if err != nil {
@@ -388,6 +463,7 @@ func (r *LighthouseRuntime) cacheDeletePayload(ctx context.Context, storeName st
 	}, nil
 }
 
+// cacheSetPayload writes one explicitly selected cache key with an optional TTL.
 func (r *LighthouseRuntime) cacheSetPayload(ctx context.Context, storeName string, key string, data []byte, ttlSeconds int) (map[string]any, error) {
 	selectedStore, cacheStore, err := resolveCacheStore(r.caches, storeName)
 	if err != nil {
@@ -411,7 +487,8 @@ func (r *LighthouseRuntime) cacheSetPayload(ctx context.Context, storeName strin
 	}, nil
 }
 
-func resolveCacheStore(manager *caches.Manager, storeName string) (string, *cachepkg.Cache, error) {
+// resolveCacheStore normalizes the default store name and rejects stores absent from this App.
+func resolveCacheStore(manager *caches.Manager, storeName string) (string, *cache.Cache, error) {
 	if manager == nil {
 		return "", nil, fmt.Errorf("cache: manager unavailable")
 	}
@@ -425,7 +502,9 @@ func resolveCacheStore(manager *caches.Manager, storeName string) (string, *cach
 	}
 	return selected, store, nil
 }
+{{- end }}
 
+	{{ if .ProjectComponents.Storage }}
 type storageDiskInfo struct {
 	Name       string `json:"name"`
 	Driver     string `json:"driver"`
@@ -442,10 +521,12 @@ type storageEntryInfo struct {
 	URLCapable   bool   `json:"url_capable"`
 }
 
+// storageDisks projects the runtime manager into the bounded Lighthouse disk contract.
 func (r *LighthouseRuntime) storageDisks() []storageDiskInfo {
 	return storageDisks(r.storage)
 }
 
+// storageDisks omits unavailable disks before advertising Storage capability to Lighthouse.
 func storageDisks(manager *storages.Manager) []storageDiskInfo {
 	if manager == nil {
 		return nil
@@ -472,6 +553,7 @@ func storageDisks(manager *storages.Manager) []storageDiskInfo {
 	return disks
 }
 
+// storageListPayload returns one normalized directory page for the Lighthouse Storage browser.
 func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName string, rawPath string, offset int, limit int) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -552,6 +634,7 @@ func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName str
 	}, nil
 }
 
+// storageDownloadPayload bounds preview reads so Lighthouse cannot load arbitrarily large files into memory.
 func (r *LighthouseRuntime) storageDownloadPayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -588,6 +671,7 @@ func (r *LighthouseRuntime) storageDownloadPayload(ctx context.Context, diskName
 	}, nil
 }
 
+// storageURLPayload resolves public URLs only for concrete files on capable drivers.
 func (r *LighthouseRuntime) storageURLPayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -618,6 +702,7 @@ func (r *LighthouseRuntime) storageURLPayload(ctx context.Context, diskName stri
 	}, nil
 }
 
+// storagePutPayload enforces the Lighthouse upload limit before writing through a selected disk.
 func (r *LighthouseRuntime) storagePutPayload(ctx context.Context, diskName string, rawPath string, data []byte) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -657,6 +742,7 @@ func (r *LighthouseRuntime) storagePutPayload(ctx context.Context, diskName stri
 	}, nil
 }
 
+// storageDeletePayload rejects root deletion and returns the normalized deleted path.
 func (r *LighthouseRuntime) storageDeletePayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -678,6 +764,7 @@ func (r *LighthouseRuntime) storageDeletePayload(ctx context.Context, diskName s
 	}, nil
 }
 
+// storageMkdirPayload creates a non-root directory and returns its backend metadata.
 func (r *LighthouseRuntime) storageMkdirPayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -711,6 +798,7 @@ func (r *LighthouseRuntime) storageMkdirPayload(ctx context.Context, diskName st
 	}, nil
 }
 
+// storageMovePayload validates both paths before moving an entry within one disk.
 func (r *LighthouseRuntime) storageMovePayload(ctx context.Context, diskName string, rawFrom string, rawTo string) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -752,6 +840,7 @@ func (r *LighthouseRuntime) storageMovePayload(ctx context.Context, diskName str
 	}, nil
 }
 
+// resolveStorageDisk selects the generated default or an exact named disk without hiding unavailable managers.
 func resolveStorageDisk(manager *storages.Manager, name string) (string, storage.Storage, error) {
 	if manager == nil {
 		return "", nil, fmt.Errorf("storage: manager unavailable")
@@ -777,6 +866,7 @@ func resolveStorageDisk(manager *storages.Manager, name string) (string, storage
 	return "", nil, fmt.Errorf("storage: disk %q not found", name)
 }
 
+// driverNameForDisk keeps Lighthouse capability hints aligned with the generated manager manifest.
 func driverNameForDisk(manager *storages.Manager, name string) string {
 	if manager == nil {
 		return ""
@@ -797,6 +887,7 @@ func driverNameForDisk(manager *storages.Manager, name string) string {
 	return ""
 }
 
+// storageDriverSupportsPublicURL limits URL actions to drivers with generated public URL support.
 func storageDriverSupportsPublicURL(driver string) bool {
 	switch strings.ToLower(strings.TrimSpace(driver)) {
 	case "dropbox", "gcs", "rclone", "s3":
@@ -806,6 +897,7 @@ func storageDriverSupportsPublicURL(driver string) bool {
 	}
 }
 
+// lighthouseStorageDownload serves bounded file downloads only when this App has a Storage manager.
 func (s *Server) lighthouseStorageDownload(r web.Context, diskName string, rawPath string) error {
 	selectedDisk, disk, err := resolveStorageDisk(s.storage, diskName)
 	if err != nil {
@@ -843,10 +935,12 @@ func (s *Server) lighthouseStorageDownload(r web.Context, diskName string, rawPa
 	return r.Blob(http.StatusOK, contentType, data)
 }
 
+// storageList applies request context before invoking a backend directory listing.
 func storageList(ctx context.Context, disk storage.Storage, currentPath string) ([]storage.Entry, error) {
 	return disk.WithContext(ctx).List(currentPath)
 }
 
+// storageListPage uses backend pagination when the selected driver supports it.
 func storageListPage(ctx context.Context, disk storage.Storage, currentPath string, offset int, limit int) (storage.ListPageResult, error) {
 	if diskPaged, ok := disk.WithContext(ctx).(storage.PagedStorage); ok {
 		return diskPaged.ListPage(currentPath, offset, limit)
@@ -854,34 +948,42 @@ func storageListPage(ctx context.Context, disk storage.Storage, currentPath stri
 	return storage.ListPageResult{}, fmt.Errorf("%w: paged list not supported", storage.ErrUnsupported)
 }
 
+// storageStat applies request context before reading backend metadata.
 func storageStat(ctx context.Context, disk storage.Storage, currentPath string) (storage.Entry, error) {
 	return disk.WithContext(ctx).Stat(currentPath)
 }
 
+// storageGet applies request context before reading backend bytes.
 func storageGet(ctx context.Context, disk storage.Storage, currentPath string) ([]byte, error) {
 	return disk.WithContext(ctx).Get(currentPath)
 }
 
+// storageURL applies request context before resolving a backend URL.
 func storageURL(ctx context.Context, disk storage.Storage, currentPath string) (string, error) {
 	return disk.WithContext(ctx).URL(currentPath)
 }
 
+// storagePut applies request context before writing backend bytes.
 func storagePut(ctx context.Context, disk storage.Storage, currentPath string, data []byte) error {
 	return disk.WithContext(ctx).Put(currentPath, data)
 }
 
+// storageMakeDir applies request context before creating a backend directory.
 func storageMakeDir(ctx context.Context, disk storage.Storage, currentPath string) error {
 	return disk.WithContext(ctx).MakeDir(currentPath)
 }
 
+// storageDelete applies request context before deleting a backend entry.
 func storageDelete(ctx context.Context, disk storage.Storage, currentPath string) error {
 	return disk.WithContext(ctx).Delete(currentPath)
 }
 
+// storageMove applies request context before moving a backend entry.
 func storageMove(ctx context.Context, disk storage.Storage, fromPath string, toPath string) error {
 	return disk.WithContext(ctx).Move(fromPath, toPath)
 }
 
+// normalizeStoragePath confines Lighthouse operations to a disk-relative path.
 func normalizeStoragePath(raw string) (string, error) {
 	cleaned := pathpkg.Clean("/" + strings.TrimSpace(raw))
 	cleaned = strings.TrimPrefix(cleaned, "/")
@@ -894,6 +996,7 @@ func normalizeStoragePath(raw string) (string, error) {
 	return cleaned, nil
 }
 
+// formatStorageBytes keeps Lighthouse size diagnostics compact and human-readable.
 func formatStorageBytes(value int64) string {
 	if value <= 0 {
 		return "0 B"
@@ -911,6 +1014,7 @@ func formatStorageBytes(value int64) string {
 	return fmt.Sprintf("%.1f %s", size, units[unit])
 }
 
+// storageParentPath derives the disk-relative parent used by browser navigation.
 func storageParentPath(currentPath string) string {
 	if currentPath == "" {
 		return ""
@@ -922,3 +1026,4 @@ func storageParentPath(currentPath string) string {
 	}
 	return parent
 }
+{{- end }}
