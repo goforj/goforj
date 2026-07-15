@@ -70,6 +70,7 @@ var (
 		"PROCESSING_RECOVERY_GRACE_SECONDS",
 		"PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
 	}
+{{- if .ProjectComponents.Storage }}
 	aboutStorageRootKeys = []string{
 		"DRIVER",
 		"ROOT",
@@ -99,6 +100,7 @@ var (
 		"RCLONE_CONFIG_PATH",
 		"RCLONE_CONFIG_DATA",
 	}
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	aboutEventRootKeys = []string{
 		"DRIVER",
@@ -201,7 +203,9 @@ type AboutReport struct {
 	Caches      []AboutCache       `json:"caches"`
 	Mails       []AboutMail        `json:"mails,omitempty"`
 	Queues      []AboutQueue       `json:"queues,omitempty"`
-	Storages    []AboutStorage     `json:"storages"`
+{{- if .ProjectComponents.Storage }}
+	Storages    []AboutStorage     `json:"storages,omitempty"`
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	Events      []AboutEvent       `json:"events,omitempty"`
 {{- end }}
@@ -274,6 +278,8 @@ type AboutQueue struct {
 	Details      []AboutField `json:"details,omitempty"`
 }
 
+{{ if .ProjectComponents.Storage }}
+// AboutStorage describes one configured Storage disk without exposing credentials.
 type AboutStorage struct {
 	Name      string       `json:"name"`
 	IsDefault bool         `json:"is_default"`
@@ -283,6 +289,7 @@ type AboutStorage struct {
 	Summary   string       `json:"summary"`
 	Details   []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
 {{ if .ProjectComponents.Events }}
 // AboutEvent describes one configured Events bus without exposing credentials.
@@ -303,7 +310,7 @@ func NewAboutService() *AboutService {
 
 // Build assembles a report from the capabilities enabled for the current App.
 func (s *AboutService) Build() AboutReport {
-{{- if or .ProjectComponents.WebUI .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.Jobs .ProjectComponents.Events }}
+{{- if or .ProjectComponents.WebUI .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.Jobs .ProjectComponents.Events .ProjectComponents.Storage }}
 	appComponents := CurrentApp().Components
 {{- end }}
 	report := AboutReport{
@@ -323,10 +330,14 @@ func (s *AboutService) Build() AboutReport {
 		Network: AboutNetwork{
 			AppURL: env.Get("APP_URL", "http://localhost:3000"),
 		},
-		Caches:   aboutCacheReports(),
-		Mails:    aboutMailReports(),
-		Storages: aboutStorageReports(),
+		Caches: aboutCacheReports(),
+		Mails:  aboutMailReports(),
 	}
+{{- if .ProjectComponents.Storage }}
+	if appComponents.Storage {
+		report.Storages = aboutStorageReports()
+	}
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	if appComponents.Events {
 		report.Events = aboutEventReports()
@@ -366,7 +377,7 @@ func (s *AboutService) Build() AboutReport {
 
 // sections converts the runtime report into the stable presentation sections consumed by the command.
 func (s *AboutService) sections(report AboutReport) []AboutSectionData {
-{{- if or .ProjectComponents.HasDatabase .ProjectComponents.Jobs .ProjectComponents.Events }}
+{{- if or .ProjectComponents.HasDatabase .ProjectComponents.Jobs .ProjectComponents.Events .ProjectComponents.Storage }}
 	appComponents := CurrentApp().Components
 {{- end }}
 	sections := []AboutSectionData{
@@ -398,9 +409,13 @@ func (s *AboutService) sections(report AboutReport) []AboutSectionData {
 {{- end }}
 	sections = append(sections,
 		AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)},
-		AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)},
 		AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)},
 	)
+{{- if .ProjectComponents.Storage }}
+	if appComponents.Storage {
+		sections = append(sections, AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)})
+	}
+{{- end }}
 {{- if .ProjectComponents.Jobs }}
 	if appComponents.Jobs {
 		sections = append(sections, AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)})
@@ -511,6 +526,8 @@ func aboutMailConnections(mails []AboutMail) []AboutConnectionData {
 	return connections
 }
 
+{{ if .ProjectComponents.Storage }}
+// aboutStorageConnections projects Storage reports into the shared About section shape.
 func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(storages))
 	for _, storage := range storages {
@@ -522,6 +539,7 @@ func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
 	}
 	return connections
 }
+{{- end }}
 
 {{ if .ProjectComponents.Events }}
 // aboutEventConnections projects Events reports into the shared About section shape.
@@ -540,10 +558,15 @@ func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 
 // aboutComponents reports only the components enabled for the current App projection.
 func aboutComponents() []string {
-{{- if or .ProjectComponents.Metrics .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.WebUI .ProjectComponents.Scheduler .ProjectComponents.Jobs .ProjectComponents.DemoApp .ProjectComponents.Events }}
+{{- if or .ProjectComponents.Metrics .ProjectComponents.HasDatabase .ProjectComponents.WebAPI .ProjectComponents.WebUI .ProjectComponents.Scheduler .ProjectComponents.Jobs .ProjectComponents.DemoApp .ProjectComponents.Events .ProjectComponents.Storage }}
 	appComponents := CurrentApp().Components
 {{- end }}
-	components := []string{"cache", "storage"}
+	components := []string{"cache"}
+{{- if .ProjectComponents.Storage }}
+	if appComponents.Storage {
+		components = append(components, "storage")
+	}
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	if appComponents.Events {
 		components = append(components, "events")
@@ -713,6 +736,8 @@ func aboutMailReports() []AboutMail {
 	return reports
 }
 
+{{ if .ProjectComponents.Storage }}
+// aboutStorageReports describes only the active App's configured Storage disks.
 func aboutStorageReports() []AboutStorage {
 	instances := DiscoverStorageInstances()
 	reports := make([]AboutStorage, 0, len(instances))
@@ -740,6 +765,7 @@ func aboutStorageReports() []AboutStorage {
 	}
 	return reports
 }
+{{- end }}
 
 {{ if .ProjectComponents.Events }}
 // aboutEventReports describes only the active App's configured Events buses.
@@ -770,8 +796,10 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 		return aboutAnySet(scope, "DRIVER", "FROM_ADDRESS", "FROM_NAME", "SMTP_HOST", "RESEND_ENDPOINT", "POSTMARK_ENDPOINT", "MAILGUN_DOMAIN", "SENDGRID_ENDPOINT", "SES_REGION")
 	case "QUEUE":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "NAME", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
+{{- if .ProjectComponents.Storage }}
 	case "STORAGE":
 		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	case "EVENTS":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "BROKERS", "PROJECT_ID", "URI", "REGION", "ENDPOINT")
@@ -995,6 +1023,8 @@ func aboutMailDetails(name string) []AboutField {
 	return details
 }
 
+{{ if .ProjectComponents.Storage }}
+// aboutStorageDetails describes one Storage disk without returning secret values.
 func aboutStorageDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("STORAGE", name)
 	driver := NormalizeStorageDriver(scope.Get("DRIVER", "local"))
@@ -1065,6 +1095,7 @@ func aboutStorageDetails(name string) []AboutField {
 	details = aboutAppendIfSet(details, "Prefix", scope.Get("PREFIX", ""))
 	return details
 }
+{{- end }}
 
 {{ if .ProjectComponents.Events }}
 // aboutEventDetails describes an Events bus without returning secret values.

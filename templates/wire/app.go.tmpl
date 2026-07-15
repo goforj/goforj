@@ -41,7 +41,9 @@ import (
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
+{{- if .Components.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
 {{- end }}
@@ -52,7 +54,9 @@ type App struct {
 	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
 	cache   *caches.Manager
+{{- if .Components.Storage }}
 	storage *storages.Manager
+{{- end }}
 {{- if .Components.Events }}
 	events *events.Manager
 {{- end }}
@@ -93,10 +97,12 @@ func (a *App) Caches() *caches.Manager {
 	return a.cache
 }
 
+{{- if .Components.Storage }}
 // Storage returns the storage manager of the application.
 func (a *App) Storage() *storages.Manager {
 	return a.storage
 }
+{{- end }}
 
 {{- if .Components.Mail }}
 // Mail returns the mail manager of the application.
@@ -283,7 +289,9 @@ func NewApplication(
 	appTimeouts *runtime.Timeouts,
 	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
 	cacheManager *caches.Manager,
+{{- if .Components.Storage }}
 	storage *storages.Manager,
+{{- end }}
 {{- if .Components.Events }}
 	eventsManager *events.Manager,
 	_ *EventSubscribersReady,
@@ -307,7 +315,9 @@ func NewApplication(
 	lifecycleManager := runtime.NewLifecycle(appTimeouts)
 
 	attachInspectLogSink(appLogger, inspectManager)
+{{- if .Components.Storage }}
 	logStorageWarnings(appLogger, storage)
+{{- end }}
 {{- if .Components.HasDatabase }}
 	registerDatabaseShutdown(lifecycleManager, appLogger, db)
 {{- end }}
@@ -333,7 +343,9 @@ func NewApplication(
 		db: db,
 		{{- end }}
 		cache: cacheManager,
+{{- if .Components.Storage }}
 		storage: storage,
+{{- end }}
 {{- if .Components.Events }}
 		events: eventsManager,
 {{- end }}
@@ -374,6 +386,7 @@ func attachInspectLogSink(appLogger *logger.AppLogger, inspectManager *inspects.
 	})
 }
 
+{{- if .Components.Storage }}
 // logStorageWarnings reports optional storage failures once for the parent app process.
 func logStorageWarnings(appLogger *logger.AppLogger, storage *storages.Manager) {
 	if strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) == "1" {
@@ -387,6 +400,7 @@ func logStorageWarnings(appLogger *logger.AppLogger, storage *storages.Manager) 
 			Msg("Optional storage disk unavailable; skipping")
 	}
 }
+{{- end }}
 
 {{ if .Components.HasDatabase }}
 // registerDatabaseShutdown closes database connections through the shared lifecycle manager.

@@ -59,8 +59,10 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 		for _, name := range namedResources(env, "CACHE") {
 			resources = append(resources, Resource{ID: "cache-" + name, Name: name, Category: "cache", Description: "Named cache resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
 		}
-		for _, name := range namedResources(env, "STORAGE") {
-			resources = append(resources, Resource{ID: "storage-" + name, Name: name, Category: "storage", Description: "Named storage disk resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
+		if projectComponents.Storage {
+			for _, name := range namedResources(env, "STORAGE") {
+				resources = append(resources, Resource{ID: "storage-" + name, Name: name, Category: "storage", Description: "Named storage disk resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
+			}
 		}
 		if projectComponents.Events {
 			for _, name := range namedResources(env, "EVENTS") {

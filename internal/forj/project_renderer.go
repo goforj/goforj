@@ -304,6 +304,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateEventsRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := p.validateStorageRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	selectedQueueDriver := input.queueDriver
 	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
 		selectedQueueDriver = selection.Active
@@ -641,14 +644,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/runtime/timeouts.go.tmpl",
 				"internal/runtime/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
-				"internal/storages/README.md.tmpl",
 				"internal/observability/cache_observer.go.tmpl",
 				"internal/observability/cache_observer_test.go.tmpl",
 				"internal/observability/mail_observer.go.tmpl",
 				"internal/observability/queue_observer.go.tmpl",
 				"internal/observability/queue_observer_test.go.tmpl",
-				"internal/observability/storage_observer.go.tmpl",
-				"internal/observability/storage_observer_test.go.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/runtime/about.go.tmpl",
 				"internal/runtime/discovery.go.tmpl",
@@ -724,6 +724,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			raw: []string{
 				"internal/makecmd/event.tmpl",
 				"internal/makecmd/subscriber.tmpl",
+			},
+		},
+		{
+			title:   "Storage Components Rendering",
+			enabled: projectComponents.Storage,
+			templates: []string{
+				"internal/storages/README.md.tmpl",
+				"internal/observability/storage_observer.go.tmpl",
+				"internal/observability/storage_observer_test.go.tmpl",
 			},
 		},
 		{
@@ -873,12 +882,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/dashboards/platform-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/lighthouse-inspects-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
-						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/auth-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
 					)
+					if projectComponents.Storage {
+						templates = append(templates, "containers/observability/grafana/dashboards/storage-overview.json.tmpl")
+					}
 					if projectComponents.Events {
 						templates = append(templates, "containers/observability/grafana/dashboards/events-overview.json.tmpl")
 					}
@@ -1390,6 +1401,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	projectCapabilitiesChanged := false
 	appConfigChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
@@ -1401,6 +1415,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		projectCapabilitiesChanged = changed
@@ -1467,6 +1484,9 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		return makeapp.RemoveResult{}, err
 	}
 	p.config = cfg
+	if err := p.validateRemoveAppTransition(app); err != nil {
+		return makeapp.RemoveResult{}, err
+	}
 
 	var result makeapp.RemoveResult
 	for _, path := range []string{
@@ -1531,6 +1551,45 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		filepath.Join("internal", "runtime", "apps_test.go"),
 	)
 	return result, nil
+}
+
+// validateRemoveAppTransition rejects removal of the last App owning a capability whose shared generated surface cannot be reconciled safely.
+func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
+	if p.config == nil {
+		return nil
+	}
+	prospective := *p.config
+	prospective.Apps = make(map[string]project.AppConfig, len(p.config.Apps))
+	for name, appConfig := range p.config.Apps {
+		if name != app.Name {
+			prospective.Apps[name] = appConfig
+		}
+	}
+	before := project.ProjectComponents(p.config)
+	after := project.ProjectComponents(&prospective)
+	checks := []struct {
+		name     string
+		removed  bool
+		residues []string
+	}{
+		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
+		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
+	}
+	for _, check := range checks {
+		if !check.removed {
+			continue
+		}
+		for _, path := range check.residues {
+			exists, err := renderPathExists(path)
+			if err != nil {
+				return err
+			}
+			if exists {
+				return fmt.Errorf("cannot remove App %q because it is the last App using %s while %s exists; automatic %s removal is not supported", app.Name, check.name, path, check.name)
+			}
+		}
+	}
+	return nil
 }
 
 // removeAppConfig forgets app-local render choices without downgrading project capabilities.
@@ -1691,6 +1750,13 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 		}
 		envDefaults[prefix+"_EVENTS_DRIVER"] = eventsDriver
 	}
+	if components.Storage {
+		storageDriver, err := storageDriverDefaultFromEnv(".env")
+		if err != nil {
+			return err
+		}
+		envDefaults[prefix+"_STORAGE_DRIVER"] = storageDriver
+	}
 	if driver := components.DatabaseDriver(); driver != "" {
 		baseDriver := ""
 		if p.config != nil {
@@ -1772,25 +1838,37 @@ func appRuntimeEnvDefaults(prefix string, metadata runtimeAppMetadata, component
 
 // eventDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Events transport.
 func eventDriverDefaultFromEnv(path string) (string, error) {
+	return resourceDriverDefaultFromEnv(path, project.ResourceEvents, "EVENTS", "inproc")
+}
+
+// storageDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Storage backend.
+func storageDriverDefaultFromEnv(path string) (string, error) {
+	return resourceDriverDefaultFromEnv(path, project.ResourceStorage, "STORAGE", "local")
+}
+
+// resourceDriverDefaultFromEnv validates one owner-controlled root driver before projecting it into a named App overlay.
+func resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, envPrefix string, fallback string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("read Events environment: %w", err)
+		return "", fmt.Errorf("read %s environment: %w", envPrefix, err)
 	}
-	driver, found := envAssignment(strings.Split(string(data), "\n"), "EVENTS_DRIVER")
+	activeKey := envPrefix + "_DRIVER"
+	supportedKey := envPrefix + "_SUPPORTED_DRIVERS"
+	driver, found := envAssignment(strings.Split(string(data), "\n"), activeKey)
 	if !found || strings.TrimSpace(driver) == "" {
-		return "inproc", nil
+		return fallback, nil
 	}
-	driver = project.CanonicalResourceDriver(project.ResourceEvents, driver)
-	definition, ok := project.ResourceDefinitionByKey(project.ResourceEvents)
+	driver = project.CanonicalResourceDriver(resource, driver)
+	definition, ok := project.ResourceDefinitionByKey(resource)
 	if !ok {
-		return "", fmt.Errorf("Events resource definition is unavailable")
+		return "", fmt.Errorf("%s resource definition is unavailable", envPrefix)
 	}
 	if _, ok := definition.Driver(driver); !ok {
-		return "", fmt.Errorf("EVENTS_DRIVER in %s selects unsupported driver %q", path, driver)
+		return "", fmt.Errorf("%s in %s selects unsupported driver %q", activeKey, path, driver)
 	}
-	supported, supportedSet := envAssignment(strings.Split(string(data), "\n"), "EVENTS_SUPPORTED_DRIVERS")
+	supported, supportedSet := envAssignment(strings.Split(string(data), "\n"), supportedKey)
 	if supportedSet && strings.TrimSpace(supported) != "" && !driverListContains(supported, driver) {
-		return "", fmt.Errorf("EVENTS_SUPPORTED_DRIVERS in %s excludes active EVENTS_DRIVER %q", path, driver)
+		return "", fmt.Errorf("%s in %s excludes active %s %q", supportedKey, path, activeKey, driver)
 	}
 	return driver, nil
 }
@@ -2946,6 +3024,62 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 	return nil
 }
 
+// validateStorageRenderTransition rejects unsupported removal states before rendering can leave stale Storage code or obscure owner references.
+func (p *ProjectRenderer) validateStorageRenderTransition(projectComponents project.Components) error {
+	if !projectComponents.Storage {
+		for _, path := range projectStorageResiduePaths() {
+			if exists, err := renderPathExists(path); err != nil {
+				return err
+			} else if exists {
+				return fmt.Errorf("cannot disable Storage while %s exists; automatic Storage removal is not supported", path)
+			}
+		}
+	}
+	for _, app := range runtimeAppsForMetadata(p.config) {
+		if appRenderComponents(p.config, app).Storage {
+			continue
+		}
+		path := filepath.Join(app.WireDir, "app.go")
+		exists, err := appStorageSurfaceExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Storage for App %q while %s exposes the generated Storage API; automatic Storage removal is not supported", app.Name, path)
+		}
+	}
+	return nil
+}
+
+// projectStorageResiduePaths lists generated artifacts that prove an existing project still owns a Storage surface.
+func projectStorageResiduePaths() []string {
+	return []string{
+		filepath.Join("internal", "storages"),
+		filepath.Join("internal", "observability", "storage_observer.go"),
+		filepath.Join("internal", "observability", "storage_observer_test.go"),
+		filepath.Join("containers", "observability", "grafana", "dashboards", "storage-overview.json"),
+	}
+}
+
+// appStorageSurfaceExists detects the generated App accessor without treating comments or unrelated owner files as removal proof.
+func appStorageSurfaceExists(path string) (bool, error) {
+	file, exists, err := parsedRenderGoFile(path)
+	if err != nil {
+		return false, fmt.Errorf("parse Storage transition path %s: %w", path, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Recv == nil || function.Name == nil || function.Name.Name != "Storage" {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // projectEventsResiduePaths lists component-owned artifacts that a disabled render cannot safely remove or leave active.
 func projectEventsResiduePaths() []string {
 	return []string{
@@ -3054,7 +3188,7 @@ func astFileContainsSelector(file *ast.File, packageName string, selectorNames .
 	return found
 }
 
-// renderPathExists reports whether a render-owned or App-owned path remains without masking filesystem errors.
+// renderPathExists reports whether a generated or App-owned transition path remains without masking filesystem errors.
 func renderPathExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	if err == nil {
@@ -3063,7 +3197,7 @@ func renderPathExists(path string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, fmt.Errorf("inspect Events transition path %s: %w", path, err)
+	return false, fmt.Errorf("inspect component transition path %s: %w", path, err)
 }
 
 // legacyEventPipelineField reports whether an owner Commands struct still carries the pre-component Events command field.
@@ -4682,7 +4816,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	projectComponents := p.projectRenderComponents()
 	count, _, err := generate.GenerateProjectFiles(
 		".",
-		true,
+		projectComponents.Storage,
 		true,
 		projectComponents.Jobs,
 		projectComponents.Events,

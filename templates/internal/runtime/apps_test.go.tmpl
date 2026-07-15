@@ -38,7 +38,9 @@ func TestAppMetadataUsesPerAppComponents(t *testing.T) {
 {{- if $.ProjectComponents.Events }}
 		Events:           {{ .Components.Events }},
 {{- end }}
+{{- if $.ProjectComponents.Storage }}
 		Storage:          {{ .Components.Storage }},
+{{- end }}
 		Jobs:             {{ .Components.Jobs }},
 	}); got != want {
 		t.Fatalf("App {{ .Name }} components = %#v, want %#v", got, want)

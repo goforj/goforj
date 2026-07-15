@@ -60,7 +60,7 @@ func TestAboutSectionRowsWrapLongValues(t *testing.T) {
 	section := runtime.AboutSectionData{
 		Title: "Build",
 		Rows: []runtime.AboutSectionRow{
-			{Key: "Components", Value: "cache, storage, {{ if .ProjectComponents.Events }}events, {{ end }}lighthouse, metrics, database, http, scheduler, jobs, mail"},
+			{Key: "Components", Value: "cache, {{ if .ProjectComponents.Storage }}storage, {{ end }}{{ if .ProjectComponents.Events }}events, {{ end }}lighthouse, metrics, database, http, scheduler, jobs, mail"},
 			{Key: "Wire Generated", Value: "present"},
 		},
 	}
@@ -93,13 +93,13 @@ func TestAboutSectionsShareVisualGrid(t *testing.T) {
 			},
 		},
 		{
-			Title: "Storages",
+			Title: "Caches",
 			Connections: []runtime.AboutConnectionData{
 				{
 					Name: "default",
 					Details: []runtime.AboutField{
-						{Key: "Driver", Value: "local"},
-						{Key: "Root", Value: "storage/app/private"},
+						{Key: "Driver", Value: "memory"},
+						{Key: "Prefix", Value: "app"},
 					},
 				},
 			},
@@ -122,16 +122,16 @@ func TestAboutSectionsShareVisualGrid(t *testing.T) {
 
 	rendered := cmd.renderAboutSections(sections)
 	appLine := aboutTestLineContaining(t, rendered, "http://localhost:3000")
-	storageLine := aboutTestLineContaining(t, rendered, "storage/app/private")
+	cacheLine := aboutTestLineContaining(t, rendered, "memory")
 	queueLine := aboutTestLineContaining(t, rendered, "report-processing")
 	if strings.Contains(rendered, "App URL") || strings.Contains(rendered, "API URL") {
 		t.Fatalf("expected network labels to align with normalized names, got:\n%s", rendered)
 	}
-	if got, want := strings.Index(appLine, "http://"), strings.Index(storageLine, "local"); got != want {
-		t.Fatalf("expected network values and storage drivers to share a column, got app=%d storage=%d\n%s", got, want, rendered)
+	if got, want := strings.Index(appLine, "http://"), strings.Index(cacheLine, "memory"); got != want {
+		t.Fatalf("expected network values and cache drivers to share a column, got app=%d cache=%d\n%s", got, want, rendered)
 	}
-	if got, want := strings.Index(queueLine, "redis"), strings.Index(storageLine, "local"); got != want {
-		t.Fatalf("expected resource drivers to share a column, got queue=%d storage=%d\n%s", got, want, rendered)
+	if got, want := strings.Index(queueLine, "redis"), strings.Index(cacheLine, "memory"); got != want {
+		t.Fatalf("expected resource drivers to share a column, got queue=%d cache=%d\n%s", got, want, rendered)
 	}
 }
 

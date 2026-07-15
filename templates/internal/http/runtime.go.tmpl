@@ -6,7 +6,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	"{{.GoModuleName}}/internal/runtime"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
@@ -16,7 +16,7 @@ type RuntimeConfig struct {
 	Host                   string
 	Port                   string
 	DisableMetricsEndpoint bool
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	MetricsPort string
 {{- end }}
 }
@@ -25,7 +25,7 @@ type RuntimeConfig struct {
 type Runtime struct {
 	server     *Server
 	lighthouse *LighthouseRuntime
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager
 {{- end }}
 	config RuntimeConfig
@@ -35,14 +35,14 @@ type Runtime struct {
 func NewRuntime(
 	server *Server,
 	lighthouse *LighthouseRuntime,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) *Runtime {
 	return &Runtime{
 		server:     server,
 		lighthouse: lighthouse,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		metricsManager: metricsManager,
 {{- end }}
 		config: defaultRuntimeConfig(),
@@ -67,7 +67,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	ctx = runtime.WithSource(ctx, runtime.SourceHTTP)
 	cfg = normalizeRuntimeConfig(cfg)
 
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.HTTPEnabled() && r.metricsManager.Registry() != nil {
 		if err := metrics.StartPrometheusEndpoint(ctx, r.server.logger, "http", cfg.MetricsPort, r.metricsManager.Registry()); err != nil {
 			return err
@@ -78,16 +78,18 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	return r.server.Serve(ctx, cfg.Host, cfg.Port)
 }
 
+// defaultRuntimeConfig builds the HTTP defaults shared by direct and hosted execution.
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 		Host: env.Get("API_HTTP_HOST", "0.0.0.0"),
 		Port: runtime.HTTPPort(),
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 		MetricsPort: runtime.MetricsPort(),
 {{- end }}
 	})
 }
 
+// normalizeRuntimeConfig prevents empty command flags from erasing environment-derived runtime defaults.
 func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 	cfg.Host = strings.TrimSpace(cfg.Host)
 	if cfg.Host == "" {
@@ -97,7 +99,7 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 	if cfg.Port == "" {
 		cfg.Port = runtime.HTTPPort()
 	}
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
 	if cfg.MetricsPort == "" {
 		cfg.MetricsPort = runtime.MetricsPort()

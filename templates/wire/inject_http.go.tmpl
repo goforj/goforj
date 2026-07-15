@@ -18,7 +18,9 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 // httpServerSet is a wire set that provides the HTTP server and its routes.
@@ -36,7 +38,9 @@ var httpServerSet = wire.NewSet(
 // provideReadinessChecks projects only this App's enabled resource managers into HTTP readiness checks.
 func provideReadinessChecks(
 	caches *caches.Manager,
+{{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
+{{- end }}
 {{- if and .ProjectComponents.Events .Components.Events }}
 	events *events.Manager,
 {{- end }}
@@ -49,7 +53,9 @@ func provideReadinessChecks(
 ) []http.ReadinessCheck {
 	return http.ProvideReadinessChecks(
 		caches,
+{{- if .ProjectComponents.Storage }}
 		storage,
+{{- end }}
 {{- if .ProjectComponents.Events }}
 		{{- if .Components.Events }}
 		events,

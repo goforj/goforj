@@ -56,9 +56,6 @@ var rendererSyncModules = []string{
 	"github.com/goforj/cache",
 	"github.com/goforj/cache/cachecore",
 	"github.com/goforj/cache/driver/rediscache",
-	"github.com/goforj/storage",
-	"github.com/goforj/storage/storagecore",
-	"github.com/goforj/storage/driver/localstorage",
 	"github.com/goforj/queue",
 	"github.com/goforj/queue/driver/mysqlqueue",
 	"github.com/goforj/queue/driver/natsqueue",
@@ -78,6 +75,12 @@ var rendererSyncModules = []string{
 var eventsRendererSyncModules = []string{
 	"github.com/goforj/events",
 	"github.com/goforj/events/eventscore",
+}
+
+var storageRendererSyncModules = []string{
+	"github.com/goforj/storage",
+	"github.com/goforj/storage/storagecore",
+	"github.com/goforj/storage/driver/localstorage",
 }
 
 // VersionFor returns the framework-pinned version for module when it is known.
@@ -100,6 +103,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	modules := append([]string(nil), rendererSyncModules...)
 	if components.Events {
 		modules = append(modules, eventsRendererSyncModules...)
+	}
+	if components.Storage {
+		modules = append(modules, storageRendererSyncModules...)
 	}
 	out := make([]string, 0, len(modules))
 	for _, module := range modules {

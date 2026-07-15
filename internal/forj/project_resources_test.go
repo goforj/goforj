@@ -60,6 +60,51 @@ func TestReconcileResourceEnvironmentIgnoresStaleDisabledEvents(t *testing.T) {
 	}
 }
 
+// TestReconcileResourceEnvironmentIgnoresStaleDisabledStorage verifies owner residue cannot reactivate an omitted Storage resource.
+func TestReconcileResourceEnvironmentIgnoresStaleDisabledStorage(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true}
+	seed := defaultResourcePlanForTest(t, components)
+	source := []byte("STORAGE_DRIVER=s3\nSTORAGE_SUPPORTED_DRIVERS=s3\nSTORAGE_PUBLIC_DRIVER=s3\n")
+	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
+	if err != nil {
+		t.Fatalf("reconcile resource environment: %v", err)
+	}
+	if _, exists := effective.Selection(project.ResourceStorage); exists {
+		t.Fatalf("Storage-disabled plan was resurrected from owner env: %#v", effective)
+	}
+	if !strings.Contains(string(updated), "STORAGE_DRIVER=s3\n") || !strings.Contains(string(updated), "STORAGE_PUBLIC_DRIVER=s3\n") {
+		t.Fatalf("reconciliation deleted owner Storage residue instead of ignoring it:\n%s", updated)
+	}
+}
+
+// TestReconcileResourceEnvironmentSeedsStorageOnFirstEnablement verifies config-only activation initializes the Storage contract.
+func TestReconcileResourceEnvironmentSeedsStorageOnFirstEnablement(t *testing.T) {
+	components := project.Components{CLI: true, Storage: true}
+	seed, err := compatibilityResourcePlan(components, "")
+	if err != nil {
+		t.Fatalf("resolve compatibility plan: %v", err)
+	}
+	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
+
+	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, false)
+	if err != nil {
+		t.Fatalf("reconcile first Storage enablement: %v", err)
+	}
+	if !changed {
+		t.Fatal("first Storage enablement did not initialize owner environment keys")
+	}
+	text := string(updated)
+	for _, want := range []string{"STORAGE_DRIVER=local\n", "STORAGE_SUPPORTED_DRIVERS=local\n", "STORAGE_PUBLIC_DRIVER=local\n"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("first Storage enablement omitted %q:\n%s", want, text)
+		}
+	}
+	storage, ok := effective.Selection(project.ResourceStorage)
+	if !ok || storage.Active != "local" || strings.Join(storage.Supported, ",") != "local" {
+		t.Fatalf("effective first Storage selection = %#v selected=%t", storage, ok)
+	}
+}
+
 // TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement verifies config-only activation compiles the common infrastructure transition.
 func TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement(t *testing.T) {
 	components := project.Components{CLI: true, Events: true}

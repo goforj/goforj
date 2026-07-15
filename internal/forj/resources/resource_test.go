@@ -13,6 +13,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	config.Render.Components.WebUI = true
 	config.Render.Components.DatabaseSQLite = true
 	config.Render.Components.Events = true
+	config.Render.Components.Storage = true
 	config.Render.Components.Mail = true
 	config.Render.Components.Docker = true
 	config.Render.Components.Observability = true
@@ -117,6 +118,38 @@ func TestRegistryUsesNamedAppEventsEnvelope(t *testing.T) {
 	}
 	if config.Render.Components.Events {
 		t.Fatal("resource discovery widened the default App Events selection")
+	}
+}
+
+// TestRegistryIgnoresStaleDisabledStorageResources verifies owner env residue cannot invent Storage participation.
+func TestRegistryIgnoresStaleDisabledStorageResources(t *testing.T) {
+	config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true}}}
+	resources, err := RegistryForProject(config, map[string]string{"STORAGE_PUBLIC_DRIVER": "s3"}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if _, ok := resourceByID(resources, "storage-public"); ok {
+		t.Fatalf("stale Storage env resurrected a disabled resource: %#v", resources)
+	}
+}
+
+// TestRegistryUsesNamedAppStorageEnvelope verifies shared Storage resources remain visible when only a named App participates.
+func TestRegistryUsesNamedAppStorageEnvelope(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			"files": {Components: project.Components{CLI: true, Storage: true}},
+		},
+	}
+	resources, err := RegistryForProject(config, map[string]string{"STORAGE_PUBLIC_DRIVER": "local"}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if _, ok := resourceByID(resources, "storage-public"); !ok {
+		t.Fatalf("named Storage App did not expose project Storage resources: %#v", resources)
+	}
+	if config.Render.Components.Storage {
+		t.Fatal("resource discovery widened the default App Storage selection")
 	}
 }
 

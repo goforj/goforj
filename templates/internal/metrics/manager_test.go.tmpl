@@ -4,7 +4,9 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
@@ -25,10 +27,12 @@ import (
 {{- if .ProjectComponents.Events }}
 	goforjevents "github.com/goforj/events"
 {{- end }}
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 	goforjmail "github.com/goforj/mail"
 {{- end }}
+{{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
+{{- end }}
 	"github.com/goforj/web"
 	"github.com/goforj/web/webtest"
 	"github.com/stretchr/testify/assert"
@@ -77,11 +81,13 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 	t.Setenv("METRICS_MONITORING_ENABLED", "false")
 {{- end }}
 	t.Setenv("METRICS_CACHE_ENABLED", "0")
+{{- if .ProjectComponents.Storage }}
 	t.Setenv("METRICS_STORAGE_ENABLED", "false")
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	t.Setenv("METRICS_EVENTS_ENABLED", "false")
 {{- end }}
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 	t.Setenv("METRICS_MAIL_ENABLED", "false")
 {{- end }}
 {{- if .Components.Jobs }}
@@ -109,15 +115,17 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 	if cfg.Cache {
 		t.Fatal("expected cache metrics to be disabled")
 	}
+{{- if .ProjectComponents.Storage }}
 	if cfg.Storage {
 		t.Fatal("expected storage metrics to be disabled")
 	}
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	if cfg.Events {
 		t.Fatal("expected event metrics to be disabled")
 	}
 {{- end }}
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 	if cfg.Mail {
 		t.Fatal("expected mail metrics to be disabled")
 	}
@@ -1030,6 +1038,8 @@ func cacheOperationEvent(name string, operation string, hit bool, err error, dur
 	}
 }
 
+{{ if .ProjectComponents.Storage }}
+// TestRecordStorageOperationTracksLabeledSeries verifies Storage metrics retain bounded dimensions.
 func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
@@ -1077,6 +1087,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("storage duration count: got %d want 1", got)
 	}
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
@@ -1200,7 +1211,8 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 }
 {{- end }}
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
+// TestRecordMailSendTracksLabeledSeries verifies Mail metrics retain bounded dimensions.
 func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
@@ -1254,6 +1266,8 @@ func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
 	}
 }
 
+{{ if .ProjectComponents.Storage }}
+// TestRecordStorageOperationEmitsSourceLabel verifies Storage metrics retain the runtime source.
 func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
@@ -1271,6 +1285,7 @@ func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 		t.Fatalf("storage source-labeled count: got %d want 1", got)
 	}
 }
+{{- end }}
 
 {{- if .ProjectComponents.Events }}
 func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
@@ -1292,7 +1307,8 @@ func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 }
 {{- end }}
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
+// TestRecordMailSendEmitsSourceLabel verifies Mail metrics retain the runtime source.
 func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)

@@ -27,7 +27,9 @@ Common event kinds include:
 - `http`
 - `query`
 - `cache`
+{{- if .ProjectComponents.Storage }}
 - `storage`
+{{- end }}
 {{- if .ProjectComponents.Events }}
 - `event`
 {{- end }}
@@ -182,7 +184,9 @@ The manager also exposes normalized helpers for framework-owned primitives, such
 
 - `RecordLog`
 - `RecordCacheEvent`
+{{- if .ProjectComponents.Storage }}
 - `RecordStorageEvent`
+{{- end }}
 {{- if .ProjectComponents.Events }}
 - `RecordEventBusEvent`
 {{- end }}

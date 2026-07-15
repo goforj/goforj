@@ -1,12 +1,12 @@
 package observability
 
-{{- if .Components.Mail }}
+{{- if .ProjectComponents.Mail }}
 import (
 	"context"
 
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/mail"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
@@ -14,7 +14,7 @@ import (
 // MailObserver records mail sends through the configured observability sinks.
 func MailObserver(
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) mail.Observer {
@@ -25,13 +25,15 @@ func MailObserver(
 			Err:      event.Err,
 			Duration: event.Duration,
 		})
-{{- if .Components.Metrics }}
-		metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{
-			Name:     event.Name,
-			Driver:   event.Driver,
-			Err:      event.Err,
-			Duration: event.Duration,
-		})
+{{- if .ProjectComponents.Metrics }}
+		if metricsManager != nil {
+			metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{
+				Name:     event.Name,
+				Driver:   event.Driver,
+				Err:      event.Err,
+				Duration: event.Duration,
+			})
+		}
 {{- end }}
 	})
 }

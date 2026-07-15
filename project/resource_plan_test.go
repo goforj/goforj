@@ -8,7 +8,7 @@ import (
 
 // TestDefaultResourcePlan locks the portable defaults and built-in transition drivers to concrete contracts.
 func TestDefaultResourcePlan(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true}
+	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true, Storage: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -46,6 +46,9 @@ func TestDefaultResourcePlanOmitsDisabledCapabilities(t *testing.T) {
 	if _, ok := plan.Selection(ResourceEvents); ok {
 		t.Fatal("Events-disabled plan contains an Events selection")
 	}
+	if _, ok := plan.Selection(ResourceStorage); ok {
+		t.Fatal("Storage-disabled plan contains a Storage selection")
+	}
 	assertResourceSelection(t, plan, ResourceDatabase, "sqlite", []string{"sqlite"})
 }
 
@@ -63,6 +66,23 @@ func TestResourcePlanNormalizationCannotResurrectDisabledEvents(t *testing.T) {
 	}
 	if _, exists := normalized.Selection(ResourceEvents); exists {
 		t.Fatalf("normalized Events-disabled plan retained stale Events selection: %#v", normalized)
+	}
+}
+
+// TestResourcePlanNormalizationCannotResurrectDisabledStorage verifies stale transient selections are discarded by component applicability.
+func TestResourcePlanNormalizationCannotResurrectDisabledStorage(t *testing.T) {
+	components := Components{DatabaseSQLite: true}
+	plan, err := DefaultResourcePlan(components)
+	if err != nil {
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
+	}
+	plan = plan.WithSelection(ResourceStorage, DriverSelection{Active: "s3", Supported: []string{"s3"}})
+	normalized, err := plan.Normalized(components)
+	if err != nil {
+		t.Fatalf("Normalized rejected a stale disabled selection: %v", err)
+	}
+	if _, exists := normalized.Selection(ResourceStorage); exists {
+		t.Fatalf("normalized Storage-disabled plan retained stale Storage selection: %#v", normalized)
 	}
 }
 
@@ -127,7 +147,7 @@ func TestResourcePlanNormalizationCanonicalizesDatabaseAliases(t *testing.T) {
 
 // TestResourcePlanNamedRequirementsLockRootSupport protects generated named-resource portability.
 func TestResourcePlanNamedRequirementsLockRootSupport(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Auth: true}
+	components := Components{DatabaseMySQL: true, Auth: true, Storage: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)

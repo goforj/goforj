@@ -365,7 +365,7 @@ func renderStorageConfig(projectDir string) ([]byte, error) {
 		driver := effectivePrimitiveDriver(env.Get("STORAGE_"+child+"_DRIVER", ""), "local")
 		driverSet[driver] = struct{}{}
 	}
-	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, "STORAGE") {
 		resourcePrefix := appPrefix + "_STORAGE"
 		for _, child := range exactScopedChildNames(resourcePrefix, storageRootKeys) {
 			driver := effectiveAppPrimitiveChildDriver(resourcePrefix, primitiveEnvContract{

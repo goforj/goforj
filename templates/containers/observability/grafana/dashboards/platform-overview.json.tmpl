@@ -549,7 +549,8 @@
           "legendFormat": "cache read p95",
           "range": true,
           "refId": "C"
-        },
+        }
+{{- if .ProjectComponents.Storage }},
         {
           "editorMode": "code",
           "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(storage_operation_duration_seconds_bucket{app=~\"$app\"}[$__rate_interval]))) or vector(0)",
@@ -557,6 +558,7 @@
           "range": true,
           "refId": "D"
         }
+{{- end }}
       ],
       "title": "Latency Watch",
       "type": "timeseries"
@@ -789,7 +791,8 @@
           "legendFormat": "{{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
-        },
+        }
+{{- if .ProjectComponents.Storage }},
         {
           "editorMode": "code",
           "expr": "topk(12, sum by (disk, operation, status) (rate(storage_operations_total{app=~\"$app\", status!=\"ok\"}[$__rate_interval])))",
@@ -797,8 +800,9 @@
           "range": true,
           "refId": "B"
         }
+{{- end }}
       ],
-      "title": "Cache And Storage Hotspots",
+      "title": "Cache{{ if .ProjectComponents.Storage }} And Storage{{ end }} Hotspots",
       "type": "timeseries"
     }
 {{- if or .ProjectComponents.Events .ProjectComponents.Mail }},

@@ -98,7 +98,7 @@ func discoverDBConnectionNames(projectDir string) []string {
 // validateAppPrefixedDBEnv rejects App-scoped keys that cannot become a root or named database setting at runtime.
 func validateAppPrefixedDBEnv(projectDir string) error {
 	problems := []string{}
-	for _, appPrefix := range generationAppEnvPrefixes(projectDir) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, "DB") {
 		prefix := appPrefix + "_DB_"
 		for _, assignment := range os.Environ() {
 			key, _, ok := strings.Cut(assignment, "=")

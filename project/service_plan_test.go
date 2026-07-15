@@ -48,7 +48,7 @@ func TestResolveServicePlanRedisStates(t *testing.T) {
 
 // TestResolveServicePlanDeduplicatesRedisConsumers verifies one service covers every normal shared Redis resource.
 func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
-	components := Components{Auth: true, DatabaseMySQL: true, Docker: true, Jobs: true, Events: true}
+	components := Components{Auth: true, DatabaseMySQL: true, Docker: true, Jobs: true, Events: true, Storage: true}
 	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceStorage, DriverSelection{Active: "redis", Supported: []string{"local", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
@@ -69,6 +69,23 @@ func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
 	}
 	if !servicePlan.HasActiveLocal() {
 		t.Fatal("service plan should report active local services")
+	}
+}
+
+// TestResolveServicePlanIgnoresStaleDisabledStorage verifies a transient selection cannot invent Storage infrastructure.
+func TestResolveServicePlanIgnoresStaleDisabledStorage(t *testing.T) {
+	components := Components{DatabaseSQLite: true}
+	resourcePlan, err := DefaultResourcePlan(components)
+	if err != nil {
+		t.Fatalf("DefaultResourcePlan returned error: %v", err)
+	}
+	resourcePlan = resourcePlan.WithSelection(ResourceStorage, DriverSelection{Active: "s3", Supported: []string{"s3"}})
+	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{})
+	if err != nil {
+		t.Fatalf("ResolveServicePlan returned error: %v", err)
+	}
+	if requirement, exists := servicePlan.Requirement(ServiceStorageS3); exists {
+		t.Fatalf("Storage-disabled plan created an S3 requirement: %#v", requirement)
 	}
 }
 

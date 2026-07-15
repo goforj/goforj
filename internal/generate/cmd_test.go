@@ -188,6 +188,100 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 }
 
+// TestCmdRunSkipsStaleStorageWhenComponentDisabled verifies default generation trusts project intent instead of generated-directory residue.
+func TestCmdRunSkipsStaleStorageWhenComponentDisabled(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
+		t.Fatalf("mkdir stale Storage package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    storage: false\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("STORAGE_DRIVER=unknown\nSTORAGE_SUPPORTED_DRIVERS=unknown\n"), 0o644); err != nil {
+		t.Fatalf("write stale Storage environment: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	if err := (&Cmd{}).Run(); err != nil {
+		t.Fatalf("generate project with disabled Storage: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("internal", "storages", "manager_gen.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("disabled Storage generation wrote manager_gen.go: %v", statErr)
+	}
+}
+
+// TestCmdRunRejectsExplicitStorageWhenComponentDisabled verifies an explicit request cannot override durable component intent.
+func TestCmdRunRejectsExplicitStorageWhenComponentDisabled(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
+		t.Fatalf("mkdir stale Storage package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    storage: false\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("STORAGE_DRIVER=unknown\nSTORAGE_SUPPORTED_DRIVERS=unknown\n"), 0o644); err != nil {
+		t.Fatalf("write stale Storage environment: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	err = (&Cmd{Storage: true}).Run()
+	if err == nil || !strings.Contains(err.Error(), "Storage component is disabled") {
+		t.Fatalf("explicit disabled Storage error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("internal", "storages", "manager_gen.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("disabled Storage generation wrote manager_gen.go: %v", statErr)
+	}
+}
+
+// TestCmdRunGeneratesStorageFromEnabledProjectConfig verifies config can authorize generation before the package directory exists.
+func TestCmdRunGeneratesStorageFromEnabledProjectConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    storage: true\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("STORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n"), 0o644); err != nil {
+		t.Fatalf("write Storage environment: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal", "storages")); !os.IsNotExist(err) {
+		t.Fatalf("Storage package exists before generation: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	originalTidy := goModTidyRunner
+	goModTidyRunner = func(string) error { return nil }
+	t.Cleanup(func() { goModTidyRunner = originalTidy })
+	if err := (&Cmd{}).Run(); err != nil {
+		t.Fatalf("generate enabled Storage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("internal", "storages", "manager_gen.go")); err != nil {
+		t.Fatalf("enabled Storage manager was not generated: %v", err)
+	}
+}
+
 // TestCmdRunRejectsExplicitEventsWhenComponentDisabled verifies stale package directories cannot authorize Events generation.
 func TestCmdRunRejectsExplicitEventsWhenComponentDisabled(t *testing.T) {
 	root := t.TempDir()

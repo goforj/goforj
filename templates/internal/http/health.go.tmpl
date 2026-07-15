@@ -136,8 +136,10 @@ func readinessCheckDriver(checkType string, checkName string) string {
 		return cacheDriver(checkName)
 	case "db":
 		return dbDriver(checkName)
+{{- if .ProjectComponents.Storage }}
 	case "storage":
 		return storageDriver(checkName)
+{{- end }}
 {{- if .ProjectComponents.Events }}
 	case "events":
 		return eventDriver(checkName)
@@ -165,6 +167,7 @@ func dbDriver(name string) string {
 	return strings.TrimSpace(env.Get(key, env.Get("DB_DRIVER", "")))
 }
 
+{{ if .ProjectComponents.Storage }}
 // storageDriver resolves the configured driver for one Storage readiness check.
 func storageDriver(name string) string {
 	key := "STORAGE_DRIVER"
@@ -173,6 +176,7 @@ func storageDriver(name string) string {
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("STORAGE_DRIVER", "local")))
 }
+{{- end }}
 
 {{ if .ProjectComponents.Events }}
 // eventDriver resolves the configured driver for one Events readiness check.
