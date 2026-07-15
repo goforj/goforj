@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/project"
@@ -111,8 +112,8 @@ func TestCurrentRootPathsPreserveCommandSpelling(t *testing.T) {
 	}
 }
 
-// TestDiscoveredNamedAppsUsesConventionalOwnershipMarkers verifies discovery is rooted, filtered, deduplicated, and sorted.
-func TestDiscoveredNamedAppsUsesConventionalOwnershipMarkers(t *testing.T) {
+// TestDiscoverUsesConventionalOwnershipMarkers verifies discovery is rooted, filtered, deduplicated, and sorted.
+func TestDiscoverUsesConventionalOwnershipMarkers(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{
 		filepath.Join("cmd", "reporting", "main.go"),
@@ -126,14 +127,18 @@ func TestDiscoveredNamedAppsUsesConventionalOwnershipMarkers(t *testing.T) {
 		writeLayoutTestFile(t, filepath.Join(root, path))
 	}
 
-	apps := DiscoveredNamedApps(root)
+	discovery, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	apps := discovery.NamedApps()
 	want := []project.App{
 		project.DefaultNamedApp("billing"),
 		project.DefaultNamedApp("customer-portal"),
 		project.DefaultNamedApp("reporting"),
 	}
 	if !reflect.DeepEqual(apps, want) {
-		t.Fatalf("DiscoveredNamedApps() = %#v, want %#v", apps, want)
+		t.Fatalf("Discovery.NamedApps() = %#v, want %#v", apps, want)
 	}
 }
 
@@ -152,13 +157,17 @@ func TestAppInventoriesKeepTheirDistinctSources(t *testing.T) {
 		WireDir:    filepath.Join("services", "billing", "wire"),
 	}
 
-	conventional := ConventionalApps(root)
+	discovery, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	conventional := discovery.ConventionalApps()
 	wantConventional := []project.App{project.DefaultApp(), project.DefaultNamedApp("billing")}
 	if !reflect.DeepEqual(conventional, wantConventional) {
 		t.Fatalf("ConventionalApps() = %#v, want %#v", conventional, wantConventional)
 	}
 
-	runtimeApps := RuntimeApps(root, config, pendingBilling, project.DefaultNamedApp("worker"))
+	runtimeApps := discovery.RuntimeApps(config, pendingBilling, project.DefaultNamedApp("worker"))
 	wantNames := []string{"app", "accounts", "billing", "reporting", "worker"}
 	if len(runtimeApps) != len(wantNames) {
 		t.Fatalf("RuntimeApps() = %#v, want names %#v", runtimeApps, wantNames)
@@ -170,6 +179,76 @@ func TestAppInventoriesKeepTheirDistinctSources(t *testing.T) {
 	}
 	if runtimeApps[2] != pendingBilling {
 		t.Fatalf("pending App paths = %#v, want %#v", runtimeApps[2], pendingBilling)
+	}
+}
+
+// TestDiscoverReturnsFilesystemErrors verifies callers can distinguish an empty layout from an inventory that could not be inspected completely.
+func TestDiscoverReturnsFilesystemErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T, root string)
+		wantError string
+		wantApps  []project.App
+	}{
+		{
+			name: "command root is not a directory",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				writeLayoutTestFile(t, filepath.Join(root, "cmd"))
+				writeLayoutTestFile(t, filepath.Join(root, "app", "billing", "routes.go"))
+			},
+			wantError: "discover Apps in",
+			wantApps:  []project.App{project.DefaultApp(), project.DefaultNamedApp("billing")},
+		},
+		{
+			name: "command marker cannot be inspected",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				marker := filepath.Join(root, "cmd", "billing", "main.go")
+				if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+					t.Fatalf("MkdirAll(%s) error = %v", filepath.Dir(marker), err)
+				}
+				if err := os.Symlink("main.go", marker); err != nil {
+					t.Fatalf("Symlink(%s) error = %v", marker, err)
+				}
+			},
+			wantError: "inspect App marker",
+			wantApps:  []project.App{project.DefaultApp()},
+		},
+		{
+			name: "App marker cannot be inspected",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				marker := filepath.Join(root, "app", "billing", "routes.go")
+				if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+					t.Fatalf("MkdirAll(%s) error = %v", filepath.Dir(marker), err)
+				}
+				if err := os.Symlink("routes.go", marker); err != nil {
+					t.Fatalf("Symlink(%s) error = %v", marker, err)
+				}
+			},
+			wantError: "inspect App marker",
+			wantApps:  []project.App{project.DefaultApp()},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			test.setup(t, root)
+
+			discovery, err := Discover(root)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("Discover() error = %v, want containing %q", err, test.wantError)
+			}
+			if got := discovery.ConventionalApps(); !reflect.DeepEqual(got, test.wantApps) {
+				t.Fatalf("partial Discovery.ConventionalApps() = %#v, want %#v", got, test.wantApps)
+			}
+
+			if got := ConventionalApps(root); !reflect.DeepEqual(got, test.wantApps) {
+				t.Fatalf("best-effort ConventionalApps() = %#v, want %#v", got, test.wantApps)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package projectlayout
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/goforj/goforj/project"
 )
+
+// Discovery is an immutable inventory of Apps proven by conventional filesystem ownership markers.
+type Discovery struct {
+	namedApps []project.App
+}
 
 // NormalizeApp fills omitted paths from GoForj's conventional App layout while preserving explicit overrides.
 func NormalizeApp(app project.App) project.App {
@@ -75,9 +81,9 @@ func RuntimeReadyStamp(root string, app project.App) string {
 	return explicitRuntimePath(root, "."+app.Name+".ready")
 }
 
-// DiscoveredNamedApps requires conventional ownership markers so arbitrary subpackages never become runnable Apps.
-func DiscoveredNamedApps(root string) []project.App {
-	names := discoverConventionalAppNames(root)
+// Discover reports filesystem failures while retaining Apps proven by readable markers, so compatibility callers can safely use the partial inventory.
+func Discover(root string) (Discovery, error) {
+	names, err := discoverConventionalAppNames(root)
 	apps := make([]project.App, 0, len(names))
 	for name := range names {
 		if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
@@ -88,18 +94,23 @@ func DiscoveredNamedApps(root string) []project.App {
 	sort.Slice(apps, func(i int, j int) bool {
 		return apps[i].Name < apps[j].Name
 	})
-	return apps
+	return Discovery{namedApps: apps}, err
 }
 
-// ConventionalApps keeps the default App first while making filesystem discovery deterministic for rendering and legacy dev.
-func ConventionalApps(root string) []project.App {
+// NamedApps returns a copy so one caller cannot reorder the shared discovery result for another.
+func (d Discovery) NamedApps() []project.App {
+	return append([]project.App(nil), d.namedApps...)
+}
+
+// ConventionalApps keeps the default App first while making filesystem discovery deterministic.
+func (d Discovery) ConventionalApps() []project.App {
 	apps := []project.App{project.DefaultApp()}
-	return append(apps, DiscoveredNamedApps(root)...)
+	return append(apps, d.namedApps...)
 }
 
 // RuntimeApps includes configured and pending Apps before their files exist while preserving stable runtime indexes.
-func RuntimeApps(root string, config *project.Config, pending ...project.App) []project.App {
-	candidates := ConventionalApps(root)
+func (d Discovery) RuntimeApps(config *project.Config, pending ...project.App) []project.App {
+	candidates := d.ConventionalApps()
 	if config != nil {
 		configuredNames := make([]string, 0, len(config.Apps))
 		for name := range config.Apps {
@@ -114,11 +125,37 @@ func RuntimeApps(root string, config *project.Config, pending ...project.App) []
 	return orderedRuntimeApps(candidates)
 }
 
+// DiscoveredNamedApps preserves best-effort discovery for renderer compatibility; callers that can return errors should use Discover.
+func DiscoveredNamedApps(root string) []project.App {
+	return bestEffortDiscovery(root).NamedApps()
+}
+
+// ConventionalApps preserves best-effort discovery for rendering and legacy dev; callers that can return errors should use Discover.
+func ConventionalApps(root string) []project.App {
+	return bestEffortDiscovery(root).ConventionalApps()
+}
+
+// RuntimeApps preserves best-effort discovery for renderer compatibility while still including configured and pending Apps.
+func RuntimeApps(root string, config *project.Config, pending ...project.App) []project.App {
+	return bestEffortDiscovery(root).RuntimeApps(config, pending...)
+}
+
 // discoverConventionalAppNames treats established cmd and app ownership markers as filesystem source of truth.
-func discoverConventionalAppNames(root string) map[string]struct{} {
+func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 	names := map[string]struct{}{}
+	var discoveryErr error
+	recordError := func(err error) {
+		if discoveryErr == nil {
+			discoveryErr = err
+		}
+	}
+
 	commandRoot := rootedPath(root, "cmd")
-	if entries, err := os.ReadDir(commandRoot); err == nil {
+	entries, err := os.ReadDir(commandRoot)
+	if err != nil && !os.IsNotExist(err) {
+		recordError(fmt.Errorf("discover Apps in %s: %w", commandRoot, err))
+	}
+	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -127,14 +164,21 @@ func discoverConventionalAppNames(root string) map[string]struct{} {
 			if name == project.DefaultAppName || !project.IsSafeAppName(name) {
 				continue
 			}
-			if _, err := os.Stat(filepath.Join(commandRoot, name, "main.go")); err == nil {
+			marker := filepath.Join(commandRoot, name, "main.go")
+			if _, err := os.Stat(marker); err == nil {
 				names[name] = struct{}{}
+			} else if !os.IsNotExist(err) {
+				recordError(fmt.Errorf("inspect App marker %s: %w", marker, err))
 			}
 		}
 	}
 
 	appRoot := rootedPath(root, "app")
-	if entries, err := os.ReadDir(appRoot); err == nil {
+	entries, err = os.ReadDir(appRoot)
+	if err != nil && !os.IsNotExist(err) {
+		recordError(fmt.Errorf("discover Apps in %s: %w", appRoot, err))
+	}
+	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -143,16 +187,21 @@ func discoverConventionalAppNames(root string) map[string]struct{} {
 			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
 				continue
 			}
-			if hasConventionalAppFiles(filepath.Join(appRoot, name)) {
+			hasFiles, err := hasConventionalAppFiles(filepath.Join(appRoot, name))
+			if err != nil {
+				recordError(err)
+			}
+			if hasFiles {
 				names[name] = struct{}{}
 			}
 		}
 	}
-	return names
+	return names, discoveryErr
 }
 
 // hasConventionalAppFiles excludes arbitrary app subpackages unless they contain an App-owned composition marker.
-func hasConventionalAppFiles(appDir string) bool {
+func hasConventionalAppFiles(appDir string) (bool, error) {
+	var markerErr error
 	for _, path := range []string{
 		filepath.Join(appDir, "wire"),
 		filepath.Join(appDir, "commands.go"),
@@ -162,10 +211,20 @@ func hasConventionalAppFiles(appDir string) bool {
 		filepath.Join(appDir, "lifecycle.go"),
 	} {
 		if _, err := os.Stat(path); err == nil {
-			return true
+			return true, markerErr
+		} else if !os.IsNotExist(err) {
+			if markerErr == nil {
+				markerErr = fmt.Errorf("inspect App marker %s: %w", path, err)
+			}
 		}
 	}
-	return false
+	return false, markerErr
+}
+
+// bestEffortDiscovery keeps renderer-facing compatibility APIs stable until their call chains can return discovery failures.
+func bestEffortDiscovery(root string) Discovery {
+	discovery, _ := Discover(root)
+	return discovery
 }
 
 // orderedRuntimeApps keeps the default App at index zero and lets later sources provide more specific paths.
