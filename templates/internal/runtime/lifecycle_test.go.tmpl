@@ -8,7 +8,7 @@ import (
 )
 
 func TestLifecycle_StartOrder(t *testing.T) {
-	manager := NewLifecycle(nil)
+	manager := NewLifecycle(NewTimeouts())
 	var calls []string
 
 	manager.On(BeforeStartup, func(context.Context) error {
@@ -35,7 +35,7 @@ func TestLifecycle_StartOrder(t *testing.T) {
 }
 
 func TestLifecycle_StartIsIdempotent(t *testing.T) {
-	manager := NewLifecycle(nil)
+	manager := NewLifecycle(NewTimeouts())
 	calls := 0
 	manager.On(Startup, func(context.Context) error {
 		calls++
@@ -54,7 +54,7 @@ func TestLifecycle_StartIsIdempotent(t *testing.T) {
 }
 
 func TestLifecycle_StopOrderReversedWithinPhase(t *testing.T) {
-	manager := NewLifecycle(nil)
+	manager := NewLifecycle(NewTimeouts())
 	var calls []string
 
 	manager.On(Shutdown, func(context.Context) error {
@@ -80,7 +80,7 @@ func TestLifecycle_StopOrderReversedWithinPhase(t *testing.T) {
 }
 
 func TestLifecycle_StopAggregatesErrors(t *testing.T) {
-	manager := NewLifecycle(nil)
+	manager := NewLifecycle(NewTimeouts())
 	errA := errors.New("a")
 	errB := errors.New("b")
 
@@ -103,8 +103,21 @@ func TestLifecycle_StopAggregatesErrors(t *testing.T) {
 }
 
 func TestLifecycle_StopWithoutStartIsNoop(t *testing.T) {
-	manager := NewLifecycle(nil)
+	manager := NewLifecycle(NewTimeouts())
 	if err := manager.Stop(context.Background()); err != nil {
 		t.Fatalf("expected noop stop, got %v", err)
 	}
+}
+
+// TestNewLifecycle_RequiresTimeouts verifies invalid wiring fails at construction rather than during shutdown.
+func TestNewLifecycle_RequiresTimeouts(t *testing.T) {
+	defer func() {
+		got := recover()
+		want := "runtime.NewLifecycle requires non-nil timeouts"
+		if got != want {
+			t.Fatalf("unexpected panic: got %v want %q", got, want)
+		}
+	}()
+
+	NewLifecycle(nil)
 }

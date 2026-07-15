@@ -27,7 +27,7 @@ func NewTimeouts() *Timeouts {
 
 // ShutdownTimeout returns the default app shutdown budget.
 func (s *Timeouts) ShutdownTimeout() time.Duration {
-	if s == nil || s.shutdownTimeout <= 0 {
+	if s.shutdownTimeout <= 0 {
 		return 30 * time.Second
 	}
 	return s.shutdownTimeout
@@ -35,7 +35,7 @@ func (s *Timeouts) ShutdownTimeout() time.Duration {
 
 // QueueShutdownTimeout returns the queue shutdown budget, falling back to the app budget.
 func (s *Timeouts) QueueShutdownTimeout() time.Duration {
-	if s != nil && s.queueShutdownTimeout > 0 {
+	if s.queueShutdownTimeout > 0 {
 		return s.queueShutdownTimeout
 	}
 	return s.ShutdownTimeout()
@@ -43,7 +43,7 @@ func (s *Timeouts) QueueShutdownTimeout() time.Duration {
 
 // SchedulerSubprocessShutdownTimeout returns the shutdown budget for scheduler-owned subprocesses.
 func (s *Timeouts) SchedulerSubprocessShutdownTimeout() time.Duration {
-	if s != nil && s.schedulerSubprocessTimeout > 0 {
+	if s.schedulerSubprocessTimeout > 0 {
 		return s.schedulerSubprocessTimeout
 	}
 	return s.ShutdownTimeout()
