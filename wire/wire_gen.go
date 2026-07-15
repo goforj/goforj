@@ -7,15 +7,8 @@
 package wire
 
 import (
-	"github.com/goforj/goforj/internal/apiindex"
-	"github.com/goforj/goforj/internal/backup"
-	"github.com/goforj/goforj/internal/bench"
-	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
-	"github.com/goforj/goforj/internal/forj/atlas"
-	"github.com/goforj/goforj/internal/forj/makeapp"
-	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -24,45 +17,17 @@ import (
 // InitializeApplication initializes the application with all its dependencies.
 func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
-	runner := forj.ProvideAPIIndexRunner(appLogger)
-	buildCmd := build.NewCmd(appLogger, runner)
-	apiindexCmd := apiindex.NewCmd(runner)
-	generateCmd := generate.NewCmd()
 	projectRenderer := forj.NewProjectRenderer(appLogger)
-	newProjectCmd := forj.NewNewProjectCmd(appLogger, projectRenderer)
-	installCmd := atlas.NewInstallCmd()
-	updateCmd := atlas.NewUpdateCmd()
-	doctorCmd := atlas.NewDoctorCmd()
-	listSkillsCmd := atlas.NewListSkillsCmd()
-	makeSkillCmd := atlas.NewMakeSkillCmd()
-	mcpCmd := atlas.NewMCPCmd()
-	makeappCmd := makeapp.NewCmd(appLogger, projectRenderer)
-	devCmd := forj.NewDevCmd(appLogger)
-	downCmd := forj.NewDownCmd(appLogger)
-	buildBinaryCmd := forj.NewBuildBinaryCmd(appLogger)
-	testRenderCmd := forj.NewTestRenderCmd(appLogger)
-	testRendersCmd := forj.NewTestRendersCmd(appLogger)
-	testIntegrationCmd := forj.NewTestIntegrationCmd(appLogger)
-	inspectOverheadMeasureCmd := bench.NewInspectOverheadMeasureCmd(appLogger)
-	loggerOverheadMeasureCmd := bench.NewLoggerOverheadMeasureCmd(appLogger)
-	httpLiveProfileCmd := bench.NewHTTPLiveProfileCmd(appLogger)
-	httpRuntimeProfileCmd := bench.NewHTTPRuntimeProfileCmd(appLogger)
-	metricsOverheadMeasureCmd := bench.NewMetricsOverheadMeasureCmd(appLogger)
-	testConsoleCmd := forj.NewTestConsoleCmd()
-	testOpenAPICmd := forj.NewTestOpenAPICmd(appLogger)
-	scenarioListCmd := forj.NewScenarioListCmd()
-	scenarioGenerateCmd := forj.NewScenarioGenerateCmd()
-	scenarioTestCmd := forj.NewScenarioTestCmd(appLogger)
-	renderCmd := forj.NewCmd(appLogger, projectRenderer)
-	runCmd := build.NewRunCmd(appLogger, runner)
-	planCmd := backup.NewPlanCmd()
-	listCmd := backup.NewListCmd()
-	createCmd := backup.NewCreateCmd()
-	verifyCmd := backup.NewVerifyCmd()
-	restoreCmd := backup.NewRestoreCmd()
-	pruneCmd := backup.NewPruneCmd()
-	statusCmd := backup.NewStatusCmd()
-	rootCmd := forj.NewRootCmd(buildCmd, apiindexCmd, generateCmd, newProjectCmd, installCmd, updateCmd, doctorCmd, listSkillsCmd, makeSkillCmd, mcpCmd, makeappCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd, planCmd, listCmd, createCmd, verifyCmd, restoreCmd, pruneCmd, statusCmd)
+	projectAuthoringCommands := forj.NewProjectAuthoringCommands(appLogger, projectRenderer)
+	runner := forj.ProvideAPIIndexRunner(appLogger)
+	buildCommands := forj.NewBuildCommands(appLogger, runner)
+	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner)
+	atlasCommands := forj.NewAtlasCommands()
+	testCommands := forj.NewTestCommands(appLogger)
+	benchmarkCommands := forj.NewBenchmarkCommands(appLogger)
+	scenarioCommands := forj.NewScenarioCommands(appLogger)
+	backupCommands := forj.NewBackupCommands()
+	rootCmd := forj.NewRootCmd(projectAuthoringCommands, buildCommands, runtimeCommands, atlasCommands, testCommands, benchmarkCommands, scenarioCommands, backupCommands)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)
