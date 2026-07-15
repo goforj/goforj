@@ -111,12 +111,12 @@ func componentYAMLSequenceStyle(names []string) yaml.Style {
 	return 0
 }
 
-// NeedsComponentMigration reports whether any component selection was loaded from the historical boolean mapping.
+// NeedsComponentMigration reports whether component YAML needs a canonical rewrite because it used a historical mapping or marker.
 func (c ProjectConfig) NeedsComponentMigration() bool {
 	return c.needsComponentMigration
 }
 
-// UnmarshalYAML records historical component shapes without changing Components value equality.
+// UnmarshalYAML uses the render component shape to distinguish legacy omission defaults from explicit modern selections.
 func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 	type projectConfigFields ProjectConfig
 	var fields projectConfigFields
@@ -124,14 +124,16 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode project config: %w", err)
 	}
 	*c = ProjectConfig(fields)
-	legacyContract := c.Render.ComponentContractVersion < CurrentComponentContractVersion
 	if c.Render.ComponentContractVersion < 0 || c.Render.ComponentContractVersion > CurrentComponentContractVersion {
 		return fmt.Errorf("decode project config: unsupported component contract version %d; this GoForj release supports version %d", c.Render.ComponentContractVersion, CurrentComponentContractVersion)
 	}
-	if legacyContract {
+	render := yamlMappingValue(value, "render")
+	renderComponents := yamlMappingValue(render, "components")
+	legacyDefaults := c.Render.ComponentContractVersion < CurrentComponentContractVersion && (renderComponents == nil || renderComponents.Kind == yaml.MappingNode)
+	if legacyDefaults {
 		c.migrateLegacyPrimitiveComponents()
 	}
-	c.needsComponentMigration = legacyContract || projectConfigNeedsComponentMigration(value)
+	c.needsComponentMigration = legacyDefaults || yamlMappingValue(render, "component_contract") != nil || projectConfigNeedsComponentMigration(value)
 	return nil
 }
 

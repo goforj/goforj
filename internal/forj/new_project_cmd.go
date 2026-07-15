@@ -502,11 +502,10 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		allowNonEmpty:        options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
-				GoForjVersion:            version.Semver(),
-				Components:               components,
-				StarterKit:               project.DefaultStarterKit(),
-				HelpFormat:               project.DefaultHelpFormat(),
-				ComponentContractVersion: project.CurrentComponentContractVersion,
+				GoForjVersion: version.Semver(),
+				Components:    components,
+				StarterKit:    project.DefaultStarterKit(),
+				HelpFormat:    project.DefaultHelpFormat(),
 			},
 		},
 	}

@@ -40,7 +40,7 @@ func testPrimitivePreservedOwnerMigrations(t *testing.T) {
 		{
 			name: "Events named App",
 			config: &project.Config{
-				Render: project.RenderConfig{Components: primitiveRendererBaseComponents(), ComponentContractVersion: project.CurrentComponentContractVersion},
+				Render: project.RenderConfig{Components: primitiveRendererBaseComponents()},
 				Apps:   map[string]project.AppConfig{"worker": {Components: primitiveComponentsWith(project.ComponentEvents)}},
 			},
 			source: filepath.Join(project.DefaultNamedApp("worker").WireDir, "inject_event_subscribers.go"),
@@ -200,7 +200,7 @@ func provideSharedRedisClient() any { return nil }
 `
 		writePrimitiveRendererFile(t, servicePath, serviceContents)
 		config := &project.Config{
-			Render: project.RenderConfig{Components: primitiveRendererBaseComponents(), ComponentContractVersion: project.CurrentComponentContractVersion},
+			Render: project.RenderConfig{Components: primitiveRendererBaseComponents()},
 			Apps:   map[string]project.AppConfig{"worker": {Components: primitiveComponentsWith(project.ComponentEvents)}},
 		}
 		renderer := &ProjectRenderer{

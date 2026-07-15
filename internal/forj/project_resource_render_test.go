@@ -299,8 +299,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 		ProjectName:  "Shared Resource App",
 		GoModuleName: "example.com/shared-resource-app",
 		Render: project.RenderConfig{
-			ComponentContractVersion: project.CurrentComponentContractVersion,
-			Components:               components,
+			Components: components,
 		},
 	}
 	encoded, err := yaml.Marshal(config)

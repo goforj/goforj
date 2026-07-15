@@ -267,8 +267,7 @@ func primitiveProjectionConfig(t *testing.T, key project.ComponentKey, defaultEn
 	return &project.Config{
 		GoModuleName: "example.com/primitive-projection",
 		Render: project.RenderConfig{
-			Components:               defaultComponents,
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: defaultComponents,
 		},
 		Apps: map[string]project.AppConfig{
 			"worker": {Components: workerComponents},

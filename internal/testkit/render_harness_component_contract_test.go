@@ -10,8 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestWriteProjectConfigFilePersistsCurrentComponentContractForPrimitiveOptOuts verifies integration renders retain their requested surface.
-func TestWriteProjectConfigFilePersistsCurrentComponentContractForPrimitiveOptOuts(t *testing.T) {
+// TestWriteProjectConfigFileUsesSequenceSemanticsForPrimitiveOptOuts verifies integration renders retain their requested surface without a marker.
+func TestWriteProjectConfigFileUsesSequenceSemanticsForPrimitiveOptOuts(t *testing.T) {
 	root := t.TempDir()
 	config := project.Config{
 		Render: project.RenderConfig{
@@ -24,8 +24,11 @@ func TestWriteProjectConfigFilePersistsCurrentComponentContractForPrimitiveOptOu
 	if err != nil {
 		t.Fatalf("read integration render config: %v", err)
 	}
-	if !strings.Contains(string(source), "component_contract: 1") {
-		t.Fatalf("integration render config omitted the component contract marker:\n%s", source)
+	if strings.Contains(string(source), "component_contract:") {
+		t.Fatalf("integration render config persisted the obsolete component marker:\n%s", source)
+	}
+	if !strings.Contains(string(source), "components: [cli]") {
+		t.Fatalf("integration render config omitted the canonical component sequence:\n%s", source)
 	}
 
 	var loaded project.Config

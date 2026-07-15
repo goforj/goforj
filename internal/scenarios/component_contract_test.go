@@ -10,8 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestWriteScenarioProjectConfigPersistsCurrentComponentContract verifies scenario fixtures retain intentionally absent primitives.
-func TestWriteScenarioProjectConfigPersistsCurrentComponentContract(t *testing.T) {
+// TestWriteScenarioProjectConfigUsesSequenceSemantics verifies scenario fixtures retain intentionally absent primitives without a marker.
+func TestWriteScenarioProjectConfigUsesSequenceSemantics(t *testing.T) {
 	root := t.TempDir()
 	spec := ScenarioSpec{
 		Title: "Lean Scenario",
@@ -28,8 +28,11 @@ func TestWriteScenarioProjectConfigPersistsCurrentComponentContract(t *testing.T
 	if err != nil {
 		t.Fatalf("read scenario config: %v", err)
 	}
-	if !strings.Contains(string(source), "component_contract: 1") {
-		t.Fatalf("scenario config omitted the component contract marker:\n%s", source)
+	if strings.Contains(string(source), "component_contract:") {
+		t.Fatalf("scenario config persisted the obsolete component marker:\n%s", source)
+	}
+	if !strings.Contains(string(source), "components: [cli]") {
+		t.Fatalf("scenario config omitted the canonical component sequence:\n%s", source)
 	}
 
 	var loaded project.Config

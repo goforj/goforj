@@ -99,8 +99,8 @@ func TestWriteProjectConfigAppliesDefaultsWithoutMutatingComponents(t *testing.T
 	}
 }
 
-// TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts verifies omissions retain current opt-out semantics.
-func TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t *testing.T) {
+// TestWriteProjectConfigUsesSequenceSemanticsForPrimitiveOptOuts verifies canonical omissions survive without a version marker.
+func TestWriteProjectConfigUsesSequenceSemanticsForPrimitiveOptOuts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".goforj.yml")
 	config := project.Config{
 		ProjectName: "Lean Render",
@@ -116,8 +116,11 @@ func TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t
 	if err != nil {
 		t.Fatalf("read project config: %v", err)
 	}
-	if !strings.Contains(string(source), "component_contract: 1") {
-		t.Fatalf("test render config omitted the component contract marker:\n%s", source)
+	if strings.Contains(string(source), "component_contract:") {
+		t.Fatalf("test render config persisted the obsolete component marker:\n%s", source)
+	}
+	if !strings.Contains(string(source), "components: [cli]") {
+		t.Fatalf("test render config omitted the canonical component sequence:\n%s", source)
 	}
 
 	var loaded project.Config

@@ -487,9 +487,6 @@ func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 // TestNewProjectExposesPrimitiveDefaultsAsComponents keeps the common path default-on without adding another wizard stage.
 func TestNewProjectExposesPrimitiveDefaultsAsComponents(t *testing.T) {
 	m := initialModel()
-	if m.config.Render.ComponentContractVersion != project.CurrentComponentContractVersion {
-		t.Fatalf("new project component contract = %d, want %d", m.config.Render.ComponentContractVersion, project.CurrentComponentContractVersion)
-	}
 	want := map[project.ComponentKey]string{
 		project.ComponentCache:   "Cache",
 		project.ComponentEvents:  "Events",

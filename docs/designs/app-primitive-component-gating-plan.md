@@ -198,14 +198,11 @@ project capability.
 
 ## Configuration Compatibility
 
-Canonical component YAML stores enabled names only. Existing projects omit
-`cache`, `events`, and `storage` because those keys did not exist, which is
-indistinguishable from intentional deselection without a migration
-discriminator.
-
-Introduce a component-contract schema marker or an equally explicit raw-config
-version discriminator. Do not infer old-versus-new semantics from decoded zero
-values.
+Canonical component YAML stores enabled names as a sequence. That raw shape is
+also the migration discriminator: historical boolean mappings predate optional
+`cache`, `events`, and `storage`, while omission from a modern sequence is an
+intentional deselection. The obsolete `component_contract` marker remains
+readable for compatibility but is not written into canonical configs.
 
 Migration from the existing contract must:
 
@@ -215,8 +212,8 @@ Migration from the existing contract must:
 - preserve the existing Jobs selection, which continues to own Queue;
 - preserve all existing driver, named-resource, and App-prefixed environment
   values;
-- persist the migrated component contract before absence gains the new
-  disabled meaning;
+- persist the migrated selection as a component sequence without the obsolete
+  marker before absence gains the new disabled meaning;
 - update both GoForj's project configuration types and the configuration parser
   rendered into generated projects.
 

@@ -277,7 +277,6 @@ func TestGenerateProjectFilesPreservesUnmanagedObservabilityTargets(t *testing.T
 const generationCacheProjectConfig = `project_name: Cache overlays
 module_name: example.com/cache-overlays
 render:
-  component_contract: 1
   components: [cli, cache]
 apps:
   billing:

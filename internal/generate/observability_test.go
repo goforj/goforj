@@ -241,12 +241,7 @@ func TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled(t *testing.T
 	config := []byte(strings.Join([]string{
 		"project_name: Observability Test App",
 		"render:",
-		"  component_contract: 1",
-		"  components:",
-		"    web_api: true",
-		"    metrics: true",
-		"    observability: true",
-		"    jobs: false",
+		"  components: [web_api, metrics, observability]",
 		"",
 	}, "\n"))
 	if err := os.WriteFile(filepath.Join(projectDir, ".goforj.yml"), config, 0o644); err != nil {

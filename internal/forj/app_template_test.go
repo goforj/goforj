@@ -38,7 +38,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Events`,
 			`Storage`,
 			`func (c *ProjectConfig) UnmarshalYAML(`,
-			`func migrateLegacyAppPrimitiveComponents(`,
+			`func normalizeAppComponents(`,
 			`func (c *DevConfig) SetApps(`,
 		},
 		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
@@ -54,7 +54,6 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Components   *project.Components`,
 			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
 			`func loadProjectConfig() (*project.Config, error)`,
-			`config.Render.ComponentContractVersion = project.CurrentComponentContractVersion`,
 		},
 	}
 	for name, snippets := range files {

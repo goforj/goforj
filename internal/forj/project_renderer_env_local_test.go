@@ -29,8 +29,7 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	config := &project.Config{
 		ProjectName: "QueueSeed", GoModuleName: "example.com/queueseed",
 		Render: project.RenderConfig{
-			Components:               project.Components{CLI: true, Jobs: true},
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: project.Components{CLI: true, Jobs: true},
 		},
 	}
 	encoded, err := yaml.Marshal(config)
@@ -117,8 +116,7 @@ func TestRenderAppOnlyPublishesResourceEnvironmentBeforeAppDefaults(t *testing.T
 		ProjectName:  "AppResourceMigration",
 		GoModuleName: "example.com/app-resource-migration",
 		Render: project.RenderConfig{
-			Components:               components,
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: components,
 		},
 		Apps: map[string]project.AppConfig{
 			"worker": {Components: components},

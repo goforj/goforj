@@ -57,7 +57,7 @@ type DevConfig struct {
 // DefaultAppName is the conventional app name used when no named app is selected.
 const DefaultAppName = "app"
 
-// CurrentComponentContractVersion identifies configs where omitted primitive component keys mean disabled.
+// CurrentComponentContractVersion identifies the only legacy component marker accepted while decoding existing configs.
 const CurrentComponentContractVersion = 1
 
 // App describes one executable app in the project.
@@ -138,11 +138,12 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components               Components `yaml:"components" json:"components"`
-	StarterKit               StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat               HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion            string     `yaml:"goforj_version" json:"goforj_version"`
-	ComponentContractVersion int        `yaml:"component_contract,omitempty" json:"component_contract,omitempty"`
+	Components    Components `yaml:"components" json:"components"`
+	StarterKit    StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat    HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
+	// ComponentContractVersion retains the deprecated marker in memory only while existing configs are decoded.
+	ComponentContractVersion int `yaml:"-" json:"-"`
 	legacyQueueDriverSet     bool
 	legacyQueueDriver        string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
@@ -161,7 +162,7 @@ func (c RenderConfig) LegacyQueueDriver() string {
 	return c.legacyQueueDriver
 }
 
-// UnmarshalYAML accepts the obsolete queue choice long enough to migrate it into the environment.
+// UnmarshalYAML accepts obsolete render fields long enough to migrate their behavior without persisting them again.
 func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 	type renderConfigFields RenderConfig
 	var fields renderConfigFields
@@ -169,6 +170,12 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode render config: %w", err)
 	}
 	*c = RenderConfig(fields)
+	if marker := yamlMappingValue(value, "component_contract"); marker != nil {
+		if err := marker.Decode(&c.ComponentContractVersion); err != nil {
+			return fmt.Errorf("decode legacy component contract: %w", err)
+		}
+	}
+	delete(c.Extra, "component_contract")
 	delete(c.Extra, "queue_driver")
 	if len(c.Extra) == 0 {
 		c.Extra = nil

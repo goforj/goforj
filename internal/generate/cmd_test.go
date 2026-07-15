@@ -309,7 +309,7 @@ func writePrimitiveGenerationConfig(t *testing.T, root string, component string,
 	if enabled {
 		components += ", " + component
 	}
-	contents := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components: [" + components + "]\n"
+	contents := "project_name: Test\nmodule_name: example.test/app\nrender:\n  components: [" + components + "]\n"
 	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(contents), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
