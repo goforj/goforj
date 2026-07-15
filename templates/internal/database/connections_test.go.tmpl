@@ -232,7 +232,7 @@ func TestClassifyDBTarget(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
-	manager := metrics.NewManager()
+	manager := metrics.NewManagerWithConfig(metrics.Config{Database: true})
 	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, nil, "default", "mysql", 250*time.Millisecond)
 
 	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
@@ -301,7 +301,7 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerRecordsSlowQueryFingerprint(t *testing.T) {
-	manager := metrics.NewManager()
+	manager := metrics.NewManagerWithConfig(metrics.Config{Database: true})
 	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, nil, "default", "mysql", 250*time.Millisecond)
 
 	sql := "SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42"
