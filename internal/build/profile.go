@@ -111,7 +111,9 @@ func (c *Cmd) buildBinaryWithCompileProfile(root string, args []string) (string,
 		return "", err
 	}
 	report.NormalizeTimings(baselineTotalMS, profiledTotalMS)
-	report.AnnotateImportChains(root)
+	if err := report.AnnotateImportChains(root); err != nil {
+		return "", fmt.Errorf("annotate compile profile import chains: %w", err)
+	}
 	c.compileProfile = report
 	return "", nil
 }

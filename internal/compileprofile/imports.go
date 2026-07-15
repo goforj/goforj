@@ -23,14 +23,15 @@ type importLoadResult struct {
 }
 
 // AnnotateImportChains adds the shortest project-rooted import chain available for each compiled package.
-func (r *Report) AnnotateImportChains(root string) {
+func (r *Report) AnnotateImportChains(root string) error {
 	loaded, err := loadImportPackages(root, defaultAnalyzePatterns(root))
 	if err != nil {
-		return
+		return err
 	}
 	for i := range r.entries {
 		r.entries[i].importChain = importChainToTarget(loaded, r.entries[i].packageName)
 	}
+	return nil
 }
 
 // loadImportPackages asks Go for the dependency graph and resolves each project pattern to traversal roots.
