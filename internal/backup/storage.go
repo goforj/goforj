@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/tar"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 // ArchiveDirectory creates a zstd-compressed tar archive of a local storage directory.
-func ArchiveDirectory(source string, artifact string) error {
+func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	info, err := os.Stat(source)
 	if err != nil {
 		return fmt.Errorf("stat storage directory: %w", err)
@@ -27,14 +28,19 @@ func ArchiveDirectory(source string, artifact string) error {
 	if err != nil {
 		return fmt.Errorf("create storage artifact: %w", err)
 	}
-	defer file.Close()
+	recordClose := func(operation string, closeFunc func() error) {
+		if err := closeFunc(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("%s: %w", operation, err))
+		}
+	}
+	defer recordClose("close storage artifact", file.Close)
 	zstdWriter, err := zstd.NewWriter(file)
 	if err != nil {
 		return fmt.Errorf("create storage compressor: %w", err)
 	}
-	defer zstdWriter.Close()
+	defer recordClose("close storage compressor", zstdWriter.Close)
 	tarWriter := tar.NewWriter(zstdWriter)
-	defer tarWriter.Close()
+	defer recordClose("close storage archive", tarWriter.Close)
 	root := filepath.Clean(source)
 	err = filepath.Walk(root, func(path string, entry os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -62,9 +68,12 @@ func ArchiveDirectory(source string, artifact string) error {
 		if err != nil {
 			return err
 		}
-		defer input.Close()
-		_, err = io.Copy(tarWriter, input)
-		return err
+		_, copyErr := io.Copy(tarWriter, input)
+		closeErr := input.Close()
+		if closeErr != nil {
+			closeErr = fmt.Errorf("close storage source %s: %w", path, closeErr)
+		}
+		return errors.Join(copyErr, closeErr)
 	})
 	if err != nil {
 		return fmt.Errorf("archive storage directory: %w", err)

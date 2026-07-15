@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -272,14 +273,20 @@ func runRedirectedTool(ctx context.Context, name string, args []string, env []st
 	if err != nil {
 		return fmt.Errorf("create %s output: %w", name, err)
 	}
-	defer file.Close()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = file
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+		runErr := fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+		if closeErr := file.Close(); closeErr != nil {
+			return errors.Join(runErr, fmt.Errorf("close %s output: %w", name, closeErr))
+		}
+		return runErr
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close %s output: %w", name, err)
 	}
 	return nil
 }
