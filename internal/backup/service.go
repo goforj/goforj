@@ -12,29 +12,35 @@ import (
 // Service orchestrates native backup creation and verification.
 type Service struct{ Hooks HookRegistry }
 
+// CreatedBackup identifies the directory and manifest produced by one native backup operation.
+type CreatedBackup struct {
+	Directory string
+	Manifest  Manifest
+}
+
 // NewService creates a native backup service.
 func NewService() *Service {
 	return &Service{}
 }
 
-// Create writes a native backup set under root and returns its manifest.
-func (s *Service) Create(ctx context.Context, root string, resourceName string) (string, Manifest, error) {
+// Create writes a native backup set under root and returns its directory and manifest together.
+func (s *Service) Create(ctx context.Context, root string, resourceName string) (CreatedBackup, error) {
 	if err := s.Hooks.Run(ctx, HookBeforeCreate); err != nil {
-		return "", Manifest{}, fmt.Errorf("before backup hook: %w", err)
+		return CreatedBackup{}, fmt.Errorf("before backup hook: %w", err)
 	}
 	if strings.TrimSpace(root) == "" {
-		return "", Manifest{}, fmt.Errorf("backup root is required")
+		return CreatedBackup{}, fmt.Errorf("backup root is required")
 	}
 	plan, err := BuildPlan()
 	if err != nil {
-		return "", Manifest{}, err
+		return CreatedBackup{}, err
 	}
 	if err := plan.Validate(); err != nil {
-		return "", Manifest{}, err
+		return CreatedBackup{}, err
 	}
 	dir := filepath.Join(root, "backup-"+time.Now().UTC().Format("20060102T150405Z"))
 	if err := os.MkdirAll(filepath.Join(dir, "databases"), 0o755); err != nil {
-		return "", Manifest{}, fmt.Errorf("create backup set: %w", err)
+		return CreatedBackup{}, fmt.Errorf("create backup set: %w", err)
 	}
 	manifest := Manifest{Version: 1, CreatedAt: time.Now().UTC()}
 	resourceName = normalizeResourceName(resourceName)
@@ -48,21 +54,21 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 		}
 		strategy, err := NativeStrategy(planned.Connection.Driver)
 		if err != nil {
-			return "", Manifest{}, err
+			return CreatedBackup{}, err
 		}
 		artifactName := planned.Connection.Name + "." + normalizeDriver(planned.Connection.Driver) + ".backup"
 		artifact := filepath.Join(dir, "databases", artifactName)
 		if err := strategy.Backup(ctx, planned.Connection, artifact); err != nil {
-			return "", Manifest{}, fmt.Errorf("backup db.%s: %w", planned.Connection.Name, err)
+			return CreatedBackup{}, fmt.Errorf("backup db.%s: %w", planned.Connection.Name, err)
 		}
-		hash, size, err := Checksum(artifact)
+		fingerprint, err := Checksum(artifact)
 		if err != nil {
-			return "", Manifest{}, err
+			return CreatedBackup{}, err
 		}
 		manifest.Resources = append(manifest.Resources, Resource{
 			ID: "db." + planned.Connection.Name, Kind: "database", Name: planned.Connection.Name,
 			Driver: normalizeDriver(planned.Connection.Driver), Strategy: strategy.Name(),
-			Artifact: filepath.ToSlash(filepath.Join("databases", artifactName)), Checksum: hash, Size: size,
+			Artifact: filepath.ToSlash(filepath.Join("databases", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size,
 		})
 	}
 	for _, storage := range plan.Storage {
@@ -71,63 +77,63 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 			continue
 		}
 		if storage.Driver == "s3" {
-			disk, prefix, err := ConfiguredObjectStorage(storage.Name)
+			objectStorage, err := ConfiguredObjectStorage(storage.Name)
 			if err != nil {
-				return "", Manifest{}, fmt.Errorf("backup %s: %w", selector, err)
+				return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
 			}
 			if storage.Prefix != "" {
-				prefix = storage.Prefix
+				objectStorage.Prefix = storage.Prefix
 			}
-			objectManifest, err := BuildObjectManifest(ctx, StorageObjectLister{Disk: disk}, prefix)
+			objectManifest, err := BuildObjectManifest(ctx, StorageObjectLister{Disk: objectStorage.Disk}, objectStorage.Prefix)
 			if err != nil {
-				return "", Manifest{}, fmt.Errorf("backup %s: %w", selector, err)
+				return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
 			}
 			data, err := MarshalObjectManifest(objectManifest)
 			if err != nil {
-				return "", Manifest{}, err
+				return CreatedBackup{}, err
 			}
 			artifactName := storage.Name + ".objects.json"
 			artifact := filepath.Join(dir, "storage", artifactName)
 			if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
-				return "", Manifest{}, err
+				return CreatedBackup{}, err
 			}
 			if err := os.WriteFile(artifact, data, 0o644); err != nil {
-				return "", Manifest{}, fmt.Errorf("write %s object manifest: %w", selector, err)
+				return CreatedBackup{}, fmt.Errorf("write %s object manifest: %w", selector, err)
 			}
-			hash, size, err := Checksum(artifact)
+			fingerprint, err := Checksum(artifact)
 			if err != nil {
-				return "", Manifest{}, err
+				return CreatedBackup{}, err
 			}
-			manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "object-manifest", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: hash, Size: size})
+			manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "object-manifest", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
 			continue
 		}
 		if storage.Driver != "local" {
 			if resourceName == selector || resourceName == storage.Name {
-				return "", Manifest{}, fmt.Errorf("backup %s is managed by unsupported external driver %s", selector, storage.Driver)
+				return CreatedBackup{}, fmt.Errorf("backup %s is managed by unsupported external driver %s", selector, storage.Driver)
 			}
 			continue
 		}
 		artifactName := storage.Name + ".local.tar.zst"
 		artifact := filepath.Join(dir, "storage", artifactName)
 		if err := ArchiveDirectory(storage.Root, artifact); err != nil {
-			return "", Manifest{}, fmt.Errorf("backup %s: %w", selector, err)
+			return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
 		}
-		hash, size, err := Checksum(artifact)
+		fingerprint, err := Checksum(artifact)
 		if err != nil {
-			return "", Manifest{}, err
+			return CreatedBackup{}, err
 		}
-		manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "local-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: hash, Size: size})
+		manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "local-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
 	}
 	if len(manifest.Resources) == 0 {
-		return "", Manifest{}, fmt.Errorf("backup resource %q was not found", resourceName)
+		return CreatedBackup{}, fmt.Errorf("backup resource %q was not found", resourceName)
 	}
 	if err := WriteManifest(dir, manifest); err != nil {
-		return "", Manifest{}, err
+		return CreatedBackup{}, err
 	}
 	if err := s.Hooks.Run(ctx, HookAfterCreate); err != nil {
-		return "", Manifest{}, fmt.Errorf("after backup hook: %w", err)
+		return CreatedBackup{}, fmt.Errorf("after backup hook: %w", err)
 	}
-	return dir, manifest, nil
+	return CreatedBackup{Directory: dir, Manifest: manifest}, nil
 }
 
 // Verify checks every artifact referenced by a backup manifest.

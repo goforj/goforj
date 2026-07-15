@@ -58,15 +58,15 @@ func TestLocalStorageBackupAndRestore(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", source)
 	backupRoot := t.TempDir()
-	dir, manifest, err := NewService().Create(context.Background(), backupRoot, "storage.default")
+	backup, err := NewService().Create(context.Background(), backupRoot, "storage.default")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Resources) != 1 || manifest.Resources[0].Kind != "storage" {
-		t.Fatalf("unexpected storage manifest: %#v", manifest)
+	if len(backup.Manifest.Resources) != 1 || backup.Manifest.Resources[0].Kind != "storage" {
+		t.Fatalf("unexpected storage manifest: %#v", backup.Manifest)
 	}
 	t.Setenv("STORAGE_ROOT", target)
-	if err := NewService().Restore(context.Background(), dir, "storage.default", "restore-production"); err != nil {
+	if err := NewService().Restore(context.Background(), backup.Directory, "storage.default", "restore-production"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(target, "avatar.txt"))

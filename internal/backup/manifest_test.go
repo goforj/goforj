@@ -17,13 +17,13 @@ func TestManifestRoundTripAndChecksum(t *testing.T) {
 	if err := os.WriteFile(artifact, []byte("portable test data\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hash, size, err := Checksum(artifact)
+	fingerprint, err := Checksum(artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest := Manifest{Resources: []Resource{{
 		ID: "db.default", Kind: "database", Name: "default", Driver: "sqlite",
-		Strategy: "sqlite3-backup", Artifact: "databases/default.sql", Checksum: hash, Size: size,
+		Strategy: "sqlite3-backup", Artifact: "databases/default.sql", Checksum: fingerprint.Checksum, Size: fingerprint.Size,
 	}}}
 	if err := WriteManifest(dir, manifest); err != nil {
 		t.Fatal(err)
@@ -35,10 +35,10 @@ func TestManifestRoundTripAndChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != 1 || len(got.Resources) != 1 || got.Resources[0].Checksum != hash {
+	if got.Version != 1 || len(got.Resources) != 1 || got.Resources[0].Checksum != fingerprint.Checksum {
 		t.Fatalf("unexpected manifest: %#v", got)
 	}
-	if err := VerifyChecksum(artifact, hash); err != nil {
+	if err := VerifyChecksum(artifact, fingerprint.Checksum); err != nil {
 		t.Fatal(err)
 	}
 }

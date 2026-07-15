@@ -78,11 +78,11 @@ func WriteObjectManifest(ctx context.Context, lister ObjectLister, prefix string
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return ObjectManifest{}, fmt.Errorf("write object manifest: %w", err)
 	}
-	checksum, size, err := Checksum(path)
+	fingerprint, err := Checksum(path)
 	if err != nil {
 		return ObjectManifest{}, err
 	}
-	if err := WriteManifest(dir, Manifest{Version: 1, Resources: []Resource{{ID: "storage.remote", Kind: "storage", Name: "remote", Driver: "s3", Strategy: "object-manifest", Artifact: "objects.json", Checksum: checksum, Size: size}}}); err != nil {
+	if err := WriteManifest(dir, Manifest{Version: 1, Resources: []Resource{{ID: "storage.remote", Kind: "storage", Name: "remote", Driver: "s3", Strategy: "object-manifest", Artifact: "objects.json", Checksum: fingerprint.Checksum, Size: fingerprint.Size}}}); err != nil {
 		return ObjectManifest{}, err
 	}
 	return manifest, nil

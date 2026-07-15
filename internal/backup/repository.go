@@ -25,9 +25,15 @@ type StorageRepository struct {
 	Prefix string
 }
 
+// repositoryBinding keeps the context-bound disk and its resolved path together.
+type repositoryBinding struct {
+	disk   storage.Storage
+	prefix string
+}
+
 // Upload copies a completed local backup directory into the storage backend.
 func (r StorageRepository) Upload(ctx context.Context, name string, source string) error {
-	disk, prefix, err := r.bound(ctx, name)
+	binding, err := r.bound(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -49,8 +55,8 @@ func (r StorageRepository) Upload(ctx context.Context, name string, source strin
 		if err != nil {
 			return err
 		}
-		key := filepath.ToSlash(filepath.Join(prefix, filepath.ToSlash(relative)))
-		if err := disk.Put(key, data); err != nil {
+		key := filepath.ToSlash(filepath.Join(binding.prefix, filepath.ToSlash(relative)))
+		if err := binding.disk.Put(key, data); err != nil {
 			return fmt.Errorf("upload %s: %w", key, err)
 		}
 		return nil
@@ -59,24 +65,24 @@ func (r StorageRepository) Upload(ctx context.Context, name string, source strin
 
 // Download copies a remote backup directory into a local destination.
 func (r StorageRepository) Download(ctx context.Context, name string, destination string) error {
-	disk, prefix, err := r.bound(ctx, name)
+	binding, err := r.bound(ctx, name)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return err
 	}
-	return disk.Walk(prefix, func(entry storage.Entry) error {
+	return binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
 		}
-		relative := strings.TrimPrefix(entry.Path, prefix)
+		relative := strings.TrimPrefix(entry.Path, binding.prefix)
 		relative = strings.TrimPrefix(relative, "/")
 		path, err := safeRepositoryExtractPath(destination, relative)
 		if err != nil {
 			return err
 		}
-		data, err := disk.Get(entry.Path)
+		data, err := binding.disk.Get(entry.Path)
 		if err != nil {
 			return fmt.Errorf("download %s: %w", entry.Path, err)
 		}
@@ -92,15 +98,16 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 
 // List returns manifest-backed backup names below the repository prefix.
 func (r StorageRepository) List(ctx context.Context, prefix string) ([]string, error) {
-	disk, root, err := r.bound(ctx, "")
+	binding, err := r.bound(ctx, "")
 	if err != nil {
 		return nil, err
 	}
+	root := binding.prefix
 	if prefix != "" {
 		root = filepath.ToSlash(filepath.Join(root, prefix))
 	}
 	names := map[string]struct{}{}
-	if err := disk.Walk(root, func(entry storage.Entry) error {
+	if err := binding.disk.Walk(root, func(entry storage.Entry) error {
 		if entry.IsDir || !strings.HasSuffix(entry.Path, "/manifest.json") {
 			return nil
 		}
@@ -124,22 +131,22 @@ func (r StorageRepository) List(ctx context.Context, prefix string) ([]string, e
 
 // Delete removes all files belonging to one remote backup directory.
 func (r StorageRepository) Delete(ctx context.Context, name string) error {
-	disk, prefix, err := r.bound(ctx, name)
+	binding, err := r.bound(ctx, name)
 	if err != nil {
 		return err
 	}
-	return disk.Walk(prefix, func(entry storage.Entry) error {
+	return binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
 		}
-		return disk.Delete(entry.Path)
+		return binding.disk.Delete(entry.Path)
 	})
 }
 
 // bound validates repository state and returns a context-bound storage handle and path.
-func (r StorageRepository) bound(ctx context.Context, name string) (storage.Storage, string, error) {
+func (r StorageRepository) bound(ctx context.Context, name string) (repositoryBinding, error) {
 	if r.Disk == nil {
-		return nil, "", fmt.Errorf("backup repository storage is required")
+		return repositoryBinding{}, fmt.Errorf("backup repository storage is required")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -148,7 +155,7 @@ func (r StorageRepository) bound(ctx context.Context, name string) (storage.Stor
 	if name != "" {
 		prefix = filepath.ToSlash(filepath.Join(prefix, name))
 	}
-	return r.Disk.WithContext(ctx), prefix, nil
+	return repositoryBinding{disk: r.Disk.WithContext(ctx), prefix: prefix}, nil
 }
 
 // safeExtractPath prevents a repository object from escaping a local destination.

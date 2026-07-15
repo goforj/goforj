@@ -12,29 +12,35 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// OpenedSQLConnection couples an open database handle with the dialect required to inspect it.
+type OpenedSQLConnection struct {
+	DB      *sql.DB
+	Dialect SQLDialect
+}
+
 // OpenSQLConnection opens a standard-library SQL connection from framework metadata.
-func OpenSQLConnection(ctx context.Context, connection Connection) (*sql.DB, SQLDialect, error) {
+func OpenSQLConnection(ctx context.Context, connection Connection) (OpenedSQLConnection, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	driver := normalizeDriver(connection.Driver)
 	dialect, err := NewSQLDialect(driver)
 	if err != nil {
-		return nil, nil, err
+		return OpenedSQLConnection{}, err
 	}
 	sqlDriver, dsn, err := sqlConnectionDetails(connection)
 	if err != nil {
-		return nil, nil, err
+		return OpenedSQLConnection{}, err
 	}
 	db, err := sql.Open(sqlDriver, dsn)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open %s connection: %w", driver, err)
+		return OpenedSQLConnection{}, fmt.Errorf("open %s connection: %w", driver, err)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, nil, fmt.Errorf("ping %s connection: %w", driver, err)
+		return OpenedSQLConnection{}, fmt.Errorf("ping %s connection: %w", driver, err)
 	}
-	return db, dialect, nil
+	return OpenedSQLConnection{DB: db, Dialect: dialect}, nil
 }
 
 // ListTables discovers application tables while excluding framework metadata tables.
