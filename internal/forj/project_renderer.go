@@ -358,7 +358,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateJobsRenderTransition(projectComponents); err != nil {
 		return err
 	}
-	if err := p.workspace.validateCacheRenderTransition(projectComponents); err != nil {
+	if err := p.validateCacheRenderTransition(projectComponents); err != nil {
 		return err
 	}
 	if err := p.prepareResourceRenderState(input, projectComponents); err != nil {
@@ -446,6 +446,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						return err
 					}
 				}
+				for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+					if appRenderComponents(p.config, app).Cache {
+						continue
+					}
+					if _, err := p.workspace.removeGeneratedAppCacheDriverDefault(".env.host", app.Name); err != nil {
+						return err
+					}
+				}
 				if err := p.writeEnvironmentTemplates([]string{localEnvTemplate}); err != nil {
 					return err
 				}
@@ -457,6 +465,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("read existing environment example: %w", err)
 				}
+				existingExample, _ = removeDisabledAppCacheDriverDefaults(
+					existingExample,
+					p.config,
+					projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+				)
 				existingExample, _ = resourceenv.RemoveGeneratedAssignments(
 					existingExample,
 					projectComponents,
@@ -1185,7 +1198,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
-	if err := p.workspace.validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
+	if err := p.validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
 	projectCapabilitiesChanged := false
@@ -1207,7 +1220,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
-		if err := p.workspace.validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		if err := p.validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		projectCapabilitiesChanged = changed
@@ -1417,7 +1430,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		}
 	}
 	if before.Cache && !after.Cache {
-		if err := p.workspace.validateCacheRenderTransition(after); err != nil {
+		if err := p.validateCacheRenderTransition(after, app); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
 		}
 	}
@@ -1575,6 +1588,13 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	}
 	const environmentPath = ".env"
 	const hostEnvironmentPath = ".env.host"
+	if !components.Cache {
+		for _, path := range []string{environmentPath, hostEnvironmentPath, ".env.example"} {
+			if _, err := p.workspace.removeGeneratedAppCacheDriverDefault(path, app.Name); err != nil {
+				return err
+			}
+		}
+	}
 	metadata := p.workspace.runtimeAppMetadataForConfiguredApp(p.config, app)
 	metadata.HTTPPort = p.workspace.nextAvailableAppHTTPPort(environmentPath, prefix, metadata.HTTPPort)
 	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)

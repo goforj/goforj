@@ -133,6 +133,15 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		// A committed fallback reproduces an existing build, but it cannot replace a new wizard decision.
 		return nil
 	}
+	if ownerExists {
+		var removedDisabledAppCacheDefaults bool
+		source, removedDisabledAppCacheDefaults = removeDisabledAppCacheDriverDefaults(
+			source,
+			p.config,
+			projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+		)
+		p.resources.pendingEnvironmentWrite = removedDisabledAppCacheDefaults
+	}
 	_, profilesSet := envfile.Lookup(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
 	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile(p.workspace.path("docker-compose.yml"))
 	if legacyLocalRedis {
@@ -140,7 +149,7 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		if ownerExists {
 			var profileChanged bool
 			source, profileChanged = seedExactComposeProfile(source, "redis")
-			p.resources.pendingEnvironmentWrite = profileChanged
+			p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || profileChanged
 		}
 	} else {
 		p.resources.serviceIntent = resourceenv.ResolveServiceIntent(source, p.resources.serviceIntent)
