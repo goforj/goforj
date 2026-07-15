@@ -35,11 +35,21 @@ type TestIntegrationCmd struct {
 	Verbose bool `help:"Enable verbose test output" short:"v"`
 }
 
+// integrationStep names one command so execution and failure reporting cannot drift apart.
 type integrationStep struct {
 	name string
 	args []string
 }
 
+// integrationExecutor owns the output policy and Go caches shared by every command in one integration run.
+type integrationExecutor struct {
+	silent     bool
+	verbose    bool
+	modCache   string
+	buildCache string
+}
+
+// dbIntegrationVariantSpec defines the component selection and runtime environment for one rendered database target.
 type dbIntegrationVariantSpec struct {
 	applyConfig func(*project.Components)
 	testEnv     map[string]string
@@ -93,6 +103,7 @@ var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 	},
 }
 
+// Signature exposes integration validation as a maintainer-only command.
 func (*TestIntegrationCmd) Signature() string {
 	return `name:"test:integration" help:"Run integration tests" hidden:""`
 }
@@ -105,6 +116,12 @@ func NewTestIntegrationCmd(logger *logger.AppLogger) *TestIntegrationCmd {
 // Run executes integration tests for the model generator.
 func (cmd *TestIntegrationCmd) Run() error {
 	modCache, buildCache := testkit.GoCachePaths()
+	executor := integrationExecutor{
+		silent:     cmd.Silent,
+		verbose:    cmd.Verbose,
+		modCache:   modCache,
+		buildCache: buildCache,
+	}
 	suite := strings.TrimSpace(strings.ToLower(cmd.Suite))
 	target := strings.TrimSpace(strings.ToLower(cmd.Target))
 	variant := strings.TrimSpace(strings.ToLower(cmd.Variant))
@@ -115,24 +132,25 @@ func (cmd *TestIntegrationCmd) Run() error {
 
 	switch suite {
 	case "framework":
-		return cmd.runFrameworkSuite(modCache, buildCache, target, variant)
+		return cmd.runFrameworkSuite(executor, target)
 	case "rendered":
-		return cmd.runRenderedSuite(target, variant)
+		return cmd.runRenderedSuite(executor, target, variant)
 	case "all":
-		if err := cmd.runFrameworkSuite(modCache, buildCache, target, variant); err != nil {
+		if err := cmd.runFrameworkSuite(executor, target); err != nil {
 			return err
 		}
-		return cmd.runRenderedSuite(target, variant)
+		return cmd.runRenderedSuite(executor, target, variant)
 	default:
 		return fmt.Errorf("unknown integration suite %q", suite)
 	}
 }
 
-func (cmd *TestIntegrationCmd) runFrameworkSuite(modCache, buildCache string, target, variant string) error {
+// runFrameworkSuite runs integration-tagged tests against this repository.
+func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, target string) error {
 	if target != "" && target != "all" {
 		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
 	}
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	forjExec, cleanup, err := repoForjExecutable(executor.modCache, executor.buildCache)
 	if err != nil {
 		return err
 	}
@@ -147,33 +165,37 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(modCache, buildCache string, ta
 	if redisTeardown != nil {
 		defer redisTeardown()
 	}
-	if !cmd.Silent {
+	if !executor.silent {
 		testkit.PrintSubsection("Framework integration preflight")
 	}
-	preflightArgs := []string{"go", "test", "-run", "^$", "-tags=integration", "./internal/forj", "-count=1"}
-	if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework preflight", ".", modCache, buildCache, frameworkEnv, preflightArgs); err != nil {
-		if !cmd.Silent {
+	preflight := integrationStep{
+		name: "framework preflight",
+		args: []string{"go", "test", "-run", "^$", "-tags=integration", "./internal/forj", "-count=1"},
+	}
+	if err := executor.runFrameworkStep(".", preflight, frameworkEnv); err != nil {
+		if !executor.silent {
 			console.Warnf("framework preflight failed, attempting integration-tagged tidy")
 		}
 		tidyEnv := map[string]string{
 			"GOFLAGS":                    "-tags=integration",
 			"FORJ_INTEGRATION_FORJ_PATH": forjExec,
 		}
-		if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework tidy", ".", modCache, buildCache, tidyEnv, []string{"go", "mod", "tidy"}); err != nil {
+		tidy := integrationStep{name: "framework tidy", args: []string{"go", "mod", "tidy"}}
+		if err := executor.runFrameworkStep(".", tidy, tidyEnv); err != nil {
 			return err
 		}
-		if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework preflight", ".", modCache, buildCache, frameworkEnv, preflightArgs); err != nil {
+		if err := executor.runFrameworkStep(".", preflight, frameworkEnv); err != nil {
 			return err
 		}
 	}
 	args := []string{"go", "test", "-tags=integration", "./internal/forj", "-count=1"}
-	if cmd.Verbose {
+	if executor.verbose {
 		args = append(args, "-v")
 	}
-	if !cmd.Silent {
+	if !executor.silent {
 		testkit.PrintSubsection("Framework integration tests")
 	}
-	if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework", ".", modCache, buildCache, frameworkEnv, args); err != nil {
+	if err := executor.runFrameworkStep(".", integrationStep{name: "framework", args: args}, frameworkEnv); err != nil {
 		return err
 	}
 	return nil
@@ -193,7 +215,8 @@ func (cmd *TestIntegrationCmd) configureFrameworkRedis(frameworkEnv map[string]s
 	return testkit.StartRedisTestcontainer(testkit.ConsoleLogf(cmd.Silent), frameworkEnv)
 }
 
-func (cmd *TestIntegrationCmd) runRenderedSuite(target, variant string) error {
+// runRenderedSuite runs generated application tests across the selected database variants.
+func (cmd *TestIntegrationCmd) runRenderedSuite(executor integrationExecutor, target, variant string) error {
 	var variants []string
 	switch variant {
 	case "", "all":
@@ -205,20 +228,21 @@ func (cmd *TestIntegrationCmd) runRenderedSuite(target, variant string) error {
 	}
 
 	for _, dbVariant := range variants {
-		if !cmd.Silent {
+		if !executor.silent {
 			testkit.PrintSubsection(fmt.Sprintf("Rendered integration variant: %s", dbVariant))
 		}
-		if err := cmd.runRenderedVariant(dbVariant, target); err != nil {
+		if err := cmd.runRenderedVariant(executor, dbVariant, target); err != nil {
 			return err
 		}
 	}
 
-	if !cmd.Silent {
+	if !executor.silent {
 		console.Successf("Integration tests completed")
 	}
 	return nil
 }
 
+// cloneStringMap prevents runtime container overrides from mutating the reusable variant catalog.
 func cloneStringMap(source map[string]string) map[string]string {
 	if len(source) == 0 {
 		return map[string]string{}
@@ -230,6 +254,7 @@ func cloneStringMap(source map[string]string) map[string]string {
 	return cloned
 }
 
+// writeRenderedIntegrationConfig publishes the minimal generated App needed to exercise one database variant.
 func (cmd *TestIntegrationCmd) writeRenderedIntegrationConfig(dir, variant string, spec dbIntegrationVariantSpec) error {
 	cfg := project.Config{
 		ProjectName:  "Integration" + strings.ToUpper(variant[:1]) + variant[1:],
@@ -251,6 +276,7 @@ func (cmd *TestIntegrationCmd) writeRenderedIntegrationConfig(dir, variant strin
 	return WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg)
 }
 
+// renderedIntegrationSteps maps a user target to deterministic generated-package test commands.
 func renderedIntegrationSteps(tag, target string) ([]integrationStep, error) {
 	all := []integrationStep{
 		{name: "auth", args: []string{"go", "test", "./internal/auth", "-tags=integration," + tag}},
@@ -273,33 +299,34 @@ func renderedIntegrationSteps(tag, target string) ([]integrationStep, error) {
 	return nil, fmt.Errorf("unknown rendered integration target %q", target)
 }
 
-func (cmd *TestIntegrationCmd) runRenderedTaggedTests(dir, modCache, buildCache, tag, target string, extraEnv map[string]string) error {
+// runRenderedTaggedTests runs each selected generated-package test through the shared integration environment.
+func (executor integrationExecutor) runRenderedTaggedTests(dir, tag, target string, extraEnv map[string]string) error {
 	steps, err := renderedIntegrationSteps(tag, target)
 	if err != nil {
 		return err
 	}
 	for _, step := range steps {
-		args := append([]string{}, step.args...)
-		if cmd.Verbose {
-			args = append(args, "-v")
+		step.args = append([]string{}, step.args...)
+		if executor.verbose {
+			step.args = append(step.args, "-v")
 		}
-		if !cmd.Silent {
+		if !executor.silent {
 			testkit.PrintSubsection(fmt.Sprintf("%s integration tests", step.name))
 		}
-		if err := runIntegrationGoTestStep(cmd.Silent, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
+		if err := executor.runGoTestStep(dir, step, extraEnv); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (cmd *TestIntegrationCmd) runRenderedVariant(variant, target string) error {
+// runRenderedVariant renders and tests one database-specific application workspace.
+func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, variant, target string) error {
 	spec, ok := dbIntegrationVariantSpecs[variant]
 	if !ok {
 		return fmt.Errorf("unknown variant %q (expected mysql, postgres, or sqlite)", variant)
 	}
 
-	modCache, buildCache := testkit.GoCachePaths()
 	tempRoot, err := testkit.TempRoot("FORJ_DB_INTEGRATION_TMPDIR")
 	if err != nil {
 		return err
@@ -310,7 +337,7 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(variant, target string) error 
 	}
 	defer os.RemoveAll(tempDir)
 
-	if !cmd.Silent {
+	if !executor.silent {
 		testkit.PrintSection(fmt.Sprintf("Rendered App Integration: %s", variant))
 		console.Infof("workspace: %s", tempDir)
 	}
@@ -318,17 +345,17 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(variant, target string) error 
 	if err := cmd.writeRenderedIntegrationConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	forjExec, cleanup, err := repoForjExecutable(executor.modCache, executor.buildCache)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	if err := runStep(cmd.logger, cmd.Silent, "render", tempDir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := runStep(cmd.logger, executor.silent, "render", tempDir, executor.modCache, executor.buildCache, []string{forjExec, "render"}); err != nil {
 		return err
 	}
 
 	testEnv := cloneStringMap(spec.testEnv)
-	stack, err := testkit.StartRenderedComposeServices(tempDir, testkit.ConsoleLogf(cmd.Silent))
+	stack, err := testkit.StartRenderedComposeServices(tempDir, testkit.ConsoleLogf(executor.silent))
 	if err != nil {
 		return err
 	}
@@ -340,31 +367,32 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(variant, target string) error 
 		testEnv[key] = value
 	}
 
-	if err := cmd.runRenderedTaggedTests(tempDir, modCache, buildCache, variant, target, testEnv); err != nil {
+	if err := executor.runRenderedTaggedTests(tempDir, variant, target, testEnv); err != nil {
 		return err
 	}
 
-	if !cmd.Silent {
+	if !executor.silent {
 		console.Successf("DB integration tests completed (%s)", variant)
 	}
 	return nil
 }
 
-func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
-	args = ensureGoTestVerbose(args)
+// runGoTestStep runs one rendered-package test with shared caches and preserves detailed package failure context.
+func (executor integrationExecutor) runGoTestStep(dir string, step integrationStep, extraEnv map[string]string) error {
+	args := ensureGoTestVerbose(step.args)
 	command := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
-			"GOMODCACHE": modCache,
-			"GOCACHE":    buildCache,
+			"GOMODCACHE": executor.modCache,
+			"GOCACHE":    executor.buildCache,
 		}).
 		EnvAppend(extraEnv)
 
-	if !silent {
+	if !executor.silent {
 		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
 	}
 
-	if !silent {
+	if !executor.silent {
 		command = command.ShadowPrint(
 			execx.WithFormatter(func(ev execx.ShadowEvent) string {
 				switch ev.Phase {
@@ -381,33 +409,34 @@ func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache strin
 
 	res, err := command.Run()
 	if err != nil || !res.OK() {
-		if !silent {
-			console.Errorf("%s failed", name)
+		if !executor.silent {
+			console.Errorf("%s failed", step.name)
 		}
 		if err != nil {
 			stderr := strings.TrimSpace(res.Stderr)
 			stdout := strings.TrimSpace(res.Stdout)
 			if stderr != "" {
-				return fmt.Errorf("%s: %w (%s)", name, err, stderr)
+				return fmt.Errorf("%s: %w (%s)", step.name, err, stderr)
 			}
 			if stdout != "" {
-				return fmt.Errorf("%s: %w (%s)", name, err, stdout)
+				return fmt.Errorf("%s: %w (%s)", step.name, err, stdout)
 			}
-			return fmt.Errorf("%s: %w", name, err)
+			return fmt.Errorf("%s: %w", step.name, err)
 		}
 		stderr := strings.TrimSpace(res.Stderr)
 		stdout := strings.TrimSpace(res.Stdout)
 		if stderr != "" {
-			return fmt.Errorf("%s failed with exit code %d (%s)", name, res.ExitCode, stderr)
+			return fmt.Errorf("%s failed with exit code %d (%s)", step.name, res.ExitCode, stderr)
 		}
 		if stdout != "" {
-			return fmt.Errorf("%s failed with exit code %d (%s)", name, res.ExitCode, stdout)
+			return fmt.Errorf("%s failed with exit code %d (%s)", step.name, res.ExitCode, stdout)
 		}
-		return fmt.Errorf("%s failed with exit code %d", name, res.ExitCode)
+		return fmt.Errorf("%s failed with exit code %d", step.name, res.ExitCode)
 	}
 	return nil
 }
 
+// ensureGoTestVerbose keeps long integration runs observable even when the command flag is omitted.
 func ensureGoTestVerbose(args []string) []string {
 	if len(args) < 2 || args[0] != "go" || args[1] != "test" {
 		return args
@@ -423,23 +452,24 @@ func ensureGoTestVerbose(args []string) []string {
 	return updated
 }
 
-func runIntegrationStepWithEnv(silent bool, verbose bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
-	args = ensureGoTestVerbose(args)
+// runFrameworkStep runs one repository command in the isolated integration module environment.
+func (executor integrationExecutor) runFrameworkStep(dir string, step integrationStep, extraEnv map[string]string) error {
+	args := ensureGoTestVerbose(step.args)
 	cmd := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
-			"GOMODCACHE": modCache,
-			"GOCACHE":    buildCache,
+			"GOMODCACHE": executor.modCache,
+			"GOCACHE":    executor.buildCache,
 			"GOFLAGS":    "",
 			"GOWORK":     "off",
 		}).
 		EnvAppend(extraEnv)
 
-	if !silent {
+	if !executor.silent {
 		cmd = cmd.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
 	}
 
-	if !silent {
+	if !executor.silent {
 		cmd = cmd.ShadowPrint(
 			execx.WithFormatter(func(ev execx.ShadowEvent) string {
 				switch ev.Phase {
@@ -456,8 +486,8 @@ func runIntegrationStepWithEnv(silent bool, verbose bool, name, dir, modCache, b
 
 	res, err := cmd.Run()
 	if err != nil || !res.OK() {
-		if !silent {
-			console.Errorf("%s failed", name)
+		if !executor.silent {
+			console.Errorf("%s failed", step.name)
 		}
 		if err == nil {
 			err = fmt.Errorf("command failed with exit code %d", res.ExitCode)
