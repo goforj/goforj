@@ -21,6 +21,58 @@ func TestDefaultResourceTemplatesOmitAdvancedPlaceholderWall(t *testing.T) {
 	}
 }
 
+// TestResourceTemplatesRenderRedisOnlyForSupportedProjects keeps unrelated Apps free of unused infrastructure settings.
+func TestResourceTemplatesRenderRedisOnlyForSupportedProjects(t *testing.T) {
+	tests := []struct {
+		name        string
+		components  project.Components
+		wantRedis   bool
+		wantHost    string
+		wantHostEnv bool
+	}{
+		{
+			name:       "storage only",
+			components: project.Components{CLI: true, Docker: true, Storage: true},
+		},
+		{
+			name:        "portable cache",
+			components:  project.Components{CLI: true, Cache: true},
+			wantRedis:   true,
+			wantHost:    "REDIS_HOST=\n",
+			wantHostEnv: true,
+		},
+		{
+			name:        "compose cache",
+			components:  project.Components{CLI: true, Docker: true, Cache: true},
+			wantRedis:   true,
+			wantHost:    "REDIS_HOST=redis\n",
+			wantHostEnv: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := defaultResourcePlanForTest(t, test.components)
+			environment, _ := renderResourceTemplates(t, test.components, plan, project.LocalServiceIntent{})
+			hostEnvironment := renderResourceHostEnvironment(t, test.components, plan, project.LocalServiceIntent{})
+			hasRedis := strings.Contains(environment, "\n# Redis\n")
+			if hasRedis != test.wantRedis {
+				t.Fatalf("Redis environment block present = %t, want %t:\n%s", hasRedis, test.wantRedis, environment)
+			}
+			if test.wantHost != "" && !strings.Contains(environment, "\n"+test.wantHost) {
+				t.Fatalf("rendered environment missing %q:\n%s", test.wantHost, environment)
+			}
+			if !test.wantRedis && strings.Contains(environment, "\nREDIS_") {
+				t.Fatalf("unrelated project received Redis assignments:\n%s", environment)
+			}
+			hasHostRedis := strings.Contains(hostEnvironment, "\nREDIS_HOST=")
+			if hasHostRedis != test.wantHostEnv {
+				t.Fatalf("Redis host override present = %t, want %t:\n%s", hasHostRedis, test.wantHostEnv, hostEnvironment)
+			}
+		})
+	}
+}
+
 // TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders verifies active and built-in opt-in drivers receive actionable dotenv hints.
 func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Mail: true, Storage: true}
