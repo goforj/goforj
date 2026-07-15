@@ -132,9 +132,7 @@ func (c *Cmd) Run() error {
 		return err
 	}
 
-	if c.logger != nil {
-		c.logger.Info().Str("app", app.Name).Msg("Creating app")
-	}
+	c.logger.Info().Str("app", app.Name).Msg("Creating app")
 	renderOptions.SkipWire = c.SkipWire
 	if err := c.renderer.RenderAppOnly(app, renderOptions); err != nil {
 		return err
