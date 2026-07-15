@@ -72,6 +72,28 @@ printf '%s\n' '{"version":1,"app":"billing","resources":[{"id":"storage.public",
 	}
 }
 
+// TestLoadResourceContractReturnsCandidateInspectionFailure verifies unreadable layout markers cannot trigger legacy environment fallback.
+func TestLoadResourceContractReturnsCandidateInspectionFailure(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	if err := os.WriteFile("bin", []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatalf("write binary path blocker: %v", err)
+	}
+	t.Setenv("FORJ_APP", "app")
+
+	_, err = LoadResourceContract(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "inspect resource contract binary") {
+		t.Fatalf("LoadResourceContract error = %v, want candidate inspection failure", err)
+	}
+}
+
 func TestBuildPlanUsesContractDatabaseAndStorageResources(t *testing.T) {
 	root := t.TempDir()
 	previous, err := os.Getwd()
