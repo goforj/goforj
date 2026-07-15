@@ -3102,11 +3102,11 @@ func installWire() (string, error) {
 
 // runGenerateAll regenerates only the packages authorized by the durable project component contract.
 func (p *ProjectRenderer) runGenerateAll() error {
-	count, _, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelectionFromComponents(p.projectRenderComponents()))
+	result, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelectionFromComponents(p.projectRenderComponents()))
 	if err != nil {
 		return p.workspace.logicalError(err)
 	}
-	p.lines = append(p.lines, renderCountsLine("forj generate", count, 0, "files"))
+	p.lines = append(p.lines, renderCountsLine("forj generate", result.TotalFiles, 0, "files"))
 	return nil
 }
 

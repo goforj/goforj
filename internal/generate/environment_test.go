@@ -13,7 +13,7 @@ func TestGenerateProjectFilesUsesEnvironmentExampleFallback(t *testing.T) {
 	writeGenerationEnvironmentFile(t, root, ".env.example", "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis\n")
 	unsetGenerationEnvironment(t, "CACHE_DRIVER", "CACHE_SUPPORTED_DRIVERS")
 
-	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
+	if _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 
@@ -41,7 +41,7 @@ func TestGenerateProjectFilesPrefersEnvironmentFile(t *testing.T) {
 		t.Fatalf("owner blank CACHE_SUPPORTED_DRIVERS = %q, %t; want blank, true", value, exists)
 	}
 
-	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
+	if _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestGenerateProjectFilesIsolatesConcurrentProjectEnvironments(t *testing.T)
 	for _, root := range []string{redisRoot, memoryRoot} {
 		go func() {
 			<-start
-			_, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true})
+			_, err := GenerateProjectFiles(root, GenerationSelection{Cache: true})
 			errors <- err
 		}()
 	}
@@ -89,7 +89,7 @@ func TestGenerateProjectFilesUsesAppOverlayManifestFromProjectEnvironment(t *tes
 	root := newGenerationCacheProject(t)
 	writeGenerationEnvironmentFile(t, root, ".env", "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis\nBILLING_CACHE_DRIVER=redis\n")
 
-	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
+	if _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 	if source := readGeneratedCacheManager(t, root); !strings.Contains(source, `"github.com/goforj/cache/driver/rediscache"`) {
@@ -123,7 +123,7 @@ func TestGenerateProjectFilesRejectsAppResourceTypos(t *testing.T) {
 			}
 			writeGenerationEnvironmentFile(t, root, ".env", test.environment)
 
-			_, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true})
+			_, err := GenerateProjectFiles(root, GenerationSelection{Cache: true})
 			if err == nil || !strings.Contains(err.Error(), "BILLING_CACHE_ADRR") {
 				t.Fatalf("GenerateProjectFiles error = %v, want BILLING_CACHE_ADRR validation", err)
 			}
@@ -138,7 +138,7 @@ func TestGenerateProjectFilesIgnoresAmbientDriverManifest(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "redis")
 	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")
 
-	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
+	if _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 
@@ -267,7 +267,7 @@ func TestGenerateProjectFilesPreservesUnmanagedObservabilityTargets(t *testing.T
 	}
 	writeGenerationEnvironmentFile(t, root, ".env", "OBSERVABILITY_METRICS_TARGET_MODE=local-single\nOBSERVABILITY_METRICS_TARGET_HOST=\n")
 
-	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Observability: true}); err != nil {
+	if _, err := GenerateProjectFiles(root, GenerationSelection{Observability: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 	content, err := os.ReadFile(targetsPath)
