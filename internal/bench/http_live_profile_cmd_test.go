@@ -5,67 +5,61 @@ import (
 	"testing"
 )
 
-func TestRawHTTPHealthHandlerJSON(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{HealthMode: "json"}
-	handler := cmd.rawHTTPHealthHandler()
-	if !strings.Contains(handler, `json.NewEncoder(w).Encode(map[string]string{"status": "ok"})`) {
-		t.Fatalf("expected json body in handler, got %q", handler)
+// TestHTTPHealthHandlers keeps raw and native comparison responses aligned with their selected health modes.
+func TestHTTPHealthHandlers(t *testing.T) {
+	tests := []struct {
+		name  string
+		stack string
+		mode  string
+		want  []string
+		avoid []string
+	}{
+		{name: "raw json", stack: "raw", mode: "json", want: []string{`json.NewEncoder(w).Encode(map[string]string{"status": "ok"})`, "application/json"}},
+		{name: "raw text", stack: "raw", mode: "text", want: []string{`[]byte("ok")`, "text/plain"}},
+		{name: "raw no content", stack: "raw", mode: "nocontent", want: []string{"http.StatusNoContent"}, avoid: []string{"[]byte("}},
+		{name: "echo json", stack: "echo", mode: "json", want: []string{`c.JSON(http.StatusOK`}},
 	}
-	if !strings.Contains(handler, "application/json") {
-		t.Fatalf("expected json content type in handler, got %q", handler)
-	}
-}
-
-func TestRawHTTPHealthHandlerText(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{HealthMode: "text"}
-	handler := cmd.rawHTTPHealthHandler()
-	if !strings.Contains(handler, `[]byte("ok")`) {
-		t.Fatalf("expected text body in handler, got %q", handler)
-	}
-	if !strings.Contains(handler, "text/plain") {
-		t.Fatalf("expected text content type in handler, got %q", handler)
-	}
-}
-
-func TestRawHTTPHealthHandlerNoContent(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{HealthMode: "nocontent"}
-	handler := cmd.rawHTTPHealthHandler()
-	if strings.Contains(handler, "[]byte(") {
-		t.Fatalf("did not expect body write in nocontent handler, got %q", handler)
-	}
-	if !strings.Contains(handler, "http.StatusNoContent") {
-		t.Fatalf("expected nocontent status in handler, got %q", handler)
-	}
-}
-
-func TestEchoHTTPHealthHandlerJSON(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{HealthMode: "json"}
-	handler := cmd.echoHTTPHealthHandler()
-	if !strings.Contains(handler, `c.JSON(http.StatusOK`) {
-		t.Fatalf("expected echo json handler, got %q", handler)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := &HTTPLiveProfileCmd{HealthMode: test.mode}
+			handler := cmd.rawHTTPHealthHandler()
+			if test.stack == "echo" {
+				handler = cmd.echoHTTPHealthHandler()
+			}
+			for _, want := range test.want {
+				if !strings.Contains(handler, want) {
+					t.Fatalf("handler missing %q: %q", want, handler)
+				}
+			}
+			for _, avoid := range test.avoid {
+				if strings.Contains(handler, avoid) {
+					t.Fatalf("handler unexpectedly contains %q: %q", avoid, handler)
+				}
+			}
+		})
 	}
 }
 
-func TestStandaloneHTTPProfileSourceIncludesEchoModule(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{ServerStack: "echonative"}
-	source := cmd.standaloneHTTPProfileSource()
-	if !strings.Contains(source, `echo "github.com/labstack/echo/v5"`) {
-		t.Fatalf("expected echo import in standalone source, got %q", source)
+// TestStandaloneHTTPProfileSourceDependencies keeps generated imports limited to the selected stack and response shape.
+func TestStandaloneHTTPProfileSourceDependencies(t *testing.T) {
+	tests := []struct {
+		name    string
+		stack   string
+		mode    string
+		token   string
+		present bool
+	}{
+		{name: "Echo module", stack: "echonative", token: `echo "github.com/labstack/echo/v5"`, present: true},
+		{name: "raw JSON import", stack: "rawnethttp", mode: "json", token: `"encoding/json"`, present: true},
+		{name: "raw no-content import", stack: "rawnethttp", mode: "nocontent", token: `"encoding/json"`, present: false},
 	}
-}
-
-func TestStandaloneHTTPProfileSourceIncludesJSONImportForRawModes(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{ServerStack: "rawnethttp", HealthMode: "json"}
-	source := cmd.standaloneHTTPProfileSource()
-	if !strings.Contains(source, `"encoding/json"`) {
-		t.Fatalf("expected encoding/json import in raw source, got %q", source)
-	}
-}
-
-func TestStandaloneHTTPProfileSourceOmitsJSONImportForNoContent(t *testing.T) {
-	cmd := &HTTPLiveProfileCmd{ServerStack: "rawnethttp", HealthMode: "nocontent"}
-	source := cmd.standaloneHTTPProfileSource()
-	if strings.Contains(source, `"encoding/json"`) {
-		t.Fatalf("did not expect encoding/json import in nocontent raw source, got %q", source)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := &HTTPLiveProfileCmd{ServerStack: test.stack, HealthMode: test.mode}
+			source := cmd.standaloneHTTPProfileSource()
+			if present := strings.Contains(source, test.token); present != test.present {
+				t.Fatalf("source contains %q = %t, want %t: %q", test.token, present, test.present, source)
+			}
+		})
 	}
 }
