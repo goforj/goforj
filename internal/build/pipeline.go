@@ -1,6 +1,7 @@
 package build
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -156,7 +157,7 @@ func NewPipeline(appLogger *logger.AppLogger, apiIndex apiindex.Preparer) Pipeli
 }
 
 // Run executes the configured steps from the project root and publishes API artifacts after the final step succeeds.
-func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) error {
+func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) (err error) {
 	if err := apiindex.ValidateGOFLAGS(os.Getenv("GOFLAGS")); err != nil {
 		return err
 	}
@@ -167,10 +168,17 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 
 	debug := debugEnabled()
 	progress := newBuildProgressReporter(debug, opts)
+	progressState := "done"
+	defer func() {
+		progress.State(progressState)
+	}()
 	var pendingAPIIndex apiindex.Candidate
 	defer func() {
 		if pendingAPIIndex != nil {
-			pendingAPIIndex.Discard()
+			if discardErr := pendingAPIIndex.Discard(); discardErr != nil {
+				progressState = "failed"
+				err = errors.Join(err, discardErr)
+			}
 		}
 	}()
 	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
@@ -191,11 +199,6 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		return preparation.Status, nil
 	}})
 	steps = append(steps, final)
-	progressState := "done"
-	defer func() {
-		progress.State(progressState)
-	}()
-
 	if debug {
 		p.logger.Info().Str("kind", kind).Str("step", generateStep.Name).Msg("Running pipeline step")
 	}

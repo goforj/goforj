@@ -87,7 +87,7 @@ func awaitPipelineCompletion(t *testing.T, done <-chan error) error {
 // recordingAPIIndexCandidate exposes publication callbacks without depending on staged artifact internals.
 type recordingAPIIndexCandidate struct {
 	publish func() error
-	discard func()
+	discard func() error
 }
 
 // Prepare records the pipeline request without requiring API-index implementation details.
@@ -100,9 +100,69 @@ func (c recordingAPIIndexCandidate) Publish() error {
 	return c.publish()
 }
 
-// Discard records candidate cleanup after either pipeline outcome.
-func (c recordingAPIIndexCandidate) Discard() {
-	c.discard()
+// Discard records candidate cleanup and returns the outcome needed to verify pipeline error joining.
+func (c recordingAPIIndexCandidate) Discard() error {
+	return c.discard()
+}
+
+// TestPipelineRunReportsCandidateDiscardFailures verifies cleanup cannot disappear behind either success or an earlier pipeline failure.
+func TestPipelineRunReportsCandidateDiscardFailures(t *testing.T) {
+	finalErr := errors.New("final step failed")
+	publishErr := errors.New("publication failed")
+	discardErr := errors.New("discard failed")
+	tests := []struct {
+		name        string
+		finalErr    error
+		publishErr  error
+		wantPublish bool
+	}{
+		{name: "successful pipeline", wantPublish: true},
+		{name: "final step failure", finalErr: finalErr},
+		{name: "publication failure", publishErr: publishErr, wantPublish: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			publishCalls := 0
+			discardCalls := 0
+			candidate := recordingAPIIndexCandidate{
+				publish: func() error {
+					publishCalls++
+					return test.publishErr
+				},
+				discard: func() error {
+					discardCalls++
+					return discardErr
+				},
+			}
+			preparer := recordingAPIIndexPreparer{prepare: func(apiindex.Options) (apiindex.Preparation, error) {
+				return apiindex.Preparation{Candidate: candidate, Status: "prepared"}, nil
+			}}
+			pipeline := NewPipeline(logger.NewSilentLogger(), preparer)
+			err := pipeline.Run(t.TempDir(), "test", Step{
+				Name: "final",
+				Run:  func(string) (string, error) { return "finished", test.finalErr },
+			}, RunOptions{SkipWire: true})
+
+			if !errors.Is(err, discardErr) {
+				t.Fatalf("pipeline error = %v, want discard failure", err)
+			}
+			for _, primaryErr := range []error{test.finalErr, test.publishErr} {
+				if primaryErr != nil && !errors.Is(err, primaryErr) {
+					t.Fatalf("pipeline error = %v, want primary failure %v", err, primaryErr)
+				}
+			}
+			wantPublishCalls := 0
+			if test.wantPublish {
+				wantPublishCalls = 1
+			}
+			if publishCalls != wantPublishCalls {
+				t.Fatalf("publish calls = %d, want %d", publishCalls, wantPublishCalls)
+			}
+			if discardCalls != 1 {
+				t.Fatalf("discard calls = %d, want 1", discardCalls)
+			}
+		})
+	}
 }
 
 // TestRunFinalAndPublishAPIIndexPublishesAfterSuccess verifies compilation remains the candidate's commit gate.
@@ -113,7 +173,7 @@ func TestRunFinalAndPublishAPIIndexPublishesAfterSuccess(t *testing.T) {
 			events = append(events, "publish")
 			return nil
 		},
-		discard: func() {},
+		discard: func() error { return nil },
 	}
 	status, err := runFinalAndPublishAPIIndex(t.TempDir(), Step{
 		Name: "go build",
@@ -138,7 +198,7 @@ func TestRunFinalAndPublishAPIIndexReturnsPublicationFailure(t *testing.T) {
 	publishErr := errors.New("publish candidate")
 	candidate := recordingAPIIndexCandidate{
 		publish: func() error { return publishErr },
-		discard: func() {},
+		discard: func() error { return nil },
 	}
 	status, err := runFinalAndPublishAPIIndex(t.TempDir(), Step{
 		Name: "go build",

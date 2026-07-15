@@ -31,9 +31,49 @@ func TestCandidateRemainsIsolatedUntilPublication(t *testing.T) {
 
 	assertArtifactContents(t, fixture.paths, fixture.previous)
 
-	pending.discard()
+	discardCandidate(t, pending)
 	if _, err := os.Stat(stagingDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("staging directory remained after discard: %v", err)
+	}
+}
+
+// TestCandidateDiscardReportsRemovalFailure verifies callers can retry cleanup instead of silently leaking staging data.
+func TestCandidateDiscardReportsRemovalFailure(t *testing.T) {
+	stagingDir := filepath.Join(t.TempDir(), ".forj-api-index-stage-test")
+	if err := os.Mkdir(stagingDir, 0o755); err != nil {
+		t.Fatalf("create staging directory: %v", err)
+	}
+	injected := errors.New("injected staging removal failure")
+	attempts := 0
+	pending := &preparedCandidate{
+		stagingDir: stagingDir,
+		removeStagingDir: func(path string) error {
+			attempts++
+			if path != stagingDir {
+				t.Fatalf("discard path = %q, want %q", path, stagingDir)
+			}
+			if attempts == 1 {
+				return injected
+			}
+			return os.RemoveAll(path)
+		},
+	}
+
+	err := pending.Discard()
+	if !errors.Is(err, injected) || !strings.Contains(err.Error(), stagingDir) {
+		t.Fatalf("discard error = %v, want injected cause and staging path", err)
+	}
+	if pending.stagingDir != stagingDir {
+		t.Fatalf("failed discard cleared staging path, preventing retry")
+	}
+	if err := pending.Discard(); err != nil {
+		t.Fatalf("retry discard: %v", err)
+	}
+	if pending.stagingDir != "" {
+		t.Fatalf("successful discard retained staging path %q", pending.stagingDir)
+	}
+	if _, err := os.Stat(stagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging directory remained after retry: %v", err)
 	}
 }
 
@@ -63,7 +103,7 @@ func TestCandidatePublishPromotesValidatedArtifacts(t *testing.T) {
 		}
 	}
 
-	pending.discard()
+	discardCandidate(t, pending)
 	if _, err := os.Stat(stagingDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("staging directory remained after publication: %v", err)
 	}
@@ -161,7 +201,7 @@ func TestCandidateRejectsConcurrentActiveArtifactChange(t *testing.T) {
 		t.Fatalf("prepare API index: %v", err)
 	}
 	pending := prepared.candidate
-	defer pending.discard()
+	defer discardCandidate(t, pending)
 	concurrent := []byte("{\"generation\":\"concurrent\"}\n")
 	if err := os.WriteFile(fixture.paths.diagnostics, concurrent, 0o644); err != nil {
 		t.Fatalf("write concurrent artifact: %v", err)
@@ -189,13 +229,13 @@ func TestCandidatePublicationLockSerializesInterleavedWriters(t *testing.T) {
 		t.Fatalf("prepare first API index writer: %v", err)
 	}
 	first := firstRun.candidate
-	defer first.discard()
+	defer discardCandidate(t, first)
 	secondRun, err := runner.prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare second API index writer: %v", err)
 	}
 	second := secondRun.candidate
-	defer second.discard()
+	defer discardCandidate(t, second)
 	locks := newQueuedPublicationCoordinator()
 	first.locks = locks
 	second.locks = locks
@@ -583,5 +623,13 @@ func assertNoTombstones(t *testing.T, artifactDir string) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("API index tombstones remained: %v", matches)
+	}
+}
+
+// discardCandidate keeps test-owned staging cleanup failures visible to the test that created them.
+func discardCandidate(t *testing.T, candidate *preparedCandidate) {
+	t.Helper()
+	if err := candidate.Discard(); err != nil {
+		t.Errorf("discard API index candidate: %v", err)
 	}
 }
