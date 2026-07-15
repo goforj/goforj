@@ -20,7 +20,7 @@ func TestEffectiveLaunchArgsPreservesCLIOnlyNoArgLaunches(t *testing.T) {
 
 // TestEffectiveLaunchArgsPreservesExplicitArgs verifies explicit command selection always takes precedence.
 func TestEffectiveLaunchArgsPreservesExplicitArgs(t *testing.T) {
-	args := []string{"queue:work", "--queue", "reports"}
+	args := []string{"about", "--json"}
 	got := EffectiveLaunchArgs(args, true)
 	if len(got) != len(args) {
 		t.Fatalf("expected explicit args to bypass default launch, got %v", got)

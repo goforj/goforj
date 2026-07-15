@@ -140,8 +140,10 @@ func readinessCheckDriver(checkType string, checkName string) string {
 		return storageDriver(checkName)
 	case "events":
 		return eventDriver(checkName)
+{{- if .ProjectComponents.Jobs }}
 	case "queue":
 		return queueDriver(checkName)
+{{- end }}
 	default:
 		return ""
 	}
@@ -183,6 +185,7 @@ func eventDriver(name string) string {
 	return strings.TrimSpace(env.Get(key, env.Get("EVENTS_DRIVER", "inproc")))
 }
 
+{{ if .ProjectComponents.Jobs }}
 // queueDriver resolves the configured driver for one Queue readiness check.
 func queueDriver(name string) string {
 	key := "QUEUE_DRIVER"
@@ -191,3 +194,4 @@ func queueDriver(name string) string {
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("QUEUE_DRIVER", "workerpool")))
 }
+{{- end }}
