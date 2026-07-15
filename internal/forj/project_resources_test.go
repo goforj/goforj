@@ -11,81 +11,77 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestReconcileResourceEnvironmentSeedsStorageOnFirstEnablement verifies config-only activation initializes the Storage contract.
-func TestReconcileResourceEnvironmentSeedsStorageOnFirstEnablement(t *testing.T) {
-	components := project.Components{CLI: true, Storage: true}
-	seed, err := compatibilityResourcePlan(components, "")
-	if err != nil {
-		t.Fatalf("resolve compatibility plan: %v", err)
+// TestReconcileResourceEnvironmentSeedsPrimitivesOnFirstEnablement verifies config-only activation initializes each primitive's owner contract.
+func TestReconcileResourceEnvironmentSeedsPrimitivesOnFirstEnablement(t *testing.T) {
+	tests := []struct {
+		name            string
+		components      project.Components
+		source          string
+		resource        project.ResourceKey
+		wantActive      string
+		wantSupported   string
+		wantAssignments []string
+	}{
+		{
+			name:            "cache",
+			components:      project.Components{CLI: true, Cache: true},
+			source:          "STORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n",
+			resource:        project.ResourceCache,
+			wantActive:      "memory",
+			wantSupported:   "memory",
+			wantAssignments: []string{"CACHE_DRIVER=memory\n", "CACHE_SUPPORTED_DRIVERS=memory\n"},
+		},
+		{
+			name:            "storage",
+			components:      project.Components{CLI: true, Storage: true},
+			source:          "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n",
+			resource:        project.ResourceStorage,
+			wantActive:      "local",
+			wantSupported:   "local",
+			wantAssignments: []string{"STORAGE_DRIVER=local\n", "STORAGE_SUPPORTED_DRIVERS=local\n", "STORAGE_PUBLIC_DRIVER=local\n"},
+		},
+		{
+			name:            "events",
+			components:      project.Components{CLI: true, Events: true},
+			source:          "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n",
+			resource:        project.ResourceEvents,
+			wantActive:      "inproc",
+			wantSupported:   "inproc,redis",
+			wantAssignments: []string{"EVENTS_DRIVER=inproc\n", "EVENTS_SUPPORTED_DRIVERS=inproc,redis\n"},
+		},
+		{
+			name:            "jobs queue",
+			components:      project.Components{CLI: true, Jobs: true},
+			source:          "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n",
+			resource:        project.ResourceQueue,
+			wantActive:      "workerpool",
+			wantSupported:   "workerpool,redis",
+			wantAssignments: []string{"QUEUE_DRIVER=workerpool\n", "QUEUE_SUPPORTED_DRIVERS=workerpool,redis\n"},
+		},
 	}
-	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
-
-	reconciled, err := resourceenv.Reconcile(source, seed, components, false)
-	if err != nil {
-		t.Fatalf("reconcile first Storage enablement: %v", err)
-	}
-	if !reconciled.Changed {
-		t.Fatal("first Storage enablement did not initialize owner environment keys")
-	}
-	text := string(reconciled.Source)
-	for _, want := range []string{"STORAGE_DRIVER=local\n", "STORAGE_SUPPORTED_DRIVERS=local\n", "STORAGE_PUBLIC_DRIVER=local\n"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("first Storage enablement omitted %q:\n%s", want, text)
-		}
-	}
-	storage, ok := reconciled.EffectivePlan.Selection(project.ResourceStorage)
-	if !ok || storage.Active != "local" || strings.Join(storage.Supported, ",") != "local" {
-		t.Fatalf("effective first Storage selection = %#v selected=%t", storage, ok)
-	}
-}
-
-// TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement verifies config-only activation compiles the common infrastructure transition.
-func TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement(t *testing.T) {
-	components := project.Components{CLI: true, Events: true}
-	seed, err := compatibilityResourcePlan(components, "")
-	if err != nil {
-		t.Fatalf("resolve compatibility plan: %v", err)
-	}
-	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n")
-
-	reconciled, err := resourceenv.Reconcile(source, seed, components, false)
-	if err != nil {
-		t.Fatalf("reconcile first Events enablement: %v", err)
-	}
-	if !reconciled.Changed {
-		t.Fatal("first Events enablement did not initialize owner environment keys")
-	}
-	if !strings.Contains(string(reconciled.Source), "EVENTS_DRIVER=inproc\n") || !strings.Contains(string(reconciled.Source), "EVENTS_SUPPORTED_DRIVERS=inproc,redis\n") {
-		t.Fatalf("first Events enablement omitted portable defaults:\n%s", reconciled.Source)
-	}
-	events, ok := reconciled.EffectivePlan.Selection(project.ResourceEvents)
-	if !ok || events.Active != "inproc" || strings.Join(events.Supported, ",") != "inproc,redis" {
-		t.Fatalf("effective first Events selection = %#v selected=%t", events, ok)
-	}
-}
-
-// TestReconcileResourceEnvironmentSeedsPortableQueueOnFirstEnablement verifies every render path starts with the local-to-Redis transition compiled.
-func TestReconcileResourceEnvironmentSeedsPortableQueueOnFirstEnablement(t *testing.T) {
-	components := project.Components{CLI: true, Jobs: true}
-	seed, err := compatibilityResourcePlan(components, "")
-	if err != nil {
-		t.Fatalf("resolve compatibility plan: %v", err)
-	}
-	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
-
-	reconciled, err := resourceenv.Reconcile(source, seed, components, false)
-	if err != nil {
-		t.Fatalf("reconcile first Jobs enablement: %v", err)
-	}
-	if !reconciled.Changed {
-		t.Fatal("first Jobs enablement did not initialize owner environment keys")
-	}
-	if !strings.Contains(string(reconciled.Source), "QUEUE_DRIVER=workerpool\n") || !strings.Contains(string(reconciled.Source), "QUEUE_SUPPORTED_DRIVERS=workerpool,redis\n") {
-		t.Fatalf("first Jobs enablement omitted portable Queue defaults:\n%s", reconciled.Source)
-	}
-	queue, ok := reconciled.EffectivePlan.Selection(project.ResourceQueue)
-	if !ok || queue.Active != "workerpool" || strings.Join(queue.Supported, ",") != "workerpool,redis" {
-		t.Fatalf("effective first Queue selection = %#v selected=%t", queue, ok)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			seed, err := compatibilityResourcePlan(test.components, "")
+			if err != nil {
+				t.Fatalf("compatibilityResourcePlan() error = %v", err)
+			}
+			reconciled, err := resourceenv.Reconcile([]byte(test.source), seed, test.components, false)
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !reconciled.Changed {
+				t.Fatal("Reconcile() did not initialize owner environment keys")
+			}
+			for _, assignment := range test.wantAssignments {
+				if !strings.Contains(string(reconciled.Source), assignment) {
+					t.Fatalf("Reconcile() source omitted %q:\n%s", assignment, reconciled.Source)
+				}
+			}
+			selection, ok := reconciled.EffectivePlan.Selection(test.resource)
+			if !ok || selection.Active != test.wantActive || strings.Join(selection.Supported, ",") != test.wantSupported {
+				t.Fatalf("effective selection = %#v selected=%t, want active=%q supported=%q", selection, ok, test.wantActive, test.wantSupported)
+			}
+		})
 	}
 }
 
