@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,6 +46,31 @@ func TestCleanupDisabledCacheGeneratedFilesRequiresAndRemovesMarkers(t *testing.
 		if _, err := os.Stat(artifact.path); !os.IsNotExist(err) {
 			t.Fatalf("generated Cache artifact %s still exists: %v", artifact.path, err)
 		}
+	}
+}
+
+// TestCacheOwnerEnvironmentPathsDiscoversOnlyRootFiles verifies custom overlays cannot widen preflight into unrelated filesystem surfaces.
+func TestCacheOwnerEnvironmentPathsDiscoversOnlyRootFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, path := range []string{".env", ".env.production", ".env.qa", ".env.qa.local", "..env.example-1234", ".envrc"} {
+		writeCacheCleanupFixture(t, path, "CACHE_REPORTS_DRIVER=redis\n")
+	}
+	for _, path := range []string{
+		filepath.Join(".env.directory", "owner"),
+		filepath.Join("forj_render_1234", ".env.qa"),
+		filepath.Join("nested", ".env.qa"),
+		filepath.Join("vendor", "dependency", ".env.qa"),
+	} {
+		writeCacheCleanupFixture(t, path, "CACHE_NESTED_DRIVER=redis\n")
+	}
+
+	paths, err := currentProjectRenderWorkspace(t).cacheOwnerEnvironmentPaths()
+	if err != nil {
+		t.Fatalf("discover Cache owner environment files: %v", err)
+	}
+	want := []string{".env", ".env.production", ".env.qa", ".env.qa.local"}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("Cache owner environment paths = %v, want %v", paths, want)
 	}
 }
 
@@ -180,6 +206,8 @@ func TestLastCacheRemovalRejectsProjectOwnerDependencies(t *testing.T) {
 		ownerPath   string
 		ownerSource string
 		envExtra    string
+		overlayPath string
+		overlay     string
 		want        string
 	}{
 		{
@@ -192,6 +220,12 @@ func TestLastCacheRemovalRejectsProjectOwnerDependencies(t *testing.T) {
 			name:     "named cache configuration",
 			envExtra: "CACHE_REPORTS_DRIVER=redis\n",
 			want:     "CACHE_REPORTS_DRIVER",
+		},
+		{
+			name:        "custom environment overlay",
+			overlayPath: ".env.qa",
+			overlay:     "CACHE_REPORTS_DRIVER=redis\n",
+			want:        ".env.qa",
 		},
 	}
 	for _, test := range tests {
@@ -212,6 +246,9 @@ func TestLastCacheRemovalRejectsProjectOwnerDependencies(t *testing.T) {
 			writePrimitiveRendererFile(t, app.Entrypoint, "package main\n")
 			environment := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n" + test.envExtra + "\n# Worker\nWORKER_CACHE_DRIVER=memory\n"
 			writePrimitiveRendererFile(t, ".env", environment)
+			if test.overlayPath != "" {
+				writePrimitiveRendererFile(t, test.overlayPath, test.overlay)
+			}
 			if test.ownerPath != "" {
 				writePrimitiveRendererFile(t, test.ownerPath, test.ownerSource)
 			}
@@ -232,6 +269,9 @@ func TestLastCacheRemovalRejectsProjectOwnerDependencies(t *testing.T) {
 			}
 			if got := readPrimitiveRendererFile(t, ".env"); got != environment {
 				t.Fatal("rejected final Cache removal rewrote owner environment")
+			}
+			if test.overlayPath != "" && readPrimitiveRendererFile(t, test.overlayPath) != test.overlay {
+				t.Fatalf("rejected final Cache removal rewrote owner environment %s", test.overlayPath)
 			}
 			if _, err := os.Stat(app.Entrypoint); err != nil {
 				t.Fatalf("rejected final Cache removal changed App source: %v", err)
