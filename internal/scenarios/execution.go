@@ -3,8 +3,10 @@ package scenarios
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,12 +36,14 @@ type scenarioExecution struct {
 }
 
 // runScenario executes one selected scenario against the same validated catalog used to select it.
-func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) error {
+func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) (runErr error) {
 	workspace, err := createScenarioWorkspace(options, spec)
 	if err != nil {
 		return err
 	}
-	defer workspace.cleanup()
+	defer func() {
+		runErr = workspace.cleanupAfter(runErr)
+	}()
 
 	execution := scenarioExecution{
 		logger:              options.Logger,
@@ -81,11 +85,16 @@ func createScenarioWorkspace(options ValidateOptions, spec ScenarioSpec) (scenar
 	return scenarioWorkspace{root: root, removeAfter: !options.Keep}, nil
 }
 
-// cleanup removes only temporary workspaces whose caller did not request preservation.
-func (workspace scenarioWorkspace) cleanup() {
-	if workspace.removeAfter {
-		_ = os.RemoveAll(workspace.root)
+// cleanupAfter removes an owned temporary workspace while retaining both scenario and cleanup failures for diagnosis.
+func (workspace scenarioWorkspace) cleanupAfter(runErr error) error {
+	if !workspace.removeAfter {
+		return runErr
 	}
+	if err := os.RemoveAll(workspace.root); err != nil {
+		cleanupErr := fmt.Errorf("remove temporary scenario workspace %q: %w", workspace.root, err)
+		return errors.Join(runErr, cleanupErr)
+	}
+	return runErr
 }
 
 // run applies the rendered project, inherited steps, selected steps, and verification commands in their contract order.
@@ -217,11 +226,13 @@ func (execution scenarioExecution) appendFile(spec ScenarioSpec, change Scenario
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	if _, err := file.Write(content); err != nil {
-		return err
-	}
-	return nil
+	return appendAndCloseScenarioFile(file, content)
+}
+
+// appendAndCloseScenarioFile reports delayed filesystem failures without discarding an earlier write failure.
+func appendAndCloseScenarioFile(file io.WriteCloser, content []byte) error {
+	_, writeErr := file.Write(content)
+	return errors.Join(writeErr, file.Close())
 }
 
 // replaceText requires an exact old value so template drift cannot silently produce an incomplete scenario.
