@@ -153,10 +153,6 @@ func shardRenderCombos(combos []renderCombo) ([]renderCombo, string, error) {
 		}
 		count = n
 	}
-	if count == 1 {
-		return combos, "", nil
-	}
-
 	index := 0
 	if v := strings.TrimSpace(os.Getenv("FORJ_TEST_RENDERS_SHARD_INDEX")); v != "" {
 		n, err := strconv.Atoi(v)
@@ -171,6 +167,9 @@ func shardRenderCombos(combos []renderCombo) ([]renderCombo, string, error) {
 			index,
 			count,
 		)
+	}
+	if count == 1 {
+		return combos, "", nil
 	}
 
 	filtered := make([]renderCombo, 0, len(combos)/count+1)
