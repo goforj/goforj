@@ -1486,9 +1486,6 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 
 // validateRemoveAppTransition rejects removal of the last App owning a capability whose shared generated surface cannot be reconciled safely.
 func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
-	if p.config == nil {
-		return nil
-	}
 	prospective := *p.config
 	prospective.Apps = make(map[string]project.AppConfig, len(p.config.Apps))
 	for name, appConfig := range p.config.Apps {
