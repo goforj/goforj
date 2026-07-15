@@ -7,6 +7,25 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestSyncCoreLibrariesGatesCacheModules verifies disabled Cache projects do not acquire project-wide Cache dependencies.
+func TestSyncCoreLibrariesGatesCacheModules(t *testing.T) {
+	disabled := SyncCoreLibraries(project.Components{})
+	enabled := SyncCoreLibraries(project.Components{Cache: true})
+
+	for _, module := range []string{
+		"github.com/goforj/cache@",
+		"github.com/goforj/cache/cachecore@",
+		"github.com/goforj/cache/driver/rediscache@",
+	} {
+		if containsModulePrefix(disabled, module) {
+			t.Fatalf("Cache-disabled modules contain %q: %#v", module, disabled)
+		}
+		if !containsModulePrefix(enabled, module) {
+			t.Fatalf("Cache-enabled modules omit %q: %#v", module, enabled)
+		}
+	}
+}
+
 // TestSyncCoreLibrariesGatesEventsModules verifies disabled Events projects do not acquire project-wide Events dependencies.
 func TestSyncCoreLibrariesGatesEventsModules(t *testing.T) {
 	disabled := SyncCoreLibraries(project.Components{})

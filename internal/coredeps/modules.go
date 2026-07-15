@@ -53,14 +53,17 @@ var pinnedModuleVersions = map[string]string{
 }
 
 var rendererSyncModules = []string{
-	"github.com/goforj/cache",
-	"github.com/goforj/cache/cachecore",
-	"github.com/goforj/cache/driver/rediscache",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
 	"github.com/goforj/web",
 	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
+}
+
+var cacheRendererSyncModules = []string{
+	"github.com/goforj/cache",
+	"github.com/goforj/cache/cachecore",
+	"github.com/goforj/cache/driver/rediscache",
 }
 
 var eventsRendererSyncModules = []string{
@@ -104,6 +107,9 @@ func MustVersionFor(module string) string {
 // SyncCoreLibraries returns the pinned renderer dependencies required by the selected project capabilities.
 func SyncCoreLibraries(components project.Components) []string {
 	modules := append([]string(nil), rendererSyncModules...)
+	if components.Cache {
+		modules = append(modules, cacheRendererSyncModules...)
+	}
 	if components.Events {
 		modules = append(modules, eventsRendererSyncModules...)
 	}
