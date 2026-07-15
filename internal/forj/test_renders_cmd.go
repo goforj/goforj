@@ -60,6 +60,54 @@ type stepTimer struct {
 	parts map[string]time.Duration
 }
 
+// renderComboFailure retains the context needed to report one failed render without terminating its worker.
+type renderComboFailure struct {
+	reason  string
+	comboID string
+	config  *project.Config
+	err     error
+}
+
+// Error identifies the failed combination while preserving its underlying cause.
+func (failure renderComboFailure) Error() string {
+	return fmt.Sprintf("%s for combo %s: %v", failure.reason, failure.comboID, failure.err)
+}
+
+// Unwrap exposes the command or filesystem error that caused this combination to fail.
+func (failure renderComboFailure) Unwrap() error {
+	return failure.err
+}
+
+// renderComboFailures keeps every worker failure available while presenting one command-level summary.
+type renderComboFailures struct {
+	failures   []*renderComboFailure
+	total      int
+	shardLabel string
+}
+
+// renderComboWorker owns the filesystem and toolchain dependencies reused by one render worker.
+type renderComboWorker struct {
+	workspaceRoot  string
+	moduleCache    string
+	buildCache     string
+	forjExecutable string
+	runTests       bool
+}
+
+// Error summarizes the failed combinations for the CLI boundary after their detailed reports are printed.
+func (failures renderComboFailures) Error() string {
+	return fmt.Sprintf("%d of %d render combinations failed%s", len(failures.failures), failures.total, failures.shardLabel)
+}
+
+// Unwrap exposes every combination failure to callers that need to inspect the aggregate.
+func (failures renderComboFailures) Unwrap() []error {
+	causes := make([]error, len(failures.failures))
+	for index := range failures.failures {
+		causes[index] = failures.failures[index]
+	}
+	return causes
+}
+
 func newStepTimer() *stepTimer {
 	return &stepTimer{
 		start: time.Now(),
@@ -129,27 +177,24 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 
 	jobs := make(chan renderCombo)
+	failureResults := make(chan *renderComboFailure, len(combos))
 	var wg sync.WaitGroup
 	wg.Add(workerCount)
 	for i := 0; i < workerCount; i++ {
 		workerRoot := filepath.Join(workspaceRoot, fmt.Sprintf("worker-%02d", i))
 		go func(root string) {
 			defer wg.Done()
+			worker := renderComboWorker{
+				workspaceRoot:  root,
+				moduleCache:    modCache,
+				buildCache:     buildCache,
+				forjExecutable: forjExec,
+				runTests:       cmd.RunTests,
+			}
 			for combo := range jobs {
-				_ = os.RemoveAll(root)
-				if err := os.MkdirAll(root, 0755); err != nil {
-					cmd.fail("workspace dir failed", combo.id, nil, err)
-					continue
+				if failure := worker.run(combo); failure != nil {
+					failureResults <- failure
 				}
-
-				if err := initModule(root, modCache, buildCache); err != nil {
-					_ = os.RemoveAll(root)
-					cmd.fail("go mod init failed", combo.id, nil, err)
-					continue
-				}
-
-				cmd.runCombo(root, modCache, buildCache, forjExec, combo)
-				_ = os.RemoveAll(root)
 			}
 		}(workerRoot)
 	}
@@ -159,6 +204,20 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 	close(jobs)
 	wg.Wait()
+	close(failureResults)
+
+	failures := make([]*renderComboFailure, 0, len(failureResults))
+	for failure := range failureResults {
+		failures = append(failures, failure)
+	}
+	if len(failures) > 0 {
+		aggregate := aggregateRenderComboFailures(failures, len(combos), shardLabel)
+		for _, failure := range aggregate.failures {
+			reportRenderComboFailure(failure)
+		}
+		return aggregate
+	}
+
 	console.Successf("Rendered %d combinations%s", len(combos), shardLabel)
 	if totalCombos != len(combos) {
 		console.Infof("Shard completed %d/%d combinations", len(combos), totalCombos)
@@ -706,13 +765,24 @@ func initModule(dir, modCache, buildCache string) error {
 	return nil
 }
 
-// runCombo renders and validates a single combo using a shared directory.
-func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, combo renderCombo) {
+// run prepares a clean workspace and returns any render failure to the coordinator for aggregation.
+func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 	comboID := combo.id
 	apps, err := renderComboApps(combo)
 	if err != nil {
-		cmd.fail("invalid configured App", comboID, nil, err)
-		return
+		return newRenderComboFailure("invalid configured App", comboID, nil, err)
+	}
+
+	_ = os.RemoveAll(worker.workspaceRoot)
+	if err := os.MkdirAll(worker.workspaceRoot, 0o755); err != nil {
+		return newRenderComboFailure("workspace dir failed", comboID, nil, err)
+	}
+	defer func() {
+		_ = os.RemoveAll(worker.workspaceRoot)
+	}()
+
+	if err := initModule(worker.workspaceRoot, worker.moduleCache, worker.buildCache); err != nil {
+		return newRenderComboFailure("go mod init failed", comboID, nil, err)
 	}
 	cfg := project.Config{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
@@ -734,27 +804,25 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 	console.Actionf("Rendering components %s", strings.Join(combo.enabled, ", "))
 
 	timer := newStepTimer()
-	ymlPath := filepath.Join(dir, ".goforj.yml")
+	ymlPath := filepath.Join(worker.workspaceRoot, ".goforj.yml")
 
 	if err := timer.Track("write_yaml", func() error {
 		return WriteYAML(ymlPath, cfg)
 	}); err != nil {
-		cmd.fail("failed to write config", comboID, &cfg, err)
-		return
+		return newRenderComboFailure("failed to write config", comboID, &cfg, err)
 	}
 	if err := timer.Track("seed_apps", func() error {
-		return seedRenderComboApps(dir, apps)
+		return seedRenderComboApps(worker.workspaceRoot, apps)
 	}); err != nil {
-		cmd.fail("failed to seed configured Apps", comboID, &cfg, err)
-		return
+		return newRenderComboFailure("failed to seed configured Apps", comboID, &cfg, err)
 	}
 
 	if err := timer.Track("forj_render", func() error {
-		render := exec.Command(forjExec, "render")
-		render.Dir = dir
+		render := exec.Command(worker.forjExecutable, "render")
+		render.Dir = worker.workspaceRoot
 		render.Env = append(os.Environ(),
-			"GOMODCACHE="+modCache,
-			"GOCACHE="+buildCache,
+			"GOMODCACHE="+worker.moduleCache,
+			"GOCACHE="+worker.buildCache,
 		)
 
 		var stdout, stderr strings.Builder
@@ -774,17 +842,16 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		}
 		return nil
 	}); err != nil {
-		cmd.fail("render failed", comboID, &cfg, err)
-		return
+		return newRenderComboFailure("render failed", comboID, &cfg, err)
 	}
 
 	if combo.starterKit == project.StarterKitTemplHTMX {
 		if err := timer.Track("templ_generate", func() error {
 			templCmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
-			templCmd.Dir = dir
+			templCmd.Dir = worker.workspaceRoot
 			templCmd.Env = append(os.Environ(),
-				"GOMODCACHE="+modCache,
-				"GOCACHE="+buildCache,
+				"GOMODCACHE="+worker.moduleCache,
+				"GOCACHE="+worker.buildCache,
 			)
 			output, err := templCmd.CombinedOutput()
 			if err != nil {
@@ -792,18 +859,17 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 			}
 			return nil
 		}); err != nil {
-			cmd.fail("templ generate failed", comboID, &cfg, err)
-			return
+			return newRenderComboFailure("templ generate failed", comboID, &cfg, err)
 		}
 	}
 
 	if err := timer.Track("wire_gen", func() error {
 		for _, app := range apps {
 			wireCmd := exec.Command("wire")
-			wireCmd.Dir = filepath.Join(dir, app.WireDir)
+			wireCmd.Dir = filepath.Join(worker.workspaceRoot, app.WireDir)
 			wireCmd.Env = append(os.Environ(),
-				"GOMODCACHE="+modCache,
-				"GOCACHE="+buildCache,
+				"GOMODCACHE="+worker.moduleCache,
+				"GOCACHE="+worker.buildCache,
 			)
 			if output, err := wireCmd.CombinedOutput(); err != nil {
 				return formatCommandFailure("wire generate "+app.Name, err, string(output), "")
@@ -811,12 +877,11 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		}
 		return nil
 	}); err != nil {
-		cmd.fail("wire generate failed", comboID, &cfg, err)
-		return
+		return newRenderComboFailure("wire generate failed", comboID, &cfg, err)
 	}
 
 	if err := timer.Track("go_build", func() error {
-		binDir := filepath.Join(dir, "bin")
+		binDir := filepath.Join(worker.workspaceRoot, "bin")
 		if err := os.MkdirAll(binDir, 0o755); err != nil {
 			return fmt.Errorf("create bin dir: %w", err)
 		}
@@ -828,10 +893,10 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 			target := "./" + filepath.ToSlash(filepath.Dir(app.Entrypoint))
 			args = append(args, "-o", filepath.Join(binDir, app.Name), target)
 			build := exec.Command("go", args...)
-			build.Dir = dir
+			build.Dir = worker.workspaceRoot
 			build.Env = append(os.Environ(),
-				"GOMODCACHE="+modCache,
-				"GOCACHE="+buildCache,
+				"GOMODCACHE="+worker.moduleCache,
+				"GOCACHE="+worker.buildCache,
 			)
 			output, err := build.CombinedOutput()
 			if err != nil {
@@ -843,22 +908,21 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, 
 		}
 		return nil
 	}); err != nil {
-		cmd.fail("go build failed", comboID, &cfg, err)
-		return
+		return newRenderComboFailure("go build failed", comboID, &cfg, err)
 	}
 
-	if cmd.RunTests {
+	if worker.runTests {
 		if err := timer.Track("go_test", func() error {
-			return runRenderedGoTests(dir, modCache, buildCache)
+			return runRenderedGoTests(worker.workspaceRoot, worker.moduleCache, worker.buildCache)
 		}); err != nil {
-			cmd.fail("go test failed", comboID, &cfg, err)
-			return
+			return newRenderComboFailure("go test failed", comboID, &cfg, err)
 		}
 	}
 
 	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")))
 
 	console.Successf("Passed")
+	return nil
 }
 
 // renderComboApps returns every executable projection a render combo must compile.
@@ -932,19 +996,41 @@ func WriteYAML(path string, cfg project.Config) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *project.Config, err error) {
-	console.Errorf("Failure")
-	console.Infof("reason: %s", reason)
-	console.Infof("combo: %s", comboID)
-	if err != nil {
-		console.Infof("error: %v", err)
+// newRenderComboFailure packages a worker failure without reporting it concurrently with other combinations.
+func newRenderComboFailure(reason, comboID string, cfg *project.Config, err error) *renderComboFailure {
+	return &renderComboFailure{
+		reason:  reason,
+		comboID: comboID,
+		config:  cfg,
+		err:     err,
 	}
-	if cfg != nil {
-		if yamlDump, yerr := yaml.Marshal(cfg); yerr == nil {
+}
+
+// aggregateRenderComboFailures orders concurrent results so repeated runs report the same diagnostic sequence.
+func aggregateRenderComboFailures(failures []*renderComboFailure, total int, shardLabel string) renderComboFailures {
+	sort.SliceStable(failures, func(left, right int) bool {
+		return failures[left].comboID < failures[right].comboID
+	})
+	return renderComboFailures{
+		failures:   failures,
+		total:      total,
+		shardLabel: shardLabel,
+	}
+}
+
+// reportRenderComboFailure prints the same detailed diagnostics once workers have finished.
+func reportRenderComboFailure(failure *renderComboFailure) {
+	console.Errorf("Failure")
+	console.Infof("reason: %s", failure.reason)
+	console.Infof("combo: %s", failure.comboID)
+	if failure.err != nil {
+		console.Infof("error: %v", failure.err)
+	}
+	if failure.config != nil {
+		if yamlDump, yerr := yaml.Marshal(failure.config); yerr == nil {
 			console.Infof("config:\n%s", string(yamlDump))
 		}
 	}
-	os.Exit(1)
 }
 
 func renderBuildTraceEnabled() bool {

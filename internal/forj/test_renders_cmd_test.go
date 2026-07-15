@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,86 @@ import (
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
+
+// TestRenderComboWorkerReturnsInvalidAppFailure verifies worker validation failures return to the coordinator instead of terminating the process.
+func TestRenderComboWorkerReturnsInvalidAppFailure(t *testing.T) {
+	wantCause := "unsafe App name"
+	worker := renderComboWorker{
+		workspaceRoot:  t.TempDir(),
+		moduleCache:    "/tmp/gomodcache",
+		buildCache:     "/tmp/gocache",
+		forjExecutable: "forj",
+		runTests:       false,
+	}
+	failure := worker.run(renderCombo{
+		id: "invalid_app",
+		apps: map[string]project.AppConfig{
+			"../outside": {},
+		},
+	})
+
+	if failure == nil {
+		t.Fatal("worker.run() failure = nil, want invalid App failure")
+	}
+	if failure.reason != "invalid configured App" {
+		t.Fatalf("failure reason = %q, want %q", failure.reason, "invalid configured App")
+	}
+	if failure.comboID != "invalid_app" {
+		t.Fatalf("failure combo = %q, want %q", failure.comboID, "invalid_app")
+	}
+	if failure.config != nil {
+		t.Fatalf("failure config = %#v, want nil before config construction", failure.config)
+	}
+	if !strings.Contains(failure.err.Error(), wantCause) {
+		t.Fatalf("failure error = %q, want substring %q", failure.err, wantCause)
+	}
+}
+
+// TestRenderComboFailuresRetainEveryCause verifies the command summary remains inspectable after concurrent work is aggregated.
+func TestRenderComboFailuresRetainEveryCause(t *testing.T) {
+	firstCause := errors.New("first failure")
+	secondCause := errors.New("second failure")
+	failures := aggregateRenderComboFailures(
+		[]*renderComboFailure{
+			newRenderComboFailure("go build failed", "combo_b", nil, secondCause),
+			newRenderComboFailure("render failed", "combo_a", nil, firstCause),
+		},
+		5,
+		" (shard 1/2 · total 10)",
+	)
+
+	wantSummary := "2 of 5 render combinations failed (shard 1/2 · total 10)"
+	if got := failures.Error(); got != wantSummary {
+		t.Fatalf("aggregate error = %q, want %q", got, wantSummary)
+	}
+	if got := []string{failures.failures[0].comboID, failures.failures[1].comboID}; got[0] != "combo_a" || got[1] != "combo_b" {
+		t.Fatalf("aggregate order = %v, want [combo_a combo_b]", got)
+	}
+	for _, cause := range []error{firstCause, secondCause} {
+		if !errors.Is(failures, cause) {
+			t.Fatalf("aggregate error does not retain %q", cause)
+		}
+	}
+}
+
+// TestReportRenderComboFailurePreservesDiagnostics verifies deferred reporting keeps the established failure details.
+func TestReportRenderComboFailurePreservesDiagnostics(t *testing.T) {
+	cfg := &project.Config{ProjectName: "FailureFixture"}
+	output := captureStdout(t, func() {
+		reportRenderComboFailure(newRenderComboFailure("render failed", "combo_a", cfg, errors.New("boom")))
+	})
+
+	for _, want := range []string{
+		"reason: render failed",
+		"combo: combo_a",
+		"error: boom",
+		"project_name: FailureFixture",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("failure output missing %q:\n%s", want, output)
+		}
+	}
+}
 
 func TestWriteYAMLPreservesRenderComponents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".goforj.yml")
