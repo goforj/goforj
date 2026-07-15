@@ -957,21 +957,18 @@ func shouldRunAfterMigrate(task project.DevTask) bool {
 	return cmd.ContainsFold("generate")
 }
 
-// runningWatcher tracks a watcher process and its configured name.
+// runningWatcher retains logical identity so one shared controller generation can report and drain every configured watcher.
 type runningWatcher struct {
-	id     string
-	name   string
-	proc   *execx.Process
-	native *devWatcherController
+	id   string
+	name string
 }
 
-// watcherExit reports the result of a watcher process after it finishes.
+// watcherExit carries one logical watcher's terminal event from the shared controller to the outer loop.
 type watcherExit struct {
-	id     string
-	name   string
-	result execx.Result
-	native *devwatch.Exit
-	err    error
+	id      string
+	name    string
+	process *devwatch.Exit
+	err     error
 }
 
 type watcherLifecycleState string
@@ -1007,9 +1004,7 @@ watcherLoop:
 				runtime.stopAndDrain(true)
 				return fmt.Errorf("dev watcher reconciliation failed: %w", reconcileErr)
 			}
-			if runtime.controller != nil {
-				runtime.controller.finishReconciliation(true)
-			}
+			runtime.controller.finishReconciliation(true)
 		}
 		printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
 		for {
@@ -1040,26 +1035,22 @@ watcherLoop:
 				if hasNewStructuredDevSPARoot(spaRootsBeforeBuild, session.config) {
 					session.reconcileFrontendDeps = true
 				}
-				if runtime.controller != nil {
-					quiesceContext, cancelQuiesce := devWatchStopContext(session.stopCh)
-					err := runtime.controller.quiesceBuilds(quiesceContext)
-					cancelQuiesce()
-					if err != nil {
-						runtime.stopAndDrain(true)
-						if errors.Is(err, context.Canceled) {
-							return errDevInterrupted
-						}
-						return fmt.Errorf("quiesce dev builds: %w", err)
+				quiesceContext, cancelQuiesce := devWatchStopContext(session.stopCh)
+				err := runtime.controller.quiesceBuilds(quiesceContext)
+				cancelQuiesce()
+				if err != nil {
+					runtime.stopAndDrain(true)
+					if errors.Is(err, context.Canceled) {
+						return errDevInterrupted
 					}
+					return fmt.Errorf("quiesce dev builds: %w", err)
 				}
 				if err := envx.Reload(); err != nil {
 					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
 				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
-					if runtime.controller != nil {
-						runtime.controller.resumeBuilds()
-					}
+					runtime.controller.resumeBuilds()
 					console.Errorf("forj build failed: %v", err)
 					resetDevFooterLine(session.outWriter)
 					resetDevFooterLine(session.errWriter)
@@ -1980,7 +1971,7 @@ func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-// stop waits for every logical handle because one native controller may publish multiple terminal events.
+// stop waits for the shared controller generation while leaving logical exit draining to its caller.
 func (runtime *devWatcherRuntime) stop(timeout time.Duration, collapse bool) {
 	wait := runtime.beginStop(timeout, collapse)
 	wait()
@@ -1997,40 +1988,25 @@ func (runtime *devWatcherRuntime) beginStop(timeout time.Duration, collapse bool
 	if collapse {
 		names := make([]string, 0, len(runtime.watchers))
 		for _, watcher := range runtime.watchers {
-			if watcher.proc == nil && watcher.native == nil {
-				continue
-			}
 			names = append(names, watcher.name)
 		}
 		emitWatcherLifecycleSummary(runtime.session.outWriter, runtime.session.streamer, names, watcherStateStopping)
-	}
-	for _, watcher := range runtime.watchers {
-		if watcher.proc == nil && watcher.native == nil {
-			continue
-		}
-		if !collapse {
+	} else {
+		for _, watcher := range runtime.watchers {
 			emitWatcherLifecycleLine(runtime.session.outWriter, runtime.session.streamer, watcher.name, watcherStateStopping)
 		}
 	}
-	var wg sync.WaitGroup
-	for _, watcher := range runtime.watchers {
-		if watcher.proc == nil && watcher.native == nil {
-			continue
-		}
-		wg.Add(1)
-		go func(watcher runningWatcher) {
-			defer wg.Done()
-			if watcher.native != nil {
-				watcher.native.stop(timeout)
-				return
-			}
-			_ = watcher.proc.GracefulShutdown(os.Interrupt, timeout)
-		}(watcher)
+	stopped := make(chan struct{})
+	go func() {
+		runtime.controller.stop(timeout)
+		close(stopped)
+	}()
+	return func() {
+		<-stopped
 	}
-	return wg.Wait
 }
 
-// drainExits consumes a fixed number of owned exit events so watcher goroutines finish cleanly.
+// drainExits consumes a fixed logical generation so its terminal reporting cannot leak into replacement watchers.
 func (runtime *devWatcherRuntime) drainExits(count int, collapse bool) {
 	names := make([]string, 0, count)
 	for i := 0; i < count; i++ {
@@ -2056,11 +2032,7 @@ func (runtime *devWatcherRuntime) stopAfterExit(exit watcherExit, timeout time.D
 	emitWatcherLifecycleLine(runtime.session.outWriter, runtime.session.streamer, exit.name, watcherStateStopped)
 	watcherCount := len(runtime.watchers)
 	runtime.watchers = removeWatcherByID(runtime.watchers, exit.id)
-	if len(runtime.watchers) == 0 && watcherCount > 0 && runtime.controller != nil {
-		runtime.controller.stop(timeout)
-	} else {
-		runtime.stop(timeout, false)
-	}
+	runtime.stop(timeout, false)
 	runtime.drainExits(watcherCount-1, false)
 }
 

@@ -198,7 +198,7 @@ func TestDevWatcherOutputBackpressureReapsProcesses(t *testing.T) {
 	case <-time.After(devWatcherChurnTimeout):
 		t.Fatal("timed out waiting for output-heavy runtime reaping")
 	}
-	if runtimeExit.id != runtimeID || runtimeExit.native == nil || runtimeExit.native.ExitCode != 0 {
+	if runtimeExit.id != runtimeID || runtimeExit.process == nil || runtimeExit.process.ExitCode != 0 {
 		t.Fatalf("output-heavy runtime exit=%+v, want reaped successful runtime %q", runtimeExit, runtimeID)
 	}
 	buildPID := additionalStressLifecyclePID(t, lifecycle, "output-build-start:")
