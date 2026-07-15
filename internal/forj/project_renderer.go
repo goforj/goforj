@@ -21,13 +21,13 @@ import (
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/coredeps"
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
-	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -580,7 +580,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					)
 				}
 				existingExample, _ = removeObsoleteDiagnosticCacheEnvironment(existingExample)
-				mergedExample := MergeEnvironmentExample(existingExample, environment)
+				mergedExample := envfile.MergeExample(existingExample, environment)
 				if err := p.workspace.writeEnvironmentExample(mergedExample, 0o644); err != nil {
 					return fmt.Errorf("write environment example: %w", err)
 				}
@@ -1258,52 +1258,6 @@ func legacyQueueDriverDefault(legacy string) string {
 	return "workerpool"
 }
 
-// envAssignment returns the final concrete assignment for a key to match dotenv override ordering.
-func envAssignment(lines []string, want string) (string, bool) {
-	values, err := godotenv.Unmarshal(strings.Join(lines, "\n"))
-	if err == nil {
-		value, found := values[want]
-		return value, found
-	}
-
-	// A malformed unrelated line must not turn a concrete owner value into a
-	// missing key that the renderer is then allowed to replace.
-	var value string
-	found := false
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		key, _, candidate, ok := parseEnvironmentExampleAssignment(line)
-		if !ok || key != want {
-			continue
-		}
-		value = strings.TrimSpace(candidate)
-		found = true
-	}
-	return value, found
-}
-
-// setFinalEnvAssignment updates the assignment that controls dotenv precedence or appends a missing key.
-func setFinalEnvAssignment(lines []string, want string, value string) []string {
-	index := -1
-	for lineIndex, line := range lines {
-		key, _, ok := parseEnvLine(line)
-		if ok && key == want {
-			index = lineIndex
-		}
-	}
-	if index >= 0 {
-		lines[index] = want + "=" + value
-		return lines
-	}
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines[len(lines)-1] = want + "=" + value
-		return append(lines, "")
-	}
-	return append(lines, want+"="+value)
-}
-
 // driverListContains compares driver names using the normalized environment representation.
 func driverListContains(value string, want string) bool {
 	for _, driver := range strings.Split(value, ",") {
@@ -1881,7 +1835,7 @@ func (w projectRenderWorkspace) resourceDriverDefaultFromEnv(path string, resour
 	activeKey := envPrefix + "_DRIVER"
 	supportedKey := envPrefix + "_SUPPORTED_DRIVERS"
 	lines := strings.Split(string(data), "\n")
-	driver, found := envAssignment(lines, activeKey)
+	driver, found := envfile.Lookup(lines, activeKey)
 	if !found || strings.TrimSpace(driver) == "" {
 		driver = fallback
 	}
@@ -1893,7 +1847,7 @@ func (w projectRenderWorkspace) resourceDriverDefaultFromEnv(path string, resour
 	if _, ok := definition.Driver(driver); !ok {
 		return "", fmt.Errorf("%s in %s selects unsupported driver %q", activeKey, path, driver)
 	}
-	supported, supportedSet := envAssignment(lines, supportedKey)
+	supported, supportedSet := envfile.Lookup(lines, supportedKey)
 	if supportedSet && strings.TrimSpace(supported) != "" && !driverListContains(supported, driver) {
 		return "", fmt.Errorf("%s in %s excludes active %s %q", supportedKey, path, activeKey, driver)
 	}
@@ -1925,7 +1879,7 @@ func (w projectRenderWorkspace) appHTTPPortsFromEnv(path string, currentPrefix s
 		return used
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := parseEnvLine(line)
+		key, value, ok := envfile.ParseAssignment(line)
 		if !ok || !isNamedAppHTTPPortKey(key, currentPrefix) {
 			continue
 		}
@@ -2069,7 +2023,7 @@ func (w projectRenderWorkspace) upsertAppEnvDefaults(path string, appName string
 func removeEnvKeys(lines []string, defaults map[string]string) []string {
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
-		key, _, ok := parseEnvLine(line)
+		key, _, ok := envfile.ParseAssignment(line)
 		if ok {
 			if _, exists := defaults[key]; exists {
 				continue
@@ -2110,7 +2064,7 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 	out := make([]string, 0, len(lines))
 	appPrefix := prefix + "_"
 	for _, line := range lines {
-		key, _, ok := parseEnvLine(line)
+		key, _, ok := envfile.ParseAssignment(line)
 		if ok && strings.HasPrefix(key, appPrefix) {
 			continue
 		}
@@ -2221,7 +2175,7 @@ func envSectionTitle(appName string) string {
 // upsertSupportedDriver appends a database driver while preserving existing driver order.
 func upsertSupportedDriver(lines []string, driver string) []string {
 	for idx, line := range lines {
-		key, value, ok := parseEnvLine(line)
+		key, value, ok := envfile.ParseAssignment(line)
 		if !ok || key != "DB_SUPPORTED_DRIVERS" {
 			continue
 		}
@@ -2254,7 +2208,7 @@ func appendDriver(value string, driver string) []string {
 // upsertEnvLine replaces an existing env key or appends it when missing.
 func upsertEnvLine(lines []string, key string, value string) []string {
 	for idx, line := range lines {
-		currentKey, _, ok := parseEnvLine(line)
+		currentKey, _, ok := envfile.ParseAssignment(line)
 		if !ok || currentKey != key {
 			continue
 		}
@@ -2262,23 +2216,6 @@ func upsertEnvLine(lines []string, key string, value string) []string {
 		return lines
 	}
 	return append(lines, key+"="+value)
-}
-
-// parseEnvLine delegates dotenv syntax to the same parser generation uses while keeping line-oriented edits localized.
-func parseEnvLine(line string) (string, string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		return "", "", false
-	}
-	values, err := godotenv.Unmarshal(line)
-	if err != nil || len(values) != 1 {
-		return "", "", false
-	}
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		return key, value, key != ""
-	}
-	return "", "", false
 }
 
 // SetTimings controls whether render summaries include elapsed phase timings.

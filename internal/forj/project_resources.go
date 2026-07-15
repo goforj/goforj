@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
@@ -131,7 +132,7 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		// A committed fallback reproduces an existing build, but it cannot replace a new wizard decision.
 		return nil
 	}
-	_, profilesSet := envAssignment(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
+	_, profilesSet := envfile.Lookup(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
 	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile(p.workspace.path("docker-compose.yml"))
 	if legacyLocalRedis {
 		p.resources.serviceIntent = p.resources.serviceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
@@ -277,15 +278,15 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 		}
 		activeKey := definition.EnvironmentKey("DRIVER")
 		supportedKey := definition.EnvironmentKey("SUPPORTED_DRIVERS")
-		active, activeSet := envAssignment(lines, activeKey)
+		active, activeSet := envfile.Lookup(lines, activeKey)
 		active = project.CanonicalResourceDriver(definition.Key, active)
 		if !activeSet || active == "" {
 			active = seedSelection.Active
-			lines = setFinalEnvAssignment(lines, activeKey, active)
+			lines = envfile.SetFinal(lines, activeKey, active)
 			changed = true
 		}
 
-		supportedValue, supportedSet := envAssignment(lines, supportedKey)
+		supportedValue, supportedSet := envfile.Lookup(lines, supportedKey)
 		supported := splitDriverList(supportedValue)
 		for index := range supported {
 			supported[index] = project.CanonicalResourceDriver(definition.Key, supported[index])
@@ -303,18 +304,18 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 			if !stringSliceContainsFold(supported, active) {
 				supported = append(supported, active)
 			}
-			lines = setFinalEnvAssignment(lines, supportedKey, strings.Join(supported, ","))
+			lines = envfile.SetFinal(lines, supportedKey, strings.Join(supported, ","))
 			changed = true
 		}
 		effective = effective.WithSelection(definition.Key, project.DriverSelection{Active: active, Supported: supported})
 	}
 
 	for _, named := range seed.GeneratedNamedSelections(components) {
-		active, activeSet := envAssignment(lines, named.EnvironmentKey)
+		active, activeSet := envfile.Lookup(lines, named.EnvironmentKey)
 		active = project.CanonicalResourceDriver(named.Resource, active)
 		if !activeSet || active == "" {
 			active = named.Active
-			lines = setFinalEnvAssignment(lines, named.EnvironmentKey, active)
+			lines = envfile.SetFinal(lines, named.EnvironmentKey, active)
 			changed = true
 		}
 		effective = effective.WithNamedSelection(named.EnvironmentKey, active)
@@ -359,7 +360,7 @@ func removeDisabledCacheEnvironment(source []byte, runtimeApps []project.App) ([
 	filtered := make([]string, 0, len(lines))
 	changed := false
 	for _, line := range lines {
-		key, _, _, ok := parseEnvironmentExampleAssignment(line)
+		key, ok := envfile.ScanKey(line)
 		if ok {
 			if _, remove := keys[key]; remove {
 				changed = true
@@ -380,7 +381,7 @@ func removeObsoleteDiagnosticCacheEnvironment(source []byte) ([]byte, bool) {
 	filtered := make([]string, 0, len(lines))
 	changed := false
 	for _, line := range lines {
-		key, _, _, ok := parseEnvironmentExampleAssignment(line)
+		key, ok := envfile.ScanKey(line)
 		if ok && (key == "CACHE_INSPECTS_DRIVER" || key == "CACHE_LIGHTHOUSE_DRIVER") {
 			changed = true
 			continue
@@ -396,7 +397,7 @@ func removeObsoleteDiagnosticCacheEnvironment(source []byte) ([]byte, bool) {
 // localServiceIntentFromEnvironment reconstructs concrete owner intent from exact Compose profile tokens.
 func localServiceIntentFromEnvironment(source []byte, fallback project.LocalServiceIntent) project.LocalServiceIntent {
 	lines := strings.Split(string(source), "\n")
-	profiles, profilesSet := envAssignment(lines, "COMPOSE_PROFILES")
+	profiles, profilesSet := envfile.Lookup(lines, "COMPOSE_PROFILES")
 	if profilesSet && exactCSVToken(profiles, string(project.ServiceRedis)) {
 		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	}
@@ -421,12 +422,12 @@ func seedComposeProfiles(source []byte, plan project.ResourcePlan, components pr
 // seedExactComposeProfile appends one profile token without replacing unrelated owner intent.
 func seedExactComposeProfile(source []byte, profile string) ([]byte, bool) {
 	lines := strings.Split(string(source), "\n")
-	profiles, profilesSet := envAssignment(lines, "COMPOSE_PROFILES")
+	profiles, profilesSet := envfile.Lookup(lines, "COMPOSE_PROFILES")
 	if profilesSet && exactCSVToken(profiles, profile) {
 		return source, false
 	}
 	profiles = appendCSVToken(profiles, profile)
-	lines = setFinalEnvAssignment(lines, "COMPOSE_PROFILES", profiles)
+	lines = envfile.SetFinal(lines, "COMPOSE_PROFILES", profiles)
 	updated := strings.Join(lines, "\n")
 	if !strings.HasSuffix(updated, "\n") {
 		updated += "\n"
