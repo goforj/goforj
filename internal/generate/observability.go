@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/project"
-	"gopkg.in/yaml.v3"
 )
 
 // observabilityMetricsModeAuto and its related constants constrain target layouts before environment values reach planning logic.
@@ -35,6 +34,13 @@ type metricsTargetRole struct {
 	PortEnv string
 	Offset  int
 	HostEnv string
+}
+
+// metricsTargetEndpoint makes per-role exclusion explicit without coupling it to an empty host or port sentinel.
+type metricsTargetEndpoint struct {
+	Host    string
+	Port    string
+	Include bool
 }
 
 // observabilityApp carries the derived identity and port defaults needed to build per-App scrape targets.
@@ -69,8 +75,8 @@ func GenerateObservabilityFiles(projectDir string) (int, error) {
 	if !plan.Manage {
 		return 0, nil
 	}
-	if len(plan.Entries) == 0 {
-		return 0, nil
+	if plan.Entries == nil {
+		plan.Entries = []metricsTargetEntry{}
 	}
 
 	content, err := json.MarshalIndent(plan.Entries, "", "  ")
@@ -96,21 +102,35 @@ func GenerateObservabilityFiles(projectDir string) (int, error) {
 func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 	service := envOrDefault("APP_NAME", filepath.Base(projectDir))
 	environment := envOrDefault("APP_ENV", "local")
-	activeRoles, err := discoverObservabilityMetricRoles(projectDir)
+	config, err := loadObservabilityProjectConfig(projectDir)
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
-	if len(activeRoles) == 0 {
-		return observabilityTargetPlan{Manage: true}, nil
+	activeRoles, err := discoverObservabilityMetricRoles(projectDir, config)
+	if err != nil {
+		return observabilityTargetPlan{}, err
 	}
-	appNames := discoverObservabilityApps(projectDir, activeRoles)
-
 	mode, err := resolveObservabilityMetricsMode()
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
 	if mode == observabilityMetricsModeDisabled {
 		return observabilityTargetPlan{Manage: false}, nil
+	}
+	localHost := ""
+	if mode == observabilityMetricsModeLocalSingle || mode == observabilityMetricsModeLocalMulti {
+		var ok bool
+		localHost, ok = resolveLocalMetricsHost()
+		if !ok {
+			return observabilityTargetPlan{Manage: false}, nil
+		}
+	}
+	if len(activeRoles) == 0 {
+		return observabilityTargetPlan{Manage: true, Entries: []metricsTargetEntry{}}, nil
+	}
+	appNames, err := discoverObservabilityApps(projectDir, config, activeRoles)
+	if err != nil {
+		return observabilityTargetPlan{}, err
 	}
 
 	basePort, err := resolveMetricsBasePort()
@@ -120,38 +140,27 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 
 	switch mode {
 	case observabilityMetricsModeLocalSingle:
-		host, ok := resolveLocalMetricsHost()
-		if !ok {
-			return observabilityTargetPlan{Manage: false}, nil
-		}
-		entries, err := buildStandaloneTargets(service, environment, host, activeRoles, appNames)
+		entries, err := buildStandaloneTargets(service, environment, localHost, activeRoles, appNames)
 		if err != nil {
 			return observabilityTargetPlan{}, err
 		}
 		return observabilityTargetPlan{Manage: true, Entries: entries}, nil
 	case observabilityMetricsModeLocalMulti:
-		host, ok := resolveLocalMetricsHost()
-		if !ok {
-			return observabilityTargetPlan{Manage: false}, nil
-		}
-		entries, err := buildAppRoleTargets(service, environment, host, activeRoles, appNames)
+		entries, err := buildAppRoleTargets(service, environment, localHost, activeRoles, appNames)
 		if err != nil {
 			return observabilityTargetPlan{}, err
 		}
 		return observabilityTargetPlan{Manage: true, Entries: entries}, nil
 	case observabilityMetricsModeCompose:
-		entries, err := buildRoleTargets(service, environment, activeRoles, func(role metricsTargetRole) (string, string, bool, error) {
+		entries, err := buildRoleTargets(service, environment, activeRoles, func(role metricsTargetRole) (metricsTargetEndpoint, error) {
 			host, ok := resolveComposeMetricsHost(role)
 			if !ok {
-				return "", "", false, nil
+				return metricsTargetEndpoint{}, nil
 			}
-			return host, strconv.Itoa(basePort), true, nil
+			return metricsTargetEndpoint{Host: host, Port: strconv.Itoa(basePort), Include: true}, nil
 		})
 		if err != nil {
 			return observabilityTargetPlan{}, err
-		}
-		if len(entries) == 0 {
-			return observabilityTargetPlan{Manage: false}, nil
 		}
 		return observabilityTargetPlan{Manage: true, Entries: entries}, nil
 	default:
@@ -206,14 +215,11 @@ func buildAppRoleTargets(
 }
 
 // discoverObservabilityMetricRoles keeps role discovery tied to rendered framework packages without letting stale Jobs output override project intent.
-func discoverObservabilityMetricRoles(projectDir string) ([]metricsTargetRole, error) {
+func discoverObservabilityMetricRoles(projectDir string, config *project.Config) ([]metricsTargetRole, error) {
 	var configuredComponents *project.Components
-	config, err := project.LoadProjectConfigAt(projectDir)
-	if err == nil {
+	if config != nil {
 		components := project.ProjectComponents(config)
 		configuredComponents = &components
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("load project observability components: %w", err)
 	}
 
 	roles := make([]metricsTargetRole, 0, len(observabilityMetricRoles))
@@ -225,7 +231,7 @@ func discoverObservabilityMetricRoles(projectDir string) ([]metricsTargetRole, e
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return nil, fmt.Errorf("inspect observability %s role: %w", role.Name, err)
 		}
 		roles = append(roles, role)
 	}
@@ -233,10 +239,13 @@ func discoverObservabilityMetricRoles(projectDir string) ([]metricsTargetRole, e
 }
 
 // discoverObservabilityApps derives app identity from layout conventions so generation does not depend on dev config.
-func discoverObservabilityApps(projectDir string, activeRoles []metricsTargetRole) []observabilityApp {
-	cfg := loadObservabilityProjectConfig(projectDir)
+func discoverObservabilityApps(projectDir string, config *project.Config, activeRoles []metricsTargetRole) ([]observabilityApp, error) {
 	names := map[string]bool{project.DefaultAppName: true}
-	for _, app := range discoverConventionalObservabilityApps(projectDir) {
+	conventionalApps, err := discoverConventionalObservabilityApps(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range conventionalApps {
 		names[app.Name] = true
 	}
 
@@ -257,16 +266,21 @@ func discoverObservabilityApps(projectDir string, activeRoles []metricsTargetRol
 			EnvPrefix:   project.AppEnvironmentPrefix(name),
 			HTTPPort:    3000 + index,
 			RuntimeBase: 10000 + index*10,
-			Components:  observabilityAppComponents(cfg, name, activeRoles),
+			Components:  observabilityAppComponents(config, name, activeRoles),
 		})
 	}
-	return apps
+	return apps, nil
 }
 
 // discoverConventionalObservabilityApps treats cmd/<app> and app/<app> as app ownership markers.
-func discoverConventionalObservabilityApps(projectDir string) []project.App {
+func discoverConventionalObservabilityApps(projectDir string) ([]project.App, error) {
 	names := make(map[string]bool)
-	if entries, err := os.ReadDir(filepath.Join(projectDir, "cmd")); err == nil {
+	cmdDir := filepath.Join(projectDir, "cmd")
+	entries, err := os.ReadDir(cmdDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("discover observability apps in %s: %w", cmdDir, err)
+	}
+	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -275,12 +289,20 @@ func discoverConventionalObservabilityApps(projectDir string) []project.App {
 			if name == project.DefaultAppName || !project.IsSafeAppName(name) {
 				continue
 			}
-			if _, err := os.Stat(filepath.Join(projectDir, "cmd", name, "main.go")); err == nil {
+			marker := filepath.Join(projectDir, "cmd", name, "main.go")
+			if _, err := os.Stat(marker); err == nil {
 				names[name] = true
+			} else if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("inspect observability app marker %s: %w", marker, err)
 			}
 		}
 	}
-	if entries, err := os.ReadDir(filepath.Join(projectDir, "app")); err == nil {
+	appRoot := filepath.Join(projectDir, "app")
+	entries, err = os.ReadDir(appRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("discover observability apps in %s: %w", appRoot, err)
+	}
+	if err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -289,7 +311,11 @@ func discoverConventionalObservabilityApps(projectDir string) []project.App {
 			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
 				continue
 			}
-			if hasConventionalObservabilityAppFiles(filepath.Join(projectDir, "app", name)) {
+			hasFiles, err := hasConventionalObservabilityAppFiles(filepath.Join(projectDir, "app", name))
+			if err != nil {
+				return nil, err
+			}
+			if hasFiles {
 				names[name] = true
 			}
 		}
@@ -302,11 +328,11 @@ func discoverConventionalObservabilityApps(projectDir string) []project.App {
 	sort.Slice(apps, func(i, j int) bool {
 		return apps[i].Name < apps[j].Name
 	})
-	return apps
+	return apps, nil
 }
 
 // hasConventionalObservabilityAppFiles avoids treating arbitrary app subpackages as apps.
-func hasConventionalObservabilityAppFiles(appDir string) bool {
+func hasConventionalObservabilityAppFiles(appDir string) (bool, error) {
 	for _, path := range []string{
 		filepath.Join(appDir, "wire"),
 		filepath.Join(appDir, "commands.go"),
@@ -316,23 +342,24 @@ func hasConventionalObservabilityAppFiles(appDir string) bool {
 		filepath.Join(appDir, "lifecycle.go"),
 	} {
 		if _, err := os.Stat(path); err == nil {
-			return true
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, fmt.Errorf("inspect observability app marker %s: %w", path, err)
 		}
 	}
-	return false
+	return false, nil
 }
 
-// loadObservabilityProjectConfig is best-effort because app existence must remain convention-driven.
-func loadObservabilityProjectConfig(projectDir string) *project.Config {
-	data, err := os.ReadFile(filepath.Join(projectDir, ".goforj.yml"))
+// loadObservabilityProjectConfig allows convention-only legacy projects while rejecting unreadable or malformed configuration.
+func loadObservabilityProjectConfig(projectDir string) (*project.Config, error) {
+	config, err := project.LoadProjectConfigAt(projectDir)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load project observability config: %w", err)
 	}
-	var cfg project.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil
-	}
-	return &cfg
+	return config, nil
 }
 
 // observabilityAppComponents uses config only to filter roles for a known conventional app.
@@ -485,19 +512,19 @@ func buildRoleTargets(
 	service string,
 	environment string,
 	roles []metricsTargetRole,
-	resolve func(role metricsTargetRole) (host string, port string, ok bool, err error),
+	resolve func(role metricsTargetRole) (metricsTargetEndpoint, error),
 ) ([]metricsTargetEntry, error) {
 	entries := make([]metricsTargetEntry, 0, len(roles))
 	for _, role := range roles {
-		host, port, ok, err := resolve(role)
+		endpoint, err := resolve(role)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			return nil, nil
+		if !endpoint.Include {
+			continue
 		}
 		entries = append(entries, metricsTargetEntry{
-			Targets: []string{host + ":" + port},
+			Targets: []string{endpoint.Host + ":" + endpoint.Port},
 			Labels:  observabilityTargetLabels(service, environment, role.Name, project.DefaultAppName),
 		})
 	}
