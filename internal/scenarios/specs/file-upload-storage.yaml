@@ -324,9 +324,9 @@ steps:
       path: app/wire/inject_services_app.go
       language: go
       old: |
-                "{{module}}/internal/makecmd"
+                "{{module}}/internal/runtime"
       new: |
-                "{{module}}/internal/makecmd"
+                "{{module}}/internal/runtime"
                 "{{module}}/internal/storages"
                 "{{module}}/internal/uploads"
 
