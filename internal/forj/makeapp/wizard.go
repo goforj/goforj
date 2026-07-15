@@ -94,18 +94,26 @@ type appWizardModel struct {
 	termWidth      int
 }
 
-// runAppWizard selects components, starter kit, and dev run behavior for a new app.
-func runAppWizard(appName string, config *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, bool, error) {
+// runAppWizard selects one complete App creation shape or returns the shared cancellation sentinel.
+func runAppWizard(appName string, config *project.Config) (RenderOptions, error) {
 	initial := initialAppWizardModel(appName, config)
 	result, err := tea.NewProgram(initial).Run()
 	if err != nil {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", false, err
+		return RenderOptions{}, err
 	}
 	model, ok := result.(appWizardModel)
-	if !ok || model.cancelled {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", true, nil
+	if !ok {
+		return RenderOptions{}, fmt.Errorf("app wizard returned unexpected model %T", result)
 	}
-	return model.components, model.starterKit, model.helpFormat, model.devRunCommand(), false, nil
+	if model.cancelled {
+		return RenderOptions{}, errAppCreationCancelled
+	}
+	return RenderOptions{
+		Components:    model.components,
+		StarterKit:    model.starterKit,
+		HelpFormat:    model.helpFormat,
+		DevRunCommand: model.devRunCommand(),
+	}, nil
 }
 
 // initialAppWizardModel builds the initial wizard state from project defaults.
