@@ -95,7 +95,7 @@ func assertGeneratedLaunchPrintsHelp(t *testing.T, projectDir string, binary str
 	if err != nil {
 		t.Fatalf("%s %s help launch failed: %v\n%s", filepath.Base(binary), strings.Join(args, " "), err, output)
 	}
-	if !strings.Contains(string(output), "make:command") {
+	if !strings.Contains(string(output), "hello:world") {
 		t.Fatalf("%s %s did not print help:\n%s", filepath.Base(binary), strings.Join(args, " "), output)
 	}
 }

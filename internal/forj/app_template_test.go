@@ -951,7 +951,7 @@ func TestWorkerTemplatesSupportNamedQueueSelection(t *testing.T) {
 		filepath.Join(templateRoot, "worker.go.tmpl"): {
 			`func selectManagedQueues(manager *queues.Manager, queueNames ...string)`,
 			`unknown queue`,
-			`func managedQueueInstances(manager *queues.Manager) []queues.Instance`,
+			`instances := manager.Instances()`,
 		},
 	}
 
