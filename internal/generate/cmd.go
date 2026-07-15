@@ -1,15 +1,65 @@
 package generate
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
-	"github.com/goforj/env/v2"
+	"github.com/goforj/goforj/project"
 )
 
 var goModTidyRunner = runGoModTidy
 
+// GenerationSelection names the project-owned surfaces that should be regenerated.
+type GenerationSelection struct {
+	Storage       bool
+	Cache         bool
+	Mail          bool
+	Queue         bool
+	Events        bool
+	Database      bool
+	Observability bool
+}
+
+// GenerationSelectionFromComponents translates durable component intent into generator participation.
+func GenerationSelectionFromComponents(components project.Components) GenerationSelection {
+	return GenerationSelection{
+		Storage:       components.Storage,
+		Cache:         components.Cache,
+		Mail:          components.Mail,
+		Queue:         components.Jobs,
+		Events:        components.Events,
+		Database:      components.HasDatabase(),
+		Observability: components.Observability,
+	}
+}
+
+// any reports whether the caller selected at least one generated surface explicitly.
+func (s GenerationSelection) any() bool {
+	return s.Storage || s.Cache || s.Mail || s.Queue || s.Events || s.Database || s.Observability
+}
+
+// generationTask keeps ordering, file accounting, and dependency behavior in one inventory.
+type generationTask struct {
+	selected             bool
+	generatedFiles       int
+	updatesDependencies  bool
+	disabledRequestError string
+	generate             func(string) (int, error)
+}
+
+// generationRun records the distinctions needed by project rendering and the interactive command's dependency policy.
+type generationRun struct {
+	totalFiles             int
+	changedFiles           int
+	dependencyTaskRan      bool
+	dependencyFilesChanged bool
+}
+
+// Cmd selects generated resource packages and derived project files.
 type Cmd struct {
 	Storage       bool `help:"Generate storage code"`
 	Cache         bool `help:"Generate cache code"`
@@ -20,79 +70,42 @@ type Cmd struct {
 	Observability bool `help:"Generate observability-derived files"`
 }
 
+// NewCmd returns a generate command with the conventional all-resources default.
 func NewCmd() *Cmd {
 	return &Cmd{}
 }
 
+// Signature declares the generated command name and help text.
 func (*Cmd) Signature() string {
 	return `name:"generate" help:"Generate application code and derived files"`
 }
 
+// Run regenerates the selected project resources from the project-owned environment snapshot.
 func (c *Cmd) Run() error {
-	if err := env.Load(); err != nil {
+	requested := c.generationSelection()
+	available, err := commandGenerationSelection(".")
+	if err != nil {
 		return err
 	}
-	selected := c.Storage || c.Cache || c.Mail || c.Queue || c.Events || c.DB || c.Observability
-	ranStorage := false
-	ranCache := false
-	ranMail := false
-	ranQueue := false
-	ranEvents := false
-	ranDB := false
-	if !selected || c.Storage {
-		if _, err := GenerateStorageFiles("."); err != nil {
+	selection := requested
+	if requested.any() {
+		if err := validateRequestedGenerationSelection(requested, available); err != nil {
 			return err
 		}
-		ranStorage = true
+	} else {
+		selection = available
 	}
-	if !selected || c.Cache {
-		if _, err := os.Stat(filepath.Join("internal", "caches")); err == nil {
-			if _, err := GenerateCacheFiles("."); err != nil {
-				return err
-			}
-			ranCache = true
-		}
+
+	restoreEnvironment, err := loadGenerationEnvironment(".")
+	if err != nil {
+		return err
 	}
-	if !selected || c.Mail {
-		if _, err := os.Stat(filepath.Join("internal", "mail")); err == nil {
-			if _, err := GenerateMailFiles("."); err != nil {
-				return err
-			}
-			ranMail = true
-		}
+	defer restoreEnvironment()
+	run, err := runGenerationTasks(".", selection)
+	if err != nil {
+		return err
 	}
-	if !selected || c.Queue {
-		if _, err := os.Stat(filepath.Join("internal", "queues")); err == nil {
-			if _, err := GenerateQueueFiles("."); err != nil {
-				return err
-			}
-			ranQueue = true
-		}
-	}
-	if !selected || c.Events {
-		if _, err := os.Stat(filepath.Join("internal", "events")); err == nil {
-			if _, err := GenerateEventFiles("."); err != nil {
-				return err
-			}
-			ranEvents = true
-		}
-	}
-	if !selected || c.DB {
-		if _, err := os.Stat(filepath.Join("internal", "database")); err == nil {
-			if _, err := GenerateDBFiles("."); err != nil {
-				return err
-			}
-			ranDB = true
-		}
-	}
-	if !selected || c.Observability {
-		if _, err := os.Stat(filepath.Join("containers", "observability", "vmagent")); err == nil {
-			if _, err := GenerateObservabilityFiles("."); err != nil {
-				return err
-			}
-		}
-	}
-	if ranStorage || ranCache || ranMail || ranQueue || ranEvents || ranDB {
+	if run.dependencyTaskRan {
 		if err := goModTidyRunner("."); err != nil {
 			return err
 		}
@@ -100,100 +113,136 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
-func GenerateProjectFiles(projectDir string, includeStorage, includeCache, includeQueue, includeEvents, includeDB, includeObservability bool) (int, int, error) {
-	if err := env.Load(); err != nil {
+// GenerateProjectFiles regenerates selected resources beneath projectDir and reports total and changed files.
+func GenerateProjectFiles(projectDir string, selection GenerationSelection) (int, int, error) {
+	restoreEnvironment, err := loadGenerationEnvironment(projectDir)
+	if err != nil {
 		return 0, 0, err
 	}
-	totalFiles := 0
-	changedFiles := 0
-	ranAny := false
-	modTidyNeeded := false
-	if includeStorage {
-		written, err := GenerateStorageFiles(projectDir)
-		if err != nil {
-			return totalFiles, changedFiles, err
-		}
-		ranAny = true
-		totalFiles += 2
-		changedFiles += written
-		modTidyNeeded = modTidyNeeded || written > 0
+	defer restoreEnvironment()
+	run, err := runGenerationTasks(projectDir, selection)
+	if err != nil {
+		return run.totalFiles, run.changedFiles, err
 	}
-	if includeCache {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "caches")); err == nil {
-			written, err := GenerateCacheFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles += 2
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
-		}
-	}
-	if _, err := os.Stat(filepath.Join(projectDir, "internal", "mail")); err == nil {
-		written, err := GenerateMailFiles(projectDir)
-		if err != nil {
-			return totalFiles, changedFiles, err
-		}
-		ranAny = true
-		totalFiles += 2
-		changedFiles += written
-		modTidyNeeded = modTidyNeeded || written > 0
-	}
-	if includeQueue {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "queues")); err == nil {
-			written, err := GenerateQueueFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles += 2
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
-		}
-	}
-	if includeEvents {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "events")); err == nil {
-			written, err := GenerateEventFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles += 2
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
-		}
-	}
-	if includeDB {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "database")); err == nil {
-			written, err := GenerateDBFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles++
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
-		}
-	}
-	if includeObservability {
-		if _, err := os.Stat(filepath.Join(projectDir, "containers", "observability", "vmagent")); err == nil {
-			written, err := GenerateObservabilityFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			totalFiles++
-			changedFiles += written
-		}
-	}
-	if ranAny && modTidyNeeded {
+	if run.dependencyFilesChanged {
 		if err := goModTidyRunner(projectDir); err != nil {
-			return totalFiles, changedFiles, err
+			return run.totalFiles, run.changedFiles, err
 		}
 	}
-	return totalFiles, changedFiles, nil
+	return run.totalFiles, run.changedFiles, nil
 }
 
+// generationSelection returns the command-line flags as one named selection value.
+func (c Cmd) generationSelection() GenerationSelection {
+	return GenerationSelection{
+		Storage:       c.Storage,
+		Cache:         c.Cache,
+		Mail:          c.Mail,
+		Queue:         c.Queue,
+		Events:        c.Events,
+		Database:      c.DB,
+		Observability: c.Observability,
+	}
+}
+
+// commandGenerationSelection uses durable project intent and limits directory inference to pre-contract compatibility surfaces.
+func commandGenerationSelection(projectDir string) (GenerationSelection, error) {
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err == nil {
+		return GenerationSelectionFromComponents(project.ProjectComponents(config)), nil
+	}
+	if !os.IsNotExist(err) {
+		return GenerationSelection{}, fmt.Errorf("load project generation selection: %w", err)
+	}
+	return legacyCommandGenerationSelection(projectDir)
+}
+
+// legacyCommandGenerationSelection preserves only the package markers used before durable component configuration existed.
+func legacyCommandGenerationSelection(projectDir string) (GenerationSelection, error) {
+	selection := GenerationSelection{}
+	legacyDirectories := []struct {
+		selected *bool
+		paths    []string
+	}{
+		{selected: &selection.Cache, paths: []string{filepath.Join("internal", "caches")}},
+		{selected: &selection.Mail, paths: []string{filepath.Join("internal", "mail")}},
+		{selected: &selection.Queue, paths: []string{filepath.Join("internal", "jobs"), filepath.Join("internal", "queues")}},
+		{selected: &selection.Database, paths: []string{filepath.Join("internal", "database")}},
+		{selected: &selection.Observability, paths: []string{filepath.Join("containers", "observability", "vmagent")}},
+	}
+	for _, directory := range legacyDirectories {
+		exists, err := anyGenerationDirectoryExists(projectDir, directory.paths)
+		if err != nil {
+			return GenerationSelection{}, err
+		}
+		*directory.selected = exists
+	}
+	return selection, nil
+}
+
+// validateRequestedGenerationSelection prevents explicit flags from bypassing the project's component contract.
+func validateRequestedGenerationSelection(requested, available GenerationSelection) error {
+	availableTasks := generationTasksFor(available)
+	for index, task := range generationTasksFor(requested) {
+		if task.selected && !availableTasks[index].selected {
+			return errors.New(task.disabledRequestError)
+		}
+	}
+	return nil
+}
+
+// generationTasksFor preserves the stable generation order and keeps per-resource behavior out of orchestration code.
+func generationTasksFor(selection GenerationSelection) []generationTask {
+	return []generationTask{
+		{selected: selection.Storage, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Storage: the Storage component is disabled in .goforj.yml", generate: GenerateStorageFiles},
+		{selected: selection.Cache, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Cache: the Cache component is disabled in .goforj.yml", generate: GenerateCacheFiles},
+		{selected: selection.Mail, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Mail: the Mail component is disabled in .goforj.yml", generate: GenerateMailFiles},
+		{selected: selection.Queue, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml", generate: GenerateQueueFiles},
+		{selected: selection.Events, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Events: the Events component is disabled in .goforj.yml", generate: GenerateEventFiles},
+		{selected: selection.Database, generatedFiles: 1, updatesDependencies: true, disabledRequestError: "cannot generate DB: no Database component is enabled in .goforj.yml", generate: GenerateDBFiles},
+		{selected: selection.Observability, generatedFiles: 1, disabledRequestError: "cannot generate Observability: the Observability component is disabled in .goforj.yml", generate: GenerateObservabilityFiles},
+	}
+}
+
+// runGenerationTasks executes the canonical task inventory and preserves file-count and dependency metadata for its caller.
+func runGenerationTasks(projectDir string, selection GenerationSelection) (generationRun, error) {
+	run := generationRun{}
+	for _, task := range generationTasksFor(selection) {
+		if !task.selected {
+			continue
+		}
+		written, err := task.generate(projectDir)
+		if err != nil {
+			return run, err
+		}
+		run.totalFiles += task.generatedFiles
+		run.changedFiles += written
+		if task.updatesDependencies {
+			run.dependencyTaskRan = true
+			run.dependencyFilesChanged = run.dependencyFilesChanged || written > 0
+		}
+	}
+	return run, nil
+}
+
+// anyGenerationDirectoryExists reports whether any legacy or prerequisite package marker is an existing directory.
+func anyGenerationDirectoryExists(projectDir string, paths []string) (bool, error) {
+	for _, path := range paths {
+		info, err := os.Stat(filepath.Join(projectDir, path))
+		if err == nil {
+			if info.IsDir() {
+				return true, nil
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// runGoModTidy refreshes dependencies without exposing project resource credentials to Go or invoked VCS processes.
 func runGoModTidy(projectDir string) error {
 	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err != nil {
 		if os.IsNotExist(err) {
@@ -203,9 +252,22 @@ func runGoModTidy(projectDir string) error {
 	}
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = projectDir
-	cmd.Env = os.Environ()
+	cmd.Env = generationSubprocessEnvironment()
 	if _, err := cmd.CombinedOutput(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// generationSubprocessEnvironment retains the developer's toolchain environment while removing temporary generator inputs.
+func generationSubprocessEnvironment() []string {
+	environment := make([]string, 0, len(os.Environ()))
+	for _, assignment := range os.Environ() {
+		key, _, _ := strings.Cut(assignment, "=")
+		if isGenerationEnvironmentKey(key) {
+			continue
+		}
+		environment = append(environment, assignment)
+	}
+	return environment
 }

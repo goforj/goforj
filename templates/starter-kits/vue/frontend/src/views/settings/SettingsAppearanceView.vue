@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Monitor, Moon, Sun } from 'lucide-vue-next'
+import { Monitor, Moon, Sun } from '@lucide/vue'
 import { setThemePreference, themePreference, type ThemePreference } from '@/lib/theme'
 
 const preference = ref<ThemePreference>(themePreference())

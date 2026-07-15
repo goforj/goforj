@@ -34,7 +34,13 @@ const (
 	ComponentDatabaseSQLite ComponentKey = "database_sqlite"
 	// ComponentScheduler enables scheduled task runtime support.
 	ComponentScheduler ComponentKey = "scheduler"
-	// ComponentJobs enables queue worker runtime support.
+	// ComponentCache enables application cache support.
+	ComponentCache ComponentKey = "cache"
+	// ComponentEvents enables application event publishing and subscription support.
+	ComponentEvents ComponentKey = "events"
+	// ComponentStorage enables application file and object storage support.
+	ComponentStorage ComponentKey = "storage"
+	// ComponentJobs enables background job dispatch and processing support.
 	ComponentJobs ComponentKey = "jobs"
 )
 
@@ -53,7 +59,7 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentCLI, Label: "CLI", Description: "Add commands to run and manage your app", DefaultSelected: true},
 	{Key: ComponentDocker, Label: "Docker", Description: "Run databases and tools locally", DefaultSelected: true},
 	{Key: ComponentMail, Label: "Mail", Description: "Send email from your app", DefaultSelected: true},
-	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail}},
+	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail, ComponentWebAPI, ComponentCache}},
 	{Key: ComponentOAuth, Label: "OAuth", Description: "Sign in with external providers", DefaultSelected: true, Requires: []ComponentKey{ComponentAuth}, Parent: ComponentAuth},
 	{Key: ComponentWebAPI, Label: "Web API", Description: "Build endpoints for clients and frontends", DefaultSelected: true},
 	{Key: ComponentWebUI, Label: "Web UI", Description: "Serve a browser frontend", DefaultSelected: true},
@@ -64,7 +70,10 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentDatabasePostgres, Label: "Database (Postgres)", Description: "Store app data in Postgres", ExclusiveGroup: "database"},
 	{Key: ComponentDatabaseSQLite, Label: "Database (SQLite)", Description: "Store app data in SQLite", ExclusiveGroup: "database"},
 	{Key: ComponentScheduler, Label: "Scheduler", Description: "Run tasks on a schedule", DefaultSelected: true},
-	{Key: ComponentJobs, Label: "Jobs", Description: "Run background work", DefaultSelected: true},
+	{Key: ComponentCache, Label: "Cache", Description: "Cache temporary and computed values", DefaultSelected: true},
+	{Key: ComponentEvents, Label: "Events", Description: "Publish and subscribe to application events", DefaultSelected: true},
+	{Key: ComponentStorage, Label: "File Storage", Description: "Store private and public files or objects", DefaultSelected: true},
+	{Key: ComponentJobs, Label: "Background Jobs", Description: "Send and process work outside requests", DefaultSelected: true},
 }
 
 // ComponentCatalog returns the canonical component definitions.
@@ -72,6 +81,11 @@ func ComponentCatalog() []ComponentDefinition {
 	out := make([]ComponentDefinition, len(componentCatalog))
 	copy(out, componentCatalog)
 	return out
+}
+
+// ProjectWizardComponentDefinitions returns catalog entries shown in the project component wizard.
+func ProjectWizardComponentDefinitions() []ComponentDefinition {
+	return ComponentCatalog()
 }
 
 // ComponentDefinitionByKey returns the definition for a component key.

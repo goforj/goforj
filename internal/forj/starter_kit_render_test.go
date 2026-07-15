@@ -52,6 +52,20 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(frontendDir, "node_modules")); !os.IsNotExist(err) {
 		t.Fatalf("expected node_modules to be excluded, stat err = %v", err)
 	}
+	packageJSON, err := os.ReadFile(filepath.Join(frontendDir, "package.json"))
+	if err != nil {
+		t.Fatalf("read Vue starter package: %v", err)
+	}
+	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite": "^7.3.6"`} {
+		if !strings.Contains(string(packageJSON), expected) {
+			t.Errorf("Vue starter package omitted %q:\n%s", expected, packageJSON)
+		}
+	}
+	for _, obsolete := range []string{"lucide-vue-next", `"shadcn-vue"`} {
+		if strings.Contains(string(packageJSON), obsolete) {
+			t.Errorf("Vue starter package retained obsolete install dependency %q:\n%s", obsolete, packageJSON)
+		}
+	}
 }
 
 func TestScaffoldReactStarterKit(t *testing.T) {
@@ -159,6 +173,7 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 	}
 }
 
+// TestScaffoldTemplHTMXStarterKit verifies the templ starter's complete frontend and server-rendered surface.
 func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
@@ -181,6 +196,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitTemplHTMX, true); err != nil {
 		t.Fatalf("scaffold templ htmx starter kit: %v", err)
 	}
@@ -374,6 +390,7 @@ func TestScaffoldTemplHTMXStarterKitWithoutAuthOmitsAuthRoutes(t *testing.T) {
 	}
 }
 
+// TestScaffoldTemplHTMXStarterKitOverwriteRefreshesServerViews verifies overwrite mode replaces framework-owned server views.
 func TestScaffoldTemplHTMXStarterKitOverwriteRefreshesServerViews(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
@@ -409,6 +426,7 @@ templ stale() {
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitTemplHTMX, true); err != nil {
 		t.Fatalf("scaffold templ htmx starter kit: %v", err)
 	}

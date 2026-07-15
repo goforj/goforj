@@ -156,9 +156,12 @@ func renderAppAtDir(t *testing.T, dir string) {
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
 				Components: project.Components{
+					Cache:     true,
+					Events:    true,
 					WebAPI:    true,
 					WebUI:     true,
 					Scheduler: true,
+					Storage:   true,
 					Jobs:      true,
 				},
 			},
@@ -189,5 +192,33 @@ func buildRenderedDefaultAppTo(t *testing.T, projectDir string, binPath string, 
 			label = "build rendered app"
 		}
 		t.Fatalf("%s: %v\n%s", label, err, out.String())
+	}
+}
+
+// selectRenderedDemoSQLite exercises Demo's built-in SQLite fallback without changing its normal MySQL starting contract.
+func selectRenderedDemoSQLite(t *testing.T, projectDir string) {
+	t.Helper()
+	if err := testkit.ReplaceOrAppendEnvValues(
+		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
+		map[string]string{"DB_DRIVER": "sqlite"},
+	); err != nil {
+		t.Fatalf("select rendered Demo SQLite fallback: %v", err)
+	}
+}
+
+// generateRenderedProject rebuilds generated source after a fixture changes its persisted build contract.
+func generateRenderedProject(t *testing.T, projectDir string, env map[string]string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, testkit.EnsureIntegrationForjBinary(t), "generate")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationGoProcessEnv(t, env)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("generate rendered project: %v\n%s", err, out.String())
 	}
 }

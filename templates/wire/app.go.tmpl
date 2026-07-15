@@ -12,19 +12,25 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+{{- if .Components.Cache }}
 	"github.com/goforj/cache"
+{{- end }}
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
 
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
+{{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
+{{- end }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+{{- if .Components.Events }}
 	"{{.GoModuleName}}/internal/events"
+{{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/konghelp"
 	"{{.GoModuleName}}/internal/logger"
@@ -39,7 +45,9 @@ import (
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
+{{- if .Components.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
 {{- end }}
@@ -49,10 +57,15 @@ import (
 type App struct {
 	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
-	topology runtime.RuntimeTopology
+{{- if .Components.Cache }}
 	cache   *caches.Manager
+{{- end }}
+{{- if .Components.Storage }}
 	storage *storages.Manager
+{{- end }}
+{{- if .Components.Events }}
 	events *events.Manager
+{{- end }}
 	inspects *inspects.Manager
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager
@@ -80,11 +93,7 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
-// Topology returns the normalized runtime topology for the application.
-func (a *App) Topology() runtime.RuntimeTopology {
-	return a.topology.Normalized()
-}
-
+{{- if .Components.Cache }}
 // Cache returns the default cache instance of the application.
 func (a *App) Cache() *cache.Cache {
 	return a.cache.Default()
@@ -94,11 +103,14 @@ func (a *App) Cache() *cache.Cache {
 func (a *App) Caches() *caches.Manager {
 	return a.cache
 }
+{{- end }}
 
+{{- if .Components.Storage }}
 // Storage returns the storage manager of the application.
 func (a *App) Storage() *storages.Manager {
 	return a.storage
 }
+{{- end }}
 
 {{- if .Components.Mail }}
 // Mail returns the mail manager of the application.
@@ -107,6 +119,7 @@ func (a *App) Mail() *mail.Manager {
 }
 {{- end }}
 
+{{- if .Components.Events }}
 // Bus returns the default event bus of the application.
 func (a *App) Bus() events.Bus {
 	return a.events.Default()
@@ -116,6 +129,7 @@ func (a *App) Bus() events.Bus {
 func (a *App) Events() *events.Manager {
 	return a.events
 }
+{{- end }}
 
 // Inspects returns the app inspect manager.
 func (a *App) Inspects() *inspects.Manager {
@@ -282,10 +296,16 @@ func NewApplication(
 	rootCmd *{{.AppPackageName}}.RootCmd,
 	appTimeouts *runtime.Timeouts,
 	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
+{{- if .Components.Cache }}
 	cacheManager *caches.Manager,
+{{- end }}
+{{- if .Components.Storage }}
 	storage *storages.Manager,
+{{- end }}
+{{- if .Components.Events }}
 	eventsManager *events.Manager,
 	_ *EventSubscribersReady,
+{{- end }}
 	inspectManager *inspects.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
@@ -305,7 +325,9 @@ func NewApplication(
 	lifecycleManager := runtime.NewLifecycle(appTimeouts)
 
 	attachInspectLogSink(appLogger, inspectManager)
+{{- if .Components.Storage }}
 	logStorageWarnings(appLogger, storage)
+{{- end }}
 {{- if .Components.HasDatabase }}
 	registerDatabaseShutdown(lifecycleManager, appLogger, db)
 {{- end }}
@@ -319,19 +341,26 @@ func NewApplication(
 {{- end }}
 	)
 {{- end }}
+{{- if .Components.Events }}
 	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
+{{- end }}
 	lifecycleRegistry.Register(lifecycleManager)
 
 	return App{
 		rootCmd: rootCmd,
 		logger:  appLogger,
-		topology: runtimeTopologyFromEnv(),
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
+{{- if .Components.Cache }}
 		cache: cacheManager,
+{{- end }}
+{{- if .Components.Storage }}
 		storage: storage,
+{{- end }}
+{{- if .Components.Events }}
 		events: eventsManager,
+{{- end }}
 		inspects: inspectManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
@@ -345,13 +374,6 @@ func NewApplication(
 		queues: queues,
 		{{- end }}
 	}
-}
-
-// runtimeTopologyFromEnv normalizes deployment mode once during app assembly.
-func runtimeTopologyFromEnv() runtime.RuntimeTopology {
-	return runtime.RuntimeTopology{
-		Mode: runtime.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
-	}.Normalized()
 }
 
 // attachInspectLogSink mirrors logs with inspect IDs into the inspect timeline.
@@ -376,6 +398,7 @@ func attachInspectLogSink(appLogger *logger.AppLogger, inspectManager *inspects.
 	})
 }
 
+{{- if .Components.Storage }}
 // logStorageWarnings reports optional storage failures once for the parent app process.
 func logStorageWarnings(appLogger *logger.AppLogger, storage *storages.Manager) {
 	if strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) == "1" {
@@ -389,6 +412,7 @@ func logStorageWarnings(appLogger *logger.AppLogger, storage *storages.Manager) 
 			Msg("Optional storage disk unavailable; skipping")
 	}
 }
+{{- end }}
 
 {{ if .Components.HasDatabase }}
 // registerDatabaseShutdown closes database connections through the shared lifecycle manager.
@@ -422,6 +446,7 @@ func registerQueueHandlers(
 }
 {{- end }}
 
+{{ if .Components.Events }}
 // registerEventBusLifecycle starts and stops each unique event bus with the application lifecycle.
 func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, eventsManager *events.Manager) {
 	seenEventBuses := map[events.Bus]struct{}{}
@@ -454,6 +479,7 @@ func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *l
 		})
 	}
 }
+{{- end }}
 
 // shutdownTimeoutForOrigin gives scheduler subprocesses a shorter shutdown window than the parent runtime.
 func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {

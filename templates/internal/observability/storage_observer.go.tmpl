@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"{{.GoModuleName}}/internal/inspects"
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
@@ -13,14 +13,28 @@ import (
 // StorageObserver records storage operations through the configured observability sinks.
 func StorageObserver(
 	inspectManager *inspects.Manager,
-{{- if .Components.Metrics }}
+{{- if .ProjectComponents.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) storages.Observer {
 	return storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
-		inspectManager.RecordStorageEvent(ctx, event)
-{{- if .Components.Metrics }}
-		metricsManager.RecordStorageOperation(ctx, event)
+		inspectManager.RecordStorageEvent(ctx, storageInspectEvent(event))
+{{- if .ProjectComponents.Metrics }}
+		if metricsManager != nil {
+			metricsManager.RecordStorageOperation(ctx, event)
+		}
 {{- end }}
 	})
+}
+
+// storageInspectEvent isolates Inspects from the storage manager's observer contract.
+func storageInspectEvent(event storages.StorageOpEvent) inspects.StorageOperationInspectEvent {
+	return inspects.StorageOperationInspectEvent{
+		Operation: event.Operation,
+		Disk:      event.Disk,
+		Path:      event.Path,
+		Driver:    event.Driver,
+		Err:       event.Err,
+		Duration:  event.Duration,
+	}
 }

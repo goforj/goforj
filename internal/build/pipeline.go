@@ -446,16 +446,25 @@ func shouldRetryWire(detail string) bool {
 		strings.Contains(detail, "could not import")
 }
 
+// generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate optional primitives.
 func (p Pipeline) generateProjectFiles() (string, error) {
-	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
-		".",
-		true,
-		hasDir(filepath.Join(".", "internal", "caches")),
-		hasDir(filepath.Join(".", "internal", "queues")),
-		hasDir(filepath.Join(".", "internal", "events")),
-		hasDir(filepath.Join(".", "internal", "database")),
-		hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
-	)
+	selection := generate.GenerationSelection{
+		Storage:       hasDir(filepath.Join(".", "internal", "storages")),
+		Cache:         hasDir(filepath.Join(".", "internal", "caches")),
+		Mail:          hasDir(filepath.Join(".", "internal", "mail")),
+		Queue:         hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues")),
+		Events:        hasDir(filepath.Join(".", "internal", "events")),
+		Database:      hasDir(filepath.Join(".", "internal", "database")),
+		Observability: hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
+	}
+	config, err := project.LoadProjectConfig()
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("load project generation config: %w", err)
+	}
+	if config != nil {
+		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
+	}
+	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(".", selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
 	}

@@ -29,9 +29,17 @@ import (
 var cmdSet = wire.NewSet(
 	appCommandSet,
 	{{.AppPackageName}}.NewCommands,
+{{- if .Components.Events }}
+	{{.AppPackageName}}.NewGeneratedEventCommands,
+{{- end }}
 	{{.AppPackageName}}.NewRootCmd,
 	cmd.NewAboutCmd,
+{{- if .Components.Cache }}
 	cmd.NewCacheShellCmd,
+{{- end }}
+{{- if and .Components.Events .LegacyEventPipelineField (not .LegacyEventPipelineProvider) }}
+	cmd.NewTestEventPipelineCmd,
+{{- end }}
 	{{- if .Components.HasDatabase }}
 	cmd.NewDBShellCmd,
 	{{- end }}

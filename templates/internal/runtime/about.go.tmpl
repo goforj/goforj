@@ -8,11 +8,14 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
+{{- if .ProjectComponents.Events }}
 	"github.com/goforj/str"
+{{- end }}
 	"gopkg.in/yaml.v3"
 )
 
 var (
+{{- if .ProjectComponents.Cache }}
 	aboutCacheRootKeys = []string{
 		"DRIVER",
 		"DEFAULT_TTL_SECONDS",
@@ -45,6 +48,8 @@ var (
 		"MAX_VALUE_BYTES",
 		"ENCRYPTION_KEY",
 	}
+{{- end }}
+{{- if .ProjectComponents.Jobs }}
 	aboutQueueRootKeys = []string{
 		"DRIVER",
 		"WORKERS",
@@ -68,6 +73,8 @@ var (
 		"PROCESSING_RECOVERY_GRACE_SECONDS",
 		"PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
 	}
+{{- end }}
+{{- if .ProjectComponents.Storage }}
 	aboutStorageRootKeys = []string{
 		"DRIVER",
 		"ROOT",
@@ -97,6 +104,8 @@ var (
 		"RCLONE_CONFIG_PATH",
 		"RCLONE_CONFIG_DATA",
 	}
+{{- end }}
+{{- if .ProjectComponents.Events }}
 	aboutEventRootKeys = []string{
 		"DRIVER",
 		"ADDR",
@@ -120,6 +129,7 @@ var (
 		"INPROC_WORKERS",
 		"INPROC_BUFFER",
 	}
+{{- end }}
 	aboutDatabaseRootKeys = []string{
 		"DRIVER",
 		"DSN",
@@ -187,17 +197,26 @@ type AboutSectionData struct {
 	Connections []AboutConnectionData `json:"connections,omitempty"`
 }
 
+// AboutReport describes the generated App's enabled runtime and resource surface.
 type AboutReport struct {
 	App         string             `json:"app"`
 	Environment AboutEnvironment   `json:"environment"`
 	Build       AboutBuild         `json:"build"`
 	Network     AboutNetwork       `json:"network"`
 	Databases   []AboutDatabase    `json:"databases,omitempty"`
-	Caches      []AboutCache       `json:"caches"`
+{{- if .ProjectComponents.Cache }}
+	Caches      []AboutCache       `json:"caches,omitempty"`
+{{- end }}
 	Mails       []AboutMail        `json:"mails,omitempty"`
+{{- if .ProjectComponents.Jobs }}
 	Queues      []AboutQueue       `json:"queues,omitempty"`
-	Storages    []AboutStorage     `json:"storages"`
-	Events      []AboutEvent       `json:"events"`
+{{- end }}
+{{- if .ProjectComponents.Storage }}
+	Storages    []AboutStorage     `json:"storages,omitempty"`
+{{- end }}
+{{- if .ProjectComponents.Events }}
+	Events      []AboutEvent       `json:"events,omitempty"`
+{{- end }}
 	Sections    []AboutSectionData `json:"sections"`
 }
 
@@ -236,6 +255,8 @@ type AboutDatabase struct {
 	Details   []AboutField `json:"details,omitempty"`
 }
 
+{{ if .ProjectComponents.Cache }}
+// AboutCache describes one configured Cache store without exposing credentials.
 type AboutCache struct {
 	Name      string       `json:"name"`
 	IsDefault bool         `json:"is_default"`
@@ -245,6 +266,7 @@ type AboutCache struct {
 	Summary   string       `json:"summary"`
 	Details   []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
 type AboutMail struct {
 	Name      string       `json:"name"`
@@ -256,6 +278,8 @@ type AboutMail struct {
 	Details   []AboutField `json:"details,omitempty"`
 }
 
+{{ if .ProjectComponents.Jobs }}
+// AboutQueue describes one configured Queue without exposing credentials.
 type AboutQueue struct {
 	Name         string       `json:"name"`
 	IsDefault    bool         `json:"is_default"`
@@ -266,7 +290,10 @@ type AboutQueue struct {
 	Summary      string       `json:"summary"`
 	Details      []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
+{{ if .ProjectComponents.Storage }}
+// AboutStorage describes one configured Storage disk without exposing credentials.
 type AboutStorage struct {
 	Name      string       `json:"name"`
 	IsDefault bool         `json:"is_default"`
@@ -276,7 +303,10 @@ type AboutStorage struct {
 	Summary   string       `json:"summary"`
 	Details   []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
+{{ if .ProjectComponents.Events }}
+// AboutEvent describes one configured Events bus without exposing credentials.
 type AboutEvent struct {
 	Name      string       `json:"name"`
 	IsDefault bool         `json:"is_default"`
@@ -285,12 +315,16 @@ type AboutEvent struct {
 	Summary   string       `json:"summary"`
 	Details   []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
+// NewAboutService constructs the runtime report service.
 func NewAboutService() *AboutService {
 	return &AboutService{}
 }
 
+// Build assembles a report from the capabilities enabled for the current App.
 func (s *AboutService) Build() AboutReport {
+	appComponents := CurrentApp().Components
 	report := AboutReport{
 		App: strings.TrimSpace(env.Get("APP_NAME", "app")),
 		Environment: AboutEnvironment{
@@ -302,29 +336,54 @@ func (s *AboutService) Build() AboutReport {
 			GoForjVersion: aboutForjVersion(),
 		},
 		Build: AboutBuild{
-			Components:    aboutComponents(),
+			Components:    aboutComponents(appComponents),
 			WireGenerated: aboutPresence(filepath.Join("app", "wire", "wire_gen.go")),
-{{- if .Components.WebUI }}
-			FrontendDist: aboutPresence(filepath.Join("cmd", CurrentApp().Name, "frontend", "dist", "index.html")),
-{{- end }}
-{{- if .Components.HasDatabase }}
-			MigrationsPath: aboutPresence("migrations"),
-{{- end }}
 		},
 		Network: AboutNetwork{
 			AppURL: env.Get("APP_URL", "http://localhost:3000"),
-{{- if .Components.WebAPI }}
-			APIURL: strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api",
-{{- end }}
 		},
-		Caches:   aboutCacheReports(),
-		Mails:    aboutMailReports(),
-{{- if .Components.Jobs }}
-		Queues:   aboutQueueReports(),
-{{- end }}
-		Storages: aboutStorageReports(),
-		Events:   aboutEventReports(),
 	}
+{{- if .ProjectComponents.Mail }}
+	if appComponents.Mail {
+		report.Mails = aboutMailReports()
+	}
+{{- end }}
+{{- if .ProjectComponents.Cache }}
+	if appComponents.Cache {
+		report.Caches = aboutCacheReports()
+	}
+{{- end }}
+{{- if .ProjectComponents.Storage }}
+	if appComponents.Storage {
+		report.Storages = aboutStorageReports()
+	}
+{{- end }}
+{{- if .ProjectComponents.Events }}
+	if appComponents.Events {
+		report.Events = aboutEventReports()
+	}
+{{- end }}
+{{- if .ProjectComponents.WebUI }}
+	if appComponents.WebUI {
+		report.Build.FrontendDist = aboutPresence(filepath.Join("cmd", CurrentApp().Name, "frontend", "dist", "index.html"))
+	}
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+	if appComponents.HasDatabase() {
+		report.Build.MigrationsPath = aboutPresence("migrations")
+		report.Databases = aboutDatabaseReports()
+	}
+{{- end }}
+{{- if .ProjectComponents.WebAPI }}
+	if appComponents.WebAPI {
+		report.Network.APIURL = strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api"
+	}
+{{- end }}
+{{- if .ProjectComponents.Jobs }}
+	if appComponents.Jobs {
+		report.Queues = aboutQueueReports()
+	}
+{{- end }}
 	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_URL", "")); raw != "" {
 		if env.GetBool("LIGHTHOUSE_ENABLED", "true") {
 			report.Network.LighthouseURL = raw
@@ -332,14 +391,12 @@ func (s *AboutService) Build() AboutReport {
 			report.Network.LighthouseURL = "disabled"
 		}
 	}
-{{- if .Components.HasDatabase }}
-	report.Databases = aboutDatabaseReports()
-{{- end }}
-	report.Sections = s.sections(report)
+	report.Sections = s.sections(report, appComponents)
 	return report
 }
 
-func (s *AboutService) sections(report AboutReport) []AboutSectionData {
+// sections converts the runtime report into the stable presentation sections consumed by the command.
+func (s *AboutService) sections(report AboutReport, appComponents AppComponents) []AboutSectionData {
 	sections := []AboutSectionData{
 		{
 			Title: "Environment",
@@ -362,18 +419,36 @@ func (s *AboutService) sections(report AboutReport) []AboutSectionData {
 		sections = append(sections, AboutSectionData{Title: "Network", Rows: rows})
 	}
 
-{{- if .Components.HasDatabase }}
-	sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
+{{- if .ProjectComponents.HasDatabase }}
+	if appComponents.HasDatabase() {
+		sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
+	}
 {{- end }}
-	sections = append(sections,
-		AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)},
-		AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)},
-		AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)},
-{{- if .Components.Jobs }}
-		AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)},
+{{- if .ProjectComponents.Mail }}
+	if appComponents.Mail {
+		sections = append(sections, AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)})
+	}
 {{- end }}
-		AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)},
-	)
+{{- if .ProjectComponents.Cache }}
+	if appComponents.Cache {
+		sections = append(sections, AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)})
+	}
+{{- end }}
+{{- if .ProjectComponents.Storage }}
+	if appComponents.Storage {
+		sections = append(sections, AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)})
+	}
+{{- end }}
+{{- if .ProjectComponents.Jobs }}
+	if appComponents.Jobs {
+		sections = append(sections, AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)})
+	}
+{{- end }}
+{{- if .ProjectComponents.Events }}
+	if appComponents.Events {
+		sections = append(sections, AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)})
+	}
+{{- end }}
 
 	return sections
 }
@@ -438,6 +513,8 @@ func aboutDatabaseConnections(databases []AboutDatabase) []AboutConnectionData {
 	return connections
 }
 
+{{ if .ProjectComponents.Cache }}
+// aboutCacheConnections projects Cache reports into the shared About section shape.
 func aboutCacheConnections(caches []AboutCache) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(caches))
 	for _, cache := range caches {
@@ -449,7 +526,10 @@ func aboutCacheConnections(caches []AboutCache) []AboutConnectionData {
 	}
 	return connections
 }
+{{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// aboutQueueConnections projects Queue reports into the shared About section shape.
 func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(queues))
 	for _, queue := range queues {
@@ -461,6 +541,7 @@ func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
 	}
 	return connections
 }
+{{- end }}
 
 func aboutMailConnections(mails []AboutMail) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(mails))
@@ -474,6 +555,8 @@ func aboutMailConnections(mails []AboutMail) []AboutConnectionData {
 	return connections
 }
 
+{{ if .ProjectComponents.Storage }}
+// aboutStorageConnections projects Storage reports into the shared About section shape.
 func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(storages))
 	for _, storage := range storages {
@@ -485,7 +568,10 @@ func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
 	}
 	return connections
 }
+{{- end }}
 
+{{ if .ProjectComponents.Events }}
+// aboutEventConnections projects Events reports into the shared About section shape.
 func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(events))
 	for _, event := range events {
@@ -497,35 +583,72 @@ func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 	}
 	return connections
 }
-
-func aboutComponents() []string {
-	components := []string{"cache", "storage", "events", "lighthouse"}
-{{- if .Components.Metrics }}
-	components = append(components, "metrics")
 {{- end }}
-{{- if .Components.Observability }}
+
+// aboutComponents reports only the components enabled for the current App projection.
+func aboutComponents(appComponents AppComponents) []string {
+	components := []string{}
+{{- if .ProjectComponents.Cache }}
+	if appComponents.Cache {
+		components = append(components, "cache")
+	}
+{{- end }}
+{{- if .ProjectComponents.Storage }}
+	if appComponents.Storage {
+		components = append(components, "storage")
+	}
+{{- end }}
+{{- if .ProjectComponents.Events }}
+	if appComponents.Events {
+		components = append(components, "events")
+	}
+{{- end }}
+{{- if .ProjectComponents.Mail }}
+	if appComponents.Mail {
+		components = append(components, "mail")
+	}
+{{- end }}
+	components = append(components, "lighthouse")
+{{- if .ProjectComponents.Metrics }}
+	if appComponents.Metrics {
+		components = append(components, "metrics")
+	}
+{{- end }}
+{{- if .ProjectComponents.Observability }}
 	components = append(components, "observability")
 {{- end }}
-{{- if .Components.Grafana }}
+{{- if .ProjectComponents.Grafana }}
 	components = append(components, "grafana")
 {{- end }}
-{{- if .Components.HasDatabase }}
-	components = append(components, "database")
+{{- if .ProjectComponents.HasDatabase }}
+	if appComponents.HasDatabase() {
+		components = append(components, "database")
+	}
 {{- end }}
-{{- if .Components.WebAPI }}
-	components = append(components, "http")
+{{- if .ProjectComponents.WebAPI }}
+	if appComponents.WebAPI {
+		components = append(components, "http")
+	}
 {{- end }}
-{{- if .Components.WebUI }}
-	components = append(components, "ui")
+{{- if .ProjectComponents.WebUI }}
+	if appComponents.WebUI {
+		components = append(components, "ui")
+	}
 {{- end }}
-{{- if .Components.Scheduler }}
-	components = append(components, "scheduler")
+{{- if .ProjectComponents.Scheduler }}
+	if appComponents.Scheduler {
+		components = append(components, "scheduler")
+	}
 {{- end }}
-{{- if .Components.Jobs }}
-	components = append(components, "jobs")
+{{- if .ProjectComponents.Jobs }}
+	if appComponents.Jobs {
+		components = append(components, "jobs")
+	}
 {{- end }}
-{{- if .Components.DemoApp }}
-	components = append(components, "demo")
+{{- if .ProjectComponents.DemoApp }}
+	if appComponents.DemoApp {
+		components = append(components, "demo")
+	}
 {{- end }}
 	return components
 }
@@ -569,6 +692,8 @@ func aboutDatabaseReports() []AboutDatabase {
 	return reports
 }
 
+{{ if .ProjectComponents.Cache }}
+// aboutCacheReports describes the configured Cache stores.
 func aboutCacheReports() []AboutCache {
 	instances := DiscoverCacheInstances()
 	reports := make([]AboutCache, 0, len(instances))
@@ -603,7 +728,10 @@ func aboutCacheReports() []AboutCache {
 	}
 	return reports
 }
+{{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// aboutQueueReports describes only the active App's configured Queues.
 func aboutQueueReports() []AboutQueue {
 	instances := DiscoverQueueInstances()
 	reports := make([]AboutQueue, 0, len(instances))
@@ -625,6 +753,7 @@ func aboutQueueReports() []AboutQueue {
 	}
 	return reports
 }
+{{- end }}
 
 func aboutMailReports() []AboutMail {
 	names := aboutScopedNames("MAIL", aboutMailRootKeys)
@@ -649,6 +778,8 @@ func aboutMailReports() []AboutMail {
 	return reports
 }
 
+{{ if .ProjectComponents.Storage }}
+// aboutStorageReports describes only the active App's configured Storage disks.
 func aboutStorageReports() []AboutStorage {
 	instances := DiscoverStorageInstances()
 	reports := make([]AboutStorage, 0, len(instances))
@@ -676,7 +807,10 @@ func aboutStorageReports() []AboutStorage {
 	}
 	return reports
 }
+{{- end }}
 
+{{ if .ProjectComponents.Events }}
+// aboutEventReports describes only the active App's configured Events buses.
 func aboutEventReports() []AboutEvent {
 	instances := DiscoverEventInstances()
 	reports := make([]AboutEvent, 0, len(instances))
@@ -693,19 +827,29 @@ func aboutEventReports() []AboutEvent {
 	}
 	return reports
 }
+{{- end }}
 
+// aboutPrimitiveChildDefined distinguishes explicitly configured child resources from inherited defaults.
 func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 	switch prefix {
+{{- if .ProjectComponents.Cache }}
 	case "CACHE":
 		return aboutAnySet(scope, "DRIVER", "FILE_DIR", "ADDR", "URL", "DSN")
+{{- end }}
 	case "MAIL":
 		return aboutAnySet(scope, "DRIVER", "FROM_ADDRESS", "FROM_NAME", "SMTP_HOST", "RESEND_ENDPOINT", "POSTMARK_ENDPOINT", "MAILGUN_DOMAIN", "SENDGRID_ENDPOINT", "SES_REGION")
+{{- if .ProjectComponents.Jobs }}
 	case "QUEUE":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "NAME", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
+{{- end }}
+{{- if .ProjectComponents.Storage }}
 	case "STORAGE":
 		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
+{{- end }}
+{{- if .ProjectComponents.Events }}
 	case "EVENTS":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "BROKERS", "PROJECT_ID", "URI", "REGION", "ENDPOINT")
+{{- end }}
 	default:
 		return false
 	}
@@ -760,6 +904,8 @@ func aboutDatabaseDetails(name string) []AboutField {
 	return details
 }
 
+{{ if .ProjectComponents.Cache }}
+// aboutCacheDetails builds the non-secret diagnostic fields for one Cache store.
 func aboutCacheDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("CACHE", name)
 	driver := NormalizeCacheDriver(scope.Get("DRIVER", "memory"))
@@ -827,7 +973,10 @@ func aboutCacheDetails(name string) []AboutField {
 	details = aboutAppendIfSet(details, "Max Value Bytes", scope.Get("MAX_VALUE_BYTES", ""))
 	return details
 }
+{{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// aboutQueueDetails builds the non-secret diagnostic fields for one Queue.
 func aboutQueueDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("QUEUE", name)
 	rootScope := env.WithPrefix("QUEUE")
@@ -870,6 +1019,7 @@ func aboutQueueDetails(name string) []AboutField {
 	return details
 }
 
+// aboutQueueWorkers resolves per-instance worker counts before falling back to the Queue root defaults.
 func aboutQueueWorkers(scope env.Scope, rootScope env.Scope) string {
 	workers := strings.TrimSpace(scope.Get("WORKERS", ""))
 	if workers == "" {
@@ -886,6 +1036,7 @@ func aboutQueueWorkers(scope env.Scope, rootScope env.Scope) string {
 	}
 	return workers
 }
+{{- end }}
 
 func aboutMailDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("MAIL", name)
@@ -925,6 +1076,8 @@ func aboutMailDetails(name string) []AboutField {
 	return details
 }
 
+{{ if .ProjectComponents.Storage }}
+// aboutStorageDetails describes one Storage disk without returning secret values.
 func aboutStorageDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("STORAGE", name)
 	driver := NormalizeStorageDriver(scope.Get("DRIVER", "local"))
@@ -995,7 +1148,10 @@ func aboutStorageDetails(name string) []AboutField {
 	details = aboutAppendIfSet(details, "Prefix", scope.Get("PREFIX", ""))
 	return details
 }
+{{- end }}
 
+{{ if .ProjectComponents.Events }}
+// aboutEventDetails describes an Events bus without returning secret values.
 func aboutEventDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("EVENTS", name)
 	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
@@ -1051,6 +1207,7 @@ func aboutEventDetails(name string) []AboutField {
 	}
 	return details
 }
+{{- end }}
 
 func aboutRedisSummary(scope env.Scope, prefix string) string {
 	host := strings.TrimSpace(scope.Get("HOST", env.Get("REDIS_HOST", "")))
@@ -1178,6 +1335,8 @@ func aboutFirstNonEmpty(values ...string) string {
 	return ""
 }
 
+{{ if .ProjectComponents.Jobs }}
+// queueRedisLogLevelAbout resolves the current and legacy Redis logging keys for Queue diagnostics.
 func queueRedisLogLevelAbout(scope env.Scope) string {
 	raw := strings.TrimSpace(scope.Get("SERVER_LOG_LEVEL", ""))
 	if raw == "" {
@@ -1188,6 +1347,7 @@ func queueRedisLogLevelAbout(scope env.Scope) string {
 	}
 	return strings.ToLower(raw)
 }
+{{- end }}
 
 func aboutDetailSummary(details []AboutField) string {
 	if len(details) == 0 {

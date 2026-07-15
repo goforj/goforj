@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"text/template"
 
@@ -13,21 +14,26 @@ import (
 	"github.com/goforj/str"
 )
 
+// mailAccessorTemplateData carries the normalized mailer names shared by generated accessor methods.
 type mailAccessorTemplateData struct {
 	Names []mailAccessorName
 }
 
+// mailConfigTemplateData keeps the compiled provider manifest aligned with generated manager wiring.
 type mailConfigTemplateData struct {
-	Drivers []mailDriverSpec
-	Names   []mailAccessorName
+	CompiledDrivers []string
+	Drivers         []mailDriverSpec
+	Names           []mailAccessorName
 }
 
+// mailAccessorName binds an environment mailer name to its Go-safe field and method identifiers.
 type mailAccessorName struct {
 	Method string
 	Mailer string
 	Field  string
 }
 
+// mailDriverSpec centralizes each provider's constructor contract so imports and configuration fields cannot drift.
 type mailDriverSpec struct {
 	ConstName    string
 	ImportPath   string
@@ -37,6 +43,7 @@ type mailDriverSpec struct {
 	ReadsEnvOnly bool
 }
 
+// mailConfigField preserves typed provider configuration expressions while the generated struct literal is assembled.
 type mailConfigField struct {
 	Name  string
 	Value string
@@ -167,8 +174,9 @@ var mailDriverKeys = map[string]map[string]struct{}{
 	"ses":      makeSet("SES_REGION", "SES_ACCESS_KEY_ID", "SES_SECRET_ACCESS_KEY", "SES_SESSION_TOKEN", "SES_ENDPOINT", "SES_CONFIGURATION_SET"),
 }
 
+// GenerateMailFiles writes mail accessors whose selectable providers are fixed by the generation snapshot.
 func GenerateMailFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(primitiveEnvContract{
+	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
 		Prefix:        "MAIL",
 		DefaultDriver: "log",
 		RootKeys:      mailRootKeys,
@@ -178,11 +186,12 @@ func GenerateMailFiles(projectDir string) (int, error) {
 			return exactScopedChildNames("MAIL", mailRootKeys)
 		},
 		AllowInactiveRootKeys: true,
+		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
 
-	manager, err := renderMailConfig()
+	manager, err := renderMailConfig(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -190,7 +199,7 @@ func GenerateMailFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated mail manager: %w", err)
 	}
-	accessors, err := renderMailAccessors()
+	accessors, err := renderMailAccessors(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -218,27 +227,29 @@ func GenerateMailFiles(projectDir string) (int, error) {
 	return written, nil
 }
 
-func renderMailConfig() ([]byte, error) {
-	names := discoverMailNames()
+// renderMailConfig retains the native log implementation without silently adding it to the compiled manifest.
+func renderMailConfig(projectDir string) ([]byte, error) {
+	names := discoverMailNames(projectDir)
 	driverSet := map[string]struct{}{}
-	defaultDriver := str.Of(env.Get("MAIL_DRIVER", "log")).TrimSpace().ToLower().String()
-	if defaultDriver != "" {
-		driverSet[defaultDriver] = struct{}{}
+	defaultDriver := effectivePrimitiveDriver(env.Get("MAIL_DRIVER", "log"), "log")
+	driverSet[defaultDriver] = struct{}{}
+	for _, child := range discoverMailChildren(projectDir) {
+		driver := effectivePrimitiveDriver(env.Get("MAIL_"+child+"_DRIVER", ""), "log")
+		driverSet[driver] = struct{}{}
 	}
-	for _, child := range discoverMailChildren() {
-		driver := str.Of(env.Get("MAIL_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
-		if driver != "" {
-			driverSet[driver] = struct{}{}
-		}
+	for _, active := range appPrefixedActiveDrivers(projectDir, "MAIL", "log", false) {
+		driverSet[active.driver] = struct{}{}
 	}
 	drivers, err := supportedDrivers("MAIL", mailDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
+	compiledDrivers := slices.Clone(drivers)
 	drivers = appendMissingString(drivers, "log")
 	data := mailConfigTemplateData{
-		Drivers: make([]mailDriverSpec, 0, len(drivers)),
-		Names:   make([]mailAccessorName, 0, len(names)),
+		CompiledDrivers: compiledDrivers,
+		Drivers:         make([]mailDriverSpec, 0, len(drivers)),
+		Names:           make([]mailAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
 		data.Names = append(data.Names, mailAccessorName{
@@ -264,8 +275,9 @@ func renderMailConfig() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func renderMailAccessors() ([]byte, error) {
-	names := discoverMailNames()
+// renderMailAccessors uses the project snapshot so App-only mailers receive generated accessors.
+func renderMailAccessors(projectDir string) ([]byte, error) {
+	names := discoverMailNames(projectDir)
 	data := mailAccessorTemplateData{
 		Names: make([]mailAccessorName, 0, len(names)),
 	}
@@ -287,12 +299,14 @@ func renderMailAccessors() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func discoverMailChildren() []string {
-	return exactScopedChildNames("MAIL", mailRootKeys)
+// discoverMailChildren includes mailers declared only through a configured App overlay.
+func discoverMailChildren(projectDir string) []string {
+	return discoverPrimitiveChildNames(projectDir, "MAIL", mailRootKeys)
 }
 
-func discoverMailNames() []string {
-	names := discoverMailChildren()
+// discoverMailNames normalizes App and resource-first scopes into generated accessor names.
+func discoverMailNames(projectDir string) []string {
+	names := discoverMailChildren(projectDir)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -345,6 +359,12 @@ const (
 	driverSMTP     = "smtp"
 )
 
+var compiledMailDrivers = []string{
+{{- range .CompiledDrivers }}
+	"{{ . }}",
+{{- end }}
+}
+
 var mailRootKeys = []string{
 	"DRIVER",
 	"FROM_ADDRESS",
@@ -383,6 +403,7 @@ type Instance struct {
 	IsDefault bool
 }
 
+// MailSendEvent carries stable delivery dimensions so observers remain independent of concrete mail providers.
 type MailSendEvent struct {
 	Name     string
 	Driver   string
@@ -390,20 +411,26 @@ type MailSendEvent struct {
 	Duration time.Duration
 }
 
+// Observer decouples delivery telemetry from the generated manager and its concrete provider drivers.
 type Observer interface {
+	// OnMailSend gives generated mail drivers one stable hook for delivery telemetry.
 	OnMailSend(ctx context.Context, event MailSendEvent)
 }
 
+// ObserverFunc adapts lightweight callbacks to the generated mail observer contract.
 type ObserverFunc func(ctx context.Context, event MailSendEvent)
 
+// OnMailSend adapts a callback so generated managers can compose it with interface-based observers.
 func (fn ObserverFunc) OnMailSend(ctx context.Context, event MailSendEvent) {
 	if fn != nil {
 		fn(ctx, event)
 	}
 }
 
+// observerChain keeps multiple telemetry integrations behind the single hook expected by generated mailers.
 type observerChain []Observer
 
+// OnMailSend preserves registration order when a delivery result is fanned out to multiple observers.
 func (c observerChain) OnMailSend(ctx context.Context, event MailSendEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -450,6 +477,7 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 	return manager, nil
 }
 
+// WithObserver rebuilds the manager because mail drivers capture their observer when they are constructed.
 func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
 	if m == nil || observer == nil {
 		return m, nil
@@ -465,11 +493,15 @@ func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
 	}
 	return NewManagerWithObserver(combined)
 }
-// newDriver is generated from MAIL_SUPPORTED_DRIVERS, or from active MAIL_* and MAIL_<NAME>_* values when unset.
+
+// newDriver rejects providers outside the generated manifest before credentials or transports are initialized.
 func newDriver(name string, scope env.Scope, observer Observer) (goforjmail.Driver, error) {
 	driverName := str.Of(scope.Get("DRIVER", driverLog)).TrimSpace().ToLower().String()
 	if driverName == "" {
 		driverName = driverLog
+	}
+	if !mailDriverCompiled(driverName) {
+		return nil, fmt.Errorf("mail: active driver %q is not built in; compiled choices: %s; run forj generate --mail after updating MAIL_SUPPORTED_DRIVERS", driverName, strings.Join(compiledMailDrivers, ", "))
 	}
 
 	wrapDriver := func(driver goforjmail.Driver) goforjmail.Driver {
@@ -509,6 +541,17 @@ func newDriver(name string, scope env.Scope, observer Observer) (goforjmail.Driv
 	}
 }
 
+// mailDriverCompiled reports whether driver is selectable in this generated artifact.
+func mailDriverCompiled(driver string) bool {
+	for _, compiled := range compiledMailDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultFromAddress preserves a deliverable fallback when configuration is missing or blank.
 func defaultFromAddress(scope env.Scope) string {
 	fromAddress := strings.TrimSpace(scope.Get("FROM_ADDRESS", "no-reply@example.com"))
 	if fromAddress == "" {
@@ -517,6 +560,7 @@ func defaultFromAddress(scope env.Scope) string {
 	return fromAddress
 }
 
+// defaultFromName falls back to the application name so blank mailer overrides do not erase sender identity.
 func defaultFromName(scope env.Scope) string {
 	fromName := strings.TrimSpace(scope.Get("FROM_NAME", env.Get("APP_NAME", "App")))
 	if fromName == "" {
@@ -525,14 +569,17 @@ func defaultFromName(scope env.Scope) string {
 	return fromName
 }
 
+// logOutput centralizes the stream used by generated log mailers so every configured instance behaves consistently.
 func logOutput() *os.File {
 	return os.Stdout
 }
 
+// discoverMailChildren excludes root settings so only named mailers receive generated accessors.
 func discoverMailChildren() []string {
 	return env.WithPrefix("MAIL").ChildNames(mailRootKeys)
 }
 
+// observedDriver decorates a provider at the driver boundary so every send path emits the same telemetry.
 type observedDriver struct {
 	name     string
 	driver   string
@@ -540,6 +587,7 @@ type observedDriver struct {
 	observer Observer
 }
 
+// Send reports the underlying delivery result without changing the driver's error semantics.
 func (d *observedDriver) Send(ctx context.Context, message goforjmail.Message) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -555,6 +603,7 @@ func (d *observedDriver) Send(ctx context.Context, message goforjmail.Message) e
 	return err
 }
 
+// mailerNameLabel gives the root mailer a stable telemetry label when no explicit name is available.
 func mailerNameLabel(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
@@ -563,6 +612,7 @@ func mailerNameLabel(name string) string {
 	return name
 }
 
+// mailerDriverLabel avoids emitting a blank telemetry dimension when driver configuration is unavailable.
 func mailerDriverLabel(driver string) string {
 	driver = strings.TrimSpace(strings.ToLower(driver))
 	if driver == "" {

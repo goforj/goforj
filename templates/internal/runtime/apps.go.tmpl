@@ -10,6 +10,38 @@ import (
 
 const defaultAppName = "app"
 
+// AppComponents records the component participation compiled for one App.
+type AppComponents struct {
+	CLI              bool
+	DemoApp          bool
+	Mail             bool
+	Auth             bool
+	OAuth            bool
+	WebAPI           bool
+	WebUI            bool
+	Metrics          bool
+	Observability    bool
+	Grafana          bool
+	Docker           bool
+	DatabaseMySQL    bool
+	DatabasePostgres bool
+	DatabaseSQLite   bool
+	Scheduler        bool
+	Cache            bool
+{{- if .ProjectComponents.Events }}
+	Events           bool
+{{- end }}
+{{- if .ProjectComponents.Storage }}
+	Storage          bool
+{{- end }}
+	Jobs             bool
+}
+
+// HasDatabase reports whether the App participates in a generated database capability.
+func (c AppComponents) HasDatabase() bool {
+	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
+}
+
 // AppInfo describes one compiled application and its deterministic runtime defaults.
 type AppInfo struct {
 	Name        string
@@ -17,12 +49,40 @@ type AppInfo struct {
 	EnvPrefix   string
 	HTTPPort    int
 	RuntimeBase int
+	Components  AppComponents
 }
 
 // Apps is generated from the app layout at render time.
 var Apps = []AppInfo{
 {{- range .RuntimeApps }}
-	{Name: "{{ .Name }}", Index: {{ .Index }}, EnvPrefix: "{{ .EnvPrefix }}", HTTPPort: {{ .HTTPPort }}, RuntimeBase: {{ .RuntimeBase }}},
+	{
+		Name: "{{ .Name }}", Index: {{ .Index }}, EnvPrefix: "{{ .EnvPrefix }}", HTTPPort: {{ .HTTPPort }}, RuntimeBase: {{ .RuntimeBase }},
+		Components: AppComponents{
+			CLI:              {{ .Components.CLI }},
+			DemoApp:          {{ .Components.DemoApp }},
+			Mail:             {{ .Components.Mail }},
+			Auth:             {{ .Components.Auth }},
+			OAuth:            {{ .Components.OAuth }},
+			WebAPI:           {{ .Components.WebAPI }},
+			WebUI:            {{ .Components.WebUI }},
+			Metrics:          {{ .Components.Metrics }},
+			Observability:    {{ .Components.Observability }},
+			Grafana:          {{ .Components.Grafana }},
+			Docker:           {{ .Components.Docker }},
+			DatabaseMySQL:    {{ .Components.DatabaseMySQL }},
+			DatabasePostgres: {{ .Components.DatabasePostgres }},
+			DatabaseSQLite:   {{ .Components.DatabaseSQLite }},
+			Scheduler:        {{ .Components.Scheduler }},
+			Cache:            {{ .Components.Cache }},
+{{- if $.ProjectComponents.Events }}
+			Events:           {{ .Components.Events }},
+{{- end }}
+{{- if $.ProjectComponents.Storage }}
+			Storage:          {{ .Components.Storage }},
+{{- end }}
+			Jobs:             {{ .Components.Jobs }},
+		},
+	},
 {{- end }}
 }
 

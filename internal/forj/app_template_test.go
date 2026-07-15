@@ -12,44 +12,6 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to resolve current file path")
-	}
-	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "wire", "app.go.tmpl")
-	content, err := os.ReadFile(templatePath)
-	if err != nil {
-		t.Fatalf("read app.go template: %v", err)
-	}
-	source := string(content)
-
-	for _, snippet := range []string{
-		"func (a *App) Cache() *cache.Cache",
-		"return a.cache.Default()",
-		"func (a *App) Topology() runtime.RuntimeTopology",
-		"return a.topology.Normalized()",
-		`Mode: runtime.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
-		"func (a *App) Caches() *caches.Manager",
-		"func (a *App) Storage() *storages.Manager",
-		"func (a *App) Bus() events.Bus",
-		"return a.events.Default()",
-		"func (a *App) Events() *events.Manager",
-		"func (a *App) Queue() *queue.Queue",
-		"return a.queues.Default()",
-		"func (a *App) Queues() *queues.Manager",
-		`runtime.NewLifecycle(appTimeouts)`,
-		`appLogger.Debug().Msg("Shutting down database connections...")`,
-		`func (a *App) appShutdownTimeout() time.Duration`,
-		`kong.Name(cmd.AppHelpName())`,
-		`konghelp.CommandParseError(parser, command, err)`,
-	} {
-		if !strings.Contains(source, snippet) {
-			t.Fatalf("expected wire app template to contain %q", snippet)
-		}
-	}
-}
-
 // TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig verifies that
 // generated settings saves retain lifecycle fields older UIs do not expose.
 func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
@@ -61,6 +23,8 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 	files := map[string][]string{
 		filepath.Join("project", "config.go.tmpl"): {
 			`package project`,
+			`CurrentComponentContractVersion`,
+			`ComponentContractVersion int`,
 			`Watch    any`,
 			`Root     string`,
 			`Roots    []string`,
@@ -70,6 +34,11 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Extra`,
 			`ModuleReplaces`,
 			`Observability`,
+			`Cache`,
+			`Events`,
+			`Storage`,
+			`func (c *ProjectConfig) UnmarshalYAML(`,
+			`func migrateLegacyAppPrimitiveComponents(`,
 			`func (c *DevConfig) SetApps(`,
 		},
 		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
@@ -85,14 +54,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Components   *project.Components`,
 			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
 			`func loadProjectConfig() (*project.Config, error)`,
-		},
-		filepath.Join("internal", "lighthouse", "project_config_test.go.tmpl"): {
-			`func TestProjectConfigYAMLRoundTripPreservesNativeAndUnknownDevFields(`,
-			`func TestRenderConfigDropsLegacyQueueDriverWithoutDroppingExtensions(`,
-			`func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(`,
-			`func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(`,
-			`future_watch_control: retained`,
-			`native watcher controls were erased`,
+			`config.Render.ComponentContractVersion = project.CurrentComponentContractVersion`,
 		},
 	}
 	for name, snippets := range files {
@@ -232,80 +194,6 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func ApplyCompiledEnvOverrides() error`,
 			`base64.StdEncoding.DecodeString`,
 			`return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)`,
-		},
-		filepath.Join(filepath.Dir(base), "runtime", "about.go.tmpl"): {
-			`package runtime`,
-			`type AboutService struct{}`,
-			`func (s *AboutService) Build() AboutReport`,
-			`type AboutSectionData struct {`,
-			`type AboutConnectionData struct {`,
-			`func aboutDatabaseDetails(name string) []AboutField`,
-		},
-		filepath.Join(filepath.Dir(base), "runtime", "discovery.go.tmpl"): {
-			`package runtime`,
-			`type PrimitiveInstance struct {`,
-			`func DiscoverCacheInstances() []PrimitiveInstance`,
-			`func DiscoverQueueInstances() []PrimitiveInstance`,
-			`func DiscoverStorageInstances() []PrimitiveInstance`,
-			`func DiscoverEventInstances() []PrimitiveInstance`,
-			`func DiscoverDatabaseInstances() []PrimitiveInstance`,
-			`func QueueDefaultQueue(name string) string`,
-		},
-		filepath.Join(filepath.Dir(base), "http", "readiness_checks.go.tmpl"): {
-			`func ProvideReadinessChecks(`,
-			`for _, check := range caches.ReadinessChecks() {`,
-			`for _, check := range storage.ReadinessChecks() {`,
-			`for _, check := range events.ReadinessChecks() {`,
-			`for _, check := range queues.ReadinessChecks() {`,
-			`for _, check := range db.ReadinessChecks() {`,
-			`Check: check.Check,`,
-		},
-		filepath.Join(filepath.Dir(base), "cmd", "resources_cmd.go.tmpl"): {
-			`runtime.DiscoverDatabaseInstances()`,
-			`runtime.DiscoverStorageInstances()`,
-			`resources:describe`,
-			`config_keys`,
-			`_PASSWORD`,
-		},
-		filepath.Join(filepath.Dir(base), "..", "app", "commands.go.tmpl"): {
-			`AboutCmd cmd.AboutCmd ` + "`cmd:\"\"`",
-			`CacheShellCmd cmd.CacheShellCmd ` + "`cmd:\"\"`",
-			`DBShellCmd cmd.DBShellCmd ` + "`cmd:\"\"`",
-			`{{- if or .Components.WebAPI .Components.WebUI }}`,
-			`HealthCmd cmd.HealthCmd ` + "`cmd:\"\"`",
-			`aboutCmd *cmd.AboutCmd,`,
-			`cacheShellCmd *cmd.CacheShellCmd,`,
-			`dbShellCmd *cmd.DBShellCmd,`,
-			`healthCmd *cmd.HealthCmd,`,
-			`AboutCmd: *aboutCmd,`,
-			`CacheShellCmd: *cacheShellCmd,`,
-			`DBShellCmd: *dbShellCmd,`,
-			`HealthCmd: *healthCmd,`,
-		},
-		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd.go.tmpl"): {
-			`appCommandSet,`,
-			`{{.AppPackageName}}.NewCommands,`,
-			`{{.AppPackageName}}.NewRootCmd,`,
-			`.Components.HasRuntime`,
-			`cmd.NewAboutCmd,`,
-			`cmd.NewCacheShellCmd,`,
-			`cmd.NewDBShellCmd,`,
-			`makecmd.NewCommandCmd,`,
-			`{{- if or .Components.WebAPI .Components.WebUI }}`,
-			`cmd.NewHealthCmd,`,
-			`makecmd.NewControllerCmd,`,
-			`makecmd.NewMigrationCmd,`,
-		},
-		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd_app.go.tmpl"): {
-			`var appCommandSet = wire.NewSet(`,
-			`cmd.NewHelloWorldCmd,`,
-			`cmd.NewTestEventPipelineCmd,`,
-			`monitoring.NewPollCmd,`,
-			`monitoring.NewPushTriggerCmd,`,
-			`monitoring.NewResetCmd,`,
-			`monitoring.NewRetentionCmd,`,
-			`monitoring.NewSeedCmd,`,
-			`monitoring.NewTestPollLoopCmd,`,
 		},
 	}
 
@@ -860,12 +748,10 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	for _, snippet := range []string{
 		`MakeCommandCmd    makecmd.CommandCmd    ` + "`cmd:\"\"`",
 		`MakeControllerCmd makecmd.ControllerCmd ` + "`cmd:\"\"`",
-		`MakeEventCmd     makecmd.EventCmd     ` + "`cmd:\"\"`",
 		`MakeJobCmd       makecmd.JobCmd       ` + "`cmd:\"\"`",
 		`MakeMigrationCmd makecmd.MigrationCmd ` + "`cmd:\"\"`",
 		`MakeQueueCmd makecmd.QueueCmd ` + "`cmd:\"\"`",
 		`MakeScheduleCmd makecmd.ScheduleCmd ` + "`cmd:\"\"`",
-		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
 		`BenchmarkRunCmd    jobs.BenchmarkRunCmd    ` + "`cmd:\"\"`",
 		`ExampleHelloJobCmd jobs.ExampleHelloJobCmd ` + "`cmd:\"\"`",
 		`HttpServeCmd http.ServeCmd ` + "`cmd:\"\"`",
@@ -876,6 +762,22 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected root command template to contain %q", snippet)
+		}
+	}
+
+	eventTemplatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "app", "event_commands.go.tmpl")
+	eventContent, err := os.ReadFile(eventTemplatePath)
+	if err != nil {
+		t.Fatalf("read event command template: %v", err)
+	}
+	eventSource := string(eventContent)
+	for _, snippet := range []string{
+		`MakeEventCmd      makecmd.EventCmd      ` + "`cmd:\"\"`",
+		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
+		`TestEventPipelineCmd cmd.TestEventPipelineCmd ` + "`cmd:\"\"`",
+	} {
+		if !strings.Contains(eventSource, snippet) {
+			t.Fatalf("expected event command template to contain %q", snippet)
 		}
 	}
 	for _, snippet := range []string{

@@ -1,5 +1,11 @@
 # `app run` Single-Process Host Design
 
+> **Runtime topology correction (2026-07-14):** The proposed `RUNTIME_MODE`
+> environment switch was retired. Process topology is expressed by the command
+> being launched: `app run` is the combined host, while `http:serve`,
+> `queue:work`, and `schedule:run` are explicit roles. References to
+> `RUNTIME_MODE` below are retained only as historical design context.
+
 ## Summary
 
 Move generated `app run` from a subprocess supervisor to a single-process runtime host that boots the enabled logical runtimes together:

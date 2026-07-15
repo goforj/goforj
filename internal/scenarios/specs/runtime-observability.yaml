@@ -7,7 +7,10 @@ app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module
   components:
+    cache: true
+    events: true
     web_api: true
+    storage: true
     jobs: true
     scheduler: true
 markdown:

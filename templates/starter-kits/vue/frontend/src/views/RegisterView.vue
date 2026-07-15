@@ -107,7 +107,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { LoaderCircle } from 'lucide-vue-next'
+import { LoaderCircle } from '@lucide/vue'
 import { registerWithPassword } from '@/lib/auth'
 import { passwordRequirementsText } from '@/lib/password-policy'
 import logoMark from '@/assets/goforj-logo.png'

@@ -1,0 +1,50 @@
+package observability
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+{{- if .ProjectComponents.Metrics }}
+	"{{.GoModuleName}}/internal/inspects"
+{{- end }}
+	"{{.GoModuleName}}/internal/storages"
+)
+
+// TestStorageInspectEventPreservesObservedOperation verifies the observer adapter does not lose storage event fields.
+func TestStorageInspectEventPreservesObservedOperation(t *testing.T) {
+	expectedErr := errors.New("storage unavailable")
+	expectedDuration := 23 * time.Millisecond
+
+	event := storageInspectEvent(storages.StorageOpEvent{
+		Operation: "put",
+		Disk:      "public",
+		Path:      "avatars/42.png",
+		Driver:    "local",
+		Err:       expectedErr,
+		Duration:  expectedDuration,
+	})
+
+	if event.Operation != "put" || event.Disk != "public" || event.Path != "avatars/42.png" {
+		t.Fatalf("storage inspect identity = %#v", event)
+	}
+	if event.Driver != "local" {
+		t.Fatalf("storage inspect driver = %q", event.Driver)
+	}
+	if !errors.Is(event.Err, expectedErr) || event.Duration != expectedDuration {
+		t.Fatalf("storage inspect error/duration = %#v", event)
+	}
+}
+
+{{ if .ProjectComponents.Metrics }}
+// TestStorageObserverAllowsAppMetricsOptOut verifies the shared observer accepts the intentional mixed-App nil Metrics seam.
+func TestStorageObserverAllowsAppMetricsOptOut(t *testing.T) {
+	observer := StorageObserver(inspects.NewManager(), nil)
+	observer.OnStorageOp(t.Context(), storages.StorageOpEvent{
+		Operation: "put",
+		Disk:      "public",
+		Path:      "avatars/42.png",
+		Driver:    "local",
+	})
+}
+{{- end }}

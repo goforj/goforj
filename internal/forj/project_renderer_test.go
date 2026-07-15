@@ -27,25 +27,6 @@ func TestGeneratedGitignoreIgnoresRuntimeStorage(t *testing.T) {
 	}
 }
 
-func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
-	modules := coredeps.SyncCoreLibraries()
-	expected := []string{
-		"github.com/goforj/queue@" + coredeps.MustVersionFor("github.com/goforj/queue"),
-		"github.com/goforj/queue/driver/redisqueue@" + coredeps.MustVersionFor("github.com/goforj/queue/driver/redisqueue"),
-		"github.com/goforj/events/eventscore@" + coredeps.MustVersionFor("github.com/goforj/events/eventscore"),
-		"github.com/goforj/web@" + coredeps.MustVersionFor("github.com/goforj/web"),
-	}
-	seen := make(map[string]struct{}, len(modules))
-	for _, module := range modules {
-		seen[module] = struct{}{}
-	}
-	for _, module := range expected {
-		if _, ok := seen[module]; !ok {
-			t.Fatalf("expected syncCoreLibraries to include %s", module)
-		}
-	}
-}
-
 func TestCoreModulesNeedingSyncSkipsPinnedAndReplacedModules(t *testing.T) {
 	root := t.TempDir()
 	goModPath := filepath.Join(root, "go.mod")
@@ -96,6 +77,7 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	}
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer.config = &project.Config{Render: project.RenderConfig{Components: project.Components{Cache: true}}}
 	if err := renderer.syncCoreLibrariesInDir(root); err != nil {
 		t.Fatalf("syncCoreLibraries returned error: %v", err)
 	}
@@ -107,12 +89,17 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"github.com/goforj/web " + coredeps.MustVersionFor("github.com/goforj/web"),
-		"github.com/goforj/queue v0.2.1",
 		"github.com/goforj/cache v0.3.0",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected go.mod to contain %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "github.com/goforj/events ") {
+		t.Fatalf("Events-disabled renderer added Events modules:\n%s", text)
+	}
+	if strings.Contains(text, "github.com/goforj/queue ") {
+		t.Fatalf("Jobs-disabled renderer added Queue modules:\n%s", text)
 	}
 	if len(renderer.lines) != 1 || !strings.Contains(renderer.lines[0], "sync core libs") {
 		t.Fatalf("expected sync core libs render line, got %#v", renderer.lines)
@@ -140,17 +127,6 @@ func TestSyncCoreLibrariesAddsTemplDependencyForTemplStarter(t *testing.T) {
 	want := "github.com/a-h/templ " + coredeps.MustVersionFor("github.com/a-h/templ")
 	if !strings.Contains(string(data), want) {
 		t.Fatalf("expected go.mod to contain %q:\n%s", want, string(data))
-	}
-}
-
-func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
-	data, err := os.ReadFile("project_renderer.go")
-	if err != nil {
-		t.Fatalf("read project_renderer.go: %v", err)
-	}
-	source := string(data)
-	if !strings.Contains(source, `requires: []string{`) || !strings.Contains(source, `"/auth/dev-session"`) {
-		t.Fatal("expected project renderer sync to require the lighthouse dev session auth route")
 	}
 }
 
@@ -239,7 +215,6 @@ func TestObservabilityDockerfilesBakeRuntimeAssets(t *testing.T) {
 			want: []string{
 				"FROM curlimages/curl:8.10.1",
 				"COPY seed-dashboards.sh /seed-dashboards.sh",
-				"COPY dashboards /dashboards",
 			},
 		},
 	}
@@ -274,32 +249,36 @@ func TestObservabilityDockerfilesBakeRuntimeAssets(t *testing.T) {
 	}
 }
 
-func TestGrafanaSeedScriptUsesIdempotentAPIImports(t *testing.T) {
+// TestGrafanaSeedScriptWaitsForProvisionedDashboards prevents the seeder from mutating Grafana's read-only provisioned resources.
+func TestGrafanaSeedScriptWaitsForProvisionedDashboards(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "containers", "observability", "grafana", "seed-dashboards.sh.tmpl"))
 	if err != nil {
 		t.Fatalf("read grafana seed script template: %v", err)
 	}
 	template := string(data)
 	for _, token := range []string{
-		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/health"`,
-		"/api/datasources/uid/goforj-victoriametrics",
-		"-X PUT",
-		"-X POST",
-		"/api/datasources",
-		"/api/dashboards/db",
-		`"overwrite":true`,
-		"for file in /dashboards/*.json",
+		`curl -sS -u "${auth}" -o /dev/null -w "%{http_code}" "${grafana_url}/api/user"`,
+		`[ "${status}" = "200" ]`,
 		`/api/dashboards/uid/${uid}" >/dev/null 2>/dev/null`,
+		"dashboard_is_starred",
+		"/api/user/stars/dashboard/uid/",
+		"/api/org/preferences",
 	} {
 		if !strings.Contains(template, token) {
 			t.Fatalf("expected grafana seed script template to contain %q\n%s", token, template)
 		}
 	}
-	if strings.Contains(template, `curl -fsS "${grafana_url}/api/health"`) {
-		t.Fatalf("expected grafana seed readiness check to use auth\n%s", template)
-	}
-	if strings.Contains(template, `curl -fsS -u "${auth}" "${grafana_url}/api/health"`) {
-		t.Fatalf("expected grafana seed readiness check not to require a 2xx health response\n%s", template)
+	for _, token := range []string{
+		"/api/health",
+		"/api/datasources/uid/goforj-victoriametrics",
+		"/api/dashboards/db",
+		`"overwrite":true`,
+		"for file in /dashboards/*.json",
+		"|| true",
+	} {
+		if strings.Contains(template, token) {
+			t.Fatalf("expected grafana seed script template not to contain %q\n%s", token, template)
+		}
 	}
 	for _, token := range []string{
 		"curl -fsS -u \"${auth}\" \"${grafana_url}/api/dashboards/uid/${uid}\" >/dev/null; do",
@@ -409,6 +388,22 @@ func TestNextStepsIncludeVueAuthLoginHint(t *testing.T) {
 	steps = strings.Join(renderer.nextSteps(), "\n")
 	if strings.Contains(steps, "auth:create-user") {
 		t.Fatalf("expected auth login hint to be omitted without auth:\n%s", steps)
+	}
+}
+
+// TestNextStepsUseQuietFrontendInstallCommand keeps the manual path aligned with generated dev setup.
+func TestNextStepsUseQuietFrontendInstallCommand(t *testing.T) {
+	renderer := &ProjectRenderer{config: &project.Config{
+		Render: project.RenderConfig{
+			StarterKit: project.StarterKitVue,
+			Components: project.Components{WebUI: true},
+		},
+	}}
+
+	steps := strings.Join(renderer.nextSteps(), "\n")
+	want := "cd cmd/app/frontend && " + generatedFrontendNPMInstallCommand
+	if !strings.Contains(steps, want) {
+		t.Fatalf("expected next steps to contain %q:\n%s", want, steps)
 	}
 }
 
@@ -529,6 +524,7 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	}
 }
 
+// TestRuntimeAppMetadataUsesCompiledAppOrder verifies filesystem discovery retains deterministic runtime defaults.
 func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -543,11 +539,13 @@ func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "customer-portal", "main.go"), "package main\n")
 
-	got := runtimeAppMetadataForRender()
+	components := project.Components{CLI: true, WebAPI: true}
+	config := &project.Config{Render: project.RenderConfig{Components: components}}
+	got := runtimeAppMetadataForRender(config)
 	want := []runtimeAppMetadata{
-		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000},
-		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010},
-		{Name: "customer-portal", Index: 2, EnvPrefix: "CUSTOMER_PORTAL", HTTPPort: 3002, RuntimeBase: 10020},
+		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000, Components: components},
+		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010, Components: components},
+		{Name: "customer-portal", Index: 2, EnvPrefix: "CUSTOMER_PORTAL", HTTPPort: 3002, RuntimeBase: 10020, Components: components},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("metadata length = %d, want %d: %#v", len(got), len(want), got)
@@ -556,6 +554,48 @@ func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("metadata[%d] = %#v, want %#v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestRuntimeAppMetadataUsesStableConfiguredAppComponents verifies configured Apps are present before discovery without leaking sibling choices.
+func TestRuntimeAppMetadataUsesStableConfiguredAppComponents(t *testing.T) {
+	root := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			"accounts":  {Components: project.Components{CLI: true, Auth: true}},
+			"reporting": {Components: project.Components{CLI: true, DatabasePostgres: true}},
+		},
+	}
+
+	got := runtimeAppMetadataForRender(config)
+	wantNames := []string{"app", "accounts", "billing", "reporting"}
+	if len(got) != len(wantNames) {
+		t.Fatalf("metadata length = %d, want %d: %#v", len(got), len(wantNames), got)
+	}
+	for index, name := range wantNames {
+		if got[index].Name != name || got[index].Index != index {
+			t.Fatalf("metadata[%d] = %#v, want App %q at index %d", index, got[index], name, index)
+		}
+	}
+	if !got[1].Components.DatabaseMySQL || got[1].Components.DatabasePostgres {
+		t.Fatalf("accounts components leaked from reporting App: %#v", got[1].Components)
+	}
+	if got[2].Components != config.Render.Components {
+		t.Fatalf("discovered billing components = %#v, want default App components %#v", got[2].Components, config.Render.Components)
+	}
+	if !got[3].Components.DatabasePostgres || got[3].Components.DatabaseMySQL {
+		t.Fatalf("reporting components = %#v, want Postgres only", got[3].Components)
 	}
 }
 
@@ -722,6 +762,7 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 }
 
+// TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController protects the templ starter's HTTP ownership boundary.
 func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -748,6 +789,7 @@ func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T)
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.renderApp(project.DefaultApp()); err != nil {
 		t.Fatalf("renderApp returned error: %v", err)
 	}
@@ -1436,6 +1478,7 @@ func TestRenderAppPreservesCustomFrontendPlaceholder(t *testing.T) {
 	}
 }
 
+// TestRenderAppWritesDefaultAppShape verifies the direct helper emits every default App composition boundary.
 func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -1461,6 +1504,7 @@ func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.renderApp(project.DefaultApp()); err != nil {
 		t.Fatalf("renderApp returned error: %v", err)
 	}

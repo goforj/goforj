@@ -13,7 +13,6 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
-	"{{.GoModuleName}}/internal/makecmd"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
@@ -23,8 +22,6 @@ import (
 var appSet = wire.NewSet(
 	{{.AppPackageName}}.NewLifecycleRegistry,
 	runtime.NewTimeouts,
-	makecmd.NewEventCmd,
-	makecmd.NewSubscriberCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitoring.NewIncidentTransitionService,
 	monitoring.NewRetentionService,

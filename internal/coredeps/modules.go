@@ -1,6 +1,10 @@
 package coredeps
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/goforj/goforj/project"
+)
 
 // pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
 var pinnedModuleVersions = map[string]string{
@@ -49,12 +53,31 @@ var pinnedModuleVersions = map[string]string{
 }
 
 var rendererSyncModules = []string{
+	"github.com/goforj/metrics",
+	"github.com/goforj/httpx",
+	"github.com/goforj/web",
+	"github.com/goforj/scheduler/v2",
+	"github.com/goforj/env/v2",
+}
+
+var cacheRendererSyncModules = []string{
 	"github.com/goforj/cache",
 	"github.com/goforj/cache/cachecore",
 	"github.com/goforj/cache/driver/rediscache",
+}
+
+var eventsRendererSyncModules = []string{
+	"github.com/goforj/events",
+	"github.com/goforj/events/eventscore",
+}
+
+var storageRendererSyncModules = []string{
 	"github.com/goforj/storage",
 	"github.com/goforj/storage/storagecore",
 	"github.com/goforj/storage/driver/localstorage",
+}
+
+var jobsRendererSyncModules = []string{
 	"github.com/goforj/queue",
 	"github.com/goforj/queue/driver/mysqlqueue",
 	"github.com/goforj/queue/driver/natsqueue",
@@ -64,20 +87,15 @@ var rendererSyncModules = []string{
 	"github.com/goforj/queue/driver/sqlitequeue",
 	"github.com/goforj/queue/driver/sqlqueuecore",
 	"github.com/goforj/queue/driver/sqsqueue",
-	"github.com/goforj/events",
-	"github.com/goforj/events/eventscore",
-	"github.com/goforj/metrics",
-	"github.com/goforj/httpx",
-	"github.com/goforj/web",
-	"github.com/goforj/scheduler/v2",
-	"github.com/goforj/env/v2",
 }
 
+// VersionFor returns the framework-pinned version for module when it is known.
 func VersionFor(module string) (string, bool) {
 	version, ok := pinnedModuleVersions[module]
 	return version, ok
 }
 
+// MustVersionFor returns the framework-pinned version for module and panics when it is unknown.
 func MustVersionFor(module string) string {
 	version, ok := VersionFor(module)
 	if !ok {
@@ -86,14 +104,29 @@ func MustVersionFor(module string) string {
 	return version
 }
 
-func SyncCoreLibraries() []string {
-	out := make([]string, 0, len(rendererSyncModules))
-	for _, module := range rendererSyncModules {
+// SyncCoreLibraries returns the pinned renderer dependencies required by the selected project capabilities.
+func SyncCoreLibraries(components project.Components) []string {
+	modules := append([]string(nil), rendererSyncModules...)
+	if components.Cache {
+		modules = append(modules, cacheRendererSyncModules...)
+	}
+	if components.Events {
+		modules = append(modules, eventsRendererSyncModules...)
+	}
+	if components.Storage {
+		modules = append(modules, storageRendererSyncModules...)
+	}
+	if components.Jobs {
+		modules = append(modules, jobsRendererSyncModules...)
+	}
+	out := make([]string, 0, len(modules))
+	for _, module := range modules {
 		out = append(out, module+"@"+MustVersionFor(module))
 	}
 	return out
 }
 
+// AllPinnedModules returns a copy of the complete framework module version catalog.
 func AllPinnedModules() map[string]string {
 	out := make(map[string]string, len(pinnedModuleVersions))
 	for module, version := range pinnedModuleVersions {
@@ -102,6 +135,7 @@ func AllPinnedModules() map[string]string {
 	return out
 }
 
+// KnownModules returns all framework-pinned module paths in lexical order.
 func KnownModules() []string {
 	out := make([]string, 0, len(pinnedModuleVersions))
 	for module := range pinnedModuleVersions {

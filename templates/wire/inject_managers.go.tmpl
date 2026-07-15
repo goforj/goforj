@@ -6,8 +6,12 @@ package wire
 import (
 	"github.com/goforj/wire"
 
+{{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
+{{- end }}
+{{- if .Components.Events }}
 	"{{.GoModuleName}}/internal/events"
+{{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
@@ -19,21 +23,35 @@ import (
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
+{{- if or .Components.Cache .Components.Events .Components.Storage .Components.Mail .Components.Jobs }}
 	"{{.GoModuleName}}/internal/observability"
+{{- end }}
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
+{{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
+{{- end }}
 )
 
 var managerSet = wire.NewSet(
-{{- if .ProjectComponents.Metrics }}
+{{- if .Components.Metrics }}
 	metrics.NewManager,
+{{- else if .ProjectComponents.Metrics }}
+	provideDisabledMetricsManager,
 {{- end }}
+{{- if .Components.Cache }}
 	provideCacheManager,
+{{- end }}
+{{- if .Components.Events }}
 	provideEventManager,
+{{- end }}
 	provideInspectManager,
+{{- if .Components.Storage }}
 	provideStorageManager,
+{{- else if .ProjectComponents.Storage }}
+	provideDisabledStorageManager,
+{{- end }}
 {{- if .Components.Mail }}
 	provideMailManager,
 {{- end }}
@@ -42,9 +60,18 @@ var managerSet = wire.NewSet(
 {{- end }}
 )
 
-// provideCacheManager attaches cache metrics during manager construction so app-owned injectors stay focused on registrations.
+{{ if and .ProjectComponents.Metrics (not .Components.Metrics) }}
+// provideDisabledMetricsManager satisfies shared project-envelope constructors without enabling Metrics for this App.
+func provideDisabledMetricsManager() *metrics.Manager {
+	return nil
+}
+{{- end }}
+
+{{- if .Components.Cache }}
+// provideCacheManager attaches cache observers during manager construction so app-owned injectors stay focused on registrations.
 func provideCacheManager(
-{{- if .ProjectComponents.Metrics }}
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*caches.Manager, error) {
@@ -52,21 +79,22 @@ func provideCacheManager(
 	if err != nil {
 		return nil, err
 	}
-{{- if .ProjectComponents.Metrics }}
+	manager = manager.WithObserver(observability.CacheInspectObserver(inspectManager))
+{{- if .Components.Metrics }}
 	if metricsManager.CacheEnabled() {
 		manager = manager.WithObserver(observability.CacheMetricsObserver(metricsManager))
 	}
 {{- end }}
 	return manager, nil
 }
+{{- end }}
 
-// provideInspectManager reuses the cache manager's inspect store and attaches cache inspect capture before app services are constructed.
-func provideInspectManager(cacheManager *caches.Manager) *inspects.Manager {
-	manager := inspects.NewManager(cacheManager.Inspects())
-	cacheManager.WithObserver(observability.CacheInspectObserver(manager))
-	return manager
+// provideInspectManager owns process-local inspect history independently from App Cache.
+func provideInspectManager() *inspects.Manager {
+	return inspects.NewManager()
 }
 
+{{ if .Components.Events }}
 // provideEventManager attaches observability hooks without making the observability package construct managers.
 func provideEventManager(
 	inspectManager *inspects.Manager,
@@ -85,7 +113,9 @@ func provideEventManager(
 {{- end }}
 	)), nil
 }
+{{- end }}
 
+{{ if .Components.Storage }}
 // provideStorageManager attaches storage observers while leaving disk registration inside the storage manager.
 func provideStorageManager(
 	inspectManager *inspects.Manager,
@@ -104,6 +134,12 @@ func provideStorageManager(
 {{- end }}
 	)), nil
 }
+{{- else if .ProjectComponents.Storage }}
+// provideDisabledStorageManager satisfies shared project-envelope constructors without initializing Storage for this App.
+func provideDisabledStorageManager() *storages.Manager {
+	return nil
+}
+{{- end }}
 
 {{ if .Components.Mail }}
 // provideMailManager attaches mail observers at the framework wiring boundary.

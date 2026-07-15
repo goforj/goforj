@@ -62,6 +62,7 @@ var storageRootKeys = []string{
 	"RCLONE_CONFIG_DATA",
 }
 
+// Manager owns initialized storage disks and their runtime instrumentation.
 type Manager struct {
 	defaultDisk   storage.Storage
 	observer      Observer
@@ -69,6 +70,7 @@ type Manager struct {
 	warnings      []OptionalDiskWarning
 }
 
+// Instance describes one initialized disk exposed through generated storage discovery.
 type Instance struct {
 	Name      string
 	Driver    string
@@ -76,21 +78,26 @@ type Instance struct {
 	IsDefault bool
 }
 
+// ReadinessCheck names a generated storage probe for framework health reporting.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
 }
 
+// OptionalDiskWarning records an unavailable non-default disk without preventing startup.
 type OptionalDiskWarning struct {
 	Name   string
 	Driver string
 	Error  string
 }
 
+// Observer receives completed storage operations without coupling drivers to telemetry packages.
 type Observer interface {
+	// OnStorageOp gives generated storage wrappers one stable hook for operation telemetry.
 	OnStorageOp(ctx context.Context, event StorageOpEvent)
 }
 
+// StorageOpEvent captures the stable operation details shared with generated observers.
 type StorageOpEvent struct {
 	Operation string
 	Disk      string
@@ -100,8 +107,10 @@ type StorageOpEvent struct {
 	Duration  time.Duration
 }
 
+// ObserverFunc adapts a callback to the generated storage observer contract.
 type ObserverFunc func(ctx context.Context, event StorageOpEvent)
 
+// OnStorageOp adapts a callback so generated managers can compose it with interface-based observers.
 func (f ObserverFunc) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	if f == nil {
 		return
@@ -109,8 +118,10 @@ func (f ObserverFunc) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	f(ctx, event)
 }
 
+// observerChain preserves observer registration order when telemetry has multiple consumers.
 type observerChain []Observer
 
+// OnStorageOp preserves registration order when a storage operation is fanned out to multiple observers.
 func (c observerChain) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -120,10 +131,12 @@ func (c observerChain) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	}
 }
 
+// NewManager builds storage disks from the environment contract captured by this generated artifact.
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
 }
 
+// WithObserver adds observability without replacing observers already attached by framework wiring.
 func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
@@ -145,6 +158,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	return m
 }
 
+// Warnings preserves diagnostics for optional disks whose unavailable infrastructure did not prevent startup.
 func (m *Manager) Warnings() []OptionalDiskWarning {
 	if m == nil || len(m.warnings) == 0 {
 		return nil
@@ -154,6 +168,7 @@ func (m *Manager) Warnings() []OptionalDiskWarning {
 	return out
 }
 
+// ReadinessChecks exposes one probe per initialized disk so health excludes optional disks skipped at startup.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	if m == nil {
 		return nil
@@ -169,6 +184,7 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
+// LoadConfigFromEnv materializes the generated disk contract for callers that build storage independently.
 func LoadConfigFromEnv() (storage.Config, error) {
 	storageScope := env.WithPrefix("STORAGE")
 	disks, err := loadDisksFromEnv(storageScope)
@@ -181,6 +197,7 @@ func LoadConfigFromEnv() (storage.Config, error) {
 	}, nil
 }
 
+// loadDisksFromEnv keeps default and named disk parsing under one validation boundary.
 func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.DriverConfig, error) {
 	disks := map[storage.DiskName]storage.DriverConfig{}
 
@@ -202,6 +219,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	return disks, nil
 }
 
+// storageChildNamesFromEnv matches complete root keys so names containing underscores are not truncated.
 func storageChildNamesFromEnv() []string {
 	rootKeyParts := make(map[string][]string, len(storageRootKeys))
 	for _, key := range storageRootKeys {
@@ -241,6 +259,7 @@ func storageChildNamesFromEnv() []string {
 	return names
 }
 
+// newManagerFromEnv eagerly initializes the default disk while allowing generated optional disks to degrade visibly.
 func newManagerFromEnv() (*Manager, error) {
 	storageScope := env.WithPrefix("STORAGE")
 	defaultCfg, err := buildDiskConfig(defaultDiskName, storageScope)
@@ -258,6 +277,7 @@ func newManagerFromEnv() (*Manager, error) {
 	return manager, nil
 }
 
+// optionalDiskFromScope keeps expected infrastructure outages nonfatal for non-default disks while retaining diagnostics.
 func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {
 	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
 	cfg, err := buildDiskConfig(name, childScope)
@@ -279,6 +299,7 @@ func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (stora
 	return nil, nil, err
 }
 
+// isOptionalStorageDiskError limits startup leniency to missing or unreachable optional backends.
 func isOptionalStorageDiskError(err error) bool {
 	if err == nil {
 		return false
@@ -292,6 +313,7 @@ func isOptionalStorageDiskError(err error) bool {
 		strings.Contains(err.Error(), "network is unreachable")
 }
 
+// storageDriverNameFromScope normalizes driver labels shared by diagnostics and operation observers.
 func storageDriverNameFromScope(scope env.Scope) string {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
 	if driver == "" {
@@ -300,9 +322,8 @@ func storageDriverNameFromScope(scope env.Scope) string {
 	return driver
 }
 
-// buildDiskConfig is generated from the storage disks currently defined in env.
-// The supported driver cases and imports in this file are derived from
-// STORAGE_SUPPORTED_DRIVERS, or from active STORAGE_* and STORAGE_<NAME>_* values when unset.
+// buildDiskConfig rejects backends outside the generated manifest before endpoint configuration is constructed.
+// The manifest comes from STORAGE_SUPPORTED_DRIVERS, falling back to active root and named Storage scopes when that list is unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
 	if driver == "" {
@@ -329,6 +350,7 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 	}
 }
 
+// storageReadinessCheck prefers explicit driver health contracts and falls back to a lightweight listing operation.
 func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
 	if disk == nil {
 		return nil
@@ -343,6 +365,7 @@ func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
 	return err
 }
 
+// observedStorage decorates a disk so every delegated operation emits consistent telemetry.
 type observedStorage struct {
 	inner    storage.Storage
 	name     string
@@ -351,6 +374,7 @@ type observedStorage struct {
 	ctx      context.Context
 }
 
+// wrapObservedStorage reuses an existing wrapper so adding observers does not stack duplicate instrumentation.
 func wrapObservedStorage(inner storage.Storage, name string, driver string, observer Observer) storage.Storage {
 	if inner == nil || observer == nil {
 		return inner
@@ -369,6 +393,7 @@ func wrapObservedStorage(inner storage.Storage, name string, driver string, obse
 	}
 }
 
+// observe emits one uniform event after a delegated storage operation completes.
 func (s *observedStorage) observe(ctx context.Context, op string, path string, start time.Time, err error) {
 	if s == nil || s.observer == nil {
 		return
@@ -383,6 +408,7 @@ func (s *observedStorage) observe(ctx context.Context, op string, path string, s
 	})
 }
 
+// WithContext clones the wrapper so request contexts cannot leak between storage callers.
 func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
 	clone := *s
 	if ctx == nil {
@@ -392,6 +418,7 @@ func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
 	return &clone
 }
 
+// context supplies a background context for callers that use the context-free storage API.
 func (s *observedStorage) context() context.Context {
 	if s == nil || s.ctx == nil {
 		return context.Background()
@@ -399,6 +426,7 @@ func (s *observedStorage) context() context.Context {
 	return s.ctx
 }
 
+// Get records read telemetry around the underlying driver without changing its behavior.
 func (s *observedStorage) Get(p string) ([]byte, error) {
 	start := time.Now()
 	ctx := s.context()
@@ -407,6 +435,7 @@ func (s *observedStorage) Get(p string) ([]byte, error) {
 	return body, err
 }
 
+// Put records write telemetry around the underlying driver without changing its behavior.
 func (s *observedStorage) Put(p string, contents []byte) error {
 	start := time.Now()
 	ctx := s.context()
@@ -415,6 +444,7 @@ func (s *observedStorage) Put(p string, contents []byte) error {
 	return err
 }
 
+// MakeDir records directory-creation telemetry around the underlying driver.
 func (s *observedStorage) MakeDir(p string) error {
 	start := time.Now()
 	ctx := s.context()
@@ -423,6 +453,7 @@ func (s *observedStorage) MakeDir(p string) error {
 	return err
 }
 
+// Delete records deletion telemetry around the underlying driver without changing its behavior.
 func (s *observedStorage) Delete(p string) error {
 	start := time.Now()
 	ctx := s.context()
@@ -431,6 +462,7 @@ func (s *observedStorage) Delete(p string) error {
 	return err
 }
 
+// Stat records metadata-read telemetry around the underlying driver.
 func (s *observedStorage) Stat(p string) (storage.Entry, error) {
 	start := time.Now()
 	ctx := s.context()
@@ -439,6 +471,7 @@ func (s *observedStorage) Stat(p string) (storage.Entry, error) {
 	return entry, err
 }
 
+// Exists records existence-check telemetry around the underlying driver.
 func (s *observedStorage) Exists(p string) (bool, error) {
 	start := time.Now()
 	ctx := s.context()
@@ -447,6 +480,7 @@ func (s *observedStorage) Exists(p string) (bool, error) {
 	return exists, err
 }
 
+// List records directory-listing telemetry around the underlying driver.
 func (s *observedStorage) List(p string) ([]storage.Entry, error) {
 	start := time.Now()
 	ctx := s.context()
@@ -455,6 +489,7 @@ func (s *observedStorage) List(p string) ([]storage.Entry, error) {
 	return entries, err
 }
 
+// Walk records traversal telemetry around the underlying driver.
 func (s *observedStorage) Walk(p string, fn func(storage.Entry) error) error {
 	start := time.Now()
 	ctx := s.context()
@@ -463,6 +498,7 @@ func (s *observedStorage) Walk(p string, fn func(storage.Entry) error) error {
 	return err
 }
 
+// Copy records both paths in telemetry so cross-location operations remain diagnosable.
 func (s *observedStorage) Copy(src, dst string) error {
 	start := time.Now()
 	ctx := s.context()
@@ -471,6 +507,7 @@ func (s *observedStorage) Copy(src, dst string) error {
 	return err
 }
 
+// Move records both paths in telemetry so cross-location operations remain diagnosable.
 func (s *observedStorage) Move(src, dst string) error {
 	start := time.Now()
 	ctx := s.context()
@@ -479,6 +516,7 @@ func (s *observedStorage) Move(src, dst string) error {
 	return err
 }
 
+// URL records URL-generation telemetry around the underlying driver.
 func (s *observedStorage) URL(p string) (string, error) {
 	start := time.Now()
 	ctx := s.context()
@@ -487,6 +525,7 @@ func (s *observedStorage) URL(p string) (string, error) {
 	return url, err
 }
 
+// ListPage preserves paged-storage capability checks while recording the result uniformly.
 func (s *observedStorage) ListPage(p string, offset, limit int) (storage.ListPageResult, error) {
 	start := time.Now()
 	ctx := s.context()

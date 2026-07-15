@@ -111,3 +111,9 @@ QUEUE_CRITICAL_NAME=critical
 `QUEUE_DEFAULT_QUEUE` and `QUEUE_<NAME>_DEFAULT_QUEUE` are still accepted as compatibility aliases, but new App configuration should prefer `QUEUE_NAME` and `QUEUE_<NAME>_NAME`.
 
 If a runtime queue selects a driver that is not listed in `QUEUE_SUPPORTED_DRIVERS`, generation fails fast with a validation error.
+
+## Switching Drivers
+
+`QUEUE_SUPPORTED_DRIVERS` is the set of drivers built into the app; `QUEUE_DRIVER` and the named `QUEUE_<NAME>_DRIVER` values select which of them are active. To switch an existing queue to a driver already built in, configure its connection and required service, coordinate producers so they stop writing to the old backend, drain its workers, change the active driver, then restart or redeploy every producer and worker together. Outstanding jobs are not copied to the new backend.
+
+To use a driver that is not built in, add it to `QUEUE_SUPPORTED_DRIVERS`, run `forj generate --queue`, and build a new artifact before selecting it. Review retry, acknowledgement, ordering, and delivery semantics whenever the backend changes.

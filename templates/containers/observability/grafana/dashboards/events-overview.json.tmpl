@@ -812,7 +812,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(events_subscriptions{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(events_subscriptions_total{app=~\"$app\", bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "subscription errors",
           "range": true,
           "refId": "A"

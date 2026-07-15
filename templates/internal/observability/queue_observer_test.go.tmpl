@@ -1,19 +1,50 @@
 package observability
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
-	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/queue"
 
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 )
+
+// TestQueueInspectEventPreservesObservedOperation verifies the observer adapter does not lose queue event fields.
+func TestQueueInspectEventPreservesObservedOperation(t *testing.T) {
+	expectedErr := errors.New("queue unavailable")
+	expectedDuration := 31 * time.Millisecond
+
+	event := queueInspectEvent(queue.Event{
+		Kind:      queue.EventProcessRetried,
+		Driver:    queue.DriverRedis,
+		Queue:     "critical",
+		JobType:   "emails:send",
+		JobKey:    "email-42",
+		Attempt:   3,
+		Scheduled: true,
+		Duration:  expectedDuration,
+		Err:       expectedErr,
+	})
+
+	if event.Kind != string(queue.EventProcessRetried) || event.Driver != string(queue.DriverRedis) {
+		t.Fatalf("queue inspect kind/driver = %#v", event)
+	}
+	if event.Queue != "critical" || event.JobName != "emails:send" || event.JobKey != "email-42" {
+		t.Fatalf("queue inspect identity = %#v", event)
+	}
+	if event.Attempt != 3 || !event.Scheduled {
+		t.Fatalf("queue inspect attempt/scheduled = %#v", event)
+	}
+	if !errors.Is(event.Err, expectedErr) || event.Duration != expectedDuration {
+		t.Fatalf("queue inspect error/duration = %#v", event)
+	}
+}
 
 func TestQueueWorkflowLogIncludesQueueName(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
@@ -26,8 +57,7 @@ func TestQueueWorkflowLogIncludesQueueName(t *testing.T) {
 	appLogger.AddSink(func(entry logger.LogEntry) {
 		entries = append(entries, entry)
 	})
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	inspectManager := inspects.NewManager(store)
+	inspectManager := inspects.NewManager()
 
 	logQueueWorkflowEvent(appLogger, inspectManager, runtime.WithSource(context.Background(), runtime.SourceJobs), queue.Event{
 		Kind:    queue.EventProcessSucceeded,

@@ -56,8 +56,12 @@ func TestWriteYAMLPreservesRawComponentDependencies(t *testing.T) {
 	if !loaded.Render.Components.Auth {
 		t.Fatalf("expected auth to remain selected")
 	}
-	if loaded.Render.Components.Mail {
-		t.Fatalf("expected raw yaml to preserve mail=false, got %#v", loaded.Render.Components)
+	if loaded.Render.Components.Mail || loaded.Render.Components.Cache {
+		t.Fatalf("expected raw yaml to preserve unresolved dependencies, got %#v", loaded.Render.Components)
+	}
+	effective := loaded.Render.Components.WithResolvedDependencies()
+	if !effective.Mail || !effective.Cache {
+		t.Fatalf("expected effective Auth dependencies to include Mail and Cache, got %#v", effective)
 	}
 }
 
@@ -159,6 +163,115 @@ func TestRenderProfilesHaveExpectedCoverageShape(t *testing.T) {
 	}
 }
 
+// TestPRRenderProfileIncludesRecommendedAndLeanPrimitiveSentinels keeps compatibility and opt-out coverage explicit.
+func TestPRRenderProfileIncludesRecommendedAndLeanPrimitiveSentinels(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	recommended := project.DefaultSelectedComponents()
+	foundRecommended := false
+	foundLean := false
+	for _, combo := range combos {
+		if combo.id == "sentinel_recommended_default" {
+			foundRecommended = true
+			if combo.components != recommended {
+				t.Fatalf("recommended sentinel = %#v, want %#v", combo.components, recommended)
+			}
+			if !combo.components.Cache || !combo.components.Events || !combo.components.Storage || !combo.components.Jobs {
+				t.Fatalf("recommended sentinel omitted a default primitive: %#v", combo.components)
+			}
+		}
+		if !combo.components.Cache && !combo.components.Events && !combo.components.Storage && !combo.components.Jobs {
+			foundLean = true
+		}
+	}
+	if !foundRecommended {
+		t.Fatal("pr profile should include the recommended-default sentinel")
+	}
+	if !foundLean {
+		t.Fatal("pr profile should include a lean primitive-free sentinel")
+	}
+}
+
+// TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels keeps component gates covered at both project and App projections.
+func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	for _, id := range []string{
+		"sentinel_primitives_all_on",
+		"sentinel_cache_only",
+		"sentinel_events_only",
+		"sentinel_storage_only",
+		"sentinel_web_metrics_grafana_without_primitives",
+		"sentinel_default_events_named_app_off",
+		"sentinel_default_jobs_named_app_off",
+	} {
+		requireRenderComboID(t, combos, id)
+	}
+
+	for _, test := range []struct {
+		id      string
+		appName string
+		key     project.ComponentKey
+	}{
+		{id: "sentinel_named_app_cache_only", appName: "cache-worker", key: project.ComponentCache},
+		{id: "sentinel_named_app_events_only", appName: "events-worker", key: project.ComponentEvents},
+		{id: "sentinel_named_app_storage_only", appName: "storage-worker", key: project.ComponentStorage},
+		{id: "sentinel_named_app_mail_only", appName: "mailer", key: project.ComponentMail},
+		{id: "sentinel_named_app_jobs_only", appName: "worker", key: project.ComponentJobs},
+		{id: "sentinel_named_app_database_only", appName: "database-worker", key: project.ComponentDatabaseSQLite},
+		{id: "sentinel_named_app_auth_only", appName: "auth-api", key: project.ComponentAuth},
+		{id: "sentinel_named_app_scheduler_only", appName: "scheduler-worker", key: project.ComponentScheduler},
+	} {
+		t.Run(test.id, func(t *testing.T) {
+			combo := requireRenderComboID(t, combos, test.id)
+			if combo.components.Enabled(test.key) {
+				t.Fatalf("default App unexpectedly enables %q", test.key)
+			}
+			configured, ok := combo.apps[test.appName]
+			if !ok || !configured.Components.Enabled(test.key) {
+				t.Fatalf("named App %q does not enable %q: %#v", test.appName, test.key, combo.apps)
+			}
+			config := &project.Config{Render: project.RenderConfig{Components: combo.components}, Apps: combo.apps}
+			if !project.ProjectComponents(config).Enabled(test.key) {
+				t.Fatalf("named App did not promote %q into the project envelope: %#v", test.key, config)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		id      string
+		appName string
+		key     project.ComponentKey
+	}{
+		{id: "sentinel_default_events_named_app_off", appName: "api", key: project.ComponentEvents},
+		{id: "sentinel_default_jobs_named_app_off", appName: "api", key: project.ComponentJobs},
+	} {
+		t.Run(test.id, func(t *testing.T) {
+			combo := requireRenderComboID(t, combos, test.id)
+			if !combo.components.Enabled(test.key) {
+				t.Fatalf("default App does not enable %q", test.key)
+			}
+			configured, ok := combo.apps[test.appName]
+			if !ok || configured.Components.Enabled(test.key) {
+				t.Fatalf("named App %q unexpectedly enables %q: %#v", test.appName, test.key, combo.apps)
+			}
+		})
+	}
+}
+
+// TestComponentLabelsMatchCatalogSelection keeps render diagnostics truthful about every selected component.
+func TestComponentLabelsMatchCatalogSelection(t *testing.T) {
+	components := project.Components{Cache: true, Events: true, Storage: true}
+	labels := componentLabels(components)
+	seen := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		seen[label] = true
+	}
+	for _, definition := range project.ComponentCatalog() {
+		if got, want := seen[definition.Label], components.Enabled(definition.Key); got != want {
+			t.Fatalf("component label %q presence = %t, want %t: %#v", definition.Label, got, want, labels)
+		}
+	}
+}
+
 func TestPRRenderProfileCoversComponentCatalog(t *testing.T) {
 	combos := buildRenderCombos(renderProfilePR)
 	requireRenderCombosCoverCatalog(t, renderProfilePR, combos)
@@ -211,11 +324,63 @@ func TestRenderCombosHaveUniqueIDs(t *testing.T) {
 	}
 }
 
+// TestRenderComboAppsIncludesConfiguredAppsInStableOrder keeps multi-App compile validation deterministic.
+func TestRenderComboAppsIncludesConfiguredAppsInStableOrder(t *testing.T) {
+	apps, err := renderComboApps(renderCombo{apps: map[string]project.AppConfig{
+		"worker":    {},
+		"backstage": {},
+	}})
+	if err != nil {
+		t.Fatalf("renderComboApps() error: %v", err)
+	}
+	want := []string{"app", "backstage", "worker"}
+	if len(apps) != len(want) {
+		t.Fatalf("render Apps = %#v, want %v", apps, want)
+	}
+	for index, name := range want {
+		if apps[index].Name != name {
+			t.Fatalf("render App %d = %q, want %q", index, apps[index].Name, name)
+		}
+	}
+}
+
+// TestSeedRenderComboAppsCreatesNamedEntrypointMarkers verifies clean workspaces expose configured Apps to conventional discovery.
+func TestSeedRenderComboAppsCreatesNamedEntrypointMarkers(t *testing.T) {
+	root := t.TempDir()
+	apps := []project.App{project.DefaultApp(), project.DefaultNamedApp("events-worker")}
+	if err := seedRenderComboApps(root, apps); err != nil {
+		t.Fatalf("seedRenderComboApps() error: %v", err)
+	}
+	namedEntrypoint := filepath.Join(root, "cmd", "events-worker", "main.go")
+	content, err := os.ReadFile(namedEntrypoint)
+	if err != nil {
+		t.Fatalf("read named App marker: %v", err)
+	}
+	if string(content) != "package main\n" {
+		t.Fatalf("named App marker = %q", content)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cmd", "app", "main.go")); !os.IsNotExist(err) {
+		t.Fatalf("default App marker should be owned by the normal renderer: %v", err)
+	}
+}
+
 func requireRenderCombo(t *testing.T, combos []renderCombo, name string, matches func(project.Components) bool) {
 	t.Helper()
 	if !renderCombosInclude(combos, matches) {
 		t.Fatalf("pr profile should include %s coverage", name)
 	}
+}
+
+// requireRenderComboID returns one declared sentinel so its exact App projection can be asserted.
+func requireRenderComboID(t *testing.T, combos []renderCombo, id string) renderCombo {
+	t.Helper()
+	for _, combo := range combos {
+		if combo.id == id {
+			return combo
+		}
+	}
+	t.Fatalf("render profile should include %q", id)
+	return renderCombo{}
 }
 
 func renderCombosInclude(combos []renderCombo, matches func(project.Components) bool) bool {

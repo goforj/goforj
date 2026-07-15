@@ -137,6 +137,7 @@ func renderMakeAppSmokeProject(t *testing.T, dir string) {
 	}); err != nil {
 		t.Fatalf("persist workerpool queue selection: %v", err)
 	}
+	runMakeAppSmokeForj(t, dir, "generate", "--queue")
 }
 
 // renderMakeAppMigrationSmokeProject enables SQLite so app migrations can run without external services.

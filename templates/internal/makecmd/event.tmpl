@@ -1,5 +1,6 @@
 package {{ .PackageName }}
 
+// {{ .StructName }}Topic is the stable routing key for {{ .StructName }}.
 const {{ .StructName }}Topic = "{{ .TopicName }}"
 
 // {{ .StructName }} is the event payload for {{ .StructName }}Topic.
@@ -7,6 +8,7 @@ type {{ .StructName }} struct {
 	// Add event fields.
 }
 
+// Topic returns the event bus topic for {{ .StructName }}.
 func ({{ .StructName }}) Topic() string {
 	return {{ .StructName }}Topic
 }

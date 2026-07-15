@@ -235,6 +235,84 @@ func TestValidatePathInputAllowsNonEmptyDirectoryWithFlag(t *testing.T) {
 	}
 }
 
+// TestProjectPathShowsResourceReconciliationErrors keeps owner-contract failures visible before confirmation.
+func TestProjectPathShowsResourceReconciliationErrors(t *testing.T) {
+	target := t.TempDir()
+	environment := "QUEUE_DRIVER=redis\nQUEUE_SUPPORTED_DRIVERS=workerpool\n"
+	if err := os.WriteFile(filepath.Join(target, ".env"), []byte(environment), 0o600); err != nil {
+		t.Fatalf("write target environment: %v", err)
+	}
+
+	m := initialModelWithOptions(newProjectModelOptions{allowNonEmpty: true})
+	m.stage = StageProjectPath
+	m.projectInput.SetValue("Existing")
+	m.moduleInput.SetValue("example.com/existing")
+	m.pathInput.SetValue(target)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.stage != StageProjectPath {
+		t.Fatalf("invalid owner contract advanced to stage %v", m.stage)
+	}
+	if !strings.Contains(m.errorMsg, "excludes active") {
+		t.Fatalf("resource reconciliation error = %q", m.errorMsg)
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "excludes active") {
+		t.Fatalf("path view hid resource reconciliation error:\n%s", view)
+	}
+	contents, err := os.ReadFile(filepath.Join(target, ".env"))
+	if err != nil {
+		t.Fatalf("read target environment: %v", err)
+	}
+	if string(contents) != environment {
+		t.Fatalf("read-only preview changed target environment:\n%s", contents)
+	}
+}
+
+// TestProjectPathDoesNotCarryTargetResourceIntentForward keeps one existing target's owner state out of the next proposal.
+func TestProjectPathDoesNotCarryTargetResourceIntentForward(t *testing.T) {
+	firstTarget := t.TempDir()
+	if err := os.WriteFile(filepath.Join(firstTarget, ".env"), []byte("COMPOSE_PROFILES=redis\n"), 0o600); err != nil {
+		t.Fatalf("write first target environment: %v", err)
+	}
+	secondTarget := t.TempDir()
+
+	m := initialModelWithOptions(newProjectModelOptions{allowNonEmpty: true})
+	m.stage = StageProjectPath
+	m.projectInput.SetValue("Existing")
+	m.moduleInput.SetValue("example.com/existing")
+	m.pathInput.SetValue(firstTarget)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.stage != StageConfirm {
+		t.Fatalf("first target did not advance to confirmation: stage=%v error=%q", m.stage, m.errorMsg)
+	}
+	preparation, err := m.selectedResourcePreparation()
+	if err != nil {
+		t.Fatalf("prepare first target resources: %v", err)
+	}
+	if mode, ok := preparation.serviceIntent.Mode(project.ServiceRedis); !ok || mode != project.LocalServiceModeLocal {
+		t.Fatalf("first target Redis intent = %q selected=%t, want local", mode, ok)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(model)
+	m.pathInput.SetValue(secondTarget)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.stage != StageConfirm {
+		t.Fatalf("second target did not advance to confirmation: stage=%v error=%q", m.stage, m.errorMsg)
+	}
+	preparation, err = m.selectedResourcePreparation()
+	if err != nil {
+		t.Fatalf("prepare second target resources: %v", err)
+	}
+	if mode, ok := preparation.serviceIntent.Mode(project.ServiceRedis); ok {
+		t.Fatalf("second target inherited Redis intent %q", mode)
+	}
+}
+
 // TestPathStatusAllowsNonEmptyDirectoryWithFlag ensures the wizard preview matches validation behavior.
 func TestPathStatusAllowsNonEmptyDirectoryWithFlag(t *testing.T) {
 	temp := t.TempDir()
@@ -268,6 +346,186 @@ func TestEnsureNewProjectConfigCanBeWrittenRejectsExistingConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already contains .goforj.yml") {
 		t.Fatalf("expected existing config error, got %v", err)
+	}
+}
+
+// TestNewProjectComponentsExposeConcreteDatabaseEngines keeps the stateful database choice in the component checklist.
+func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
+	m := initialModel()
+	databaseRows := map[project.ComponentKey]ListItem{}
+	for _, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if project.IsAppDatabaseComponent(item.Key) {
+			databaseRows[item.Key] = item
+		}
+	}
+	if len(databaseRows) != 3 {
+		t.Fatalf("database rows = %#v, want MySQL, Postgres, and SQLite", databaseRows)
+	}
+	for key, label := range map[project.ComponentKey]string{
+		project.ComponentDatabaseMySQL:    "Database (MySQL)",
+		project.ComponentDatabasePostgres: "Database (Postgres)",
+		project.ComponentDatabaseSQLite:   "Database (SQLite)",
+	} {
+		if item := databaseRows[key]; item.Name != label {
+			t.Fatalf("database row %q label = %q, want %q", key, item.Name, label)
+		}
+		m.stage = StageSelectComponents
+		if view := ansi.Strip(m.View()); !strings.Contains(view, label) {
+			t.Fatalf("component view is missing %q:\n%s", label, view)
+		}
+	}
+	if !databaseRows[project.ComponentDatabaseMySQL].Selected || databaseRows[project.ComponentDatabasePostgres].Selected || databaseRows[project.ComponentDatabaseSQLite].Selected {
+		t.Fatalf("initial database selection = %#v, want only MySQL", databaseRows)
+	}
+}
+
+// TestNewProjectExposesPrimitiveDefaultsAsComponents keeps the common path default-on without adding another wizard stage.
+func TestNewProjectExposesPrimitiveDefaultsAsComponents(t *testing.T) {
+	m := initialModel()
+	if m.config.Render.ComponentContractVersion != project.CurrentComponentContractVersion {
+		t.Fatalf("new project component contract = %d, want %d", m.config.Render.ComponentContractVersion, project.CurrentComponentContractVersion)
+	}
+	want := map[project.ComponentKey]string{
+		project.ComponentCache:   "Cache",
+		project.ComponentEvents:  "Events",
+		project.ComponentStorage: "File Storage",
+		project.ComponentJobs:    "Background Jobs",
+	}
+	for _, raw := range m.componentList.Items() {
+		item := raw.(ListItem)
+		label, ok := want[item.Key]
+		if !ok {
+			continue
+		}
+		if item.Name != label || !item.Selected {
+			t.Fatalf("primitive row %q = %#v, want selected %q", item.Key, item, label)
+		}
+		delete(want, item.Key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("new project wizard is missing primitive rows: %#v", want)
+	}
+	m.applyComponentSelection()
+	if !m.config.Render.Components.Cache || !m.config.Render.Components.Events || !m.config.Render.Components.Storage || !m.config.Render.Components.Jobs {
+		t.Fatalf("primitive defaults were lost while applying wizard selections: %#v", m.config.Render.Components)
+	}
+}
+
+// TestDatabaseEngineSelectionIsExclusive verifies the component checklist owns one concrete database engine.
+func TestDatabaseEngineSelectionIsExclusive(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+	selectComponentRowByKey(t, &m, project.ComponentDatabasePostgres)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+	m.applyComponentSelection()
+
+	if componentSelectedByKey(t, m, project.ComponentDatabaseMySQL) || !componentSelectedByKey(t, m, project.ComponentDatabasePostgres) || componentSelectedByKey(t, m, project.ComponentDatabaseSQLite) {
+		t.Fatalf("database rows did not select only Postgres")
+	}
+	if !m.config.Render.Components.DatabasePostgres || m.config.Render.Components.DatabaseMySQL || m.config.Render.Components.DatabaseSQLite {
+		t.Fatalf("render components did not retain only Postgres: %#v", m.config.Render.Components)
+	}
+}
+
+// TestSetAllComponentsKeepsConcreteDatabaseExclusive verifies the bulk shortcut preserves one chosen engine.
+func TestSetAllComponentsKeepsConcreteDatabaseExclusive(t *testing.T) {
+	m := initialModel()
+	setComponentSelectedByKey(t, &m, project.ComponentDatabaseMySQL, false)
+	setComponentSelectedByKey(t, &m, project.ComponentDatabasePostgres, true)
+
+	m.setAllComponents(true)
+
+	if componentSelectedByKey(t, m, project.ComponentDatabaseMySQL) || !componentSelectedByKey(t, m, project.ComponentDatabasePostgres) || componentSelectedByKey(t, m, project.ComponentDatabaseSQLite) {
+		t.Fatal("select all did not preserve Postgres as the sole database")
+	}
+}
+
+// TestAuthBlocksLastDatabaseDeselection makes the capability dependency immediate without changing the selected engine.
+func TestAuthBlocksLastDatabaseDeselection(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
+	selectComponentRowByKey(t, &m, project.ComponentDatabaseMySQL)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if !componentSelectedByKey(t, m, project.ComponentDatabaseMySQL) {
+		t.Fatalf("expected auth to keep MySQL selected")
+	}
+	if !strings.Contains(m.errorMsg, "Database remains enabled because Auth requires it.") {
+		t.Fatalf("expected capability-level dependency message, got %q", m.errorMsg)
+	}
+	if strings.Contains(m.errorMsg, "MySQL") {
+		t.Fatalf("database dependency should not prescribe a driver: %q", m.errorMsg)
+	}
+}
+
+// TestDatabaseCanBeDisabledWithoutAuth preserves database-free project generation when nothing requires persistence.
+func TestDatabaseCanBeDisabledWithoutAuth(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, false)
+	selectComponentRowByKey(t, &m, project.ComponentDatabaseMySQL)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+	m.applyComponentSelection()
+
+	if componentSelectedByKey(t, m, project.ComponentDatabaseMySQL) {
+		t.Fatalf("expected MySQL to remain disabled")
+	}
+	if m.config.Render.Components.HasDatabase() {
+		t.Fatalf("expected no database render flag when the capability is disabled")
+	}
+}
+
+// TestDemoDatabaseLockRestoresUnlockedChoice verifies Demo's MySQL constraint is temporary and non-destructive.
+func TestDemoDatabaseLockRestoresUnlockedChoice(t *testing.T) {
+	m := initialModel()
+	setComponentSelectedByKey(t, &m, project.ComponentDatabaseMySQL, false)
+	setComponentSelectedByKey(t, &m, project.ComponentDatabasePostgres, true)
+	setComponentSelectedByKey(t, &m, project.ComponentJobs, false)
+	m.applyComponentSelection()
+	if !m.config.Render.Components.DatabasePostgres {
+		t.Fatalf("expected the unlocked Postgres choice before Demo")
+	}
+
+	m.extrasIndex = 1
+	m.applyExtrasSelection()
+	if !componentSelectedByKey(t, m, project.ComponentDatabasePostgres) || componentSelectedByKey(t, m, project.ComponentDatabaseMySQL) {
+		t.Fatal("expected Demo to preserve the concrete Postgres row")
+	}
+	if !m.config.Render.Components.DatabaseMySQL || m.config.Render.Components.DatabasePostgres {
+		t.Fatalf("expected Demo to temporarily force MySQL")
+	}
+	if !m.config.Render.Components.Jobs {
+		t.Fatalf("expected Demo to force its core component selections")
+	}
+	componentSummary := strings.Join(m.selectedComponentNames(), ", ")
+	if !strings.Contains(componentSummary, "Database (MySQL)") || strings.Contains(componentSummary, "Database (Postgres)") {
+		t.Fatalf("expected Demo summary to describe its effective MySQL choice, got %q", componentSummary)
+	}
+	if !strings.Contains(componentSummary, "Jobs") {
+		t.Fatalf("expected Demo summary to include its effective Jobs choice, got %q", componentSummary)
+	}
+
+	m.extrasIndex = 0
+	m.applyExtrasSelection()
+	if !m.config.Render.Components.DatabasePostgres || m.config.Render.Components.DatabaseMySQL {
+		t.Fatalf("expected disabling Demo to restore Postgres")
+	}
+	if m.config.Render.Components.Jobs {
+		t.Fatalf("expected disabling Demo to reconstruct pre-Demo component selections")
+	}
+	componentSummary = strings.Join(m.selectedComponentNames(), ", ")
+	if !strings.Contains(componentSummary, "Database (Postgres)") || strings.Contains(componentSummary, "Database (MySQL)") {
+		t.Fatalf("expected summary to restore the unlocked Postgres choice, got %q", componentSummary)
 	}
 }
 
@@ -327,8 +585,9 @@ func TestMailSelectionEnablesMailComponent(t *testing.T) {
 	}
 }
 
-func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
+func TestAuthSelectionAlsoEnablesDependencies(t *testing.T) {
 	m := initialModel()
+	m.config.Render.Components.Cache = false
 
 	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
 
@@ -340,9 +599,15 @@ func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
 	if !m.config.Render.Components.Mail {
 		t.Fatalf("expected auth selection to force mail on")
 	}
+	if !m.config.Render.Components.WebAPI {
+		t.Fatalf("expected auth selection to force the API capability used by generated auth routes")
+	}
+	if !m.config.Render.Components.Cache {
+		t.Fatalf("expected auth selection to force its Cache dependency")
+	}
 }
 
-func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
+func TestAuthToggleAutoSelectsDependenciesInWizard(t *testing.T) {
 	m := initialModel()
 	m.stage = StageSelectComponents
 
@@ -359,6 +624,9 @@ func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
 	}
 	if !componentSelectedByKey(t, m, project.ComponentMail) {
 		t.Fatalf("expected mail to be auto-selected when auth is selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentCache) {
+		t.Fatalf("expected cache to be auto-selected when auth is selected")
 	}
 }
 
@@ -506,6 +774,35 @@ func TestStarterKitStageSkippedWhenWebUIDisabled(t *testing.T) {
 	}
 }
 
+// TestDemoBackNavigationDoesNotInventSkippedStarterKit keeps reverse navigation on the path the user actually traversed.
+func TestDemoBackNavigationDoesNotInventSkippedStarterKit(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+	setComponentSelectedByKey(t, &m, project.ComponentWebUI, false)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageExtras || m.starterKitApplicable {
+		t.Fatalf("expected the forward path to skip Starter Kit, stage=%v applicable=%t", m.stage, m.starterKitApplicable)
+	}
+
+	m.extrasIndex = 1
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageAtlasSupport || !m.config.Render.Components.WebUI {
+		t.Fatalf("expected Demo to enable Web UI after the skipped stage, stage=%v components=%#v", m.stage, m.config.Render.Components)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = next.(model)
+	if m.stage != StageHelpFormat {
+		t.Fatalf("expected back navigation to return to Help, got %v", m.stage)
+	}
+}
+
 // TestHelpFormatPreviewOrderMatchesOptionOrder prevents the side-by-side panes from drifting away from the option list.
 func TestHelpFormatPreviewOrderMatchesOptionOrder(t *testing.T) {
 	m := initialModel()
@@ -644,7 +941,8 @@ func TestAtlasCustomRequiresAgentAndSurface(t *testing.T) {
 	}
 }
 
-func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
+// TestDefaultResourcePlanCoordinatesJobsWithoutWizardStage verifies the shorter route starts Jobs locally with Redis included.
+func TestDefaultResourcePlanCoordinatesJobsWithoutWizardStage(t *testing.T) {
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -678,41 +976,71 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSupport {
-		t.Fatalf("expected atlas support stage when jobs enabled, got %v", m.stage)
+		t.Fatalf("expected Atlas after extras, got %v", m.stage)
 	}
-
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
-	if m.stage != StageProjectPath {
-		t.Fatalf("expected project path stage after atlas support, got %v", m.stage)
+	preparation, err := m.selectedResourcePreparation()
+	if err != nil {
+		t.Fatalf("selectedResourcePreparation returned error: %v", err)
 	}
-
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
-	if m.stage != StageConfirm {
-		t.Fatalf("expected confirmation stage after project path selection, got %v", m.stage)
-	}
-	if m.queueDriver != "redis" {
-		t.Fatalf("expected default queue driver to be redis, got %q", m.queueDriver)
+	queue, ok := preparation.plan.Selection(project.ResourceQueue)
+	if !ok || queue.Active != "workerpool" || !reflect.DeepEqual(queue.Supported, []string{"workerpool", "redis"}) {
+		t.Fatalf("default queue selection = %#v, exists %v", queue, ok)
 	}
 }
 
-func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
+// TestWizardOmitsResourcesStageAndPanel keeps internal driver defaults out of the normal decision flow.
+func TestWizardOmitsResourcesStageAndPanel(t *testing.T) {
+	m := initialModel()
+	m.stage = StageExtras
+	m.termWidth = wizardWidth
+
+	progress := ansi.Strip(m.renderProgress())
+	view := ansi.Strip(m.View())
+	if strings.Contains(progress, "Resources") || strings.Contains(view, "App Resources") {
+		t.Fatalf("wizard retained the removed resource stage:\nprogress=%s\nview=%s", progress, view)
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageAtlasSupport {
+		t.Fatalf("expected Extras to continue directly to Atlas, got %v", m.stage)
+	}
+}
+
+// TestDemoExtrasExplainsTemporaryMySQLConstraint makes the effective database change understandable without another decision screen.
+func TestDemoExtrasExplainsTemporaryMySQLConstraint(t *testing.T) {
+	m := initialModel()
+	m.stage = StageExtras
+	m.extrasIndex = 1
+	m.termWidth = wizardWidth
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Demo currently requires MySQL") || !strings.Contains(view, "database choice returns") {
+		t.Fatalf("Demo selection hid its temporary database constraint:\n%s", view)
+	}
+
+	m.extrasIndex = 0
+	view = ansi.Strip(m.View())
+	if strings.Contains(view, "Demo currently requires MySQL") {
+		t.Fatalf("disabled Demo added irrelevant database guidance:\n%s", view)
+	}
+}
+
+// TestFinalizeConfigKeepsResourceTopologyOutOfProjectYAML protects the boundary between durable capabilities and deployment-owned choices.
+func TestFinalizeConfigKeepsResourceTopologyOutOfProjectYAML(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.Jobs = true
-	m.queueDriver = "  "
 
 	m.finalizeConfig()
 
-	if m.queueDriver != "redis" {
-		t.Fatalf("expected queue driver default redis, got %q", m.queueDriver)
-	}
 	encoded, err := yaml.Marshal(m.config)
 	if err != nil {
 		t.Fatalf("marshal finalized config: %v", err)
 	}
-	if strings.Contains(string(encoded), "queue_driver:") {
-		t.Fatalf("wizard-only queue driver was persisted:\n%s", encoded)
+	for _, transient := range []string{"queue_driver:", "resource_shape:", "resource_plan:"} {
+		if strings.Contains(string(encoded), transient) {
+			t.Fatalf("wizard-only resource state %q was persisted:\n%s", transient, encoded)
+		}
 	}
 	if m.config.Render.GoForjVersion != version.Semver() {
 		t.Fatalf("expected goforj version %q, got %q", version.Semver(), m.config.Render.GoForjVersion)
@@ -812,7 +1140,7 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 
 	foundInstall := false
 	for _, task := range m.config.Dev.Pre {
-		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd cmd/app/frontend && npm install" {
+		if task == generatedDevFrontendInstallTask(project.DefaultApp()) {
 			foundInstall = true
 			break
 		}

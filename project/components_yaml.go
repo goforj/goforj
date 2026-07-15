@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// componentYAMLKeys is intentionally independent from wizard order so persisted config stays stable when the UI is regrouped.
 var componentYAMLKeys = []ComponentKey{
 	ComponentCLI,
 	ComponentDemoApp,
@@ -23,8 +24,17 @@ var componentYAMLKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentCache,
+	ComponentEvents,
+	ComponentStorage,
 	ComponentJobs,
 }
+
+var retiredLegacyComponentYAMLKeys = map[ComponentKey]struct{}{
+	"stress_test": {},
+}
+
+const componentYAMLInlineLimit = 120
 
 // UnmarshalYAML accepts historical boolean mappings and canonical component-name sequences.
 func (c *Components) UnmarshalYAML(value *yaml.Node) error {
@@ -37,7 +47,7 @@ func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 				return fmt.Errorf("decode components: legacy mapping key %d must be a component name", index/2+1)
 			}
 			key := ComponentKey(entry.Value)
-			if !isComponentYAMLKey(key) {
+			if !isComponentYAMLKey(key) && !isRetiredLegacyComponentYAMLKey(key) {
 				return fmt.Errorf("decode components: unknown component %q in legacy mapping; valid components: %s", key, componentYAMLKeyNames())
 			}
 			if _, duplicate := seen[key]; duplicate {
@@ -76,16 +86,29 @@ func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
-// MarshalYAML emits enabled component keys in a stable flow sequence for concise project configuration.
+// MarshalYAML emits enabled component keys in a stable sequence and expands only selections that would create an overlong line.
 func (c Components) MarshalYAML() (any, error) {
-	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+	names := make([]string, 0, len(componentYAMLKeys))
 	for _, key := range componentYAMLKeys {
 		if !c.Enabled(key) {
 			continue
 		}
-		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: string(key)})
+		names = append(names, string(key))
+	}
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: componentYAMLSequenceStyle(names)}
+	for _, name := range names {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})
 	}
 	return node, nil
+}
+
+// componentYAMLSequenceStyle keeps short selections scan-friendly without creating an overlong config line.
+func componentYAMLSequenceStyle(names []string) yaml.Style {
+	line := "components: [" + strings.Join(names, ", ") + "]"
+	if len(line) <= componentYAMLInlineLimit {
+		return yaml.FlowStyle
+	}
+	return 0
 }
 
 // NeedsComponentMigration reports whether any component selection was loaded from the historical boolean mapping.
@@ -101,8 +124,29 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode project config: %w", err)
 	}
 	*c = ProjectConfig(fields)
-	c.needsComponentMigration = projectConfigNeedsComponentMigration(value)
+	legacyContract := c.Render.ComponentContractVersion < CurrentComponentContractVersion
+	if c.Render.ComponentContractVersion < 0 || c.Render.ComponentContractVersion > CurrentComponentContractVersion {
+		return fmt.Errorf("decode project config: unsupported component contract version %d; this GoForj release supports version %d", c.Render.ComponentContractVersion, CurrentComponentContractVersion)
+	}
+	if legacyContract {
+		c.migrateLegacyPrimitiveComponents()
+	}
+	c.needsComponentMigration = legacyContract || projectConfigNeedsComponentMigration(value)
 	return nil
+}
+
+// migrateLegacyPrimitiveComponents preserves capabilities that every App received before they became optional components.
+func (c *ProjectConfig) migrateLegacyPrimitiveComponents() {
+	c.Render.ComponentContractVersion = CurrentComponentContractVersion
+	c.Render.Components.Cache = true
+	c.Render.Components.Events = true
+	c.Render.Components.Storage = true
+	for name, app := range c.Apps {
+		app.Components.Cache = true
+		app.Components.Events = true
+		app.Components.Storage = true
+		c.Apps[name] = app
+	}
 }
 
 // isComponentYAMLKey reports whether a name belongs to the exact persisted component contract.
@@ -113,6 +157,12 @@ func isComponentYAMLKey(key ComponentKey) bool {
 		}
 	}
 	return false
+}
+
+// isRetiredLegacyComponentYAMLKey keeps generated projects loadable after a component leaves the render catalog.
+func isRetiredLegacyComponentYAMLKey(key ComponentKey) bool {
+	_, ok := retiredLegacyComponentYAMLKeys[key]
+	return ok
 }
 
 // componentYAMLKeyNames formats the accepted sequence keys for configuration errors.

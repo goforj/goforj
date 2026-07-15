@@ -371,13 +371,15 @@ func selectedScenarioSpecs(specDir string, ids []string, all bool) ([]ScenarioSp
 	return selected, nil
 }
 
+// writeScenarioProjectConfig marks scenario selections as current so intentionally absent primitives stay disabled.
 func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
 	cfg := project.Config{
 		ProjectName:  spec.Title,
 		GoModuleName: spec.App.ModuleName,
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
 		Render: project.RenderConfig{
-			Components: spec.App.Components,
+			Components:               spec.App.Components,
+			ComponentContractVersion: project.CurrentComponentContractVersion,
 		},
 		Dev: project.DevConfig{
 			Pre:               []project.DevTask{},

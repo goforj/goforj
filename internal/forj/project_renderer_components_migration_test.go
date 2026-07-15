@@ -47,7 +47,7 @@ render:
 	if err != nil {
 		t.Fatalf("load migrated config: %v", err)
 	}
-	want := project.Components{CLI: true, Auth: true, WebAPI: true, DatabaseSQLite: true}
+	want := project.Components{CLI: true, Auth: true, WebAPI: true, DatabaseSQLite: true, Cache: true, Events: true, Storage: true}
 	if migrated.Render.Components != want {
 		t.Fatalf("persisted components = %#v, want raw selection %#v", migrated.Render.Components, want)
 	}
@@ -72,7 +72,7 @@ func TestSyncProjectConfigForRenderMigratesLegacyComponentMappings(t *testing.T)
 	}{
 		{
 			name:           "render components",
-			wantRenderLine: "components: [cli, auth, web_api, database_sqlite]",
+			wantRenderLine: "components: [cli, auth, web_api, database_sqlite, cache, events, storage]",
 			source: `project_name: Component Migration
 module_name: example.com/component-migration
 updated_at: "2026-07-14 00:00:00 UTC"
@@ -101,7 +101,7 @@ apps:
 		},
 		{
 			name:           "App components",
-			wantRenderLine: "components: [cli, web_api]",
+			wantRenderLine: "components: [cli, web_api, cache, events, storage]",
 			source: `project_name: Component Migration
 module_name: example.com/component-migration
 updated_at: "2026-07-14 00:00:00 UTC"
@@ -165,7 +165,8 @@ apps:
 			text := string(migrated)
 			for _, want := range []string{
 				test.wantRenderLine,
-				"components: [cli, jobs]",
+				"components: [cli, cache, events, storage, jobs]",
+				"component_contract: 1",
 			} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("migrated config missing %q:\n%s", want, text)

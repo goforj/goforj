@@ -1,86 +1,9 @@
 package http
 
-import (
-	"context"
-
-	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/database"
-{{- end }}
-	"{{.GoModuleName}}/internal/events"
-{{- if .Components.Jobs }}
-	"{{.GoModuleName}}/internal/queues"
-{{- end }}
-	"{{.GoModuleName}}/internal/storages"
-)
+import "context"
 
 // ReadinessCheck represents a dependency check used by readiness probes.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
-}
-
-// ProvideReadinessChecks builds the dependency checks for readiness probes.
-func ProvideReadinessChecks(
-	caches *caches.Manager,
-	storage *storages.Manager,
-	events *events.Manager,
-{{- if .Components.Jobs }}
-	queues *queues.Manager,
-{{- end }}
-{{- if .Components.HasDatabase }}
-	db *database.Connections,
-{{- end }}
-) []ReadinessCheck {
-	checks := make([]ReadinessCheck, 0)
-	if caches != nil {
-		for _, check := range caches.ReadinessChecks() {
-			checks = append(checks, ReadinessCheck{
-				Name:  check.Name,
-				Check: check.Check,
-			})
-		}
-	}
-
-{{- if .Components.HasDatabase }}
-	if db != nil {
-		for _, check := range db.ReadinessChecks() {
-			checks = append(checks, ReadinessCheck{
-				Name:  check.Name,
-				Check: check.Check,
-			})
-		}
-	}
-{{- end }}
-
-	if storage != nil {
-		for _, check := range storage.ReadinessChecks() {
-			checks = append(checks, ReadinessCheck{
-				Name:  check.Name,
-				Check: check.Check,
-			})
-		}
-	}
-
-	if events != nil {
-		for _, check := range events.ReadinessChecks() {
-			checks = append(checks, ReadinessCheck{
-				Name:  check.Name,
-				Check: check.Check,
-			})
-		}
-	}
-
-{{- if .Components.Jobs }}
-	if queues != nil {
-		for _, check := range queues.ReadinessChecks() {
-			checks = append(checks, ReadinessCheck{
-				Name:  check.Name,
-				Check: check.Check,
-			})
-		}
-	}
-{{- end }}
-
-	return checks
 }
