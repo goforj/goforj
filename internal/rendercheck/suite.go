@@ -22,12 +22,15 @@ type Suite struct {
 }
 
 // NewSuite selects a stable render matrix while retaining the legacy full-flag precedence.
-func NewSuite(profile string, full bool) *Suite {
-	selectedProfile := selectedRenderProfile(profile, full)
+func NewSuite(profile string, full bool) (*Suite, error) {
+	selectedProfile, err := selectedRenderProfile(profile, full)
+	if err != nil {
+		return nil, err
+	}
 	return &Suite{
 		profile: selectedProfile,
 		combos:  buildRenderCombos(selectedProfile),
-	}
+	}, nil
 }
 
 // List prints the selected shard without performing filesystem or toolchain work.
@@ -36,7 +39,9 @@ func (suite *Suite) List(writer io.Writer) error {
 	if err != nil {
 		return err
 	}
-	listRenderCombos(writer, suite.profile, combos, shardLabel)
+	if err := listRenderCombos(writer, suite.profile, combos, shardLabel); err != nil {
+		return fmt.Errorf("list render combinations: %w", err)
+	}
 	return nil
 }
 
@@ -117,16 +122,24 @@ func (suite *Suite) Run(runTests bool) error {
 }
 
 // listRenderCombos keeps profile review output stable across local and CI invocations.
-func listRenderCombos(writer io.Writer, profile string, combos []renderCombo, shardLabel string) {
-	fmt.Fprintf(writer, "profile: %s\n", profile)
-	fmt.Fprintf(writer, "combinations: %d%s\n\n", len(combos), shardLabel)
+func listRenderCombos(writer io.Writer, profile string, combos []renderCombo, shardLabel string) error {
+	if _, err := fmt.Fprintf(writer, "profile: %s\n", profile); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "combinations: %d%s\n\n", len(combos), shardLabel); err != nil {
+		return err
+	}
 
 	w := tabwriter.NewWriter(writer, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tComponents")
-	for _, combo := range combos {
-		fmt.Fprintf(w, "%s\t%s\n", combo.id, strings.Join(combo.enabled, ", "))
+	if _, err := fmt.Fprintln(w, "ID\tComponents"); err != nil {
+		return err
 	}
-	_ = w.Flush()
+	for _, combo := range combos {
+		if _, err := fmt.Fprintf(w, "%s\t%s\n", combo.id, strings.Join(combo.enabled, ", ")); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
 }
 
 // shardRenderCombos partitions by stable matrix order so CI shards remain deterministic.

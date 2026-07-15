@@ -52,19 +52,19 @@ const (
 	renderProfileFull  = "full"
 )
 
-// selectedRenderProfile resolves legacy flags and the named render profile.
-func selectedRenderProfile(profile string, full bool) string {
+// selectedRenderProfile resolves legacy flags while rejecting profile typos that could silently reduce render coverage.
+func selectedRenderProfile(profile string, full bool) (string, error) {
 	if full {
-		return renderProfileFull
+		return renderProfileFull, nil
 	}
 	trimmed := strings.TrimSpace(profile)
 	switch trimmed {
 	case renderProfileSmoke, renderProfilePR, renderProfileFull:
-		return trimmed
+		return trimmed, nil
 	case "":
-		return renderProfilePR
+		return renderProfilePR, nil
 	default:
-		return renderProfilePR
+		return "", fmt.Errorf("unknown render profile %q; valid profiles: %s, %s, %s", trimmed, renderProfileSmoke, renderProfilePR, renderProfileFull)
 	}
 }
 
