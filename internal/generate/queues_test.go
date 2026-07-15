@@ -155,6 +155,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	testSource := `package queues
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -165,7 +166,7 @@ import (
 func TestGeneratedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
-	t.Setenv("QUEUE_CRITICAL_NAME", "critical")
+	t.Setenv("QUEUE_CRITICAL_NAME", "production-critical-jobs")
 
 	mgr, err := NewManager()
 	if err != nil {
@@ -178,15 +179,55 @@ func TestGeneratedAccessors(t *testing.T) {
 	if got := mgr.Critical().Driver(); got != "sync" {
 		t.Fatalf("Critical driver = %q, want %q", got, "sync")
 	}
+	if got := mgr.Instances()[1].queueName; got != "production-critical-jobs" {
+		t.Fatalf("critical instance queue name = %q, want production-critical-jobs", got)
+	}
 	if _, err := mgr.Dispatch(queue.NewJob("jobs:smoke")); err != nil {
 		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	handledCritical := false
+	mgr.Register("jobs:critical", func(context.Context, queue.Message) error {
+		handledCritical = true
+		return nil
+	})
+	if err := mgr.Critical().StartWorkers(t.Context()); err != nil {
+		t.Fatalf("start critical workers: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := mgr.Critical().Shutdown(t.Context()); err != nil {
+			t.Errorf("shutdown critical workers: %v", err)
+		}
+	})
+	if _, err := mgr.Dispatch(queue.NewJob("jobs:critical").OnQueue("critical")); err != nil {
+		t.Fatalf("named Dispatch returned error: %v", err)
+	}
+	if !handledCritical {
+		t.Fatal("named Dispatch did not use the registered critical queue runtime")
 	}
 	if got := mgr.defaultQueueName; got != "default" {
 		t.Fatalf("default queue name = %q, want default", got)
 	}
 	queueScope := env.WithPrefix("QUEUE")
-	if got := queueDefaultQueue("critical", queueScope.Child("critical"), queueScope); got != "critical" {
-		t.Fatalf("critical queue name = %q, want critical", got)
+	if got := queueDefaultQueue("critical", queueScope.Child("CRITICAL"), queueScope); got != "production-critical-jobs" {
+		t.Fatalf("critical queue name = %q, want production-critical-jobs", got)
+	}
+
+	t.Setenv("QUEUE_NAME", "production-default-jobs")
+	queueEvents := make(chan queue.Event, 8)
+	observedManager, err := NewManagerWithObserver(queue.ChannelObserver{Events: queueEvents}, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManagerWithObserver returned error: %v", err)
+	}
+	if _, err := observedManager.Dispatch(queue.NewJob("jobs:default").OnQueue("default")); err != nil {
+		t.Fatalf("explicit default Dispatch returned error: %v", err)
+	}
+	select {
+	case event := <-queueEvents:
+		if event.Queue != "production-default-jobs" {
+			t.Fatalf("explicit default dispatched to %q, want production-default-jobs", event.Queue)
+		}
+	default:
+		t.Fatal("explicit default Dispatch emitted no queue event")
 	}
 
 	checks := mgr.ReadinessChecks()
@@ -214,7 +255,7 @@ func TestGeneratedQueueNamesUseCurrentApp(t *testing.T) {
 		t.Fatalf("default queue name = %q, want billing_default", got)
 	}
 	queueScope := env.WithPrefix("QUEUE")
-	if got := queueDefaultQueue("critical", queueScope.Child("critical"), queueScope); got != "billing_critical" {
+	if got := queueDefaultQueue("critical", queueScope.Child("CRITICAL"), queueScope); got != "billing_critical" {
 		t.Fatalf("critical queue name = %q, want billing_critical", got)
 	}
 }

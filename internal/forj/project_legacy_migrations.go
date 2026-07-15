@@ -146,6 +146,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 				switch filepath.Base(path) {
 				case "inject_jobs_app.go":
 					updated = syncDemoAppJobInjector(updated, p.config.GoModuleName, components)
+					updated, err = syncLegacyJobHandlerRegistration(updated, p.config.GoModuleName, components)
+					if err != nil {
+						return fmt.Errorf("migrate %s: %w", path, err)
+					}
 				case "inject_repositories_app.go":
 					updated = syncDemoAppRepositoryInjector(updated, p.config.GoModuleName, components)
 				case "inject_services_app.go":
@@ -671,7 +675,7 @@ func replaceGoImportPath(content string, oldPath string, newPath string, alias s
 	return content
 }
 
-// ensureGoImport inserts a named import into the first import block when missing.
+// ensureGoImport preserves the existing declaration shape while adding one migration dependency.
 func ensureGoImport(content string, importPath string, alias string) string {
 	if strings.Contains(content, strconv.Quote(importPath)) {
 		if alias != "" {
@@ -679,15 +683,27 @@ func ensureGoImport(content string, importPath string, alias string) string {
 		}
 		return content
 	}
+	importSpec := strconv.Quote(importPath)
+	if alias != "" {
+		importSpec = alias + " " + importSpec
+	}
 	importStart := strings.Index(content, "import (\n")
 	if importStart == -1 {
-		return content
+		singleImport := regexp.MustCompile(`(?m)^import[ \t]+([^\r\n]+)$`)
+		if match := singleImport.FindStringSubmatchIndex(content); match != nil {
+			existingSpec := strings.TrimSpace(content[match[2]:match[3]])
+			block := "import (\n\t" + importSpec + "\n\t" + existingSpec + "\n)"
+			return content[:match[0]] + block + content[match[1]:]
+		}
+		packageDeclaration := regexp.MustCompile(`(?m)^package[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\r?\n`)
+		match := packageDeclaration.FindStringIndex(content)
+		if match == nil {
+			return content
+		}
+		return content[:match[1]] + "\nimport " + importSpec + "\n" + content[match[1]:]
 	}
 	insertAt := importStart + len("import (\n")
-	importLine := "\t" + strconv.Quote(importPath) + "\n"
-	if alias != "" {
-		importLine = "\t" + alias + " " + strconv.Quote(importPath) + "\n"
-	}
+	importLine := "\t" + importSpec + "\n"
 	return content[:insertAt] + importLine + content[insertAt:]
 }
 
