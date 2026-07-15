@@ -160,7 +160,7 @@ type App struct{}
 func (a *App) Queues() any { return nil }
 `
 			writePrimitiveRendererFile(t, appPath, appContents)
-			renderer := &ProjectRenderer{config: config}
+			renderer := projectRendererForTest(t, config)
 			if test.removeApp {
 				renderer = NewProjectRenderer(logger.NewSilentLogger())
 				result, err := renderer.RemoveApp(app)
@@ -234,6 +234,7 @@ func testPrimitiveDriverEnvironment(t *testing.T) {
 	for _, contract := range primitiveRendererContracts() {
 		contract := contract
 		t.Run(contract.name, func(t *testing.T) {
+			workspace := currentProjectRenderWorkspace(t)
 			tests := []struct {
 				name        string
 				environment string
@@ -259,7 +260,7 @@ func testPrimitiveDriverEnvironment(t *testing.T) {
 					if test.environment != "" {
 						writePrimitiveRendererFile(t, path, test.environment)
 					}
-					got, err := primitiveDriverDefaultFromEnv(contract.key, path)
+					got, err := workspace.primitiveDriverDefaultFromEnv(contract.key, path)
 					if test.wantError != "" {
 						if err == nil || !strings.Contains(err.Error(), test.wantError) {
 							t.Fatalf("%s driver error = %v, want %q", contract.name, err, test.wantError)
@@ -340,18 +341,6 @@ func validatePrimitiveTransition(renderer *ProjectRenderer, key project.Componen
 		return renderer.validateJobsRenderTransition(components)
 	default:
 		panic("unsupported primitive component: " + string(key))
-	}
-}
-
-// primitiveAppSurfaceExists calls the syntax-aware App API detector for one primitive.
-func primitiveAppSurfaceExists(key project.ComponentKey, path string) (bool, error) {
-	switch key {
-	case project.ComponentStorage:
-		return appStorageSurfaceExists(path)
-	case project.ComponentJobs:
-		return appJobsSurfaceExists(path)
-	default:
-		panic("unsupported primitive App surface: " + string(key))
 	}
 }
 
@@ -445,7 +434,18 @@ func assertPrimitiveAdditiveSurface(t *testing.T, app project.App, key project.C
 		}
 		return
 	}
-	exists, err := primitiveAppSurfaceExists(key, filepath.Join(app.WireDir, "app.go"))
+	workspace := currentProjectRenderWorkspace(t)
+	appPath := filepath.Join(app.WireDir, "app.go")
+	var exists bool
+	var err error
+	switch key {
+	case project.ComponentStorage:
+		exists, err = workspace.appStorageSurfaceExists(appPath)
+	case project.ComponentJobs:
+		exists, err = workspace.appJobsSurfaceExists(appPath)
+	default:
+		panic("unsupported primitive App surface: " + string(key))
+	}
 	if err != nil {
 		t.Fatalf("inspect additive %s App surface: %v", key, err)
 	}
@@ -482,15 +482,15 @@ func primitiveLastOwnerResidue(key project.ComponentKey) (string, string) {
 	}
 }
 
-// primitiveDriverDefaultFromEnv resolves one primitive's owner-controlled root driver.
-func primitiveDriverDefaultFromEnv(key project.ComponentKey, path string) (string, error) {
+// primitiveDriverDefaultFromEnv resolves one primitive's owner-controlled root driver inside the test workspace.
+func (w projectRenderWorkspace) primitiveDriverDefaultFromEnv(key project.ComponentKey, path string) (string, error) {
 	switch key {
 	case project.ComponentEvents:
-		return eventDriverDefaultFromEnv(path)
+		return w.eventDriverDefaultFromEnv(path)
 	case project.ComponentStorage:
-		return storageDriverDefaultFromEnv(path)
+		return w.storageDriverDefaultFromEnv(path)
 	case project.ComponentJobs:
-		return queueDriverDefaultFromEnv(path)
+		return w.queueDriverDefaultFromEnv(path)
 	default:
 		panic("unsupported primitive component: " + string(key))
 	}

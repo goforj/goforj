@@ -200,7 +200,7 @@ func projectRelativeDevPath(value string) string {
 
 // migrateGeneratedDevWatchers converts only historical watcher shapes emitted
 // by GoForj, leaving hand-authored and modified watcher entries untouched.
-func migrateGeneratedDevWatchers(config *project.Config) bool {
+func (w projectRenderWorkspace) migrateGeneratedDevWatchers(config *project.Config) bool {
 	if config == nil {
 		return false
 	}
@@ -219,7 +219,7 @@ func migrateGeneratedDevWatchers(config *project.Config) bool {
 
 	runCommands := config.Dev.Run
 	config.Dev.Apps = make(map[string]project.DevApp)
-	for _, app := range projectlayout.ConventionalApps(".") {
+	for _, app := range projectlayout.ConventionalApps(w.discoveryRoot()) {
 		command, run := legacyDevRunCommandForMigration(runCommands, app.Name)
 		configured := generatedDevAppConfig(config, app, command)
 		if !run {

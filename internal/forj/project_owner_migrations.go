@@ -30,37 +30,37 @@ type jobsOwnerMigration struct {
 
 // migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
 func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
-	eventMigrations, err := planEventSubscriberOwnerMigrations(p.config)
+	eventMigrations, err := p.workspace.planEventSubscriberOwnerMigrations(p.config)
 	if err != nil {
 		return err
 	}
-	jobsMigration, err := planJobsOwnerMigration(p.config)
+	jobsMigration, err := p.workspace.planJobsOwnerMigration(p.config)
 	if err != nil {
 		return err
 	}
-	if err := applyEventSubscriberOwnerMigrations(eventMigrations); err != nil {
+	if err := p.workspace.applyEventSubscriberOwnerMigrations(eventMigrations); err != nil {
 		return err
 	}
-	if err := applyJobsOwnerMigration(jobsMigration); err != nil {
+	if err := p.workspace.applyJobsOwnerMigration(jobsMigration); err != nil {
 		return err
 	}
-	if err := migrateLegacyCacheShellCommandOwners(); err != nil {
+	if err := p.workspace.migrateLegacyCacheShellCommandOwners(); err != nil {
 		return err
 	}
-	if err := repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
+	if err := p.workspace.repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
 		return err
 	}
-	return migratePreservedFile(
+	return p.workspace.migratePreservedFile(
 		filepath.Join("app", "wire", "inject_controllers_app.go"),
 		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
 	)
 }
 
-// migrateLegacyCacheShellCommandOwners moves the former generated Cache command out of preserved App command files.
-func migrateLegacyCacheShellCommandOwners() error {
-	for _, app := range projectlayout.ConventionalApps(".") {
+// migrateLegacyCacheShellCommandOwners repairs preserved commands inside one project workspace.
+func (w projectRenderWorkspace) migrateLegacyCacheShellCommandOwners() error {
+	for _, app := range projectlayout.ConventionalApps(w.discoveryRoot()) {
 		path := filepath.Join(projectlayout.AppDir(".", app), "commands.go")
-		source, err := os.ReadFile(path)
+		source, err := w.readFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -74,7 +74,7 @@ func migrateLegacyCacheShellCommandOwners() error {
 		if !changed {
 			continue
 		}
-		if err := writeFileAtomically(path, updated, 0o644); err != nil {
+		if err := w.writeFileAtomically(path, updated, 0o644); err != nil {
 			return err
 		}
 	}
@@ -138,21 +138,21 @@ func removeLegacyCacheShellCommandSource(path string, source []byte) ([]byte, bo
 	return updated, true, nil
 }
 
-// planJobsOwnerMigration rejects destination collisions before a legacy owner is moved byte-for-byte.
-func planJobsOwnerMigration(config *project.Config) (*jobsOwnerMigration, error) {
+// planJobsOwnerMigration resolves legacy owner paths inside one project workspace.
+func (w projectRenderWorkspace) planJobsOwnerMigration(config *project.Config) (*jobsOwnerMigration, error) {
 	if config == nil || !appRenderComponents(config, project.DefaultApp()).Jobs {
 		return nil, nil
 	}
 	source := filepath.Join("wire", "inject_jobs_app.go")
 	target := filepath.Join(projectlayout.WireDir(".", project.DefaultApp()), "inject_jobs_app.go")
-	sourceExists, err := renderPathExists(source)
+	sourceExists, err := w.renderPathExists(source)
 	if err != nil {
 		return nil, err
 	}
 	if !sourceExists {
 		return nil, nil
 	}
-	targetExists, err := renderPathExists(target)
+	targetExists, err := w.renderPathExists(target)
 	if err != nil {
 		return nil, err
 	}
@@ -162,22 +162,22 @@ func planJobsOwnerMigration(config *project.Config) (*jobsOwnerMigration, error)
 	return &jobsOwnerMigration{source: source, target: target}, nil
 }
 
-// applyJobsOwnerMigration moves the preserved injector only while its destination remains unclaimed.
-func applyJobsOwnerMigration(migration *jobsOwnerMigration) error {
+// applyJobsOwnerMigration moves one preserved Jobs owner inside a project workspace.
+func (w projectRenderWorkspace) applyJobsOwnerMigration(migration *jobsOwnerMigration) error {
 	if migration == nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(migration.target), 0o755); err != nil {
+	if err := w.ensureDir(filepath.Dir(migration.target)); err != nil {
 		return fmt.Errorf("prepare Jobs owner destination %s: %w", migration.target, err)
 	}
-	targetExists, err := renderPathExists(migration.target)
+	targetExists, err := w.renderPathExists(migration.target)
 	if err != nil {
 		return err
 	}
 	if targetExists {
 		return fmt.Errorf("cannot migrate legacy Jobs owner %s to %s because the destination now exists; reconcile the App-owned files manually", migration.source, migration.target)
 	}
-	if err := os.Rename(migration.source, migration.target); err != nil {
+	if err := w.move(migration.source, migration.target); err != nil {
 		return fmt.Errorf("migrate legacy Jobs owner %s to %s: %w", migration.source, migration.target, err)
 	}
 	return nil
@@ -201,17 +201,17 @@ func legacyEventSubscriberOwnerPaths(app project.App) []string {
 	return paths
 }
 
-// planEventSubscriberOwnerMigrations rejects ambiguous ownership before moving any preserved file.
-func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscriberOwnerMigration, error) {
+// planEventSubscriberOwnerMigrations resolves preserved Events owners inside one project workspace.
+func (w projectRenderWorkspace) planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscriberOwnerMigration, error) {
 	migrations := make([]eventSubscriberOwnerMigration, 0)
-	for _, app := range projectlayout.RuntimeApps(".", config) {
+	for _, app := range projectlayout.RuntimeApps(w.discoveryRoot(), config) {
 		if !appRenderComponents(config, app).Events {
 			continue
 		}
 		target := eventSubscriberOwnerPath(app)
 		sources := make([]string, 0)
 		for _, source := range legacyEventSubscriberOwnerPaths(app) {
-			exists, err := renderPathExists(source)
+			exists, err := w.renderPathExists(source)
 			if err != nil {
 				return nil, err
 			}
@@ -222,7 +222,7 @@ func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscrib
 		if len(sources) == 0 {
 			continue
 		}
-		targetExists, err := renderPathExists(target)
+		targetExists, err := w.renderPathExists(target)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscrib
 		if len(sources) > 1 {
 			return nil, fmt.Errorf("cannot migrate multiple legacy Events subscriber owners %s to %s; reconcile the App-owned files manually", strings.Join(sources, ", "), target)
 		}
-		if _, _, err := parsedRenderGoFile(sources[0]); err != nil {
+		if _, _, err := w.parsedRenderGoFile(sources[0]); err != nil {
 			return nil, fmt.Errorf("parse legacy Events subscriber owner %s: %w", sources[0], err)
 		}
 		migrations = append(migrations, eventSubscriberOwnerMigration{source: sources[0], target: target})
@@ -240,34 +240,34 @@ func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscrib
 	return migrations, nil
 }
 
-// applyEventSubscriberOwnerMigrations moves only plans whose destination remains unclaimed.
-func applyEventSubscriberOwnerMigrations(migrations []eventSubscriberOwnerMigration) error {
+// applyEventSubscriberOwnerMigrations moves preserved Events owners inside one project workspace.
+func (w projectRenderWorkspace) applyEventSubscriberOwnerMigrations(migrations []eventSubscriberOwnerMigration) error {
 	for _, migration := range migrations {
-		if err := os.MkdirAll(filepath.Dir(migration.target), 0o755); err != nil {
+		if err := w.ensureDir(filepath.Dir(migration.target)); err != nil {
 			return fmt.Errorf("prepare Events subscriber owner destination %s: %w", migration.target, err)
 		}
-		targetExists, err := renderPathExists(migration.target)
+		targetExists, err := w.renderPathExists(migration.target)
 		if err != nil {
 			return err
 		}
 		if targetExists {
 			return fmt.Errorf("cannot migrate legacy Events subscriber owner %s to %s because the destination now exists; reconcile the App-owned files manually", migration.source, migration.target)
 		}
-		if err := os.Rename(migration.source, migration.target); err != nil {
+		if err := w.move(migration.source, migration.target); err != nil {
 			return fmt.Errorf("migrate legacy Events subscriber owner %s to %s: %w", migration.source, migration.target, err)
 		}
 	}
 	return nil
 }
 
-// repairLegacyEventSubscriberOwnerSetNames updates only the historical package-level set identifier in preserved owner files.
-func repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
-	for _, app := range projectlayout.RuntimeApps(".", config) {
+// repairLegacyEventSubscriberOwnerSetNames updates preserved Events owners inside one project workspace.
+func (w projectRenderWorkspace) repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
+	for _, app := range projectlayout.RuntimeApps(w.discoveryRoot(), config) {
 		if !appRenderComponents(config, app).Events {
 			continue
 		}
 		path := eventSubscriberOwnerPath(app)
-		source, err := os.ReadFile(path)
+		source, err := w.readFile(path)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -281,7 +281,7 @@ func repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
 		if !changed {
 			continue
 		}
-		if err := writeFileAtomically(path, updated, 0o644); err != nil {
+		if err := w.writeFileAtomically(path, updated, 0o644); err != nil {
 			return fmt.Errorf("repair Events subscriber owner %s: %w", path, err)
 		}
 	}
@@ -362,18 +362,19 @@ func appOwnedWirePathsForApp(app project.App) []string {
 	}
 }
 
-// migratePreservedFile renames a render-once file only when the replacement does not already exist.
-func migratePreservedFile(oldPath string, newPath string) error {
-	if _, err := os.Stat(oldPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+// migratePreservedFile renames one render-once owner inside a project workspace.
+func (w projectRenderWorkspace) migratePreservedFile(oldPath string, newPath string) error {
+	oldExists, err := w.exists(oldPath)
+	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(newPath); err == nil {
+	if !oldExists {
 		return nil
-	} else if !os.IsNotExist(err) {
-		return err
 	}
-	return os.Rename(oldPath, newPath)
+	if newExists, err := w.exists(newPath); err != nil {
+		return err
+	} else if newExists {
+		return nil
+	}
+	return w.move(oldPath, newPath)
 }

@@ -150,7 +150,7 @@ apps:
 
 			config.Render.Components.ResolveDependencies()
 			effectiveRender := config.Render.Components
-			renderer := &ProjectRenderer{config: config}
+			renderer := projectRendererForTest(t, config)
 			if err := renderer.syncProjectConfigForRender(wantRender); err != nil {
 				t.Fatalf("sync project config: %v", err)
 			}

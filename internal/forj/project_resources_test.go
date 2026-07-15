@@ -310,6 +310,7 @@ func TestPrepareResourceEnvironmentUsesCommittedFallback(t *testing.T) {
 		t.Fatalf("resolve compatibility plan: %v", err)
 	}
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config:    &project.Config{Render: project.RenderConfig{Components: components}},
 		resources: resourceRenderState{plan: plan},
 	}
@@ -353,7 +354,8 @@ func TestPrepareResourceEnvironmentKeepsExplicitPlanAboveCommittedFallback(t *te
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := &ProjectRenderer{
-		config: &project.Config{Render: project.RenderConfig{Components: components}},
+		workspace: currentProjectRenderWorkspace(t),
+		config:    &project.Config{Render: project.RenderConfig{Components: components}},
 		resources: resourceRenderState{
 			plan:          plan,
 			serviceIntent: intent,
@@ -392,6 +394,7 @@ func TestPrepareResourceEnvironmentCarriesNamedAndAppConsumers(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			Render: project.RenderConfig{Components: components},
 			Apps:   map[string]project.AppConfig{"billing": {Components: components}},
@@ -536,6 +539,7 @@ func TestSyncProjectConfigDoesNotWidenDefaultAppForNamedDatabaseSupport(t *testi
 
 	configured := project.Components{CLI: true, DatabaseMySQL: true}
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Example",
 			GoModuleName: "example.com/app",

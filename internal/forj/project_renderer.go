@@ -3,7 +3,6 @@ package forj
 import (
 	"bytes"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"go/format"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"text/template"
 	"time"
 
@@ -72,6 +70,7 @@ func (e *wireGenerateError) Unwrap() error {
 type ComponentRenderInput struct {
 	components         project.Components
 	renderAll          bool
+	root               string
 	resourcePlan       project.ResourcePlan
 	localServiceIntent project.LocalServiceIntent
 	serviceConsumers   []project.EffectiveResourceConsumer
@@ -91,6 +90,7 @@ type resourceRenderState struct {
 type ProjectRenderer struct {
 	logger                  *logger.AppLogger
 	config                  *project.Config
+	workspace               projectRenderWorkspace
 	stats                   *renderStats
 	lines                   []string
 	timings                 bool
@@ -256,22 +256,40 @@ func generateRandomToken(charset string, length int) (string, error) {
 
 // NewProjectRenderer creates a renderer with atomic environment publication enabled.
 func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
+	workspace, err := resolveProjectRenderWorkspace(".")
+	if err != nil {
+		panic(err)
+	}
 	return &ProjectRenderer{
 		logger:               logger,
+		workspace:            workspace,
 		stats:                &renderStats{},
 		writeEnvironmentFile: writeFileAtomically,
 	}
 }
 
-// Render reconciles project-owned inputs before publishing a complete scaffold.
-func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
+// beginRenderInvocation resets invocation-local state and resolves the project workspace before any renderer boundary runs.
+func (p *ProjectRenderer) beginRenderInvocation(root string) error {
+	workspace, err := resolveProjectRenderWorkspace(root)
+	if err != nil {
+		return err
+	}
+	p.workspace = workspace
 	p.stats = &renderStats{}
 	p.lines = nil
+	return nil
+}
+
+// Render reconciles project-owned inputs before publishing a complete scaffold.
+func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
+	if err := p.beginRenderInvocation(input.root); err != nil {
+		return err
+	}
 	p.resources = resourceRenderState{}
 	p.removeLegacyQueueDriver = false
 
 	if input.renderAll {
-		cfg, err := project.LoadProjectConfig()
+		cfg, err := p.workspace.loadProjectConfig()
 		if err != nil {
 			return err
 		}
@@ -304,7 +322,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateJobsRenderTransition(projectComponents); err != nil {
 		return err
 	}
-	if err := validateCacheRenderTransition(projectComponents); err != nil {
+	if err := p.workspace.validateCacheRenderTransition(projectComponents); err != nil {
 		return err
 	}
 	if err := p.prepareResourceRenderState(input, projectComponents); err != nil {
@@ -355,7 +373,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}
 				localEnvTemplate := ".env.local.tmpl"
 				ensureEnvDefaults := func(path string, allowAppKey bool) error {
-					content, err := os.ReadFile(path)
+					content, err := p.workspace.readFile(path)
 					if err != nil {
 						return err
 					}
@@ -500,7 +518,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if updated == text {
 						return nil
 					}
-					if err := writeFileAtomically(path, []byte(updated), 0o644); err != nil {
+					if err := p.workspace.writeFileAtomically(path, []byte(updated), 0o644); err != nil {
 						return err
 					}
 					return nil
@@ -508,7 +526,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				missingEnvTemplates := make([]string, 0, len(envTemplates))
 				for _, tmpl := range envTemplates {
 					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, ""), ".tmpl")
-					if _, err := os.Stat(name); err == nil {
+					if exists, err := p.workspace.exists(name); err != nil {
+						return err
+					} else if exists {
 						allowAppKey := name == ".env"
 						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
 							return err
@@ -545,24 +565,27 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err := p.writeEnvironmentTemplates([]string{localEnvTemplate}); err != nil {
 					return err
 				}
-				environment, err := os.ReadFile(".env")
+				environment, err := p.workspace.readFile(".env")
 				if err != nil {
 					return fmt.Errorf("read environment contract source: %w", err)
 				}
-				existingExample, err := os.ReadFile(".env.example")
+				existingExample, err := p.workspace.readFile(".env.example")
 				if err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("read existing environment example: %w", err)
 				}
 				if !projectComponents.Cache {
-					existingExample, _ = removeDisabledCacheEnvironment(existingExample, p.config)
+					existingExample, _ = removeDisabledCacheEnvironment(
+						existingExample,
+						projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+					)
 				}
 				existingExample, _ = removeObsoleteDiagnosticCacheEnvironment(existingExample)
 				mergedExample := MergeEnvironmentExample(existingExample, environment)
-				if err := WriteEnvironmentExampleAtomic(".env.example", mergedExample, 0o644); err != nil {
+				if err := p.workspace.writeEnvironmentExample(mergedExample, 0o644); err != nil {
 					return fmt.Errorf("write environment example: %w", err)
 				}
 				p.stats.recordCreated(".env.example")
-				if err := ensureGitignoreEnvironmentRules(".gitignore"); err != nil {
+				if err := p.workspace.ensureGitignoreEnvironmentRules(); err != nil {
 					return fmt.Errorf("update environment ignore rules: %w", err)
 				}
 				return p.syncProjectConfigForRender(configuredComponents)
@@ -572,7 +595,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Bin Directory Initialization",
 			enabled: input.renderAll,
 			action: func() error {
-				if err := os.MkdirAll("bin", 0755); err != nil {
+				if err := p.workspace.ensureDir("bin"); err != nil {
 					return err
 				}
 				p.stats.recordCreated("bin/")
@@ -714,7 +737,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Cache Components Cleanup",
 			enabled: input.renderAll && !projectComponents.Cache,
-			action:  cleanupDisabledCacheGeneratedFiles,
+			action:  p.workspace.cleanupDisabledCacheGeneratedFiles,
 		},
 		{
 			title:   "Legacy File Cleanup",
@@ -1293,10 +1316,11 @@ func driverListContains(value string, want string) bool {
 
 // RenderAppOnly renders one named app without replaying the full project scaffold.
 func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
-	p.stats = &renderStats{}
-	p.lines = nil
+	if err := p.beginRenderInvocation("."); err != nil {
+		return err
+	}
 
-	cfg, err := project.LoadProjectConfig()
+	cfg, err := p.workspace.loadProjectConfig()
 	if err != nil {
 		return err
 	}
@@ -1325,7 +1349,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
-	if err := validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
+	if err := p.workspace.validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
 	projectCapabilitiesChanged := false
@@ -1347,7 +1371,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
-		if err := validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		if err := p.workspace.validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		projectCapabilitiesChanged = changed
@@ -1370,14 +1394,14 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		if err := p.writeAppEnvDefaults(app, appRenderComponents(p.config, app)); err != nil {
 			return err
 		}
-		if err := writeProjectConfig(".goforj.yml", p.config); err != nil {
+		if err := p.workspace.writeProjectConfig(p.config); err != nil {
 			return err
 		}
 	}
 
 	if projectCapabilitiesChanged {
 		// A new App has no conventional files for the full renderer to discover yet, so this reconciles shared capabilities while the App-specific render below materializes its graph.
-		if err := p.Render(ComponentRenderInput{renderAll: true}); err != nil {
+		if err := p.Render(ComponentRenderInput{renderAll: true, root: p.workspace.root}); err != nil {
 			return err
 		}
 	}
@@ -1410,15 +1434,16 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 
 // RemoveApp removes conventional app-owned files and refreshes generated app metadata.
 func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, error) {
-	p.stats = &renderStats{}
-	p.lines = nil
+	if err := p.beginRenderInvocation("."); err != nil {
+		return makeapp.RemoveResult{}, err
+	}
 
 	app = projectlayout.NormalizeApp(app)
 	if app.Name == "" || app.Name == project.DefaultAppName {
 		return makeapp.RemoveResult{}, fmt.Errorf("default app cannot be removed")
 	}
 
-	cfg, err := project.LoadProjectConfig()
+	cfg, err := p.workspace.loadProjectConfig()
 	if err != nil {
 		return makeapp.RemoveResult{}, err
 	}
@@ -1433,7 +1458,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		projectlayout.AppDir(".", app),
 		projectlayout.FrontendDir(".", app),
 	} {
-		removed, err := removeDirIfExists(path)
+		removed, err := p.workspace.removeTreeIfExists(path)
 		if err != nil {
 			return result, err
 		}
@@ -1445,7 +1470,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		projectlayout.Entrypoint(".", app),
 		projectlayout.RuntimeBinary(".", app),
 	} {
-		removed, err := removeFileIfExists(path)
+		removed, err := p.workspace.removeFileIfExists(path)
 		if err != nil {
 			return result, err
 		}
@@ -1455,7 +1480,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	}
 
 	cmdDir := projectlayout.CommandDir(".", app)
-	removed, err := removeEmptyDirIfEmpty(cmdDir)
+	removed, err := p.workspace.removeEmptyDir(cmdDir)
 	if err != nil {
 		return result, err
 	}
@@ -1463,7 +1488,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		result.Removed = append(result.Removed, cmdDir)
 	}
 	for _, path := range []string{".env", ".env.host", ".env.example"} {
-		updated, err := removeAppEnvDefaults(path, app.Name)
+		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name)
 		if err != nil {
 			return result, err
 		}
@@ -1472,7 +1497,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		}
 	}
 	if p.removeAppConfig(app.Name) {
-		if err := writeProjectConfig(".goforj.yml", p.config); err != nil {
+		if err := p.workspace.writeProjectConfig(p.config); err != nil {
 			return result, err
 		}
 		result.Updated = append(result.Updated, ".goforj.yml")
@@ -1482,7 +1507,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	}
 	afterProjectComponents := project.ProjectComponents(p.config)
 	if beforeProjectComponents.Cache && !afterProjectComponents.Cache {
-		if err := p.Render(ComponentRenderInput{renderAll: true}); err != nil {
+		if err := p.Render(ComponentRenderInput{renderAll: true, root: p.workspace.root}); err != nil {
 			return result, fmt.Errorf("reconcile shared Cache surface after removing App %q: %w", app.Name, err)
 		}
 		return result, nil
@@ -1533,7 +1558,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 			continue
 		}
 		for _, path := range check.residues {
-			exists, err := renderPathExists(path)
+			exists, err := p.workspace.renderPathExists(path)
 			if err != nil {
 				return err
 			}
@@ -1543,14 +1568,14 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		}
 	}
 	if before.Jobs && !after.Jobs {
-		path, exists, err := projectJobsRemovalResiduePath()
+		path, exists, err := p.workspace.projectJobsRemovalResiduePath()
 		if err != nil {
 			return err
 		}
 		if exists {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Jobs while %s exists; automatic Jobs removal is not supported", app.Name, path)
 		}
-		path, exists, err = appJobsRemovalResiduePath(app)
+		path, exists, err = p.workspace.appJobsRemovalResiduePath(app)
 		if err != nil {
 			return err
 		}
@@ -1559,7 +1584,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		}
 	}
 	if before.Cache && !after.Cache {
-		if err := validateCacheRenderTransition(after); err != nil {
+		if err := p.workspace.validateCacheRenderTransition(after); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
 		}
 	}
@@ -1641,7 +1666,7 @@ func (p *ProjectRenderer) prepareDevAppsForAppMutation() error {
 	if p.config.Dev.UsesStructuredApps() {
 		return nil
 	}
-	if migrateGeneratedDevWatchers(p.config) {
+	if p.workspace.migrateGeneratedDevWatchers(p.config) {
 		return nil
 	}
 	if hasLegacyDevAppLifecycle(p.config) {
@@ -1715,32 +1740,34 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	if prefix == "" {
 		return nil
 	}
-	metadata := runtimeAppMetadataForConfiguredApp(p.config, app)
-	metadata.HTTPPort = nextAvailableAppHTTPPort(".env", prefix, metadata.HTTPPort)
+	const environmentPath = ".env"
+	const hostEnvironmentPath = ".env.host"
+	metadata := p.workspace.runtimeAppMetadataForConfiguredApp(p.config, app)
+	metadata.HTTPPort = p.workspace.nextAvailableAppHTTPPort(environmentPath, prefix, metadata.HTTPPort)
 	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)
 	if components.Cache {
-		cacheDriver, err := cacheDriverDefaultFromEnv(".env")
+		cacheDriver, err := p.workspace.cacheDriverDefaultFromEnv(environmentPath)
 		if err != nil {
 			return err
 		}
 		envDefaults[prefix+"_CACHE_DRIVER"] = cacheDriver
 	}
 	if components.Events {
-		eventsDriver, err := eventDriverDefaultFromEnv(".env")
+		eventsDriver, err := p.workspace.eventDriverDefaultFromEnv(environmentPath)
 		if err != nil {
 			return err
 		}
 		envDefaults[prefix+"_EVENTS_DRIVER"] = eventsDriver
 	}
 	if components.Storage {
-		storageDriver, err := storageDriverDefaultFromEnv(".env")
+		storageDriver, err := p.workspace.storageDriverDefaultFromEnv(environmentPath)
 		if err != nil {
 			return err
 		}
 		envDefaults[prefix+"_STORAGE_DRIVER"] = storageDriver
 	}
 	if components.Jobs {
-		queueDriver, err := queueDriverDefaultFromEnv(".env")
+		queueDriver, err := p.workspace.queueDriverDefaultFromEnv(environmentPath)
 		if err != nil {
 			return err
 		}
@@ -1756,14 +1783,14 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	envGlobals, envAppDefaults := splitEnvDefaultsByPrefix(envDefaults, prefix)
 	if p.config != nil && p.config.Render.Components.DemoApp {
 		// Demo migrations still exercise SQLite, so a named-App render must not create a MySQL-only build contract before the full renderer runs.
-		if err := upsertEnvDefaults(".env", map[string]string{"DB_SUPPORTED_DRIVERS": "sqlite"}); err != nil {
+		if err := p.workspace.upsertEnvDefaults(environmentPath, map[string]string{"DB_SUPPORTED_DRIVERS": "sqlite"}); err != nil {
 			return err
 		}
 	}
-	if err := upsertEnvDefaults(".env", envGlobals); err != nil {
+	if err := p.workspace.upsertEnvDefaults(environmentPath, envGlobals); err != nil {
 		return err
 	}
-	if err := upsertAppEnvDefaults(".env", app.Name, prefix, envAppDefaults); err != nil {
+	if err := p.workspace.upsertAppEnvDefaults(environmentPath, app.Name, prefix, envAppDefaults); err != nil {
 		return err
 	}
 
@@ -1777,10 +1804,10 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	}
 	delete(hostDefaults, "DB_SUPPORTED_DRIVERS")
 	hostGlobals, hostAppDefaults := splitEnvDefaultsByPrefix(hostDefaults, prefix)
-	if err := upsertEnvDefaults(".env.host", hostGlobals); err != nil {
+	if err := p.workspace.upsertEnvDefaults(hostEnvironmentPath, hostGlobals); err != nil {
 		return err
 	}
-	if err := upsertAppEnvDefaults(".env.host", app.Name, prefix, hostAppDefaults); err != nil {
+	if err := p.workspace.upsertAppEnvDefaults(hostEnvironmentPath, app.Name, prefix, hostAppDefaults); err != nil {
 		return err
 	}
 	return nil
@@ -1826,28 +1853,28 @@ func appRuntimeEnvDefaults(prefix string, metadata runtimeAppMetadata, component
 }
 
 // cacheDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Cache backend.
-func cacheDriverDefaultFromEnv(path string) (string, error) {
-	return resourceDriverDefaultFromEnv(path, project.ResourceCache, "CACHE", "memory")
+func (w projectRenderWorkspace) cacheDriverDefaultFromEnv(path string) (string, error) {
+	return w.resourceDriverDefaultFromEnv(path, project.ResourceCache, "CACHE", "memory")
 }
 
 // eventDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Events transport.
-func eventDriverDefaultFromEnv(path string) (string, error) {
-	return resourceDriverDefaultFromEnv(path, project.ResourceEvents, "EVENTS", "inproc")
+func (w projectRenderWorkspace) eventDriverDefaultFromEnv(path string) (string, error) {
+	return w.resourceDriverDefaultFromEnv(path, project.ResourceEvents, "EVENTS", "inproc")
 }
 
 // storageDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Storage backend.
-func storageDriverDefaultFromEnv(path string) (string, error) {
-	return resourceDriverDefaultFromEnv(path, project.ResourceStorage, "STORAGE", "local")
+func (w projectRenderWorkspace) storageDriverDefaultFromEnv(path string) (string, error) {
+	return w.resourceDriverDefaultFromEnv(path, project.ResourceStorage, "STORAGE", "local")
 }
 
 // queueDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Queue backend.
-func queueDriverDefaultFromEnv(path string) (string, error) {
-	return resourceDriverDefaultFromEnv(path, project.ResourceQueue, "QUEUE", "workerpool")
+func (w projectRenderWorkspace) queueDriverDefaultFromEnv(path string) (string, error) {
+	return w.resourceDriverDefaultFromEnv(path, project.ResourceQueue, "QUEUE", "workerpool")
 }
 
 // resourceDriverDefaultFromEnv validates one owner-controlled root driver before projecting it into a named App overlay.
-func resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, envPrefix string, fallback string) (string, error) {
-	data, err := os.ReadFile(path)
+func (w projectRenderWorkspace) resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, envPrefix string, fallback string) (string, error) {
+	data, err := w.readFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("read %s environment: %w", envPrefix, err)
 	}
@@ -1873,13 +1900,12 @@ func resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, env
 	return driver, nil
 }
 
-// nextAvailableAppHTTPPort keeps sequential make:app runs from reusing a port
-// that was already written for another named app in the local env defaults.
-func nextAvailableAppHTTPPort(path string, prefix string, preferred int) int {
+// nextAvailableAppHTTPPort keeps sequential App defaults unique within one project workspace.
+func (w projectRenderWorkspace) nextAvailableAppHTTPPort(path string, prefix string, preferred int) int {
 	if preferred <= 0 {
 		preferred = 3001
 	}
-	used := appHTTPPortsFromEnv(path, prefix)
+	used := w.appHTTPPortsFromEnv(path, prefix)
 	if _, exists := used[preferred]; !exists {
 		return preferred
 	}
@@ -1891,9 +1917,10 @@ func nextAvailableAppHTTPPort(path string, prefix string, preferred int) int {
 	return preferred
 }
 
-func appHTTPPortsFromEnv(path string, currentPrefix string) map[int]struct{} {
+// appHTTPPortsFromEnv reads assigned named-App ports from one project workspace.
+func (w projectRenderWorkspace) appHTTPPortsFromEnv(path string, currentPrefix string) map[int]struct{} {
 	used := map[int]struct{}{}
-	data, err := os.ReadFile(path)
+	data, err := w.readFile(path)
 	if err != nil {
 		return used
 	}
@@ -1987,11 +2014,11 @@ func prefixDatabaseName(prefix string, fallback string) string {
 }
 
 // upsertEnvDefaults preserves existing env files while filling missing app defaults.
-func upsertEnvDefaults(path string, defaults map[string]string) error {
+func (w projectRenderWorkspace) upsertEnvDefaults(path string, defaults map[string]string) error {
 	if len(defaults) == 0 {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := w.readFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -2008,15 +2035,15 @@ func upsertEnvDefaults(path string, defaults map[string]string) error {
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return w.writeFile(path, []byte(content), 0o644)
 }
 
 // upsertAppEnvDefaults groups app overrides so multi-app env files remain readable.
-func upsertAppEnvDefaults(path string, appName string, prefix string, defaults map[string]string) error {
+func (w projectRenderWorkspace) upsertAppEnvDefaults(path string, appName string, prefix string, defaults map[string]string) error {
 	if len(defaults) == 0 {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := w.readFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -2035,7 +2062,7 @@ func upsertAppEnvDefaults(path string, appName string, prefix string, defaults m
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return w.writeFile(path, []byte(content), 0o644)
 }
 
 // removeEnvKeys prevents old loose app entries from surviving after sectioned rendering.
@@ -2066,12 +2093,12 @@ func removeEnvSectionHeader(lines []string, appName string) []string {
 }
 
 // removeAppEnvDefaults deletes app-prefixed overrides when an app is removed.
-func removeAppEnvDefaults(path string, appName string) (bool, error) {
+func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string) (bool, error) {
 	prefix := project.AppEnvironmentPrefix(appName)
 	if prefix == "" {
 		return false, nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := w.readFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -2100,7 +2127,7 @@ func removeAppEnvDefaults(path string, appName string) (bool, error) {
 	if content == original {
 		return false, nil
 	}
-	return true, os.WriteFile(path, []byte(content), 0o644)
+	return true, w.writeFile(path, []byte(content), 0o644)
 }
 
 // isEnvSectionHeader recognizes generated app headings case-insensitively for cleanup.
@@ -2370,7 +2397,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	if removeGrafanaSeedTask(&p.config.Dev.Pre) {
 		changed = true
 	}
-	if migrateGeneratedDevWatchers(p.config) {
+	if p.workspace.migrateGeneratedDevWatchers(p.config) {
 		changed = true
 	}
 	if migrateGeneratedDevFrontendInstallTasks(p.config) {
@@ -2407,7 +2434,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	defer func() {
 		p.config.Render.Components = effectiveComponents
 	}()
-	return writeProjectConfig(".goforj.yml", p.config)
+	return p.workspace.writeProjectConfig(p.config)
 }
 
 // ensureGitignoreEnvironmentRules adds newly generated local environment files without replacing owner-authored ignore rules.
@@ -2579,7 +2606,7 @@ func hasDevTask(tasks []project.DevTask, want project.DevTask) bool {
 
 // renderNamedApps renders every non-default app discovered from conventional project layout.
 func (p *ProjectRenderer) renderNamedApps() error {
-	apps := projectlayout.DiscoveredNamedApps(".")
+	apps := projectlayout.DiscoveredNamedApps(p.workspace.discoveryRoot())
 	if len(apps) == 1 {
 		app := apps[0]
 		if err := p.renderApp(app); err != nil {
@@ -2615,7 +2642,7 @@ func (p *ProjectRenderer) renderNamedApps() error {
 // expandDefaultMigrationsForNamedApps moves single-app migration streams into the explicit default app layout.
 func (p *ProjectRenderer) expandDefaultMigrationsForNamedApps() error {
 	root := "migrations"
-	entries, err := os.ReadDir(root)
+	entries, err := p.workspace.readDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -2630,7 +2657,7 @@ func (p *ProjectRenderer) expandDefaultMigrationsForNamedApps() error {
 			if shouldSkipMigrationExpansionDir(name) {
 				continue
 			}
-			if err := moveDirectMigrationSQLFiles(source, filepath.Join(root, "app", name)); err != nil {
+			if err := p.workspace.moveDirectMigrationSQLFiles(source, filepath.Join(root, "app", name)); err != nil {
 				return err
 			}
 			continue
@@ -2638,7 +2665,7 @@ func (p *ProjectRenderer) expandDefaultMigrationsForNamedApps() error {
 		if !isMigrationSQLFile(name) {
 			continue
 		}
-		if err := moveMigrationFile(source, filepath.Join(root, "app", "default", name)); err != nil {
+		if err := p.workspace.moveMigrationFile(source, filepath.Join(root, "app", "default", name)); err != nil {
 			return err
 		}
 	}
@@ -2650,9 +2677,9 @@ func shouldSkipMigrationExpansionDir(name string) bool {
 	return name == ".goforj" || name == "app" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
-// moveDirectMigrationSQLFiles moves only legacy direct SQL files and leaves nested app layouts alone.
-func moveDirectMigrationSQLFiles(sourceDir, destDir string) error {
-	entries, err := os.ReadDir(sourceDir)
+// moveDirectMigrationSQLFiles moves only legacy direct SQL files within one project workspace and leaves nested app layouts alone.
+func (w projectRenderWorkspace) moveDirectMigrationSQLFiles(sourceDir, destDir string) error {
+	entries, err := w.readDir(sourceDir)
 	if err != nil {
 		return err
 	}
@@ -2661,7 +2688,7 @@ func moveDirectMigrationSQLFiles(sourceDir, destDir string) error {
 		if entry.IsDir() || !isMigrationSQLFile(entry.Name()) {
 			continue
 		}
-		if err := moveMigrationFile(filepath.Join(sourceDir, entry.Name()), filepath.Join(destDir, entry.Name())); err != nil {
+		if err := w.moveMigrationFile(filepath.Join(sourceDir, entry.Name()), filepath.Join(destDir, entry.Name())); err != nil {
 			return err
 		}
 		moved = true
@@ -2670,43 +2697,47 @@ func moveDirectMigrationSQLFiles(sourceDir, destDir string) error {
 		return nil
 	}
 
-	remaining, err := os.ReadDir(sourceDir)
+	remaining, err := w.readDir(sourceDir)
 	if err != nil {
 		return err
 	}
 	if len(remaining) == 0 {
-		return os.Remove(sourceDir)
+		_, err := w.removeEmptyDir(sourceDir)
+		return err
 	}
 	return nil
 }
 
-// moveMigrationFile moves one migration file unless a different destination already exists.
-func moveMigrationFile(source, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+// moveMigrationFile moves one migration file within a project workspace unless a different destination already exists.
+func (w projectRenderWorkspace) moveMigrationFile(source, dest string) error {
+	if err := w.ensureDir(filepath.Dir(dest)); err != nil {
 		return err
 	}
-	if _, err := os.Stat(dest); err == nil {
-		same, err := filesHaveSameContent(source, dest)
+	destinationExists, err := w.exists(dest)
+	if err != nil {
+		return err
+	}
+	if destinationExists {
+		same, err := w.filesHaveSameContent(source, dest)
 		if err != nil {
 			return err
 		}
 		if same {
-			return os.Remove(source)
+			_, err = w.removeFileIfExists(source)
+			return err
 		}
 		return fmt.Errorf("migration expansion destination already exists with different content: %s", dest)
-	} else if !os.IsNotExist(err) {
-		return err
 	}
-	return os.Rename(source, dest)
+	return w.move(source, dest)
 }
 
-// filesHaveSameContent prevents migration expansion from overwriting user-edited migration files.
-func filesHaveSameContent(left, right string) (bool, error) {
-	leftBytes, err := os.ReadFile(left)
+// filesHaveSameContent prevents migration expansion from overwriting user-edited files inside one project workspace.
+func (w projectRenderWorkspace) filesHaveSameContent(left, right string) (bool, error) {
+	leftBytes, err := w.readFile(left)
 	if err != nil {
 		return false, err
 	}
-	rightBytes, err := os.ReadFile(right)
+	rightBytes, err := w.readFile(right)
 	if err != nil {
 		return false, err
 	}
@@ -2746,7 +2777,7 @@ func (p *ProjectRenderer) migrateFrontendDistPlaceholder(app project.App) error 
 	}
 	app = projectlayout.NormalizeApp(app)
 	path := projectlayout.FrontendDistIndex(".", app)
-	content, err := os.ReadFile(path)
+	content, err := p.workspace.readFile(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -2756,7 +2787,7 @@ func (p *ProjectRenderer) migrateFrontendDistPlaceholder(app project.App) error 
 	if !isGeneratedFrontendDistPlaceholderNeedingRefresh(string(content), p.config.ProjectName) {
 		return nil
 	}
-	if err := p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", templateDataForApp(p.config, app)); err != nil {
+	if err := p.renderTemplateFile(path, "frontend/dist/index.html.tmpl", p.workspace.templateDataForApp(p.config, app)); err != nil {
 		return err
 	}
 	return p.ensureFrontendPlaceholderAssets(app)
@@ -2769,7 +2800,7 @@ func (p *ProjectRenderer) ensureFrontendPlaceholderAssets(app project.App) error
 	}
 	app = projectlayout.NormalizeApp(app)
 	index := projectlayout.FrontendDistIndex(".", app)
-	content, err := os.ReadFile(index)
+	content, err := p.workspace.readFile(index)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -2961,7 +2992,9 @@ func writeFileAtomically(path string, data []byte, defaultMode fs.FileMode) erro
 
 // createGoMod initializes the go.mod for the project
 func (p *ProjectRenderer) createGoMod() error {
-	if err := exec.Command("go", "mod", "init", p.config.GoModuleName).Run(); err != nil {
+	cmd := exec.Command("go", "mod", "init", p.config.GoModuleName)
+	cmd.Dir = p.workspace.path()
+	if err := p.workspace.logicalError(cmd.Run()); err != nil {
 		p.stats.recordSkipped("go.mod (exists)")
 	} else {
 		p.stats.recordCreated("go.mod")
@@ -2972,14 +3005,14 @@ func (p *ProjectRenderer) createGoMod() error {
 // goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
 func (p *ProjectRenderer) goModTidy() error {
 	cmd := exec.Command("go", "mod", "tidy")
-	cmd.Dir = "." // Or p.config.ProjectRoot if you have it
+	cmd.Dir = p.workspace.path()
 	cmd.Env = os.Environ()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := p.workspace.logicalError(cmd.Run()); err != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
@@ -3008,6 +3041,7 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 
 // syncCoreLibrariesInDir updates core goforj dependencies in a specific module without forcing callers to change process cwd.
 func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
+	projectDir := p.workspace.path(dir)
 	components := project.Components{}
 	if p.config != nil {
 		components = project.ProjectComponents(p.config)
@@ -3016,9 +3050,9 @@ func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 	if p.config != nil && p.config.Render.StarterKit == project.StarterKitTemplHTMX {
 		modules = append(modules, "github.com/a-h/templ@"+coredeps.MustVersionFor("github.com/a-h/templ"))
 	}
-	modules, skipped, err := coreModulesNeedingSync(filepath.Join(dir, "go.mod"), modules)
+	modules, skipped, err := coreModulesNeedingSync(filepath.Join(projectDir, "go.mod"), modules)
 	if err != nil {
-		return err
+		return p.workspace.logicalError(err)
 	}
 	if len(modules) == 0 {
 		p.lines = append(p.lines, renderCountsLine("sync core libs", 0, skipped, "modules"))
@@ -3030,14 +3064,14 @@ func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 		args = append(args, "-require="+module)
 	}
 	cmd := exec.Command("go", args...)
-	cmd.Dir = dir
+	cmd.Dir = projectDir
 	cmd.Env = os.Environ()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := p.workspace.logicalError(cmd.Run()); err != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
@@ -3161,8 +3195,10 @@ func stripGoModLineComment(line string) string {
 
 func (p *ProjectRenderer) runTemplGenerate() error {
 	cmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+	cmd.Dir = p.workspace.path()
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
+	err = p.workspace.logicalError(err)
 	if err != nil {
 		detail := strings.TrimSpace(string(output))
 		if detail != "" {
@@ -3188,7 +3224,7 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	}
 
 	wireDirs := p.wireGenerateDirs()
-	if err := firstWireGenerateError(runWireGenerateDirs(wireBinaryPath, wireDirs)); err != nil {
+	if err := firstWireGenerateError(p.runWireGenerateDirs(wireBinaryPath, wireDirs)); err != nil {
 		// If a stale wire binary was built with an older Go toolchain, reinstall
 		// wire with the current toolchain and retry all app-local graphs once.
 		if wireGenerateErr, ok := err.(*wireGenerateError); ok && wireGenerateErr.stale {
@@ -3197,7 +3233,7 @@ func (p *ProjectRenderer) runWireGenerate() error {
 				return installErr
 			}
 			wireBinaryPath = path
-			if retryErr := firstWireGenerateError(runWireGenerateDirs(wireBinaryPath, wireDirs)); retryErr != nil {
+			if retryErr := firstWireGenerateError(p.runWireGenerateDirs(wireBinaryPath, wireDirs)); retryErr != nil {
 				return retryErr
 			}
 		} else {
@@ -3209,22 +3245,24 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	return nil
 }
 
-func runWireGenerateDirs(wirePath string, wireDirs []string) []error {
+// runWireGenerateDirs executes independent App Wire graphs while retaining logical directories in diagnostics.
+func (p *ProjectRenderer) runWireGenerateDirs(wirePath string, wireDirs []string) []error {
 	errs := make([]error, len(wireDirs))
 	var wg sync.WaitGroup
 	for i, wireDir := range wireDirs {
 		wg.Add(1)
 		go func(i int, wireDir string) {
 			defer wg.Done()
-			errs[i] = runWireGenerateDir(wirePath, wireDir)
+			errs[i] = p.runWireGenerateDir(wirePath, wireDir)
 		}(i, wireDir)
 	}
 	wg.Wait()
 	return errs
 }
 
-func runWireGenerateDir(wirePath string, wireDir string) error {
-	out, err := runWireCommand(wirePath, wireDir)
+// runWireGenerateDir wraps one Wire failure with the logical App directory that owns the graph.
+func (p *ProjectRenderer) runWireGenerateDir(wirePath string, wireDir string) error {
+	out, err := p.runWireCommand(wirePath, wireDir)
 	if err == nil {
 		return nil
 	}
@@ -3254,7 +3292,7 @@ func (p *ProjectRenderer) wireGenerateDirs() []string {
 		if dir == "." || dir == "" || seen[dir] {
 			return
 		}
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		if info, err := p.workspace.stat(dir); err == nil && info.IsDir() {
 			seen[dir] = true
 			*dirs = append(*dirs, dir)
 		}
@@ -3267,7 +3305,7 @@ func (p *ProjectRenderer) wireGenerateDirs() []string {
 			add(configured, &dirs)
 		}
 	}
-	for _, app := range projectlayout.DiscoveredNamedApps(".") {
+	for _, app := range projectlayout.DiscoveredNamedApps(p.workspace.discoveryRoot()) {
 		add(projectlayout.WireDir(".", app), &dirs)
 	}
 	if len(dirs) == 0 {
@@ -3276,12 +3314,13 @@ func (p *ProjectRenderer) wireGenerateDirs() []string {
 	return dirs
 }
 
-// runWireCommand executes the Wire binary from one app-local Wire package.
-func runWireCommand(wirePath string, dir string) ([]byte, error) {
+// runWireCommand executes the Wire binary from one app-local Wire package inside the invocation workspace.
+func (p *ProjectRenderer) runWireCommand(wirePath string, dir string) ([]byte, error) {
 	cmd := exec.Command(wirePath)
-	cmd.Dir = dir
+	cmd.Dir = p.workspace.path(dir)
 	cmd.Env = os.Environ()
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	return output, p.workspace.logicalError(err)
 }
 
 func installWire() (string, error) {
@@ -3304,61 +3343,12 @@ func installWire() (string, error) {
 
 // runGenerateAll regenerates only the packages authorized by the durable project component contract.
 func (p *ProjectRenderer) runGenerateAll() error {
-	count, _, err := generate.GenerateProjectFiles(".", generate.GenerationSelectionFromComponents(p.projectRenderComponents()))
+	count, _, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelectionFromComponents(p.projectRenderComponents()))
 	if err != nil {
-		return err
+		return p.workspace.logicalError(err)
 	}
 	p.lines = append(p.lines, renderCountsLine("forj generate", count, 0, "files"))
 	return nil
-}
-
-func removeIfExists(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
-// removeFileIfExists reports whether a conventional generated file was present.
-func removeFileIfExists(path string) (bool, error) {
-	if err := os.Remove(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-// removeDirIfExists reports whether a conventional generated directory was present.
-func removeDirIfExists(path string) (bool, error) {
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if err := os.RemoveAll(path); err != nil {
-		return false, err
-	}
-	if _, err := os.Stat(path); err == nil {
-		return false, fmt.Errorf("remove directory %s: still exists after removal", path)
-	} else if os.IsNotExist(err) {
-		return true, nil
-	} else {
-		return false, err
-	}
-}
-
-// removeEmptyDirIfEmpty avoids deleting command-package files that are outside the generated app shape.
-func removeEmptyDirIfEmpty(path string) (bool, error) {
-	if err := os.Remove(path); err != nil {
-		if os.IsNotExist(err) || errors.Is(err, syscall.ENOTEMPTY) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 func commandExists(name string) bool {
@@ -3371,7 +3361,11 @@ func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 	if err := p.copyRawPathToDest("demo/frontend", frontendDir); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
+	exists, err := p.workspace.exists(frontendDir, "dist", "index.html")
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return p.ensureFrontendDistPlaceholder()
 	}
 	return nil
@@ -3387,10 +3381,12 @@ func (p *ProjectRenderer) scaffoldAppStarterKit(app project.App) error {
 	if starterKit == project.StarterKitNone {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(projectlayout.FrontendDir(".", app), "package.json")); err == nil {
-		return nil
-	} else if err != nil && !os.IsNotExist(err) {
+	exists, err := p.workspace.exists(projectlayout.FrontendDir(".", app), "package.json")
+	if err != nil {
 		return err
+	}
+	if exists {
+		return nil
 	}
 	return p.scaffoldStarterKitForApp(app, starterKit, false)
 }
@@ -3403,7 +3399,7 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 	}
 	frontendDir := projectlayout.FrontendDir(".", app)
 	if overwrite {
-		if err := os.RemoveAll(frontendDir); err != nil {
+		if err := p.workspace.removeTree(frontendDir); err != nil {
 			return err
 		}
 	}
@@ -3419,9 +3415,13 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 			return err
 		}
 	}
-	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
+	exists, err := p.workspace.exists(frontendDir, "dist", "index.html")
+	if err != nil {
+		return err
+	}
+	if !exists {
 		if p.config != nil {
-			if err := p.renderTemplateFile(projectlayout.FrontendDistIndex(".", app), "frontend/dist/index.html.tmpl", templateDataForApp(p.config, app)); err != nil {
+			if err := p.renderTemplateFile(projectlayout.FrontendDistIndex(".", app), "frontend/dist/index.html.tmpl", p.workspace.templateDataForApp(p.config, app)); err != nil {
 				return err
 			}
 			return p.ensureFrontendPlaceholderAssets(app)
@@ -3481,14 +3481,18 @@ func starterKitFrontendFilter(starterKit project.StarterKit) func(string, fs.Dir
 
 func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 	newContent := []byte(content)
-	if existingContent, err := os.ReadFile(path); err == nil && bytes.Equal(existingContent, newContent) {
-		p.stats.recordSkipped(path)
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if existingContent, err := p.workspace.readFile(path); err == nil {
+		if bytes.Equal(existingContent, newContent) {
+			p.stats.recordSkipped(path)
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.WriteFile(path, newContent, 0644); err != nil {
+	if err := p.workspace.ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if err := p.workspace.writeFile(path, newContent, 0644); err != nil {
 		return err
 	}
 	p.stats.recordCreated(path)
@@ -3498,14 +3502,18 @@ func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
 	content := defaultFrontendDistPlaceholderContent()
 	paths := make([]string, 0)
-	for _, app := range projectlayout.ConventionalApps(".") {
+	for _, app := range projectlayout.ConventionalApps(p.workspace.discoveryRoot()) {
 		if !appRenderComponents(p.config, app).WebUI {
 			continue
 		}
 		paths = append(paths, projectlayout.FrontendDistIndex(".", app))
 	}
 	for _, index := range paths {
-		if _, err := os.Stat(index); err == nil {
+		exists, err := p.workspace.exists(index)
+		if err != nil {
+			return err
+		}
+		if exists {
 			continue
 		}
 		if err := p.writeFrontendDistPlaceholder(index, content); err != nil {
@@ -3527,10 +3535,10 @@ func defaultFrontendDistPlaceholderContent() string {
 
 // writeFrontendDistPlaceholder writes a fallback SPA page and records it in render stats.
 func (p *ProjectRenderer) writeFrontendDistPlaceholder(index string, content string) error {
-	if err := os.MkdirAll(filepath.Dir(index), 0755); err != nil {
+	if err := p.workspace.ensureDir(filepath.Dir(index)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(index, []byte(content), 0644); err != nil {
+	if err := p.workspace.writeFile(index, []byte(content), 0644); err != nil {
 		return err
 	}
 	if p.stats != nil {
@@ -3550,16 +3558,20 @@ func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath
 	if err != nil {
 		return err
 	}
-	if existing, err := os.ReadFile(dest); err == nil && bytes.Equal(existing, content) {
-		if p.stats != nil {
-			p.stats.recordSkipped(dest)
+	if existing, err := p.workspace.readFile(dest); err == nil {
+		if bytes.Equal(existing, content) {
+			if p.stats != nil {
+				p.stats.recordSkipped(dest)
+			}
+			return nil
 		}
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.WriteFile(dest, content, 0644); err != nil {
+	if err := p.workspace.ensureDir(filepath.Dir(dest)); err != nil {
+		return err
+	}
+	if err := p.workspace.writeFile(dest, content, 0644); err != nil {
 		return err
 	}
 	if p.stats != nil {
@@ -3571,6 +3583,18 @@ func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath
 // renderTemplateFile renders ordinary scaffold files while transactional environment files use the atomic variant.
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
 	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, false)
+}
+
+// renderTemplateIfMissing preserves owner files while surfacing filesystem failures that are not simple absence.
+func (p *ProjectRenderer) renderTemplateIfMissing(destPath string, tmpl string, data any) error {
+	exists, err := p.workspace.exists(destPath)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	return p.renderTemplateFile(destPath, tmpl, data)
 }
 
 // renderTemplateFileAtomically renders a template through a same-directory replacement file.
@@ -3604,20 +3628,24 @@ func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl strin
 		return err
 	}
 	newContent = formatted
-	if existingContent, err := os.ReadFile(destPath); err == nil && bytes.Equal(existingContent, newContent) {
-		p.stats.recordSkipped(destPath)
-		return nil
+	if existingContent, err := p.workspace.readFile(destPath); err == nil {
+		if bytes.Equal(existingContent, newContent) {
+			p.stats.recordSkipped(destPath)
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := p.workspace.ensureDir(filepath.Dir(destPath)); err != nil {
 		return err
 	}
 	if atomic {
-		if err := writeFileAtomically(destPath, newContent, 0o644); err != nil {
+		if err := p.workspace.writeFileAtomically(destPath, newContent, 0o644); err != nil {
 			return err
 		}
 	} else {
-		if err := os.WriteFile(destPath, newContent, 0644); err != nil {
+		if err := p.workspace.writeFile(destPath, newContent, 0644); err != nil {
 			return err
 		}
 	}
@@ -3630,9 +3658,9 @@ func (p *ProjectRenderer) prepareTemplateData(data any) (any, error) {
 	value := data
 	switch config := data.(type) {
 	case *project.Config:
-		value = templateDataForApp(config, project.DefaultApp())
+		value = p.workspace.templateDataForApp(config, project.DefaultApp())
 	case project.Config:
-		value = templateDataForApp(&config, project.DefaultApp())
+		value = p.workspace.templateDataForApp(&config, project.DefaultApp())
 	}
 	if config, ok := value.(templateRenderConfig); ok {
 		config.ProjectComponents = project.ProjectComponents(config.Config)
@@ -3654,8 +3682,8 @@ func (p *ProjectRenderer) projectRenderComponents() project.Components {
 	return components
 }
 
-// templateDataForApp keeps named-App package paths and capability projections isolated from project-level resource state.
-func templateDataForApp(config *project.Config, app project.App) templateRenderConfig {
+// templateDataForApp keeps named-App package paths and capability projections isolated within one project workspace.
+func (w projectRenderWorkspace) templateDataForApp(config *project.Config, app project.App) templateRenderConfig {
 	if app.Name == "" {
 		app = project.DefaultApp()
 	}
@@ -3664,7 +3692,7 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 	components := appRenderComponents(config, app)
 	starterKit := appRenderStarterKit(config, app)
 	helpFormat := appRenderHelpFormat(config, app)
-	runtimeApps := runtimeAppMetadataForRender(config)
+	runtimeApps := w.runtimeAppMetadataForRender(config)
 	return templateRenderConfig{
 		Config:                      config,
 		Components:                  components,
@@ -3680,8 +3708,8 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 		AppIsDefault:                app.Name == project.DefaultAppName,
 		HasNamedApps:                app.Name != project.DefaultAppName || len(runtimeApps) > 1,
 		RuntimeApps:                 runtimeApps,
-		LegacyEventPipelineField:    legacyEventPipelineField(app),
-		LegacyEventPipelineProvider: legacyEventPipelineProvider(app),
+		LegacyEventPipelineField:    w.legacyEventPipelineField(app),
+		LegacyEventPipelineProvider: w.legacyEventPipelineProvider(app),
 	}
 }
 
@@ -3758,9 +3786,9 @@ func appRenderStarterKit(config *project.Config, app project.App) project.Starte
 	return starterKit
 }
 
-// runtimeAppMetadataForRender creates the compiled App table with each App's stable component projection.
-func runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
-	apps := projectlayout.RuntimeApps(".", config)
+// runtimeAppMetadataForRender creates the compiled App table from one project's discovered and configured Apps.
+func (w projectRenderWorkspace) runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
+	apps := projectlayout.RuntimeApps(w.discoveryRoot(), config)
 	out := make([]runtimeAppMetadata, 0, len(apps))
 	for i, app := range apps {
 		out = append(out, runtimeAppMetadata{
@@ -3775,10 +3803,9 @@ func runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
 	return out
 }
 
-// runtimeAppMetadataForConfiguredApp includes persisted app config so make:app can
-// assign env defaults before the new conventional files are fully discoverable.
-func runtimeAppMetadataForConfiguredApp(config *project.Config, app project.App) runtimeAppMetadata {
-	metadata := runtimeAppMetadataForAppFromApps(app, projectlayout.RuntimeApps(".", config, app))
+// runtimeAppMetadataForConfiguredApp includes persisted app config before new conventional files are discoverable in one project workspace.
+func (w projectRenderWorkspace) runtimeAppMetadataForConfiguredApp(config *project.Config, app project.App) runtimeAppMetadata {
+	metadata := runtimeAppMetadataForAppFromApps(app, projectlayout.RuntimeApps(w.discoveryRoot(), config, app))
 	metadata.Components = appRenderComponents(config, app)
 	return metadata
 }
@@ -3853,7 +3880,7 @@ func (p *ProjectRenderer) writeTemplateMappings(mappings []templateMapping) erro
 
 // writeTemplateMappingsForApp renders mapped templates with app-specific package and import data.
 func (p *ProjectRenderer) writeTemplateMappingsForApp(app project.App, mappings []templateMapping) error {
-	data := templateDataForApp(p.config, projectlayout.NormalizeApp(app))
+	data := p.workspace.templateDataForApp(p.config, projectlayout.NormalizeApp(app))
 	for _, mapping := range mappings {
 		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
 			return err
@@ -3950,10 +3977,10 @@ func (p *ProjectRenderer) copyRawFileToDest(path, dest string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	if err := p.workspace.ensureDir(filepath.Dir(dest)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(dest, content, 0644); err != nil {
+	if err := p.workspace.writeFile(dest, content, 0644); err != nil {
 		return err
 	}
 	p.stats.recordCreated(dest)
@@ -3965,7 +3992,11 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 	for _, path := range tmpls {
 		dest := strings.TrimSuffix(path, ".tmpl")
 
-		if _, err := os.Stat(dest); err == nil {
+		exists, err := p.workspace.exists(dest)
+		if err != nil {
+			return err
+		}
+		if exists {
 			p.stats.recordSkipped(dest)
 			continue
 		}
@@ -3980,7 +4011,11 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 // writeTemplateMappingsOnce writes mapped templates only if destination does not yet exist.
 func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) error {
 	for _, mapping := range mappings {
-		if _, err := os.Stat(mapping.dest); err == nil {
+		exists, err := p.workspace.exists(mapping.dest)
+		if err != nil {
+			return err
+		}
+		if exists {
 			p.stats.recordSkipped(mapping.dest)
 			continue
 		}
@@ -3993,9 +4028,13 @@ func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) 
 
 // writeTemplateMappingsOnceForApp preserves app-owned files after their first render.
 func (p *ProjectRenderer) writeTemplateMappingsOnceForApp(app project.App, mappings []templateMapping) error {
-	data := templateDataForApp(p.config, projectlayout.NormalizeApp(app))
+	data := p.workspace.templateDataForApp(p.config, projectlayout.NormalizeApp(app))
 	for _, mapping := range mappings {
-		if _, err := os.Stat(mapping.dest); err == nil {
+		exists, err := p.workspace.exists(mapping.dest)
+		if err != nil {
+			return err
+		}
+		if exists {
 			p.stats.recordSkipped(mapping.dest)
 			continue
 		}

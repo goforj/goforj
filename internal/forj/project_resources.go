@@ -100,7 +100,8 @@ func (p *ProjectRenderer) publishPendingResourceEnvironment() error {
 	if !p.resources.pendingEnvironmentWrite {
 		return nil
 	}
-	if err := p.writeEnvironmentFile(".env", p.resources.pendingEnvironment, 0o644); err != nil {
+	err := p.writeEnvironmentFile(p.workspace.path(".env"), p.resources.pendingEnvironment, 0o644)
+	if err := p.workspace.logicalError(err); err != nil {
 		return fmt.Errorf("write resource environment: %w", err)
 	}
 	p.resources.pendingEnvironment = nil
@@ -114,11 +115,11 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	const examplePath = ".env.example"
 	path := ownerPath
 	ownerExists := true
-	source, err := os.ReadFile(path)
+	source, err := p.workspace.readFile(path)
 	if os.IsNotExist(err) {
 		path = examplePath
 		ownerExists = false
-		source, err = os.ReadFile(path)
+		source, err = p.workspace.readFile(path)
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -131,7 +132,7 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		return nil
 	}
 	_, profilesSet := envAssignment(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
-	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile("docker-compose.yml")
+	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile(p.workspace.path("docker-compose.yml"))
 	if legacyLocalRedis {
 		p.resources.serviceIntent = p.resources.serviceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 		if ownerExists {
@@ -145,7 +146,10 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	projectComponents := p.projectRenderComponents()
 	if !projectComponents.Cache {
 		var removedCacheEnvironment bool
-		source, removedCacheEnvironment = removeDisabledCacheEnvironment(source, p.config)
+		source, removedCacheEnvironment = removeDisabledCacheEnvironment(
+			source,
+			projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+		)
 		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || removedCacheEnvironment
 	}
 	updated, effective, changed, err := reconcileResourceEnvironment(
@@ -324,7 +328,7 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 }
 
 // removeDisabledCacheEnvironment prunes only framework-owned Cache assignments after the project envelope disables Cache.
-func removeDisabledCacheEnvironment(source []byte, config *project.Config) ([]byte, bool) {
+func removeDisabledCacheEnvironment(source []byte, runtimeApps []project.App) ([]byte, bool) {
 	keys := map[string]struct{}{
 		"METRICS_CACHE_ENABLED":        {},
 		"CACHE_DRIVER":                 {},
@@ -337,12 +341,10 @@ func removeDisabledCacheEnvironment(source []byte, config *project.Config) ([]by
 		"CACHE_INSPECTS_DRIVER":        {},
 		"CACHE_LIGHTHOUSE_DRIVER":      {},
 	}
-	if config != nil {
-		for _, app := range projectlayout.RuntimeApps(".", config) {
-			prefix := project.AppEnvironmentPrefix(app.Name)
-			if prefix != "" {
-				keys[prefix+"_CACHE_DRIVER"] = struct{}{}
-			}
+	for _, app := range runtimeApps {
+		prefix := project.AppEnvironmentPrefix(app.Name)
+		if prefix != "" {
+			keys[prefix+"_CACHE_DRIVER"] = struct{}{}
 		}
 	}
 

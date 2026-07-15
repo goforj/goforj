@@ -15,7 +15,7 @@ func TestValidateCacheRenderTransitionRejectsUnmarkedCleanupArtifact(t *testing.
 	path := filepath.Join("internal", "cmd", "cache_shell_cmd.go")
 	writeCacheCleanupFixture(t, path, "package cmd\n\nfunc customCacheCommand() {}\n")
 
-	err := validateCacheRenderTransition(project.Components{})
+	err := currentProjectRenderWorkspace(t).validateCacheRenderTransition(project.Components{})
 	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "ownership marker") {
 		t.Fatalf("validate Cache transition error = %v, want ownership error for %s", err, path)
 	}
@@ -36,7 +36,7 @@ func TestCleanupDisabledCacheGeneratedFilesRequiresAndRemovesMarkers(t *testing.
 		writeCacheCleanupFixture(t, artifact.path, artifact.marker+"\n")
 	}
 
-	if err := cleanupDisabledCacheGeneratedFiles(); err != nil {
+	if err := currentProjectRenderWorkspace(t).cleanupDisabledCacheGeneratedFiles(); err != nil {
 		t.Fatalf("clean marked Cache artifacts: %v", err)
 	}
 	for _, artifact := range artifacts {

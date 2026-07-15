@@ -835,7 +835,10 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 // TestSwaggerTemplatesRenderPinnedAndAppScoped guards the generated UI and serving contract at the renderer boundary.
 func TestSwaggerTemplatesRenderPinnedAndAppScoped(t *testing.T) {
 	root := t.TempDir()
-	renderer := &ProjectRenderer{stats: &renderStats{}}
+	renderer := &ProjectRenderer{
+		stats:     &renderStats{},
+		workspace: currentProjectRenderWorkspace(t),
+	}
 	config := &project.Config{
 		GoModuleName: "example.com/swaggerfixture",
 		Render: project.RenderConfig{
