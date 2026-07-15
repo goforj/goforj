@@ -1,6 +1,7 @@
 package build
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,4 +42,34 @@ func appPackageFromEntrypoint(entrypoint string) string {
 		return "."
 	}
 	return "./" + strings.TrimPrefix(dir, "./")
+}
+
+// resolveDefaultAppPackage prefers the selected App and treats only absent package directories as a reason to fall back.
+func resolveDefaultAppPackage(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	selected := appPackageFromEntrypoint(ActiveApp().Entrypoint)
+	candidates := make([]string, 0, 2)
+	if selected != "." {
+		candidates = append(candidates, selected)
+	}
+	if selected != "./cmd/app" {
+		candidates = append(candidates, "./cmd/app")
+	}
+	for _, candidate := range candidates {
+		path := filepath.Join(root, strings.TrimPrefix(candidate, "./"))
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("inspect App package %s: %w", path, err)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("inspect App package %s: expected a directory", path)
+		}
+		return candidate, nil
+	}
+	return ".", nil
 }

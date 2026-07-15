@@ -56,8 +56,12 @@ func (c *RunCmd) Run() error {
 	c.process = nil
 	c.outputGate = nil
 	c.transientProgress = shouldUseTransientRunProgress(c.Timings)
+	runArgs, err := c.runArgsAt(root)
+	if err != nil {
+		return err
+	}
 	if err := c.pipeline.Run(root, "run", Step{
-		Name: c.launchCommand(c.runArgsAt(root)),
+		Name: c.launchCommand(runArgs),
 		Run:  c.runBinary,
 	}, RunOptions{
 		Timings:                  c.Timings,
@@ -84,7 +88,10 @@ func (c *RunCmd) Run() error {
 
 // runBinary starts the source app process without waiting for it to finish.
 func (c *RunCmd) runBinary(root string) (string, error) {
-	args := c.runArgsAt(root)
+	args, err := c.runArgsAt(root)
+	if err != nil {
+		return "", err
+	}
 	prepared, err := c.preflightBinary(root, args[0])
 	if err != nil {
 		return "", err
@@ -272,16 +279,20 @@ func exitCodeFromError(err error) (int, bool) {
 }
 
 // runArgs returns the selected source package followed by arguments for its compiled app.
-func (c *RunCmd) runArgs() []string {
+func (c *RunCmd) runArgs() ([]string, error) {
 	return c.runArgsAt(c.Root)
 }
 
 // runArgsAt returns App arguments against the validated project root shared by every pipeline step.
-func (c *RunCmd) runArgsAt(root string) []string {
+func (c *RunCmd) runArgsAt(root string) ([]string, error) {
+	packagePath, err := resolveDefaultAppPackage(root)
+	if err != nil {
+		return nil, err
+	}
 	args := make([]string, 0, len(c.Args)+1)
-	args = append(args, defaultRunPackage(root))
+	args = append(args, packagePath)
 	args = append(args, c.Args...)
-	return args
+	return args, nil
 }
 
 // launchCommand formats the command shown in pipeline progress.
@@ -302,23 +313,6 @@ func clearInterruptEcho() {
 	if term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprint(os.Stderr, "\r\x1b[2K")
 	}
-}
-
-// defaultRunPackage keeps `forj run` pointed at the generated app entrypoint when one exists.
-func defaultRunPackage(root string) string {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	target := ActiveApp()
-	if packagePath := appPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
-		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
-			return packagePath
-		}
-	}
-	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
-		return "./cmd/app"
-	}
-	return "."
 }
 
 // firstOutputGate holds app output until transient pipeline progress can be cleared.

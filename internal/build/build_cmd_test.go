@@ -389,7 +389,7 @@ func TestBuildArgsAppendDefaultPackageWhenOnlyFlagsProvided(t *testing.T) {
 		t.Fatalf("mkdir cmd/app: %v", err)
 	}
 	cmd := &Cmd{Root: root, Args: []string{"-o", "./bin/app"}}
-	got := cmd.buildArgs(cmd.Root)
+	got := requireBuildArgs(t, cmd)
 	want := []string{"-o", "./bin/app", "./cmd/app"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("build args = %#v, want %#v", got, want)
@@ -403,7 +403,7 @@ func TestBuildArgsAppendDefaultPackageAfterDoubleDashTags(t *testing.T) {
 		t.Fatalf("create default app target: %v", err)
 	}
 	command := &Cmd{Root: root, Args: []string{"--tags", "dev"}}
-	got := command.buildArgs(command.Root)
+	got := requireBuildArgs(t, command)
 	want := []string{"--tags", "dev", "./cmd/app"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("double-dash tag build args = %v, want %v", got, want)
@@ -456,7 +456,7 @@ func TestBuildArgsUseActiveConventionalTarget(t *testing.T) {
 	t.Setenv("FORJ_APP", "reporting")
 
 	cmd := &Cmd{Root: root}
-	got := cmd.buildArgs(cmd.Root)
+	got := requireBuildArgs(t, cmd)
 	want := []string{"-o", "bin/reporting", "./cmd/reporting"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("build args = %#v, want %#v", got, want)
@@ -659,7 +659,7 @@ func TestBuildProgressReporterNoopsWithoutTTY(t *testing.T) {
 // from generated app source rather than artifact-specific linker values.
 func TestBuildArgsDoNotInjectLaunchState(t *testing.T) {
 	cmd := &Cmd{Root: t.TempDir()}
-	args := cmd.buildArgs(cmd.Root)
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	if strings.Contains(got, "-ldflags") {
 		t.Fatalf("buildArgs() injected launch state: %v", args)
@@ -679,7 +679,7 @@ func TestBuildArgsAddsCompiledEnvDefaultsLdflags(t *testing.T) {
 		EnvDefaults: "FEATURE_A=true,FEATURE_B=false",
 	}
 
-	args := cmd.buildArgs(cmd.Root)
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
 	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64="+wantPayload) {
@@ -700,7 +700,7 @@ func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
 		EnvOverrides: "FEATURE_A=true,FEATURE_B=false",
 	}
 
-	args := cmd.buildArgs(cmd.Root)
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
 	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvOverridesBase64="+wantPayload) {
@@ -722,7 +722,7 @@ func TestBuildArgsMergesCompiledEnvWithExistingLdflags(t *testing.T) {
 		Args:        []string{"-trimpath", "-ldflags", "-s -w", "-o", "./bin/app", "."},
 	}
 
-	args := cmd.buildArgs(cmd.Root)
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true"))
 	want := "-s -w -X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64=" + wantPayload
@@ -751,4 +751,14 @@ func TestValidateCompiledEnvRejectsMalformedEnvOverrides(t *testing.T) {
 	if err := cmd.validateCompiledEnv(cmd.Root); err == nil {
 		t.Fatal("expected malformed env overrides to fail")
 	}
+}
+
+// requireBuildArgs keeps argument-shape assertions focused while still failing on package-probe errors.
+func requireBuildArgs(t *testing.T, command *Cmd) []string {
+	t.Helper()
+	args, err := command.buildArgs(command.Root)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	return args
 }
