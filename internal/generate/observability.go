@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -265,114 +265,24 @@ func discoverObservabilityMetricRoles(projectDir string, config *project.Config)
 
 // discoverObservabilityApps derives app identity from layout conventions so generation does not depend on dev config.
 func discoverObservabilityApps(projectDir string, config *project.Config, activeRoles []metricsTargetRole) ([]observabilityApp, error) {
-	names := map[string]bool{project.DefaultAppName: true}
-	conventionalApps, err := discoverConventionalObservabilityApps(projectDir)
+	discovery, err := projectlayout.Discover(projectDir)
 	if err != nil {
-		return nil, err
-	}
-	for _, app := range conventionalApps {
-		names[app.Name] = true
+		return nil, fmt.Errorf("discover observability apps: %w", err)
 	}
 
-	orderedNames := make([]string, 0, len(names))
-	for name := range names {
-		if name != project.DefaultAppName {
-			orderedNames = append(orderedNames, name)
-		}
-	}
-	sort.Strings(orderedNames)
-	orderedNames = append([]string{project.DefaultAppName}, orderedNames...)
-
-	apps := make([]observabilityApp, 0, len(orderedNames))
-	for index, name := range orderedNames {
+	conventionalApps := discovery.ConventionalApps()
+	apps := make([]observabilityApp, 0, len(conventionalApps))
+	for index, app := range conventionalApps {
 		apps = append(apps, observabilityApp{
-			Name:        name,
+			Name:        app.Name,
 			Index:       index,
-			EnvPrefix:   project.AppEnvironmentPrefix(name),
+			EnvPrefix:   project.AppEnvironmentPrefix(app.Name),
 			HTTPPort:    3000 + index,
 			RuntimeBase: 10000 + index*10,
-			Components:  observabilityAppComponents(config, name, activeRoles),
+			Components:  observabilityAppComponents(config, app.Name, activeRoles),
 		})
 	}
 	return apps, nil
-}
-
-// discoverConventionalObservabilityApps treats cmd/<app> and app/<app> as app ownership markers.
-func discoverConventionalObservabilityApps(projectDir string) ([]project.App, error) {
-	names := make(map[string]bool)
-	cmdDir := filepath.Join(projectDir, "cmd")
-	entries, err := os.ReadDir(cmdDir)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("discover observability apps in %s: %w", cmdDir, err)
-	}
-	if err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if name == project.DefaultAppName || !project.IsSafeAppName(name) {
-				continue
-			}
-			marker := filepath.Join(projectDir, "cmd", name, "main.go")
-			if _, err := os.Stat(marker); err == nil {
-				names[name] = true
-			} else if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("inspect observability app marker %s: %w", marker, err)
-			}
-		}
-	}
-	appRoot := filepath.Join(projectDir, "app")
-	entries, err = os.ReadDir(appRoot)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("discover observability apps in %s: %w", appRoot, err)
-	}
-	if err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
-				continue
-			}
-			hasFiles, err := hasConventionalObservabilityAppFiles(filepath.Join(projectDir, "app", name))
-			if err != nil {
-				return nil, err
-			}
-			if hasFiles {
-				names[name] = true
-			}
-		}
-	}
-
-	apps := make([]project.App, 0, len(names))
-	for name := range names {
-		apps = append(apps, project.DefaultNamedApp(name))
-	}
-	sort.Slice(apps, func(i, j int) bool {
-		return apps[i].Name < apps[j].Name
-	})
-	return apps, nil
-}
-
-// hasConventionalObservabilityAppFiles avoids treating arbitrary app subpackages as apps.
-func hasConventionalObservabilityAppFiles(appDir string) (bool, error) {
-	for _, path := range []string{
-		filepath.Join(appDir, "wire"),
-		filepath.Join(appDir, "commands.go"),
-		filepath.Join(appDir, "root_cmd.go"),
-		filepath.Join(appDir, "routes.go"),
-		filepath.Join(appDir, "schedules.go"),
-		filepath.Join(appDir, "lifecycle.go"),
-	} {
-		if _, err := os.Stat(path); err == nil {
-			return true, nil
-		} else if !os.IsNotExist(err) {
-			return false, fmt.Errorf("inspect observability app marker %s: %w", path, err)
-		}
-	}
-	return false, nil
 }
 
 // loadObservabilityProjectConfig allows convention-only legacy projects while rejecting unreadable or malformed configuration.
