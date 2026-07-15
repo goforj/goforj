@@ -273,7 +273,7 @@ func (cmd *TestIntegrationCmd) writeRenderedIntegrationConfig(dir, variant strin
 	if spec.applyConfig != nil {
 		spec.applyConfig(&cfg.Render.Components)
 	}
-	return WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg)
+	return testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg)
 }
 
 // renderedIntegrationSteps maps a user target to deterministic generated-package test commands.

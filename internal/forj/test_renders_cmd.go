@@ -17,7 +17,6 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
 )
 
@@ -807,7 +806,7 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 	ymlPath := filepath.Join(worker.workspaceRoot, ".goforj.yml")
 
 	if err := timer.Track("write_yaml", func() error {
-		return WriteYAML(ymlPath, cfg)
+		return testkit.WriteProjectConfig(ymlPath, cfg)
 	}); err != nil {
 		return newRenderComboFailure("failed to write config", comboID, &cfg, err)
 	}
@@ -980,20 +979,6 @@ func runRenderedGoTests(dir, modCache, buildCache string) error {
 		console.Infof("go test packages: ./...")
 	}
 	return nil
-}
-
-// WriteYAML writes a project config while preserving raw component selections.
-func WriteYAML(path string, cfg project.Config) error {
-	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
-	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
-	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
-		cfg.Render.GoForjVersion = version.Semver()
-	}
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
 }
 
 // newRenderComboFailure packages a worker failure without reporting it concurrently with other combinations.

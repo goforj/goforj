@@ -60,33 +60,3 @@ func TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t
 		t.Fatalf("named App primitive opt-outs changed after reload: %#v", worker)
 	}
 }
-
-// TestWriteYAMLPersistsCurrentComponentContractForPrimitiveOptOuts verifies generated test projects exercise the requested component shape.
-func TestWriteYAMLPersistsCurrentComponentContractForPrimitiveOptOuts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".goforj.yml")
-	config := project.Config{
-		ProjectName: "Lean Render",
-		Render: project.RenderConfig{
-			Components: project.Components{CLI: true},
-		},
-	}
-
-	if err := WriteYAML(path, config); err != nil {
-		t.Fatalf("write test render config: %v", err)
-	}
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read test render config: %v", err)
-	}
-	if !strings.Contains(string(source), "component_contract: 1") {
-		t.Fatalf("test render config omitted the component contract marker:\n%s", source)
-	}
-
-	var loaded project.Config
-	if err := yaml.Unmarshal(source, &loaded); err != nil {
-		t.Fatalf("reload test render config: %v", err)
-	}
-	if loaded.Render.Components.Cache || loaded.Render.Components.Events || loaded.Render.Components.Storage {
-		t.Fatalf("test render primitive opt-outs changed after reload: %#v", loaded.Render.Components)
-	}
-}

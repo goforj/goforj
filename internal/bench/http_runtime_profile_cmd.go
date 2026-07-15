@@ -82,7 +82,7 @@ func (cmd *HTTPRuntimeProfileCmd) Run() error {
 		},
 	}
 
-	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
