@@ -14,7 +14,7 @@ import (
 
 func TestRunCmdRunArgsDefaultsToCurrentPackage(t *testing.T) {
 	cmd := &RunCmd{}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"."}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"."}) {
 		t.Fatalf("expected default run args to target current package, got %#v", got)
 	}
 }
@@ -191,7 +191,7 @@ func TestRunCmdRunArgsDefaultsToCmdAppWhenPresent(t *testing.T) {
 		t.Fatalf("mkdir cmd/app: %v", err)
 	}
 	cmd := &RunCmd{Root: root}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/app"}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"./cmd/app"}) {
 		t.Fatalf("expected default run args to target cmd/app, got %#v", got)
 	}
 }
@@ -204,7 +204,7 @@ func TestRunCmdRunArgsUseActiveConventionalTarget(t *testing.T) {
 	t.Setenv("FORJ_APP", "reporting")
 
 	cmd := &RunCmd{Root: root}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {
 		t.Fatalf("expected run args to target cmd/reporting, got %#v", got)
 	}
 }
@@ -215,7 +215,7 @@ func TestRunCmdRunArgsPassesAppArgsAfterCurrentPackage(t *testing.T) {
 		t.Fatalf("mkdir cmd/app: %v", err)
 	}
 	cmd := &RunCmd{Root: root, Args: []string{"run", "--port", "4000"}}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/app", "run", "--port", "4000"}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"./cmd/app", "run", "--port", "4000"}) {
 		t.Fatalf("expected app args after cmd/app package, got %#v", got)
 	}
 }
@@ -346,4 +346,14 @@ func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
 	if !ok || gotCode != 7 {
 		t.Fatalf("ChildExitCode() = %d, %v; want 7, true", gotCode, ok)
 	}
+}
+
+// requireRunArgs keeps argument-shape assertions focused while still failing on package-probe errors.
+func requireRunArgs(t *testing.T, command *RunCmd) []string {
+	t.Helper()
+	args, err := command.runArgs()
+	if err != nil {
+		t.Fatalf("run args: %v", err)
+	}
+	return args
 }

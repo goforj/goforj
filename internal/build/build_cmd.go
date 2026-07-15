@@ -75,7 +75,10 @@ func (c *Cmd) Run() error {
 
 // buildBinary compiles and publishes the selected App beneath the pipeline's validated project root.
 func (c *Cmd) buildBinary(root string) (string, error) {
-	args := c.buildArgs(root)
+	args, err := c.buildArgs(root)
+	if err != nil {
+		return "", err
+	}
 	if outIndex := outputArgIndex(args); outIndex >= 0 {
 		if err := os.MkdirAll(rootedBuildPath(root, filepath.Dir(outputPath(args[outIndex]))), 0o755); err != nil {
 			return "", err
@@ -98,8 +101,8 @@ func rootedBuildPath(root string, path string) string {
 	return filepath.Join(root, path)
 }
 
-// buildArgs preserves caller-supplied Go build flags while injecting App environment metadata only when that metadata is configured.
-func (c *Cmd) buildArgs(root string) []string {
+// buildArgs preserves caller-supplied Go build flags while resolving the default App package and configured environment metadata.
+func (c *Cmd) buildArgs(root string) ([]string, error) {
 	envDefaultsEncoded := c.encodedEnvDefaults()
 	envOverridesEncoded := c.encodedEnvOverrides()
 	modulePath := ""
@@ -119,16 +122,24 @@ func (c *Cmd) buildArgs(root string) []string {
 		if len(extraLdflags) > 0 {
 			args = append(args, "-ldflags", strings.Join(extraLdflags, " "))
 		}
-		return append(args, defaultBuildPackage(root))
+		packagePath, err := resolveDefaultAppPackage(root)
+		if err != nil {
+			return nil, err
+		}
+		return append(args, packagePath), nil
 	}
 	args := append([]string{}, c.Args...)
 	if !hasGoBuildPackageArg(args) {
-		args = append(args, defaultBuildPackage(root))
+		packagePath, err := resolveDefaultAppPackage(root)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, packagePath)
 	}
 	if len(extraLdflags) == 0 {
-		return args
+		return args, nil
 	}
-	return c.withExtraLdflags(args, extraLdflags...)
+	return c.withExtraLdflags(args, extraLdflags...), nil
 }
 
 // hasGoBuildPackageArg reports whether pass-through go build args already name the package to build.
@@ -163,23 +174,6 @@ func hasGoBuildPackageArg(args []string) bool {
 		return true
 	}
 	return false
-}
-
-// defaultBuildPackage keeps generated projects building the real app entrypoint instead of the framework root.
-func defaultBuildPackage(root string) string {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	target := ActiveApp()
-	if packagePath := appPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
-		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
-			return packagePath
-		}
-	}
-	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
-		return "./cmd/app"
-	}
-	return "."
 }
 
 func outputArgIndex(args []string) int {
