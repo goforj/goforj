@@ -10,8 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts verifies renderer-owned saves cannot reinterpret omissions as legacy defaults.
-func TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t *testing.T) {
+// TestWriteProjectConfigUsesSequenceSemanticsForPrimitiveOptOuts verifies renderer-owned saves retain omissions without a version marker.
+func TestWriteProjectConfigUsesSequenceSemanticsForPrimitiveOptOuts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".goforj.yml")
 	config := &project.Config{
 		ProjectName: "Explicit Opt Outs",
@@ -31,16 +31,15 @@ func TestWriteProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t
 	if err := writeProjectConfig(path, config); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
-	if config.Render.ComponentContractVersion != project.CurrentComponentContractVersion {
-		t.Fatalf("written component contract = %d, want %d", config.Render.ComponentContractVersion, project.CurrentComponentContractVersion)
-	}
-
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read project config: %v", err)
 	}
-	if !strings.Contains(string(source), "component_contract: 1") {
-		t.Fatalf("project config omitted the component contract marker:\n%s", source)
+	if strings.Contains(string(source), "component_contract:") {
+		t.Fatalf("project config persisted the obsolete component marker:\n%s", source)
+	}
+	if strings.Count(string(source), "components: [cli]") != 2 {
+		t.Fatalf("project config omitted canonical component sequences:\n%s", source)
 	}
 	for _, expected := range []string{"future_project:", "future_runtime: canary", "future_routes:"} {
 		if !strings.Contains(string(source), expected) {

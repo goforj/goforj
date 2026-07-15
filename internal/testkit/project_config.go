@@ -12,7 +12,6 @@ import (
 // WriteProjectConfig writes a test project config while preserving raw component selections.
 func WriteProjectConfig(path string, config project.Config) error {
 	config.Render.StarterKit = project.NormalizeStarterKit(config.Render.StarterKit)
-	config.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	if strings.TrimSpace(config.Render.GoForjVersion) == "" {
 		config.Render.GoForjVersion = version.Semver()
 	}

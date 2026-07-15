@@ -106,8 +106,7 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 		ProjectName:  "Cache Removal",
 		GoModuleName: "example.test/cache-removal",
 		Render: project.RenderConfig{
-			Components:               project.Components{CLI: true},
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: project.Components{CLI: true},
 		},
 		Apps: map[string]project.AppConfig{
 			app.Name: {Components: project.Components{CLI: true, Cache: true}},

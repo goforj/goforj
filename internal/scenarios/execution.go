@@ -135,15 +135,14 @@ func (execution scenarioExecution) applyDependencies(spec ScenarioSpec) error {
 	return nil
 }
 
-// writeScenarioProjectConfig marks scenario selections as current so intentionally absent primitives stay disabled.
+// writeScenarioProjectConfig relies on the canonical component sequence so intentionally absent primitives stay disabled.
 func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
 	config := project.Config{
 		ProjectName:  spec.Title,
 		GoModuleName: spec.App.ModuleName,
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
 		Render: project.RenderConfig{
-			Components:               spec.App.Components,
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: spec.App.Components,
 		},
 		Dev: project.DevConfig{
 			Pre:               []project.DevTask{},

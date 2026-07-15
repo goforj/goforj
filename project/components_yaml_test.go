@@ -66,11 +66,13 @@ apps:
 	for _, expected := range []string{
 		"components: [cli, auth, web_api, cache, events, storage]",
 		"components: [cli, cache, events, storage, jobs]",
-		"component_contract: 1",
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("migrated YAML omitted %q:\n%s", expected, encoded)
 		}
+	}
+	if strings.Contains(string(encoded), "component_contract:") {
+		t.Fatalf("migrated YAML retained the obsolete component marker:\n%s", encoded)
 	}
 
 	var roundTripped Config
@@ -145,11 +147,18 @@ apps:
 			name: "canonical sequences",
 			input: `render:
   components: [cli]
-  component_contract: 1
 apps:
   api:
     components: [web_api]
 `,
+		},
+		{
+			name: "obsolete marker",
+			input: `render:
+  components: [cli]
+  component_contract: 1
+`,
+			want: true,
 		},
 	}
 
@@ -166,11 +175,52 @@ apps:
 	}
 }
 
+// TestModernRenderSequenceKeepsAppMappingOmissionsDisabled verifies the project-level sequence governs semantics while App mappings are canonicalized.
+func TestModernRenderSequenceKeepsAppMappingOmissionsDisabled(t *testing.T) {
+	input := `render:
+  components: [cli]
+apps:
+  worker:
+    components:
+      cli: true
+      jobs: true
+`
+	var config Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal mixed component shapes: %v", err)
+	}
+	if !config.NeedsComponentMigration() {
+		t.Fatal("App component mapping did not request canonical rewrite")
+	}
+	for scope, components := range map[string]Components{
+		"default App": config.Render.Components,
+		"worker App":  config.Apps["worker"].Components,
+	} {
+		if components.Cache || components.Events || components.Storage {
+			t.Fatalf("%s modern omissions were widened: %#v", scope, components)
+		}
+	}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal mixed component shapes: %v", err)
+	}
+	if strings.Contains(string(encoded), "component_contract:") || !strings.Contains(string(encoded), "components: [cli, jobs]") {
+		t.Fatalf("mixed component shapes did not canonicalize without a marker:\n%s", encoded)
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("reload canonical component shapes: %v", err)
+	}
+	if roundTripped.NeedsComponentMigration() || roundTripped.Render.Components != config.Render.Components || roundTripped.Apps["worker"].Components != config.Apps["worker"].Components {
+		t.Fatalf("canonical rewrite changed mixed component semantics: %#v", roundTripped)
+	}
+}
+
 // TestComponentsYAMLSequenceRoundTripUsesCanonicalOrder verifies user ordering never destabilizes generated configuration.
 func TestComponentsYAMLSequenceRoundTripUsesCanonicalOrder(t *testing.T) {
 	input := `render:
   components: [jobs, web_api, demo_app, cli, docker, mail]
-  component_contract: 1
 `
 
 	var config Config
@@ -225,7 +275,6 @@ func TestComponentsYAMLLongSequenceUsesReadableBlockStyle(t *testing.T) {
 func TestComponentsYAMLPreservesEmptySequence(t *testing.T) {
 	input := `render:
   components: []
-  component_contract: 1
 apps:
   ship:
     components: []
@@ -297,10 +346,12 @@ func TestComponentsJSONRemainsBooleanObject(t *testing.T) {
 	}
 }
 
-// TestLegacyComponentContractEnablesPrimitiveCapabilitiesEverywhere verifies versionless configs preserve their previous generated App surface.
-func TestLegacyComponentContractEnablesPrimitiveCapabilitiesEverywhere(t *testing.T) {
+// TestLegacyComponentMappingEnablesPrimitiveCapabilitiesEverywhere verifies historical mappings preserve their previous generated App surface.
+func TestLegacyComponentMappingEnablesPrimitiveCapabilitiesEverywhere(t *testing.T) {
 	input := `render:
-  components: [cli, jobs]
+  components:
+    cli: true
+    jobs: true
 apps:
   api:
     components: [cli, web_api]
@@ -314,7 +365,7 @@ apps:
 		t.Fatalf("unmarshal versionless component config: %v", err)
 	}
 	if !config.NeedsComponentMigration() {
-		t.Fatal("versionless component contract was not marked for migration")
+		t.Fatal("legacy component mapping was not marked for migration")
 	}
 	if config.Render.ComponentContractVersion != CurrentComponentContractVersion {
 		t.Fatalf("component contract version = %d, want %d", config.Render.ComponentContractVersion, CurrentComponentContractVersion)
@@ -341,7 +392,10 @@ apps:
 		t.Fatalf("unmarshal migrated component contract: %v", err)
 	}
 	if roundTripped.NeedsComponentMigration() {
-		t.Fatal("current component contract requested a second migration")
+		t.Fatal("canonical component sequence requested a second migration")
+	}
+	if strings.Contains(string(encoded), "component_contract:") {
+		t.Fatalf("migrated component mapping retained the obsolete marker:\n%s", encoded)
 	}
 	if roundTripped.Render.Components != config.Render.Components ||
 		roundTripped.Apps["api"].Components != config.Apps["api"].Components ||
@@ -350,8 +404,8 @@ apps:
 	}
 }
 
-// TestLegacyComponentContractPreservesExtensionSettings verifies migration does not erase fields owned by newer GoForj versions or extensions.
-func TestLegacyComponentContractPreservesExtensionSettings(t *testing.T) {
+// TestLegacyComponentMappingPreservesExtensionSettings verifies migration does not erase fields owned by newer GoForj versions or extensions.
+func TestLegacyComponentMappingPreservesExtensionSettings(t *testing.T) {
 	input := `future_project:
   enabled: true
 dev:
@@ -375,7 +429,8 @@ dev:
           path: frontend
           future_spa: retained
 render:
-  components: [cli]
+  components:
+    cli: true
   future_runtime: canary
 apps:
   api:
@@ -402,11 +457,13 @@ apps:
 		"future_runtime: canary",
 		"future_routes:",
 		"- audit",
-		"component_contract: 1",
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("migrated config omitted extension %q:\n%s", expected, encoded)
 		}
+	}
+	if strings.Contains(string(encoded), "component_contract:") {
+		t.Fatalf("migrated config retained the obsolete component marker:\n%s", encoded)
 	}
 
 	var roundTripped Config
@@ -426,8 +483,8 @@ apps:
 	}
 }
 
-// TestCurrentComponentContractPreservesPrimitiveDeselection verifies omission gains disabled meaning only after the schema marker exists.
-func TestCurrentComponentContractPreservesPrimitiveDeselection(t *testing.T) {
+// TestMarkerBearingComponentSequencePreservesPrimitiveDeselection verifies old current-contract configs migrate without widening selections.
+func TestMarkerBearingComponentSequencePreservesPrimitiveDeselection(t *testing.T) {
 	input := `render:
   components: [cli]
   component_contract: 1
@@ -439,8 +496,8 @@ apps:
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
 		t.Fatalf("unmarshal current component config: %v", err)
 	}
-	if config.NeedsComponentMigration() {
-		t.Fatal("current component contract requested migration")
+	if !config.NeedsComponentMigration() {
+		t.Fatal("obsolete component marker did not request canonical rewrite")
 	}
 	for scope, components := range map[string]Components{
 		"default App": config.Render.Components,
@@ -452,6 +509,20 @@ apps:
 	}
 	if config.Render.Components.Jobs || !config.Apps["worker"].Components.Jobs {
 		t.Fatalf("Jobs selection changed under current contract: %#v", config)
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal marker-bearing config: %v", err)
+	}
+	if strings.Contains(string(encoded), "component_contract:") {
+		t.Fatalf("canonical config retained the obsolete component marker:\n%s", encoded)
+	}
+	var roundTripped Config
+	if err := yaml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("reload canonical config: %v", err)
+	}
+	if roundTripped.NeedsComponentMigration() || roundTripped.Render.Components != config.Render.Components || roundTripped.Apps["worker"].Components != config.Apps["worker"].Components {
+		t.Fatalf("marker cleanup changed component semantics: %#v", roundTripped)
 	}
 }
 

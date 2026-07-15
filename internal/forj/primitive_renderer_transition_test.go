@@ -293,11 +293,10 @@ func primitiveComponentsWith(keys ...project.ComponentKey) project.Components {
 	return components
 }
 
-// primitiveRendererConfig creates an explicit-contract fixture so omissions remain disabled.
+// primitiveRendererConfig creates a canonical selection fixture so omissions remain disabled.
 func primitiveRendererConfig(components project.Components) *project.Config {
 	return &project.Config{Render: project.RenderConfig{
-		Components:               components,
-		ComponentContractVersion: project.CurrentComponentContractVersion,
+		Components: components,
 	}}
 }
 

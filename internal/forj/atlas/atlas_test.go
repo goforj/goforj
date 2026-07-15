@@ -200,11 +200,7 @@ func TestInventoryIgnoresStaleDisabledEventBuses(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
-    cache: false
-    events: false
+  components: [cli]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "CACHE_SESSIONS_DRIVER=redis\nEVENTS_AUDIT_DRIVER=redis\n")
 
@@ -224,15 +220,10 @@ func TestInventoryUsesNamedAppEventsEnvelope(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
+  components: [cli]
 apps:
   events-worker:
-    components:
-      cli: true
-      cache: true
-      events: true
+    components: [cli, cache, events]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "CACHE_REPORTS_DRIVER=memory\nEVENTS_AUDIT_DRIVER=inproc\n")
 
@@ -252,10 +243,7 @@ func TestInventoryIgnoresStaleDisabledStorageDisks(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
-    storage: false
+  components: [cli]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=s3\n")
 
@@ -275,14 +263,10 @@ func TestInventoryUsesNamedAppStorageEnvelope(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
+  components: [cli]
 apps:
   files:
-    components:
-      cli: true
-      storage: true
+    components: [cli, storage]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=local\n")
 
@@ -302,10 +286,7 @@ func TestInventoryIgnoresStaleDisabledQueues(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
-    jobs: false
+  components: [cli]
 `)
 	writeFile(t, filepath.Join(root, ".env"), `
 QUEUE_DRIVER=redis
@@ -331,18 +312,12 @@ func TestInventoryKeepsNamedAppQueuesLocal(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
+  components: [cli]
 apps:
   api:
-    components:
-      cli: true
-      web_api: true
+    components: [cli, web_api]
   worker:
-    components:
-      cli: true
-      jobs: true
+    components: [cli, jobs]
 `)
 	writeFile(t, filepath.Join(root, ".env"), `
 QUEUE_DRIVER=workerpool

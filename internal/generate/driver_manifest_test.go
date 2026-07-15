@@ -414,18 +414,12 @@ func TestGenerateStorageFilesIgnoresDisabledAppOverlays(t *testing.T) {
 	config := `project_name: Storage overlays
 module_name: example.com/storage-overlays
 render:
-  component_contract: 1
-  components:
-    cli: true
-    storage: true
+  components: [cli, storage]
 apps:
   api:
-    components:
-      cli: true
+    components: [cli]
   files:
-    components:
-      cli: true
-      storage: true
+    components: [cli, storage]
 `
 	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)

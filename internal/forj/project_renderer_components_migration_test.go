@@ -62,17 +62,18 @@ render:
 	}
 }
 
-// TestSyncProjectConfigForRenderMigratesLegacyComponentMappings verifies that
-// full-render config sync recognizes both project and per-App legacy shapes.
-func TestSyncProjectConfigForRenderMigratesLegacyComponentMappings(t *testing.T) {
+// TestSyncProjectConfigForRenderCanonicalizesComponentMappings verifies that full-render sync preserves the semantics selected by the render shape.
+func TestSyncProjectConfigForRenderCanonicalizesComponentMappings(t *testing.T) {
 	tests := []struct {
 		name           string
 		source         string
 		wantRenderLine string
+		wantAppLine    string
 	}{
 		{
 			name:           "render components",
 			wantRenderLine: "components: [cli, auth, web_api, database_sqlite, cache, events, storage]",
+			wantAppLine:    "components: [cli, cache, events, storage, jobs]",
 			source: `project_name: Component Migration
 module_name: example.com/component-migration
 updated_at: "2026-07-14 00:00:00 UTC"
@@ -101,7 +102,8 @@ apps:
 		},
 		{
 			name:           "App components",
-			wantRenderLine: "components: [cli, web_api, cache, events, storage]",
+			wantRenderLine: "components: [cli, web_api]",
+			wantAppLine:    "components: [cli, jobs]",
 			source: `project_name: Component Migration
 module_name: example.com/component-migration
 updated_at: "2026-07-14 00:00:00 UTC"
@@ -165,12 +167,14 @@ apps:
 			text := string(migrated)
 			for _, want := range []string{
 				test.wantRenderLine,
-				"components: [cli, cache, events, storage, jobs]",
-				"component_contract: 1",
+				test.wantAppLine,
 			} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("migrated config missing %q:\n%s", want, text)
 				}
+			}
+			if strings.Contains(text, "component_contract:") {
+				t.Fatalf("migrated config retained the obsolete component marker:\n%s", text)
 			}
 			if strings.Count(text, "components: [") != 2 {
 				t.Fatalf("component selections were not normalized to one-line arrays:\n%s", text)
