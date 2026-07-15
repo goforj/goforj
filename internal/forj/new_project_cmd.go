@@ -60,15 +60,11 @@ var (
 	mutedText             = lipgloss.Color("#8b93a1") // gray
 	accentColor           = lipgloss.Color("#8C97E6") // soft blue-violet
 	errorColor            = lipgloss.Color("#c97b7b") // muted red
-	ruleColor             = lipgloss.Color("#1f2937")
 	normalStyle           = lipgloss.NewStyle().Foreground(primaryText)
 	successStyle          = lipgloss.NewStyle().Foreground(primaryText)
 	titleStyle            = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
 	subtitleStyle         = lipgloss.NewStyle().Foreground(mutedText).Italic(true)
 	helpStyle             = lipgloss.NewStyle().Foreground(mutedText)
-	ruleStyle             = lipgloss.NewStyle().Foreground(ruleColor)
-	sectionLabelStyle     = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
-	headerLabelStyle      = lipgloss.NewStyle().Foreground(primaryText)
 	progressDoneMark      = lipgloss.NewStyle().Foreground(accentColor)
 	progressDoneLabel     = lipgloss.NewStyle().Foreground(mutedText)
 	progressCurrentStyle  = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
@@ -391,11 +387,6 @@ func (m *model) finalizeConfig() error {
 // build lifecycle is not owned by a known GoForj starter kit.
 func frontendNPMWatch(frontendDir string) string {
 	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir node_modules -xdir dist"
-}
-
-// initialModel builds the default wizard state used by tests and the plain interactive command.
-func initialModel() model {
-	return initialModelWithOptions(newProjectModelOptions{})
 }
 
 // initialModelWithOptions builds wizard state for command-line flags that need to affect validation.
@@ -1779,30 +1770,6 @@ func (m model) selectedAtlasSurfaceNames() []string {
 	return names
 }
 
-func (m model) renderSummary() string {
-	project := m.config.ProjectName
-	if project == "" {
-		project = "<not set>"
-	}
-
-	module := m.config.GoModuleName
-	if module == "" {
-		module = "<not set>"
-	}
-
-	components := m.selectedComponentNames()
-	if len(components) == 0 {
-		components = []string{"CLI"}
-	}
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Project"), normalStyle.Render(project)),
-		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Module"), normalStyle.Render(module)),
-		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Components"), normalStyle.Render(strings.Join(components, ", "))),
-	)
-}
-
 // selectedComponentNames reports effective render choices so temporary Demo constraints are described truthfully.
 func (m model) selectedComponentNames() []string {
 	components := m.config.Render.Components
@@ -1829,35 +1796,6 @@ func renderInputLine(input textinput.Model) string {
 	return view + padding
 }
 
-func wrapText(text string, width int) []string {
-	if width <= 0 {
-		return []string{text}
-	}
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return nil
-	}
-
-	var lines []string
-	var current string
-	for _, word := range words {
-		if current == "" {
-			current = word
-			continue
-		}
-		if lipgloss.Width(current)+1+lipgloss.Width(word) <= width {
-			current += " " + word
-			continue
-		}
-		lines = append(lines, current)
-		current = word
-	}
-	if current != "" {
-		lines = append(lines, current)
-	}
-	return lines
-}
-
 func indentBlock(content string, padLeft int) string {
 	if padLeft <= 0 {
 		return content
@@ -1868,30 +1806,6 @@ func indentBlock(content string, padLeft int) string {
 		lines[i] = pad + line
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderSectionHeader(title string, termWidth int) string {
-	label := headerLabelStyle.Render(title)
-	prefix := ruleStyle.Render("─") + " " + label
-	width := lipgloss.Width(prefix)
-	if width < wizardWidth {
-		width = wizardWidth
-	}
-	if termWidth <= 0 {
-		termWidth = wizardWidth
-	}
-	if termWidth < width {
-		width = termWidth
-	}
-	header := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		ruleStyle.Render("─"),
-		" ",
-		label,
-		" ",
-		ruleStyle.Render(strings.Repeat("─", width-lipgloss.Width(prefix)-1)),
-	)
-	return header
 }
 
 type keyValue struct {
@@ -2046,19 +1960,6 @@ func (m model) selectedDatabaseComponentKey() project.ComponentKey {
 	return project.ComponentDatabaseMySQL
 }
 
-// deselectComponent clears a component selection by name.
-func (m *model) deselectComponent(name string) {
-	for idx, listItem := range m.componentList.Items() {
-		item := listItem.(ListItem)
-		if item.Name != name {
-			continue
-		}
-		item.Selected = false
-		m.componentList.SetItem(idx, item)
-		return
-	}
-}
-
 // setComponentSelected updates one concrete wizard component row.
 func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
 	for idx, listItem := range m.componentList.Items() {
@@ -2067,18 +1968,6 @@ func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
 			continue
 		}
 		item.Selected = selected
-		m.componentList.SetItem(idx, item)
-		return
-	}
-}
-
-func (m *model) selectComponent(name string) {
-	for idx, listItem := range m.componentList.Items() {
-		item := listItem.(ListItem)
-		if item.Name != name {
-			continue
-		}
-		item.Selected = true
 		m.componentList.SetItem(idx, item)
 		return
 	}

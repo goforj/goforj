@@ -17,6 +17,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// initialModel keeps default test setup concise without exposing a production-only forwarding helper.
+func initialModel() model {
+	return initialModelWithOptions(newProjectModelOptions{})
+}
+
 func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
 	t.Helper()
 	for idx, item := range m.componentList.Items() {
