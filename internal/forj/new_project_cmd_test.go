@@ -1,11 +1,11 @@
 package forj
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -359,7 +359,7 @@ func TestEnsureNewProjectConfigCanBeWrittenRejectsExistingConfig(t *testing.T) {
 
 // TestNewProjectCreationKeepsWorkInsideTarget verifies project creation does not use process cwd as hidden renderer or command state.
 func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
-	target := t.TempDir()
+	target := filepath.Join(t.TempDir(), "project with spaces")
 	frontendDir := filepath.Join(target, projectlayout.FrontendDir(".", project.DefaultApp()))
 	if err := os.MkdirAll(frontendDir, 0o755); err != nil {
 		t.Fatalf("create target frontend: %v", err)
@@ -428,14 +428,6 @@ fi
 	}
 	t.Setenv("FORJ_NEW_PROJECT_COMMAND_LOG", logPath)
 	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	wireInstallOnce = sync.Once{}
-	wireInstallErr = nil
-	wireBinaryPath = ""
-	t.Cleanup(func() {
-		wireInstallOnce = sync.Once{}
-		wireInstallErr = nil
-		wireBinaryPath = ""
-	})
 	return logPath
 }
 
@@ -446,7 +438,14 @@ func assertNewProjectCommandsRootedAt(t *testing.T, logPath string, target strin
 	if err != nil {
 		t.Fatalf("read command log: %v", err)
 	}
-	directories := strings.Fields(string(data))
+	directories := make([]string, 0)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		directories = append(directories, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read command log lines: %v", err)
+	}
 	if len(directories) == 0 {
 		t.Fatal("project creation did not run any observed commands")
 	}
