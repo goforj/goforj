@@ -65,7 +65,8 @@ func (cmd *LoggerOverheadMeasureCmd) Run() error {
 	if !cmd.Keep {
 		defer os.RemoveAll(dir)
 	}
-	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, testexec.NewGoCaches(modCache, buildCache))
+	caches := testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
 
 	if !cmd.Silent {
 		testkit.PrintSection("Logger Overhead")

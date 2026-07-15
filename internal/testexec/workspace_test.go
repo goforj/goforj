@@ -3,6 +3,7 @@ package testexec_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/internal/logger"
@@ -14,10 +15,12 @@ const (
 	helperDirEnv        = "FORJ_TESTEXEC_EXPECT_DIR"
 	helperModCacheEnv   = "FORJ_TESTEXEC_EXPECT_MOD_CACHE"
 	helperBuildCacheEnv = "FORJ_TESTEXEC_EXPECT_BUILD_CACHE"
+	helperStepEnv       = "FORJ_TESTEXEC_STEP_VALUE"
+	helperExpectedStep  = "FORJ_TESTEXEC_EXPECT_STEP_VALUE"
 )
 
-// TestWorkspaceRunAppliesWorkspacePolicy verifies subprocesses receive the bound directory and Go caches.
-func TestWorkspaceRunAppliesWorkspacePolicy(t *testing.T) {
+// TestWorkspaceExecutionAppliesWorkspacePolicy verifies ordinary and streaming subprocesses share directory and cache isolation.
+func TestWorkspaceExecutionAppliesWorkspacePolicy(t *testing.T) {
 	dir := t.TempDir()
 	modCache := filepath.Join(t.TempDir(), "module")
 	buildCache := filepath.Join(t.TempDir(), "build")
@@ -25,25 +28,43 @@ func TestWorkspaceRunAppliesWorkspacePolicy(t *testing.T) {
 	t.Setenv(helperDirEnv, dir)
 	t.Setenv(helperModCacheEnv, modCache)
 	t.Setenv(helperBuildCacheEnv, buildCache)
-
 	workspace := testexec.NewWorkspace(
 		logger.NewSilentLogger(),
 		true,
 		dir,
-		testexec.NewGoCaches(modCache, buildCache),
+		testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache},
 	)
-	if err := workspace.Run("verify workspace", os.Args[0], "-test.run=^TestWorkspaceHelperProcess$"); err != nil {
+	if err := workspace.Run("verify ordinary workspace", os.Args[0], "-test.run=^TestWorkspaceHelperProcess$"); err != nil {
+		t.Fatalf("run ordinary workspace helper: %v", err)
+	}
+
+	t.Setenv(helperExpectedStep, "step-specific")
+	err := workspace.RunStreaming(testexec.StreamingStep{
+		Name:        "verify workspace",
+		Command:     []string{os.Args[0], "-test.run=^TestWorkspaceHelperProcess$"},
+		Environment: map[string]string{helperStepEnv: "step-specific"},
+	})
+	if err != nil {
 		t.Fatalf("run workspace helper: %v", err)
 	}
 }
 
-// TestWorkspaceRunReturnsCommandFailure verifies a failed subprocess remains visible to its caller.
-func TestWorkspaceRunReturnsCommandFailure(t *testing.T) {
+// TestWorkspaceRunStreamingReturnsCommandFailure verifies streamed failures retain their step and both output streams.
+func TestWorkspaceRunStreamingReturnsCommandFailure(t *testing.T) {
 	t.Setenv(helperModeEnv, "fail")
 	workspace := testexec.NewWorkspace(logger.NewSilentLogger(), true, t.TempDir(), testexec.GoCaches{})
 
-	if err := workspace.Run("failing workspace", os.Args[0], "-test.run=^TestWorkspaceHelperProcess$"); err == nil {
+	err := workspace.RunStreaming(testexec.StreamingStep{
+		Name:    "failing workspace",
+		Command: []string{os.Args[0], "-test.run=^TestWorkspaceHelperProcess$"},
+	})
+	if err == nil {
 		t.Fatal("expected workspace command failure")
+	}
+	for _, expected := range []string{"failing workspace", "helper stdout details", "helper stderr details"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("failure %q does not contain %q", err, expected)
+		}
 	}
 }
 
@@ -53,11 +74,16 @@ func TestWorkspaceHelperProcess(t *testing.T) {
 	case "":
 		return
 	case "fail":
+		_, _ = os.Stdout.WriteString("helper stdout details\n")
+		_, _ = os.Stderr.WriteString("helper stderr details\n")
 		os.Exit(7)
 	case "verify":
 		assertHelperValue(t, "working directory", currentDir(t), os.Getenv(helperDirEnv))
 		assertHelperValue(t, "GOMODCACHE", os.Getenv("GOMODCACHE"), os.Getenv(helperModCacheEnv))
 		assertHelperValue(t, "GOCACHE", os.Getenv("GOCACHE"), os.Getenv(helperBuildCacheEnv))
+		if expected := os.Getenv(helperExpectedStep); expected != "" {
+			assertHelperValue(t, helperStepEnv, os.Getenv(helperStepEnv), expected)
+		}
 	default:
 		t.Fatalf("unknown helper mode %q", os.Getenv(helperModeEnv))
 	}

@@ -37,7 +37,7 @@ func NewTestRenderCmd(logger *logger.AppLogger) *TestRenderCmd {
 // Run executes the render, build, and test steps against a temp project.
 func (cmd *TestRenderCmd) Run() error {
 	modCache, buildCache := testkit.GoCachePaths()
-	caches := testexec.NewGoCaches(modCache, buildCache)
+	caches := testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}
 
 	dir, err := os.MkdirTemp("", "forj_render_")
 	if err != nil {

@@ -88,7 +88,7 @@ func (cmd *HTTPLiveProfileCmd) Run() error {
 	concurrency := liveBenchmarkConcurrency(cmd.Concurrency, 8, 512)
 
 	modCache, buildCache := testkit.GoCachePaths()
-	caches := testexec.NewGoCaches(modCache, buildCache)
+	caches := testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}
 	dir, err := os.MkdirTemp("", "forj_http_live_profile_")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
@@ -269,7 +269,7 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir string, caches teste
 		return err
 	}
 
-	builtForj, err := testkit.BuildForjBinary(caches.ModulePath(), caches.BuildPath())
+	builtForj, err := testkit.BuildForjBinary(caches.ModulePath, caches.BuildPath)
 	if err != nil {
 		return err
 	}
