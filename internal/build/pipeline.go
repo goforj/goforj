@@ -396,32 +396,40 @@ func (p Pipeline) runWireGenerate(root string) (string, error) {
 	return "", nil
 }
 
+// wireCommandResult separates user-facing success status from failure diagnostics captured from the same process.
+type wireCommandResult struct {
+	status string
+	detail string
+}
+
+// runWireCommand retries the one known transient Wire import failure while preserving useful diagnostics.
 func (p Pipeline) runWireCommand(wirePath string, debug bool) (string, error) {
-	status, detail, err := runWireCommandQuiet(wirePath)
+	result, err := runWireCommandQuiet(wirePath)
 	if err == nil {
-		if debug && strings.TrimSpace(status) != "" {
-			fmt.Fprintln(os.Stderr, strings.TrimSpace(status))
+		if debug && strings.TrimSpace(result.status) != "" {
+			fmt.Fprintln(os.Stderr, strings.TrimSpace(result.status))
 		}
-		return status, nil
+		return result.status, nil
 	}
-	if shouldRetryWire(detail) {
-		retryStatus, retryDetail, retryErr := runWireCommandQuiet(wirePath)
+	if shouldRetryWire(result.detail) {
+		retryResult, retryErr := runWireCommandQuiet(wirePath)
 		if retryErr == nil {
-			if retryStatus == "" {
+			if retryResult.status == "" {
 				return "retried", nil
 			}
-			return retryStatus + ", retried", nil
+			return retryResult.status + ", retried", nil
 		}
-		detail = retryDetail
+		result = retryResult
 		err = retryErr
 	}
-	if detail != "" {
-		printBuildFailureDetail(detail)
+	if result.detail != "" {
+		printBuildFailureDetail(result.detail)
 		return "", fmt.Errorf("wire (%s): %w", wirePath, err)
 	}
 	return "", fmt.Errorf("wire (%s): %w", wirePath, err)
 }
 
+// printBuildFailureDetail keeps subprocess diagnostics separate from the pipeline's concise error line.
 func printBuildFailureDetail(detail string) {
 	trimmed := strings.TrimSpace(detail)
 	if trimmed == "" {
@@ -431,7 +439,8 @@ func printBuildFailureDetail(detail string) {
 	fmt.Fprintln(os.Stderr, trimmed)
 }
 
-func runWireCommandQuiet(wirePath string) (string, string, error) {
+// runWireCommandQuiet captures Wire output so the pipeline can decide whether to retry or print it.
+func runWireCommandQuiet(wirePath string) (wireCommandResult, error) {
 	cmd := exec.Command("wire")
 	cmd.Dir = wirePath
 	cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
@@ -448,9 +457,10 @@ func runWireCommandQuiet(wirePath string) (string, string, error) {
 	if err == nil {
 		status = strings.TrimSpace(stdout.String())
 	}
-	return status, detail, err
+	return wireCommandResult{status: status, detail: detail}, err
 }
 
+// shouldRetryWire recognizes the transient import failure that a second incremental Wire pass can resolve.
 func shouldRetryWire(detail string) bool {
 	detail = strings.ToLower(strings.TrimSpace(detail))
 	if detail == "" {
