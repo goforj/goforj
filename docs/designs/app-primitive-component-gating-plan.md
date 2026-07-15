@@ -100,22 +100,26 @@ compatibility behavior.
 
 ## Component Dependencies
 
-The primitive components are otherwise independent. Framework tooling consumes
-them when present but does not force them.
+Component choices describe useful capabilities, not every technically possible
+permutation. Dependencies are resolved automatically and surfaced to users so
+the wizard can offer fewer knobs without hiding why a component is present.
 
 The new dependency rules are:
 
 - Demo App requires Cache, Events, File Storage, and Background Jobs because
   its generated features use all four.
+- Auth requires Web API, Mail, a database, and Cache. OAuth inherits those
+  requirements through Auth.
 - Metrics records only the enabled primitive families.
 - Observability and Grafana project only the enabled metrics and dashboards.
-- Web API, Web UI, Auth, OAuth, Scheduler, CLI, and Database do not inherently
-  require Cache, Events, Storage, or Background Jobs.
-- Auth may use Cache as an optimization when present, but it must retain a
-  database-only render when Cache is absent.
+- Web API, Web UI, Scheduler, CLI, and Database do not inherently require
+  Cache, Events, Storage, or Background Jobs.
 - Background Jobs benchmarks may exercise Cache or Storage when present, but
   benchmark tooling must not turn those optional capabilities into Jobs
   dependencies.
+- Users may remove any primitive that has no selected dependents. Dependency
+  normalization keeps required primitives visibly selected in the same flat
+  component checklist instead of hiding them behind another wizard stage.
 
 Dependency resolution must be identical in project creation, `make:app`, YAML
 loading, generated project configuration, and tests.
@@ -276,10 +280,10 @@ cache state. A future distributed inspection store may have its own explicit
 contract without forcing the App Cache component.
 
 Remove or migrate `CACHE_INSPECTS_DRIVER` once inspection persistence is no
-longer an App cache. Keep `CACHE_LIGHTHOUSE_DRIVER` only when both Cache and
-Background Jobs use it for the queue timeline; Jobs must retain a bounded
-in-memory timeline when Cache is absent. Cache browsing and cache benchmarks
-remain conditional on the App Cache component.
+longer an App cache. Queue history is owned by the Queue implementation and read
+through `queue.Queue.History`; the duplicate Lighthouse cache timeline and its
+`CACHE_LIGHTHOUSE_DRIVER` setting have been removed. Cache browsing and cache
+benchmarks remain conditional on the App Cache component.
 
 ### Background Jobs owns Queue completely
 
@@ -508,17 +512,17 @@ Exit criteria:
 - Gate App cache fields and accessors, providers, warnings, HTTP readiness,
   Lighthouse cache browsing, metrics, dashboards, About, discovery, commands,
   environment, and dependencies.
-- Render Auth repositories with cache optimization only when Cache is present;
-  do not inject a fake or nil required dependency when it is absent.
+- Keep Auth on its single cache-backed repository implementation and make the
+  Auth-to-Cache dependency explicit instead of generating a cache-free fork.
 - Keep Demo settings and other Demo cache usage behind Demo's Cache dependency.
 - Remove the inspection named cache from the App Cache resource catalog once
-  diagnostic storage has moved. Gate the Lighthouse named cache behind both
-  Cache and Background Jobs.
+  diagnostic storage has moved. Background Jobs reads queue history from Queue
+  directly and does not own a Lighthouse named cache.
 
 Exit criteria:
 
 - Cache-disabled Apps retain working Inspects and Lighthouse diagnostics;
-- Auth compiles and functions in its database-only shape;
+- selecting Auth resolves Cache and uses the existing cache-backed repositories;
 - representative Cache-enabled and Cache-disabled projects compile and test;
 - Background Jobs compiles and runs without Cache;
 - disabled output has no App cache API, cache environment, cache command,
@@ -603,7 +607,7 @@ Maintain these explicit profiles:
 | Background Jobs only | Proves Queue and workers do not require Cache, Events, or Storage |
 | Web without primitives | Exercises HTTP, readiness, Inspects, and Lighthouse degradation |
 | Metrics without primitives | Exercises optional imports and collector construction |
-| Auth without Cache | Exercises database-only Auth and the templ-HTMX starter kit |
+| Auth | Proves dependency closure includes Cache and retains one repository path |
 | Demo App | Proves dependency closure restores all required capabilities |
 | Mixed multi-App | Gives different Apps disjoint primitive selections |
 | Legacy project | Proves migration preserves the old always-present surface |
@@ -672,7 +676,8 @@ The goal is complete when all of these are true:
 5. Existing project and named-App configurations migrate without losing their
    previous primitive surface.
 6. Inspects and core Lighthouse diagnostics work without App Cache.
-7. Auth works without Cache, and Jobs works without Cache, Events, or Storage.
+7. Auth transparently requires Cache, while Jobs works without Cache, Events,
+   or Storage.
 8. Background Jobs owns all Queue surface without introducing another user
    component.
 9. Disabled components do not create runtime discovery entries, readiness
