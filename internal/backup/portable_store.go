@@ -19,13 +19,13 @@ func WritePortableArchive(dir string, archive PortableArchive) error {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write portable archive: %w", err)
 	}
-	checksum, size, err := Checksum(path)
+	fingerprint, err := Checksum(path)
 	if err != nil {
 		return err
 	}
 	manifest := Manifest{Version: 1, Resources: []Resource{{
 		ID: "portable.database", Kind: "database", Name: "portable", Driver: "portable",
-		Strategy: "goforj-portable", Artifact: "portable.json", Checksum: checksum, Size: size,
+		Strategy: "goforj-portable", Artifact: "portable.json", Checksum: fingerprint.Checksum, Size: fingerprint.Size,
 	}}}
 	return WriteManifest(dir, manifest)
 }

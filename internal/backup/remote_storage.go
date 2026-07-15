@@ -16,6 +16,12 @@ type StorageObjectLister struct {
 	Disk storage.Storage
 }
 
+// ObjectStorage identifies a configured object disk together with its scoped key prefix.
+type ObjectStorage struct {
+	Disk   storage.Storage
+	Prefix string
+}
+
 // ListObjects lists all objects below a storage prefix.
 func (l StorageObjectLister) ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	if l.Disk == nil {
@@ -39,7 +45,7 @@ func (l StorageObjectLister) ListObjects(ctx context.Context, prefix string) ([]
 }
 
 // ConfiguredObjectStorage opens a configured S3-compatible App disk.
-func ConfiguredObjectStorage(name string) (storage.Storage, string, error) {
+func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
 	prefix := storageEnvPrefix(name)
 	parseBool := func(key string) bool {
 		value, _ := strconv.ParseBool(os.Getenv(prefix + key))
@@ -56,9 +62,9 @@ func ConfiguredObjectStorage(name string) (storage.Storage, string, error) {
 	}
 	disk, err := storage.Build(cfg)
 	if err != nil {
-		return nil, "", fmt.Errorf("open S3 storage %s: %w", name, err)
+		return ObjectStorage{}, fmt.Errorf("open S3 storage %s: %w", name, err)
 	}
-	return disk, cfg.Prefix, nil
+	return ObjectStorage{Disk: disk, Prefix: cfg.Prefix}, nil
 }
 
 // ConfiguredBackupRepository opens the configured S3 backup repository when one is enabled.

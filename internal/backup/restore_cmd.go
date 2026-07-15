@@ -51,16 +51,16 @@ func (c *RestoreCmd) Run() error {
 		if c.TargetDriver != "" {
 			connection.Driver = c.TargetDriver
 		}
-		db, dialect, err := OpenSQLConnection(context.Background(), connection)
+		sqlConnection, err := OpenSQLConnection(context.Background(), connection)
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer sqlConnection.DB.Close()
 		migrationFingerprint, err := ProjectMigrationFingerprint(".")
 		if err != nil {
 			return err
 		}
-		if err := NewPortableService().Restore(context.Background(), c.From, db, dialect, migrationFingerprint); err != nil {
+		if err := NewPortableService().Restore(context.Background(), c.From, sqlConnection.DB, sqlConnection.Dialect, migrationFingerprint); err != nil {
 			return err
 		}
 		fmt.Println("portable backup restored")
