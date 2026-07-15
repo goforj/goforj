@@ -96,7 +96,7 @@ type testCommands struct {
 func NewTestCommands(appLogger *logger.AppLogger) *testCommands {
 	return &testCommands{
 		render:      *NewTestRenderCmd(appLogger),
-		renders:     *NewTestRendersCmd(appLogger),
+		renders:     *NewTestRendersCmd(),
 		integration: *NewTestIntegrationCmd(appLogger),
 		console:     *NewTestConsoleCmd(),
 		openAPI:     *NewTestOpenAPICmd(appLogger),
