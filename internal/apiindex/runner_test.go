@@ -135,6 +135,30 @@ func TestRunnerDefaultStatusIncludesActiveApp(t *testing.T) {
 	}
 }
 
+// TestRunnerRejectsInvalidExplicitRoot prevents missing source trees from looking like intentional nonparticipation.
+func TestRunnerRejectsInvalidExplicitRoot(t *testing.T) {
+	fileRoot := filepath.Join(t.TempDir(), "project-file")
+	if err := os.WriteFile(fileRoot, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write project-root fixture: %v", err)
+	}
+	tests := []struct {
+		name string
+		root string
+		want string
+	}{
+		{name: "missing", root: filepath.Join(t.TempDir(), "missing"), want: "inspect API index project root"},
+		{name: "file", root: fileRoot, want: "is not a directory"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := newTestRunner().RunDefault(Options{Root: test.root})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("RunDefault() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 // TestRunnerSkipsCLIOnlyAppAndRemovesStaleArtifacts verifies explicit nonparticipation clears old contracts.
 func TestRunnerSkipsCLIOnlyAppAndRemovesStaleArtifacts(t *testing.T) {
 	root := t.TempDir()
