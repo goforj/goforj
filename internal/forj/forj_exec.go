@@ -18,10 +18,6 @@ func currentForjExecutable() (string, error) {
 	return path, nil
 }
 
-func repoForjExecutable(modCache, buildCache string) (string, func(), error) {
-	return testkit.BuildForjBinary(modCache, buildCache)
-}
-
 func resolveForjRepoRoot() (string, error) {
 	return testkit.RepoRoot()
 }
