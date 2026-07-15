@@ -2,6 +2,7 @@ package forj
 
 import (
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/goforj/goforj/internal/envfile"
@@ -14,7 +15,11 @@ import (
 func (p *ProjectRenderer) cacheOwnerEnvironmentDependency(components project.Components, disabledApps []project.App, ignoredApps []project.App) (string, string, error) {
 	ignored := cacheTransitionAppNames(ignoredApps)
 	runtimeApps := projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config)
-	for _, path := range []string{".env", ".env.host", ".env.example", ".env.local", ".env.staging", ".env.production", ".env.testing"} {
+	paths, err := p.workspace.cacheOwnerEnvironmentPaths()
+	if err != nil {
+		return "", "", err
+	}
+	for _, path := range paths {
 		source, err := p.workspace.readFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -43,6 +48,48 @@ func (p *ProjectRenderer) cacheOwnerEnvironmentDependency(components project.Com
 		}
 	}
 	return "", "", nil
+}
+
+// cacheOwnerEnvironmentPaths preserves conventional preflight precedence while adding root-only owner overlays.
+// A single directory read keeps dependency trees and temporary render workspaces outside owner discovery.
+func (w projectRenderWorkspace) cacheOwnerEnvironmentPaths() ([]string, error) {
+	entries, err := w.readDir()
+	if err != nil {
+		return nil, err
+	}
+	discovered := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != ".env" && !strings.HasPrefix(name, ".env.") {
+			continue
+		}
+		info, err := w.stat(name)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		discovered[name] = true
+	}
+
+	preferred := []string{".env", ".env.host", ".env.example", ".env.local", ".env.staging", ".env.production", ".env.testing"}
+	paths := make([]string, 0, len(discovered))
+	for _, path := range preferred {
+		if discovered[path] {
+			paths = append(paths, path)
+			delete(discovered, path)
+		}
+	}
+	custom := make([]string, 0, len(discovered))
+	for path := range discovered {
+		custom = append(custom, path)
+	}
+	slices.Sort(custom)
+	return append(paths, custom...), nil
 }
 
 // cacheIgnoredAppEnvironmentAssignment excludes assignments removed together with an explicitly deleted App.
