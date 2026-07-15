@@ -20,6 +20,7 @@ import (
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -87,6 +88,7 @@ func (cmd *HTTPLiveProfileCmd) Run() error {
 	concurrency := liveBenchmarkConcurrency(cmd.Concurrency, 8, 512)
 
 	modCache, buildCache := testkit.GoCachePaths()
+	caches := testexec.NewGoCaches(modCache, buildCache)
 	dir, err := os.MkdirTemp("", "forj_http_live_profile_")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
@@ -110,7 +112,7 @@ func (cmd *HTTPLiveProfileCmd) Run() error {
 		}
 	}
 	binPath := filepath.Join(binDir, "app")
-	if err := cmd.prepareHTTPProfileTarget(dir, modCache, buildCache, binPath); err != nil {
+	if err := cmd.prepareHTTPProfileTarget(dir, caches, binPath); err != nil {
 		return err
 	}
 
@@ -224,7 +226,9 @@ func (cmd *HTTPLiveProfileCmd) Run() error {
 	return nil
 }
 
-func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir, modCache, buildCache, binPath string) error {
+// prepareHTTPProfileTarget builds the selected server shape in one workspace so every profile runs a comparable artifact.
+func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir string, caches testexec.GoCaches, binPath string) error {
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
 	if !cmd.Silent {
 		testkit.PrintSection("HTTP Live Profile")
 		switch cmd.ServerStack {
@@ -243,10 +247,10 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir, modCache, buildCach
 		if err := cmd.writeStandaloneHTTPProfileApp(dir); err != nil {
 			return err
 		}
-		if err := runStep(cmd.logger, cmd.Silent, "go mod tidy", dir, modCache, buildCache, []string{"go", "mod", "tidy"}); err != nil {
+		if err := workspace.Run("go mod tidy", "go", "mod", "tidy"); err != nil {
 			return err
 		}
-		return runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "."})
+		return workspace.Run("build", "go", "build", "-o", binPath, ".")
 	}
 
 	cfg := project.Config{
@@ -265,13 +269,13 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir, modCache, buildCach
 		return err
 	}
 
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	forjExec, cleanup, err := repoForjExecutable(caches.ModulePath(), caches.BuildPath())
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
 	if err := cmd.applyLocalWebReplace(dir); err != nil {
@@ -283,7 +287,7 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir, modCache, buildCach
 	if err := cmd.writePprofSupport(dir); err != nil {
 		return err
 	}
-	return runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "./cmd/app"})
+	return workspace.Run("build", "go", "build", "-o", binPath, "./cmd/app")
 }
 
 func (cmd *HTTPLiveProfileCmd) httpProfileExecCommand(ctx context.Context, dir, binPath, httpPort, metricsPort, pprofAddr, baseURL string) (*exec.Cmd, error) {
@@ -553,6 +557,7 @@ func (cmd *HTTPLiveProfileCmd) customizeRenderedHTTPApp(dir string) error {
 	return nil
 }
 
+// applyLocalWebReplace includes sibling web changes when maintainers profile an uncommitted local checkout.
 func (cmd *HTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
 	const localWebPath = "/workspace/code/web"
 	info, err := os.Stat(localWebPath)
@@ -565,9 +570,8 @@ func (cmd *HTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
 	if !info.IsDir() {
 		return nil
 	}
-	return runStep(cmd.logger, cmd.Silent, "go mod replace web", dir, "", "", []string{
-		"go", "mod", "edit", "-replace", "github.com/goforj/web=" + localWebPath,
-	})
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, testexec.GoCaches{})
+	return workspace.Run("go mod replace web", "go", "mod", "edit", "-replace", "github.com/goforj/web="+localWebPath)
 }
 
 func (cmd *HTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {

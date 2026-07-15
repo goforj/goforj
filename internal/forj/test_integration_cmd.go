@@ -10,6 +10,7 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
@@ -43,10 +44,10 @@ type integrationStep struct {
 
 // integrationExecutor owns the output policy and Go caches shared by every command in one integration run.
 type integrationExecutor struct {
-	silent     bool
-	verbose    bool
-	modCache   string
-	buildCache string
+	logger  *logger.AppLogger
+	silent  bool
+	verbose bool
+	caches  testexec.GoCaches
 }
 
 // dbIntegrationVariantSpec defines the component selection and runtime environment for one rendered database target.
@@ -117,10 +118,10 @@ func NewTestIntegrationCmd(logger *logger.AppLogger) *TestIntegrationCmd {
 func (cmd *TestIntegrationCmd) Run() error {
 	modCache, buildCache := testkit.GoCachePaths()
 	executor := integrationExecutor{
-		silent:     cmd.Silent,
-		verbose:    cmd.Verbose,
-		modCache:   modCache,
-		buildCache: buildCache,
+		logger:  cmd.logger,
+		silent:  cmd.Silent,
+		verbose: cmd.Verbose,
+		caches:  testexec.NewGoCaches(modCache, buildCache),
 	}
 	suite := strings.TrimSpace(strings.ToLower(cmd.Suite))
 	target := strings.TrimSpace(strings.ToLower(cmd.Target))
@@ -150,7 +151,7 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 	if target != "" && target != "all" {
 		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
 	}
-	forjExec, cleanup, err := repoForjExecutable(executor.modCache, executor.buildCache)
+	forjExec, cleanup, err := repoForjExecutable(executor.caches.ModulePath(), executor.caches.BuildPath())
 	if err != nil {
 		return err
 	}
@@ -345,12 +346,12 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 	if err := cmd.writeRenderedIntegrationConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
-	forjExec, cleanup, err := repoForjExecutable(executor.modCache, executor.buildCache)
+	forjExec, cleanup, err := repoForjExecutable(executor.caches.ModulePath(), executor.caches.BuildPath())
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	if err := runStep(cmd.logger, executor.silent, "render", tempDir, executor.modCache, executor.buildCache, []string{forjExec, "render"}); err != nil {
+	if err := executor.workspace(tempDir).Run("render", forjExec, "render"); err != nil {
 		return err
 	}
 
@@ -383,8 +384,8 @@ func (executor integrationExecutor) runGoTestStep(dir string, step integrationSt
 	command := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
-			"GOMODCACHE": executor.modCache,
-			"GOCACHE":    executor.buildCache,
+			"GOMODCACHE": executor.caches.ModulePath(),
+			"GOCACHE":    executor.caches.BuildPath(),
 		}).
 		EnvAppend(extraEnv)
 
@@ -458,8 +459,8 @@ func (executor integrationExecutor) runFrameworkStep(dir string, step integratio
 	cmd := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
-			"GOMODCACHE": executor.modCache,
-			"GOCACHE":    executor.buildCache,
+			"GOMODCACHE": executor.caches.ModulePath(),
+			"GOCACHE":    executor.caches.BuildPath(),
 			"GOFLAGS":    "",
 			"GOWORK":     "off",
 		}).
@@ -505,4 +506,9 @@ func (executor integrationExecutor) runFrameworkStep(dir string, step integratio
 		}
 	}
 	return nil
+}
+
+// workspace binds non-streaming integration commands to the executor's shared policy.
+func (executor integrationExecutor) workspace(dir string) *testexec.Workspace {
+	return testexec.NewWorkspace(executor.logger, executor.silent, dir, executor.caches)
 }

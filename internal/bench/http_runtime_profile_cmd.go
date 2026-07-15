@@ -12,6 +12,7 @@ import (
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -63,6 +64,7 @@ func (cmd *HTTPRuntimeProfileCmd) Run() error {
 	if !cmd.Keep {
 		defer os.RemoveAll(dir)
 	}
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, testexec.NewGoCaches(modCache, buildCache))
 
 	if !cmd.Silent {
 		testkit.PrintSection("HTTP Runtime Profile")
@@ -92,12 +94,12 @@ func (cmd *HTTPRuntimeProfileCmd) Run() error {
 	}
 	defer cleanup()
 
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
 
 	testBinary := filepath.Join(dir, "http_runtime_bench.test")
-	if err := runStep(cmd.logger, cmd.Silent, "bench-compile", dir, modCache, buildCache, []string{"go", "test", "-c", "-o", testBinary, "./internal/http"}); err != nil {
+	if err := workspace.Run("bench-compile", "go", "test", "-c", "-o", testBinary, "./internal/http"); err != nil {
 		return err
 	}
 
