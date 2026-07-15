@@ -154,7 +154,7 @@ func (s *Service) Verify(dir string) (Manifest, error) {
 	return manifest, nil
 }
 
-// Restore restores one or all native database artifacts from a backup set.
+// Restore restores selected native database and storage artifacts only after the backup set verifies successfully.
 func (s *Service) Restore(ctx context.Context, dir string, resourceName string, confirmation string) error {
 	if confirmation != "restore-production" {
 		return fmt.Errorf("restore requires --confirm restore-production")
@@ -171,6 +171,7 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 		return err
 	}
 	resourceName = normalizeResourceName(resourceName)
+	restored := false
 	for _, resource := range manifest.Resources {
 		if resourceName != "" && resource.Name != resourceName && resource.ID != resourceName {
 			continue
@@ -193,6 +194,7 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 			if err := RestoreDirectoryArchive(artifact, storage.Root); err != nil {
 				return fmt.Errorf("restore %s: %w", resource.ID, err)
 			}
+			restored = true
 			continue
 		}
 		connection := findPlanConnection(plan.Resources, resource.Name)
@@ -213,6 +215,10 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 		if err := strategy.Restore(ctx, connection.Connection, artifact); err != nil {
 			return fmt.Errorf("restore %s: %w", resource.ID, err)
 		}
+		restored = true
+	}
+	if resourceName != "" && !restored {
+		return fmt.Errorf("restore resource %q was not found", resourceName)
 	}
 	return s.Hooks.Run(ctx, HookAfterRestore)
 }
