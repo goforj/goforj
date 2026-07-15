@@ -1,7 +1,8 @@
-package forj
+package rendercheck
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,6 +91,7 @@ func TestReportRenderComboFailurePreservesDiagnostics(t *testing.T) {
 	}
 }
 
+// TestBuildRenderCombosSkipsInvalidAuthSelections verifies every profile honors the renderer's component contract.
 func TestBuildRenderCombosSkipsInvalidAuthSelections(t *testing.T) {
 	for _, profile := range []string{renderProfileSmoke, renderProfilePR, renderProfileFull} {
 		for _, combo := range buildRenderCombos(profile) {
@@ -103,6 +105,7 @@ func TestBuildRenderCombosSkipsInvalidAuthSelections(t *testing.T) {
 	}
 }
 
+// TestSelectedRenderProfile verifies named profiles and the legacy full flag retain their precedence.
 func TestSelectedRenderProfile(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -127,6 +130,28 @@ func TestSelectedRenderProfile(t *testing.T) {
 	}
 }
 
+// TestSuiteListWritesSelectedShard verifies the public listing boundary preserves profile and shard diagnostics.
+func TestSuiteListWritesSelectedShard(t *testing.T) {
+	t.Setenv("FORJ_TEST_RENDERS_SHARD_COUNT", "2")
+	t.Setenv("FORJ_TEST_RENDERS_SHARD_INDEX", "1")
+
+	var output strings.Builder
+	if err := NewSuite(renderProfileSmoke, false).List(&output); err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+	for _, want := range []string{
+		"profile: smoke",
+		"(shard 2/2 · total ",
+		"\nID ",
+		"Components\n",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("List() output missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
+// TestRenderProfilesHaveExpectedCoverageShape verifies broader profiles add coverage without collapsing their intended cost tiers.
 func TestRenderProfilesHaveExpectedCoverageShape(t *testing.T) {
 	smoke := buildRenderCombos(renderProfileSmoke)
 	pr := buildRenderCombos(renderProfilePR)
@@ -266,16 +291,19 @@ func TestComponentLabelsMatchCatalogSelection(t *testing.T) {
 	}
 }
 
+// TestPRRenderProfileCoversComponentCatalog verifies pull-request coverage includes every selectable component.
 func TestPRRenderProfileCoversComponentCatalog(t *testing.T) {
 	combos := buildRenderCombos(renderProfilePR)
 	requireRenderCombosCoverCatalog(t, renderProfilePR, combos)
 }
 
+// TestFullRenderProfileCoversComponentCatalog verifies exhaustive coverage includes every selectable component.
 func TestFullRenderProfileCoversComponentCatalog(t *testing.T) {
 	combos := buildRenderCombos(renderProfileFull)
 	requireRenderCombosCoverCatalog(t, renderProfileFull, combos)
 }
 
+// requireRenderCombosCoverCatalog centralizes catalog assertions so profile tests report missing component keys consistently.
 func requireRenderCombosCoverCatalog(t *testing.T, profile string, combos []renderCombo) {
 	t.Helper()
 	for _, definition := range project.ComponentCatalog() {
@@ -287,6 +315,7 @@ func requireRenderCombosCoverCatalog(t *testing.T, profile string, combos []rend
 	}
 }
 
+// TestPRRenderProfileIncludesCriticalInteractions verifies the curated profile protects cross-component render boundaries.
 func TestPRRenderProfileIncludesCriticalInteractions(t *testing.T) {
 	combos := buildRenderCombos(renderProfilePR)
 	requireRenderCombo(t, combos, "auth webapi db", func(c project.Components) bool {
@@ -306,6 +335,7 @@ func TestPRRenderProfileIncludesCriticalInteractions(t *testing.T) {
 	})
 }
 
+// TestRenderCombosHaveUniqueIDs keeps sharding and failure aggregation deterministic.
 func TestRenderCombosHaveUniqueIDs(t *testing.T) {
 	for _, profile := range []string{renderProfileSmoke, renderProfilePR, renderProfileFull} {
 		seen := map[string]struct{}{}
@@ -358,6 +388,7 @@ func TestSeedRenderComboAppsCreatesNamedEntrypointMarkers(t *testing.T) {
 	}
 }
 
+// requireRenderCombo reports interaction coverage with a human-readable contract name.
 func requireRenderCombo(t *testing.T, combos []renderCombo, name string, matches func(project.Components) bool) {
 	t.Helper()
 	if !renderCombosInclude(combos, matches) {
@@ -377,6 +408,7 @@ func requireRenderComboID(t *testing.T, combos []renderCombo, id string) renderC
 	return renderCombo{}
 }
 
+// renderCombosInclude keeps profile assertions independent of matrix ordering.
 func renderCombosInclude(combos []renderCombo, matches func(project.Components) bool) bool {
 	for _, combo := range combos {
 		if matches(combo.components) {
@@ -384,4 +416,33 @@ func renderCombosInclude(combos []renderCombo, matches func(project.Components) 
 		}
 	}
 	return false
+}
+
+// captureStdout redirects package-level console output because failure reporting intentionally uses the shared CLI console.
+func captureStdout(t *testing.T, run func()) string {
+	t.Helper()
+
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = original
+	}()
+
+	run()
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close stdout pipe: %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read stdout pipe: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
+	return string(data)
 }
