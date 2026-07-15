@@ -48,7 +48,7 @@ type generationTask struct {
 	generatedFiles       int
 	updatesDependencies  bool
 	disabledRequestError string
-	generate             func(string) (int, error)
+	generate             func(generationInput) (int, error)
 }
 
 // generationRun records the distinctions needed by project rendering and the interactive command's dependency policy.
@@ -96,12 +96,11 @@ func (c *Cmd) Run() error {
 		selection = available
 	}
 
-	restoreEnvironment, err := loadGenerationEnvironment(".")
+	input, err := loadProjectGenerationInput(".")
 	if err != nil {
 		return err
 	}
-	defer restoreEnvironment()
-	run, err := runGenerationTasks(".", selection)
+	run, err := runGenerationTasks(input, selection)
 	if err != nil {
 		return err
 	}
@@ -115,12 +114,11 @@ func (c *Cmd) Run() error {
 
 // GenerateProjectFiles regenerates selected resources beneath projectDir and reports total and changed files.
 func GenerateProjectFiles(projectDir string, selection GenerationSelection) (int, int, error) {
-	restoreEnvironment, err := loadGenerationEnvironment(projectDir)
+	input, err := loadProjectGenerationInput(projectDir)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer restoreEnvironment()
-	run, err := runGenerationTasks(projectDir, selection)
+	run, err := runGenerationTasks(input, selection)
 	if err != nil {
 		return run.totalFiles, run.changedFiles, err
 	}
@@ -194,24 +192,24 @@ func validateRequestedGenerationSelection(requested, available GenerationSelecti
 // generationTasksFor preserves the stable generation order and keeps per-resource behavior out of orchestration code.
 func generationTasksFor(selection GenerationSelection) []generationTask {
 	return []generationTask{
-		{selected: selection.Storage, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Storage: the Storage component is disabled in .goforj.yml", generate: GenerateStorageFiles},
-		{selected: selection.Cache, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Cache: the Cache component is disabled in .goforj.yml", generate: GenerateCacheFiles},
-		{selected: selection.Mail, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Mail: the Mail component is disabled in .goforj.yml", generate: GenerateMailFiles},
-		{selected: selection.Queue, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml", generate: GenerateQueueFiles},
-		{selected: selection.Events, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Events: the Events component is disabled in .goforj.yml", generate: GenerateEventFiles},
-		{selected: selection.Database, generatedFiles: 1, updatesDependencies: true, disabledRequestError: "cannot generate DB: no Database component is enabled in .goforj.yml", generate: GenerateDBFiles},
-		{selected: selection.Observability, generatedFiles: 1, disabledRequestError: "cannot generate Observability: the Observability component is disabled in .goforj.yml", generate: GenerateObservabilityFiles},
+		{selected: selection.Storage, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Storage: the Storage component is disabled in .goforj.yml", generate: generateStorageFiles},
+		{selected: selection.Cache, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Cache: the Cache component is disabled in .goforj.yml", generate: generateCacheFiles},
+		{selected: selection.Mail, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Mail: the Mail component is disabled in .goforj.yml", generate: generateMailFiles},
+		{selected: selection.Queue, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml", generate: generateQueueFiles},
+		{selected: selection.Events, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Events: the Events component is disabled in .goforj.yml", generate: generateEventFiles},
+		{selected: selection.Database, generatedFiles: 1, updatesDependencies: true, disabledRequestError: "cannot generate DB: no Database component is enabled in .goforj.yml", generate: generateDBFiles},
+		{selected: selection.Observability, generatedFiles: 1, disabledRequestError: "cannot generate Observability: the Observability component is disabled in .goforj.yml", generate: generateObservabilityFiles},
 	}
 }
 
 // runGenerationTasks executes the canonical task inventory and preserves file-count and dependency metadata for its caller.
-func runGenerationTasks(projectDir string, selection GenerationSelection) (generationRun, error) {
+func runGenerationTasks(input generationInput, selection GenerationSelection) (generationRun, error) {
 	run := generationRun{}
 	for _, task := range generationTasksFor(selection) {
 		if !task.selected {
 			continue
 		}
-		written, err := task.generate(projectDir)
+		written, err := task.generate(input)
 		if err != nil {
 			return run, err
 		}
@@ -252,19 +250,22 @@ func runGoModTidy(projectDir string) error {
 	}
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = projectDir
-	cmd.Env = generationSubprocessEnvironment()
+	cmd.Env = generationSubprocessEnvironment(projectDir)
 	if _, err := cmd.CombinedOutput(); err != nil {
 		return err
 	}
 	return nil
 }
 
-// generationSubprocessEnvironment retains the developer's toolchain environment while removing temporary generator inputs.
-func generationSubprocessEnvironment() []string {
-	environment := make([]string, 0, len(os.Environ()))
-	for _, assignment := range os.Environ() {
+// generationSubprocessEnvironment uses project App identities so even invalid resource inputs cannot leak into child processes.
+func generationSubprocessEnvironment(projectDir string) []string {
+	assignments := os.Environ()
+	snapshot := generationEnvironmentFromAssignments(assignments)
+	filter := newGenerationEnvironmentFilter(projectDir, snapshot)
+	environment := make([]string, 0, len(assignments))
+	for _, assignment := range assignments {
 		key, _, _ := strings.Cut(assignment, "=")
-		if isGenerationEnvironmentKey(key) {
+		if filter.keeps(key) {
 			continue
 		}
 		environment = append(environment, assignment)

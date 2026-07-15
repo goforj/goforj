@@ -59,6 +59,31 @@ type observabilityTargetPlan struct {
 	Manage  bool
 }
 
+// observabilityTargetResolver keeps every environment lookup on the immutable snapshot used to plan one target file.
+type observabilityTargetResolver struct {
+	environment generationEnvironment
+}
+
+// observabilityEnvironmentMatch preserves the winning key so invalid values can produce actionable errors.
+type observabilityEnvironmentMatch struct {
+	key   string
+	value string
+}
+
+// observabilityTargetIdentity holds the labels shared by every endpoint in one generated target file.
+type observabilityTargetIdentity struct {
+	service string
+	appEnv  string
+}
+
+// observabilityAppTargetPlan carries the shared labels and App layout used by local target builders.
+type observabilityAppTargetPlan struct {
+	identity     observabilityTargetIdentity
+	host         string
+	activeRoles  []metricsTargetRole
+	applications []observabilityApp
+}
+
 // observabilityMetricRoles preserves a stable role order for deterministic generated target files.
 var observabilityMetricRoles = []metricsTargetRole{
 	{Name: "api", Path: filepath.Join("internal", "http"), PortEnv: "METRICS_API_PORT", Offset: 0, HostEnv: "OBSERVABILITY_API_METRICS_HOST"},
@@ -68,7 +93,12 @@ var observabilityMetricRoles = []metricsTargetRole{
 
 // GenerateObservabilityFiles updates framework-owned scrape targets only when the project's observability mode delegates their management to Forj.
 func GenerateObservabilityFiles(projectDir string) (int, error) {
-	plan, err := buildMetricsTargets(projectDir)
+	return generateObservabilityFiles(ambientGenerationInput(projectDir))
+}
+
+// generateObservabilityFiles renders scrape targets from the same captured environment as the other generator tasks.
+func generateObservabilityFiles(input generationInput) (int, error) {
+	plan, err := buildMetricsTargets(input)
 	if err != nil {
 		return 0, err
 	}
@@ -86,7 +116,7 @@ func GenerateObservabilityFiles(projectDir string) (int, error) {
 	content = append(content, '\n')
 
 	changed, err := writeGeneratedSource(
-		filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json"),
+		filepath.Join(input.projectDir, "containers", "observability", "vmagent", "metrics-targets.json"),
 		content,
 	)
 	if err != nil {
@@ -99,18 +129,19 @@ func GenerateObservabilityFiles(projectDir string) (int, error) {
 }
 
 // buildMetricsTargets translates project layout and target mode into a deterministic VictoriaMetrics scrape plan.
-func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
-	service := envOrDefault("APP_NAME", filepath.Base(projectDir))
-	environment := envOrDefault("APP_ENV", "local")
-	config, err := loadObservabilityProjectConfig(projectDir)
+func buildMetricsTargets(input generationInput) (observabilityTargetPlan, error) {
+	resolver := observabilityTargetResolver{environment: input.environment}
+	service := resolver.envOrDefault("APP_NAME", filepath.Base(input.projectDir))
+	environment := resolver.envOrDefault("APP_ENV", "local")
+	config, err := loadObservabilityProjectConfig(input.projectDir)
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
-	activeRoles, err := discoverObservabilityMetricRoles(projectDir, config)
+	activeRoles, err := discoverObservabilityMetricRoles(input.projectDir, config)
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
-	mode, err := resolveObservabilityMetricsMode()
+	mode, err := resolver.resolveObservabilityMetricsMode()
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
@@ -120,7 +151,7 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 	localHost := ""
 	if mode == observabilityMetricsModeLocalSingle || mode == observabilityMetricsModeLocalMulti {
 		var ok bool
-		localHost, ok = resolveLocalMetricsHost()
+		localHost, ok = resolver.resolveLocalMetricsHost()
 		if !ok {
 			return observabilityTargetPlan{Manage: false}, nil
 		}
@@ -128,32 +159,38 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 	if len(activeRoles) == 0 {
 		return observabilityTargetPlan{Manage: true, Entries: []metricsTargetEntry{}}, nil
 	}
-	appNames, err := discoverObservabilityApps(projectDir, config, activeRoles)
+	appNames, err := discoverObservabilityApps(input.projectDir, config, activeRoles)
 	if err != nil {
 		return observabilityTargetPlan{}, err
 	}
 
-	basePort, err := resolveMetricsBasePort()
+	basePort, err := resolver.resolveMetricsBasePort()
 	if err != nil {
 		return observabilityTargetPlan{}, err
+	}
+	appTargetPlan := observabilityAppTargetPlan{
+		identity:     observabilityTargetIdentity{service: service, appEnv: environment},
+		host:         localHost,
+		activeRoles:  activeRoles,
+		applications: appNames,
 	}
 
 	switch mode {
 	case observabilityMetricsModeLocalSingle:
-		entries, err := buildStandaloneTargets(service, environment, localHost, activeRoles, appNames)
+		entries, err := resolver.buildStandaloneTargets(appTargetPlan)
 		if err != nil {
 			return observabilityTargetPlan{}, err
 		}
 		return observabilityTargetPlan{Manage: true, Entries: entries}, nil
 	case observabilityMetricsModeLocalMulti:
-		entries, err := buildAppRoleTargets(service, environment, localHost, activeRoles, appNames)
+		entries, err := resolver.buildAppRoleTargets(appTargetPlan)
 		if err != nil {
 			return observabilityTargetPlan{}, err
 		}
 		return observabilityTargetPlan{Manage: true, Entries: entries}, nil
 	case observabilityMetricsModeCompose:
-		entries, err := buildRoleTargets(service, environment, activeRoles, func(role metricsTargetRole) (metricsTargetEndpoint, error) {
-			host, ok := resolveComposeMetricsHost(role)
+		entries, err := buildRoleTargets(appTargetPlan.identity, activeRoles, func(role metricsTargetRole) (metricsTargetEndpoint, error) {
+			host, ok := resolver.resolveComposeMetricsHost(role)
 			if !ok {
 				return metricsTargetEndpoint{}, nil
 			}
@@ -169,45 +206,33 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 }
 
 // buildStandaloneTargets mirrors app run/dev mode where each app owns one host process.
-func buildStandaloneTargets(
-	service string,
-	environment string,
-	host string,
-	activeRoles []metricsTargetRole,
-	appNames []observabilityApp,
-) ([]metricsTargetEntry, error) {
-	entries := make([]metricsTargetEntry, 0, len(appNames))
-	for _, app := range appNames {
-		port, err := resolveStandaloneMetricsPort(app, activeRoles)
+func (r observabilityTargetResolver) buildStandaloneTargets(plan observabilityAppTargetPlan) ([]metricsTargetEntry, error) {
+	entries := make([]metricsTargetEntry, 0, len(plan.applications))
+	for _, app := range plan.applications {
+		port, err := r.resolveStandaloneMetricsPort(app, plan.activeRoles)
 		if err != nil {
 			return nil, err
 		}
 		entries = append(entries, metricsTargetEntry{
-			Targets: []string{host + ":" + port},
-			Labels:  observabilityTargetLabels(service, environment, "app", app.Name),
+			Targets: []string{plan.host + ":" + port},
+			Labels:  observabilityTargetLabels(plan.identity, "app", app.Name),
 		})
 	}
 	return entries, nil
 }
 
 // buildAppRoleTargets mirrors distributed local mode where each app/runtime pair can expose metrics independently.
-func buildAppRoleTargets(
-	service string,
-	environment string,
-	host string,
-	activeRoles []metricsTargetRole,
-	appNames []observabilityApp,
-) ([]metricsTargetEntry, error) {
-	entries := make([]metricsTargetEntry, 0, len(activeRoles)*len(appNames))
-	for _, app := range appNames {
-		for _, role := range filterAppMetricRoles(activeRoles, app) {
-			port, err := resolveAppRolePort(role, app)
+func (r observabilityTargetResolver) buildAppRoleTargets(plan observabilityAppTargetPlan) ([]metricsTargetEntry, error) {
+	entries := make([]metricsTargetEntry, 0, len(plan.activeRoles)*len(plan.applications))
+	for _, app := range plan.applications {
+		for _, role := range filterAppMetricRoles(plan.activeRoles, app) {
+			port, err := r.resolveAppRolePort(role, app)
 			if err != nil {
 				return nil, err
 			}
 			entries = append(entries, metricsTargetEntry{
-				Targets: []string{host + ":" + port},
-				Labels:  observabilityTargetLabels(service, environment, role.Name, app.Name),
+				Targets: []string{plan.host + ":" + port},
+				Labels:  observabilityTargetLabels(plan.identity, role.Name, app.Name),
 			})
 		}
 	}
@@ -395,8 +420,8 @@ func componentsFromMetricRoles(activeRoles []metricsTargetRole) project.Componen
 }
 
 // resolveObservabilityMetricsMode defaults to the combined App target because split roles are selected by explicit commands.
-func resolveObservabilityMetricsMode() (string, error) {
-	mode := strings.ToLower(envOrDefault("OBSERVABILITY_METRICS_TARGET_MODE", observabilityMetricsModeAuto))
+func (r observabilityTargetResolver) resolveObservabilityMetricsMode() (string, error) {
+	mode := strings.ToLower(r.envOrDefault("OBSERVABILITY_METRICS_TARGET_MODE", observabilityMetricsModeAuto))
 	switch mode {
 	case "", observabilityMetricsModeAuto:
 		return observabilityMetricsModeLocalSingle, nil
@@ -408,8 +433,8 @@ func resolveObservabilityMetricsMode() (string, error) {
 }
 
 // resolveMetricsBasePort validates the shared port before role offsets are applied so invalid configuration fails generation early.
-func resolveMetricsBasePort() (int, error) {
-	value := envOrDefault("METRICS_PORT", "9100")
+func (r observabilityTargetResolver) resolveMetricsBasePort() (int, error) {
+	value := r.envOrDefault("METRICS_PORT", "9100")
 	port, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("invalid METRICS_PORT %q: %w", value, err)
@@ -418,8 +443,8 @@ func resolveMetricsBasePort() (int, error) {
 }
 
 // resolveRolePort honors explicit role ports while retaining deterministic offsets from the shared base port.
-func resolveRolePort(role metricsTargetRole, basePort int) (string, error) {
-	if value, ok := lookupEnvTrimmed(role.PortEnv); ok {
+func (r observabilityTargetResolver) resolveRolePort(role metricsTargetRole, basePort int) (string, error) {
+	if value, ok := r.lookupEnvTrimmed(role.PortEnv); ok {
 		port, err := strconv.Atoi(value)
 		if err != nil {
 			return "", fmt.Errorf("invalid %s %q: %w", role.PortEnv, value, err)
@@ -430,12 +455,12 @@ func resolveRolePort(role metricsTargetRole, basePort int) (string, error) {
 }
 
 // resolveAppRolePort applies the same app-scoped override order used by generated runtime helpers.
-func resolveAppRolePort(role metricsTargetRole, app observabilityApp) (string, error) {
+func (r observabilityTargetResolver) resolveAppRolePort(role metricsTargetRole, app observabilityApp) (string, error) {
 	envKeys := appRolePortEnvKeys(role, app)
-	if value, key, ok := firstEnvTrimmed(envKeys); ok {
-		port, err := strconv.Atoi(value)
+	if match, ok := r.firstEnvTrimmed(envKeys); ok {
+		port, err := strconv.Atoi(match.value)
 		if err != nil {
-			return "", fmt.Errorf("invalid %s %q: %w", key, value, err)
+			return "", fmt.Errorf("invalid %s %q: %w", match.key, match.value, err)
 		}
 		return strconv.Itoa(port), nil
 	}
@@ -471,8 +496,8 @@ func observabilityAppEnvKeys(app observabilityApp, suffixes ...string) []string 
 }
 
 // resolveLocalMetricsHost treats an explicitly empty host as an opt-out while retaining the Docker-to-host default.
-func resolveLocalMetricsHost() (string, bool) {
-	if value, ok := lookupEnvTrimmed("OBSERVABILITY_METRICS_TARGET_HOST"); ok {
+func (r observabilityTargetResolver) resolveLocalMetricsHost() (string, bool) {
+	if value, ok := r.lookupEnvTrimmed("OBSERVABILITY_METRICS_TARGET_HOST"); ok {
 		if value == "" {
 			return "", false
 		}
@@ -482,8 +507,8 @@ func resolveLocalMetricsHost() (string, bool) {
 }
 
 // resolveComposeMetricsHost defaults to stable Compose service names while allowing individual roles to be excluded.
-func resolveComposeMetricsHost(role metricsTargetRole) (string, bool) {
-	if value, ok := lookupEnvTrimmed(role.HostEnv); ok {
+func (r observabilityTargetResolver) resolveComposeMetricsHost(role metricsTargetRole) (string, bool) {
+	if value, ok := r.lookupEnvTrimmed(role.HostEnv); ok {
 		if value == "" {
 			return "", false
 		}
@@ -493,24 +518,23 @@ func resolveComposeMetricsHost(role metricsTargetRole) (string, bool) {
 }
 
 // resolveStandaloneMetricsPort prefers the HTTP listener because app run exposes /metrics there when HTTP is present.
-func resolveStandaloneMetricsPort(app observabilityApp, activeRoles []metricsTargetRole) (string, error) {
+func (r observabilityTargetResolver) resolveStandaloneMetricsPort(app observabilityApp, activeRoles []metricsTargetRole) (string, error) {
 	if containsObservabilityRole(activeRoles, "api") {
-		if value, key, ok := firstEnvTrimmed(observabilityAppEnvKeys(app, "PORT", "API_HTTP_PORT")); ok {
-			port, err := strconv.Atoi(value)
+		if match, ok := r.firstEnvTrimmed(observabilityAppEnvKeys(app, "PORT", "API_HTTP_PORT")); ok {
+			port, err := strconv.Atoi(match.value)
 			if err != nil {
-				return "", fmt.Errorf("invalid %s %q: %w", key, value, err)
+				return "", fmt.Errorf("invalid %s %q: %w", match.key, match.value, err)
 			}
 			return strconv.Itoa(port), nil
 		}
 		return strconv.Itoa(app.HTTPPort), nil
 	}
-	return resolveAppRolePort(metricsTargetRole{Name: "api", Offset: 0}, app)
+	return r.resolveAppRolePort(metricsTargetRole{Name: "api", Offset: 0}, app)
 }
 
 // buildRoleTargets applies one endpoint policy across roles so Compose and future layouts share labeling and failure behavior.
 func buildRoleTargets(
-	service string,
-	environment string,
+	identity observabilityTargetIdentity,
 	roles []metricsTargetRole,
 	resolve func(role metricsTargetRole) (metricsTargetEndpoint, error),
 ) ([]metricsTargetEntry, error) {
@@ -525,7 +549,7 @@ func buildRoleTargets(
 		}
 		entries = append(entries, metricsTargetEntry{
 			Targets: []string{endpoint.Host + ":" + endpoint.Port},
-			Labels:  observabilityTargetLabels(service, environment, role.Name, project.DefaultAppName),
+			Labels:  observabilityTargetLabels(identity, role.Name, project.DefaultAppName),
 		})
 	}
 	return entries, nil
@@ -557,24 +581,24 @@ func appHasMetricRole(app observabilityApp, role metricsTargetRole) bool {
 }
 
 // observabilityTargetLabels keeps vmagent labels consistent with emitted framework metric labels.
-func observabilityTargetLabels(service string, environment string, process string, appName string) map[string]string {
+func observabilityTargetLabels(identity observabilityTargetIdentity, process string, appName string) map[string]string {
 	return map[string]string{
 		"app":         appName,
-		"environment": environment,
+		"environment": identity.appEnv,
 		"process":     process,
-		"service":     service,
+		"service":     identity.service,
 	}
 }
 
 // firstEnvTrimmed returns the winning key as well as the value so validation errors can name it.
-func firstEnvTrimmed(keys []string) (string, string, bool) {
+func (r observabilityTargetResolver) firstEnvTrimmed(keys []string) (observabilityEnvironmentMatch, bool) {
 	for _, key := range keys {
-		value, ok := lookupEnvTrimmed(key)
+		value, ok := r.lookupEnvTrimmed(key)
 		if ok && value != "" {
-			return value, key, true
+			return observabilityEnvironmentMatch{key: key, value: value}, true
 		}
 	}
-	return "", "", false
+	return observabilityEnvironmentMatch{}, false
 }
 
 // containsObservabilityRole keeps role-presence checks independent of the discovery order.
@@ -588,8 +612,8 @@ func containsObservabilityRole(roles []metricsTargetRole, name string) bool {
 }
 
 // envOrDefault normalizes blank environment values to defaults so whitespace cannot create malformed endpoints.
-func envOrDefault(key string, defaultValue string) string {
-	if value, ok := lookupEnvTrimmed(key); ok {
+func (r observabilityTargetResolver) envOrDefault(key string, defaultValue string) string {
+	if value, ok := r.lookupEnvTrimmed(key); ok {
 		if value != "" {
 			return value
 		}
@@ -599,8 +623,8 @@ func envOrDefault(key string, defaultValue string) string {
 }
 
 // lookupEnvTrimmed preserves whether a variable was explicitly set because empty values can disable optional targets.
-func lookupEnvTrimmed(key string) (string, bool) {
-	value, ok := os.LookupEnv(key)
+func (r observabilityTargetResolver) lookupEnvTrimmed(key string) (string, bool) {
+	value, ok := r.environment.Lookup(key)
 	if !ok {
 		return "", false
 	}

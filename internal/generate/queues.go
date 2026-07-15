@@ -11,7 +11,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -207,21 +206,26 @@ var queueDriverKeys = map[string]map[string]struct{}{
 
 // GenerateQueueFiles writes queue accessors whose selectable transports are fixed by the generation snapshot.
 func GenerateQueueFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
+	return generateQueueFiles(ambientGenerationInput(projectDir))
+}
+
+// generateQueueFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateQueueFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "QUEUE",
 		DefaultDriver: "workerpool",
 		RootKeys:      queueRootKeys,
 		CommonKeys:    queueCommonKeys,
 		DriverKeys:    queueDriverKeys,
-		ChildNames: func(scope env.Scope) []string {
-			return scope.ChildNames(queueRootKeys)
+		ChildNames: func(environment generationEnvironment) []string {
+			return exactScopedChildNames(environment, "QUEUE", queueRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 		InheritRootDriver:     true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderQueueConfig(projectDir)
+	manager, err := renderQueueConfig(input)
 	if err != nil {
 		return 0, err
 	}
@@ -229,7 +233,7 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated queue manager: %w", err)
 	}
-	accessors, err := renderQueueAccessors(projectDir, discoverQueueNames(projectDir))
+	accessors, err := renderQueueAccessors(input.projectDir, discoverQueueNames(input))
 	if err != nil {
 		return 0, err
 	}
@@ -238,30 +242,30 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 		return 0, fmt.Errorf("failed to format generated queue accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "queues", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "queues", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(projectDir, "internal", "queues", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "queues", "accessors_gen.go"), formattedAccessors)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "runtime.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "manager.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "queues_gen.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "config_gen.go"))
+	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "runtime.go"))
+	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "manager.go"))
+	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "queues_gen.go"))
+	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "config_gen.go"))
 	return written, nil
 }
 
 // discoverQueueNames includes queues declared only through a configured App overlay.
-func discoverQueueNames(projectDir string) []string {
-	names := discoverPrimitiveChildNames(projectDir, "QUEUE", queueRootKeys)
+func discoverQueueNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "QUEUE", queueRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -312,9 +316,9 @@ func readModuleName(projectDir string) (string, error) {
 }
 
 // renderQueueConfig retains native worker execution code without widening the authoritative compiled manifest.
-func renderQueueConfig(projectDir string) ([]byte, error) {
-	names := discoverQueueNames(projectDir)
-	moduleName, err := readModuleName(projectDir)
+func renderQueueConfig(input generationInput) ([]byte, error) {
+	names := discoverQueueNames(input)
+	moduleName, err := readModuleName(input.projectDir)
 	if err != nil {
 		return nil, err
 	}
@@ -323,18 +327,18 @@ func renderQueueConfig(projectDir string) ([]byte, error) {
 		"sync":       {},
 		"workerpool": {},
 	}
-	defaultDriver := effectivePrimitiveDriver(env.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
+	defaultDriver := effectivePrimitiveDriver(input.environment.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
 	driverSet[defaultDriver] = struct{}{}
-	for _, child := range env.WithPrefix("QUEUE").ChildNames(queueRootKeys) {
-		driver := str.Of(env.Get("QUEUE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
+	for _, child := range exactScopedChildNames(input.environment, "QUEUE", queueRootKeys) {
+		driver := str.Of(input.environment.Get("QUEUE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
 		if driver != "" {
 			driverSet[driver] = struct{}{}
 		}
 	}
-	for _, active := range appPrefixedActiveDrivers(projectDir, "QUEUE", "workerpool", true) {
+	for _, active := range appPrefixedActiveDrivers(input, "QUEUE", "workerpool", true) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers("QUEUE", queueDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "QUEUE", queueDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}

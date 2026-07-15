@@ -398,7 +398,7 @@ func TestAppPrefixedActiveDriversDoNotClassifyResourceFirstScopes(t *testing.T) 
 	t.Setenv("CACHE_REPORTS_DRIVER", "redis")
 	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "memcached")
 	t.Setenv("STORAGE_CACHE_DRIVER", "memory")
-	drivers := appPrefixedActiveDrivers(t.TempDir(), "CACHE", "memory", false)
+	drivers := appPrefixedActiveDrivers(ambientGenerationInput(t.TempDir()), "CACHE", "memory", false)
 	for _, active := range drivers {
 		switch active.key {
 		case "CACHE_REPORTS_DRIVER", "CACHE_PAGE_CACHE_DRIVER", "STORAGE_CACHE_DRIVER":
