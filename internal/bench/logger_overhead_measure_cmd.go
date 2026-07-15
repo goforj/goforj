@@ -28,6 +28,7 @@ type LoggerOverheadMeasureCmd struct {
 	Silent     bool `help:"Suppress command progress output" short:"s"`
 }
 
+// loggerOverheadBenchResult names benchmark units for one logger scenario and implementation mode.
 type loggerOverheadBenchResult struct {
 	Scenario    string
 	Mode        string
@@ -36,19 +37,23 @@ type loggerOverheadBenchResult struct {
 	AllocsPerOp float64
 }
 
+// loggerOverheadRound keeps one comparison pass intact before cross-round medians are calculated.
 type loggerOverheadRound struct {
 	Index   int
 	Results map[string]loggerOverheadBenchResult
 }
 
+// Signature keeps the measurement command available to maintainers without exposing it in ordinary help.
 func (*LoggerOverheadMeasureCmd) Signature() string {
 	return `name:"bench:logger-overhead" help:"Measure generated logger overhead against direct zerolog" hidden:""`
 }
 
+// NewLoggerOverheadMeasureCmd wires measurement output through the shared application logger.
 func NewLoggerOverheadMeasureCmd(logger *logger.AppLogger) *LoggerOverheadMeasureCmd {
 	return &LoggerOverheadMeasureCmd{logger: logger}
 }
 
+// Run compares logger modes against one rendered artifact across repeated rounds.
 func (cmd *LoggerOverheadMeasureCmd) Run() error {
 	if cmd.Iterations <= 0 {
 		return fmt.Errorf("iterations must be greater than zero")
@@ -119,6 +124,7 @@ func (cmd *LoggerOverheadMeasureCmd) Run() error {
 	return nil
 }
 
+// runBench executes every logger mode together so one round shares the same build and host conditions.
 func (cmd *LoggerOverheadMeasureCmd) runBench(dir string, round int) (map[string]loggerOverheadBenchResult, error) {
 	if !cmd.Silent {
 		console.Actionf("Running logger overhead benchmark (round %d/%d)", round, cmd.Rounds)
@@ -151,6 +157,7 @@ func (cmd *LoggerOverheadMeasureCmd) runBench(dir string, round int) (map[string
 	return results, nil
 }
 
+// parseLoggerOverheadBenchOutput ignores Go tool noise while retaining scenario and mode identity.
 func parseLoggerOverheadBenchOutput(stdout string) (map[string]loggerOverheadBenchResult, error) {
 	results := map[string]loggerOverheadBenchResult{}
 	for _, line := range strings.Split(stdout, "\n") {
@@ -199,6 +206,7 @@ func parseLoggerOverheadBenchOutput(stdout string) (map[string]loggerOverheadBen
 	return results, nil
 }
 
+// printComparison reports every generated logger mode against its direct zerolog baseline.
 func (cmd *LoggerOverheadMeasureCmd) printComparison(rounds []loggerOverheadRound) {
 	byMode := map[string][]loggerOverheadBenchResult{}
 	for _, round := range rounds {
@@ -254,6 +262,7 @@ func (cmd *LoggerOverheadMeasureCmd) printComparison(rounds []loggerOverheadRoun
 	}
 }
 
+// medianLoggerOverhead reduces host jitter without separating the measurements from their scenario metadata.
 func medianLoggerOverhead(results []loggerOverheadBenchResult) loggerOverheadBenchResult {
 	if len(results) == 0 {
 		return loggerOverheadBenchResult{}
@@ -273,6 +282,7 @@ func medianLoggerOverhead(results []loggerOverheadBenchResult) loggerOverheadBen
 	return base
 }
 
+// medianFloat64Logger copies input before sorting so callers retain round order for diagnostics.
 func medianFloat64Logger(values []float64) float64 {
 	if len(values) == 0 {
 		return 0

@@ -44,6 +44,7 @@ type HTTPLiveProfileCmd struct {
 	Silent         bool   `help:"Suppress command progress output" short:"s"`
 }
 
+// httpLiveProfileResult keeps load measurements and captured profiles tied to one target process.
 type httpLiveProfileResult struct {
 	URL         string
 	DurationMS  int64
@@ -79,14 +80,17 @@ type httpLatencyPercentiles struct {
 	p99 float64
 }
 
+// Signature keeps the profiling command available to maintainers without exposing it in ordinary help.
 func (*HTTPLiveProfileCmd) Signature() string {
 	return `name:"bench:http-live-profile" help:"Profile the real rendered HTTP server under live benchmark load" hidden:""`
 }
 
+// NewHTTPLiveProfileCmd wires profiling output through the shared application logger.
 func NewHTTPLiveProfileCmd(logger *logger.AppLogger) *HTTPLiveProfileCmd {
 	return &HTTPLiveProfileCmd{logger: logger}
 }
 
+// Run profiles one server process across warmup, measured load, and profile collection.
 func (cmd *HTTPLiveProfileCmd) Run() error {
 	if cmd.DurationMS <= 0 {
 		return fmt.Errorf("duration-ms must be greater than zero")
@@ -340,6 +344,7 @@ func (cmd *HTTPLiveProfileCmd) httpProfileExecCommand(ctx context.Context, binPa
 	}
 }
 
+// liveProfileDuration covers the warmup and measured window unless an explicit capture duration was requested.
 func (cmd *HTTPLiveProfileCmd) liveProfileDuration(duration time.Duration) time.Duration {
 	if cmd.ProfileSecs > 0 {
 		return time.Duration(cmd.ProfileSecs) * time.Second
@@ -347,6 +352,7 @@ func (cmd *HTTPLiveProfileCmd) liveProfileDuration(duration time.Duration) time.
 	return duration + liveBenchmarkWarmup(duration)
 }
 
+// expectedHealthStatus keeps readiness checks aligned with the selected response shape.
 func (cmd *HTTPLiveProfileCmd) expectedHealthStatus() int {
 	if strings.EqualFold(strings.TrimSpace(cmd.HealthMode), "nocontent") {
 		return http.StatusNoContent
@@ -354,6 +360,7 @@ func (cmd *HTTPLiveProfileCmd) expectedHealthStatus() int {
 	return http.StatusOK
 }
 
+// writePprofSupport adds an isolated diagnostics listener without changing rendered HTTP routes.
 func (cmd *HTTPLiveProfileCmd) writePprofSupport(dir string) error {
 	const source = `package http
 
@@ -381,6 +388,7 @@ func init() {
 	return nil
 }
 
+// writeStandaloneHTTPProfileApp creates comparison stacks outside framework rendering while preserving the same process contract.
 func (cmd *HTTPLiveProfileCmd) writeStandaloneHTTPProfileApp(dir string) error {
 	goMod := "module example.com/standalonehttpprofileapp\n\ngo 1.25.0\n"
 	if cmd.ServerStack == "echonative" {
@@ -395,6 +403,7 @@ func (cmd *HTTPLiveProfileCmd) writeStandaloneHTTPProfileApp(dir string) error {
 	return nil
 }
 
+// standaloneHTTPProfileSource selects the requested comparison stack without leaking stack branches into file setup.
 func (cmd *HTTPLiveProfileCmd) standaloneHTTPProfileSource() string {
 	switch cmd.ServerStack {
 	case "rawdirect":
@@ -406,6 +415,7 @@ func (cmd *HTTPLiveProfileCmd) standaloneHTTPProfileSource() string {
 	}
 }
 
+// rawNetHTTPProfileSource provides the standard-library ServeMux baseline for framework comparisons.
 func (cmd *HTTPLiveProfileCmd) rawNetHTTPProfileSource() string {
 	handler := cmd.rawHTTPHealthHandler()
 	jsonImport := ""
@@ -447,6 +457,7 @@ func main() {
 `, jsonImport, handler)
 }
 
+// rawDirectHTTPProfileSource removes router dispatch from the standard-library comparison path.
 func (cmd *HTTPLiveProfileCmd) rawDirectHTTPProfileSource() string {
 	handler := cmd.rawHTTPHealthHandler()
 	jsonImport := ""
@@ -491,6 +502,7 @@ func main() {
 `, jsonImport, handler)
 }
 
+// echoNativeHTTPProfileSource isolates Echo's native routing cost from GoForj middleware and composition.
 func (cmd *HTTPLiveProfileCmd) echoNativeHTTPProfileSource() string {
 	handler := cmd.echoHTTPHealthHandler()
 	return fmt.Sprintf(`package main
@@ -529,6 +541,7 @@ func main() {
 `, handler)
 }
 
+// rawHTTPHealthHandler keeps standard-library response semantics aligned with the selected health mode.
 func (cmd *HTTPLiveProfileCmd) rawHTTPHealthHandler() string {
 	switch strings.ToLower(strings.TrimSpace(cmd.HealthMode)) {
 	case "text":
@@ -540,6 +553,7 @@ func (cmd *HTTPLiveProfileCmd) rawHTTPHealthHandler() string {
 	}
 }
 
+// echoHTTPHealthHandler keeps Echo response semantics aligned with the selected health mode.
 func (cmd *HTTPLiveProfileCmd) echoHTTPHealthHandler() string {
 	switch strings.ToLower(strings.TrimSpace(cmd.HealthMode)) {
 	case "text":
@@ -551,6 +565,7 @@ func (cmd *HTTPLiveProfileCmd) echoHTTPHealthHandler() string {
 	}
 }
 
+// customizeRenderedHTTPApp applies benchmark toggles after rendering so the normal template contract remains unchanged.
 func (cmd *HTTPLiveProfileCmd) customizeRenderedHTTPApp(dir string) error {
 	if err := cmd.customizeRenderedHealth(dir); err != nil {
 		return err
@@ -581,6 +596,7 @@ func (cmd *HTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
 	return workspace.Run("go mod replace web", "go", "mod", "edit", "-replace", "github.com/goforj/web="+localWebPath)
 }
 
+// customizeRenderedHealth rewrites only non-default response shapes while retaining the generated JSON fast path.
 func (cmd *HTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
 	mode := strings.ToLower(strings.TrimSpace(cmd.HealthMode))
 	if mode == "json" {
@@ -609,6 +625,7 @@ func (cmd *HTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
 	return nil
 }
 
+// customizeRenderedCORS removes middleware only when the benchmark explicitly excludes its cost.
 func (cmd *HTTPLiveProfileCmd) customizeRenderedCORS(dir string) error {
 	if cmd.HTTPCORS {
 		return nil
@@ -628,6 +645,7 @@ func (s *Server) mountCors(router web.Router) error {
 	return nil
 }
 
+// customizeRenderedEnvFlags makes runtime middleware switches match the requested benchmark scenario.
 func (cmd *HTTPLiveProfileCmd) customizeRenderedEnvFlags(dir string) error {
 	path := filepath.Join(dir, ".env.local")
 	input, err := os.ReadFile(path)
@@ -662,6 +680,7 @@ func (cmd *HTTPLiveProfileCmd) customizeRenderedEnvFlags(dir string) error {
 	return nil
 }
 
+// printResult presents load metrics beside the profiles captured from the same process window.
 func (cmd *HTTPLiveProfileCmd) printResult(result httpLiveProfileResult) {
 	rows := [][]string{
 		{"Metric", "Value"},
@@ -684,6 +703,7 @@ func (cmd *HTTPLiveProfileCmd) printResult(result httpLiveProfileResult) {
 	fmt.Fprintf(os.Stdout, "\nprofiles: cpu=%s heap=%s\n", result.CPUProfile, result.HeapProfile)
 }
 
+// fetchPprof limits error bodies before persisting successful profile responses.
 func fetchPprof(url, path string) error {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -703,6 +723,7 @@ func fetchPprof(url, path string) error {
 	return err
 }
 
+// findFreeAddr releases an ephemeral loopback address for the benchmark child to claim.
 func findFreeAddr() (string, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -713,6 +734,7 @@ func findFreeAddr() (string, error) {
 	return addr, nil
 }
 
+// waitForTCP prevents benchmark load from racing process listener startup.
 func waitForTCP(addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -726,6 +748,7 @@ func waitForTCP(addr string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for tcp %s", addr)
 }
 
+// waitForHTTPStatus waits for application readiness rather than treating an open socket as a healthy server.
 func waitForHTTPStatus(url string, want int, timeout time.Duration) error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
@@ -743,6 +766,7 @@ func waitForHTTPStatus(url string, want int, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for %s status %d", url, want)
 }
 
+// normalizeLiveHTTPBenchmarkURL gives command input one predictable absolute target shape.
 func normalizeLiveHTTPBenchmarkURL(baseURL string, path string) string {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
@@ -758,6 +782,7 @@ func normalizeLiveHTTPBenchmarkURL(baseURL string, path string) string {
 	return strings.TrimRight(baseURL, "/") + path
 }
 
+// liveBenchmarkConcurrency bounds worker fan-out so maintenance profiles cannot exhaust the host.
 func liveBenchmarkConcurrency(value, fallback, max int) int {
 	if value <= 0 {
 		value = fallback
@@ -768,6 +793,7 @@ func liveBenchmarkConcurrency(value, fallback, max int) int {
 	return value
 }
 
+// liveBenchmarkWarmup scales startup traffic while keeping short and long profiles reasonably bounded.
 func liveBenchmarkWarmup(duration time.Duration) time.Duration {
 	if duration <= 0 {
 		return 0
@@ -782,6 +808,7 @@ func liveBenchmarkWarmup(duration time.Duration) time.Duration {
 	return w
 }
 
+// runLiveHTTPBenchmark excludes warmup requests while preserving one client and worker set for the measured window.
 func runLiveHTTPBenchmark(ctx context.Context, target string, duration time.Duration, concurrency int, started time.Time) httpRuntimeBenchmarkSummary {
 	warmup := liveBenchmarkWarmup(duration)
 	measureStart := started.Add(warmup)
@@ -879,6 +906,7 @@ func runLiveHTTPBenchmark(ctx context.Context, target string, duration time.Dura
 	}
 }
 
+// httpRuntimeBenchmarkSummary names load and latency units so reporting cannot transpose positional values.
 type httpRuntimeBenchmarkSummary struct {
 	DurationMS  int64
 	Concurrency int
@@ -895,6 +923,7 @@ var (
 	liveHTTPClientInst *http.Client
 )
 
+// liveBenchmarkHTTPClient reuses a bounded transport so connection setup does not dominate every request.
 func liveBenchmarkHTTPClient() *http.Client {
 	liveHTTPClientOnce.Do(func() {
 		transport := &http.Transport{
@@ -913,6 +942,7 @@ func liveBenchmarkHTTPClient() *http.Client {
 	return liveHTTPClientInst
 }
 
+// liveTransportErrorBackoff prevents a failed target from turning workers into a tight retry loop.
 func liveTransportErrorBackoff(streak int) time.Duration {
 	if streak <= 1 {
 		return 0

@@ -30,12 +30,14 @@ type MetricsOverheadMeasureCmd struct {
 	Silent         bool `help:"Suppress command progress output" short:"s"`
 }
 
+// metricsOverheadProbeOutput preserves child mode and warnings beside its surface measurements.
 type metricsOverheadProbeOutput struct {
 	Mode     string                       `json:"mode"`
 	Results  []metricsOverheadProbeResult `json:"results"`
 	Warnings []string                     `json:"warnings,omitempty"`
 }
 
+// metricsOverheadProbeResult names timing and allocation units emitted for one observed surface.
 type metricsOverheadProbeResult struct {
 	Surface     string  `json:"surface"`
 	Iterations  int     `json:"iterations"`
@@ -48,14 +50,17 @@ type metricsOverheadProbeResult struct {
 	BytesPerOp  float64 `json:"bytes_per_op"`
 }
 
+// Signature keeps the measurement command available to maintainers without exposing it in ordinary help.
 func (*MetricsOverheadMeasureCmd) Signature() string {
 	return `name:"bench:metrics-overhead" help:"Measure generated telemetry overhead across observed surfaces" hidden:""`
 }
 
+// NewMetricsOverheadMeasureCmd wires measurement output through the shared application logger.
 func NewMetricsOverheadMeasureCmd(logger *logger.AppLogger) *MetricsOverheadMeasureCmd {
 	return &MetricsOverheadMeasureCmd{logger: logger}
 }
 
+// Run compares telemetry states against one rendered probe across paired rounds.
 func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	if cmd.Iterations <= 0 {
 		return fmt.Errorf("iterations must be greater than zero")
@@ -159,12 +164,14 @@ func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	return nil
 }
 
+// metricsOverheadRound keeps off and on probes paired before cross-round medians are calculated.
 type metricsOverheadRound struct {
 	Index int
 	Off   *metricsOverheadProbeOutput
 	On    *metricsOverheadProbeOutput
 }
 
+// writeProbe substitutes the temporary module path without coupling the embedded probe to a repository location.
 func (cmd *MetricsOverheadMeasureCmd) writeProbe(dir, module string) error {
 	source := strings.ReplaceAll(metricsOverheadProbeSource, "__MODULE__", module)
 	probeDir := filepath.Join(dir, "cmd", "metricsprobe")
@@ -177,6 +184,7 @@ func (cmd *MetricsOverheadMeasureCmd) writeProbe(dir, module string) error {
 	return nil
 }
 
+// runProbe controls every telemetry switch explicitly so ambient environment cannot reshape measurements.
 func (cmd *MetricsOverheadMeasureCmd) runProbe(dir, modCache, buildCache, mode string, round int) (*metricsOverheadProbeOutput, error) {
 	if !cmd.Silent {
 		console.Actionf("Running telemetry probe (%s round %d/%d)", mode, round, cmd.Rounds)
@@ -245,6 +253,7 @@ func (cmd *MetricsOverheadMeasureCmd) runProbe(dir, modCache, buildCache, mode s
 	return &out, nil
 }
 
+// printComparison aligns latency and memory medians by surface before presenting the paired states.
 func (cmd *MetricsOverheadMeasureCmd) printComparison(rounds []metricsOverheadRound) {
 	offMap := make(map[string][]metricsOverheadProbeResult)
 	onMap := make(map[string][]metricsOverheadProbeResult)
@@ -312,6 +321,7 @@ func (cmd *MetricsOverheadMeasureCmd) printComparison(rounds []metricsOverheadRo
 	printASCIITable(os.Stdout, memoryRows)
 }
 
+// formatPercentDelta avoids presenting a fabricated percentage when the baseline is zero.
 func formatPercentDelta(base, current float64) string {
 	if base == 0 {
 		return "n/a"
@@ -319,6 +329,7 @@ func formatPercentDelta(base, current float64) string {
 	return fmt.Sprintf("%+.1f%%", ((current-base)/base)*100)
 }
 
+// boolString emits the exact lowercase literals expected by generated environment readers.
 func boolString(v bool) string {
 	if v {
 		return "true"
@@ -326,6 +337,7 @@ func boolString(v bool) string {
 	return "false"
 }
 
+// hasWarnings retains child diagnostics across every comparison round.
 func hasWarnings(rounds []metricsOverheadRound) bool {
 	for _, round := range rounds {
 		if len(round.Off.Warnings) > 0 || len(round.On.Warnings) > 0 {
@@ -335,6 +347,7 @@ func hasWarnings(rounds []metricsOverheadRound) bool {
 	return false
 }
 
+// lastJSONLine skips build and runtime noise that may precede the probe's machine-readable result.
 func lastJSONLine(stdout string) string {
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -346,6 +359,7 @@ func lastJSONLine(stdout string) string {
 	return ""
 }
 
+// medianProbeResult reduces host jitter while retaining surface metadata from the measured series.
 func medianProbeResult(results []metricsOverheadProbeResult) metricsOverheadProbeResult {
 	if len(results) == 0 {
 		return metricsOverheadProbeResult{}
@@ -368,6 +382,7 @@ func medianProbeResult(results []metricsOverheadProbeResult) metricsOverheadProb
 	return base
 }
 
+// medianFloat64 copies input before sorting so callers retain round order for diagnostics.
 func medianFloat64(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
@@ -381,6 +396,7 @@ func medianFloat64(values []float64) float64 {
 	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
+// printASCIITable keeps all maintenance benchmark reports visually comparable.
 func printASCIITable(out *os.File, rows [][]string) {
 	if len(rows) == 0 {
 		return
