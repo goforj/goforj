@@ -58,6 +58,21 @@ func defaultPaths(target project.App) paths {
 	}
 }
 
+// rootDefaultPaths anchors convention-selected artifacts before any read, staging, or publication work begins.
+func rootDefaultPaths(root string, defaults paths) paths {
+	rootPath := func(path string) string {
+		if path != "" && !filepath.IsAbs(path) {
+			return filepath.Join(root, path)
+		}
+		return path
+	}
+	defaults.out = rootPath(defaults.out)
+	defaults.diagnostics = rootPath(defaults.diagnostics)
+	defaults.openAPI = rootPath(defaults.openAPI)
+	defaults.routeComposition = rootPath(defaults.routeComposition)
+	return defaults
+}
+
 // participation records whether modern config can make an intentional indexing decision.
 type participation struct {
 	known  bool
@@ -65,8 +80,8 @@ type participation struct {
 }
 
 // resolveParticipation uses modern app component config when it can distinguish an intentional CLI-only app from an incomplete WebAPI app.
-func resolveParticipation(target project.App) (participation, error) {
-	config, err := project.LoadProjectConfig()
+func resolveParticipation(root string, target project.App) (participation, error) {
+	config, err := project.LoadProjectConfigAt(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return participation{}, nil

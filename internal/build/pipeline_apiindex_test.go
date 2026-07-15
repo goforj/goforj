@@ -2,8 +2,10 @@ package build
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/apiindex"
@@ -12,7 +14,57 @@ import (
 
 // recordingAPIIndexPreparer exposes one focused preparation function to build integration tests.
 type recordingAPIIndexPreparer struct {
-	prepare func(apiindex.Options) (apiindex.Candidate, string, error)
+	prepare func(apiindex.Options) (apiindex.Preparation, error)
+}
+
+// TestPipelineRunDoesNotChangeProcessWorkingDirectory proves an in-flight build cannot redirect unrelated goroutines into its project root.
+func TestPipelineRunDoesNotChangeProcessWorkingDirectory(t *testing.T) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("read working directory: %v", err)
+	}
+	root := t.TempDir()
+	preparing := make(chan struct{})
+	release := make(chan struct{})
+	preparer := recordingAPIIndexPreparer{prepare: func(options apiindex.Options) (apiindex.Preparation, error) {
+		if options.Root != root {
+			return apiindex.Preparation{}, errors.New("API index received the wrong project root")
+		}
+		close(preparing)
+		<-release
+		return apiindex.Preparation{Status: "skipped"}, nil
+	}}
+	pipeline := NewPipeline(logger.NewSilentLogger(), preparer)
+	done := make(chan error, 1)
+	go func() {
+		done <- pipeline.Run(root, "test", Step{Name: "finish", Run: func(stepRoot string) (string, error) {
+			if stepRoot != root {
+				return "", errors.New("final step received the wrong project root")
+			}
+			return "finished", nil
+		}}, RunOptions{SkipWire: true})
+	}()
+
+	select {
+	case <-preparing:
+	case err := <-done:
+		t.Fatalf("pipeline stopped before API index preparation: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline did not reach API index preparation")
+	}
+	current, err := os.Getwd()
+	if err != nil {
+		close(release)
+		t.Fatalf("read working directory during pipeline: %v", err)
+	}
+	if current != workingDirectory {
+		close(release)
+		t.Fatalf("working directory changed to %q during pipeline, want %q", current, workingDirectory)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("run pipeline: %v", err)
+	}
 }
 
 // recordingAPIIndexCandidate exposes publication callbacks without depending on staged artifact internals.
@@ -22,7 +74,7 @@ type recordingAPIIndexCandidate struct {
 }
 
 // Prepare records the pipeline request without requiring API-index implementation details.
-func (p recordingAPIIndexPreparer) Prepare(options apiindex.Options) (apiindex.Candidate, string, error) {
+func (p recordingAPIIndexPreparer) Prepare(options apiindex.Options) (apiindex.Preparation, error) {
 	return p.prepare(options)
 }
 
@@ -46,9 +98,9 @@ func TestRunFinalAndPublishAPIIndexPublishesAfterSuccess(t *testing.T) {
 		},
 		discard: func() {},
 	}
-	status, err := runFinalAndPublishAPIIndex(Step{
+	status, err := runFinalAndPublishAPIIndex(t.TempDir(), Step{
 		Name: "go build",
-		Run: func() (string, error) {
+		Run: func(string) (string, error) {
 			events = append(events, "final")
 			return "compiled", nil
 		},
@@ -71,9 +123,9 @@ func TestRunFinalAndPublishAPIIndexReturnsPublicationFailure(t *testing.T) {
 		publish: func() error { return publishErr },
 		discard: func() {},
 	}
-	status, err := runFinalAndPublishAPIIndex(Step{
+	status, err := runFinalAndPublishAPIIndex(t.TempDir(), Step{
 		Name: "go build",
-		Run:  func() (string, error) { return "compiled", nil },
+		Run:  func(string) (string, error) { return "compiled", nil },
 	}, candidate)
 	if !errors.Is(err, publishErr) {
 		t.Fatalf("publication error = %v, want %v", err, publishErr)
@@ -86,24 +138,30 @@ func TestRunFinalAndPublishAPIIndexReturnsPublicationFailure(t *testing.T) {
 // TestPipelinePrepareAPIIndexThreadsStrictAndReportsCounts verifies ordinary build pipelines share strict policy and report formatting.
 func TestPipelinePrepareAPIIndexThreadsStrictAndReportsCounts(t *testing.T) {
 	strict := false
-	preparer := recordingAPIIndexPreparer{prepare: func(options apiindex.Options) (apiindex.Candidate, string, error) {
+	receivedRoot := ""
+	preparer := recordingAPIIndexPreparer{prepare: func(options apiindex.Options) (apiindex.Preparation, error) {
 		strict = options.Strict
-		return nil, "app customer-portal, unchanged, 7 operations, 3 schemas, 1 diagnostic", nil
+		receivedRoot = options.Root
+		return apiindex.Preparation{Status: "app customer-portal, unchanged, 7 operations, 3 schemas, 1 diagnostic"}, nil
 	}}
 	pipeline := NewPipeline(logger.NewSilentLogger(), preparer)
-	pending, status, err := pipeline.prepareAPIIndex(true)
+	root := t.TempDir()
+	preparation, err := pipeline.prepareAPIIndex(root, true)
 	if err != nil {
 		t.Fatalf("prepare strict pipeline API index: %v", err)
 	}
-	if pending != nil {
+	if preparation.Candidate != nil {
 		t.Fatal("expected focused preparer not to create a transaction")
 	}
 	if !strict {
 		t.Fatal("expected strict policy to reach the shared preparer")
 	}
+	if receivedRoot != root {
+		t.Fatalf("API index root = %q, want %q", receivedRoot, root)
+	}
 	want := "app customer-portal, unchanged, 7 operations, 3 schemas, 1 diagnostic"
-	if status != want {
-		t.Fatalf("pipeline API index status = %q, want %q", status, want)
+	if preparation.Status != want {
+		t.Fatalf("pipeline API index status = %q, want %q", preparation.Status, want)
 	}
 }
 

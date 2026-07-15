@@ -77,8 +77,9 @@ func runProfileTool(args []string) int {
 	return 1
 }
 
-func (c *Cmd) buildBinaryWithProfile(args []string) (string, error) {
-	return c.buildBinaryWithCompileProfile(args)
+// buildBinaryWithProfile compiles from the selected project while collecting package timing data.
+func (c *Cmd) buildBinaryWithProfile(root string, args []string) (string, error) {
+	return c.buildBinaryWithCompileProfile(root, args)
 }
 
 func (c *Cmd) printProfile() error {
@@ -86,7 +87,8 @@ func (c *Cmd) printProfile() error {
 	return printCompileProfile(os.Stdout, c.compileProfile, c.Top)
 }
 
-func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
+// buildBinaryWithCompileProfile compares uncached baseline and instrumented builds from the same source root.
+func (c *Cmd) buildBinaryWithCompileProfile(root string, args []string) (string, error) {
 	logFile, err := os.CreateTemp("", "forj-build-compile-profile-*.log")
 	if err != nil {
 		return "", err
@@ -101,7 +103,7 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	}
 
 	baselineStartedAt := time.Now()
-	if _, err := c.runGoBuild(args, goBuildOptions{forceNoCache: true}); err != nil {
+	if err := c.runGoBuild(root, args, goBuildOptions{forceNoCache: true}); err != nil {
 		return "", err
 	}
 	baselineTotalMS := time.Since(baselineStartedAt).Milliseconds()
@@ -109,7 +111,7 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	buildArgs := []string{"build", "-toolexec", exePath + " " + profileToolCommand, "-a"}
 	buildArgs = append(buildArgs, args...)
 	profiledStartedAt := time.Now()
-	if _, err := c.runGoBuild(buildArgs[1:], goBuildOptions{
+	if err := c.runGoBuild(root, buildArgs[1:], goBuildOptions{
 		extraEnv: []string{"FORJ_BUILD_PROFILE_LOG=" + logPath},
 	}); err != nil {
 		return "", err
@@ -121,74 +123,88 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 		return "", err
 	}
 	c.compileProfile = normalizeCompileProfile(report, baselineTotalMS, profiledTotalMS)
-	root, err := filepath.Abs(c.Root)
-	if err == nil {
-		annotateCompileProfile(root, &c.compileProfile)
-	}
+	annotateCompileProfile(root, &c.compileProfile)
 	return "", nil
 }
 
-func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
+// runPlainGoBuild stages executable outputs so watchers only observe complete binaries.
+func (c *Cmd) runPlainGoBuild(root string, args []string) (string, error) {
 	c.lastBuildStatus = ""
-	if atomicArgs, output, cleanup, ok, err := atomicGoBuildArgs(args); ok || err != nil {
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if err != nil {
+	plan, err := planAtomicGoBuild(root, args)
+	if err != nil {
+		return "", err
+	}
+	if plan != nil {
+		defer plan.cleanup()
+		if err := c.runGoBuild(root, plan.args, goBuildOptions{allowRecovery: true}); err != nil {
 			return "", err
 		}
-		if _, err := c.runGoBuild(atomicArgs, goBuildOptions{allowRecovery: true}); err != nil {
-			return "", err
-		}
-		if err := os.Chmod(output.build, 0o755); err != nil {
+		if err := os.Chmod(plan.build, 0o755); err != nil {
 			return "", fmt.Errorf("prepare built binary permissions: %w", err)
 		}
-		if err := os.Rename(output.build, output.final); err != nil {
+		if err := os.Rename(plan.build, plan.final); err != nil {
 			return "", fmt.Errorf("publish built binary: %w", err)
 		}
-		if err := writeBuildReadyStamp(output.ready); err != nil {
+		if err := writeBuildReadyStamp(plan.ready); err != nil {
 			return "", fmt.Errorf("write build ready stamp: %w", err)
 		}
 		return c.lastBuildStatus, nil
 	}
-	if _, err := c.runGoBuild(args, goBuildOptions{allowRecovery: true}); err != nil {
+	if err := c.runGoBuild(root, args, goBuildOptions{allowRecovery: true}); err != nil {
 		return "", err
 	}
 	return c.lastBuildStatus, nil
 }
 
-type atomicBuildOutput struct {
-	final string
-	build string
-	ready string
+// atomicBuildPlan binds command arguments and publication paths for one safely staged binary build.
+type atomicBuildPlan struct {
+	args   []string
+	final  string
+	build  string
+	ready  string
+	legacy string
 }
 
-// atomicGoBuildArgs builds watched binaries in a hidden unique file so dev never executes a partial file.
-func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool, error) {
+// planAtomicGoBuild stages watched binaries in a hidden unique file so dev never executes a partial file.
+func planAtomicGoBuild(root string, args []string) (*atomicBuildPlan, error) {
 	outIndex := outputArgIndex(args)
 	if outIndex < 0 {
-		return args, atomicBuildOutput{}, nil, false, nil
+		return nil, nil
 	}
-	final := outputPath(args[outIndex])
-	if !atomicBuildOutputPath(final) {
-		return args, atomicBuildOutput{}, nil, false, nil
+	finalArg := outputPath(args[outIndex])
+	if !atomicBuildOutputPath(rootedBuildPath(root, finalArg)) {
+		return nil, nil
 	}
+	final := rootedBuildPath(root, finalArg)
 	dir := filepath.Dir(final)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, atomicBuildOutput{}, nil, true, err
+		return nil, err
 	}
 	cacheDir := filepath.Join(dir, ".forj-build-cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return nil, atomicBuildOutput{}, nil, true, err
+		return nil, err
 	}
-	build := filepath.Join(cacheDir, uniqueBuildOutputName(filepath.Base(final)))
-	atomicArgs := replaceBuildOutputArg(args, outIndex, build)
+	buildName := uniqueBuildOutputName(filepath.Base(final))
+	build := filepath.Join(cacheDir, buildName)
+	buildArg := build
+	if !filepath.IsAbs(finalArg) {
+		buildArg = filepath.Join(filepath.Dir(finalArg), ".forj-build-cache", buildName)
+	}
+	atomicArgs := replaceBuildOutputArg(args, outIndex, buildArg)
 	legacyBuild := filepath.Join(cacheDir, filepath.Base(final))
-	cleanup := func() {
-		_ = os.Remove(build)
-		_ = os.Remove(legacyBuild)
-	}
-	return atomicArgs, atomicBuildOutput{final: final, build: build, ready: buildReadyStampPath(final)}, cleanup, true, nil
+	return &atomicBuildPlan{
+		args:   atomicArgs,
+		final:  final,
+		build:  build,
+		ready:  buildReadyStampPath(final),
+		legacy: legacyBuild,
+	}, nil
+}
+
+// cleanup removes unpublished outputs without disturbing the last complete binary.
+func (p *atomicBuildPlan) cleanup() {
+	_ = os.Remove(p.build)
+	_ = os.Remove(p.legacy)
 }
 
 // uniqueBuildOutputName avoids shared temp paths when dev and manual builds overlap.
@@ -239,12 +255,14 @@ func replaceBuildOutputArg(args []string, outIndex int, output string) []string 
 	return out
 }
 
-func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
+// runGoBuild executes Go from the selected project and optionally repairs missing module requirements once.
+func (c *Cmd) runGoBuild(root string, args []string, opts goBuildOptions) error {
 	buildArgs := append([]string{"build"}, args...)
 	if opts.forceNoCache {
 		buildArgs = append([]string{"build", "-a"}, args...)
 	}
 	cmd := exec.Command("go", buildArgs...)
+	cmd.Dir = root
 	if len(opts.extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), opts.extraEnv...)
 	}
@@ -252,9 +270,9 @@ func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return false, fmt.Errorf("go build: %w", err)
+			return fmt.Errorf("go build: %w", err)
 		}
-		return false, nil
+		return nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -266,18 +284,18 @@ func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if opts.allowRecovery {
-			recovered, recoverErr := c.attemptMissingModuleRecovery(detail)
+			recovered, recoverErr := c.attemptMissingModuleRecovery(root, detail)
 			if recoverErr == nil && recovered {
 				opts.allowRecovery = false
-				return c.runGoBuild(args, opts)
+				return c.runGoBuild(root, args, opts)
 			}
 		}
 		if detail != "" {
-			return false, fmt.Errorf("go build: %w (%s)", err, detail)
+			return fmt.Errorf("go build: %w (%s)", err, detail)
 		}
-		return false, fmt.Errorf("go build: %w", err)
+		return fmt.Errorf("go build: %w", err)
 	}
-	return false, nil
+	return nil
 }
 
 var missingModulePattern = regexp.MustCompile(`no required module provides package (\S+?)(?:;|\s|$)`)
@@ -306,19 +324,21 @@ func missingModulePackages(detail string) []string {
 	return pkgs
 }
 
-func (c *Cmd) attemptMissingModuleRecovery(detail string) (bool, error) {
+// attemptMissingModuleRecovery installs only dependencies named by Go's missing-module diagnostics.
+func (c *Cmd) attemptMissingModuleRecovery(root string, detail string) (bool, error) {
 	missingPkgs := missingModulePackages(detail)
 	if len(missingPkgs) == 0 {
 		return false, nil
 	}
-	if err := c.runGoGet(missingPkgs); err != nil {
+	if err := c.runGoGet(root, missingPkgs); err != nil {
 		return false, err
 	}
 	c.lastBuildStatus = "synced deps, retried"
 	return true, nil
 }
 
-func (c *Cmd) runGoGet(packages []string) error {
+// runGoGet updates the selected project's module files without relying on process working directory.
+func (c *Cmd) runGoGet(root string, packages []string) error {
 	if len(packages) == 0 {
 		return nil
 	}
@@ -327,6 +347,7 @@ func (c *Cmd) runGoGet(packages []string) error {
 	}
 	args := append([]string{"get"}, packages...)
 	cmd := exec.Command("go", args...)
+	cmd.Dir = root
 	if debugEnabled() {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
