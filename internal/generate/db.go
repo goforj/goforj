@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -38,6 +36,12 @@ type dbDriverSpec struct {
 	PrepareDSN  bool
 }
 
+// dbDriverPlan keeps generated implementations and the authoritative compiled manifest in one validated result.
+type dbDriverPlan struct {
+	drivers  []dbDriverSpec
+	compiled []string
+}
+
 var dbRootKeys = []string{
 	"DEFAULT",
 	"DRIVER",
@@ -57,15 +61,20 @@ var dbRootKeys = []string{
 
 // GenerateDBFiles writes database accessors whose selectable drivers are fixed by the generation snapshot.
 func GenerateDBFiles(projectDir string) (int, error) {
-	if err := validateAppPrefixedDBEnv(projectDir); err != nil {
+	return generateDBFiles(ambientGenerationInput(projectDir))
+}
+
+// generateDBFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateDBFiles(input generationInput) (int, error) {
+	if err := validateAppPrefixedDBEnv(input); err != nil {
 		return 0, err
 	}
-	names := discoverDBConnectionNames(projectDir)
-	drivers, compiledDrivers, err := discoverDBDrivers(projectDir, names)
+	names := discoverDBConnectionNames(input)
+	driverPlan, err := discoverDBDrivers(input, names)
 	if err != nil {
 		return 0, err
 	}
-	source, err := renderDBAccessors(names, drivers, compiledDrivers)
+	source, err := renderDBAccessors(names, driverPlan)
 	if err != nil {
 		return 0, err
 	}
@@ -73,7 +82,7 @@ func GenerateDBFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated db accessors: %w", err)
 	}
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "database", "connections_gen.go"), formatted)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "database", "connections_gen.go"), formatted)
 	if err != nil {
 		return 0, err
 	}
@@ -84,8 +93,8 @@ func GenerateDBFiles(projectDir string) (int, error) {
 }
 
 // discoverDBConnectionNames includes connections declared only through a configured App overlay.
-func discoverDBConnectionNames(projectDir string) []string {
-	names := discoverPrimitiveChildNames(projectDir, "DB", dbRootKeys)
+func discoverDBConnectionNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "DB", dbRootKeys)
 	out := make([]string, 0, len(names))
 	for _, name := range names {
 		normalized := str.Of(name).TrimSpace().ToLower().String()
@@ -99,16 +108,16 @@ func discoverDBConnectionNames(projectDir string) []string {
 }
 
 // validateAppPrefixedDBEnv rejects App-scoped keys that cannot become a root or named database setting at runtime.
-func validateAppPrefixedDBEnv(projectDir string) error {
+func validateAppPrefixedDBEnv(input generationInput) error {
 	problems := []string{}
-	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, "DB") {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(input, "DB") {
 		prefix := appPrefix + "_DB_"
-		for _, assignment := range os.Environ() {
-			key, _, ok := strings.Cut(assignment, "=")
-			if !ok || !strings.HasPrefix(key, prefix) {
+		for _, entry := range input.environment.Entries() {
+			key := entry.key
+			if !strings.HasPrefix(key, prefix) {
 				continue
 			}
-			if _, _, valid := splitScopedEnvKey(strings.TrimPrefix(key, prefix), dbRootKeys); valid {
+			if _, valid := splitScopedEnvKey(strings.TrimPrefix(key, prefix), dbRootKeys); valid {
 				continue
 			}
 			problems = append(problems, fmt.Sprintf("%s is not a supported database env var", key))
@@ -132,13 +141,13 @@ func dbHelperConnectionName(name string) bool {
 }
 
 // renderDBAccessors keeps retained compatibility implementations separate from the authoritative compiled manifest.
-func renderDBAccessors(names []string, drivers []dbDriverSpec, compiledDrivers []string) ([]byte, error) {
+func renderDBAccessors(names []string, driverPlan dbDriverPlan) ([]byte, error) {
 	data := dbTemplateData{
-		CompiledDrivers: compiledDrivers,
+		CompiledDrivers: driverPlan.compiled,
 		HasNames:        false,
-		NeedsGormImport: len(names) > 1 || len(drivers) > 0,
+		NeedsGormImport: len(names) > 1 || len(driverPlan.drivers) > 0,
 		Names:           make([]dbAccessorName, 0, len(names)),
-		Drivers:         drivers,
+		Drivers:         driverPlan.drivers,
 	}
 	for _, name := range names {
 		if name == "default" {
@@ -162,11 +171,11 @@ func renderDBAccessors(names []string, drivers []dbDriverSpec, compiledDrivers [
 }
 
 // discoverDBDrivers validates every active connection against the explicit build contract before source is emitted.
-func discoverDBDrivers(projectDir string, names []string) ([]dbDriverSpec, []string, error) {
+func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, error) {
 	drivers := map[string]dbDriverSpec{}
 	compiled := map[string]struct{}{}
 	recordDBDriver(drivers, "sqlite")
-	rootDriver := str.Of(env.WithPrefix("DB").Get("DRIVER", "sqlite")).TrimSpace().ToLower().String()
+	rootDriver := str.Of(input.environment.Get("DB_DRIVER", "sqlite")).TrimSpace().ToLower().String()
 	if rootDriver == "" {
 		rootDriver = "sqlite"
 	}
@@ -177,8 +186,8 @@ func discoverDBDrivers(projectDir string, names []string) ([]dbDriverSpec, []str
 		},
 	}
 	for _, name := range names {
-		scope := env.WithPrefix("DB").Child(str.Of(name).Snake("_").ToUpper().String())
-		driver := str.Of(scope.Get("DRIVER", "")).TrimSpace().ToLower().String()
+		prefix := "DB_" + str.Of(name).Snake("_").ToUpper().String()
+		driver := str.Of(input.environment.Get(prefix+"_DRIVER", "")).TrimSpace().ToLower().String()
 		if driver == "" {
 			continue
 		}
@@ -187,8 +196,8 @@ func discoverDBDrivers(projectDir string, names []string) ([]dbDriverSpec, []str
 			driver: driver,
 		})
 	}
-	activeDrivers = append(activeDrivers, appPrefixedActiveDrivers(projectDir, "DB", "sqlite", true)...)
-	rawSupported := str.Of(env.WithPrefix("DB").Get("SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
+	activeDrivers = append(activeDrivers, appPrefixedActiveDrivers(input, "DB", "sqlite", true)...)
+	rawSupported := str.Of(input.environment.Get("DB_SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
 	if rawSupported != "" {
 		for _, part := range strings.Split(rawSupported, ",") {
 			driver := str.Of(part).TrimSpace().ToLower().String()
@@ -196,22 +205,22 @@ func discoverDBDrivers(projectDir string, names []string) ([]dbDriverSpec, []str
 				continue
 			}
 			if !recordDBDriver(drivers, driver) {
-				return nil, nil, fmt.Errorf("DB_SUPPORTED_DRIVERS includes unsupported driver %q", driver)
+				return dbDriverPlan{}, fmt.Errorf("DB_SUPPORTED_DRIVERS includes unsupported driver %q", driver)
 			}
 			compiled[canonicalDBDriver(driver)] = struct{}{}
 		}
 		if len(compiled) == 0 {
-			return nil, nil, fmt.Errorf("DB_SUPPORTED_DRIVERS must include at least one driver")
+			return dbDriverPlan{}, fmt.Errorf("DB_SUPPORTED_DRIVERS must include at least one driver")
 		}
 		for _, active := range activeDrivers {
 			if _, ok := compiled[canonicalDBDriver(active.driver)]; !ok {
-				return nil, nil, fmt.Errorf("%s selects driver %q not enabled by DB_SUPPORTED_DRIVERS", active.key, active.driver)
+				return dbDriverPlan{}, fmt.Errorf("%s selects driver %q not enabled by DB_SUPPORTED_DRIVERS", active.key, active.driver)
 			}
 		}
 	} else {
 		for _, active := range activeDrivers {
 			if !recordDBDriver(drivers, active.driver) {
-				return nil, nil, fmt.Errorf("%s selects unsupported driver %q", active.key, active.driver)
+				return dbDriverPlan{}, fmt.Errorf("%s selects unsupported driver %q", active.key, active.driver)
 			}
 			compiled[canonicalDBDriver(active.driver)] = struct{}{}
 		}
@@ -221,7 +230,7 @@ func discoverDBDrivers(projectDir string, names []string) ([]dbDriverSpec, []str
 		out = append(out, driver)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Alias < out[j].Alias })
-	return out, sortStrings(compiled), nil
+	return dbDriverPlan{drivers: out, compiled: sortStrings(compiled)}, nil
 }
 
 // canonicalDBDriver normalizes accepted compatibility aliases to the generated manifest name.

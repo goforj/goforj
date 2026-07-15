@@ -2,11 +2,9 @@ package generate
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 )
@@ -17,18 +15,50 @@ type generationActiveDriver struct {
 	driver string
 }
 
+// scopedEnvironmentKey separates an optional named resource from the root key it overrides.
+type scopedEnvironmentKey struct {
+	child   string
+	rootKey string
+}
+
+// appPrimitiveDriverScope groups the overlay levels needed to resolve one App-scoped child driver.
+type appPrimitiveDriverScope struct {
+	resourcePrefix string
+	contract       primitiveEnvContract
+	rootDriver     string
+	appRootDriver  string
+}
+
 // generationDriverResourcePrefixes bounds App-prefix inference to resources whose overlays generated apps consume.
 var generationDriverResourcePrefixes = []string{"CACHE", "DB", "EVENTS", "MAIL", "QUEUE", "STORAGE"}
 
+// generationEnvironmentResource pairs an App-overlay marker with the keys that provide trustworthy prefix evidence.
+type generationEnvironmentResource struct {
+	prefix   string
+	rootKeys []string
+}
+
+// generationEnvironmentResources keeps App-prefix inference aligned with every generated primitive contract.
+func generationEnvironmentResources() []generationEnvironmentResource {
+	return []generationEnvironmentResource{
+		{prefix: "CACHE", rootKeys: cacheRootKeys},
+		{prefix: "DB", rootKeys: dbRootKeys},
+		{prefix: "EVENTS", rootKeys: eventRootKeys},
+		{prefix: "MAIL", rootKeys: mailRootKeys},
+		{prefix: "QUEUE", rootKeys: queueRootKeys},
+		{prefix: "STORAGE", rootKeys: storageRootKeys},
+	}
+}
+
 // discoverPrimitiveChildNames unions resource-first names with names declared only inside configured App overlays.
-func discoverPrimitiveChildNames(projectDir string, resourcePrefix string, rootKeys []string) []string {
+func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, rootKeys []string) []string {
 	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
 	if resourcePrefix == "" {
 		return nil
 	}
 	names := map[string]struct{}{}
 	add := func(prefix string) {
-		for _, name := range exactScopedChildNames(prefix, rootKeys) {
+		for _, name := range exactScopedChildNames(input.environment, prefix, rootKeys) {
 			name = strings.TrimSpace(strings.ToUpper(name))
 			if name != "" {
 				names[name] = struct{}{}
@@ -36,7 +66,7 @@ func discoverPrimitiveChildNames(projectDir string, resourcePrefix string, rootK
 		}
 	}
 	add(resourcePrefix)
-	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, resourcePrefix) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(input, resourcePrefix) {
 		add(appPrefix + "_" + resourcePrefix)
 	}
 	return sortStrings(names)
@@ -49,25 +79,33 @@ type primitiveEnvContract struct {
 	RootKeys              []string
 	CommonKeys            map[string]struct{}
 	DriverKeys            map[string]map[string]struct{}
-	ChildNames            func(scope env.Scope) []string
+	ChildNames            func(environment generationEnvironment) []string
 	AllowInactiveRootKeys bool
 	InheritRootDriver     bool
 	EagerNamedResources   bool
 }
 
+// primitiveEnvValidator owns the derived driver state shared by root, named, and App-prefixed validation.
+type primitiveEnvValidator struct {
+	input            generationInput
+	contract         primitiveEnvContract
+	supportedDrivers map[string]struct{}
+	rootDriver       string
+	baseChildren     []string
+}
+
 // validatePrimitiveEnv rejects environment shapes that cannot be represented by the generated driver manifest.
-func validatePrimitiveEnv(projectDir string, contract primitiveEnvContract) error {
+func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) error {
 	rootKeySet := makeSet(contract.RootKeys...)
-	scope := env.WithPrefix(contract.Prefix)
-	childNames := contract.ChildNames(scope)
+	childNames := contract.ChildNames(input.environment)
 	knownChildren := makeSet(childNames...)
-	supportedDrivers, err := parseSupportedDrivers(contract.Prefix, contract.DriverKeys)
+	supportedDrivers, err := parseSupportedDrivers(input.environment, contract.Prefix, contract.DriverKeys)
 	if err != nil {
 		return err
 	}
 
 	var problems []string
-	rootDriver := effectivePrimitiveDriver(scope.Get("DRIVER", contract.DefaultDriver), contract.DefaultDriver)
+	rootDriver := effectivePrimitiveDriver(input.environment.Get(contract.Prefix+"_DRIVER", contract.DefaultDriver), contract.DefaultDriver)
 	rootDriverValid := true
 	if supportedDrivers != nil {
 		if _, ok := supportedDrivers[rootDriver]; !ok {
@@ -79,8 +117,8 @@ func validatePrimitiveEnv(projectDir string, contract primitiveEnvContract) erro
 		problems = append(problems, fmt.Sprintf("%s selects unsupported driver %q", contract.Prefix+"_DRIVER", rootDriver))
 		rootDriverValid = false
 	}
-	for _, entry := range os.Environ() {
-		key, _, _ := strings.Cut(entry, "=")
+	for _, entry := range input.environment.Entries() {
+		key := entry.key
 		if !strings.HasPrefix(key, contract.Prefix+"_") {
 			continue
 		}
@@ -89,62 +127,69 @@ func validatePrimitiveEnv(projectDir string, contract primitiveEnvContract) erro
 		}
 
 		trimmed := strings.TrimPrefix(key, contract.Prefix+"_")
-		child, rootKey, ok := splitScopedEnvKey(trimmed, contract.RootKeys)
+		scopedKey, ok := splitScopedEnvKey(trimmed, contract.RootKeys)
 		if !ok {
 			problems = append(problems, fmt.Sprintf("%s is not a supported %s env var", key, strings.ToLower(contract.Prefix)))
 			continue
 		}
-		if child != "" {
-			if _, ok := knownChildren[child]; !ok {
+		if scopedKey.child != "" {
+			if _, ok := knownChildren[scopedKey.child]; !ok {
 				problems = append(problems, fmt.Sprintf("%s does not match a valid %s scope", key, strings.ToLower(contract.Prefix)))
 				continue
 			}
 		}
 
-		driverScope := scope
-		if child != "" {
-			driverScope = scope.Child(child)
-		}
 		driverFallback := contract.DefaultDriver
-		if child != "" && contract.InheritRootDriver {
+		if scopedKey.child != "" && contract.InheritRootDriver {
 			driverFallback = rootDriver
 		}
-		driver := effectivePrimitiveDriver(driverScope.Get("DRIVER", driverFallback), driverFallback)
-		if child == "" {
+		driverKey := contract.Prefix + "_DRIVER"
+		if scopedKey.child != "" {
+			driverKey = contract.Prefix + "_" + scopedKey.child + "_DRIVER"
+		}
+		driver := effectivePrimitiveDriver(input.environment.Get(driverKey, driverFallback), driverFallback)
+		if scopedKey.child == "" {
 			driver = rootDriver
 			if !rootDriverValid {
 				continue
 			}
 		}
-		if child != "" && supportedDrivers != nil {
+		if scopedKey.child != "" && supportedDrivers != nil {
 			if _, ok := supportedDrivers[driver]; !ok {
-				problems = append(problems, fmt.Sprintf("%s selects driver %q not enabled by %s_SUPPORTED_DRIVERS", contract.Prefix+"_"+child+"_DRIVER", driver, contract.Prefix))
+				problems = append(problems, fmt.Sprintf("%s selects driver %q not enabled by %s_SUPPORTED_DRIVERS", contract.Prefix+"_"+scopedKey.child+"_DRIVER", driver, contract.Prefix))
 				continue
 			}
 		}
 		allowedKeys, err := allowedPrimitiveKeys(contract, driver)
 		if err != nil {
-			if child == "" {
+			if scopedKey.child == "" {
 				problems = append(problems, fmt.Sprintf("%s selects unsupported driver %q", contract.Prefix+"_DRIVER", driver))
 			} else {
-				problems = append(problems, fmt.Sprintf("%s selects unsupported driver %q", contract.Prefix+"_"+child+"_DRIVER", driver))
+				problems = append(problems, fmt.Sprintf("%s selects unsupported driver %q", contract.Prefix+"_"+scopedKey.child+"_DRIVER", driver))
 			}
 			continue
 		}
-		if _, ok := rootKeySet[rootKey]; !ok {
+		if _, ok := rootKeySet[scopedKey.rootKey]; !ok {
 			problems = append(problems, fmt.Sprintf("%s is not a supported %s env var", key, strings.ToLower(contract.Prefix)))
 			continue
 		}
-		if _, ok := allowedKeys[rootKey]; ok {
+		if _, ok := allowedKeys[scopedKey.rootKey]; ok {
 			continue
 		}
-		if child == "" && contract.AllowInactiveRootKeys {
+		if scopedKey.child == "" && contract.AllowInactiveRootKeys {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(contract.Prefix), driver))
 	}
-	problems = append(problems, validateEagerNamedPrimitiveDrivers(projectDir, contract, supportedDrivers, rootDriver)...)
-	problems = append(problems, validateAppPrefixedPrimitiveEnv(projectDir, contract, supportedDrivers, rootDriver, childNames)...)
+	validator := primitiveEnvValidator{
+		input:            input,
+		contract:         contract,
+		supportedDrivers: supportedDrivers,
+		rootDriver:       rootDriver,
+		baseChildren:     childNames,
+	}
+	problems = append(problems, validator.eagerNamedDriverProblems()...)
+	problems = append(problems, validator.appPrefixedProblems()...)
 
 	if len(problems) == 0 {
 		return nil
@@ -153,145 +198,150 @@ func validatePrimitiveEnv(projectDir string, contract primitiveEnvContract) erro
 	return fmt.Errorf("invalid %s env:\n- %s", strings.ToLower(contract.Prefix), strings.Join(problems, "\n- "))
 }
 
-// validateEagerNamedPrimitiveDrivers accounts for generated managers that initialize every accessor in every App.
-func validateEagerNamedPrimitiveDrivers(projectDir string, contract primitiveEnvContract, supportedDrivers map[string]struct{}, rootDriver string) []string {
-	if !contract.EagerNamedResources {
+// eagerNamedDriverProblems accounts for generated managers that initialize every accessor in every App.
+func (v primitiveEnvValidator) eagerNamedDriverProblems() []string {
+	if !v.contract.EagerNamedResources {
 		return nil
 	}
 	problems := []string{}
-	for _, child := range discoverPrimitiveChildNames(projectDir, contract.Prefix, contract.RootKeys) {
-		key := contract.Prefix + "_" + child + "_DRIVER"
-		if _, set := os.LookupEnv(key); set {
+	for _, child := range discoverPrimitiveChildNames(v.input, v.contract.Prefix, v.contract.RootKeys) {
+		key := v.contract.Prefix + "_" + child + "_DRIVER"
+		if _, set := v.input.environment.Lookup(key); set {
 			continue
 		}
-		fallback := contract.DefaultDriver
-		if contract.InheritRootDriver {
-			fallback = rootDriver
+		fallback := v.contract.DefaultDriver
+		if v.contract.InheritRootDriver {
+			fallback = v.rootDriver
 		}
 		driver := effectivePrimitiveDriver("", fallback)
-		if supportedDrivers != nil {
-			if _, supported := supportedDrivers[driver]; !supported {
-				problems = append(problems, fmt.Sprintf("%s defaults to driver %q not enabled by %s_SUPPORTED_DRIVERS", key, driver, contract.Prefix))
+		if v.supportedDrivers != nil {
+			if _, supported := v.supportedDrivers[driver]; !supported {
+				problems = append(problems, fmt.Sprintf("%s defaults to driver %q not enabled by %s_SUPPORTED_DRIVERS", key, driver, v.contract.Prefix))
 				continue
 			}
 		}
-		if _, supported := contract.DriverKeys[driver]; !supported {
+		if _, supported := v.contract.DriverKeys[driver]; !supported {
 			problems = append(problems, fmt.Sprintf("%s defaults to unsupported driver %q", key, driver))
 		}
 	}
 	return problems
 }
 
-// validateAppPrefixedPrimitiveEnv applies the root contract after resolving each App value as an overlay of base resource state.
-func validateAppPrefixedPrimitiveEnv(projectDir string, contract primitiveEnvContract, supportedDrivers map[string]struct{}, rootDriver string, baseChildren []string) []string {
+// appPrefixedProblems applies the root contract after resolving each App value as an overlay of base resource state.
+func (v primitiveEnvValidator) appPrefixedProblems() []string {
 	problems := []string{}
-	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, contract.Prefix) {
-		resourcePrefix := appPrefix + "_" + contract.Prefix
-		appRootDriver := rootDriver
-		if value, set := os.LookupEnv(resourcePrefix + "_DRIVER"); set {
-			appRootDriver = effectivePrimitiveDriver(value, contract.DefaultDriver)
+	for _, appPrefix := range generationAppEnvPrefixesForResource(v.input, v.contract.Prefix) {
+		resourcePrefix := appPrefix + "_" + v.contract.Prefix
+		appRootDriver := v.rootDriver
+		if value, set := v.input.environment.Lookup(resourcePrefix + "_DRIVER"); set {
+			appRootDriver = effectivePrimitiveDriver(value, v.contract.DefaultDriver)
 		}
 		knownChildren := map[string]struct{}{}
-		for _, child := range baseChildren {
+		for _, child := range v.baseChildren {
 			child = strings.TrimSpace(strings.ToUpper(child))
 			if child != "" {
 				knownChildren[child] = struct{}{}
 			}
 		}
-		for _, child := range exactScopedChildNames(resourcePrefix, contract.RootKeys) {
+		for _, child := range exactScopedChildNames(v.input.environment, resourcePrefix, v.contract.RootKeys) {
 			knownChildren[child] = struct{}{}
 		}
 
-		for _, assignment := range os.Environ() {
-			key, _, ok := strings.Cut(assignment, "=")
-			if !ok || !strings.HasPrefix(key, resourcePrefix+"_") {
+		for _, entry := range v.input.environment.Entries() {
+			key := entry.key
+			if !strings.HasPrefix(key, resourcePrefix+"_") {
 				continue
 			}
 			trimmed := strings.TrimPrefix(key, resourcePrefix+"_")
-			child, rootKey, split := splitScopedEnvKey(trimmed, contract.RootKeys)
-			if !split {
-				problems = append(problems, fmt.Sprintf("%s is not a supported %s env var", key, strings.ToLower(contract.Prefix)))
+			scopedKey, ok := splitScopedEnvKey(trimmed, v.contract.RootKeys)
+			if !ok {
+				problems = append(problems, fmt.Sprintf("%s is not a supported %s env var", key, strings.ToLower(v.contract.Prefix)))
 				continue
 			}
-			if child != "" {
-				if _, known := knownChildren[child]; !known {
-					problems = append(problems, fmt.Sprintf("%s does not match a valid %s scope", key, strings.ToLower(contract.Prefix)))
+			if scopedKey.child != "" {
+				if _, known := knownChildren[scopedKey.child]; !known {
+					problems = append(problems, fmt.Sprintf("%s does not match a valid %s scope", key, strings.ToLower(v.contract.Prefix)))
 					continue
 				}
 			}
 
 			driver := appRootDriver
-			if child != "" {
-				driver = effectiveAppPrimitiveChildDriver(resourcePrefix, contract, rootDriver, appRootDriver, child)
+			if scopedKey.child != "" {
+				driver = effectiveAppPrimitiveChildDriver(v.input.environment, appPrimitiveDriverScope{
+					resourcePrefix: resourcePrefix,
+					contract:       v.contract,
+					rootDriver:     v.rootDriver,
+					appRootDriver:  appRootDriver,
+				}, scopedKey.child)
 			}
-			if supportedDrivers != nil {
-				if _, supported := supportedDrivers[driver]; !supported {
+			if v.supportedDrivers != nil {
+				if _, supported := v.supportedDrivers[driver]; !supported {
 					selectionKey := resourcePrefix + "_DRIVER"
-					if child != "" {
-						selectionKey = resourcePrefix + "_" + child + "_DRIVER"
+					if scopedKey.child != "" {
+						selectionKey = resourcePrefix + "_" + scopedKey.child + "_DRIVER"
 					}
-					problems = append(problems, fmt.Sprintf("%s selects driver %q not enabled by %s_SUPPORTED_DRIVERS", selectionKey, driver, contract.Prefix))
+					problems = append(problems, fmt.Sprintf("%s selects driver %q not enabled by %s_SUPPORTED_DRIVERS", selectionKey, driver, v.contract.Prefix))
 					continue
 				}
 			}
-			allowedKeys, err := allowedPrimitiveKeys(contract, driver)
+			allowedKeys, err := allowedPrimitiveKeys(v.contract, driver)
 			if err != nil {
 				selectionKey := resourcePrefix + "_DRIVER"
-				if child != "" {
-					selectionKey = resourcePrefix + "_" + child + "_DRIVER"
+				if scopedKey.child != "" {
+					selectionKey = resourcePrefix + "_" + scopedKey.child + "_DRIVER"
 				}
 				problems = append(problems, fmt.Sprintf("%s selects unsupported driver %q", selectionKey, driver))
 				continue
 			}
-			if _, allowed := allowedKeys[rootKey]; allowed {
+			if _, allowed := allowedKeys[scopedKey.rootKey]; allowed {
 				continue
 			}
-			if child == "" && contract.AllowInactiveRootKeys {
+			if scopedKey.child == "" && v.contract.AllowInactiveRootKeys {
 				continue
 			}
-			problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(contract.Prefix), driver))
+			problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(v.contract.Prefix), driver))
 		}
 	}
 	return problems
 }
 
 // effectiveAppPrimitiveChildDriver mirrors runtime overlay precedence for one App-scoped named resource.
-func effectiveAppPrimitiveChildDriver(appResourcePrefix string, contract primitiveEnvContract, rootDriver string, appRootDriver string, child string) string {
-	baseFallback := contract.DefaultDriver
-	appFallback := contract.DefaultDriver
-	if contract.InheritRootDriver {
-		baseFallback = rootDriver
-		appFallback = appRootDriver
+func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope appPrimitiveDriverScope, child string) string {
+	baseFallback := scope.contract.DefaultDriver
+	appFallback := scope.contract.DefaultDriver
+	if scope.contract.InheritRootDriver {
+		baseFallback = scope.rootDriver
+		appFallback = scope.appRootDriver
 	}
-	baseKey := contract.Prefix + "_" + child + "_DRIVER"
+	baseKey := scope.contract.Prefix + "_" + child + "_DRIVER"
 	driver := baseFallback
-	if value, set := os.LookupEnv(baseKey); set {
+	if value, set := environment.Lookup(baseKey); set {
 		driver = effectivePrimitiveDriver(value, baseFallback)
 	}
-	if value, set := os.LookupEnv(appResourcePrefix + "_" + child + "_DRIVER"); set {
+	if value, set := environment.Lookup(scope.resourcePrefix + "_" + child + "_DRIVER"); set {
 		driver = effectivePrimitiveDriver(value, appFallback)
 	}
 	return driver
 }
 
 // appPrefixedActiveDrivers resolves root and named App overlays with the same blank-driver fallbacks used at runtime.
-func appPrefixedActiveDrivers(projectDir string, resourcePrefix string, defaultDriver string, inheritRootDriver bool) []generationActiveDriver {
+func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defaultDriver string, inheritRootDriver bool) []generationActiveDriver {
 	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
 	if resourcePrefix == "" {
 		return nil
 	}
-	baseRootDriver := effectivePrimitiveDriver(env.WithPrefix(resourcePrefix).Get("DRIVER", defaultDriver), defaultDriver)
+	baseRootDriver := effectivePrimitiveDriver(input.environment.Get(resourcePrefix+"_DRIVER", defaultDriver), defaultDriver)
 	drivers := make([]generationActiveDriver, 0)
 	seen := map[string]struct{}{}
-	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, resourcePrefix) {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(input, resourcePrefix) {
 		keyPrefix := appPrefix + "_" + resourcePrefix + "_"
 		appRootDriver := baseRootDriver
-		if value, ok := os.LookupEnv(keyPrefix + "DRIVER"); ok {
+		if value, ok := input.environment.Lookup(keyPrefix + "DRIVER"); ok {
 			appRootDriver = effectivePrimitiveDriver(value, defaultDriver)
 		}
-		for _, assignment := range os.Environ() {
-			key, value, ok := strings.Cut(assignment, "=")
-			if !ok || !strings.HasPrefix(key, keyPrefix) || !strings.HasSuffix(key, "_DRIVER") {
+		for _, entry := range input.environment.Entries() {
+			key, value := entry.key, entry.value
+			if !strings.HasPrefix(key, keyPrefix) || !strings.HasSuffix(key, "_DRIVER") {
 				continue
 			}
 			relative := strings.TrimPrefix(key, keyPrefix)
@@ -320,15 +370,44 @@ func appPrefixedActiveDrivers(projectDir string, resourcePrefix string, defaultD
 	return drivers
 }
 
-// generationAppEnvPrefixes combines configured Apps with conservative evidence from App-before-resource driver keys.
-func generationAppEnvPrefixes(projectDir string) []string {
+// generationAppEnvPrefixes returns the App identities fixed when the generation snapshot was captured.
+func generationAppEnvPrefixes(input generationInput) []string {
+	return append([]string(nil), input.appPrefixes...)
+}
+
+// generationAppEnvPrefixSet combines configured Apps with conservative evidence from valid App-before-resource keys.
+func generationAppEnvPrefixSet(projectDir string, environment generationEnvironment) map[string]struct{} {
+	configured := configuredGenerationAppEnvPrefixes(projectDir)
+	prefixes := map[string]struct{}{}
+	for prefix := range configured {
+		prefixes[prefix] = struct{}{}
+	}
+	for _, entry := range environment.Entries() {
+		if generationKeyMatchesConfiguredApp(entry.key, configured) {
+			continue
+		}
+		prefix, ok := inferredGenerationAppPrefix(entry.key)
+		if !ok || generationResourceFirstPrefix(prefix) {
+			continue
+		}
+		prefixes[prefix] = struct{}{}
+	}
+	return prefixes
+}
+
+// configuredGenerationAppEnvPrefixes returns every durable App prefix without making a missing config fatal to direct generators.
+func configuredGenerationAppEnvPrefixes(projectDir string) map[string]struct{} {
 	prefixes := map[string]struct{}{}
 	addName := func(name string) {
 		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
 			prefixes[prefix] = struct{}{}
 		}
 	}
-	if config, err := project.LoadProjectConfigAt(projectDir); err == nil {
+	if strings.TrimSpace(projectDir) != "" {
+		config, err := project.LoadProjectConfigAt(projectDir)
+		if err != nil {
+			return prefixes
+		}
 		for name := range config.Apps {
 			addName(name)
 		}
@@ -339,34 +418,59 @@ func generationAppEnvPrefixes(projectDir string) []string {
 			addName(name)
 		}
 	}
-	for _, assignment := range os.Environ() {
-		key, _, ok := strings.Cut(assignment, "=")
-		if !ok || !strings.HasSuffix(key, "_DRIVER") {
-			continue
+	return prefixes
+}
+
+// generationKeyMatchesConfiguredApp lets explicit App identities win when their names contain resource words.
+func generationKeyMatchesConfiguredApp(key string, configured map[string]struct{}) bool {
+	for prefix := range configured {
+		if isGenerationAppResourceKey(key, prefix) {
+			return true
 		}
-		markerIndex := -1
-		for _, resourcePrefix := range generationDriverResourcePrefixes {
-			index := strings.Index(key, "_"+resourcePrefix+"_")
-			if index > 0 && (markerIndex < 0 || index < markerIndex) {
-				markerIndex = index
-			}
-		}
-		if markerIndex <= 0 {
-			continue
-		}
-		prefix := key[:markerIndex]
-		if !validGenerationAppEnvPrefix(prefix) || generationResourceFirstPrefix(prefix) {
-			continue
-		}
-		prefixes[prefix] = struct{}{}
 	}
-	return sortStrings(prefixes)
+	return false
+}
+
+// isGenerationAppResourceKey recognizes any resource-shaped key after an already trusted App prefix, including typos for validation.
+func isGenerationAppResourceKey(key string, appPrefix string) bool {
+	for _, resource := range generationEnvironmentResources() {
+		if strings.HasPrefix(key, appPrefix+"_"+resource.prefix+"_") {
+			return true
+		}
+	}
+	return false
+}
+
+// inferredGenerationAppPrefix uses the earliest valid resource marker so ambiguous unconfigured names retain the historical boundary.
+func inferredGenerationAppPrefix(key string) (string, bool) {
+	bestIndex := -1
+	bestPrefix := ""
+	for _, resource := range generationEnvironmentResources() {
+		marker := "_" + resource.prefix + "_"
+		searchFrom := 0
+		for searchFrom < len(key) {
+			relativeIndex := strings.Index(key[searchFrom:], marker)
+			if relativeIndex < 0 {
+				break
+			}
+			index := searchFrom + relativeIndex
+			prefix := key[:index]
+			if index > 0 && validGenerationAppEnvPrefix(prefix) {
+				if _, ok := splitScopedEnvKey(key[index+len(marker):], resource.rootKeys); ok && (bestIndex < 0 || index < bestIndex) {
+					bestIndex = index
+					bestPrefix = prefix
+				}
+			}
+			searchFrom = index + 1
+		}
+	}
+	return bestPrefix, bestIndex >= 0
 }
 
 // generationAppEnvPrefixesForResource keeps stale overlays from Apps that do not participate in a component out of generated manifests.
-func generationAppEnvPrefixesForResource(projectDir string, resourcePrefix string) []string {
-	prefixes := generationAppEnvPrefixes(projectDir)
-	config, err := project.LoadProjectConfigAt(projectDir)
+func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix string) []string {
+	prefixes := generationAppEnvPrefixes(input)
+	config, err := project.LoadProjectConfigAt(input.projectDir)
 	if err != nil {
 		return prefixes
 	}
@@ -479,14 +583,14 @@ func allowedPrimitiveKeys(contract primitiveEnvContract, driver string) (map[str
 }
 
 // splitScopedEnvKey prefers complete multi-part keys so suffixes such as WORKERPOOL_WORKERS do not become false child names.
-func splitScopedEnvKey(value string, rootKeys []string) (child string, rootKey string, ok bool) {
+func splitScopedEnvKey(value string, rootKeys []string) (scopedEnvironmentKey, bool) {
 	orderedRootKeys := append([]string(nil), rootKeys...)
 	sort.SliceStable(orderedRootKeys, func(left, right int) bool {
 		return len(strings.Split(orderedRootKeys[left], "_")) > len(strings.Split(orderedRootKeys[right], "_"))
 	})
 	for _, rootKey := range orderedRootKeys {
 		if value == rootKey {
-			return "", rootKey, true
+			return scopedEnvironmentKey{rootKey: rootKey}, true
 		}
 	}
 	for _, rootKey := range orderedRootKeys {
@@ -494,14 +598,14 @@ func splitScopedEnvKey(value string, rootKeys []string) (child string, rootKey s
 		if !strings.HasSuffix(value, suffix) {
 			continue
 		}
-		child = strings.TrimSuffix(value, suffix)
+		child := strings.TrimSuffix(value, suffix)
 		child = str.Of(child).TrimSpace().ToUpper().String()
 		if child == "" {
-			return "", "", false
+			return scopedEnvironmentKey{}, false
 		}
-		return child, rootKey, true
+		return scopedEnvironmentKey{child: child, rootKey: rootKey}, true
 	}
-	return "", "", false
+	return scopedEnvironmentKey{}, false
 }
 
 // makeSet avoids repeated linear scans in environment validation paths with overlapping key inventories.
@@ -514,8 +618,8 @@ func makeSet(values ...string) map[string]struct{} {
 }
 
 // parseSupportedDrivers distinguishes an omitted build manifest from an explicit, validated driver set.
-func parseSupportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}) (map[string]struct{}, error) {
-	raw := str.Of(env.WithPrefix(prefix).Get("SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
+func parseSupportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}) (map[string]struct{}, error) {
+	raw := str.Of(environment.Get(prefix+"_SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
 	if raw == "" {
 		return nil, nil
 	}
@@ -537,8 +641,8 @@ func parseSupportedDrivers(prefix string, knownDrivers map[string]map[string]str
 }
 
 // supportedDrivers uses catalog fallbacks only when the owner environment has not declared a build manifest.
-func supportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}, fallback []string) ([]string, error) {
-	set, err := parseSupportedDrivers(prefix, knownDrivers)
+func supportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}, fallback []string) ([]string, error) {
+	set, err := parseSupportedDrivers(environment, prefix, knownDrivers)
 	if err != nil {
 		return nil, err
 	}
