@@ -355,7 +355,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.StorageFaviconsDriver = named.Active
 		}
 	}
-	values.RedisSupported = components.Docker && resourcePlanIncludesDriver(plan, components, "redis")
+	values.RedisSupported = resourcePlanIncludesDriver(plan, components, "redis")
 	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
 		switch requirement.State {
 		case project.ServiceStateActiveLocal, project.ServiceStateLocalRequestedUnused:
