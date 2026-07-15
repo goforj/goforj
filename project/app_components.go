@@ -116,6 +116,9 @@ func NormalizeAppComponents(available Components, selected Components) Component
 
 // DeselectAppComponent clears a selected app component and any selected app components that depend on it.
 func DeselectAppComponent(selected *Components, key ComponentKey) {
+	if selected == nil {
+		return
+	}
 	selected.SetEnabled(key, false)
 	for _, candidate := range appComponentKeys {
 		if candidate == key || !selected.Enabled(candidate) || !AppComponentRequires(candidate, key) {
@@ -159,6 +162,9 @@ func IsAppDatabaseComponent(key ComponentKey) bool {
 
 // ProjectComponents derives the shared render capability envelope without changing the default App selection.
 func ProjectComponents(config *Config) Components {
+	if config == nil {
+		return Components{}
+	}
 	available := config.Render.Components.WithResolvedDependencies()
 	envelope := available
 	for _, appConfig := range config.Apps {
@@ -170,6 +176,9 @@ func ProjectComponents(config *Config) Components {
 
 // NormalizeConfiguredAppComponents resolves one App against the default App so sibling selections cannot change its implicit dependencies.
 func NormalizeConfiguredAppComponents(config *Config, selected Components) Components {
+	if config == nil {
+		return NormalizeAppComponents(Components{}, selected)
+	}
 	return NormalizeAppComponents(config.Render.Components.WithResolvedDependencies(), selected)
 }
 
