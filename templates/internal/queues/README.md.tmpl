@@ -35,6 +35,14 @@ The default queue is available from app.Queue(). Named queues are available from
 
 Named generated accessors such as app.Queues().Critical() do not return errors. They represent generated configuration invariants from the env state present when forj generate --queue last ran. If one of those accessors is missing at runtime, the generated code and the current env configuration are out of sync, so the accessor fails fast.
 
+Dispatch App-facing logical names through the manager so it can select the named runtime and translate its configured physical queue name:
+
+```go
+_, err := app.Queues().Dispatch(queue.NewJob("reports:generate").OnQueue("critical"))
+```
+
+`app.Queues().Critical()` is the direct runtime handle used for worker lifecycle, readiness, and driver inspection. If low-level code dispatches through that handle, omit `OnQueue`; setting the logical name again bypasses the manager's App namespace translation.
+
 ## Apps
 
 Queue names in app code and `.env` are logical names.

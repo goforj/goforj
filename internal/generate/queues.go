@@ -423,10 +423,10 @@ func (m *Manager) {{ .Method }}() *queue.Queue {
 // Instances returns the generated queue instances derived from QUEUE_* configuration.
 func (m *Manager) Instances() []Instance {
 	instances := []Instance{
-		{Name: "default", Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
+		{Name: "default", queueName: m.defaultQueueName, Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
 	}
 {{- range .Names }}
-	instances = append(instances, Instance{Name: "{{ .Queue }}", Queue: m.{{ .Queue }}, Workers: m.{{ .Queue }}Workers})
+	instances = append(instances, Instance{Name: "{{ .Queue }}", queueName: m.{{ .Queue }}QueueName, Queue: m.{{ .Queue }}, Workers: m.{{ .Queue }}Workers})
 {{- end }}
 	return instances
 }`
@@ -516,6 +516,7 @@ type Manager struct {
 	inspects *inspects.Manager
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue
+	{{ .Queue }}QueueName string
 	{{ .Queue }}Workers int
 {{- end }}
 }
@@ -523,6 +524,7 @@ type Manager struct {
 // Instance gives tooling a uniform view of each generated queue and its worker count.
 type Instance struct {
 	Name      string
+	queueName string
 	Queue     *queue.Queue
 	Workers   int
 	IsDefault bool
@@ -637,36 +639,52 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
-// Register registers a handler on the default queue and stamps jobs source
-// context at the queue execution boundary.
+// Register binds a job handler to every generated queue so workers can consume it from any configured lane.
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
-	m.defaultQueue.Register(jobType, func(ctx context.Context, msg queue.Message) error {
+	for _, instance := range m.Instances() {
+		instance.Queue.Register(jobType, m.instrumentJobHandler(jobType, fn))
+	}
+}
+
+// instrumentJobHandler applies the shared source and inspect contract at every queue execution boundary.
+func (m *Manager) instrumentJobHandler(jobType string, fn func(context.Context, queue.Message) error) func(context.Context, queue.Message) error {
+	return func(ctx context.Context, msg queue.Message) (handlerErr error) {
 		ctx = runtime.WithSource(ctx, runtime.SourceJobs)
 		if m.inspects != nil {
 			ctx = m.inspects.Begin(ctx, runtime.SourceJobs, jobType, map[string]string{
 				"job_name": jobType,
 			})
 			recordJobPayload(ctx, msg)
-			defer m.inspects.Finish(ctx, "", nil)
+			defer func() {
+				status := ""
+				if handlerErr != nil {
+					status = "error"
+				}
+				m.inspects.Finish(ctx, status, handlerErr)
+			}()
 		}
-		err := fn(ctx, msg)
-		if m.inspects != nil && err != nil {
-			m.inspects.Finish(ctx, "error", err)
-		}
-		return err
-	})
+		return fn(ctx, msg)
+	}
 }
 
-// Dispatch applies the generated default queue before recording payload telemetry and handing work to the transport.
+// Dispatch routes generated named resources through their own driver and physical queue configuration.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
-	if queue.DriverOptions(job).QueueName == "" {
-		queueName := strings.TrimSpace(m.defaultQueueName)
+	queueName := strings.TrimSpace(queue.DriverOptions(job).QueueName)
+	if queueName == "" || strings.EqualFold(queueName, defaultQueueName) {
+		queueName = strings.TrimSpace(m.defaultQueueName)
 		if queueName == "" {
 			queueName = defaultQueueName
 		}
 		job = job.OnQueue(queueName)
+		recordQueuedJobPayload(m.ctx, job)
+		return m.defaultQueue.Dispatch(job)
 	}
 	recordQueuedJobPayload(m.ctx, job)
+	for _, instance := range m.Instances() {
+		if !instance.IsDefault && strings.EqualFold(instance.Name, queueName) {
+			return instance.Queue.Dispatch(job.OnQueue(instance.queueName))
+		}
+	}
 	return m.defaultQueue.Dispatch(job)
 }
 
@@ -700,6 +718,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 		return nil, err
 	}
 	manager.{{ .Queue }} = queue{{ .Method }}
+	manager.{{ .Queue }}QueueName = queueDefaultQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
 	manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
 {{- end }}
 

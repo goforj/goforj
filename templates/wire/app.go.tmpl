@@ -38,12 +38,7 @@ import (
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 {{- if .Components.Jobs }}
-	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/queues"
-{{- end }}
-{{- if and .Components.DemoApp .Components.Jobs }}
-	"{{.GoModuleName}}/internal/alerts"
-	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
 {{- if .Components.Storage }}
 	"{{.GoModuleName}}/internal/storages"
@@ -315,11 +310,7 @@ func NewApplication(
 	{{- end }}
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
-	exampleHelloJob *jobs.ExampleHelloJob,
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	dispatchJob *alerts.DispatchJob,
-	monitorCheckJob *monitoring.MonitorCheckJob,
-	{{- end }}
+	_ *jobHandlerRegistration,
 	{{- end }}
 ) App {
 	lifecycleManager := runtime.NewLifecycle(appTimeouts)
@@ -330,16 +321,6 @@ func NewApplication(
 {{- end }}
 {{- if .Components.HasDatabase }}
 	registerDatabaseShutdown(lifecycleManager, appLogger, db)
-{{- end }}
-{{- if .Components.Jobs }}
-	registerQueueHandlers(
-		queues,
-		exampleHelloJob,
-{{- if and .Components.DemoApp .Components.Jobs }}
-		dispatchJob,
-		monitorCheckJob,
-{{- end }}
-	)
 {{- end }}
 {{- if .Components.Events }}
 	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
@@ -425,24 +406,6 @@ func registerDatabaseShutdown(lifecycleManager *runtime.Lifecycle, appLogger *lo
 		appLogger.Debug().Msg("Database connections shut down")
 		return nil
 	})
-}
-{{- end }}
-
-{{ if .Components.Jobs }}
-// registerQueueHandlers binds generated job handlers to queue type names during app assembly.
-func registerQueueHandlers(
-	queues *queues.Manager,
-	exampleHelloJob *jobs.ExampleHelloJob,
-{{- if and .Components.DemoApp .Components.Jobs }}
-	dispatchJob *alerts.DispatchJob,
-	monitorCheckJob *monitoring.MonitorCheckJob,
-{{- end }}
-) {
-	queues.Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
-{{- if and .Components.DemoApp .Components.Jobs }}
-	queues.Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
-	queues.Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
-{{- end }}
 }
 {{- end }}
 

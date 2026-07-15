@@ -5,6 +5,7 @@ package wire
 
 import (
 	"github.com/goforj/wire"
+	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 {{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
@@ -14,6 +15,7 @@ import (
 
 // appJobSet is a wire set that contains application-level jobs.
 var appJobSet = wire.NewSet(
+	registerJobHandlers,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	alerts.NewDispatchJob,
 	{{- end }}
@@ -24,3 +26,23 @@ var appJobSet = wire.NewSet(
 	monitoring.NewMonitorCheckJob,
 	{{- end }}
 )
+
+// jobHandlerRegistration makes handler registration a prerequisite of App construction.
+type jobHandlerRegistration struct{}
+
+// registerJobHandlers binds every application job to each configured queue runtime.
+func registerJobHandlers(
+	queueManager *queues.Manager,
+	exampleHelloJob *jobs.ExampleHelloJob,
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	dispatchJob *alerts.DispatchJob,
+	monitorCheckJob *monitoring.MonitorCheckJob,
+	{{- end }}
+) *jobHandlerRegistration {
+	queueManager.Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	queueManager.Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
+	queueManager.Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
+	{{- end }}
+	return &jobHandlerRegistration{}
+}

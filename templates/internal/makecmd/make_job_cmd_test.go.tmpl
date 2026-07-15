@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+const jobWireFixture = `package wire
+
+import (
+	"github.com/goforj/wire"
+	"example.com/testapp/internal/queues"
+)
+
+var appJobSet = wire.NewSet(
+	registerJobHandlers,
+)
+
+// jobHandlerRegistration makes fixture registration part of App construction.
+type jobHandlerRegistration struct{}
+
+// registerJobHandlers gives make:job the same stable boundary as rendered Apps.
+func registerJobHandlers(
+	queueManager *queues.Manager,
+) *jobHandlerRegistration {
+	_ = queueManager
+	return &jobHandlerRegistration{}
+}
+`
+
 func TestJobCmdStampsQueueName(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -17,13 +40,7 @@ func TestJobCmdStampsQueueName(t *testing.T) {
 	if err := os.MkdirAll("wire", 0755); err != nil {
 		t.Fatalf("mkdir wire: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join("wire", "inject_jobs_app.go"), []byte(`package wire
-
-import "github.com/goforj/wire"
-
-var appJobSet = wire.NewSet(
-)
-`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join("wire", "inject_jobs_app.go"), []byte(jobWireFixture), 0644); err != nil {
 		t.Fatalf("write inject_jobs_app.go: %v", err)
 	}
 
@@ -39,6 +56,10 @@ var appJobSet = wire.NewSet(
 	if !strings.Contains(string(body), `.OnQueue("reports")`) {
 		t.Fatalf("expected generated job to dispatch on reports queue, got:\n%s", string(body))
 	}
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_jobs_app.go"), []string{
+		"jobsGenerateReportJob *jobs.GenerateReportJob",
+		"queueManager.Register(jobs.GenerateReportJobTypeName, jobsGenerateReportJob.HandleTask)",
+	})
 }
 
 func TestJobCmdRemoveDeletesFileAndWiring(t *testing.T) {
@@ -46,13 +67,7 @@ func TestJobCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	t.Chdir(root)
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
-	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_jobs_app.go"), `package wire
-
-import "github.com/goforj/wire"
-
-var appJobSet = wire.NewSet(
-)
-`)
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_jobs_app.go"), jobWireFixture)
 
 	create := &JobCmd{Name: "Reports:Generate", Queue: "reports"}
 	if err := create.Run(); err != nil {
@@ -68,6 +83,8 @@ var appJobSet = wire.NewSet(
 	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewGenerateJob",
+		"reportsGenerateJob *reports.GenerateJob",
+		"queueManager.Register(reports.GenerateJobTypeName, reportsGenerateJob.HandleTask)",
 	})
 
 	remove := &JobCmd{Name: "Reports:Generate", Remove: true}
@@ -79,6 +96,8 @@ var appJobSet = wire.NewSet(
 	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewGenerateJob",
+		"reportsGenerateJob *reports.GenerateJob",
+		"queueManager.Register(reports.GenerateJobTypeName, reportsGenerateJob.HandleTask)",
 	})
 }
 
@@ -88,20 +107,8 @@ func TestJobCmdUsesActiveApp(t *testing.T) {
 	t.Setenv("FORJ_APP", "reporting")
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
-	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_jobs_app.go"), `package wire
-
-import "github.com/goforj/wire"
-
-var appJobSet = wire.NewSet(
-)
-`)
-	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_jobs_app.go"), `package wire
-
-import "github.com/goforj/wire"
-
-var appJobSet = wire.NewSet(
-)
-`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_jobs_app.go"), jobWireFixture)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_jobs_app.go"), jobWireFixture)
 
 	cmd := &JobCmd{Name: "Reports:Generate", Queue: "reports"}
 	if err := cmd.Run(); err != nil {
@@ -111,6 +118,8 @@ var appJobSet = wire.NewSet(
 	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewGenerateJob",
+		"reportsGenerateJob *reports.GenerateJob",
+		"queueManager.Register(reports.GenerateJobTypeName, reportsGenerateJob.HandleTask)",
 	})
 	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
