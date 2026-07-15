@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -227,7 +226,15 @@ func generateMailFiles(input generationInput) (int, error) {
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "mail", "manager.go"))
+	for _, name := range mailLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "mail", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 

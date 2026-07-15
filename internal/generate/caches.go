@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
-	"os"
 	"path/filepath"
 	"sort"
 	"text/template"
@@ -245,10 +244,15 @@ func generateCacheFiles(input generationInput) (int, error) {
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "caches", "runtime.go"))
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "caches", "manager.go"))
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "caches", "stores_gen.go"))
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "caches", "config_gen.go"))
+	for _, name := range cacheLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "caches", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
