@@ -11,7 +11,7 @@ import (
 
 // TestLoadEmbeddedScenarioSpecs verifies the shipped catalog is non-empty and includes the golden-path entry point.
 func TestLoadEmbeddedScenarioSpecs(t *testing.T) {
-	specs, err := loadScenarioSpecs("")
+	specs, err := List("")
 	if err != nil {
 		t.Fatalf("load specs: %v", err)
 	}
@@ -185,7 +185,7 @@ func writeScenarioSpecFixture(t *testing.T, specDir, name, body string) {
 
 // TestScenarioSpecsDeclareCumulativePrimitiveDependencies keeps each independently rendered scenario truthful about the prior steps it applies.
 func TestScenarioSpecsDeclareCumulativePrimitiveDependencies(t *testing.T) {
-	specs, err := loadScenarioSpecs("")
+	specs, err := List("")
 	if err != nil {
 		t.Fatalf("load specs: %v", err)
 	}
@@ -227,7 +227,11 @@ func TestScenarioSpecsDeclareCumulativePrimitiveDependencies(t *testing.T) {
 
 // TestRenderScenarioMarkdownIncludesVerificationBanner verifies generated documentation describes its executable contract.
 func TestRenderScenarioMarkdownIncludesVerificationBanner(t *testing.T) {
-	specs, err := selectedScenarioSpecs("", []string{"json-api-route"}, false)
+	catalog, err := loadScenarioCatalog("")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	specs, err := catalog.selectSpecs([]string{"json-api-route"}, false)
 	if err != nil {
 		t.Fatalf("select spec: %v", err)
 	}

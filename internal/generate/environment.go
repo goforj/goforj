@@ -189,12 +189,6 @@ func (f generationEnvironmentFilter) sortedAppPrefixes() []string {
 	return sortStrings(f.appPrefixes)
 }
 
-// isGenerationEnvironmentKey classifies one isolated key using the same evidence rules as a complete snapshot.
-func isGenerationEnvironmentKey(key string) bool {
-	environment := generationEnvironment{values: map[string]string{key: ""}}
-	return newGenerationEnvironmentFilter("", environment).keeps(key)
-}
-
 // isDirectGenerationEnvironmentKey recognizes root resources and metrics inputs without interpreting embedded cache-like words.
 func isDirectGenerationEnvironmentKey(key string) bool {
 	if generationEnvironmentExactKeys[key] {

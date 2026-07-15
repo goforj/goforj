@@ -214,14 +214,19 @@ func TestLoadProjectGenerationInputIncludesAppResourceOverlays(t *testing.T) {
 
 // TestGenerationEnvironmentKeyRejectsUnrelatedCacheNames prevents common toolchain variables from masquerading as App cache overlays.
 func TestGenerationEnvironmentKeyRejectsUnrelatedCacheNames(t *testing.T) {
+	environment := generationEnvironmentFromAssignments([]string{
+		"XDG_CACHE_HOME=", "GOCACHE=", "GOMODCACHE=", "PIP_CACHE_DIR=", "UV_CACHE_DIR=", "SCCACHE_CACHE_SIZE=",
+		"CACHE_DRIVER=memory", "BILLING_CACHE_DRIVER=redis", "BILLING_CACHE_SESSIONS_DRIVER=memory",
+	})
+	filter := newGenerationEnvironmentFilter("", environment)
 	for _, key := range []string{"XDG_CACHE_HOME", "GOCACHE", "GOMODCACHE", "PIP_CACHE_DIR", "UV_CACHE_DIR", "SCCACHE_CACHE_SIZE"} {
-		if isGenerationEnvironmentKey(key) {
-			t.Fatalf("isGenerationEnvironmentKey(%q) = true, want false", key)
+		if filter.keeps(key) {
+			t.Fatalf("generation environment filter kept unrelated key %q", key)
 		}
 	}
 	for _, key := range []string{"CACHE_DRIVER", "BILLING_CACHE_DRIVER", "BILLING_CACHE_SESSIONS_DRIVER"} {
-		if !isGenerationEnvironmentKey(key) {
-			t.Fatalf("isGenerationEnvironmentKey(%q) = false, want true", key)
+		if !filter.keeps(key) {
+			t.Fatalf("generation environment filter rejected project key %q", key)
 		}
 	}
 }

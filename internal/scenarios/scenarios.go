@@ -253,15 +253,6 @@ func loadScenarioCatalog(specDir string) (scenarioCatalog, error) {
 	return scenarioCatalog{specs: specs, byID: byID}, nil
 }
 
-// loadScenarioSpecs preserves the package's list-oriented helper while guaranteeing callers receive a validated catalog.
-func loadScenarioSpecs(specDir string) ([]ScenarioSpec, error) {
-	catalog, err := loadScenarioCatalog(specDir)
-	if err != nil {
-		return nil, err
-	}
-	return catalog.specs, nil
-}
-
 // readScenarioSpecs decodes every source file before catalog-wide validation resolves graph relationships.
 func readScenarioSpecs(specDir string) ([]ScenarioSpec, error) {
 	var specs []ScenarioSpec
@@ -324,15 +315,6 @@ func decodeScenarioSpec(body []byte) (ScenarioSpec, error) {
 		spec.App.ModuleName = "example.com/" + strings.ReplaceAll(spec.ID, "-", "")
 	}
 	return spec, nil
-}
-
-// selectedScenarioSpecs preserves the package's selection helper for tests and callers that do not need graph lookups.
-func selectedScenarioSpecs(specDir string, ids []string, all bool) ([]ScenarioSpec, error) {
-	catalog, err := loadScenarioCatalog(specDir)
-	if err != nil {
-		return nil, err
-	}
-	return catalog.selectSpecs(ids, all)
 }
 
 // selectSpecs resolves requested IDs only from the validated catalog index.
