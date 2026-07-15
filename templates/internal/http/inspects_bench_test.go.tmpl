@@ -1,17 +1,14 @@
 package http
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
-	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/web"
 )
 
@@ -111,8 +108,7 @@ func newInspectBenchmarkServer(b *testing.B, inspectEnabled bool, handler func(w
 	if inspectEnabled {
 		b.Setenv("LIGHTHOUSE_ENABLED", "true")
 		b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
-		store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
-		inspectManager = inspects.NewManager(store)
+		inspectManager = inspects.NewManager()
 		inspectManager.SetPublisher(noopInspectPublisher{})
 		inspectManager.SetPublishOnly(true)
 	}

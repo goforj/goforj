@@ -2,14 +2,11 @@ package jobs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/queue"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/queues"
@@ -289,7 +286,6 @@ func (c *LighthouseRuntime) queueSnapshots(ctx context.Context) ([]QueueSnapshot
 	if err != nil {
 		return nil, err
 	}
-	c.recordSnapshot(snapshot)
 	queues := make([]QueueSnapshot, 0, len(snapshot.ByQueue))
 	names := make([]string, 0, len(snapshot.ByQueue))
 	for name := range snapshot.ByQueue {
@@ -319,7 +315,7 @@ func (c *LighthouseRuntime) queueHistory(ctx context.Context, queueName string, 
 	if c.defaultQueue == nil || queueName == "" {
 		return nil
 	}
-	return readQueueMetricPoints(ctx, c.defaultQueue, c.timeline, c.recordSnapshot, queueName, window, true)
+	return readQueueMetricPoints(ctx, c.defaultQueue, queueName, window)
 }
 
 func (c *LighthouseRuntime) resolveQueueNames(ctx context.Context, names []string) []string {
@@ -336,16 +332,12 @@ func (c *LighthouseRuntime) resolveQueueNames(ctx context.Context, names []strin
 		queueNames = append(queueNames, name)
 	}
 	if len(queueNames) > 0 {
-		if snapshot, err := queueStats(ctx, c.defaultQueue); err == nil {
-			c.recordSnapshot(snapshot)
-		}
 		return queueNames
 	}
 	snapshot, err := queueStats(ctx, c.defaultQueue)
 	if err != nil {
 		return nil
 	}
-	c.recordSnapshot(snapshot)
 	for name := range snapshot.ByQueue {
 		queueNames = append(queueNames, name)
 	}
@@ -429,173 +421,12 @@ type JobSnapshot struct {
 	CompletedAt   string `json:"completed_at,omitempty"`
 }
 
-type queueTimeline struct {
-	mu      sync.Mutex
-	byQueue map[string][]queueTimelinePoint
-	loaded  map[string]bool
-	store   cachecore.Store
-}
-
-type queueTimelinePoint struct {
-	At        time.Time
-	Processed int64
-	Failed    int64
-}
-
-const (
-	queueTimelineRetention = 8 * 24 * time.Hour
-	queueTimelineCacheTTL  = 9 * 24 * time.Hour
-	queueTimelineMaxPoints = 30000
-	queueTimelineKeyPrefix = "lighthouse:queue_timeline:v1:"
-)
-
-func newQueueTimeline(store cachecore.Store) *queueTimeline {
-	return &queueTimeline{
-		byQueue: make(map[string][]queueTimelinePoint),
-		loaded:  make(map[string]bool),
-		store:   store,
-	}
-}
-
-func (t *queueTimeline) Record(now time.Time, snapshot queue.StatsSnapshot) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if now.IsZero() {
-		now = time.Now()
-	}
-	cutoff := now.Add(-queueTimelineRetention)
-	for queueName, counters := range snapshot.ByQueue {
-		t.loadQueueLocked(queueName)
-		points := t.byQueue[queueName]
-		entry := queueTimelinePoint{
-			At:        now,
-			Processed: counters.Processed,
-			Failed:    counters.Failed,
-		}
-		if len(points) > 0 {
-			last := points[len(points)-1]
-			if last.Processed == entry.Processed && last.Failed == entry.Failed && now.Sub(last.At) < 30*time.Second {
-				continue
-			}
-		}
-		points = append(points, entry)
-		start := 0
-		for start < len(points) && points[start].At.Before(cutoff) {
-			start++
-		}
-		if start > 0 {
-			points = append([]queueTimelinePoint(nil), points[start:]...)
-		}
-		if len(points) > queueTimelineMaxPoints {
-			points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
-		}
-		t.byQueue[queueName] = points
-		t.persistQueueLocked(queueName, points)
-	}
-}
-
-func (t *queueTimeline) Points(queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
-	if t == nil {
-		return nil
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.loadQueueLocked(queueName)
-	points := t.byQueue[queueName]
-	if len(points) == 0 {
-		return nil
-	}
-	now := time.Now()
-	cutoff := now.Add(-historyWindowDuration(window))
-	result := make([]QueueMetricPoint, 0, len(points))
-	for _, point := range points {
-		if point.At.Before(cutoff) {
-			continue
-		}
-		result = append(result, QueueMetricPoint{
-			Queue:     queueName,
-			Timestamp: point.At.Unix(),
-			Date:      point.At.Format(time.RFC3339),
-			Processed: int(point.Processed),
-			Failed:    int(point.Failed),
-		})
-	}
-	return result
-}
-
-func (t *queueTimeline) loadQueueLocked(queueName string) {
-	if t == nil || t.store == nil || queueName == "" || t.loaded[queueName] {
-		return
-	}
-	t.loaded[queueName] = true
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	body, ok, err := t.store.Get(ctx, t.cacheKey(queueName))
-	if err != nil || !ok || len(body) == 0 {
-		return
-	}
-	var points []queueTimelinePoint
-	if err := json.Unmarshal(body, &points); err != nil {
-		return
-	}
-	cutoff := time.Now().Add(-queueTimelineRetention)
-	start := 0
-	for start < len(points) && points[start].At.Before(cutoff) {
-		start++
-	}
-	if start > 0 {
-		points = append([]queueTimelinePoint(nil), points[start:]...)
-	}
-	if len(points) > queueTimelineMaxPoints {
-		points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
-	}
-	t.byQueue[queueName] = points
-}
-
-func (t *queueTimeline) persistQueueLocked(queueName string, points []queueTimelinePoint) {
-	if t == nil || t.store == nil || queueName == "" {
-		return
-	}
-	body, err := json.Marshal(points)
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_ = t.store.Set(ctx, t.cacheKey(queueName), body, queueTimelineCacheTTL)
-}
-
-func (t *queueTimeline) cacheKey(queueName string) string {
-	return queueTimelineKeyPrefix + queueName
-}
-
-func historyWindowDuration(window queue.QueueHistoryWindow) time.Duration {
-	switch window {
-	case queue.QueueHistoryWeek:
-		return 7 * 24 * time.Hour
-	case queue.QueueHistoryDay:
-		return 24 * time.Hour
-	default:
-		return time.Hour
-	}
-}
-
 func readQueueMetricPoints(
 	ctx context.Context,
 	queueInstance *queue.Queue,
-	timeline *queueTimeline,
-	recordSnapshot func(snapshot queue.StatsSnapshot),
 	queueName string,
 	window queue.QueueHistoryWindow,
-	sampleIfEmpty bool,
 ) []QueueMetricPoint {
-	_ = timeline
-	_ = recordSnapshot
-	_ = sampleIfEmpty
 	if queueInstance == nil || queueName == "" {
 		return nil
 	}

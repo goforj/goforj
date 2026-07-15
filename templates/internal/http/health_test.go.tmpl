@@ -48,7 +48,7 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{
 			{
-				Name: "cache_default",
+				Name: "dependency_default",
 				Check: func(_ context.Context) error {
 					return nil
 				},

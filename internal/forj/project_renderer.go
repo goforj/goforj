@@ -310,6 +310,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateJobsRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := validateCacheRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	selectedQueueDriver := input.queueDriver
 	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
 		selectedQueueDriver = selection.Active
@@ -401,8 +404,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsAppDiagToken := path == ".env" && !strings.Contains(text, "APP_DIAG_TOKEN=")
 					needsSecret := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_SECRET=")
 					needsEnabled := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_ENABLED=")
-					needsTraceCache := path == ".env" && !strings.Contains(text, "CACHE_INSPECTS_DRIVER=")
-					needsLighthouseCache := path == ".env" && !strings.Contains(text, "CACHE_LIGHTHOUSE_DRIVER=")
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsForjMakeOpen := path == ".env" && !strings.Contains(text, "FORJ_MAKE_OPEN=")
 					needsForjEditor := path == ".env" && !strings.Contains(text, "FORJ_EDITOR=")
@@ -457,7 +458,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if path == ".env" && p.config.Render.Components.Grafana {
 						lines, needsGrafanaPortDefault = migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
 					}
-					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsForjMakeOpen || needsForjEditor || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
+					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsSwagger || needsForjMakeOpen || needsForjEditor || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
 						return nil
 					}
 					if needsAppDiagToken && appDiagToken == "" {
@@ -503,12 +504,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					if needsEnabled {
 						writeLines = append(writeLines, "LIGHTHOUSE_ENABLED=true")
-					}
-					if needsTraceCache {
-						writeLines = append(writeLines, "CACHE_INSPECTS_DRIVER=memory")
-					}
-					if needsLighthouseCache {
-						writeLines = append(writeLines, "CACHE_LIGHTHOUSE_DRIVER=memory")
 					}
 					if needsSwagger {
 						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
@@ -598,6 +593,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("read existing environment example: %w", err)
 				}
+				if !projectComponents.Cache {
+					existingExample, _ = removeDisabledCacheEnvironment(existingExample, p.config)
+				}
+				existingExample, _ = removeObsoleteDiagnosticCacheEnvironment(existingExample)
 				mergedExample := MergeEnvironmentExample(existingExample, environment)
 				if err := WriteEnvironmentExampleAtomic(".env.example", mergedExample, 0o644); err != nil {
 					return fmt.Errorf("write environment example: %w", err)
@@ -646,9 +645,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/runtime/runtime_host_test.go.tmpl",
 				"internal/runtime/timeouts.go.tmpl",
 				"internal/runtime/README.md.tmpl",
-				"internal/caches/README.md.tmpl",
-				"internal/observability/cache_observer.go.tmpl",
-				"internal/observability/cache_observer_test.go.tmpl",
 				"internal/observability/mail_observer.go.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/runtime/about.go.tmpl",
@@ -656,7 +652,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/about_cmd.go.tmpl",
 				"internal/cmd/about_cmd_test.go.tmpl",
 				"internal/cmd/about_grid.go.tmpl",
-				"internal/cmd/cache_shell_cmd.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/json_helpers.go.tmpl",
 				"internal/cmd/resources_cmd.go.tmpl",
@@ -692,6 +687,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/wire.go.tmpl",
 				"internal/inspects/README.md.tmpl",
 				"internal/inspects/manager.go.tmpl",
+				"internal/inspects/store.go.tmpl",
+				"internal/inspects/store_test.go.tmpl",
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
 				"project/config.go.tmpl",
@@ -704,6 +701,24 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			raw: []string{
 				"internal/makecmd/make_command.tmpl",
+			},
+		},
+		{
+			title:   "Cache Components Rendering",
+			enabled: projectComponents.Cache,
+			templates: []string{
+				"internal/caches/README.md.tmpl",
+				"internal/observability/cache_observer.go.tmpl",
+				"internal/observability/cache_observer_test.go.tmpl",
+				"internal/cmd/cache_shell_cmd.go.tmpl",
+			},
+		},
+		{
+			title:   "Cache Metrics Rendering",
+			enabled: projectComponents.Cache && projectComponents.Metrics,
+			templates: []string{
+				"internal/metrics/cache_metrics_gen.go.tmpl",
+				"internal/metrics/cache_metrics_gen_test.go.tmpl",
 			},
 		},
 		{
@@ -735,6 +750,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/observability/storage_observer.go.tmpl",
 				"internal/observability/storage_observer_test.go.tmpl",
 			},
+		},
+		{
+			title:   "Cache Components Cleanup",
+			enabled: input.renderAll && !projectComponents.Cache,
+			action:  cleanupDisabledCacheGeneratedFiles,
 		},
 		{
 			title:   "Legacy File Cleanup",
@@ -882,11 +902,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/seed-dashboards.sh.tmpl",
 						"containers/observability/grafana/dashboards/platform-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/lighthouse-inspects-overview.json.tmpl",
-						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/auth-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
 					)
+					if projectComponents.Cache {
+						templates = append(templates, "containers/observability/grafana/dashboards/cache-overview.json.tmpl")
+					}
 					if projectComponents.Jobs {
 						templates = append(templates, "containers/observability/grafana/dashboards/queue-overview.json.tmpl")
 					}
@@ -1412,6 +1434,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	projectCapabilitiesChanged := false
 	appConfigChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
@@ -1429,6 +1454,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := validateCacheRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		projectCapabilitiesChanged = changed
@@ -1495,6 +1523,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		return makeapp.RemoveResult{}, err
 	}
 	p.config = cfg
+	beforeProjectComponents := project.ProjectComponents(p.config)
 	if err := p.validateRemoveAppTransition(app); err != nil {
 		return makeapp.RemoveResult{}, err
 	}
@@ -1533,7 +1562,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if removed {
 		result.Removed = append(result.Removed, cmdDir)
 	}
-	for _, path := range []string{".env", ".env.host"} {
+	for _, path := range []string{".env", ".env.host", ".env.example"} {
 		updated, err := removeAppEnvDefaults(path, app.Name)
 		if err != nil {
 			return result, err
@@ -1549,6 +1578,13 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		result.Updated = append(result.Updated, ".goforj.yml")
 	}
 	if !result.Changed() {
+		return result, nil
+	}
+	afterProjectComponents := project.ProjectComponents(p.config)
+	if beforeProjectComponents.Cache && !afterProjectComponents.Cache {
+		if err := p.Render(ComponentRenderInput{renderAll: true}); err != nil {
+			return result, fmt.Errorf("reconcile shared Cache surface after removing App %q: %w", app.Name, err)
+		}
 		return result, nil
 	}
 	if err := p.writeTemplates([]string{
@@ -1614,6 +1650,11 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		}
 		if exists {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Jobs while %s contains generated Jobs accessors or wiring; automatic Jobs removal is not supported", app.Name, path)
+		}
+	}
+	if before.Cache && !after.Cache {
+		if err := validateCacheRenderTransition(after); err != nil {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
 		}
 	}
 	return nil
@@ -1769,6 +1810,13 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	metadata := runtimeAppMetadataForConfiguredApp(p.config, app)
 	metadata.HTTPPort = nextAvailableAppHTTPPort(".env", prefix, metadata.HTTPPort)
 	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)
+	if components.Cache {
+		cacheDriver, err := cacheDriverDefaultFromEnv(".env")
+		if err != nil {
+			return err
+		}
+		envDefaults[prefix+"_CACHE_DRIVER"] = cacheDriver
+	}
 	if components.Events {
 		eventsDriver, err := eventDriverDefaultFromEnv(".env")
 		if err != nil {
@@ -1867,6 +1915,11 @@ func appRuntimeEnvDefaults(prefix string, metadata runtimeAppMetadata, component
 		values[prefix+"_API_HTTP_PORT"] = strconv.Itoa(metadata.HTTPPort)
 	}
 	return values
+}
+
+// cacheDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Cache backend.
+func cacheDriverDefaultFromEnv(path string) (string, error) {
+	return resourceDriverDefaultFromEnv(path, project.ResourceCache, "CACHE", "memory")
 }
 
 // eventDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Events transport.
@@ -3009,6 +3062,54 @@ func oldFrontendDistPlaceholder(projectName string) string {
 </html>`, projectName)
 }
 
+// validateCacheRenderTransition allows generated Cache cleanup while rejecting files the App owns.
+func validateCacheRenderTransition(components project.Components) error {
+	if components.Cache {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join("internal", "caches"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	generated := map[string]struct{}{
+		"README.md":        {},
+		"accessors_gen.go": {},
+		"manager_gen.go":   {},
+	}
+	for _, entry := range entries {
+		if _, ok := generated[entry.Name()]; ok && !entry.IsDir() {
+			continue
+		}
+		return fmt.Errorf("Cache is disabled but internal/caches/%s is not a generated Cache artifact; move or remove it before rendering", entry.Name())
+	}
+	return nil
+}
+
+// cleanupDisabledCacheGeneratedFiles removes only framework-owned Cache artifacts after transition validation succeeds.
+func cleanupDisabledCacheGeneratedFiles() error {
+	paths := []string{
+		filepath.Join("internal", "caches", "README.md"),
+		filepath.Join("internal", "caches", "accessors_gen.go"),
+		filepath.Join("internal", "caches", "manager_gen.go"),
+		filepath.Join("internal", "cmd", "cache_shell_cmd.go"),
+		filepath.Join("internal", "observability", "cache_observer.go"),
+		filepath.Join("internal", "observability", "cache_observer_test.go"),
+		filepath.Join("internal", "metrics", "cache_metrics_gen.go"),
+		filepath.Join("internal", "metrics", "cache_metrics_gen_test.go"),
+		filepath.Join("containers", "observability", "grafana", "dashboards", "cache-overview.json"),
+	}
+	for _, path := range paths {
+		if err := removeIfExists(path); err != nil {
+			return err
+		}
+	}
+	_, err := removeEmptyDirIfEmpty(filepath.Join("internal", "caches"))
+	return err
+}
+
 // validateEventsRenderTransition rejects unsupported removal states before rendering can leave a stale Events surface behind.
 func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents project.Components) error {
 	if !projectComponents.Events {
@@ -4052,6 +4153,9 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 	if err := applyJobsOwnerMigration(jobsMigration); err != nil {
 		return err
 	}
+	if err := migrateLegacyCacheShellCommandOwners(); err != nil {
+		return err
+	}
 	if err := repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
 		return err
 	}
@@ -4059,6 +4163,88 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 		filepath.Join("app", "wire", "inject_controllers_app.go"),
 		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
 	)
+}
+
+// migrateLegacyCacheShellCommandOwners moves the former generated Cache command out of preserved App command files.
+func migrateLegacyCacheShellCommandOwners() error {
+	for _, app := range renderApps() {
+		path := filepath.Join(app.AppDir, "commands.go")
+		source, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		updated, changed, err := removeLegacyCacheShellCommandSource(path, source)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			continue
+		}
+		if err := writeFileAtomically(path, updated, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeLegacyCacheShellCommandSource removes the former generated Cache command wiring without depending on gofmt alignment.
+func removeLegacyCacheShellCommandSource(path string, source []byte) ([]byte, bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return nil, false, fmt.Errorf("parse legacy Cache command owner %s: %w", path, err)
+	}
+	cacheShellSelectors := 0
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if ok && selectorExpressionMatches(selector, "cmd", "CacheShellCmd") {
+			cacheShellSelectors++
+		}
+		return true
+	})
+	if cacheShellSelectors == 0 {
+		return source, false, nil
+	}
+	if cacheShellSelectors != 2 {
+		return nil, false, fmt.Errorf("cannot migrate legacy Cache command owner %s because its CacheShellCmd wiring was customized or is incomplete; move CacheShellCmd out of the App-owned Commands type manually", path)
+	}
+
+	targets := []*regexp.Regexp{
+		regexp.MustCompile(`^[ \t]*CacheShellCmd[ \t]+cmd\.CacheShellCmd[ \t]+` + "`cmd:\"\"`" + `[ \t\r]*$`),
+		regexp.MustCompile(`^[ \t]*cacheShellCmd[ \t]+\*cmd\.CacheShellCmd,[ \t\r]*$`),
+		regexp.MustCompile(`^[ \t]*CacheShellCmd:[ \t]*\*cacheShellCmd,[ \t\r]*$`),
+	}
+	found := make([]int, len(targets))
+	lines := strings.SplitAfter(string(source), "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		candidate := strings.TrimSuffix(line, "\n")
+		matched := false
+		for index, target := range targets {
+			if !target.MatchString(candidate) {
+				continue
+			}
+			found[index]++
+			matched = true
+			break
+		}
+		if matched {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	for _, count := range found {
+		if count != 1 {
+			return nil, false, fmt.Errorf("cannot migrate legacy Cache command owner %s because its CacheShellCmd wiring was customized or is incomplete; move CacheShellCmd out of the App-owned Commands type manually", path)
+		}
+	}
+	updated := []byte(strings.Join(filtered, ""))
+	if _, err := parser.ParseFile(token.NewFileSet(), path, updated, 0); err != nil {
+		return nil, false, fmt.Errorf("validate migrated Cache command owner %s: %w", path, err)
+	}
+	return updated, true, nil
 }
 
 // planJobsOwnerMigration rejects destination collisions before a legacy owner is moved byte-for-byte.
@@ -5095,7 +5281,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	count, _, err := generate.GenerateProjectFiles(
 		".",
 		projectComponents.Storage,
-		true,
+		projectComponents.Cache,
 		projectComponents.Jobs,
 		projectComponents.Events,
 		projectComponents.HasDatabase(),
@@ -5525,10 +5711,10 @@ func appRenderComponents(config *project.Config, app project.App) project.Compon
 	if config == nil {
 		return project.Components{}
 	}
+	components := config.Render.Components.WithResolvedDependencies()
 	if app.Name == "" || app.Name == project.DefaultAppName {
-		return config.Render.Components
+		return components
 	}
-	components := config.Render.Components
 	appConfig, ok := config.Apps[app.Name]
 	if ok {
 		components = project.NormalizeConfiguredAppComponents(config, appConfig.Components)

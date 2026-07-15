@@ -5,12 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/runtime"
-	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/web"
 )
 
@@ -20,8 +18,7 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
 	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
-	inspectManager := inspects.NewManager(store)
+	inspectManager := inspects.NewManager()
 
 	server := NewServer(
 		logger.NewSilentLogger(),

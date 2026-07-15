@@ -6,7 +6,7 @@ grafana_user="${GRAFANA_ADMIN_USER:-admin}"
 grafana_password="${GRAFANA_ADMIN_PASSWORD:-admin}"
 auth="${grafana_user}:${grafana_password}"
 
-dashboard_uids="goforj-platform-overview goforj-lighthouse-inspects goforj-cache-overview{{ if .ProjectComponents.Storage }} goforj-storage-overview{{ end }}{{ if .ProjectComponents.Events }} goforj-events-overview{{ end }} goforj-http-overview goforj-auth-overview"
+dashboard_uids="goforj-platform-overview goforj-lighthouse-inspects{{ if .ProjectComponents.Cache }} goforj-cache-overview{{ end }}{{ if .ProjectComponents.Storage }} goforj-storage-overview{{ end }}{{ if .ProjectComponents.Events }} goforj-events-overview{{ end }} goforj-http-overview goforj-auth-overview"
 {{- if .ProjectComponents.Mail }}
 dashboard_uids="${dashboard_uids} goforj-mail-overview"
 {{- end }}

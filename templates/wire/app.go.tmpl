@@ -12,14 +12,18 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+{{- if .Components.Cache }}
 	"github.com/goforj/cache"
+{{- end }}
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
 
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
+{{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
+{{- end }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
@@ -53,7 +57,9 @@ import (
 type App struct {
 	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
+{{- if .Components.Cache }}
 	cache   *caches.Manager
+{{- end }}
 {{- if .Components.Storage }}
 	storage *storages.Manager
 {{- end }}
@@ -87,6 +93,7 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
+{{- if .Components.Cache }}
 // Cache returns the default cache instance of the application.
 func (a *App) Cache() *cache.Cache {
 	return a.cache.Default()
@@ -96,6 +103,7 @@ func (a *App) Cache() *cache.Cache {
 func (a *App) Caches() *caches.Manager {
 	return a.cache
 }
+{{- end }}
 
 {{- if .Components.Storage }}
 // Storage returns the storage manager of the application.
@@ -288,7 +296,9 @@ func NewApplication(
 	rootCmd *{{.AppPackageName}}.RootCmd,
 	appTimeouts *runtime.Timeouts,
 	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
+{{- if .Components.Cache }}
 	cacheManager *caches.Manager,
+{{- end }}
 {{- if .Components.Storage }}
 	storage *storages.Manager,
 {{- end }}
@@ -342,7 +352,9 @@ func NewApplication(
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
+{{- if .Components.Cache }}
 		cache: cacheManager,
+{{- end }}
 {{- if .Components.Storage }}
 		storage: storage,
 {{- end }}

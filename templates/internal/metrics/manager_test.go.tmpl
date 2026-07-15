@@ -3,21 +3,17 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/runtime"
-	"{{.GoModuleName}}/internal/caches"
 {{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
-	"errors"
 	"net/http"
 	"testing"
 	"time"
 
 	gmetrics "github.com/goforj/metrics"
-	"github.com/goforj/cache"
-	"github.com/goforj/cache/cachecore"
 {{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
@@ -63,6 +59,7 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 func TestHTTPMetricsIncludeAppAndRuntimeSource(t *testing.T) {
 	manager := NewManager()
 	req := httptestNewRequest(http.MethodGet, "/hello")
+	req = req.WithContext(runtime.WithSource(context.Background(), runtime.SourceHTTP))
 	ctx := webtest.NewContext(req, nil, "/hello", nil)
 
 	manager.RecordHTTPRequest(ctx, http.StatusOK, time.Millisecond)
@@ -80,7 +77,6 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	t.Setenv("METRICS_MONITORING_ENABLED", "false")
 {{- end }}
-	t.Setenv("METRICS_CACHE_ENABLED", "0")
 {{- if .ProjectComponents.Storage }}
 	t.Setenv("METRICS_STORAGE_ENABLED", "false")
 {{- end }}
@@ -112,9 +108,6 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 		t.Fatal("expected monitoring metrics to be disabled")
 	}
 {{- end }}
-	if cfg.Cache {
-		t.Fatal("expected cache metrics to be disabled")
-	}
 {{- if .ProjectComponents.Storage }}
 	if cfg.Storage {
 		t.Fatal("expected storage metrics to be disabled")
@@ -976,75 +969,11 @@ func TestRecordDatabasePoolStatsTracksSeries(t *testing.T) {
 }
 {{- end }}
 
-func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
-	manager := NewManager()
-
-	manager.RecordCacheOperation(context.Background(), cacheOperationEvent("sessions", "get", true, nil, 2*time.Second))
-	manager.RecordCacheOperation(context.Background(), cacheOperationEvent("sessions", "get", false, nil, 0))
-	manager.RecordCacheOperation(context.Background(), cacheOperationEvent("sessions", "set_string", false, errors.New("boom"), 0))
-
-	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
-		{Key: "source", Value: "app"},
-		{Key: "cache", Value: "sessions"},
-		{Key: "driver", Value: "memory"},
-		{Key: "operation", Value: "get"},
-		{Key: "category", Value: "read"},
-		{Key: "status", Value: "ok"},
-		{Key: "hit", Value: "hit"},
-	}); got != 1 {
-		t.Fatalf("cache get hit count: got %d want 1", got)
-	}
-	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
-		{Key: "source", Value: "app"},
-		{Key: "cache", Value: "sessions"},
-		{Key: "driver", Value: "memory"},
-		{Key: "operation", Value: "get"},
-		{Key: "category", Value: "read"},
-		{Key: "status", Value: "ok"},
-		{Key: "hit", Value: "miss"},
-	}); got != 1 {
-		t.Fatalf("cache get miss count: got %d want 1", got)
-	}
-	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
-		{Key: "source", Value: "app"},
-		{Key: "cache", Value: "sessions"},
-		{Key: "driver", Value: "memory"},
-		{Key: "operation", Value: "set_string"},
-		{Key: "category", Value: "write"},
-		{Key: "status", Value: "error"},
-		{Key: "hit", Value: "na"},
-	}); got != 1 {
-		t.Fatalf("cache set error count: got %d want 1", got)
-	}
-	if got := histogramCountByLabels(t, manager, "cache.operation.duration", []gmetrics.Label{
-		{Key: "source", Value: "app"},
-		{Key: "cache", Value: "sessions"},
-		{Key: "driver", Value: "memory"},
-		{Key: "operation", Value: "get"},
-		{Key: "category", Value: "read"},
-	}); got != 1 {
-		t.Fatalf("cache duration count: got %d want 1", got)
-	}
-}
-
-// cacheOperationEvent creates a named cache observer event for metric assertions.
-func cacheOperationEvent(name string, operation string, hit bool, err error, duration time.Duration) caches.CacheOpEvent {
-	return caches.CacheOpEvent{
-		Name: name,
-		CacheOpEvent: cache.CacheOpEvent{
-			Operation: operation,
-			Hit:       hit,
-			Err:       err,
-			Duration:  duration,
-			Driver:    cachecore.DriverMemory,
-		},
-	}
-}
 
 {{ if .ProjectComponents.Storage }}
 // TestRecordStorageOperationTracksLabeledSeries verifies Storage metrics retain bounded dimensions.
 func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Storage: true})
 
 	manager.RecordStorageOperation(context.Background(), storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "get", Err: storage.ErrNotFound, Duration: 2 * time.Second})
 	manager.RecordStorageOperation(context.Background(), storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "url", Err: storage.ErrUnsupported})
@@ -1094,7 +1023,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 
 {{- if .ProjectComponents.Events }}
 func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Events: true})
 
 	manager.RecordEventPublish(context.Background(), EventPublishMetricEvent{Bus: "default", Driver: "redis", Topic: "users.created", Duration: 2 * time.Second})
 	manager.RecordEventPublish(context.Background(), EventPublishMetricEvent{Bus: "audit", Driver: "redis", Topic: "users.created", Err: goforjevents.ErrNilEvent})
@@ -1130,7 +1059,7 @@ func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 }
 
 func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Events: true})
 
 	manager.RecordEventSubscribe(context.Background(), EventSubscriptionMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler"})
 	manager.RecordEventDeliveryStart(context.Background(), EventDeliveryMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler"})
@@ -1217,7 +1146,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 {{- if .ProjectComponents.Mail }}
 // TestRecordMailSendTracksLabeledSeries verifies Mail metrics retain bounded dimensions.
 func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Mail: true})
 
 	manager.RecordMailSend(context.Background(), MailSendMetricEvent{Name: "default", Driver: "smtp", Duration: 2 * time.Second})
 	manager.RecordMailSend(context.Background(), MailSendMetricEvent{Name: "transactional", Driver: "resend", Err: goforjmail.ErrMissingRecipient})
@@ -1250,29 +1179,11 @@ func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 }
 {{- end }}
 
-func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
-	manager := NewManager()
-	ctx := runtime.WithSource(context.Background(), runtime.SourceHTTP)
-
-	manager.RecordCacheOperation(ctx, cacheOperationEvent("sessions", "get", true, nil, 0))
-
-	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
-		{Key: "source", Value: "http"},
-		{Key: "cache", Value: "sessions"},
-		{Key: "driver", Value: "memory"},
-		{Key: "operation", Value: "get"},
-		{Key: "category", Value: "read"},
-		{Key: "status", Value: "ok"},
-		{Key: "hit", Value: "hit"},
-	}); got != 1 {
-		t.Fatalf("cache source-labeled count: got %d want 1", got)
-	}
-}
 
 {{ if .ProjectComponents.Storage }}
 // TestRecordStorageOperationEmitsSourceLabel verifies Storage metrics retain the runtime source.
 func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Storage: true})
 	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
 
 	manager.RecordStorageOperation(ctx, storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "put"})
@@ -1292,7 +1203,7 @@ func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 
 {{- if .ProjectComponents.Events }}
 func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Events: true})
 	ctx := runtime.WithSource(context.Background(), runtime.SourceScheduler)
 
 	manager.RecordEventPublish(ctx, EventPublishMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created"})
@@ -1313,7 +1224,7 @@ func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 {{- if .ProjectComponents.Mail }}
 // TestRecordMailSendEmitsSourceLabel verifies Mail metrics retain the runtime source.
 func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Mail: true})
 	ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
 
 	manager.RecordMailSend(ctx, MailSendMetricEvent{Name: "default", Driver: "smtp"})
@@ -1330,23 +1241,6 @@ func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 }
 {{- end }}
 
-func TestSourceMetricsNormalizeUnknownSourceLabel(t *testing.T) {
-	manager := NewManager()
-
-	manager.RecordCacheOperation(runtime.WithSource(context.Background(), runtime.Source("weird")), cacheOperationEvent("settings", "get", true, nil, 0))
-
-	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
-		{Key: "source", Value: "app"},
-		{Key: "cache", Value: "settings"},
-		{Key: "driver", Value: "memory"},
-		{Key: "operation", Value: "get"},
-		{Key: "category", Value: "read"},
-		{Key: "status", Value: "ok"},
-		{Key: "hit", Value: "hit"},
-	}); got != 1 {
-		t.Fatalf("fallback source-labeled count: got %d want 1", got)
-	}
-}
 
 func httptestNewRequest(method, target string) *http.Request {
 	req, err := http.NewRequest(method, target, nil)

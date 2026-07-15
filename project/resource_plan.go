@@ -44,6 +44,7 @@ type LocalServiceIntent struct {
 
 // DefaultResourcePlan returns local starting drivers with the common Redis alternatives included.
 func DefaultResourcePlan(components Components) (ResourcePlan, error) {
+	components = components.WithResolvedDependencies()
 	plan := ResourcePlan{Selections: map[ResourceKey]DriverSelection{}}
 	if components.HasDatabase() {
 		driver := components.DatabaseDriver()
@@ -59,7 +60,9 @@ func DefaultResourcePlan(components Components) (ResourcePlan, error) {
 		}
 		plan.Selections[ResourceDatabase] = DriverSelection{Active: driver, Supported: supported}
 	}
-	plan.Selections[ResourceCache] = DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}}
+	if components.Cache {
+		plan.Selections[ResourceCache] = DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}}
+	}
 	if components.Events {
 		plan.Selections[ResourceEvents] = DriverSelection{Active: "inproc", Supported: []string{"inproc", "redis"}}
 	}
@@ -133,6 +136,7 @@ func (p ResourcePlan) WithNamedSelection(environmentKey string, driver string) R
 
 // Normalized validates the plan and returns deterministic driver names and built-in ordering.
 func (p ResourcePlan) Normalized(components Components) (ResourcePlan, error) {
+	components = components.WithResolvedDependencies()
 	knownResources := map[ResourceKey]bool{}
 	knownNamedSelections := map[string]bool{}
 	for _, definition := range resourceCatalog {
@@ -211,6 +215,7 @@ func (p ResourcePlan) Validate(components Components) error {
 
 // GeneratedNamedSelections resolves framework-owned named resources from concrete overrides or catalog defaults.
 func (p ResourcePlan) GeneratedNamedSelections(components Components) []GeneratedNamedResourceSelection {
+	components = components.WithResolvedDependencies()
 	selections := []GeneratedNamedResourceSelection{}
 	for _, definition := range resourceCatalog {
 		if !definition.AppliesTo(components) {
