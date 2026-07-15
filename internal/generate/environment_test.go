@@ -5,7 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// generationEnvironmentTestTimeout bounds concurrent generation regressions without shaping normal execution.
+const generationEnvironmentTestTimeout = 5 * time.Second
 
 // TestGenerateProjectFilesUsesEnvironmentExampleFallback verifies a clean checkout retains its compiled driver set without a runtime .env file.
 func TestGenerateProjectFilesUsesEnvironmentExampleFallback(t *testing.T) {
@@ -61,18 +65,25 @@ func TestGenerateProjectFilesIsolatesConcurrentProjectEnvironments(t *testing.T)
 	writeGenerationEnvironmentFile(t, memoryRoot, ".env.example", "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
 
 	start := make(chan struct{})
-	errors := make(chan error, 2)
-	for _, root := range []string{redisRoot, memoryRoot} {
+	runs := []struct {
+		name   string
+		root   string
+		result chan error
+	}{
+		{name: "Redis project", root: redisRoot, result: make(chan error, 1)},
+		{name: "memory project", root: memoryRoot, result: make(chan error, 1)},
+	}
+	for _, run := range runs {
 		go func() {
 			<-start
-			_, err := GenerateProjectFiles(root, GenerationSelection{Cache: true})
-			errors <- err
+			_, err := GenerateProjectFiles(run.root, GenerationSelection{Cache: true})
+			run.result <- err
 		}()
 	}
 	close(start)
-	for range 2 {
-		if err := <-errors; err != nil {
-			t.Fatalf("generate project: %v", err)
+	for _, run := range runs {
+		if err := awaitGenerationResult(t, run.name, run.result); err != nil {
+			t.Fatalf("generate %s: %v", run.name, err)
 		}
 	}
 
@@ -81,6 +92,20 @@ func TestGenerateProjectFilesIsolatesConcurrentProjectEnvironments(t *testing.T)
 	}
 	if source := readGeneratedCacheManager(t, memoryRoot); strings.Contains(source, `"github.com/goforj/cache/driver/rediscache"`) {
 		t.Fatal("expected memory project's .env.example to exclude the Redis cache import")
+	}
+}
+
+// awaitGenerationResult keeps concurrent project failures labeled while preventing a worker regression from hanging CI.
+func awaitGenerationResult(t *testing.T, name string, result <-chan error) error {
+	t.Helper()
+	timer := time.NewTimer(generationEnvironmentTestTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-result:
+		return err
+	case <-timer.C:
+		t.Fatalf("timed out waiting for %s generation", name)
+		return nil
 	}
 }
 
