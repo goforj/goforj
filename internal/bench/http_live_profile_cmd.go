@@ -60,6 +60,25 @@ type httpLiveProfileResult struct {
 	HeapTop     string
 }
 
+// httpProfileEndpoints keeps the addresses for one benchmark process together so launch code cannot swap similar string arguments.
+type httpProfileEndpoints struct {
+	httpPort    string
+	metricsPort string
+	pprofAddr   string
+}
+
+// baseURL derives the benchmark URL from the same HTTP port passed to the child process.
+func (endpoints httpProfileEndpoints) baseURL() string {
+	return "http://127.0.0.1:" + endpoints.httpPort
+}
+
+// httpLatencyPercentiles names benchmark latency boundaries so callers cannot transpose positional float returns.
+type httpLatencyPercentiles struct {
+	p50 float64
+	p95 float64
+	p99 float64
+}
+
 func (*HTTPLiveProfileCmd) Signature() string {
 	return `name:"bench:http-live-profile" help:"Profile the real rendered HTTP server under live benchmark load" hidden:""`
 }
@@ -137,13 +156,14 @@ func (cmd *HTTPLiveProfileCmd) Run() error {
 		return fmt.Errorf("split metrics addr: %w", err)
 	}
 
-	baseURL := "http://127.0.0.1:" + httpPort
+	endpoints := httpProfileEndpoints{httpPort: httpPort, metricsPort: metricsPort, pprofAddr: pprofAddr}
+	baseURL := endpoints.baseURL()
 	targetURL := normalizeLiveHTTPBenchmarkURL(baseURL, cmd.Path)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	execCmd, err := cmd.httpProfileExecCommand(ctx, dir, binPath, httpPort, metricsPort, pprofAddr, baseURL)
+	execCmd, err := cmd.httpProfileExecCommand(ctx, binPath, endpoints)
 	if err != nil {
 		return err
 	}
@@ -291,42 +311,28 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir string, caches teste
 	return workspace.Run("build", "go", "build", "-o", binPath, "./cmd/app")
 }
 
-func (cmd *HTTPLiveProfileCmd) httpProfileExecCommand(ctx context.Context, dir, binPath, httpPort, metricsPort, pprofAddr, baseURL string) (*exec.Cmd, error) {
+// httpProfileExecCommand builds a child process from one endpoint set so each server stack observes the same benchmark topology.
+func (cmd *HTTPLiveProfileCmd) httpProfileExecCommand(ctx context.Context, binPath string, endpoints httpProfileEndpoints) (*exec.Cmd, error) {
+	baseURL := endpoints.baseURL()
 	switch cmd.ServerStack {
-	case "rawnethttp":
+	case "rawnethttp", "rawdirect", "echonative":
 		execCmd := exec.CommandContext(ctx, binPath)
 		execCmd.Env = testkit.ProcessEnv("", map[string]string{
 			"APP_URL":         baseURL,
-			"HTTP_PORT":       httpPort,
-			"FORJ_PPROF_ADDR": pprofAddr,
-		})
-		return execCmd, nil
-	case "rawdirect":
-		execCmd := exec.CommandContext(ctx, binPath)
-		execCmd.Env = testkit.ProcessEnv("", map[string]string{
-			"APP_URL":         baseURL,
-			"HTTP_PORT":       httpPort,
-			"FORJ_PPROF_ADDR": pprofAddr,
-		})
-		return execCmd, nil
-	case "echonative":
-		execCmd := exec.CommandContext(ctx, binPath)
-		execCmd.Env = testkit.ProcessEnv("", map[string]string{
-			"APP_URL":         baseURL,
-			"HTTP_PORT":       httpPort,
-			"FORJ_PPROF_ADDR": pprofAddr,
+			"HTTP_PORT":       endpoints.httpPort,
+			"FORJ_PPROF_ADDR": endpoints.pprofAddr,
 		})
 		return execCmd, nil
 	case "rendered":
-		execCmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort, "--metrics-port", metricsPort)
+		execCmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", endpoints.httpPort, "--metrics-port", endpoints.metricsPort)
 		execCmd.Env = testkit.ProcessEnv("", map[string]string{
 			"APP_ENV":                    "local",
 			"APP_URL":                    baseURL,
 			"HTTP_ACCESS_LOG_ENABLED":    strconv.FormatBool(cmd.HTTPAccessLogs),
 			"LIGHTHOUSE_INSPECT_ENABLED": strconv.FormatBool(cmd.InspectEnabled),
 			"METRICS_HTTP_ENABLED":       strconv.FormatBool(cmd.MetricsEnabled),
-			"METRICS_API_PORT":           metricsPort,
-			"FORJ_PPROF_ADDR":            pprofAddr,
+			"METRICS_API_PORT":           endpoints.metricsPort,
+			"FORJ_PPROF_ADDR":            endpoints.pprofAddr,
 		})
 		return execCmd, nil
 	default:
@@ -860,16 +866,16 @@ func runLiveHTTPBenchmark(ctx context.Context, target string, duration time.Dura
 	if elapsed <= 0 {
 		elapsed = time.Millisecond
 	}
-	p50, p95, p99 := liveLatencyPercentiles(latencies)
+	percentiles := liveLatencyPercentiles(latencies)
 	return httpRuntimeBenchmarkSummary{
 		DurationMS:  int64(duration / time.Millisecond),
 		Concurrency: concurrency,
 		Ops:         ops,
 		OpsPerSec:   float64(ops) / elapsed.Seconds(),
 		Errors:      errs,
-		P50MS:       p50,
-		P95MS:       p95,
-		P99MS:       p99,
+		P50MS:       percentiles.p50,
+		P95MS:       percentiles.p95,
+		P99MS:       percentiles.p99,
 	}
 }
 
@@ -917,9 +923,10 @@ func liveTransportErrorBackoff(streak int) time.Duration {
 	return time.Duration(1<<streak) * time.Millisecond
 }
 
-func liveLatencyPercentiles(raw []float64) (float64, float64, float64) {
+// liveLatencyPercentiles returns named boundaries because positional floats are easy to transpose in benchmark summaries.
+func liveLatencyPercentiles(raw []float64) httpLatencyPercentiles {
 	if len(raw) == 0 {
-		return 0, 0, 0
+		return httpLatencyPercentiles{}
 	}
 	sorted := append([]float64(nil), raw...)
 	sort.Float64s(sorted)
@@ -939,5 +946,5 @@ func liveLatencyPercentiles(raw []float64) (float64, float64, float64) {
 		}
 		return sorted[idx]
 	}
-	return pick(0.50), pick(0.95), pick(0.99)
+	return httpLatencyPercentiles{p50: pick(0.50), p95: pick(0.95), p99: pick(0.99)}
 }
