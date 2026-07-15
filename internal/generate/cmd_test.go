@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+// skipModuleTidy isolates generator artifact assertions from dependency resolution already covered by dedicated tests.
+func skipModuleTidy(string) error {
+	return nil
+}
+
 func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
@@ -38,16 +43,12 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 		t.Fatalf("write environment: %v", err)
 	}
 
-	orig := goModTidyRunner
-	goModTidyRunner = func(dir string) error { return nil }
-	defer func() { goModTidyRunner = orig }()
-
-	result, err := GenerateProjectFiles(projectDir, GenerationSelection{
+	result, err := generateProjectFiles(projectDir, GenerationSelection{
 		Storage: true,
 		Cache:   true,
 		Mail:    true,
 		Queue:   true,
-	})
+	}, skipModuleTidy)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -80,17 +81,15 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 
 	called := 0
-	orig := goModTidyRunner
-	goModTidyRunner = func(dir string) error {
+	tidy := func(dir string) error {
 		called++
 		if dir != projectDir {
-			t.Fatalf("goModTidyRunner dir = %q, want %q", dir, projectDir)
+			t.Fatalf("tidy directory = %q, want %q", dir, projectDir)
 		}
 		return nil
 	}
-	defer func() { goModTidyRunner = orig }()
 
-	result, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
+	result, err := generateProjectFiles(projectDir, GenerationSelection{Database: true}, tidy)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -101,7 +100,7 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 		t.Fatal("expected generated db file to be written")
 	}
 	if called != 1 {
-		t.Fatalf("goModTidyRunner called %d times, want 1", called)
+		t.Fatalf("tidy calls = %d, want 1", called)
 	}
 }
 
@@ -120,14 +119,12 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 	}
 
 	called := 0
-	orig := goModTidyRunner
-	goModTidyRunner = func(dir string) error {
+	tidy := func(string) error {
 		called++
 		return nil
 	}
-	defer func() { goModTidyRunner = orig }()
 
-	result, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
+	result, err := generateProjectFiles(projectDir, GenerationSelection{Database: true}, tidy)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -138,7 +135,7 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 		t.Fatalf("changed files = %d, want 0", result.ChangedFiles)
 	}
 	if called != 0 {
-		t.Fatalf("goModTidyRunner called %d times, want 0", called)
+		t.Fatalf("tidy calls = %d, want 0", called)
 	}
 }
 
@@ -165,22 +162,20 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	defer func() { _ = os.Chdir(origWD) }()
 
 	called := 0
-	orig := goModTidyRunner
-	goModTidyRunner = func(dir string) error {
+	tidy := func(dir string) error {
 		called++
 		if dir != "." {
-			t.Fatalf("goModTidyRunner dir = %q, want %q", dir, ".")
+			t.Fatalf("tidy directory = %q, want %q", dir, ".")
 		}
 		return nil
 	}
-	defer func() { goModTidyRunner = orig }()
 
 	cmd := &Cmd{DB: true}
-	if err := cmd.Run(); err != nil {
+	if err := cmd.run(tidy); err != nil {
 		t.Fatalf("Cmd.Run returned error: %v", err)
 	}
 	if called != 1 {
-		t.Fatalf("goModTidyRunner called %d times, want 1", called)
+		t.Fatalf("tidy calls = %d, want 1", called)
 	}
 }
 
@@ -269,15 +264,12 @@ func TestCmdRunFollowsPrimitiveComponentIntent(t *testing.T) {
 
 					restoreWorkingDirectory := useGenerationTestRoot(t, root)
 					defer restoreWorkingDirectory()
-					originalTidy := goModTidyRunner
-					goModTidyRunner = func(string) error { return nil }
-					defer func() { goModTidyRunner = originalTidy }()
 
 					cmd := &Cmd{}
 					if scenario.explicit {
 						resource.selectExplicitly(cmd)
 					}
-					err := cmd.Run()
+					err := cmd.run(skipModuleTidy)
 					if scenario.wantError {
 						if err == nil || !strings.Contains(err.Error(), resource.disabledError) {
 							t.Fatalf("generation error = %v, want %q", err, resource.disabledError)
@@ -356,19 +348,17 @@ func TestCmdRunGeneratesObservabilityTargetsWithoutGoModTidy(t *testing.T) {
 	defer func() { _ = os.Chdir(origWD) }()
 
 	called := 0
-	orig := goModTidyRunner
-	goModTidyRunner = func(dir string) error {
+	tidy := func(string) error {
 		called++
 		return nil
 	}
-	defer func() { goModTidyRunner = orig }()
 
 	cmd := &Cmd{Observability: true}
-	if err := cmd.Run(); err != nil {
+	if err := cmd.run(tidy); err != nil {
 		t.Fatalf("Cmd.Run returned error: %v", err)
 	}
 	if called != 0 {
-		t.Fatalf("goModTidyRunner called %d times, want 0", called)
+		t.Fatalf("tidy calls = %d, want 0", called)
 	}
 
 	content, err := os.ReadFile(filepath.Join(root, "containers", "observability", "vmagent", "metrics-targets.json"))
@@ -410,17 +400,15 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 
 	called := 0
-	orig := goModTidyRunner
-	goModTidyRunner = func(dir string) error {
+	tidy := func(string) error {
 		called++
 		return nil
 	}
-	defer func() { goModTidyRunner = orig }()
 
-	result, err := GenerateProjectFiles(projectDir, GenerationSelection{
+	result, err := generateProjectFiles(projectDir, GenerationSelection{
 		Storage:       true,
 		Observability: true,
-	})
+	}, tidy)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -431,6 +419,6 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 		t.Fatalf("changed files = %d, want %d", result.ChangedFiles, 1)
 	}
 	if called != 0 {
-		t.Fatalf("goModTidyRunner called %d times, want 0", called)
+		t.Fatalf("tidy calls = %d, want 0", called)
 	}
 }

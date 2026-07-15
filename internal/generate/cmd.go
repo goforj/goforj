@@ -11,7 +11,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-var goModTidyRunner = runGoModTidy
+// moduleTidyRunner names the dependency publication boundary used after generated imports change.
+type moduleTidyRunner func(projectDir string) error
 
 // GenerationSelection names the project-owned surfaces that should be regenerated.
 type GenerationSelection struct {
@@ -90,6 +91,11 @@ func (*Cmd) Signature() string {
 
 // Run regenerates the selected project resources from the project-owned environment snapshot.
 func (c *Cmd) Run() error {
+	return c.run(runGoModTidy)
+}
+
+// run keeps module mutation explicit so tests cannot replace process-global generator behavior.
+func (c *Cmd) run(tidy moduleTidyRunner) error {
 	requested := c.generationSelection()
 	available, err := commandGenerationSelection(".")
 	if err != nil {
@@ -113,7 +119,7 @@ func (c *Cmd) Run() error {
 		return err
 	}
 	if run.dependencyTaskRan {
-		if err := goModTidyRunner("."); err != nil {
+		if err := tidy("."); err != nil {
 			return err
 		}
 	}
@@ -122,6 +128,11 @@ func (c *Cmd) Run() error {
 
 // GenerateProjectFiles regenerates selected resources beneath projectDir and returns named file accounting.
 func GenerateProjectFiles(projectDir string, selection GenerationSelection) (GenerationResult, error) {
+	return generateProjectFiles(projectDir, selection, runGoModTidy)
+}
+
+// generateProjectFiles keeps dependency publication injectable without exposing it through the public generator API.
+func generateProjectFiles(projectDir string, selection GenerationSelection, tidy moduleTidyRunner) (GenerationResult, error) {
 	input, err := loadProjectGenerationInput(projectDir)
 	if err != nil {
 		return GenerationResult{}, err
@@ -132,7 +143,7 @@ func GenerateProjectFiles(projectDir string, selection GenerationSelection) (Gen
 		return result, err
 	}
 	if run.dependencyFilesChanged {
-		if err := goModTidyRunner(projectDir); err != nil {
+		if err := tidy(projectDir); err != nil {
 			return result, err
 		}
 	}
