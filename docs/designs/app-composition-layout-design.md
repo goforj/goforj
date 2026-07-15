@@ -575,9 +575,23 @@ apps:
 
 Legacy boolean mappings remain readable, but the next `forj render` or other
 config-writing command normalizes both Project and per-App component selections
-to one-line arrays without changing which components are selected.
+to canonical sequences without changing which components are selected. Compact
+selections use a flow sequence such as `[web_api, jobs]`; longer selections use
+a readable block sequence instead of forcing a wrapped line.
 
-The project-level component set is the currently rendered support surface, not a hard ceiling for future apps. `make:app` may promote newly selected app-safe capabilities into the project render set. For example, a project that starts with MySQL can create a `reporting` app that uses Postgres; the app keeps an exclusive database driver selection while the project records both drivers as supported.
+The renderer derives the project support surface from the union of the default
+App and named-App selections; the persisted default selection is not a hard
+ceiling for future Apps. `make:app` records a new capability only under that
+App and does not promote it into `render.components`. For example, a project
+that starts with MySQL can create a `reporting` App that uses Postgres. Shared
+rendering then includes both database drivers while the default App remains on
+MySQL and `reporting` remains on Postgres.
+
+Composition files have an explicit ownership boundary. App-owned registration
+files, including `inject_*_app.go`, are render-once and remain editable after
+creation. Framework-owned injectors are regenerated and carry `DO NOT EDIT`
+headers. `wire.go` is an editable Wire harness, but rerender may overwrite it,
+so durable provider registrations belong in the App-owned injector files.
 
 `make:app` should reuse the same component catalog and starter-kit catalog as `forj new`, filtered to app-safe choices. The interactive app wizard should show the app-affecting choices that can be compiled into the project, not only the choices used by the default app. This keeps the additional app creation flow from feeling artificially constrained by the first app's choices.
 
@@ -1085,7 +1099,7 @@ Track implementation as concrete work items:
   - [x] Add `forj make:app <app>` to create a named app from convention.
   - [x] Keep `make:app` narrow by rendering only the new app scaffold, runtime app metadata, migration layout updates, and Wire generation.
   - [x] Support per-app component selection from the app-safe component catalog.
-  - [x] Promote newly selected app-safe capabilities into the project render set when a named app needs them.
+  - [x] Derive project render support from every App selection without promoting named-App capabilities into the default App.
   - [x] Keep database driver choices exclusive per app while allowing multiple project-supported database drivers.
   - [x] Persist per-app component and starter-kit choices without using config as app discovery.
   - [x] Scope the `make:app` command and interactive app wizard under `internal/forj/makeapp`.
@@ -1258,8 +1272,8 @@ Track implementation as concrete work items:
   - [ ] Update model/repository docs to mention `app/wire/inject_repositories_app.go`.
   - [ ] Update controller docs/scenarios to mention `app/wire/inject_http_controllers_app.go`.
   - [ ] Update service/resource workflow scenarios to mention `app/wire/inject_services_app.go`.
-  - [ ] Document that `wire.go` is editable but overwrite-rendered.
-  - [ ] Document that app-owned injectors are render-once and framework-owned injectors are regenerated.
+  - [x] Document that `wire.go` is editable but overwrite-rendered.
+  - [x] Document that app-owned injectors are render-once and framework-owned injectors are regenerated.
   - [ ] Decide whether to remove or update unused legacy demo Wire templates.
 
 ## Open Questions

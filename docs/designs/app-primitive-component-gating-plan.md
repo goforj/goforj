@@ -2,8 +2,10 @@
 
 ## Status
 
-- Plan status: accepted; implementation in progress
+- Plan status: complete
 - Planning date: 2026-07-14
+- Phase 0 status: complete; the render-contract inventory, absence assertions,
+  and focused render profiles are in place
 - Phase 1 status: complete; component contract, legacy migration, App/project
   projections, and primitive-neutral Inspects observations are merged on this
   branch
@@ -15,7 +17,16 @@
 - Phase 4 status: complete; Background Jobs now owns the complete Queue
   surface, including mixed-App projection, environment, generation,
   observability, dependencies, and safe transition preflight
-- Next slice: Phase 5, Cache and Inspects
+- Phase 5 status: complete; Inspects uses private bounded storage and Cache has
+  a truthful opt-out, dependency closure, generated ownership markers, and
+  transition preflight
+- Phase 6 status: complete; resource planning, environment, generation,
+  dependencies, runtime reporting, and service reconciliation honor effective
+  component selections
+- Phase 7 status: complete; the normal wizard exposes the four default-selected
+  components without adding a resource, driver, topology, or mode stage
+- Acceptance status: complete; unit, vet, race, integration, multi-App,
+  Lighthouse, and all six sharded PR render jobs pass
 - Scope: component modeling, project and App rendering, generated resource
   surfaces, configuration migration, and test-render coverage
 - Target repository: `goforj`
@@ -24,9 +35,48 @@
 This plan turns Cache, Events, Storage, and Background Jobs into truthful App
 components without adding another resource or driver stage to `forj new`.
 
-It is intended to be executed as an iterative goal. Each capability is completed
-as a vertical render slice and proven independently before it is exposed as a
-new wizard choice.
+The implementation was organized as vertical render slices. Events, Storage,
+and Background Jobs completed their disabled contracts before wizard exposure.
+Cache was exposed before its full disabled contract landed; the later Cache and
+cross-cutting slices brought the current tree to the same truthful contract.
+The status above describes the current implementation and does not claim a
+different commit chronology.
+
+## Current Completion Evidence
+
+- `project/components_yaml_test.go` proves legacy mapping migration, modern
+  sequence opt-outs, canonical ordering, long-sequence formatting, extension
+  preservation, and removal of the obsolete compatibility marker.
+- `internal/forj/new_project_cmd_test.go` proves concrete database choices and
+  all four default-selected primitives share the existing Components stage,
+  while resource topology stays out of the wizard and project YAML.
+- `internal/forj/primitive_template_projection_test.go` and
+  `internal/forj/project_renderer_test.go` cover enabled and disabled generated
+  surfaces and dependencies.
+- `internal/forj/primitive_renderer_preflight_test.go` proves unsafe removal is
+  rejected before configuration, environment, or owner files are written.
+- `internal/forj/primitive_renderer_transition_test.go` proves additive
+  enablement and App-owned-file preservation for Cache, Events, Storage, and
+  Background Jobs, including last-owner removal refusal.
+- `internal/forj/cache_cleanup_ownership_test.go` proves Cache cleanup accepts
+  only explicitly marked generated artifacts and rejects owner source or
+  environment dependencies before mutation.
+- `internal/forj/resource_switching_docs_test.go` keeps generated component
+  documentation explicit about active and included drivers.
+- `internal/rendercheck` validates the high-signal real-render contract: package
+  and support files, App accessors, exact named-App driver keys, dashboards,
+  runtime markers, documentation, and direct module boundaries. Focused
+  template, resource, readiness, About, metrics, and Compose tests cover the
+  remaining detailed projections without duplicating every assertion in each
+  real-render sentinel.
+- The six-shard PR profile renders, wires, builds, and tests all 77 curated and
+  pairwise combinations under `/tmp`. Its all-on, web-without-primitives, and
+  historical-mapping sentinels also rerun `forj render` and bare
+  `forj generate`, preserve representative App-owned edits byte-for-byte, and
+  require canonical marker-free configuration.
+- The full Go suite, vet, watcher race/stress lanes, multi-App smoke tests,
+  Lighthouse integration suite, and consolidated framework plus rendered
+  SQLite/MySQL/Postgres integration suite pass on the completed branch.
 
 ## Goal
 
@@ -61,7 +111,8 @@ The plan does not introduce:
 - a normal resource or driver wizard;
 - driver-specific components such as Redis Cache;
 - an App-wide standalone, shared, portable, or runtime mode;
-- a redesign of existing named-queue handler registration;
+- a broader Queue API redesign beyond correcting exposed dispatch and handler
+  registration behavior;
 - changes to the existing concrete database choices in Components.
 
 The governing model is:
@@ -94,9 +145,25 @@ choice. Driver defaults for the new component-gated resources remain implicit:
 | File Storage | `local` | `local` |
 | Background Jobs | `workerpool` | `workerpool,redis` |
 
-The wizard rows are not added until the corresponding disabled render contract
-is continuously tested. Until then, the current always-on behavior remains the
-compatibility behavior.
+Each current wizard deselection maps to a tested disabled render contract. The
+driver defaults remain operational details rather than additional creation-time
+questions.
+
+### Changing components later
+
+To enable a component later, add it to the default App's `render.components`
+sequence or a named App's `apps.<name>.components` sequence, then run
+`forj render`. GoForj resolves required component dependencies and creates the
+missing framework-owned support without replacing render-once App-owned
+registration files.
+
+Removing a component from an existing project is deliberately conservative.
+Changing the sequence is not an uninstall command: GoForj removes only artifacts
+it can verify are framework-owned, never arbitrary source files, storage data,
+queued work, cache state, or event history. If generated or user-owned residue
+makes the transition unsafe, `forj render` refuses before writing and identifies
+the path that must be moved or reconciled. Driver switching remains a separate
+environment concern and does not require changing the component selection.
 
 ## Component Dependencies
 
@@ -117,9 +184,11 @@ The new dependency rules are:
 - Background Jobs benchmarks may exercise Cache or Storage when present, but
   benchmark tooling must not turn those optional capabilities into Jobs
   dependencies.
-- Users may remove any primitive that has no selected dependents. Dependency
+- Users may deselect any primitive that has no selected dependents. Dependency
   normalization keeps required primitives visibly selected in the same flat
-  component checklist instead of hiding them behind another wizard stage.
+  component checklist instead of hiding them behind another wizard stage;
+  existing-project reconciliation may still refuse a destructive removal when
+  component-owned or user-owned residue remains.
 
 Dependency resolution must be identical in project creation, `make:app`, YAML
 loading, generated project configuration, and tests.
@@ -296,9 +365,11 @@ queue-owned surface beneath Jobs:
 - queue Lighthouse and benchmark functionality;
 - queue and queue-driver dependencies.
 
-Existing named-queue and generated-job handler registration behavior must not
-be made worse by component gating, but redesigning it belongs to a separate
-Jobs correctness effort.
+The slice also corrects the exposed Jobs contract needed for enabled renders to
+be truthful: logical named queues route through their generated runtime and
+physical queue name, and every generated job handler is registered on every
+queue where it may be consumed. This is correctness repair, not a new Queue
+abstraction or component.
 
 ## Implementation Strategy
 
@@ -438,7 +509,13 @@ Implement the closure in this order:
    Grafana panels, service consumers, and generated documentation. A shared
    package may exist for another App, but an App without Jobs must not
    advertise, wire, or execute it.
-7. Preserve enabled behavior and deployment flexibility. Jobs-enabled Apps may
+7. Close generated-job registration and named-queue routing. App-owned
+   `inject_jobs_app.go` owns constructor and handler registration, `make:job`
+   updates both seams, and the Queue manager registers each handler with every
+   generated queue runtime. Logical `default` and named resource choices map to
+   their configured physical queue names without changing the public dispatch
+   API.
+8. Preserve enabled behavior and deployment flexibility. Jobs-enabled Apps may
    dispatch and process work using any supported runtime topology, and the
    existing worker, driver, Lighthouse, metrics, Demo, and multi-App behavior
    remains covered.
@@ -460,6 +537,14 @@ the transition safe. App-owned injectors, generated-job source edited by the
 user, arbitrary files in Jobs directories, external queue contents, and local
 queue data are preserved. Legacy owner-file migration must be conflict-aware;
 cleanup must never silently delete the former top-level Jobs injector.
+
+Legacy rerender adds the App-owned registration seam and registers only the
+framework jobs whose constructor and handler contracts are known. Older custom
+`make:job` providers are preserved, but they are not guessed from arbitrary
+constructors. Their one-time migration is explicit: add the job as a typed
+parameter to `registerJobHandlers` and call
+`queueManager.Register(<TypeName>, <job>.HandleTask)`. Future `make:job` calls
+write both the provider and registration automatically.
 
 The Jobs-disabled absence contract applies to Queue-owned generated and runtime
 surface. The persisted Jobs component field, primitive-neutral inspection
@@ -496,6 +581,10 @@ Exit criteria:
 - Existing Queue driver, worker selection, Lighthouse queue health, Jobs
   metrics, observability, Demo, generator, and multi-App integration tests stay
   green, and rerender plus generation is idempotent.
+- `make:job` create and remove update the App-owned constructor, typed handler
+  parameter, and Queue registration together. Named dispatch reaches the named
+  runtime and configured physical queue; explicit `default` dispatch respects
+  the configured default physical queue.
 - No Queue or Job Workers component is introduced.
 
 ### Phase 5: Cache and Inspects vertical slice
