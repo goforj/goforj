@@ -755,7 +755,7 @@ func writeDevWatcherBoundaryRuntimeState(path string, version string, pid int, h
 func writeDevWatcherBoundaryArtifactProject(t *testing.T, root string, sourcePath string, version string) {
 	t.Helper()
 	writeDevWatcherChurnFile(t, filepath.Join(root, "go.mod"), "module example.com/watcherboundary\n\ngo 1.24\n", 0o644)
-	writeDevWatcherChurnFile(t, filepath.Join(root, ".goforj.yml"), "project_name: WatcherBoundary\ngo_module_name: example.com/watcherboundary\nupdated_at: \"2026-07-13 00:00:00 UTC\"\n", 0o644)
+	writeDevWatcherChurnFile(t, filepath.Join(root, ".goforj.yml"), "project_name: WatcherBoundary\ngo_module_name: example.com/watcherboundary\nupdated_at: \"2026-07-13 00:00:00 UTC\"\nrender:\n  components: []\n  component_contract: 1\n", 0o644)
 	writeDevWatcherBoundarySource(t, sourcePath, version, false)
 }
 
