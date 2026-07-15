@@ -197,10 +197,22 @@ func buildAppRoleTargets(
 	return entries, nil
 }
 
-// discoverObservabilityMetricRoles keeps role discovery tied to rendered framework packages.
+// discoverObservabilityMetricRoles keeps role discovery tied to rendered framework packages without letting stale Jobs output override project intent.
 func discoverObservabilityMetricRoles(projectDir string) ([]metricsTargetRole, error) {
+	var configuredComponents *project.Components
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err == nil {
+		components := project.ProjectComponents(config)
+		configuredComponents = &components
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("load project observability components: %w", err)
+	}
+
 	roles := make([]metricsTargetRole, 0, len(observabilityMetricRoles))
 	for _, role := range observabilityMetricRoles {
+		if role.Name == "jobs" && configuredComponents != nil && !configuredComponents.Jobs {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(projectDir, role.Path)); err != nil {
 			if os.IsNotExist(err) {
 				continue

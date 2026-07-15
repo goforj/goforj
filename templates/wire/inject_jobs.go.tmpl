@@ -5,6 +5,11 @@ package wire
 
 import (
 	"github.com/goforj/wire"
+{{- if .ProjectComponents.HasDatabase }}
+{{- if not .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/database"
+{{- end }}
+{{- end }}
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/makecmd"
 )
@@ -14,6 +19,12 @@ var jobSet = wire.NewSet(
 	jobs.NewBenchmarkRunCmd,
 	jobs.NewLighthouseRuntime,
 	jobs.NewRuntime,
+{{- if .ProjectComponents.HasDatabase }}
+{{- if not .Components.HasDatabase }}
+	// Database is optional for Jobs; another App is the only Database owner in this build.
+	wire.Value((*database.Connections)(nil)),
+{{- end }}
+{{- end }}
 	jobs.NewWorker,
 	jobs.NewWorkerCmd,
 	makecmd.NewJobCmd,

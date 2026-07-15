@@ -12,7 +12,10 @@
 - Phase 3 status: complete; File Storage now has a truthful initial opt-out,
   mixed-App projection, safe additive enablement, and an explicit no-removal
   contract that never treats runtime file data as generated residue
-- Next slice: Phase 4, Background Jobs and Queue closure
+- Phase 4 status: complete; Background Jobs now owns the complete Queue
+  surface, including mixed-App projection, environment, generation,
+  observability, dependencies, and safe transition preflight
+- Next slice: Phase 5, Cache and Inspects
 - Scope: component modeling, project and App rendering, generated resource
   surfaces, configuration migration, and test-render coverage
 - Target repository: `goforj`
@@ -420,9 +423,10 @@ Implement the closure in this order:
    queue-driver modules are synchronized only for a Jobs-enabled project.
 4. Close mixed-App constructor seams. Shared Jobs code must not be shaped by
    the default App's Database, Metrics, Storage, or other optional selections.
-   Framework-owned App wrappers provide real collaborators only for an App
-   that selected them and otherwise provide the intentional typed-nil boundary
-   used by shared constructors.
+   Existing disabled providers satisfy optional Metrics and Storage shapes.
+   When another App makes Database part of the shared constructor shape, a
+   Jobs App without Database receives one explicit App-local typed-nil Wire
+   binding.
 5. Make every generation entry point component-aware. Full render, App-only
    render, build generation, bare `forj generate`, explicit `--queue`
    generation, and observability-role discovery must use configuration intent
@@ -441,11 +445,13 @@ Implement the closure in this order:
 The mixed-App boundary is the highest-risk part of this phase. A named App may
 be the only App with Jobs, so shared templates cannot branch on the default
 App's components. Conversely, a Jobs-disabled named App must not receive Queue
-managers merely because another App widened the project envelope. Database and
-Metrics constructor shapes need explicit per-App wrappers; Storage follows the
-same optional pattern. Jobs still has a known Cache dependency in its
-Lighthouse benchmark and inspection plumbing. Removing that dependency belongs
-to Phase 5 and must not be hidden by making Cache an implicit Jobs requirement.
+managers merely because another App widened the project envelope. Metrics and
+Storage already expose disabled providers for Apps that omit them. Database
+has no equivalent provider, so the Jobs Wire set owns the one explicit nil
+binding needed when shared source includes Database but the current App does
+not. Jobs still has a known Cache dependency in its Lighthouse benchmark and
+inspection plumbing. Removing that dependency belongs to Phase 5 and must not
+be hidden by making Cache an implicit Jobs requirement.
 
 The removal preflight must distinguish source ownership from runtime state.
 Framework-owned Jobs files can be reconciled only after the preflight proves

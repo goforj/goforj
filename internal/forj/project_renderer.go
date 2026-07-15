@@ -307,6 +307,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateStorageRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := p.validateJobsRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	selectedQueueDriver := input.queueDriver
 	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
 		selectedQueueDriver = selection.Active
@@ -647,8 +650,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/observability/cache_observer.go.tmpl",
 				"internal/observability/cache_observer_test.go.tmpl",
 				"internal/observability/mail_observer.go.tmpl",
-				"internal/observability/queue_observer.go.tmpl",
-				"internal/observability/queue_observer_test.go.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/runtime/about.go.tmpl",
 				"internal/runtime/discovery.go.tmpl",
@@ -884,9 +885,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/auth-overview.json.tmpl",
-						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
 					)
+					if projectComponents.Jobs {
+						templates = append(templates, "containers/observability/grafana/dashboards/queue-overview.json.tmpl")
+					}
 					if projectComponents.Storage {
 						templates = append(templates, "containers/observability/grafana/dashboards/storage-overview.json.tmpl")
 					}
@@ -1144,6 +1147,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
+				"internal/observability/queue_observer.go.tmpl",
+				"internal/observability/queue_observer_test.go.tmpl",
 			},
 			raw: []string{"internal/makecmd/job.tmpl"},
 			action: func() error {
@@ -1248,7 +1253,7 @@ func resolveQueueDriverSeed(selected string, legacy string) string {
 	if driver := normalizeQueueDriver(legacy); driver != "" {
 		return driver
 	}
-	return "redis"
+	return "workerpool"
 }
 
 // reconcileQueueDriverEnvironment migrates applicable queue state before the legacy YAML source can be removed.
@@ -1404,6 +1409,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	projectCapabilitiesChanged := false
 	appConfigChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
@@ -1418,6 +1426,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateJobsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		projectCapabilitiesChanged = changed
@@ -1589,6 +1600,22 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 			}
 		}
 	}
+	if before.Jobs && !after.Jobs {
+		path, exists, err := projectJobsRemovalResiduePath()
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Jobs while %s exists; automatic Jobs removal is not supported", app.Name, path)
+		}
+		path, exists, err = appJobsRemovalResiduePath(app)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Jobs while %s contains generated Jobs accessors or wiring; automatic Jobs removal is not supported", app.Name, path)
+		}
+	}
 	return nil
 }
 
@@ -1739,7 +1766,6 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	if prefix == "" {
 		return nil
 	}
-
 	metadata := runtimeAppMetadataForConfiguredApp(p.config, app)
 	metadata.HTTPPort = nextAvailableAppHTTPPort(".env", prefix, metadata.HTTPPort)
 	envDefaults := appRuntimeEnvDefaults(prefix, metadata, components)
@@ -1756,6 +1782,13 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 			return err
 		}
 		envDefaults[prefix+"_STORAGE_DRIVER"] = storageDriver
+	}
+	if components.Jobs {
+		queueDriver, err := queueDriverDefaultFromEnv(".env")
+		if err != nil {
+			return err
+		}
+		envDefaults[prefix+"_QUEUE_DRIVER"] = queueDriver
 	}
 	if driver := components.DatabaseDriver(); driver != "" {
 		baseDriver := ""
@@ -1846,6 +1879,11 @@ func storageDriverDefaultFromEnv(path string) (string, error) {
 	return resourceDriverDefaultFromEnv(path, project.ResourceStorage, "STORAGE", "local")
 }
 
+// queueDriverDefaultFromEnv keeps an incrementally added App aligned with the project's active Queue backend.
+func queueDriverDefaultFromEnv(path string) (string, error) {
+	return resourceDriverDefaultFromEnv(path, project.ResourceQueue, "QUEUE", "workerpool")
+}
+
 // resourceDriverDefaultFromEnv validates one owner-controlled root driver before projecting it into a named App overlay.
 func resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, envPrefix string, fallback string) (string, error) {
 	data, err := os.ReadFile(path)
@@ -1854,9 +1892,10 @@ func resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, env
 	}
 	activeKey := envPrefix + "_DRIVER"
 	supportedKey := envPrefix + "_SUPPORTED_DRIVERS"
-	driver, found := envAssignment(strings.Split(string(data), "\n"), activeKey)
+	lines := strings.Split(string(data), "\n")
+	driver, found := envAssignment(lines, activeKey)
 	if !found || strings.TrimSpace(driver) == "" {
-		return fallback, nil
+		driver = fallback
 	}
 	driver = project.CanonicalResourceDriver(resource, driver)
 	definition, ok := project.ResourceDefinitionByKey(resource)
@@ -1866,7 +1905,7 @@ func resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, env
 	if _, ok := definition.Driver(driver); !ok {
 		return "", fmt.Errorf("%s in %s selects unsupported driver %q", activeKey, path, driver)
 	}
-	supported, supportedSet := envAssignment(strings.Split(string(data), "\n"), supportedKey)
+	supported, supportedSet := envAssignment(lines, supportedKey)
 	if supportedSet && strings.TrimSpace(supported) != "" && !driverListContains(supported, driver) {
 		return "", fmt.Errorf("%s in %s excludes active %s %q", supportedKey, path, activeKey, driver)
 	}
@@ -2164,13 +2203,14 @@ func orderedEnvDefaultKeys(defaults map[string]string, prefix string) []string {
 		prefix + "_METRICS_SCHEDULER_PORT": 40,
 		prefix + "_METRICS_JOBS_PORT":      50,
 		prefix + "_EVENTS_DRIVER":          60,
-		prefix + "_DB_DRIVER":              70,
-		prefix + "_DB_DATABASE":            80,
-		prefix + "_DB_SQLITE_DATABASE":     85,
-		prefix + "_DB_HOST":                90,
-		prefix + "_DB_PORT":                100,
-		prefix + "_DB_USERNAME":            110,
-		prefix + "_DB_PASSWORD":            120,
+		prefix + "_QUEUE_DRIVER":           70,
+		prefix + "_DB_DRIVER":              80,
+		prefix + "_DB_DATABASE":            90,
+		prefix + "_DB_SQLITE_DATABASE":     95,
+		prefix + "_DB_HOST":                100,
+		prefix + "_DB_PORT":                110,
+		prefix + "_DB_USERNAME":            120,
+		prefix + "_DB_PASSWORD":            130,
 	}
 	sort.Slice(keys, func(left, right int) bool {
 		leftRank, leftKnown := rank[keys[left]]
@@ -3051,6 +3091,188 @@ func (p *ProjectRenderer) validateStorageRenderTransition(projectComponents proj
 	return nil
 }
 
+// validateJobsRenderTransition rejects unsupported removal states before rendering can strand Jobs source or App-owned providers.
+func (p *ProjectRenderer) validateJobsRenderTransition(projectComponents project.Components) error {
+	if !projectComponents.Jobs {
+		path, exists, err := projectJobsRemovalResiduePath()
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Jobs while %s exists; automatic Jobs removal is not supported", path)
+		}
+	}
+	for _, app := range runtimeAppsForMetadata(p.config) {
+		if appRenderComponents(p.config, app).Jobs {
+			continue
+		}
+		path, exists, err := appJobsRemovalResiduePath(app)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Jobs for App %q while %s contains generated Jobs accessors or wiring; automatic Jobs removal is not supported", app.Name, path)
+		}
+	}
+	return nil
+}
+
+// legacyJobsFrameworkPaths lists obsolete generated Jobs files retained only for cleanup compatibility.
+func legacyJobsFrameworkPaths() []string {
+	return []string{
+		filepath.Join("internal", "jobs", "devconsole.go"),
+		filepath.Join("internal", "jobs", "queue_registration.go"),
+	}
+}
+
+// projectJobsRemovalResiduePath centralizes the ownership boundary so renders and App removal reject the same residue.
+func projectJobsRemovalResiduePath() (string, bool, error) {
+	for _, path := range projectJobsResiduePaths() {
+		exists, residuePath, err := jobsRemovalResidueExists(path)
+		if err != nil {
+			return "", false, err
+		}
+		if exists {
+			return residuePath, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// jobsRemovalResidueExists treats empty shells as harmless because earlier renderers can leave component directories behind.
+func jobsRemovalResidueExists(path string) (bool, string, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", fmt.Errorf("inspect component transition path %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return true, path, nil
+	}
+
+	legacyFramework := make(map[string]struct{}, len(legacyJobsFrameworkPaths()))
+	for _, frameworkPath := range legacyJobsFrameworkPaths() {
+		legacyFramework[filepath.Clean(frameworkPath)] = struct{}{}
+	}
+	residuePath := ""
+	err = filepath.WalkDir(path, func(candidate string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if _, frameworkOwned := legacyFramework[filepath.Clean(candidate)]; frameworkOwned {
+			return nil
+		}
+		residuePath = candidate
+		return fs.SkipAll
+	})
+	if err != nil {
+		return false, "", fmt.Errorf("inspect Jobs transition directory %s: %w", path, err)
+	}
+	return residuePath != "", residuePath, nil
+}
+
+// projectJobsResiduePaths stays explicit so local Queue runtime data is never mistaken for project-owned Jobs source.
+func projectJobsResiduePaths() []string {
+	return []string{
+		filepath.Join("internal", "jobs"),
+		filepath.Join("internal", "queues"),
+		filepath.Join("internal", "makecmd", "make_job_cmd.go"),
+		filepath.Join("internal", "makecmd", "make_job_cmd_test.go"),
+		filepath.Join("internal", "makecmd", "make_queue_cmd.go"),
+		filepath.Join("internal", "makecmd", "make_queue_cmd_test.go"),
+		filepath.Join("internal", "makecmd", "job.tmpl"),
+		filepath.Join("internal", "observability", "queue_observer.go"),
+		filepath.Join("internal", "observability", "queue_observer_test.go"),
+		filepath.Join("containers", "observability", "grafana", "dashboards", "queue-overview.json"),
+	}
+}
+
+// appJobsResiduePaths lists generated and owner-controlled Jobs injectors for one App.
+func appJobsResiduePaths(app project.App) []string {
+	app = normalizeRenderApp(app)
+	paths := []string{
+		filepath.Join(app.WireDir, "inject_jobs.go"),
+		filepath.Join(app.WireDir, "inject_jobs_app.go"),
+	}
+	if app.Name == project.DefaultAppName {
+		paths = append(paths, filepath.Join("wire", "inject_jobs_app.go"))
+	}
+	return paths
+}
+
+// appJobsRemovalResiduePath finds the first App-owned Jobs accessor or injector that prevents safe component removal.
+func appJobsRemovalResiduePath(app project.App) (string, bool, error) {
+	app = normalizeRenderApp(app)
+	appPath := filepath.Join(app.WireDir, "app.go")
+	exists, err := appJobsSurfaceExists(appPath)
+	if err != nil {
+		return "", false, err
+	}
+	if exists {
+		return appPath, true, nil
+	}
+	for _, path := range appJobsResiduePaths(app) {
+		exists, err := renderPathExists(path)
+		if err != nil {
+			return "", false, err
+		}
+		if exists {
+			return path, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// appJobsSurfaceExists detects Queue accessors from receiver syntax without matching comments, strings, fields, or free functions.
+func appJobsSurfaceExists(path string) (bool, error) {
+	file, exists, err := parsedRenderGoFile(path)
+	if err != nil {
+		return false, fmt.Errorf("parse Jobs transition path %s: %w", path, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name == nil || !receiverListNamesType(function.Recv, "App") {
+			continue
+		}
+		if function.Name.Name == "Queue" || function.Name.Name == "Queues" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// receiverListNamesType recognizes pointer and generic receiver forms for one declared type.
+func receiverListNamesType(receivers *ast.FieldList, want string) bool {
+	if receivers == nil || len(receivers.List) != 1 {
+		return false
+	}
+	return receiverExpressionNamesType(receivers.List[0].Type, want)
+}
+
+// receiverExpressionNamesType unwraps receiver syntax without relying on source text.
+func receiverExpressionNamesType(expression ast.Expr, want string) bool {
+	switch value := expression.(type) {
+	case *ast.Ident:
+		return value.Name == want
+	case *ast.StarExpr:
+		return receiverExpressionNamesType(value.X, want)
+	case *ast.IndexExpr:
+		return receiverExpressionNamesType(value.X, want)
+	case *ast.IndexListExpr:
+		return receiverExpressionNamesType(value.X, want)
+	default:
+		return false
+	}
+}
+
 // projectStorageResiduePaths lists generated artifacts that prove an existing project still owns a Storage surface.
 func projectStorageResiduePaths() []string {
 	return []string{
@@ -3477,8 +3699,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "app", "runtime_host_test.go"),
 		filepath.Join("internal", "app", "source.go"),
 		filepath.Join("internal", "app", "timeouts.go"),
-		filepath.Join("internal", "jobs", "devconsole.go"),
-		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
 		filepath.Join("internal", "scheduler", "app_schedules.go"),
 		filepath.Join("internal", "scheduler", "cmd.go"),
@@ -3502,7 +3722,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("wire", "inject_controllers_app.go"),
 		filepath.Join("wire", "inject_http_controllers_app.go"),
 		filepath.Join("wire", "inject_jobs.go"),
-		filepath.Join("wire", "inject_jobs_app.go"),
 		filepath.Join("wire", "inject_mail.go"),
 		filepath.Join("wire", "inject_queue.go"),
 		filepath.Join("wire", "inject_repositories.go"),
@@ -3524,6 +3743,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("app", "wire", "inject_scheduler_schedules.go"),
 		filepath.Join("app", "wire", "inject_storage.go"),
 	}
+	legacyPaths = append(legacyPaths, legacyJobsFrameworkPaths()...)
 	for _, path := range legacyPaths {
 		if err := removeIfExists(path); err != nil {
 			return err
@@ -3810,13 +4030,26 @@ type eventSubscriberOwnerMigration struct {
 	target string
 }
 
+// jobsOwnerMigration describes the preserved default-App Jobs injector move from the former top-level Wire package.
+type jobsOwnerMigration struct {
+	source string
+	target string
+}
+
 // migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
 func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 	eventMigrations, err := planEventSubscriberOwnerMigrations(p.config)
 	if err != nil {
 		return err
 	}
+	jobsMigration, err := planJobsOwnerMigration(p.config)
+	if err != nil {
+		return err
+	}
 	if err := applyEventSubscriberOwnerMigrations(eventMigrations); err != nil {
+		return err
+	}
+	if err := applyJobsOwnerMigration(jobsMigration); err != nil {
 		return err
 	}
 	if err := repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
@@ -3826,6 +4059,51 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 		filepath.Join("app", "wire", "inject_controllers_app.go"),
 		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
 	)
+}
+
+// planJobsOwnerMigration rejects destination collisions before a legacy owner is moved byte-for-byte.
+func planJobsOwnerMigration(config *project.Config) (*jobsOwnerMigration, error) {
+	if config == nil || !appRenderComponents(config, project.DefaultApp()).Jobs {
+		return nil, nil
+	}
+	source := filepath.Join("wire", "inject_jobs_app.go")
+	target := filepath.Join(project.DefaultApp().WireDir, "inject_jobs_app.go")
+	sourceExists, err := renderPathExists(source)
+	if err != nil {
+		return nil, err
+	}
+	if !sourceExists {
+		return nil, nil
+	}
+	targetExists, err := renderPathExists(target)
+	if err != nil {
+		return nil, err
+	}
+	if targetExists {
+		return nil, fmt.Errorf("cannot migrate legacy Jobs owner %s to %s because both exist; reconcile the App-owned files manually", source, target)
+	}
+	return &jobsOwnerMigration{source: source, target: target}, nil
+}
+
+// applyJobsOwnerMigration moves the preserved injector only while its destination remains unclaimed.
+func applyJobsOwnerMigration(migration *jobsOwnerMigration) error {
+	if migration == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(migration.target), 0o755); err != nil {
+		return fmt.Errorf("prepare Jobs owner destination %s: %w", migration.target, err)
+	}
+	targetExists, err := renderPathExists(migration.target)
+	if err != nil {
+		return err
+	}
+	if targetExists {
+		return fmt.Errorf("cannot migrate legacy Jobs owner %s to %s because the destination now exists; reconcile the App-owned files manually", migration.source, migration.target)
+	}
+	if err := os.Rename(migration.source, migration.target); err != nil {
+		return fmt.Errorf("migrate legacy Jobs owner %s to %s: %w", migration.source, migration.target, err)
+	}
+	return nil
 }
 
 // eventSubscriberOwnerPath returns the current App-owned subscriber injector path.

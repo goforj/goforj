@@ -16,7 +16,7 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
 	"{{.GoModuleName}}/internal/queues"
@@ -38,7 +38,7 @@ type benchmarkRunner struct {
 {{- if .ProjectComponents.Storage }}
 	storages *storages.Manager
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	db *database.Connections
 {{- else }}
 	_ any
@@ -52,7 +52,7 @@ func newBenchmarkRunner(
 {{- if .ProjectComponents.Storage }}
 	storages *storages.Manager,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	db *database.Connections,
 {{- else }}
 	_ any,
@@ -64,7 +64,7 @@ func newBenchmarkRunner(
 {{- if .ProjectComponents.Storage }}
 		storages: storages,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 		db: db,
 {{- end }}
 	}
@@ -157,12 +157,14 @@ func (r *benchmarkRunner) catalog() map[string]any {
 		"queue": map[string]any{
 			"instances": benchmarkQueueCatalog(r.queues),
 		},
-{{- if .Components.HasDatabase }}
-		"db": map[string]any{
-			"instances": benchmarkDBCatalog(),
-		},
-{{- end }}
 	}
+{{- if .ProjectComponents.HasDatabase }}
+	if r.db != nil {
+		catalog["db"] = map[string]any{
+			"instances": benchmarkDBCatalog(),
+		}
+	}
+{{- end }}
 {{- if .ProjectComponents.Storage }}
 	if r.storages != nil {
 		catalog["storage"] = map[string]any{
@@ -230,7 +232,8 @@ func benchmarkStorageCatalog() []benchmarkCatalogItem {
 }
 {{- end }}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
+// benchmarkDBCatalog projects generated connections into the bounded Lighthouse benchmark catalog.
 func benchmarkDBCatalog() []benchmarkCatalogItem {
 	instances := runtime.DiscoverDatabaseInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
@@ -268,7 +271,7 @@ func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (Ben
 	case "queue":
 		return r.runQueue(ctx, instanceName, duration, req.Concurrency, payloadSize, req.Queue, started)
 	case "db":
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 		return r.runDB(ctx, instanceName, duration, req.Concurrency, payloadSize, started)
 {{- else }}
 		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
@@ -292,7 +295,7 @@ func runBenchmark(
 {{- if .ProjectComponents.Storage }}
 	storages *storages.Manager,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	dbConnections *database.Connections,
 {{- else }}
 	_ any,
@@ -305,7 +308,7 @@ func runBenchmark(
 {{- if .ProjectComponents.Storage }}
 		storages,
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 		dbConnections,
 {{- else }}
 		nil,
@@ -400,7 +403,8 @@ func (r *benchmarkRunner) runQueue(ctx context.Context, instanceName string, dur
 	return runQueueBenchmark(ctx, r.queues, duration, concurrency, payloadSize, queueName, started)
 }
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
+// runDB rejects unavailable App-local Database support before starting a benchmark.
 func (r *benchmarkRunner) runDB(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	concurrency = benchmarkConcurrency(concurrency, 8, 128)
 	if r.db == nil {

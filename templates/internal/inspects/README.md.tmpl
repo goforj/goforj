@@ -5,7 +5,9 @@
 An inspect is a bounded record of one unit of work, such as:
 
 - an HTTP request
+{{- if .ProjectComponents.Jobs }}
 - a job execution
+{{- end }}
 - a scheduler run
 - a CLI command
 - app startup
@@ -16,7 +18,7 @@ Each inspect keeps:
 - ordered timeline events
 - source-specific labels
 
-Lighthouse uses this package to power the Requests / Jobs / Schedule inspect views.
+Lighthouse uses this package to power its runtime inspect views.
 
 ## What Gets Captured
 
@@ -34,7 +36,9 @@ Common event kinds include:
 - `event`
 {{- end }}
 - `mail`
+{{- if .ProjectComponents.Jobs }}
 - `queue`
+{{- end }}
 - `log`
 - `error`
 
@@ -191,7 +195,9 @@ The manager also exposes normalized helpers for framework-owned primitives, such
 - `RecordEventBusEvent`
 {{- end }}
 - `RecordMailEvent`
+{{- if .ProjectComponents.Jobs }}
 - `RecordQueueEvent`
+{{- end }}
 - `RecordQueryEvent`
 - `RecordHTTPExchange`
 

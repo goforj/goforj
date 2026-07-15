@@ -11,6 +11,7 @@ import (
 	atlasproject "github.com/goforj/atlas/project"
 	"github.com/goforj/atlas/skills"
 	"github.com/goforj/atlas/workflows"
+	"github.com/goforj/goforj/project"
 )
 
 func TestProjectUsesGoForjConfig(t *testing.T) {
@@ -78,6 +79,7 @@ apps:
 	writeFile(t, filepath.Join(root, "cmd", "app", "main.go"), "package main\n")
 	writeFile(t, filepath.Join(root, "cmd", "worker", "main.go"), "package main\n")
 	writeFile(t, filepath.Join(root, "app", "worker", "commands.go"), "package workerapp\n")
+	writeFile(t, filepath.Join(root, ".env"), "QUEUE_DRIVER=redis\n")
 
 	discovered := Project(root)
 	if !containsString(discovered.Components, "jobs") || !containsString(discovered.Components, "database-postgres") {
@@ -85,6 +87,9 @@ apps:
 	}
 	if discovered.DatabaseDriver != "sqlite" {
 		t.Fatalf("default App database driver = %q, want sqlite", discovered.DatabaseDriver)
+	}
+	if discovered.QueueDriver != "" {
+		t.Fatalf("default App queue driver = %q, want none for its disabled Jobs component", discovered.QueueDriver)
 	}
 
 	var defaultApp atlasproject.App
@@ -279,6 +284,98 @@ apps:
 	}
 	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); !ok {
 		t.Fatalf("named Storage App did not expose Atlas resource links: %#v", inventory.Resources)
+	}
+}
+
+// TestInventoryIgnoresStaleDisabledQueues verifies Atlas does not turn Queue env residue into Background Jobs capability.
+func TestInventoryIgnoresStaleDisabledQueues(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+    jobs: false
+`)
+	writeFile(t, filepath.Join(root, ".env"), `
+QUEUE_DRIVER=redis
+QUEUE_REPORTS_DRIVER=redis
+WORKER_QUEUE_EMAILS_DRIVER=redis
+`)
+
+	inventory := Inventory(root)
+	if len(inventory.Queues) != 0 {
+		t.Fatalf("stale Queue env resurrected Atlas queues: %#v", inventory.Queues)
+	}
+	for _, resource := range inventory.Resources {
+		if resource.Category == "queue" {
+			t.Fatalf("stale Queue env resurrected an Atlas resource link: %#v", inventory.Resources)
+		}
+	}
+}
+
+// TestInventoryKeepsNamedAppQueuesLocal verifies Atlas projects Queue resources only through participating Jobs Apps.
+func TestInventoryKeepsNamedAppQueuesLocal(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".goforj.yml"), `
+project_name: demo
+module_name: example.com/demo
+render:
+  component_contract: 1
+  components:
+    cli: true
+apps:
+  api:
+    components:
+      cli: true
+      web_api: true
+  worker:
+    components:
+      cli: true
+      jobs: true
+`)
+	writeFile(t, filepath.Join(root, ".env"), `
+QUEUE_DRIVER=workerpool
+QUEUE_REPORTS_DRIVER=workerpool
+API_QUEUE_EXPORTS_DRIVER=redis
+WORKER_QUEUE_EMAILS_DRIVER=redis
+`)
+
+	inventory := Inventory(root)
+	if len(inventory.Queues) != 3 {
+		t.Fatalf("named Jobs App queues = %#v, want exactly default, emails, and reports", inventory.Queues)
+	}
+	for _, name := range []string{"default", "emails", "reports"} {
+		if !containsString(inventory.Queues, name) {
+			t.Fatalf("named Jobs App queue %q missing from Atlas inventory: %#v", name, inventory.Queues)
+		}
+	}
+	if containsString(inventory.Queues, "exports") {
+		t.Fatalf("disabled API App Queue overlay leaked into Atlas inventory: %#v", inventory.Queues)
+	}
+}
+
+// TestMetricsMetadataKeepsJobsProjectionAppLocal verifies Jobs counters are advertised only for participating Apps.
+func TestMetricsMetadataKeepsJobsProjectionAppLocal(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, WebAPI: true, Metrics: true, Cache: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{CLI: true, Jobs: true}},
+		},
+	}
+	metadata := metricsMetadata([]atlasproject.App{
+		{Name: project.DefaultAppName, Default: true},
+		{Name: "worker"},
+	}, config, nil)
+	if counters := metadata["app/http"].Counters; containsString(counters, "queue_jobs_total") {
+		t.Fatalf("default App advertised Jobs counters without Jobs: %#v", counters)
+	}
+	if counters := metadata["worker/jobs"].Counters; !containsString(counters, "queue_jobs_total") {
+		t.Fatalf("worker App omitted its Jobs counters: %#v", counters)
 	}
 }
 

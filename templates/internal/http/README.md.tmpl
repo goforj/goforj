@@ -108,10 +108,12 @@ Readiness automatically includes infrastructure checks based on enabled/configur
 - `cache_redis`
   - always registered, active only when `CACHE_DRIVER=redis`
   - verifies Redis connectivity for cache
+{{- if .ProjectComponents.Jobs }}
 - `queue_redis`
   - included when Jobs component is enabled
   - active only when `QUEUE_DRIVER=redis`
   - verifies Redis connectivity for queueing
+{{- end }}
 
 Checks that are not active for current runtime configuration are treated as pass.
 

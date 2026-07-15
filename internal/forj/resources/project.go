@@ -53,8 +53,15 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 		if components.HasDatabase() {
 			resources = append(resources, Resource{ID: "database-default", Name: "default", Category: "database", Description: "Default database connection.", Enabled: true, Priority: 10, Source: "component", App: project.DefaultAppName, Owner: "goforj"})
 		}
-		for _, name := range namedResources(env, "QUEUE") {
-			resources = append(resources, Resource{ID: "queue-" + name, Name: name, Category: "queue", Description: "Named queue resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Runtime: "jobs", Owner: "goforj"})
+		if projectComponents.Jobs {
+			for _, app := range projectResourceApps(r.Config) {
+				if !app.components.Jobs {
+					continue
+				}
+				for _, name := range namedResourcesForApp(env, app.name, "QUEUE") {
+					resources = append(resources, Resource{ID: queueResourceID(app.name, name), Name: name, Category: "queue", Description: "Named queue resource.", Enabled: true, Priority: 10, Source: "env", App: app.name, Runtime: "jobs", Owner: "goforj"})
+				}
+			}
 		}
 		for _, name := range namedResources(env, "CACHE") {
 			resources = append(resources, Resource{ID: "cache-" + name, Name: name, Category: "cache", Description: "Named cache resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
@@ -166,12 +173,76 @@ func namedResources(env map[string]string, prefix string) []string {
 		if !strings.HasPrefix(key, prefix+"_") || !strings.HasSuffix(key, "_DRIVER") {
 			continue
 		}
+		if key == prefix+"_DRIVER" {
+			continue
+		}
 		name := strings.TrimSuffix(strings.TrimPrefix(key, prefix+"_"), "_DRIVER")
 		if name != "" {
 			names = append(names, strings.ToLower(name))
 		}
 	}
 	return uniqueSorted(names)
+}
+
+// projectResourceApp binds one App name to the component projection that owns its resource overlays.
+type projectResourceApp struct {
+	name       string
+	components project.Components
+}
+
+// projectResourceApps returns deterministic App-local component projections for resource ownership.
+func projectResourceApps(config *project.Config) []projectResourceApp {
+	apps := []projectResourceApp{{
+		name:       project.DefaultAppName,
+		components: config.Render.Components.WithResolvedDependencies(),
+	}}
+	names := make([]string, 0, len(config.Apps))
+	for name := range config.Apps {
+		if name == "" || name == project.DefaultAppName {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		apps = append(apps, projectResourceApp{
+			name:       name,
+			components: project.NormalizeConfiguredAppComponents(config, config.Apps[name].Components),
+		})
+	}
+	return apps
+}
+
+// namedResourcesForApp combines shared queue definitions with one participating App's overrides.
+func namedResourcesForApp(env map[string]string, appName string, prefix string) []string {
+	names := namedResources(env, prefix)
+	if appName == "" || appName == project.DefaultAppName {
+		return names
+	}
+	appPrefix := resourceAppEnvPrefix(appName)
+	if appPrefix == "" {
+		return names
+	}
+	return uniqueSorted(append(names, namedResources(env, appPrefix+"_"+prefix)...))
+}
+
+// queueResourceID preserves the established default-App IDs while namespacing sibling Apps.
+func queueResourceID(appName string, queueName string) string {
+	if appName == "" || appName == project.DefaultAppName {
+		return "queue-" + queueName
+	}
+	return "queue-" + strings.ToLower(appName) + "-" + queueName
+}
+
+// resourceAppEnvPrefix mirrors the generated runtime convention for App environment overlays.
+func resourceAppEnvPrefix(appName string) string {
+	parts := strings.FieldsFunc(strings.TrimSpace(appName), func(r rune) bool {
+		return r == '-' || r == '_' || r == ' ' || r == '.'
+	})
+	for i, part := range parts {
+		parts[i] = strings.ToUpper(part)
+	}
+	return strings.Join(parts, "_")
 }
 
 func firstNonEmpty(values ...string) string {

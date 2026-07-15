@@ -21,13 +21,6 @@ var scheduleNamePattern = regexp.MustCompile(`\.Name\("([^"]+)"\)`)
 var routeGroupPattern = regexp.MustCompile(`web\.NewRouteGroup\("([^"]*)"`)
 var commandFieldPattern = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_]+)\s+[\w.]+\s+` + "`" + `cmd:""` + "`")
 
-var queueEnvKeys = []string{
-	"DRIVER", "WORKERS", "NAME", "DEFAULT_QUEUE", "SHUTDOWN_TIMEOUT", "ADDR", "PASSWORD", "DB",
-	"QUEUES", "SERVER_LOG_LEVEL", "URL", "REGION", "ENDPOINT", "ACCESS_KEY", "SECRET_KEY", "DSN",
-	"WORKERPOOL_WORKERS", "WORKERPOOL_BUFFER", "WORKERPOOL_TASK_TIMEOUT_SECONDS",
-	"PROCESSING_RECOVERY_GRACE_SECONDS", "PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
-}
-
 var cacheEnvKeys = []string{
 	"DRIVER", "DEFAULT_TTL_SECONDS", "PREFIX", "MEMORY_CLEANUP_SECONDS", "FILE_DIR", "ADDR",
 	"ADDRESSES", "USERNAME", "PASSWORD", "DB", "DSN", "TABLE", "ENDPOINT", "REGION", "TLS",
@@ -74,15 +67,16 @@ func Inventory(root string) mcp.Inventory {
 	if projectComponents.Events {
 		eventBuses = resourceNames(env, "EVENTS", eventEnvKeys)
 	}
+	links := resourceLinks(cfg, env)
 	return mcp.Inventory{
 		Routes:     discoverAppSymbols(root, apps, "routes.go", routeGroupPattern, routeLabel),
 		Schedules:  discoverAppSymbols(root, apps, "schedules.go", scheduleNamePattern, identityLabel),
 		Commands:   discoverAppSymbols(root, apps, "commands.go", commandFieldPattern, identityLabel),
-		Queues:     resourceNames(env, "QUEUE", queueEnvKeys),
+		Queues:     resourceLinkLabels(links, "queue"),
 		Caches:     resourceNames(env, "CACHE", cacheEnvKeys),
 		Disks:      disks,
 		EventBuses: eventBuses,
-		Resources:  resourceLinks(cfg, env),
+		Resources:  links,
 	}
 }
 
@@ -367,11 +361,7 @@ func metricsMetadata(apps []atlasproject.App, cfg *project.Config, env map[strin
 				Targets: []string{
 					metricsTarget(app.Name, runtime, env),
 				},
-				Counters: []string{
-					"http_requests_total",
-					"cache_operations_total",
-					"queue_jobs_total",
-				},
+				Counters: metricsCounters(components),
 			}
 		}
 	}
@@ -379,6 +369,18 @@ func metricsMetadata(apps []atlasproject.App, cfg *project.Config, env map[strin
 		return nil
 	}
 	return metadata
+}
+
+// metricsCounters advertises only metric families owned by the App's selected runtime surfaces.
+func metricsCounters(components project.Components) []string {
+	counters := []string{
+		"http_requests_total",
+		"cache_operations_total",
+	}
+	if components.Jobs {
+		counters = append(counters, "queue_jobs_total")
+	}
+	return counters
 }
 
 func metricsTarget(appName string, runtime string, env map[string]string) string {
@@ -415,6 +417,17 @@ func resourceLinks(cfg *project.Config, env map[string]string) []workflows.Resou
 		})
 	}
 	return links
+}
+
+// resourceLinkLabels returns the unique labels exposed by one resource category.
+func resourceLinkLabels(links []workflows.ResourceLink, category string) []string {
+	labels := make([]string, 0, len(links))
+	for _, link := range links {
+		if link.Category == category {
+			labels = append(labels, link.Label)
+		}
+	}
+	return uniqueSorted(labels)
 }
 
 func appScopedKey(appName string, key string) string {

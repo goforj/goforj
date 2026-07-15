@@ -130,6 +130,31 @@ func TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement(t *tes
 	}
 }
 
+// TestReconcileResourceEnvironmentSeedsPortableQueueOnFirstEnablement verifies every render path starts with the local-to-Redis transition compiled.
+func TestReconcileResourceEnvironmentSeedsPortableQueueOnFirstEnablement(t *testing.T) {
+	components := project.Components{CLI: true, Jobs: true}
+	seed, err := compatibilityResourcePlan(components, "")
+	if err != nil {
+		t.Fatalf("resolve compatibility plan: %v", err)
+	}
+	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
+
+	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, false)
+	if err != nil {
+		t.Fatalf("reconcile first Jobs enablement: %v", err)
+	}
+	if !changed {
+		t.Fatal("first Jobs enablement did not initialize owner environment keys")
+	}
+	if !strings.Contains(string(updated), "QUEUE_DRIVER=workerpool\n") || !strings.Contains(string(updated), "QUEUE_SUPPORTED_DRIVERS=workerpool,redis\n") {
+		t.Fatalf("first Jobs enablement omitted portable Queue defaults:\n%s", updated)
+	}
+	queue, ok := effective.Selection(project.ResourceQueue)
+	if !ok || queue.Active != "workerpool" || strings.Join(queue.Supported, ",") != "workerpool,redis" {
+		t.Fatalf("effective first Queue selection = %#v selected=%t", queue, ok)
+	}
+}
+
 // TestReconcileResourceEnvironmentKeepsExistingEventsCompatibility verifies an owner key retains the legacy active-only build contract.
 func TestReconcileResourceEnvironmentKeepsExistingEventsCompatibility(t *testing.T) {
 	components := project.Components{CLI: true, Events: true}

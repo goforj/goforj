@@ -79,7 +79,14 @@ func (c *Cmd) Run() error {
 		}
 	}
 	if !selected || c.Queue {
-		if _, err := os.Stat(filepath.Join("internal", "queues")); err == nil {
+		jobsEnabled, err := projectJobsEnabled(".")
+		if err != nil {
+			return fmt.Errorf("load project Background Jobs selection: %w", err)
+		}
+		if c.Queue && !jobsEnabled {
+			return fmt.Errorf("cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml")
+		}
+		if jobsEnabled {
 			if _, err := GenerateQueueFiles("."); err != nil {
 				return err
 			}
@@ -168,16 +175,14 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if includeQueue {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "queues")); err == nil {
-			written, err := GenerateQueueFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles += 2
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
+		written, err := GenerateQueueFiles(projectDir)
+		if err != nil {
+			return totalFiles, changedFiles, err
 		}
+		ranAny = true
+		totalFiles += 2
+		changedFiles += written
+		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if includeEvents {
 		written, err := GenerateEventFiles(projectDir)
@@ -235,6 +240,30 @@ func projectStorageEnabled(projectDir string) (bool, error) {
 		return false, err
 	}
 	return project.ProjectComponents(config).Storage, nil
+}
+
+// projectJobsEnabled resolves durable Jobs intent first and retains directory inference only for projects without GoForj configuration.
+func projectJobsEnabled(projectDir string) (bool, error) {
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err == nil {
+		return project.ProjectComponents(config).Jobs, nil
+	}
+	if !os.IsNotExist(err) {
+		return false, err
+	}
+	for _, path := range []string{
+		filepath.Join(projectDir, "internal", "jobs"),
+		filepath.Join(projectDir, "internal", "queues"),
+	} {
+		info, statErr := os.Stat(path)
+		if statErr == nil && info.IsDir() {
+			return true, nil
+		}
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return false, statErr
+		}
+	}
+	return false, nil
 }
 
 // runGoModTidy refreshes dependencies without exposing project resource credentials to Go or invoked VCS processes.

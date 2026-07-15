@@ -130,7 +130,7 @@ func compatibilityResourcePlan(components project.Components, legacyQueueDriver 
 	if err != nil {
 		return project.ResourcePlan{}, err
 	}
-	// Events is intentionally excluded so first enablement keeps the portable in-process/Redis pair until an environment owns it.
+	// Events and Queue retain their portable pairs so a first enablement can run locally and adopt Redis without rebuilding.
 	for _, key := range []project.ResourceKey{
 		project.ResourceDatabase,
 		project.ResourceCache,
@@ -150,7 +150,9 @@ func compatibilityResourcePlan(components project.Components, legacyQueueDriver 
 	if components.Jobs {
 		queue, _ := plan.Selection(project.ResourceQueue)
 		queue.Active = resolveQueueDriverSeed("", legacyQueueDriver)
-		queue.Supported = []string{queue.Active}
+		if queue.Active != "workerpool" {
+			queue.Supported = []string{queue.Active}
+		}
 		plan = plan.WithSelection(project.ResourceQueue, queue)
 	}
 	return plan.Normalized(components)
@@ -228,8 +230,8 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 			return nil, project.ResourcePlan{}, false, fmt.Errorf("%s in .env excludes active %s %q; add %q before rerendering", keys.supported, keys.active, active, active)
 		}
 		if !supportedSet || len(supported) == 0 {
-			firstEventsInitialization := definition.Key == project.ResourceEvents && !activeSet && !supportedSet
-			if portableDefaults || firstEventsInitialization {
+			firstPortableInitialization := (definition.Key == project.ResourceEvents || definition.Key == project.ResourceQueue) && !activeSet && !supportedSet
+			if portableDefaults || firstPortableInitialization {
 				supported = append([]string(nil), seedSelection.Supported...)
 			} else {
 				supported = []string{active}

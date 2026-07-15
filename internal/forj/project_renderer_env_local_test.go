@@ -81,7 +81,7 @@ func TestResolveQueueDriverSeed(t *testing.T) {
 	}{
 		{name: "wizard selection wins", selected: " NATS ", legacy: "redis", want: "nats"},
 		{name: "legacy config seeds missing selection", legacy: "workerpool", want: "workerpool"},
-		{name: "invalid values use default", selected: "unknown", legacy: "invalid", want: "redis"},
+		{name: "invalid values use portable default", selected: "unknown", legacy: "invalid", want: "workerpool"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

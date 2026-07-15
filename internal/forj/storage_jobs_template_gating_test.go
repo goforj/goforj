@@ -9,10 +9,18 @@ import (
 
 // TestJobsStorageTemplatesUseProjectEnvelope verifies shared Jobs source includes Storage only when some App needs it.
 func TestJobsStorageTemplatesUseProjectEnvelope(t *testing.T) {
-	paths := []string{
-		"internal/jobs/lighthouse.go.tmpl",
-		"internal/jobs/lighthouse_benchmark.go.tmpl",
-		"internal/jobs/benchmark_run_cmd.go.tmpl",
+	paths := map[string][]string{
+		"internal/jobs/lighthouse.go.tmpl": {
+			`"example.com/jobs-storage/internal/storages"`,
+			"*storages.Manager",
+		},
+		"internal/jobs/lighthouse_benchmark.go.tmpl": {
+			`"example.com/jobs-storage/internal/storages"`,
+			"*storages.Manager",
+		},
+		"internal/jobs/benchmark_run_cmd.go.tmpl": {
+			"c.storage",
+		},
 	}
 
 	for _, test := range []struct {
@@ -42,11 +50,12 @@ func TestJobsStorageTemplatesUseProjectEnvelope(t *testing.T) {
 				},
 			}
 
-			for _, path := range paths {
+			for path, markers := range paths {
 				source := renderSharedTemplate(t, path, data)
 				assertFormattedGoTemplate(t, path, source)
-				assertTemplateMarker(t, path, source, `"example.com/jobs-storage/internal/storages"`, test.wantStorage)
-				assertTemplateMarker(t, path, source, "*storages.Manager", test.wantStorage)
+				for _, marker := range markers {
+					assertTemplateMarker(t, path, source, marker, test.wantStorage)
+				}
 			}
 		})
 	}
@@ -99,7 +108,7 @@ func TestJobsWithoutStorageOmitsBenchmarkSurface(t *testing.T) {
 	}
 }
 
-// TestMixedAppJobsStorageSurfaceUsesInjectedManager verifies typed nil keeps Storage compiled but unavailable to a non-participating App.
+// TestMixedAppJobsStorageSurfaceUsesInjectedManager verifies shared Storage support remains unavailable to a non-participating App.
 func TestMixedAppJobsStorageSurfaceUsesInjectedManager(t *testing.T) {
 	data := templateRenderConfig{
 		Config:            &project.Config{GoModuleName: "example.com/jobs-storage-mixed"},
@@ -120,6 +129,7 @@ func TestMixedAppJobsStorageSurfaceUsesInjectedManager(t *testing.T) {
 
 	for _, marker := range []string{
 		"storage *storages.Manager",
+		"storage,",
 		"newBenchmarkRunner(caches, queues,",
 		"runStorageBenchmark",
 	} {
@@ -137,7 +147,7 @@ func TestMixedAppJobsStorageSurfaceUsesInjectedManager(t *testing.T) {
 	for _, marker := range []string{
 		"storage *storages.Manager",
 		"storageEnabled = c.storage != nil",
-		"availableBenchmarkSuites(storageEnabled)",
+		"availableBenchmarkSuites(storageEnabled, databaseEnabled)",
 		"if storageEnabled {",
 		`storage benchmark unavailable: Storage is not enabled for this App`,
 	} {

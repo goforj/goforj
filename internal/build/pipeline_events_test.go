@@ -74,3 +74,41 @@ func TestPipelineGenerationIgnoresStaleStorageDirectoryWhenComponentDisabled(t *
 		t.Fatalf("Storage-disabled build generated stale Storage package: %v", err)
 	}
 }
+
+// TestPipelineGenerationIgnoresStaleJobsDirectoriesWhenComponentDisabled verifies builds cannot resurrect Queue generation from obsolete package residue.
+func TestPipelineGenerationIgnoresStaleJobsDirectoriesWhenComponentDisabled(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(root, "internal", "jobs"),
+		filepath.Join(root, "internal", "queues"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("create stale Jobs directory %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    jobs: false\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("QUEUE_DRIVER=unknown\nQUEUE_SUPPORTED_DRIVERS=unknown\n"), 0o644); err != nil {
+		t.Fatalf("write stale Queue environment: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
+	if _, err := pipeline.generateProjectFiles(); err != nil {
+		t.Fatalf("generate project files: %v", err)
+	}
+	for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
+		if _, err := os.Stat(filepath.Join("internal", "queues", name)); !os.IsNotExist(err) {
+			t.Fatalf("Jobs-disabled build generated Queue file %s: %v", name, err)
+		}
+	}
+}

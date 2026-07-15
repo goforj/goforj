@@ -19,7 +19,7 @@ import (
 	"github.com/goforj/env/v2"
 	goforjcache "github.com/goforj/cache"
 	gmetrics "github.com/goforj/metrics"
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
 {{- if .Components.Scheduler }}
@@ -67,7 +67,7 @@ type Manager struct {
 	authFlows           *metricCounterVec
 	authFlowLatency     *metricHistogramVec
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	queueJobsEnqueued    *metricCounterVec
 	queueJobsScheduled   *metricCounterVec
 	queueJobsProcessed   *metricCounterVec
@@ -151,7 +151,7 @@ type Config struct {
 {{- if .ProjectComponents.Mail }}
 	Mail      bool
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 	Queue     bool
 {{- end }}
 {{- if .Components.HasDatabase }}
@@ -264,8 +264,8 @@ func NewConfig() Config {
 {{- if .ProjectComponents.Mail }}
 		Mail:      runtime.CurrentApp().Components.Mail && env.GetBool("METRICS_MAIL_ENABLED", "true"),
 {{- end }}
-{{- if .Components.Jobs }}
-		Queue:     env.GetBool("METRICS_QUEUE_ENABLED", "true"),
+{{- if .ProjectComponents.Jobs }}
+		Queue:     runtime.CurrentApp().Components.Jobs && env.GetBool("METRICS_QUEUE_ENABLED", "true"),
 {{- end }}
 {{- if .Components.HasDatabase }}
 		Database:  env.GetBool("METRICS_DATABASE_ENABLED", "true"),
@@ -383,7 +383,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("flow", "status", "provider"), gmetrics.DurationBounds(authDurationBounds())),
 {{- end }}
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 		queueJobsEnqueued: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "queue.jobs.enqueued",
 			Help: "Total queue jobs accepted for enqueue by source.",
@@ -726,7 +726,8 @@ func (m *Manager) MailEnabled() bool {
 }
 {{- end }}
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
+// QueueEnabled reports whether Queue metrics are enabled for this runtime.
 func (m *Manager) QueueEnabled() bool {
 	return m.config.Queue
 }
@@ -846,7 +847,7 @@ func (m *Manager) RecordMonitoringHeartbeatPayload(ctx context.Context, scoped b
 }
 {{- end }}
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
 // RecordQueueEvent updates framework-owned queue metrics from queue observer events.
 func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 	if !m.QueueEnabled() {
@@ -1627,7 +1628,8 @@ func authDurationBounds() []time.Duration {
 }
 {{- end }}
 
-{{- if .Components.Jobs }}
+{{- if .ProjectComponents.Jobs }}
+// queueLabel supplies a stable label for the default Queue.
 func queueLabel(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1636,6 +1638,7 @@ func queueLabel(name string) string {
 	return name
 }
 
+// queueJobLabel supplies a bounded fallback for missing generated job names.
 func queueJobLabel(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1644,6 +1647,7 @@ func queueJobLabel(name string) string {
 	return name
 }
 
+// queueDriverLabel normalizes absent Queue drivers without introducing an empty label.
 func queueDriverLabel(driver string) string {
 	driver = strings.TrimSpace(strings.ToLower(driver))
 	if driver == "" {
@@ -1652,6 +1656,7 @@ func queueDriverLabel(driver string) string {
 	return driver
 }
 
+// queueDurationBounds defines the histogram resolution shared by Queue latency instruments.
 func queueDurationBounds() []time.Duration {
 	return []time.Duration{
 		time.Microsecond,
