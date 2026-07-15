@@ -827,38 +827,13 @@ type devBuildJob struct {
 	env     map[string]string
 }
 
-// devBuildCommands returns the build commands needed for the active dev app set.
-func devBuildCommands(config *project.Config) []string {
-	jobs := devBuildJobs(config, false)
-	commands := make([]string, 0, len(jobs))
-	for _, job := range jobs {
-		commands = append(commands, job.command)
-	}
-	return commands
-}
-
-// devInitialBuildCommands returns bootstrap builds for every active app so dev never starts from a stale binary.
-func devInitialBuildCommands(config *project.Config) []string {
-	jobs := devBuildJobs(config, false)
-	commands := make([]string, 0, len(jobs))
-	for _, job := range jobs {
-		commands = append(commands, job.command)
-	}
-	return commands
-}
-
 // devBuildJobs resolves app build commands while preserving the app label for compact output.
-func devBuildJobs(config *project.Config, missingOnly bool) []devBuildJob {
+func devBuildJobs(config *project.Config) []devBuildJob {
 	apps := activeDevAppsForConfig(config)
 	jobs := make([]devBuildJob, 0, len(apps))
 	baseCommand := devBaseBuildCommand(config)
 	for _, app := range apps {
 		app = projectlayout.NormalizeApp(app)
-		if missingOnly {
-			if _, err := os.Stat(filepath.Join("bin", app.Name)); err == nil {
-				continue
-			}
-		}
 		command := devBuildCommandForConfigApp(config, baseCommand, app)
 		if strings.TrimSpace(command) == "" {
 			continue
@@ -1356,13 +1331,14 @@ func hasNewStructuredDevSPARoot(before map[string]bool, config *project.Config) 
 	return false
 }
 
+// runDevBuild rebuilds every active app so a previous binary never masks current source changes.
 func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevBuildJobs(config, outWriter, errWriter, false, "forj build failed")
+	return runDevBuildJobs(config, outWriter, errWriter, "forj build failed")
 }
 
 // runDevInitialBuild builds every active app before pre-dev tasks can call generated app commands.
 func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevBuildJobs(config, outWriter, errWriter, false, "initial forj build failed")
+	return runDevBuildJobs(config, outWriter, errWriter, "initial forj build failed")
 }
 
 // runDevInitialSPABuilds publishes frontend assets after dependency setup and before the runtime-owning rebuild.
@@ -1394,8 +1370,8 @@ type devBuildResult struct {
 }
 
 // runDevBuildJobs runs app builds together so multi-app dev startup scales with the slowest build.
-func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, missingOnly bool, failurePrefix string) error {
-	jobs := devBuildJobs(config, missingOnly)
+func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, failurePrefix string) error {
+	jobs := devBuildJobs(config)
 	clearDevBuildReadyStamps(jobs)
 	switch len(jobs) {
 	case 0:

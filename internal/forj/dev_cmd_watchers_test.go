@@ -450,23 +450,27 @@ func TestDevWatchesForAppsDropsRemovedConventionalApp(t *testing.T) {
 	}
 }
 
-func TestDevBuildCommandsBuildEveryApp(t *testing.T) {
+func TestDevBuildJobsBuildEveryApp(t *testing.T) {
 	withConventionalApp(t, "customer-portal")
 
-	got := devBuildCommands(&project.Config{
+	jobs := devBuildJobs(&project.Config{
 		Dev: project.DevConfig{
 			Watches: []project.DevWatch{
 				{Name: "Build App", Exec: "FORJ_BUILD=1 forj build --race -o ./bin/app"},
 			},
 		},
 	})
+	if len(jobs) != 2 {
+		t.Fatalf("devBuildJobs() = %#v, want two active App builds", jobs)
+	}
+	got := []string{jobs[0].command, jobs[1].command}
 	want := []string{"FORJ_BUILD=1 forj build --race -o ./bin/app", "FORJ_BUILD=1 forj customer-portal build --race -o ./bin/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
 	}
 }
 
-func TestDevInitialBuildCommandsBuildEveryApp(t *testing.T) {
+func TestDevBuildJobsIncludeAppsWithExistingBinaries(t *testing.T) {
 	withConventionalApp(t, "customer-portal")
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
@@ -475,7 +479,11 @@ func TestDevInitialBuildCommandsBuildEveryApp(t *testing.T) {
 		t.Fatalf("write app binary: %v", err)
 	}
 
-	got := devInitialBuildCommands(&project.Config{})
+	jobs := devBuildJobs(&project.Config{})
+	if len(jobs) != 2 {
+		t.Fatalf("devBuildJobs() = %#v, want existing and missing App binaries rebuilt", jobs)
+	}
+	got := []string{jobs[0].command, jobs[1].command}
 	want := []string{"forj build -o ./bin/app", "forj customer-portal build -o ./bin/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial dev build commands: got %#v want %#v", got, want)
@@ -494,7 +502,7 @@ func TestDevBuildCommandForAppRewritesExistingPackageArgument(t *testing.T) {
 func TestDevBuildJobsKeepAppLabels(t *testing.T) {
 	withConventionalApp(t, "billing")
 
-	got := devBuildJobs(&project.Config{}, false)
+	got := devBuildJobs(&project.Config{})
 	if len(got) != 2 {
 		t.Fatalf("expected default and billing build jobs, got %#v", got)
 	}
@@ -1484,7 +1492,7 @@ func TestDevBuildJobsPreserveStructuredExecutionContext(t *testing.T) {
 			},
 		},
 	}}}
-	jobs := devBuildJobs(config, false)
+	jobs := devBuildJobs(config)
 	if len(jobs) != 1 {
 		t.Fatalf("devBuildJobs() = %#v, want one billing build", jobs)
 	}
@@ -1541,7 +1549,7 @@ func TestDevBuildJobsTreatExplicitEmptyAppsAsAuthority(t *testing.T) {
 			{Name: "Docs", Include: []string{".md"}, Exec: "make docs"},
 		},
 	}}
-	if jobs := devBuildJobs(native, false); len(jobs) != 0 {
+	if jobs := devBuildJobs(native); len(jobs) != 0 {
 		t.Fatalf("explicit empty dev.apps produced build jobs: %#v", jobs)
 	}
 	if apps := activeDevAppsForConfig(native); len(apps) != 0 {
@@ -1551,7 +1559,7 @@ func TestDevBuildJobsTreatExplicitEmptyAppsAsAuthority(t *testing.T) {
 	legacy := &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{
 		{Name: "Docs", Watch: "-file .md", Exec: "make docs"},
 	}}}
-	if jobs := devBuildJobs(legacy, false); len(jobs) == 0 {
+	if jobs := devBuildJobs(legacy); len(jobs) == 0 {
 		t.Fatal("omitted dev.apps lost legacy App discovery")
 	}
 }
