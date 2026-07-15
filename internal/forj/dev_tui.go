@@ -9,10 +9,10 @@ import (
 	"golang.org/x/term"
 )
 
+// devOutputController exposes TUI-only controls while allowing plain writers to remain valid session output.
 type devOutputController interface {
 	DisableFooter()
 	EnableFooter()
-	SetFooterLine(string)
 	ResetFooterLine()
 	SetStatusLine(string)
 	MarkStatusDone()
@@ -50,12 +50,6 @@ func disableDevFooter(writer io.Writer) {
 func enableDevFooter(writer io.Writer) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.EnableFooter()
-	}
-}
-
-func setDevFooterLine(writer io.Writer, line string) {
-	if controller := asDevOutputController(writer); controller != nil {
-		controller.SetFooterLine(line)
 	}
 }
 

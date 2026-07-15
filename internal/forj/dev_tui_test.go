@@ -55,6 +55,16 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	}
 }
 
+// TestDevBubbleModelResetFooterLine keeps the rendered footer synchronized with the writer's refreshed default.
+func TestDevBubbleModelResetFooterLine(t *testing.T) {
+	model := devBubbleModel{footerLine: "temporary"}
+	next, _ := model.Update(devResetFooterMsg{line: "default"})
+
+	if got := next.(devBubbleModel).footerLine; got != "default" {
+		t.Fatalf("reset footer line = %q, want %q", got, "default")
+	}
+}
+
 func TestBuildDevHotkeyPanel(t *testing.T) {
 	panel := strings.Join(buildDevHotkeyPanel([]devToolLink{
 		{Label: "App", URL: "http://localhost:3000"},
