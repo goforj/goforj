@@ -2,6 +2,7 @@ package compileprofile
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,30 @@ func TestReportPrint(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
 		}
+	}
+}
+
+// TestReportPrintReturnsImportChainWriterFailure keeps the public writer contract intact through nested chain formatting.
+func TestReportPrintReturnsImportChainWriterFailure(t *testing.T) {
+	want := errors.New("injected import chain write failure")
+	report := Report{entries: []entry{{
+		packageName: "example.com/a",
+		durationMS:  10,
+		invocations: 1,
+		importChain: []string{"example.com/root", "example.com/a"},
+	}}}
+	err := report.Print(importChainFailWriter{err: want}, 1)
+	if !errors.Is(err, want) {
+		t.Fatalf("Print() error = %v, want injected writer failure", err)
+	}
+}
+
+// TestAnnotateImportChainsReturnsDiscoveryFailure prevents incomplete dependency explanations from looking successful.
+func TestAnnotateImportChainsReturnsDiscoveryFailure(t *testing.T) {
+	report := Report{}
+	err := report.AnnotateImportChains(filepath.Join(t.TempDir(), "missing"))
+	if err == nil {
+		t.Fatal("AnnotateImportChains() accepted an unreadable project root")
 	}
 }
 
@@ -127,4 +152,17 @@ func TestImportChainToTarget(t *testing.T) {
 	if strings.Join(chain, "|") != strings.Join(want, "|") {
 		t.Fatalf("chain = %#v, want %#v", chain, want)
 	}
+}
+
+// importChainFailWriter fails only nested import-chain lines so Print must propagate the deepest writer boundary.
+type importChainFailWriter struct {
+	err error
+}
+
+// Write accepts report headings and rejects the first import-chain line.
+func (w importChainFailWriter) Write(data []byte) (int, error) {
+	if bytes.Contains(data, []byte("└─")) {
+		return 0, w.err
+	}
+	return len(data), nil
 }

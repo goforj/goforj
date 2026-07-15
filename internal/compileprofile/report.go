@@ -122,7 +122,9 @@ func (r Report) Print(w io.Writer, top int) error {
 			return err
 		}
 		if len(item.importChain) > 1 {
-			printImportChain(w, item.importChain)
+			if err := printImportChain(w, item.importChain); err != nil {
+				return err
+			}
 		}
 	}
 	if limit < len(r.entries) {
@@ -145,12 +147,15 @@ func (r *Report) NormalizeTimings(baselineTotalMS, profiledTotalMS int64) {
 }
 
 // printImportChain indents successive imports so the dependency reason remains scannable beneath a timing entry.
-func printImportChain(w io.Writer, chain []string) {
+func printImportChain(w io.Writer, chain []string) error {
 	for i, part := range chain {
 		indent := "      "
 		if i > 0 {
 			indent += strings.Repeat("   ", i-1)
 		}
-		fmt.Fprintf(w, "%s└─ %s\n", indent, part)
+		if _, err := fmt.Fprintf(w, "%s└─ %s\n", indent, part); err != nil {
+			return err
+		}
 	}
+	return nil
 }
