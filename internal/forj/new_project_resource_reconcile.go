@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -57,12 +58,12 @@ func prepareNewProjectTargetResources(
 		return resolveNewProjectResourcePreparation(seed, components, proposedIntent, nil)
 	}
 
-	reconciled, err := reconcileResourceEnvironment(source, seed, components, true)
+	reconciled, err := resourceenv.Reconcile(source, seed, components, true)
 	if err != nil {
 		return newProjectResourcePreparation{}, fmt.Errorf("reconcile existing target resources: %w", err)
 	}
-	effective := reconciled.effectivePlan
-	effectiveIntent := localServiceIntentFromEnvironment(source, proposedIntent)
+	effective := reconciled.EffectivePlan
+	effectiveIntent := resourceenv.ResolveServiceIntent(source, proposedIntent)
 	targetConfig, configErr := project.LoadProjectConfigAt(targetPath)
 	if configErr != nil && !os.IsNotExist(configErr) {
 		return newProjectResourcePreparation{}, fmt.Errorf("read existing target Apps: %w", configErr)

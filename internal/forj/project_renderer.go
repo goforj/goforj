@@ -26,6 +26,7 @@ import (
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
 	"gopkg.in/yaml.v3"
@@ -573,13 +574,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("read existing environment example: %w", err)
 				}
-				if !projectComponents.Cache {
-					existingExample, _ = removeDisabledCacheEnvironment(
-						existingExample,
-						projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
-					)
-				}
-				existingExample, _ = removeObsoleteDiagnosticCacheEnvironment(existingExample)
+				existingExample, _ = resourceenv.RemoveGeneratedAssignments(
+					existingExample,
+					projectComponents,
+					projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+				)
 				mergedExample := envfile.MergeExample(existingExample, environment)
 				if err := p.workspace.writeEnvironmentExample(mergedExample, 0o644); err != nil {
 					return fmt.Errorf("write environment example: %w", err)
