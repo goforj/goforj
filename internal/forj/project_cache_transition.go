@@ -1,0 +1,179 @@
+package forj
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/project"
+)
+
+// cacheOwnerCodeDependency finds owner source that would retain a generated Cache dependency after the prospective render.
+func (p *ProjectRenderer) cacheOwnerCodeDependency(components project.Components, disabledApps []project.App, ignoredApps []project.App) (string, error) {
+	frameworkPaths := p.cacheReconciledGoPaths(components)
+	if !components.Cache {
+		return p.workspace.findCacheOwnerCodeDependency(".", cacheTransitionAppRoots(ignoredApps), frameworkPaths)
+	}
+	allApps := projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config)
+	for _, app := range disabledApps {
+		otherApps := make([]project.App, 0, len(allApps)-1)
+		for _, candidate := range allApps {
+			if candidate.Name != app.Name {
+				otherApps = append(otherApps, candidate)
+			}
+		}
+		for _, root := range cacheTransitionAppRoots([]project.App{app}) {
+			path, err := p.workspace.findCacheOwnerCodeDependency(root, cacheTransitionAppRoots(otherApps), frameworkPaths)
+			if err != nil || path != "" {
+				return path, err
+			}
+		}
+	}
+	return "", nil
+}
+
+// cacheTransitionAppRoots returns the source ownership roots removed with one or more Apps.
+func cacheTransitionAppRoots(apps []project.App) []string {
+	roots := make([]string, 0, len(apps)*2)
+	for _, app := range apps {
+		roots = append(roots, projectlayout.AppDir(".", app), projectlayout.CommandDir(".", app))
+	}
+	return roots
+}
+
+// cacheReconciledGoPaths lists Cache-aware source that the prospective renderer refreshes before compilation.
+func (p *ProjectRenderer) cacheReconciledGoPaths(components project.Components) map[string]bool {
+	paths := map[string]bool{
+		filepath.Join("internal", "runtime", "about.go"):     true,
+		filepath.Join("internal", "runtime", "apps.go"):      true,
+		filepath.Join("internal", "runtime", "apps_test.go"): true,
+		filepath.Join("internal", "runtime", "discovery.go"): true,
+	}
+	if components.WebAPI || components.WebUI {
+		paths[filepath.Join("internal", "http", "lighthouse.go")] = true
+	}
+	if components.Jobs {
+		for _, name := range []string{"benchmark_run_cmd.go", "lighthouse.go", "lighthouse_benchmark.go"} {
+			paths[filepath.Join("internal", "jobs", name)] = true
+		}
+	}
+	if components.Metrics {
+		paths[filepath.Join("internal", "metrics", "manager.go")] = true
+	}
+	for _, artifact := range cacheGeneratedCleanupArtifacts() {
+		paths[filepath.Clean(artifact.path)] = true
+	}
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		for _, mapping := range p.appFrameworkMappings(app) {
+			paths[filepath.Clean(mapping.dest)] = true
+		}
+	}
+	return paths
+}
+
+// findCacheOwnerCodeDependency walks one ownership root without mistaking generated or removed App source for a dependency.
+func (w projectRenderWorkspace) findCacheOwnerCodeDependency(root string, excludedRoots []string, frameworkPaths map[string]bool) (string, error) {
+	physicalRoot := w.path(root)
+	if _, err := os.Stat(physicalRoot); os.IsNotExist(err) {
+		return "", nil
+	} else if err != nil {
+		return "", w.logicalError(err)
+	}
+	dependency := ""
+	err := filepath.WalkDir(physicalRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		logical := filepath.Clean(w.logicalLabel(path))
+		if entry.IsDir() {
+			if logical != "." && cacheTransitionSkippedDirectory(entry.Name()) {
+				return filepath.SkipDir
+			}
+			for _, excludedRoot := range excludedRoots {
+				if logical == filepath.Clean(excludedRoot) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if filepath.Ext(entry.Name()) != ".go" || frameworkPaths[logical] {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if cacheTransitionGeneratedGoSource(source) {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), logical, source, 0)
+		if err != nil {
+			return fmt.Errorf("parse Cache owner source %s: %w", logical, err)
+		}
+		if cacheGoFileDependsOnGeneratedAPI(logical, file) {
+			dependency = logical
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("inspect Cache owner source: %w", w.logicalError(err))
+	}
+	return dependency, nil
+}
+
+// cacheTransitionSkippedDirectory excludes dependencies and runtime data that cannot contain project-owned Go source.
+func cacheTransitionSkippedDirectory(name string) bool {
+	switch name {
+	case ".git", ".idea", ".vscode", "bin", "node_modules", "vendor", "_data":
+		return true
+	default:
+		return false
+	}
+}
+
+// cacheTransitionGeneratedGoSource recognizes framework output that has its own generated ownership marker.
+func cacheTransitionGeneratedGoSource(source []byte) bool {
+	text := string(source)
+	return strings.Contains(text, "// Code generated by GoForj CLI. DO NOT EDIT.") ||
+		strings.Contains(text, "// Code generated by forj generate --")
+}
+
+// cacheGoFileDependsOnGeneratedAPI recognizes imports and App Wire accessor calls that disappear when Cache is disabled.
+func cacheGoFileDependsOnGeneratedAPI(path string, file *ast.File) bool {
+	importsAppWire := false
+	for _, imported := range file.Imports {
+		importPath := strings.Trim(imported.Path.Value, `"`)
+		if strings.HasSuffix(importPath, "/internal/caches") {
+			return true
+		}
+		importsAppWire = importsAppWire || strings.HasSuffix(importPath, "/app/wire") ||
+			(strings.Contains(importPath, "/app/") && strings.HasSuffix(importPath, "/wire"))
+	}
+	logical := filepath.ToSlash(path)
+	insideAppWire := strings.HasPrefix(logical, "app/wire/") ||
+		(strings.HasPrefix(logical, "app/") && strings.Contains(logical, "/wire/"))
+	if !importsAppWire && !insideAppWire {
+		return false
+	}
+	depends := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if ok && (selector.Sel.Name == "Cache" || selector.Sel.Name == "Caches") {
+			depends = true
+			return false
+		}
+		return true
+	})
+	return depends
+}

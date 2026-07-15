@@ -82,6 +82,52 @@ func (w projectRenderWorkspace) validateCacheRenderTransition(components project
 	return nil
 }
 
+// validateCacheRenderTransition proves Cache removal will not erase generated ownership boundaries or strand owner dependencies.
+func (p *ProjectRenderer) validateCacheRenderTransition(components project.Components, ignoredApps ...project.App) error {
+	if err := p.workspace.validateCacheRenderTransition(components); err != nil {
+		return err
+	}
+	disabledApps := p.cacheDisabledApps(ignoredApps)
+	if components.Cache && len(disabledApps) == 0 {
+		return nil
+	}
+	if path, err := p.cacheOwnerCodeDependency(components, disabledApps, ignoredApps); err != nil {
+		return err
+	} else if path != "" {
+		return fmt.Errorf("cannot disable Cache while owner source %s depends on the generated Cache API; reconcile that source before rendering", path)
+	}
+	if path, key, err := p.cacheOwnerEnvironmentDependency(components, disabledApps, ignoredApps); err != nil {
+		return err
+	} else if path != "" {
+		return fmt.Errorf("cannot disable Cache while %s defines owner Cache assignment %s; remove or move that assignment before rendering", path, key)
+	}
+	return nil
+}
+
+// cacheDisabledApps returns only Apps whose generated Cache API is being removed by the prospective component contract.
+func (p *ProjectRenderer) cacheDisabledApps(ignoredApps []project.App) []project.App {
+	ignored := cacheTransitionAppNames(ignoredApps)
+	apps := projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config)
+	disabled := make([]project.App, 0, len(apps))
+	for _, app := range apps {
+		if ignored[app.Name] || appRenderComponents(p.config, app).Cache {
+			continue
+		}
+		disabled = append(disabled, app)
+	}
+	return disabled
+}
+
+// cacheTransitionAppNames normalizes ignored App identities once for code and environment ownership checks.
+func cacheTransitionAppNames(apps []project.App) map[string]bool {
+	names := make(map[string]bool, len(apps))
+	for _, app := range apps {
+		app = projectlayout.NormalizeApp(app)
+		names[app.Name] = true
+	}
+	return names
+}
+
 // cleanupDisabledCacheGeneratedFiles removes only framework-owned Cache artifacts from one project workspace.
 func (w projectRenderWorkspace) cleanupDisabledCacheGeneratedFiles() error {
 	if err := w.validateCacheGeneratedCleanupArtifacts(); err != nil {

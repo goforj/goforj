@@ -125,8 +125,9 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 		"CACHE_PREFIX=app",
 		"CACHE_DEFAULT_TTL_SECONDS=300",
 		"CACHE_MEMORY_CLEANUP_SECONDS=600",
+		"",
+		"# Worker",
 		"WORKER_CACHE_DRIVER=memory",
-		"CACHE_REPORTS_DRIVER=redis",
 		"",
 	}, "\n")
 	writePrimitiveRendererFile(t, ".env", environment)
@@ -167,7 +168,7 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 				t.Fatalf("reconciled %s retained %q:\n%s", path, removed, text)
 			}
 		}
-		for _, preserved := range []string{"OWNER_SENTINEL=keep", "CACHE_REPORTS_DRIVER=redis"} {
+		for _, preserved := range []string{"OWNER_SENTINEL=keep"} {
 			if !strings.Contains(text, preserved) {
 				t.Fatalf("reconciled %s removed owner assignment %q:\n%s", path, preserved, text)
 			}

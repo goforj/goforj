@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/forj/makeapp"
+	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -43,6 +45,198 @@ func TestCleanupDisabledCacheGeneratedFilesRequiresAndRemovesMarkers(t *testing.
 		if _, err := os.Stat(artifact.path); !os.IsNotExist(err) {
 			t.Fatalf("generated Cache artifact %s still exists: %v", artifact.path, err)
 		}
+	}
+}
+
+// TestNamedAppCacheDeselectionRemovesOnlyGeneratedDefaults verifies a named App can drop Cache without retaining framework environment residue.
+func TestNamedAppCacheDeselectionRemovesOnlyGeneratedDefaults(t *testing.T) {
+	usePrimitiveRendererRoot(t)
+	app := project.DefaultNamedApp("worker")
+	enabled := project.Components{CLI: true, Cache: true}
+	config := &project.Config{
+		ProjectName:  "Named Cache Deselection",
+		GoModuleName: "example.test/named-cache-deselection",
+		Render:       project.RenderConfig{Components: enabled},
+		Apps:         map[string]project.AppConfig{app.Name: {Components: enabled}},
+	}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatalf("write Cache-enabled project config: %v", err)
+	}
+	environment := strings.Join([]string{
+		"CACHE_DRIVER=memory",
+		"CACHE_SUPPORTED_DRIVERS=memory",
+		"OWNER_SENTINEL=keep",
+		"",
+		"# Worker",
+		"WORKER_CACHE_DRIVER=memory",
+		"WORKER_OWNER_VALUE=keep",
+		"",
+	}, "\n")
+	for _, path := range []string{".env", ".env.example"} {
+		writePrimitiveRendererFile(t, path, environment)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.RenderAppOnly(app, makeapp.RenderOptions{Components: project.Components{CLI: true}, SkipWire: true}); err != nil {
+		t.Fatalf("disable Cache for named App: %v", err)
+	}
+	for _, path := range []string{".env", ".env.example"} {
+		updated := readPrimitiveRendererFile(t, path)
+		if strings.Contains(updated, "WORKER_CACHE_DRIVER=") {
+			t.Fatalf("Cache deselection retained generated App default in %s:\n%s", path, updated)
+		}
+		for _, want := range []string{"OWNER_SENTINEL=keep", "WORKER_OWNER_VALUE=keep"} {
+			if !strings.Contains(updated, want) {
+				t.Fatalf("Cache deselection removed owner assignment %q from %s:\n%s", want, path, updated)
+			}
+		}
+	}
+	loaded, err := project.LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("reload Cache-disabled App config: %v", err)
+	}
+	if loaded.Apps[app.Name].Components.Cache {
+		t.Fatalf("named App still enables Cache: %#v", loaded.Apps[app.Name].Components)
+	}
+}
+
+// TestNamedAppCacheDeselectionRejectsOwnerDependencies verifies every refusal happens before project files are mutated.
+func TestNamedAppCacheDeselectionRejectsOwnerDependencies(t *testing.T) {
+	tests := []struct {
+		name        string
+		ownerPath   string
+		ownerSource string
+		example     string
+		want        string
+	}{
+		{
+			name:        "App source import",
+			ownerPath:   filepath.Join("app", "worker", "wire", "inject_services_app.go"),
+			ownerSource: "package wire\n\nimport \"example.test/cache-owner/internal/caches\"\n\nvar ownerCache *caches.Manager\n",
+			want:        "inject_services_app.go",
+		},
+		{
+			name:        "loose App driver",
+			ownerSource: "WORKER_CACHE_DRIVER=redis\n",
+			want:        "WORKER_CACHE_DRIVER",
+		},
+		{
+			name:    "named App cache",
+			example: "# Worker\nWORKER_CACHE_REPORTS_DRIVER=redis\n",
+			want:    "WORKER_CACHE_REPORTS_DRIVER",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usePrimitiveRendererRoot(t)
+			app := project.DefaultNamedApp("worker")
+			enabled := project.Components{CLI: true, Cache: true}
+			config := &project.Config{
+				ProjectName:  "Cache Owner Preflight",
+				GoModuleName: "example.test/cache-owner",
+				Render:       project.RenderConfig{Components: enabled},
+				Apps:         map[string]project.AppConfig{app.Name: {Components: enabled}},
+			}
+			if err := writeProjectConfig(".goforj.yml", config); err != nil {
+				t.Fatalf("write Cache owner config: %v", err)
+			}
+			environment := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n"
+			if test.ownerPath == "" {
+				environment += test.ownerSource
+			}
+			environment += "\n# Worker\nWORKER_CACHE_DRIVER=memory\n"
+			writePrimitiveRendererFile(t, ".env", environment)
+			if test.example != "" {
+				writePrimitiveRendererFile(t, ".env.example", test.example)
+			}
+			if test.ownerPath != "" {
+				writePrimitiveRendererFile(t, test.ownerPath, test.ownerSource)
+			}
+			configBefore := readPrimitiveRendererFile(t, ".goforj.yml")
+			environmentBefore := readPrimitiveRendererFile(t, ".env")
+
+			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			err := renderer.RenderAppOnly(app, makeapp.RenderOptions{Components: project.Components{CLI: true}, SkipWire: true})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Cache owner preflight error = %v, want %q", err, test.want)
+			}
+			if got := readPrimitiveRendererFile(t, ".goforj.yml"); got != configBefore {
+				t.Fatal("rejected Cache transition rewrote project config")
+			}
+			if got := readPrimitiveRendererFile(t, ".env"); got != environmentBefore {
+				t.Fatal("rejected Cache transition rewrote owner environment")
+			}
+			if test.ownerPath != "" && readPrimitiveRendererFile(t, test.ownerPath) != test.ownerSource {
+				t.Fatalf("rejected Cache transition rewrote owner source %s", test.ownerPath)
+			}
+		})
+	}
+}
+
+// TestLastCacheRemovalRejectsProjectOwnerDependencies verifies shared source and resource configuration block destructive cleanup.
+func TestLastCacheRemovalRejectsProjectOwnerDependencies(t *testing.T) {
+	tests := []struct {
+		name        string
+		ownerPath   string
+		ownerSource string
+		envExtra    string
+		want        string
+	}{
+		{
+			name:        "shared source",
+			ownerPath:   filepath.Join("internal", "billing", "owner.go"),
+			ownerSource: "package billing\n\nimport \"example.test/cache-owner/app/wire\"\n\n// useCache proves owner code still calls the generated App Cache accessor.\nfunc useCache(app *wire.App) { _ = app.Cache() }\n",
+			want:        filepath.Join("internal", "billing", "owner.go"),
+		},
+		{
+			name:     "named cache configuration",
+			envExtra: "CACHE_REPORTS_DRIVER=redis\n",
+			want:     "CACHE_REPORTS_DRIVER",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usePrimitiveRendererRoot(t)
+			app := project.DefaultNamedApp("worker")
+			config := &project.Config{
+				ProjectName:  "Last Cache Owner",
+				GoModuleName: "example.test/cache-owner",
+				Render:       project.RenderConfig{Components: project.Components{CLI: true}},
+				Apps: map[string]project.AppConfig{
+					app.Name: {Components: project.Components{CLI: true, Cache: true}},
+				},
+			}
+			if err := writeProjectConfig(".goforj.yml", config); err != nil {
+				t.Fatalf("write final Cache owner config: %v", err)
+			}
+			writePrimitiveRendererFile(t, app.Entrypoint, "package main\n")
+			environment := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n" + test.envExtra + "\n# Worker\nWORKER_CACHE_DRIVER=memory\n"
+			writePrimitiveRendererFile(t, ".env", environment)
+			if test.ownerPath != "" {
+				writePrimitiveRendererFile(t, test.ownerPath, test.ownerSource)
+			}
+			for _, artifact := range cacheGeneratedCleanupArtifacts() {
+				writePrimitiveRendererFile(t, artifact.path, artifact.marker+"\n")
+			}
+			configBefore := readPrimitiveRendererFile(t, ".goforj.yml")
+
+			result, err := NewProjectRenderer(logger.NewSilentLogger()).RemoveApp(app)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("final Cache owner preflight error = %v, want %q", err, test.want)
+			}
+			if result.Changed() {
+				t.Fatalf("rejected final Cache removal reported changes: %#v", result)
+			}
+			if got := readPrimitiveRendererFile(t, ".goforj.yml"); got != configBefore {
+				t.Fatal("rejected final Cache removal rewrote project config")
+			}
+			if got := readPrimitiveRendererFile(t, ".env"); got != environment {
+				t.Fatal("rejected final Cache removal rewrote owner environment")
+			}
+			if _, err := os.Stat(app.Entrypoint); err != nil {
+				t.Fatalf("rejected final Cache removal changed App source: %v", err)
+			}
+		})
 	}
 }
 
