@@ -29,8 +29,12 @@ type Lifecycle struct {
 	timeouts *Timeouts
 }
 
-// NewLifecycle creates a lifecycle coordinator.
+// NewLifecycle creates a lifecycle coordinator and panics when its required timeout policy is missing.
 func NewLifecycle(timeouts *Timeouts) *Lifecycle {
+	if timeouts == nil {
+		panic("runtime.NewLifecycle requires non-nil timeouts")
+	}
+
 	return &Lifecycle{
 		hooks:    make(map[Phase][]Hook),
 		timeouts: timeouts,
@@ -39,15 +43,12 @@ func NewLifecycle(timeouts *Timeouts) *Lifecycle {
 
 // Timeouts returns lifecycle timeout policy.
 func (m *Lifecycle) Timeouts() *Timeouts {
-	if m == nil {
-		return nil
-	}
 	return m.timeouts
 }
 
 // On registers a hook for a phase.
 func (m *Lifecycle) On(phase Phase, hook Hook) {
-	if m == nil || hook == nil {
+	if hook == nil {
 		return
 	}
 	m.mu.Lock()
@@ -57,9 +58,6 @@ func (m *Lifecycle) On(phase Phase, hook Hook) {
 
 // Start runs startup phases once. Additional calls are no-op.
 func (m *Lifecycle) Start(ctx context.Context) error {
-	if m == nil {
-		return nil
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -88,9 +86,6 @@ func (m *Lifecycle) Start(ctx context.Context) error {
 
 // Stop runs shutdown phases in reverse registration order. Additional calls are no-op.
 func (m *Lifecycle) Stop(ctx context.Context) error {
-	if m == nil {
-		return nil
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -118,6 +113,7 @@ func (m *Lifecycle) Stop(ctx context.Context) error {
 	return joined
 }
 
+// cloneHooks isolates hook execution from registrations made while hooks are running.
 func (m *Lifecycle) cloneHooks(phases []Phase) [][]Hook {
 	cloned := make([][]Hook, 0, len(phases))
 	for _, phase := range phases {
