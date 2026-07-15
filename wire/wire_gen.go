@@ -19,7 +19,7 @@ func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
 	projectRenderer := forj.NewProjectRenderer(appLogger)
 	projectAuthoringCommands := forj.NewProjectAuthoringCommands(appLogger, projectRenderer)
-	runner := forj.ProvideAPIIndexRunner(appLogger)
+	runner := forj.ProvideAPIIndexRunner()
 	buildCommands := forj.NewBuildCommands(appLogger, runner)
 	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner)
 	atlasCommands := forj.NewAtlasCommands()

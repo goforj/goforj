@@ -275,7 +275,7 @@ func runDevWatcherPollingBuildHelper() {
 	}
 	appendDevWatcherChurnLine(buildLog, fmt.Sprintf("build-compiling:%d", count))
 	appLogger := logger.NewSilentLogger()
-	command := build.NewCmd(appLogger, ProvideAPIIndexRunner(appLogger))
+	command := build.NewCmd(appLogger, ProvideAPIIndexRunner())
 	command.Root = os.Getenv("GOFORJ_WATCHER_CHURN_ROOT")
 	command.SkipWire = true
 	command.Args = []string{"-o", "./bin/app", "./cmd/app"}

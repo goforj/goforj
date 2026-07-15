@@ -19,22 +19,16 @@ type paths struct {
 }
 
 // resolvePaths anchors source discovery while preserving caller-selected artifact paths.
-func resolvePaths(root string, out string, diagnostics string, openAPI string, routeComposition string, appName string) (paths, error) {
-	absRoot, err := filepath.Abs(root)
+func resolvePaths(input paths) (paths, error) {
+	absRoot, err := filepath.Abs(input.root)
 	if err != nil {
 		return paths{}, err
 	}
-	if appName == "" {
-		appName = project.DefaultAppName
+	input.root = absRoot
+	if input.appName == "" {
+		input.appName = project.DefaultAppName
 	}
-	return paths{
-		root:             absRoot,
-		appName:          appName,
-		out:              out,
-		diagnostics:      diagnostics,
-		openAPI:          openAPI,
-		routeComposition: routeComposition,
-	}, nil
+	return input, nil
 }
 
 // defaultPaths keeps each app's contract separate while retaining legacy paths for the default app.
