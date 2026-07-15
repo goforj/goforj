@@ -367,9 +367,6 @@ apps:
 	if !config.NeedsComponentMigration() {
 		t.Fatal("legacy component mapping was not marked for migration")
 	}
-	if config.Render.ComponentContractVersion != CurrentComponentContractVersion {
-		t.Fatalf("component contract version = %d, want %d", config.Render.ComponentContractVersion, CurrentComponentContractVersion)
-	}
 	for scope, components := range map[string]Components{
 		"default App": config.Render.Components,
 		"api App":     config.Apps["api"].Components,
@@ -526,11 +523,25 @@ apps:
 	}
 }
 
-// TestProjectConfigRejectsUnsupportedComponentContract avoids silently applying semantics from a newer config contract.
-func TestProjectConfigRejectsUnsupportedComponentContract(t *testing.T) {
-	var config Config
-	err := yaml.Unmarshal([]byte("render:\n  components: [cli]\n  component_contract: 2\n"), &config)
-	if err == nil || !strings.Contains(err.Error(), "unsupported component contract version 2") {
-		t.Fatalf("unmarshal error = %v, want unsupported component contract diagnostic", err)
+// TestProjectConfigRejectsInvalidLegacyComponentContract keeps retired markers at the raw compatibility boundary.
+func TestProjectConfigRejectsInvalidLegacyComponentContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		marker string
+		want   string
+	}{
+		{name: "future version", marker: "2", want: "unsupported component contract version 2"},
+		{name: "malformed version", marker: "future", want: "decode legacy component contract"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var config Config
+			input := "render:\n  components: [cli]\n  component_contract: " + test.marker + "\n"
+			err := yaml.Unmarshal([]byte(input), &config)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("unmarshal error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }

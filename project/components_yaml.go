@@ -36,6 +36,9 @@ var retiredLegacyComponentYAMLKeys = map[ComponentKey]struct{}{
 
 const componentYAMLInlineLimit = 120
 
+// legacyComponentContractVersion is the only retired marker whose mapping semantics this release can migrate safely.
+const legacyComponentContractVersion = 1
+
 // UnmarshalYAML accepts historical boolean mappings and canonical component-name sequences.
 func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
@@ -124,12 +127,18 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode project config: %w", err)
 	}
 	*c = ProjectConfig(fields)
-	if c.Render.ComponentContractVersion < 0 || c.Render.ComponentContractVersion > CurrentComponentContractVersion {
-		return fmt.Errorf("decode project config: unsupported component contract version %d; this GoForj release supports version %d", c.Render.ComponentContractVersion, CurrentComponentContractVersion)
-	}
 	render := yamlMappingValue(value, "render")
+	version := 0
+	if marker := yamlMappingValue(render, "component_contract"); marker != nil {
+		if err := marker.Decode(&version); err != nil {
+			return fmt.Errorf("decode legacy component contract: %w", err)
+		}
+	}
+	if version < 0 || version > legacyComponentContractVersion {
+		return fmt.Errorf("decode project config: unsupported component contract version %d; this GoForj release supports version %d", version, legacyComponentContractVersion)
+	}
 	renderComponents := yamlMappingValue(render, "components")
-	legacyDefaults := c.Render.ComponentContractVersion < CurrentComponentContractVersion && (renderComponents == nil || renderComponents.Kind == yaml.MappingNode)
+	legacyDefaults := version < legacyComponentContractVersion && (renderComponents == nil || renderComponents.Kind == yaml.MappingNode)
 	if legacyDefaults {
 		c.migrateLegacyPrimitiveComponents()
 	}
@@ -139,7 +148,6 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // migrateLegacyPrimitiveComponents preserves capabilities that every App received before they became optional components.
 func (c *ProjectConfig) migrateLegacyPrimitiveComponents() {
-	c.Render.ComponentContractVersion = CurrentComponentContractVersion
 	c.Render.Components.Cache = true
 	c.Render.Components.Events = true
 	c.Render.Components.Storage = true
