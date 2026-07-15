@@ -107,10 +107,11 @@ func (r *Runner) Prepare(options Options) (Preparation, error) {
 		strict:    options.Strict,
 		buildTags: append([]string(nil), options.BuildTags...),
 	})
-	return Preparation{
-		Candidate: prepared.candidate,
-		Status:    prepared.report.status(),
-	}, err
+	preparation := Preparation{Status: prepared.report.status()}
+	if prepared.candidate != nil {
+		preparation.Candidate = prepared.candidate
+	}
+	return preparation, err
 }
 
 // RunDefault generates and immediately publishes the active App's default artifacts.

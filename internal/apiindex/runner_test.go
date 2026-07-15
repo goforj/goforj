@@ -198,6 +198,29 @@ apps:
 	}
 }
 
+// TestRunnerPrepareReturnsNilCandidateForCLIOnlyApp ensures callers can use an interface nil check before publishing or discarding optional work.
+func TestRunnerPrepareReturnsNilCandidateForCLIOnlyApp(t *testing.T) {
+	root := t.TempDir()
+	config := `render:
+  components: [cli]
+`
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	preparation, err := newTestRunner().Prepare(Options{Root: root})
+	if err != nil {
+		t.Fatalf("Prepare() error: %v", err)
+	}
+	if preparation.Candidate != nil {
+		t.Fatalf("Prepare() candidate = %T, want nil for CLI-only App without stale artifacts", preparation.Candidate)
+	}
+	wantStatus := "app app, skipped (no web API), 0 operations, 0 schemas, 0 diagnostics"
+	if preparation.Status != wantStatus {
+		t.Fatalf("Prepare() status = %q, want %q", preparation.Status, wantStatus)
+	}
+}
+
 // TestRunnerRequiresCompositionForWebAPIApp verifies a configured API cannot silently widen to repository scope.
 func TestRunnerRequiresCompositionForWebAPIApp(t *testing.T) {
 	root := t.TempDir()
