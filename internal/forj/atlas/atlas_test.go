@@ -256,7 +256,7 @@ render:
 	}
 }
 
-// TestInventoryUsesNamedAppStorageEnvelope verifies Atlas exposes shared disks when only a named App participates in Storage.
+// TestInventoryUsesNamedAppStorageEnvelope verifies Atlas attributes shared Storage definitions to the participating App.
 func TestInventoryUsesNamedAppStorageEnvelope(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".goforj.yml"), `
@@ -274,8 +274,12 @@ apps:
 	if !containsString(inventory.Disks, "public") {
 		t.Fatalf("named Storage App did not expose Atlas disks: %#v", inventory.Disks)
 	}
-	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); !ok {
+	resource, ok := resourceLinkByID(inventory.Resources, "storage-files-public")
+	if !ok {
 		t.Fatalf("named Storage App did not expose Atlas resource links: %#v", inventory.Resources)
+	}
+	if resource.App != "files" {
+		t.Fatalf("named Storage resource App = %q, want files", resource.App)
 	}
 }
 
