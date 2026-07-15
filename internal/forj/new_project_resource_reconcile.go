@@ -57,10 +57,11 @@ func prepareNewProjectTargetResources(
 		return resolveNewProjectResourcePreparation(seed, components, proposedIntent, nil)
 	}
 
-	_, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
+	reconciled, err := reconcileResourceEnvironment(source, seed, components, true)
 	if err != nil {
 		return newProjectResourcePreparation{}, fmt.Errorf("reconcile existing target resources: %w", err)
 	}
+	effective := reconciled.effectivePlan
 	effectiveIntent := localServiceIntentFromEnvironment(source, proposedIntent)
 	targetConfig, configErr := project.LoadProjectConfigAt(targetPath)
 	if configErr != nil && !os.IsNotExist(configErr) {

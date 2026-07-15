@@ -152,7 +152,7 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		)
 		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || removedCacheEnvironment
 	}
-	updated, effective, changed, err := reconcileResourceEnvironment(
+	reconciled, err := reconcileResourceEnvironment(
 		source,
 		p.resources.plan,
 		projectComponents,
@@ -161,15 +161,15 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	if err != nil {
 		return err
 	}
-	p.resources.plan = effective
-	consumers, err := effectiveResourceConsumersFromProjectConfig(updated, effective, projectComponents, p.config)
+	p.resources.plan = reconciled.effectivePlan
+	consumers, err := effectiveResourceConsumersFromProjectConfig(reconciled.source, reconciled.effectivePlan, projectComponents, p.config)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}
 	p.resources.serviceConsumers = cloneEffectiveResourceConsumers(consumers)
 	if ownerExists {
-		p.resources.pendingEnvironment = updated
-		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || changed
+		p.resources.pendingEnvironment = reconciled.source
+		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || reconciled.changed
 	}
 	return nil
 }
@@ -247,8 +247,15 @@ func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponent
 	return plan.WithSelection(project.ResourceDatabase, selection).Normalized(projectComponents)
 }
 
+// reconciledResourceEnvironment keeps the rewritten owner contract and its effective plan together as one reconciliation outcome.
+type reconciledResourceEnvironment struct {
+	source        []byte
+	effectivePlan project.ResourcePlan
+	changed       bool
+}
+
 // reconcileResourceEnvironment applies owner precedence and fills only missing initialization keys.
-func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, components project.Components, portableDefaults bool) ([]byte, project.ResourcePlan, bool, error) {
+func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, components project.Components, portableDefaults bool) (reconciledResourceEnvironment, error) {
 	components = components.WithResolvedDependencies()
 	removedDisabledCache := false
 	if !components.Cache {
@@ -266,7 +273,7 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 		}
 		seedSelection, ok := seed.Selection(definition.Key)
 		if !ok {
-			return nil, project.ResourcePlan{}, false, fmt.Errorf("resource %s has no initialization selection", definition.Label)
+			return reconciledResourceEnvironment{}, fmt.Errorf("resource %s has no initialization selection", definition.Label)
 		}
 		activeKey := definition.EnvironmentKey("DRIVER")
 		supportedKey := definition.EnvironmentKey("SUPPORTED_DRIVERS")
@@ -284,7 +291,7 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 			supported[index] = project.CanonicalResourceDriver(definition.Key, supported[index])
 		}
 		if supportedSet && len(supported) > 0 && !stringSliceContainsFold(supported, active) {
-			return nil, project.ResourcePlan{}, false, fmt.Errorf("%s in .env excludes active %s %q; add %q before rerendering", supportedKey, activeKey, active, active)
+			return reconciledResourceEnvironment{}, fmt.Errorf("%s in .env excludes active %s %q; add %q before rerendering", supportedKey, activeKey, active, active)
 		}
 		if !supportedSet || len(supported) == 0 {
 			firstPortableInitialization := (definition.Key == project.ResourceEvents || definition.Key == project.ResourceQueue) && !activeSet && !supportedSet
@@ -315,16 +322,16 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 
 	normalized, err := effective.Normalized(components)
 	if err != nil {
-		return nil, project.ResourcePlan{}, false, fmt.Errorf("environment resource contract: %w", err)
+		return reconciledResourceEnvironment{}, fmt.Errorf("environment resource contract: %w", err)
 	}
 	if !changed {
-		return source, normalized, false, nil
+		return reconciledResourceEnvironment{source: source, effectivePlan: normalized}, nil
 	}
 	updated := strings.Join(lines, "\n")
 	if !strings.HasSuffix(updated, "\n") {
 		updated += "\n"
 	}
-	return []byte(updated), normalized, true, nil
+	return reconciledResourceEnvironment{source: []byte(updated), effectivePlan: normalized, changed: true}, nil
 }
 
 // removeDisabledCacheEnvironment prunes only framework-owned Cache assignments after the project envelope disables Cache.
