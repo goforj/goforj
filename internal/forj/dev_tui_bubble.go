@@ -1430,7 +1430,13 @@ func parseDevAppCommandAcceptsArgs(help string) bool {
 	return false
 }
 
-func buildDevOutputWritersBubble(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) (io.Writer, io.Writer, func(), func()) {
+// buildDevOutputSessionBubble couples both terminal streams to one Bubble Tea lifecycle.
+func buildDevOutputSessionBubble(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) devOutputSession {
 	writer := newDevBubbleWriter(config, requestRestart, requestRender, requestCommand)
-	return writer, writer, func() { _ = writer.Close() }, func() { writer.RefreshEnv(config) }
+	return devOutputSession{
+		stdout:   writer,
+		stderr:   writer,
+		shutdown: func() { _ = writer.Close() },
+		refresh:  func() { writer.RefreshEnv(config) },
+	}
 }

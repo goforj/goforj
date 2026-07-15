@@ -20,14 +20,25 @@ type devOutputController interface {
 	HasStatusLine() bool
 }
 
-func buildDevOutputWriters(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) (io.Writer, io.Writer, func(), func()) {
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return os.Stdout, os.Stderr, func() {}, func() {}
+// devOutputSession names the terminal streams and lifecycle hooks that must change together when the TUI is enabled.
+type devOutputSession struct {
+	stdout   io.Writer
+	stderr   io.Writer
+	shutdown func()
+	refresh  func()
+}
+
+// buildDevOutputSession selects plain terminal streams or a coordinated TUI output session.
+func buildDevOutputSession(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) devOutputSession {
+	if !term.IsTerminal(int(os.Stdout.Fd())) || strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" {
+		return devOutputSession{
+			stdout:   os.Stdout,
+			stderr:   os.Stderr,
+			shutdown: func() {},
+			refresh:  func() {},
+		}
 	}
-	if strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" {
-		return os.Stdout, os.Stderr, func() {}, func() {}
-	}
-	return buildDevOutputWritersBubble(config, requestRestart, requestRender, requestCommand)
+	return buildDevOutputSessionBubble(config, requestRestart, requestRender, requestCommand)
 }
 
 func disableDevFooter(writer io.Writer) {
