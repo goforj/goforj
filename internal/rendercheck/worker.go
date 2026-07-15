@@ -146,6 +146,12 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 		return newRenderComboFailure("render failed", comboID, &cfg, err)
 	}
 
+	if err := timer.Track("component_contract", func() error {
+		return validateRenderedComponentContracts(worker.workspaceRoot, &cfg, apps)
+	}); err != nil {
+		return newRenderComboFailure("component contract failed", comboID, &cfg, err)
+	}
+
 	if combo.starterKit == project.StarterKitTemplHTMX {
 		if err := timer.Track("templ_generate", func() error {
 			templCmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
