@@ -24,6 +24,14 @@ type GenerationSelection struct {
 	Observability bool
 }
 
+// GenerationResult names file counts so callers cannot transpose positional integer returns.
+type GenerationResult struct {
+	// TotalFiles reports every file considered by the selected generators.
+	TotalFiles int
+	// ChangedFiles reports the subset written or removed during this run.
+	ChangedFiles int
+}
+
 // GenerationSelectionFromComponents translates durable component intent into generator participation.
 func GenerationSelectionFromComponents(components project.Components) GenerationSelection {
 	return GenerationSelection{
@@ -112,22 +120,23 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
-// GenerateProjectFiles regenerates selected resources beneath projectDir and reports total and changed files.
-func GenerateProjectFiles(projectDir string, selection GenerationSelection) (int, int, error) {
+// GenerateProjectFiles regenerates selected resources beneath projectDir and returns named file accounting.
+func GenerateProjectFiles(projectDir string, selection GenerationSelection) (GenerationResult, error) {
 	input, err := loadProjectGenerationInput(projectDir)
 	if err != nil {
-		return 0, 0, err
+		return GenerationResult{}, err
 	}
 	run, err := runGenerationTasks(input, selection)
+	result := GenerationResult{TotalFiles: run.totalFiles, ChangedFiles: run.changedFiles}
 	if err != nil {
-		return run.totalFiles, run.changedFiles, err
+		return result, err
 	}
 	if run.dependencyFilesChanged {
 		if err := goModTidyRunner(projectDir); err != nil {
-			return run.totalFiles, run.changedFiles, err
+			return result, err
 		}
 	}
-	return run.totalFiles, run.changedFiles, nil
+	return result, nil
 }
 
 // generationSelection returns the command-line flags as one named selection value.

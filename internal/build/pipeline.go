@@ -478,17 +478,17 @@ func (p Pipeline) generateProjectFiles(root string) (string, error) {
 	if config != nil {
 		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
 	}
-	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(root, selection)
+	result, err := generate.GenerateProjectFiles(root, selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
 	}
 	if debugEnabled() {
-		p.logger.Info().Int("files", generatedFiles).Msg("Generated project files")
+		p.logger.Info().Int("files", result.TotalFiles).Msg("Generated project files")
 	}
-	if changedFiles == 0 {
+	if result.ChangedFiles == 0 {
 		return "no changes", nil
 	}
-	return fmt.Sprintf("%d files", changedFiles), nil
+	return fmt.Sprintf("%d files", result.ChangedFiles), nil
 }
 
 // loadWirePaths reads project-configured Wire roots and falls back to the generated app layout.

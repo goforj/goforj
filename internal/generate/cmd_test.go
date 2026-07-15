@@ -42,7 +42,7 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	goModTidyRunner = func(dir string) error { return nil }
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{
+	result, err := GenerateProjectFiles(projectDir, GenerationSelection{
 		Storage: true,
 		Cache:   true,
 		Mail:    true,
@@ -51,10 +51,10 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
-	if total != 8 {
-		t.Fatalf("total files = %d, want %d", total, 8)
+	if result.TotalFiles != 8 {
+		t.Fatalf("total files = %d, want %d", result.TotalFiles, 8)
 	}
-	if changed == 0 {
+	if result.ChangedFiles == 0 {
 		t.Fatal("expected generated files to be written")
 	}
 
@@ -90,14 +90,14 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
+	result, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
-	if total != 1 {
-		t.Fatalf("total files = %d, want %d", total, 1)
+	if result.TotalFiles != 1 {
+		t.Fatalf("total files = %d, want %d", result.TotalFiles, 1)
 	}
-	if changed == 0 {
+	if result.ChangedFiles == 0 {
 		t.Fatal("expected generated db file to be written")
 	}
 	if called != 1 {
@@ -127,15 +127,15 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
+	result, err := GenerateProjectFiles(projectDir, GenerationSelection{Database: true})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
-	if total != 1 {
-		t.Fatalf("total files = %d, want %d", total, 1)
+	if result.TotalFiles != 1 {
+		t.Fatalf("total files = %d, want %d", result.TotalFiles, 1)
 	}
-	if changed != 0 {
-		t.Fatalf("changed files = %d, want 0", changed)
+	if result.ChangedFiles != 0 {
+		t.Fatalf("changed files = %d, want 0", result.ChangedFiles)
 	}
 	if called != 0 {
 		t.Fatalf("goModTidyRunner called %d times, want 0", called)
@@ -417,18 +417,18 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, GenerationSelection{
+	result, err := GenerateProjectFiles(projectDir, GenerationSelection{
 		Storage:       true,
 		Observability: true,
 	})
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
-	if total != 3 {
-		t.Fatalf("total files = %d, want %d", total, 3)
+	if result.TotalFiles != 3 {
+		t.Fatalf("total files = %d, want %d", result.TotalFiles, 3)
 	}
-	if changed != 1 {
-		t.Fatalf("changed files = %d, want %d", changed, 1)
+	if result.ChangedFiles != 1 {
+		t.Fatalf("changed files = %d, want %d", result.ChangedFiles, 1)
 	}
 	if called != 0 {
 		t.Fatalf("goModTidyRunner called %d times, want 0", called)
