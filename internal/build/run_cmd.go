@@ -48,12 +48,16 @@ func (*RunCmd) Signature() string {
 
 // Run executes generation, API indexing, and the generated app command.
 func (c *RunCmd) Run() error {
+	root, err := resolveProjectRoot(c.Root)
+	if err != nil {
+		return err
+	}
 	c.waitCh = nil
 	c.process = nil
 	c.outputGate = nil
 	c.transientProgress = shouldUseTransientRunProgress(c.Timings)
-	if err := c.pipeline.Run(c.Root, "run", Step{
-		Name: c.launchCommand(c.runArgs()),
+	if err := c.pipeline.Run(root, "run", Step{
+		Name: c.launchCommand(c.runArgsAt(root)),
 		Run:  c.runBinary,
 	}, RunOptions{
 		Timings:                  c.Timings,
@@ -79,13 +83,14 @@ func (c *RunCmd) Run() error {
 }
 
 // runBinary starts the source app process without waiting for it to finish.
-func (c *RunCmd) runBinary() (string, error) {
-	args := c.runArgs()
-	executable, cleanup, err := c.preflightBinary(args[0])
+func (c *RunCmd) runBinary(root string) (string, error) {
+	args := c.runArgsAt(root)
+	prepared, err := c.preflightBinary(root, args[0])
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(executable, args[1:]...)
+	cmd := exec.Command(prepared.executable, args[1:]...)
+	cmd.Dir = root
 	if c.shouldPreserveTTY() {
 		cmd.Stdin = os.Stdin
 	}
@@ -103,14 +108,14 @@ func (c *RunCmd) runBinary() (string, error) {
 		cmd.Env = c.Env
 	}
 	if err := cmd.Start(); err != nil {
-		cleanup()
+		prepared.cleanup()
 		return "", fmt.Errorf("start compiled app: %w", err)
 	}
 	c.process = cmd.Process
 	waitCh := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
-		cleanup()
+		prepared.cleanup()
 		waitCh <- err
 	}()
 	c.waitCh = waitCh
@@ -128,28 +133,38 @@ func (c *RunCmd) runBinary() (string, error) {
 	return "started", nil
 }
 
+// preparedRunBinary owns the temporary executable produced by compilation preflight.
+type preparedRunBinary struct {
+	executable string
+}
+
+// cleanup removes the one-shot executable after start failure or process exit.
+func (p preparedRunBinary) cleanup() {
+	_ = os.RemoveAll(filepath.Dir(p.executable))
+}
+
 // preflightBinary proves the selected run package compiles before a candidate API contract can be published.
-func (c *RunCmd) preflightBinary(packagePath string) (string, func(), error) {
+func (c *RunCmd) preflightBinary(root string, packagePath string) (preparedRunBinary, error) {
 	outputDir, err := os.MkdirTemp("", "forj-run-preflight-")
 	if err != nil {
-		return "", nil, fmt.Errorf("prepare app compilation: %w", err)
+		return preparedRunBinary{}, fmt.Errorf("prepare app compilation: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(outputDir) }
+	prepared := preparedRunBinary{executable: filepath.Join(outputDir, "app")}
 
-	executable := filepath.Join(outputDir, "app")
-	cmd := exec.Command("go", "build", "-o", executable, packagePath)
+	cmd := exec.Command("go", "build", "-o", prepared.executable, packagePath)
+	cmd.Dir = root
 	if c.Env != nil {
 		cmd.Env = c.Env
 	}
 	output, err := cmd.CombinedOutput()
 	if err == nil {
-		return executable, cleanup, nil
+		return prepared, nil
 	}
-	cleanup()
+	prepared.cleanup()
 	if detail := strings.TrimSpace(string(output)); detail != "" {
 		printBuildFailureDetail(detail)
 	}
-	return "", nil, fmt.Errorf("compile app target: %w", err)
+	return preparedRunBinary{}, fmt.Errorf("compile app target: %w", err)
 }
 
 // handlePipelineError releases output and terminates any app started before a later publication error surfaced.
@@ -258,8 +273,13 @@ func exitCodeFromError(err error) (int, bool) {
 
 // runArgs returns the selected source package followed by arguments for its compiled app.
 func (c *RunCmd) runArgs() []string {
+	return c.runArgsAt(c.Root)
+}
+
+// runArgsAt returns App arguments against the validated project root shared by every pipeline step.
+func (c *RunCmd) runArgsAt(root string) []string {
 	args := make([]string, 0, len(c.Args)+1)
-	args = append(args, defaultRunPackage(c.Root))
+	args = append(args, defaultRunPackage(root))
 	args = append(args, c.Args...)
 	return args
 }

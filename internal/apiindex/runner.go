@@ -3,6 +3,7 @@ package apiindex
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
@@ -34,6 +35,7 @@ const (
 
 // runOptions controls diagnostics policy without coupling command flags to web internals.
 type runOptions struct {
+	root      string
 	strict    bool
 	buildTags []string
 }
@@ -50,6 +52,8 @@ type runReport struct {
 
 // Options controls diagnostics policy and source selection for one indexing transaction.
 type Options struct {
+	// Root anchors default source discovery and artifacts without changing process working directory.
+	Root string
 	// Strict rejects candidates that contain analyzer warnings or errors.
 	Strict bool
 	// BuildTags keeps indexing on the same conditional source surface as compilation.
@@ -64,10 +68,18 @@ type Candidate interface {
 	Discard()
 }
 
+// Preparation keeps a staged candidate and its user-facing status together as one indexing outcome.
+type Preparation struct {
+	// Candidate remains unpublished until the caller's surrounding operation succeeds.
+	Candidate Candidate
+	// Status summarizes analysis even when no candidate is needed or preparation fails.
+	Status string
+}
+
 // Preparer isolates API-index candidates so build orchestration can share its success boundary.
 type Preparer interface {
 	// Prepare analyzes the active App without changing its published artifacts.
-	Prepare(options Options) (Candidate, string, error)
+	Prepare(options Options) (Preparation, error)
 }
 
 // AppResolver returns the active App when an indexing operation starts.
@@ -103,21 +115,22 @@ func (r *Runner) Run(root string, out string, diagnostics string, openAPI string
 }
 
 // Prepare creates a validated candidate while leaving publication under the caller's control.
-func (r *Runner) Prepare(options Options) (Candidate, string, error) {
+func (r *Runner) Prepare(options Options) (Preparation, error) {
 	prepared, report, err := r.prepareDefault(runOptions{
+		root:      options.Root,
 		strict:    options.Strict,
 		buildTags: append([]string(nil), options.BuildTags...),
 	})
-	status := report.status()
-	if prepared == nil {
-		return nil, status, err
-	}
-	return prepared, status, err
+	return Preparation{
+		Candidate: prepared,
+		Status:    report.status(),
+	}, err
 }
 
 // RunDefault generates and immediately publishes the active App's default artifacts.
 func (r *Runner) RunDefault(options Options) (string, error) {
 	report, err := r.runDefault(runOptions{
+		root:      options.Root,
 		strict:    options.Strict,
 		buildTags: append([]string(nil), options.BuildTags...),
 	})
@@ -148,9 +161,19 @@ func (r *Runner) prepareDefault(options runOptions) (prepared *preparedCandidate
 			report.outcome = outcomeRejected
 		}
 	}()
+	root := options.root
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, runReport{}, fmt.Errorf("resolve API index project root %q: %w", root, err)
+	}
 	target := r.resolveApp()
 	paths := defaultPaths(target)
-	participation, err := resolveParticipation(target)
+	expectedRouteComposition := paths.routeComposition
+	paths = rootDefaultPaths(absRoot, paths)
+	participation, err := resolveParticipation(absRoot, target)
 	if err != nil {
 		return nil, runReport{appName: paths.appName}, err
 	}
@@ -169,8 +192,7 @@ func (r *Runner) prepareDefault(options runOptions) (prepared *preparedCandidate
 		}
 		return &preparedCandidate{paths: paths, active: active, report: report, remove: true}, report, nil
 	}
-	expectedRouteComposition := paths.routeComposition
-	routeComposition, err := existingRouteCompositionPath(target, expectedRouteComposition)
+	routeComposition, err := existingRouteCompositionPath(target, paths.routeComposition)
 	if err != nil {
 		return nil, runReport{appName: paths.appName}, err
 	}
@@ -182,7 +204,7 @@ func (r *Runner) prepareDefault(options runOptions) (prepared *preparedCandidate
 		report := runReport{appName: paths.appName, outcome: outcomeSkipped, reason: noRouteCompositionReason}
 		return nil, report, nil
 	}
-	paths.root = "."
+	paths.root = absRoot
 	return r.prepareDefaultPaths(paths, options)
 }
 

@@ -103,18 +103,9 @@ func TestRunnerDefaultStatusIncludesActiveApp(t *testing.T) {
 	writeRouteComposition(t, root, "customer-portal")
 	t.Setenv("FORJ_APP", "customer-portal")
 
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
 	runner := newTestRunner()
 
-	status, err := runner.RunDefault(Options{})
+	status, err := runner.RunDefault(Options{Root: root})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -122,7 +113,7 @@ func TestRunnerDefaultStatusIncludesActiveApp(t *testing.T) {
 		t.Fatalf("status does not include active app, outcome, and counts: %q", status)
 	}
 
-	status, err = runner.RunDefault(Options{})
+	status, err = runner.RunDefault(Options{Root: root})
 	if err != nil {
 		t.Fatalf("rerun failed: %v", err)
 	}

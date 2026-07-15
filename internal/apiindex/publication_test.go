@@ -276,7 +276,7 @@ func TestPreparedCLIOnlyCleanupRollsBackInjectedMidSetFailure(t *testing.T) {
 
 	injected := errors.New("injected cleanup rename failure")
 	pending.renameFile = func(oldPath string, newPath string) error {
-		if filepath.Clean(oldPath) == filepath.Clean(paths.diagnostics) {
+		if filepath.Clean(oldPath) == filepath.Join(root, paths.diagnostics) {
 			return injected
 		}
 		return os.Rename(oldPath, newPath)
@@ -298,10 +298,10 @@ func TestPreparedCLIOnlyCleanupJoinsRollbackFailure(t *testing.T) {
 	cleanupErr := errors.New("injected cleanup failure")
 	rollbackErr := errors.New("injected cleanup rollback failure")
 	pending.renameFile = func(oldPath string, newPath string) error {
-		if filepath.Clean(oldPath) == filepath.Clean(paths.diagnostics) {
+		if filepath.Clean(oldPath) == filepath.Join(root, paths.diagnostics) {
 			return cleanupErr
 		}
-		if filepath.Clean(newPath) == filepath.Clean(paths.out) && strings.Contains(filepath.Base(oldPath), ".forj-api-index-remove-") {
+		if filepath.Clean(newPath) == filepath.Join(root, paths.out) && strings.Contains(filepath.Base(oldPath), ".forj-api-index-remove-") {
 			return rollbackErr
 		}
 		return os.Rename(oldPath, newPath)

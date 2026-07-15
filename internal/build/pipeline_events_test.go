@@ -21,21 +21,12 @@ func TestPipelineGenerationIgnoresStaleCacheDirectoryWhenComponentDisabled(t *te
 		t.Fatalf("write stale Cache environment: %v", err)
 	}
 
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("change working directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(originalWD) })
-
 	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
-	if _, err := pipeline.generateProjectFiles(); err != nil {
+	if _, err := pipeline.generateProjectFiles(root); err != nil {
 		t.Fatalf("generate project files: %v", err)
 	}
 	for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
-		if _, err := os.Stat(filepath.Join("internal", "caches", name)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(root, "internal", "caches", name)); !os.IsNotExist(err) {
 			t.Fatalf("Cache-disabled build generated Cache file %s: %v", name, err)
 		}
 	}
@@ -59,20 +50,11 @@ func TestPipelineGenerationIgnoresStaleEventsDirectoryWhenComponentDisabled(t *t
 		t.Fatalf("write environment: %v", err)
 	}
 
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("change working directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(originalWD) })
-
 	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
-	if _, err := pipeline.generateProjectFiles(); err != nil {
+	if _, err := pipeline.generateProjectFiles(root); err != nil {
 		t.Fatalf("generate project files: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join("internal", "events", "manager_gen.go")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "internal", "events", "manager_gen.go")); !os.IsNotExist(err) {
 		t.Fatalf("Events-disabled build generated stale Events package: %v", err)
 	}
 }
@@ -90,20 +72,11 @@ func TestPipelineGenerationIgnoresStaleStorageDirectoryWhenComponentDisabled(t *
 		t.Fatalf("write stale Storage environment: %v", err)
 	}
 
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("change working directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(originalWD) })
-
 	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
-	if _, err := pipeline.generateProjectFiles(); err != nil {
+	if _, err := pipeline.generateProjectFiles(root); err != nil {
 		t.Fatalf("generate project files: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join("internal", "storages", "manager_gen.go")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "internal", "storages", "manager_gen.go")); !os.IsNotExist(err) {
 		t.Fatalf("Storage-disabled build generated stale Storage package: %v", err)
 	}
 }
@@ -126,21 +99,12 @@ func TestPipelineGenerationIgnoresStaleJobsDirectoriesWhenComponentDisabled(t *t
 		t.Fatalf("write stale Queue environment: %v", err)
 	}
 
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("change working directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(originalWD) })
-
 	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
-	if _, err := pipeline.generateProjectFiles(); err != nil {
+	if _, err := pipeline.generateProjectFiles(root); err != nil {
 		t.Fatalf("generate project files: %v", err)
 	}
 	for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
-		if _, err := os.Stat(filepath.Join("internal", "queues", name)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(root, "internal", "queues", name)); !os.IsNotExist(err) {
 			t.Fatalf("Jobs-disabled build generated Queue file %s: %v", name, err)
 		}
 	}

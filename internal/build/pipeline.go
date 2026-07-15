@@ -17,10 +17,10 @@ import (
 	"golang.org/x/term"
 )
 
-// Step names one observable pipeline action and returns its compact status.
+// Step names one observable pipeline action whose runner receives the validated project root.
 type Step struct {
 	Name string
-	Run  func() (string, error)
+	Run  func(root string) (string, error)
 }
 
 // Pipeline coordinates source generation, indexing, and the caller's final build or launch step.
@@ -160,18 +160,10 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	if err := apiindex.ValidateGOFLAGS(os.Getenv("GOFLAGS")); err != nil {
 		return err
 	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := resolveProjectRoot(root)
 	if err != nil {
 		return err
 	}
-	originalWD, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	if err := os.Chdir(absRoot); err != nil {
-		return err
-	}
-	defer func() { _ = os.Chdir(originalWD) }()
 
 	debug := debugEnabled()
 	progress := newBuildProgressReporter(debug, opts)
@@ -184,19 +176,19 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
 	steps := make([]Step, 0, 4)
 	steps = append(steps, generateStep)
-	if buildUsesTemplHTMX() {
+	if buildUsesTemplHTMX(absRoot) {
 		steps = append(steps, Step{Name: "templ", Run: p.runTemplGenerate})
 	}
 	if !opts.SkipWire {
 		steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
 	}
-	steps = append(steps, Step{Name: "build:api-index", Run: func() (string, error) {
-		candidate, status, err := p.prepareAPIIndex(opts.APIIndexStrict, opts.BuildTags...)
+	steps = append(steps, Step{Name: "build:api-index", Run: func(root string) (string, error) {
+		preparation, err := p.prepareAPIIndex(root, opts.APIIndexStrict, opts.BuildTags...)
 		if err != nil {
 			return "", err
 		}
-		pendingAPIIndex = candidate
-		return status, nil
+		pendingAPIIndex = preparation.Candidate
+		return preparation.Status, nil
 	}})
 	steps = append(steps, final)
 	progressState := "done"
@@ -209,7 +201,7 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	}
 	progress.Step(1, len(steps), generateStep.Name)
 	generateStartedAt := time.Now()
-	generateStatus, err := generateStep.Run()
+	generateStatus, err := generateStep.Run(absRoot)
 	if err != nil {
 		progressState = "failed"
 		return err
@@ -230,7 +222,7 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		}
 		progress.Step(idx+2, len(steps), step.Name)
 		startedAt := time.Now()
-		status, err := step.Run()
+		status, err := step.Run(absRoot)
 		if err != nil {
 			progressState = "failed"
 			return err
@@ -258,7 +250,7 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		progress.State("done")
 	}
 	finalStartedAt := time.Now()
-	finalStatus, err := runFinalAndPublishAPIIndex(final, pendingAPIIndex)
+	finalStatus, err := runFinalAndPublishAPIIndex(absRoot, final, pendingAPIIndex)
 	if err != nil {
 		progressState = "failed"
 		return err
@@ -276,9 +268,28 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	return nil
 }
 
+// resolveProjectRoot validates the explicit command root once so every pipeline step shares one stable absolute path.
+func resolveProjectRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root %q: %w", root, err)
+	}
+	info, err := os.Stat(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("open project root %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("open project root %q: not a directory", root)
+	}
+	return absRoot, nil
+}
+
 // runFinalAndPublishAPIIndex keeps the previous active contract until compilation or process startup succeeds.
-func runFinalAndPublishAPIIndex(final Step, pending apiindex.Candidate) (string, error) {
-	status, err := final.Run()
+func runFinalAndPublishAPIIndex(root string, final Step, pending apiindex.Candidate) (string, error) {
+	status, err := final.Run(root)
 	if err != nil {
 		return "", err
 	}
@@ -291,12 +302,12 @@ func runFinalAndPublishAPIIndex(final Step, pending apiindex.Candidate) (string,
 }
 
 // prepareAPIIndex applies the command's diagnostics policy while keeping pipeline status formatting centralized.
-func (p Pipeline) prepareAPIIndex(strict bool, buildTags ...string) (apiindex.Candidate, string, error) {
-	prepared, status, err := p.apiIndex.Prepare(apiindex.Options{Strict: strict, BuildTags: append([]string(nil), buildTags...)})
+func (p Pipeline) prepareAPIIndex(root string, strict bool, buildTags ...string) (apiindex.Preparation, error) {
+	preparation, err := p.apiIndex.Prepare(apiindex.Options{Root: root, Strict: strict, BuildTags: append([]string(nil), buildTags...)})
 	if err != nil {
-		return nil, status, fmt.Errorf("%s: %w", status, err)
+		return preparation, fmt.Errorf("%s: %w", preparation.Status, err)
 	}
-	return prepared, status, nil
+	return preparation, nil
 }
 
 func buildProgressEnabled() bool {
@@ -324,8 +335,8 @@ func printStepTiming(kind string, stepName string, duration time.Duration, statu
 }
 
 // buildUsesTemplHTMX limits template generation to the selected App's configured starter kit so unrelated Apps do not add build work.
-func buildUsesTemplHTMX() bool {
-	cfg, err := project.LoadProjectConfig()
+func buildUsesTemplHTMX(root string) bool {
+	cfg, err := project.LoadProjectConfigAt(root)
 	if err != nil {
 		return false
 	}
@@ -339,8 +350,10 @@ func buildUsesTemplHTMX() bool {
 	return project.NormalizeStarterKit(starterKit) == project.StarterKitTemplHTMX
 }
 
-func (p Pipeline) runTemplGenerate() (string, error) {
+// runTemplGenerate keeps template discovery inside the selected project without changing process state.
+func (p Pipeline) runTemplGenerate(root string) (string, error) {
 	cmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+	cmd.Dir = root
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -353,9 +366,10 @@ func (p Pipeline) runTemplGenerate() (string, error) {
 	return "generated", nil
 }
 
-func (p Pipeline) runWireGenerate() (string, error) {
+// runWireGenerate evaluates every configured dependency-injection root beneath the selected project.
+func (p Pipeline) runWireGenerate(root string) (string, error) {
 	ran := false
-	for _, wirePath := range loadWirePaths() {
+	for _, wirePath := range loadWirePaths(root) {
 		info, err := os.Stat(wirePath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -447,24 +461,24 @@ func shouldRetryWire(detail string) bool {
 }
 
 // generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate optional primitives.
-func (p Pipeline) generateProjectFiles() (string, error) {
+func (p Pipeline) generateProjectFiles(root string) (string, error) {
 	selection := generate.GenerationSelection{
-		Storage:       hasDir(filepath.Join(".", "internal", "storages")),
-		Cache:         hasDir(filepath.Join(".", "internal", "caches")),
-		Mail:          hasDir(filepath.Join(".", "internal", "mail")),
-		Queue:         hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues")),
-		Events:        hasDir(filepath.Join(".", "internal", "events")),
-		Database:      hasDir(filepath.Join(".", "internal", "database")),
-		Observability: hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
+		Storage:       hasDir(filepath.Join(root, "internal", "storages")),
+		Cache:         hasDir(filepath.Join(root, "internal", "caches")),
+		Mail:          hasDir(filepath.Join(root, "internal", "mail")),
+		Queue:         hasDir(filepath.Join(root, "internal", "jobs")) || hasDir(filepath.Join(root, "internal", "queues")),
+		Events:        hasDir(filepath.Join(root, "internal", "events")),
+		Database:      hasDir(filepath.Join(root, "internal", "database")),
+		Observability: hasDir(filepath.Join(root, "containers", "observability", "vmagent")),
 	}
-	config, err := project.LoadProjectConfig()
+	config, err := project.LoadProjectConfigAt(root)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load project generation config: %w", err)
 	}
 	if config != nil {
 		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
 	}
-	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(".", selection)
+	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(root, selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
 	}
@@ -478,32 +492,41 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 }
 
 // loadWirePaths reads project-configured Wire roots and falls back to the generated app layout.
-func loadWirePaths() []string {
+func loadWirePaths(root string) []string {
 	if targetName := requestedAppName(); targetName != "" {
 		if !project.IsSafeAppName(targetName) {
-			return defaultWirePaths()
+			return defaultWirePaths(root)
 		}
 		target := project.DefaultNamedApp(targetName)
-		if hasDir(target.WireDir) {
-			return []string{target.WireDir}
+		wireDir := filepath.Join(root, target.WireDir)
+		if hasDir(wireDir) {
+			return []string{wireDir}
 		}
 	}
-	config, err := project.LoadProjectConfig()
+	config, err := project.LoadProjectConfigAt(root)
 	if err != nil {
-		return defaultWirePaths()
+		return defaultWirePaths(root)
 	}
 	if len(config.Dev.WirePaths) == 0 {
-		return defaultWirePaths()
+		return defaultWirePaths(root)
 	}
-	return config.Dev.WirePaths
+	paths := make([]string, 0, len(config.Dev.WirePaths))
+	for _, wirePath := range config.Dev.WirePaths {
+		if !filepath.IsAbs(wirePath) {
+			wirePath = filepath.Join(root, wirePath)
+		}
+		paths = append(paths, wirePath)
+	}
+	return paths
 }
 
 // defaultWirePaths prefers app/wire so rendered projects do not depend on the legacy root wire directory.
-func defaultWirePaths() []string {
-	if hasDir(filepath.Join("app", "wire")) {
-		return []string{filepath.Join("app", "wire")}
+func defaultWirePaths(root string) []string {
+	appWireDir := filepath.Join(root, "app", "wire")
+	if hasDir(appWireDir) {
+		return []string{appWireDir}
 	}
-	return []string{"wire"}
+	return []string{filepath.Join(root, "wire")}
 }
 
 // hasDir treats missing paths as a normal layout probe instead of an error.

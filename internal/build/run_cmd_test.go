@@ -62,9 +62,8 @@ func TestRunCmdCompileFailurePreventsStartAndAPIIndexPublication(t *testing.T) {
 		discard: func() {},
 	}
 
-	t.Chdir(root)
 	command := &RunCmd{Root: root}
-	_, err := runFinalAndPublishAPIIndex(Step{Name: "compile and start", Run: command.runBinary}, pending)
+	_, err := runFinalAndPublishAPIIndex(root, Step{Name: "compile and start", Run: command.runBinary}, pending)
 	if err == nil || !strings.Contains(err.Error(), "compile app target") {
 		t.Fatalf("compile failure = %v, want preflight error", err)
 	}
@@ -110,11 +109,9 @@ func main() {
 			t.Fatalf("write fixture %s: %v", relativePath, err)
 		}
 	}
-	t.Chdir(root)
-
 	command := &RunCmd{Root: root}
 	t.Cleanup(func() { _ = command.terminateStartedProcess() })
-	status, err := command.runBinary()
+	status, err := command.runBinary(root)
 	if err != nil {
 		t.Fatalf("start run command: %v", err)
 	}
@@ -167,11 +164,9 @@ func main() {
 			t.Fatalf("write fixture %s: %v", relativePath, err)
 		}
 	}
-	t.Chdir(root)
-
 	resultPath := filepath.Join(root, "run-result.txt")
 	command := &RunCmd{Root: root, Args: []string{resultPath, "hello", "portal"}}
-	if _, err := command.runBinary(); err != nil {
+	if _, err := command.runBinary(root); err != nil {
 		t.Fatalf("start compiled run binary: %v", err)
 	}
 	if err := command.waitForRunProcess(); err != nil {
