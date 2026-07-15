@@ -88,11 +88,12 @@ func (cmd *InspectOverheadMeasureCmd) Run() error {
 		return err
 	}
 
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	builtForj, err := testkit.BuildForjBinary(modCache, buildCache)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 
 	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err

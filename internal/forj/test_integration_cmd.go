@@ -151,11 +151,12 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 	if target != "" && target != "all" {
 		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
 	}
-	forjExec, cleanup, err := repoForjExecutable(executor.caches.ModulePath(), executor.caches.BuildPath())
+	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath(), executor.caches.BuildPath())
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 	frameworkEnv := map[string]string{
 		"FORJ_INTEGRATION_FORJ_PATH": forjExec,
 	}
@@ -346,11 +347,12 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 	if err := cmd.writeRenderedIntegrationConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
-	forjExec, cleanup, err := repoForjExecutable(executor.caches.ModulePath(), executor.caches.BuildPath())
+	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath(), executor.caches.BuildPath())
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 	if err := executor.workspace(tempDir).Run("render", forjExec, "render"); err != nil {
 		return err
 	}

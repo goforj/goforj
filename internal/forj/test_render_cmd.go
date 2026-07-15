@@ -108,11 +108,12 @@ func (cmd *TestRenderCmd) Run() error {
 	if !cmd.Silent {
 		console.Actionf("Running test:render")
 	}
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	builtForj, err := testkit.BuildForjBinary(modCache, buildCache)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
 	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err

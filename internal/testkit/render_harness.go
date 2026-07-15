@@ -167,14 +167,14 @@ func EnsureIntegrationForjBinary(t *testing.T) string {
 			return
 		}
 
-		binPath, cleanup, err := BuildForjBinary("/tmp/gomodcache", "/tmp/gocache")
+		builtForj, err := BuildForjBinary("/tmp/gomodcache", "/tmp/gocache")
 		if err != nil {
 			gomodOut, _ := exec.Command("go", "env", "GOMOD", "GOWORK").CombinedOutput()
 			sharedForjErr = fmt.Errorf("build forj binary: %w\nrepo: %s\ngo env:\n%s", err, repoRoot, strings.TrimSpace(string(gomodOut)))
 			return
 		}
-		sharedForjPath = binPath
-		sharedForjStop = cleanup
+		sharedForjPath = builtForj.Path
+		sharedForjStop = builtForj.Cleanup
 	})
 	if sharedForjErr != nil {
 		t.Fatal(sharedForjErr)

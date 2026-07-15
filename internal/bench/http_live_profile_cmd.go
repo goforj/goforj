@@ -269,11 +269,12 @@ func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir string, caches teste
 		return err
 	}
 
-	forjExec, cleanup, err := repoForjExecutable(caches.ModulePath(), caches.BuildPath())
+	builtForj, err := testkit.BuildForjBinary(caches.ModulePath(), caches.BuildPath())
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 
 	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
