@@ -2,6 +2,7 @@ package rendercheck
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,21 @@ import (
 
 	"github.com/goforj/goforj/project"
 )
+
+// failAfterWriter exposes buffered list flush failures after a fixed number of successful writes.
+type failAfterWriter struct {
+	writes    int
+	failAfter int
+}
+
+// Write returns a closed-pipe error after the configured successful write count.
+func (writer *failAfterWriter) Write(data []byte) (int, error) {
+	if writer.writes >= writer.failAfter {
+		return 0, io.ErrClosedPipe
+	}
+	writer.writes++
+	return len(data), nil
+}
 
 // TestRenderComboWorkerReturnsInvalidAppFailure verifies worker validation failures return to the coordinator instead of terminating the process.
 func TestRenderComboWorkerReturnsInvalidAppFailure(t *testing.T) {
@@ -110,18 +126,30 @@ func TestSelectedRenderProfile(t *testing.T) {
 		profile string
 		full    bool
 		want    string
+		wantErr bool
 	}{
 		{name: "default", want: renderProfilePR},
 		{name: "smoke", profile: renderProfileSmoke, want: renderProfileSmoke},
 		{name: "pr", profile: renderProfilePR, want: renderProfilePR},
 		{name: "full", profile: renderProfileFull, want: renderProfileFull},
 		{name: "legacy full flag wins", profile: renderProfileSmoke, full: true, want: renderProfileFull},
-		{name: "unknown falls back to pr", profile: "unknown", want: renderProfilePR},
+		{name: "unknown fails", profile: "unknown", wantErr: true},
+		{name: "legacy full flag wins over unknown profile", profile: "unknown", full: true, want: renderProfileFull},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := selectedRenderProfile(tt.profile, tt.full); got != tt.want {
+			got, err := selectedRenderProfile(tt.profile, tt.full)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "valid profiles: smoke, pr, full") {
+					t.Fatalf("selectedRenderProfile(%q, %v) error = %v, want valid-profile error", tt.profile, tt.full, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("selectedRenderProfile(%q, %v) error: %v", tt.profile, tt.full, err)
+			}
+			if got != tt.want {
 				t.Fatalf("selectedRenderProfile(%q, %v) = %q, want %q", tt.profile, tt.full, got, tt.want)
 			}
 		})
@@ -133,8 +161,12 @@ func TestSuiteListWritesSelectedShard(t *testing.T) {
 	t.Setenv("FORJ_TEST_RENDERS_SHARD_COUNT", "2")
 	t.Setenv("FORJ_TEST_RENDERS_SHARD_INDEX", "1")
 
+	suite, err := NewSuite(renderProfileSmoke, false)
+	if err != nil {
+		t.Fatalf("NewSuite() error: %v", err)
+	}
 	var output strings.Builder
-	if err := NewSuite(renderProfileSmoke, false).List(&output); err != nil {
+	if err := suite.List(&output); err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
 	for _, want := range []string{
@@ -146,6 +178,18 @@ func TestSuiteListWritesSelectedShard(t *testing.T) {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("List() output missing %q:\n%s", want, output.String())
 		}
+	}
+}
+
+// TestSuiteListReturnsFlushErrors verifies buffered table output cannot fail silently at the public listing boundary.
+func TestSuiteListReturnsFlushErrors(t *testing.T) {
+	suite, err := NewSuite(renderProfileSmoke, false)
+	if err != nil {
+		t.Fatalf("NewSuite() error: %v", err)
+	}
+	writer := &failAfterWriter{failAfter: 2}
+	if err := suite.List(writer); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("List() error = %v, want closed pipe", err)
 	}
 }
 

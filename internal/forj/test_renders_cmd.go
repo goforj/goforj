@@ -33,7 +33,10 @@ func NewTestRendersCmd() *TestRendersCmd {
 
 // Run keeps command parsing at the CLI boundary while render validation remains independently testable.
 func (cmd *TestRendersCmd) Run() error {
-	suite := rendercheck.NewSuite(cmd.Profile, cmd.Full)
+	suite, err := rendercheck.NewSuite(cmd.Profile, cmd.Full)
+	if err != nil {
+		return err
+	}
 	if cmd.List {
 		return suite.List(os.Stdout)
 	}
