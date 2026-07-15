@@ -14,21 +14,19 @@ func Lookup(lines []string, want string) (string, bool) {
 		return value, found
 	}
 
-	// A malformed unrelated line must not hide a concrete owner value and allow
-	// a generator to replace it as though the key were missing.
-	var value string
-	found := false
+	// Parsing valid assignments together preserves quotes and interpolation while
+	// excluding unrelated malformed owner lines from the recovery input.
+	validLines := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
+		if _, _, ok := ParseAssignment(line); ok {
+			validLines = append(validLines, line)
 		}
-		key, _, candidate, ok := scanAssignment(line)
-		if !ok || key != want {
-			continue
-		}
-		value = strings.TrimSpace(candidate)
-		found = true
 	}
+	values, err = godotenv.Unmarshal(strings.Join(validLines, "\n"))
+	if err != nil {
+		return "", false
+	}
+	value, found := values[want]
 	return value, found
 }
 

@@ -26,6 +26,19 @@ func TestLookupFallsBackAroundMalformedLines(t *testing.T) {
 	}
 }
 
+// TestLookupFallbackPreservesDotenvValues verifies recovery still decodes quotes and references between valid assignments.
+func TestLookupFallbackPreservesDotenvValues(t *testing.T) {
+	lines := []string{
+		"HOST=cache.internal",
+		"BROKEN='unterminated",
+		`CACHE_URL="redis://${HOST}:6379"`,
+	}
+	got, found := envfile.Lookup(lines, "CACHE_URL")
+	if !found || got != "redis://cache.internal:6379" {
+		t.Fatalf("Lookup() = %q, %t, want decoded interpolated value", got, found)
+	}
+}
+
 // TestSetFinalPreservesPrecedenceAndTerminalNewline verifies updates target the controlling assignment without changing newline ownership.
 func TestSetFinalPreservesPrecedenceAndTerminalNewline(t *testing.T) {
 	lines := []string{"CACHE_DRIVER=file", "export CACHE_DRIVER='memory'", ""}
