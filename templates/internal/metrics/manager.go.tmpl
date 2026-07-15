@@ -6,7 +6,7 @@ import (
 {{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"database/sql"
 {{- end }}
 	{{- if or .ProjectComponents.Storage .ProjectComponents.Events .ProjectComponents.Mail }}
@@ -22,7 +22,7 @@ import (
 {{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	"github.com/goforj/scheduler/v2"
 {{- end }}
 {{- if .ProjectComponents.Events }}
@@ -63,7 +63,7 @@ type Manager struct {
 	monitoringHeartbeatReturnedRows     *metricHistogramVec
 	monitoringHeartbeatReturnedPointSets *metricHistogramVec
 {{- end }}
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 	authFlows           *metricCounterVec
 	authFlowLatency     *metricHistogramVec
 {{- end }}
@@ -81,7 +81,7 @@ type Manager struct {
 	queueDurationByQueue *metricHistogramVec
 	queueDurationByJob   *metricHistogramVec
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	schedulerStarted       *metricCounterVec
 	schedulerRuns          *metricCounterVec
 	schedulerFailures      *metricCounterVec
@@ -91,7 +91,7 @@ type Manager struct {
 	schedulerEventsByJob   *metricCounterVec
 	schedulerDurationByJob *metricHistogramVec
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	databaseOperations            *metricCounterVec
 	databaseOperationLatency      *metricHistogramVec
 	databaseQueriesByFingerprint *metricCounterVec
@@ -158,13 +158,13 @@ type Config struct {
 {{- if .ProjectComponents.Jobs }}
 	Queue     bool
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	Database  bool
 {{- end }}
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 	Auth      bool
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	Scheduler bool
 {{- end }}
 }
@@ -256,7 +256,7 @@ func NewConfig() Config {
 	return Config{
 		HTTP:      env.GetBool("METRICS_HTTP_ENABLED", "true"),
 {{- if and .Components.DemoApp .Components.HasDatabase }}
-		Monitoring: env.GetBool("METRICS_MONITORING_ENABLED", "true"),
+		Monitoring: runtime.CurrentApp().Components.DemoApp && runtime.CurrentApp().Components.HasDatabase() && env.GetBool("METRICS_MONITORING_ENABLED", "true"),
 {{- end }}
 	{{- if .ProjectComponents.Cache }}
 		Cache: runtime.CurrentApp().Components.Cache && env.GetBool("METRICS_CACHE_ENABLED", "true"),
@@ -273,14 +273,14 @@ func NewConfig() Config {
 {{- if .ProjectComponents.Jobs }}
 		Queue:     runtime.CurrentApp().Components.Jobs && env.GetBool("METRICS_QUEUE_ENABLED", "true"),
 {{- end }}
-{{- if .Components.HasDatabase }}
-		Database:  env.GetBool("METRICS_DATABASE_ENABLED", "true"),
+{{- if .ProjectComponents.HasDatabase }}
+		Database:  runtime.CurrentApp().Components.HasDatabase() && env.GetBool("METRICS_DATABASE_ENABLED", "true"),
 {{- end }}
-{{- if .Components.Auth }}
-		Auth:      env.GetBool("METRICS_AUTH_ENABLED", "true"),
+{{- if .ProjectComponents.Auth }}
+		Auth:      runtime.CurrentApp().Components.Auth && env.GetBool("METRICS_AUTH_ENABLED", "true"),
 {{- end }}
-{{- if .Components.Scheduler }}
-		Scheduler: env.GetBool("METRICS_SCHEDULER_ENABLED", "true"),
+{{- if .ProjectComponents.Scheduler }}
+		Scheduler: runtime.CurrentApp().Components.Scheduler && env.GetBool("METRICS_SCHEDULER_ENABLED", "true"),
 {{- end }}
 	}
 }
@@ -376,7 +376,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 		}, metricLabelKeys("source", "scope"), []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
 {{- end }}
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 		authFlows: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "auth.flows",
 			Help: "Total auth lifecycle flow outcomes by flow, status, reason, and provider.",
@@ -453,7 +453,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("source", "queue", "job_name", "driver"), gmetrics.DurationBounds(queueDurationBounds())),
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 		schedulerStarted: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.started",
 			Help: "Total scheduler job attempts that started execution.",
@@ -496,7 +496,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("source", "job_name", "target_kind", "status"), gmetrics.DurationBounds(schedulerDurationBounds())),
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 		databaseOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.operations",
 			Help: "Total database statements by connection, driver, operation, target, and status.",
@@ -738,25 +738,25 @@ func (m *Manager) QueueEnabled() bool {
 }
 {{- end }}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 func (m *Manager) DatabaseEnabled() bool {
 	return m.config.Database
 }
 {{- end }}
 
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 func (m *Manager) AuthEnabled() bool {
 	return m.config.Auth
 }
 {{- end }}
 
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 func (m *Manager) SchedulerEnabled() bool {
 	return m.config.Scheduler
 }
 {{- end }}
 
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 // RecordAuthFlow updates framework-owned auth lifecycle metrics.
 func (m *Manager) RecordAuthFlow(flow, status, reason, provider string, duration time.Duration) {
 	if !m.AuthEnabled() {
@@ -905,7 +905,7 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 }
 {{- end }}
 
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 // RecordSchedulerJob updates framework-owned scheduler metrics from scheduler job observer events.
 func (m *Manager) RecordSchedulerJob(ctx context.Context, event scheduler.JobEvent) {
 	if !m.SchedulerEnabled() {
@@ -944,7 +944,7 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event scheduler.JobEve
 }
 {{- end }}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 type DatabaseStatementMetricEvent struct {
 	Connection string
 	Driver     string
@@ -1110,7 +1110,7 @@ type MailSendMetricEvent struct {
 
 {{- end }}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 type DatabaseQueryFingerprintMetricEvent struct {
 	Connection  string
 	Driver      string
@@ -1544,7 +1544,7 @@ func httpRouteLabel(r web.Context) string {
 	return "unknown"
 }
 
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 func authFlowLabel(flow string) string {
 	flow = strings.TrimSpace(strings.ToLower(flow))
 	if flow == "" {
@@ -1652,7 +1652,7 @@ func queueDurationBounds() []time.Duration {
 }
 {{- end }}
 
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 func schedulerJobLabel(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1704,7 +1704,7 @@ func schedulerDurationBounds() []time.Duration {
 }
 {{- end }}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 func databaseConnectionLabel(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {

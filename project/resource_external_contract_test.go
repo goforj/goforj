@@ -9,16 +9,17 @@ import (
 func TestResourceCatalogExternalDriversDeclareOperationalMetadata(t *testing.T) {
 	for _, resource := range ResourceCatalog() {
 		for _, driver := range resource.Drivers {
-			if !resourceDriverRequiresInfrastructure(driver) {
-				continue
-			}
+			hasEnvironment := len(driver.Environment) > 0 || len(driver.EndpointEnvironment) > 0
 			if driver.Service == "" {
-				t.Errorf("%s %s has no stable service key", resource.Key, driver.Name)
+				if hasEnvironment {
+					t.Errorf("%s %s declares infrastructure configuration without a stable service key", resource.Key, driver.Name)
+				}
+				continue
 			}
 			if strings.TrimSpace(driver.ServiceLabel) == "" {
 				t.Errorf("%s %s has no readable service label", resource.Key, driver.Name)
 			}
-			if len(driver.Environment) == 0 && len(driver.EndpointEnvironment) == 0 && !resourceDriverUsesBaseEnvironment(driver.Service) {
+			if !hasEnvironment && !resourceDriverUsesBaseEnvironment(driver.Service) {
 				t.Errorf("%s %s has no endpoint or credential placeholders", resource.Key, driver.Name)
 			}
 		}
@@ -56,6 +57,7 @@ func TestResourceCatalogExternalEndpointAffinity(t *testing.T) {
 // TestResourceCatalogReturnsDefensiveEnvironmentMetadata verifies callers cannot mutate process-wide placeholder policy.
 func TestResourceCatalogReturnsDefensiveEnvironmentMetadata(t *testing.T) {
 	definition, _ := ResourceDefinitionByKey(ResourceStorage)
+	definition.DefaultSupportedDrivers[0] = "changed"
 	driver, _ := definition.Driver("s3")
 	if len(driver.Environment) == 0 {
 		t.Fatal("S3 placeholder metadata is missing")
@@ -63,9 +65,51 @@ func TestResourceCatalogReturnsDefensiveEnvironmentMetadata(t *testing.T) {
 	driver.Environment[0].Key = "CHANGED"
 
 	second, _ := ResourceDefinitionByKey(ResourceStorage)
+	if second.DefaultSupportedDrivers[0] == "changed" {
+		t.Fatal("ResourceDefinitionByKey returned aliased default-driver metadata")
+	}
 	retained, _ := second.Driver("s3")
 	if retained.Environment[0].Key == "CHANGED" {
 		t.Fatal("ResourceDefinitionByKey returned aliased environment metadata")
+	}
+}
+
+// TestResourceCatalogDefinesEnvironmentAndFallbackPolicy keeps generator and renderer defaults on one shared contract.
+func TestResourceCatalogDefinesEnvironmentAndFallbackPolicy(t *testing.T) {
+	tests := []struct {
+		resource      ResourceKey
+		prefix        string
+		defaultDriver string
+		rootDriver    string
+		namedDriver   string
+	}{
+		{resource: ResourceDatabase, prefix: "DB", defaultDriver: "sqlite", rootDriver: "mysql", namedDriver: "mysql"},
+		{resource: ResourceCache, prefix: "CACHE", defaultDriver: "memory", rootDriver: "redis", namedDriver: "memory"},
+		{resource: ResourceQueue, prefix: "QUEUE", defaultDriver: "workerpool", rootDriver: "redis", namedDriver: "redis"},
+		{resource: ResourceEvents, prefix: "EVENTS", defaultDriver: "inproc", rootDriver: "redis", namedDriver: "inproc"},
+		{resource: ResourceStorage, prefix: "STORAGE", defaultDriver: "local", rootDriver: "s3", namedDriver: "local"},
+		{resource: ResourceMail, prefix: "MAIL", defaultDriver: "log", rootDriver: "smtp", namedDriver: "log"},
+	}
+
+	for _, test := range tests {
+		t.Run(string(test.resource), func(t *testing.T) {
+			definition, ok := ResourceDefinitionByKey(test.resource)
+			if !ok {
+				t.Fatalf("resource %q is missing", test.resource)
+			}
+			if definition.EnvironmentPrefix != test.prefix {
+				t.Errorf("EnvironmentPrefix = %q, want %q", definition.EnvironmentPrefix, test.prefix)
+			}
+			if got := definition.EnvironmentKey("driver"); got != test.prefix+"_DRIVER" {
+				t.Errorf("EnvironmentKey(driver) = %q, want %q", got, test.prefix+"_DRIVER")
+			}
+			if definition.DefaultDriver != test.defaultDriver {
+				t.Errorf("DefaultDriver = %q, want %q", definition.DefaultDriver, test.defaultDriver)
+			}
+			if got := definition.NamedDriverDefault(test.rootDriver); got != test.namedDriver {
+				t.Errorf("NamedDriverDefault(%q) = %q, want %q", test.rootDriver, got, test.namedDriver)
+			}
+		})
 	}
 }
 
@@ -79,14 +123,6 @@ func TestResourceCatalogSMTPDeclaresEndpointMetadata(t *testing.T) {
 	if driver.EndpointEnvironment[0].Key != "MAIL_SMTP_HOST" || driver.EndpointEnvironment[1].Key != "MAIL_SMTP_PORT" {
 		t.Fatalf("SMTP endpoint metadata = %#v, want MAIL_SMTP_HOST and MAIL_SMTP_PORT", driver.EndpointEnvironment)
 	}
-}
-
-// resourceDriverRequiresInfrastructure identifies catalog groups that cannot run solely in-process or from a local file.
-func resourceDriverRequiresInfrastructure(driver DriverDefinition) bool {
-	if driver.Group == DriverGroupShared || driver.Group == DriverGroupCloud {
-		return true
-	}
-	return driver.Group == DriverGroupSQL && driver.Name != "sqlite"
 }
 
 // resourceDriverUsesBaseEnvironment identifies infrastructure already configured by the concise template contract.

@@ -438,7 +438,7 @@ func appScopedKey(appName string, key string) string {
 	if appName == "" || appName == project.DefaultAppName {
 		return key
 	}
-	prefix := strings.ToUpper(strings.ReplaceAll(appName, "-", "_"))
+	prefix := project.AppEnvironmentPrefix(appName)
 	return prefix + "_" + key
 }
 

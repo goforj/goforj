@@ -400,10 +400,6 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.DefaultSelectedComponents(),
 		},
 		{
-			id:  "sentinel_primitives_all_off",
-			cfg: project.Components{CLI: true, Docker: true},
-		},
-		{
 			id: "sentinel_primitives_all_on",
 			cfg: project.Components{
 				CLI: true, Docker: true, Cache: true, Events: true, Storage: true, Jobs: true,
@@ -484,6 +480,19 @@ func prSentinelRenderCombos() []renderCombo {
 		CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
 	}
 	mixedDefault.ResolveDependencies()
+	for _, sentinel := range []struct {
+		id      string
+		appName string
+		key     project.ComponentKey
+	}{
+		{id: "sentinel_named_app_storage_only", appName: "storage-worker", key: project.ComponentStorage},
+		{id: "sentinel_named_app_mail_only", appName: "mailer", key: project.ComponentMail},
+		{id: "sentinel_named_app_database_only", appName: "database-worker", key: project.ComponentDatabaseSQLite},
+		{id: "sentinel_named_app_auth_only", appName: "auth-api", key: project.ComponentAuth},
+		{id: "sentinel_named_app_scheduler_only", appName: "scheduler-worker", key: project.ComponentScheduler},
+	} {
+		combos = append(combos, namedComponentRenderCombo(mixedDefault, sentinel.id, sentinel.appName, sentinel.key))
+	}
 	mixedEvents := project.Components{CLI: true, Events: true}
 	mixedEvents.ResolveDependencies()
 	combos = append(combos, renderCombo{
@@ -551,6 +560,22 @@ func prSentinelRenderCombos() []renderCombo {
 		enabled: append(componentLabels(defaultJobs), "App:api(WebAPI,Metrics,SQLite,Cache;Jobs-off)"),
 	})
 	return combos
+}
+
+// namedComponentRenderCombo keeps the default App lean while compiling one component through a named App.
+func namedComponentRenderCombo(defaultComponents project.Components, id string, appName string, key project.ComponentKey) renderCombo {
+	namedComponents := project.Components{CLI: true}
+	namedComponents.SetEnabled(key, true)
+	namedComponents = project.NormalizeAppComponents(defaultComponents, namedComponents)
+	return renderCombo{
+		id:         id,
+		components: defaultComponents,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			appName: {Components: namedComponents},
+		},
+		enabled: append(componentLabels(defaultComponents), "App:"+appName+"("+strings.Join(componentLabels(namedComponents), ",")+")"),
+	}
 }
 
 func starterKitRenderCombos() []renderCombo {
@@ -655,57 +680,11 @@ func buildCuratedRenderCombos() []renderCombo {
 
 // componentLabels returns the human-friendly component labels for logging.
 func componentLabels(cfg project.Components) []string {
-	enabled := []string{"CLI", "Docker"}
-	if cfg.DemoApp {
-		enabled = append(enabled, "Demo App")
-	}
-	if cfg.Mail {
-		enabled = append(enabled, "Mail")
-	}
-	if cfg.Auth {
-		enabled = append(enabled, "Auth")
-	}
-	if cfg.OAuth {
-		enabled = append(enabled, "OAuth")
-	}
-	if cfg.WebAPI {
-		enabled = append(enabled, "WebAPI")
-	}
-	if cfg.WebUI {
-		enabled = append(enabled, "WebUI")
-	}
-	if cfg.Metrics {
-		enabled = append(enabled, "Metrics")
-	}
-	if cfg.Observability {
-		enabled = append(enabled, "Observability")
-	}
-	if cfg.Grafana {
-		enabled = append(enabled, "Grafana")
-	}
-	if cfg.DatabaseMySQL {
-		enabled = append(enabled, "Database (MySQL)")
-	}
-	if cfg.DatabasePostgres {
-		enabled = append(enabled, "Database (Postgres)")
-	}
-	if cfg.DatabaseSQLite {
-		enabled = append(enabled, "Database (SQLite)")
-	}
-	if cfg.Scheduler {
-		enabled = append(enabled, "Scheduler")
-	}
-	if cfg.Cache {
-		enabled = append(enabled, "Cache")
-	}
-	if cfg.Events {
-		enabled = append(enabled, "Events")
-	}
-	if cfg.Storage {
-		enabled = append(enabled, "Storage")
-	}
-	if cfg.Jobs {
-		enabled = append(enabled, "Jobs")
+	enabled := make([]string, 0)
+	for _, definition := range project.ComponentCatalog() {
+		if cfg.Enabled(definition.Key) {
+			enabled = append(enabled, definition.Label)
+		}
 	}
 	return enabled
 }

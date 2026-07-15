@@ -309,17 +309,20 @@ func TestPrepareResourceEnvironmentUsesCommittedFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve compatibility plan: %v", err)
 	}
-	renderer := &ProjectRenderer{config: &project.Config{Render: project.RenderConfig{Components: components}}, resourcePlan: plan}
+	renderer := &ProjectRenderer{
+		config:    &project.Config{Render: project.RenderConfig{Components: components}},
+		resources: resourceRenderState{plan: plan},
+	}
 	if err := renderer.prepareResourceEnvironment(); err != nil {
 		t.Fatalf("prepare resource environment: %v", err)
 	}
 
-	cache, _ := renderer.resourcePlan.Selection(project.ResourceCache)
-	events, _ := renderer.resourcePlan.Selection(project.ResourceEvents)
+	cache, _ := renderer.resources.plan.Selection(project.ResourceCache)
+	events, _ := renderer.resources.plan.Selection(project.ResourceEvents)
 	if strings.Join(cache.Supported, ",") != "memory,redis" || strings.Join(events.Supported, ",") != "inproc,redis" {
 		t.Fatalf("committed fallback was narrowed: cache=%#v events=%#v", cache, events)
 	}
-	if renderer.pendingEnvironmentWrite || renderer.pendingEnvironment != nil {
+	if renderer.resources.pendingEnvironmentWrite || renderer.resources.pendingEnvironment != nil {
 		t.Fatal("safe fallback must remain read-only until the owner environment is rendered")
 	}
 	after, err := os.ReadFile(".env.example")
@@ -350,19 +353,21 @@ func TestPrepareResourceEnvironmentKeepsExplicitPlanAboveCommittedFallback(t *te
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := &ProjectRenderer{
-		config:               &project.Config{Render: project.RenderConfig{Components: components}},
-		resourcePlan:         plan,
-		localServiceIntent:   intent,
-		explicitResourcePlan: true,
+		config: &project.Config{Render: project.RenderConfig{Components: components}},
+		resources: resourceRenderState{
+			plan:          plan,
+			serviceIntent: intent,
+			explicitPlan:  true,
+		},
 	}
 	if err := renderer.prepareResourceEnvironment(); err != nil {
 		t.Fatalf("prepare resource environment: %v", err)
 	}
-	cache, _ := renderer.resourcePlan.Selection(project.ResourceCache)
+	cache, _ := renderer.resources.plan.Selection(project.ResourceCache)
 	if cache.Active != "redis" {
 		t.Fatalf("safe fallback replaced explicit cache driver with %q", cache.Active)
 	}
-	mode, _ := renderer.localServiceIntent.Mode(project.ServiceRedis)
+	mode, _ := renderer.resources.serviceIntent.Mode(project.ServiceRedis)
 	if mode != project.LocalServiceModeLocal {
 		t.Fatalf("safe fallback replaced explicit Redis placement with %q", mode)
 	}
@@ -391,13 +396,15 @@ func TestPrepareResourceEnvironmentCarriesNamedAndAppConsumers(t *testing.T) {
 			Render: project.RenderConfig{Components: components},
 			Apps:   map[string]project.AppConfig{"billing": {Components: components}},
 		},
-		resourcePlan:       plan,
-		localServiceIntent: project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal),
+		resources: resourceRenderState{
+			plan:          plan,
+			serviceIntent: project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal),
+		},
 	}
 	if err := renderer.prepareResourceEnvironment(); err != nil {
 		t.Fatalf("prepare resource environment: %v", err)
 	}
-	resolved, err := project.ResolveServicePlanWithConsumers(renderer.resourcePlan, components, renderer.localServiceIntent, renderer.serviceConsumers)
+	resolved, err := project.ResolveServicePlanWithConsumers(renderer.resources.plan, components, renderer.resources.serviceIntent, renderer.resources.serviceConsumers)
 	if err != nil {
 		t.Fatalf("resolve renderer service plan: %v", err)
 	}
@@ -494,9 +501,24 @@ func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Auth: true, Cache: true}
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	values := resourceRenderValuesForPlan(plan, components, intent)
+	values, err := resourceRenderValuesForPlanWithConsumers(plan, components, intent, nil)
+	if err != nil {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
+	}
 	if values.CacheSessionsDriver != "redis" || !values.RedisActive || !values.RedisSupported || !values.RedisLocal {
 		t.Fatalf("render values = %#v", values)
+	}
+}
+
+// TestResourceRenderValuesRejectInvalidConsumers prevents service-planning errors from degrading into different Redis flags.
+func TestResourceRenderValuesRejectInvalidConsumers(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Cache: true}
+	plan := defaultResourcePlanForTest(t, components)
+	_, err := resourceRenderValuesForPlanWithConsumers(plan, components, project.LocalServiceIntent{}, []project.EffectiveResourceConsumer{
+		{Resource: project.ResourceCache, Consumer: "cache", Driver: "missing"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown Cache driver") {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers error = %v, want invalid-consumer failure", err)
 	}
 }
 

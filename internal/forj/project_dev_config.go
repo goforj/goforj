@@ -335,6 +335,7 @@ func isGeneratedLegacyNPMWatcher(watch project.DevWatch) bool {
 // a user added to an otherwise familiar framework watcher.
 func legacyWatcherHasNoOverrides(watch project.DevWatch) bool {
 	return watch.Watch != "" &&
+		len(watch.Extra) == 0 &&
 		len(watch.Include) == 0 &&
 		len(watch.Ignore) == 0 &&
 		len(watch.Roots) == 0 &&

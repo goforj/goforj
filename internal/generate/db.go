@@ -14,6 +14,7 @@ import (
 	"github.com/goforj/str"
 )
 
+// dbTemplateData keeps manifest, import, and accessor decisions together so emitted database source stays internally consistent.
 type dbTemplateData struct {
 	CompiledDrivers []string
 	HasNames        bool
@@ -22,11 +23,13 @@ type dbTemplateData struct {
 	Drivers         []dbDriverSpec
 }
 
+// dbAccessorName pairs normalized configuration names with Go-safe method names for generated accessors.
 type dbAccessorName struct {
 	Method string
 	Name   string
 }
 
+// dbDriverSpec keeps each driver's imports, aliases, and constructor in one place so generated support cannot drift.
 type dbDriverSpec struct {
 	Alias       string
 	ImportPath  string
@@ -235,6 +238,7 @@ func canonicalDBDriver(driver string) string {
 	}
 }
 
+// recordDBDriver collapses accepted aliases into one specification so generated imports and switch cases stay deduplicated.
 func recordDBDriver(drivers map[string]dbDriverSpec, driver string) bool {
 	switch driver {
 	case "mysql", "mariadb":
@@ -292,11 +296,13 @@ var compiledDatabaseDrivers = []string{
 {{- end }}
 }
 
+// ReadinessCheck gives health aggregation a stable label and deferred probe without exposing connection internals.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
 }
 
+// ReadinessChecks exposes one stable probe per generated connection so health reporting stays independent of accessor names.
 func (c *Connections) ReadinessChecks() []ReadinessCheck {
 	if c == nil {
 		return nil
@@ -320,6 +326,7 @@ func (c *Connections) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
+// readinessCheck uses the shared connection lookup so default and named databases retain identical error behavior.
 func (c *Connections) readinessCheck(ctx context.Context, name string) error {
 	conn, err := c.Connection(name)
 	if err != nil {
@@ -334,6 +341,7 @@ func (c *Connections) readinessCheck(ctx context.Context, name string) error {
 
 {{- if .Drivers }}
 
+// openDialector rejects drivers outside the generated manifest before GORM initializes a connection.
 func openDialector(driver, dsn string) (gorm.Dialector, error) {
 	driver = strings.TrimSpace(strings.ToLower(driver))
 	if !databaseDriverCompiled(driver) {

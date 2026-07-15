@@ -7,22 +7,7 @@ import (
 
 var appComponentKeys = []ComponentKey{
 	ComponentCLI,
-	ComponentWebAPI,
-	ComponentWebUI,
-	ComponentAuth,
-	ComponentOAuth,
-	ComponentDatabaseMySQL,
-	ComponentDatabasePostgres,
-	ComponentDatabaseSQLite,
-	ComponentScheduler,
-	ComponentCache,
-	ComponentEvents,
-	ComponentStorage,
-	ComponentJobs,
-}
-
-var appWizardComponentKeys = []ComponentKey{
-	ComponentCLI,
+	ComponentMail,
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -38,13 +23,15 @@ var appWizardComponentKeys = []ComponentKey{
 }
 
 // AppComponentDefinitions returns catalog entries that can participate in an app graph.
-func AppComponentDefinitions(available Components) []ComponentDefinition {
+func AppComponentDefinitions(_ Components) []ComponentDefinition {
 	return appDefinitionsForKeys(appComponentKeys)
 }
 
-// AppWizardComponentDefinitions returns app entries that belong in the interactive app wizard.
+// AppWizardComponentDefinitions returns the unified App component inventory used by interactive selection.
+//
+// Deprecated: Use AppComponentDefinitions.
 func AppWizardComponentDefinitions(available Components) []ComponentDefinition {
-	return appDefinitionsForKeys(appWizardComponentKeys)
+	return AppComponentDefinitions(available)
 }
 
 // appDefinitionsForKeys keeps app component ordering stable while ignoring catalog entries that no longer exist.

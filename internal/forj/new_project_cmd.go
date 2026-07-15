@@ -315,11 +315,7 @@ type model struct {
 	extrasIndex          int
 	demoAppEnabled       bool
 	starterKitApplicable bool
-	effectiveResources   project.ResourcePlan
-	effectiveIntent      project.LocalServiceIntent
-	effectiveConsumers   []project.EffectiveResourceConsumer
-	resourceOverrides    string
-	resourcesReconciled  bool
+	resourcePreparation  *newProjectResourcePreparation
 	atlasMode            atlasMode
 }
 
@@ -337,13 +333,9 @@ func (m *model) components() *project.Components {
 
 // finalizeConfig derives development tasks only after the effective resource and service plans are valid.
 func (m *model) finalizeConfig() error {
-	resourcePlan, err := m.selectedResourcePlan()
+	preparation, err := m.selectedResourcePreparation()
 	if err != nil {
 		return fmt.Errorf("resolve App resources: %w", err)
-	}
-	servicePlan, err := project.ResolveServicePlanWithConsumers(resourcePlan, *m.components(), m.selectedResourceIntent(), m.selectedResourceConsumers())
-	if err != nil {
-		return fmt.Errorf("resolve App services: %w", err)
 	}
 
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
@@ -363,7 +355,7 @@ func (m *model) finalizeConfig() error {
 		DownOnExit:        true,
 		WirePaths:         []string{project.DefaultApp().WireDir},
 	}
-	serviceTasks := planNewProjectServiceTasks(resourcePlan, servicePlan, *components)
+	serviceTasks := planNewProjectServiceTasks(preparation.plan, preparation.servicePlan, *components)
 	m.config.Dev.Pre = append(m.config.Dev.Pre, serviceTasks.Pre...)
 	m.config.Dev.Down = append(m.config.Dev.Down, serviceTasks.Down...)
 
@@ -588,35 +580,19 @@ func (m *model) applyExtrasSelection() {
 
 // resetResourcePreview invalidates owner-derived state after an earlier wizard choice changes.
 func (m *model) resetResourcePreview() {
-	m.effectiveResources = project.ResourcePlan{}
-	m.effectiveIntent = project.LocalServiceIntent{}
-	m.effectiveConsumers = nil
-	m.resourceOverrides = ""
-	m.resourcesReconciled = false
+	m.resourcePreparation = nil
 }
 
-// selectedResourcePlan returns the owner-reconciled plan when Path has supplied one.
-func (m model) selectedResourcePlan() (project.ResourcePlan, error) {
-	if m.resourcesReconciled {
-		return m.effectiveResources.Clone(), nil
+// selectedResourcePreparation returns the Path-reconciled renderer handoff or validates the ordinary defaults.
+func (m model) selectedResourcePreparation() (newProjectResourcePreparation, error) {
+	if m.resourcePreparation != nil {
+		return cloneNewProjectResourcePreparation(*m.resourcePreparation), nil
 	}
-	return project.DefaultResourcePlan(m.config.Render.Components)
-}
-
-// selectedResourceIntent returns owner intent only after the selected target has been reconciled.
-func (m model) selectedResourceIntent() project.LocalServiceIntent {
-	if m.resourcesReconciled {
-		return cloneNewProjectTargetServiceIntent(m.effectiveIntent)
+	plan, err := project.DefaultResourcePlan(m.config.Render.Components)
+	if err != nil {
+		return newProjectResourcePreparation{}, err
 	}
-	return project.LocalServiceIntent{}
-}
-
-// selectedResourceConsumers returns owner-discovered named and App-scoped consumers after Path reconciliation.
-func (m model) selectedResourceConsumers() []project.EffectiveResourceConsumer {
-	if !m.resourcesReconciled {
-		return nil
-	}
-	return cloneEffectiveResourceConsumers(m.effectiveConsumers)
+	return resolveNewProjectResourcePreparation(plan, m.config.Render.Components, project.LocalServiceIntent{}, nil)
 }
 
 func (m *model) applyAtlasModeSelection() {
@@ -1019,7 +995,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errorMsg = fmt.Sprintf("resolve App resources: %v", err)
 					return m, nil
 				}
-				reconciliation, err := reconcileNewProjectTargetResources(
+				preparation, err := prepareNewProjectTargetResources(
 					m.targetPath,
 					resourcePlan,
 					m.config.Render.Components,
@@ -1029,11 +1005,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errorMsg = err.Error()
 					return m, nil
 				}
-				m.effectiveResources = reconciliation.plan.Clone()
-				m.effectiveIntent = cloneNewProjectTargetServiceIntent(reconciliation.serviceIntent)
-				m.effectiveConsumers = cloneEffectiveResourceConsumers(reconciliation.serviceConsumers)
-				m.resourceOverrides = reconciliation.overrideSummary
-				m.resourcesReconciled = true
+				m.resourcePreparation = &preparation
 				m.errorMsg = ""
 				m.stage = StageConfirm
 				return m, nil
@@ -1279,9 +1251,6 @@ func (m model) View() string {
 		}
 		if tools := newProjectDevelopmentToolsSummary(m.config.Render.Components); tools != "" {
 			rows = append(rows, keyValue{"Development tools", tools})
-		}
-		if m.resourceOverrides != "" {
-			rows = append(rows, keyValue{"Existing target overrides", m.resourceOverrides})
 		}
 		rows = append(rows, keyValue{"Help format", m.selectedHelpFormatSummary()})
 		confirmBody := lipgloss.JoinVertical(lipgloss.Left, renderKeyValueTable(rows))
@@ -2326,15 +2295,9 @@ func (m model) validateBeforeConfirm() error {
 	if err := m.validatePathInput(); err != nil {
 		return err
 	}
-	resourcePlan, err := m.selectedResourcePlan()
+	_, err := m.selectedResourcePreparation()
 	if err != nil {
 		return fmt.Errorf("App resources are invalid: %w", err)
-	}
-	if err := resourcePlan.Validate(m.config.Render.Components); err != nil {
-		return fmt.Errorf("App resources are invalid: %w", err)
-	}
-	if _, err := project.ResolveServicePlanWithConsumers(resourcePlan, m.config.Render.Components, m.selectedResourceIntent(), m.selectedResourceConsumers()); err != nil {
-		return fmt.Errorf("App services are invalid: %w", err)
 	}
 
 	return nil
@@ -2548,15 +2511,15 @@ func (c *NewProjectCmd) Run() error {
 	}
 
 	// project renderer
-	resourcePlan, err := m.selectedResourcePlan()
+	preparation, err := m.selectedResourcePreparation()
 	if err != nil {
 		return fmt.Errorf("resolve App resources: %w", err)
 	}
 	i := ComponentRenderInput{
 		renderAll:          true,
-		resourcePlan:       resourcePlan,
-		localServiceIntent: m.selectedResourceIntent(),
-		serviceConsumers:   m.selectedResourceConsumers(),
+		resourcePlan:       preparation.plan,
+		localServiceIntent: preparation.serviceIntent,
+		serviceConsumers:   preparation.serviceConsumers,
 	}
 	err = runWithLoader("Rendering project files", func() error {
 		return c.renderer.Render(i)

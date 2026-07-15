@@ -388,7 +388,7 @@ func (m *appWizardModel) applyComponentSelection() {
 
 // deselectExclusiveComponents enforces one visible choice per exclusive component group.
 func (m *appWizardModel) deselectExclusiveComponents(selectedKey project.ComponentKey, group string) {
-	for _, definition := range project.AppWizardComponentDefinitions(m.available) {
+	for _, definition := range project.AppComponentDefinitions(m.available) {
 		if definition.Key == selectedKey || definition.ExclusiveGroup != group {
 			continue
 		}
@@ -415,7 +415,7 @@ func (m *appWizardModel) setAllComponents(selected bool) {
 
 // deselectDependentComponents removes visible app surfaces that would otherwise force the component back on.
 func (m *appWizardModel) deselectDependentComponents(key project.ComponentKey) {
-	for _, definition := range project.AppWizardComponentDefinitions(m.available) {
+	for _, definition := range project.AppComponentDefinitions(m.available) {
 		if definition.Key == key || !project.AppComponentRequires(definition.Key, key) {
 			continue
 		}
@@ -723,7 +723,7 @@ func makeHelpFormatItems(selected project.HelpFormat) []list.Item {
 
 // makeAppComponentItems converts component definitions into list rows with current selection state.
 func makeAppComponentItems(available project.Components, selected project.Components) []list.Item {
-	definitions := project.AppWizardComponentDefinitions(available)
+	definitions := project.AppComponentDefinitions(available)
 	items := make([]list.Item, 0, len(definitions))
 	for _, definition := range definitions {
 		items = append(items, componentItem{

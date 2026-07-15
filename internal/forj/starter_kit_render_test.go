@@ -173,6 +173,7 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 	}
 }
 
+// TestScaffoldTemplHTMXStarterKit verifies the templ starter's complete frontend and server-rendered surface.
 func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
@@ -195,6 +196,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitTemplHTMX, true); err != nil {
 		t.Fatalf("scaffold templ htmx starter kit: %v", err)
 	}
@@ -388,6 +390,7 @@ func TestScaffoldTemplHTMXStarterKitWithoutAuthOmitsAuthRoutes(t *testing.T) {
 	}
 }
 
+// TestScaffoldTemplHTMXStarterKitOverwriteRefreshesServerViews verifies overwrite mode replaces framework-owned server views.
 func TestScaffoldTemplHTMXStarterKitOverwriteRefreshesServerViews(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
@@ -423,6 +426,7 @@ templ stale() {
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitTemplHTMX, true); err != nil {
 		t.Fatalf("scaffold templ htmx starter kit: %v", err)
 	}

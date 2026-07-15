@@ -50,16 +50,61 @@ type resourceRenderValues struct {
 	RedisExternal            bool
 }
 
-var resourceEnvironmentKeys = map[project.ResourceKey]struct {
-	active    string
-	supported string
-}{
-	project.ResourceDatabase: {active: "DB_DRIVER", supported: "DB_SUPPORTED_DRIVERS"},
-	project.ResourceCache:    {active: "CACHE_DRIVER", supported: "CACHE_SUPPORTED_DRIVERS"},
-	project.ResourceQueue:    {active: "QUEUE_DRIVER", supported: "QUEUE_SUPPORTED_DRIVERS"},
-	project.ResourceEvents:   {active: "EVENTS_DRIVER", supported: "EVENTS_SUPPORTED_DRIVERS"},
-	project.ResourceStorage:  {active: "STORAGE_DRIVER", supported: "STORAGE_SUPPORTED_DRIVERS"},
-	project.ResourceMail:     {active: "MAIL_DRIVER", supported: "MAIL_SUPPORTED_DRIVERS"},
+// prepareResourceRenderState resolves one validated resource snapshot for every renderer entry point.
+func (p *ProjectRenderer) prepareResourceRenderState(input ComponentRenderInput, projectComponents project.Components) error {
+	p.resources = resourceRenderState{
+		serviceConsumers: cloneEffectiveResourceConsumers(input.serviceConsumers),
+	}
+	if len(input.resourcePlan.Selections) > 0 {
+		plan, err := normalizeExplicitResourcePlan(input.resourcePlan, projectComponents)
+		if err != nil {
+			return err
+		}
+		p.resources.plan = plan
+		p.resources.explicitPlan = true
+		p.resources.serviceIntent = input.localServiceIntent
+	} else {
+		// Legacy YAML remains a one-way migration source until environment initialization succeeds.
+		queueDriver := legacyQueueDriverDefault(p.config.Render.LegacyQueueDriver())
+		plan, err := compatibilityResourcePlan(projectComponents, queueDriver)
+		if err != nil {
+			return err
+		}
+		p.resources.plan = plan
+	}
+
+	var err error
+	p.resources.plan, err = withProjectDatabaseCapabilities(p.resources.plan, p.config.Render.Components, projectComponents)
+	if err != nil {
+		return err
+	}
+	if input.renderAll {
+		if err := p.prepareResourceEnvironment(); err != nil {
+			return err
+		}
+	}
+	if _, err := project.ResolveServicePlanWithConsumers(
+		p.resources.plan,
+		p.projectRenderComponents(),
+		p.resources.serviceIntent,
+		p.resources.serviceConsumers,
+	); err != nil {
+		return fmt.Errorf("resolve effective App services: %w", err)
+	}
+	return nil
+}
+
+// publishPendingResourceEnvironment commits validated owner changes before another renderer step can update the same file.
+func (p *ProjectRenderer) publishPendingResourceEnvironment() error {
+	if !p.resources.pendingEnvironmentWrite {
+		return nil
+	}
+	if err := p.writeEnvironmentFile(".env", p.resources.pendingEnvironment, 0o644); err != nil {
+		return fmt.Errorf("write resource environment: %w", err)
+	}
+	p.resources.pendingEnvironment = nil
+	p.resources.pendingEnvironmentWrite = false
+	return nil
 }
 
 // prepareResourceEnvironment reconciles an existing owner file without publishing changes before validation completes.
@@ -80,49 +125,46 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	if err != nil {
 		return fmt.Errorf("read resource environment: %w", err)
 	}
-	if !ownerExists && p.explicitResourcePlan {
+	if !ownerExists && p.resources.explicitPlan {
 		// A committed fallback reproduces an existing build, but it cannot replace a new wizard decision.
 		return nil
 	}
 	_, profilesSet := envAssignment(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
 	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile("docker-compose.yml")
 	if legacyLocalRedis {
-		p.localServiceIntent = p.localServiceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
+		p.resources.serviceIntent = p.resources.serviceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 		if ownerExists {
 			var profileChanged bool
 			source, profileChanged = seedExactComposeProfile(source, "redis")
-			p.pendingEnvironmentWrite = profileChanged
+			p.resources.pendingEnvironmentWrite = profileChanged
 		}
 	} else {
-		p.localServiceIntent = localServiceIntentFromEnvironment(source, p.localServiceIntent)
+		p.resources.serviceIntent = localServiceIntentFromEnvironment(source, p.resources.serviceIntent)
 	}
 	projectComponents := p.projectRenderComponents()
 	if !projectComponents.Cache {
 		var removedCacheEnvironment bool
 		source, removedCacheEnvironment = removeDisabledCacheEnvironment(source, p.config)
-		p.pendingEnvironmentWrite = p.pendingEnvironmentWrite || removedCacheEnvironment
+		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || removedCacheEnvironment
 	}
 	updated, effective, changed, err := reconcileResourceEnvironment(
 		source,
-		p.resourcePlan,
+		p.resources.plan,
 		projectComponents,
-		p.explicitResourcePlan,
+		p.resources.explicitPlan,
 	)
 	if err != nil {
 		return err
 	}
-	p.resourcePlan = effective
+	p.resources.plan = effective
 	consumers, err := effectiveResourceConsumersFromProjectConfig(updated, effective, projectComponents, p.config)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}
-	p.serviceConsumers = cloneEffectiveResourceConsumers(consumers)
-	if queue, ok := effective.Selection(project.ResourceQueue); ok {
-		p.queueDriver = queue.Active
-	}
+	p.resources.serviceConsumers = cloneEffectiveResourceConsumers(consumers)
 	if ownerExists {
-		p.pendingEnvironment = updated
-		p.pendingEnvironmentWrite = p.pendingEnvironmentWrite || changed
+		p.resources.pendingEnvironment = updated
+		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || changed
 	}
 	return nil
 }
@@ -152,7 +194,7 @@ func compatibilityResourcePlan(components project.Components, legacyQueueDriver 
 	}
 	if components.Jobs {
 		queue, _ := plan.Selection(project.ResourceQueue)
-		queue.Active = resolveQueueDriverSeed("", legacyQueueDriver)
+		queue.Active = legacyQueueDriverDefault(legacyQueueDriver)
 		if queue.Active != "workerpool" {
 			queue.Supported = []string{queue.Active}
 		}
@@ -221,22 +263,23 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 		if !ok {
 			return nil, project.ResourcePlan{}, false, fmt.Errorf("resource %s has no initialization selection", definition.Label)
 		}
-		keys := resourceEnvironmentKeys[definition.Key]
-		active, activeSet := envAssignment(lines, keys.active)
+		activeKey := definition.EnvironmentKey("DRIVER")
+		supportedKey := definition.EnvironmentKey("SUPPORTED_DRIVERS")
+		active, activeSet := envAssignment(lines, activeKey)
 		active = project.CanonicalResourceDriver(definition.Key, active)
 		if !activeSet || active == "" {
 			active = seedSelection.Active
-			lines = setFinalEnvAssignment(lines, keys.active, active)
+			lines = setFinalEnvAssignment(lines, activeKey, active)
 			changed = true
 		}
 
-		supportedValue, supportedSet := envAssignment(lines, keys.supported)
+		supportedValue, supportedSet := envAssignment(lines, supportedKey)
 		supported := splitDriverList(supportedValue)
 		for index := range supported {
 			supported[index] = project.CanonicalResourceDriver(definition.Key, supported[index])
 		}
 		if supportedSet && len(supported) > 0 && !stringSliceContainsFold(supported, active) {
-			return nil, project.ResourcePlan{}, false, fmt.Errorf("%s in .env excludes active %s %q; add %q before rerendering", keys.supported, keys.active, active, active)
+			return nil, project.ResourcePlan{}, false, fmt.Errorf("%s in .env excludes active %s %q; add %q before rerendering", supportedKey, activeKey, active, active)
 		}
 		if !supportedSet || len(supported) == 0 {
 			firstPortableInitialization := (definition.Key == project.ResourceEvents || definition.Key == project.ResourceQueue) && !activeSet && !supportedSet
@@ -248,7 +291,7 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 			if !stringSliceContainsFold(supported, active) {
 				supported = append(supported, active)
 			}
-			lines = setFinalEnvAssignment(lines, keys.supported, strings.Join(supported, ","))
+			lines = setFinalEnvAssignment(lines, supportedKey, strings.Join(supported, ","))
 			changed = true
 		}
 		effective = effective.WithSelection(definition.Key, project.DriverSelection{Active: active, Supported: supported})
@@ -295,7 +338,7 @@ func removeDisabledCacheEnvironment(source []byte, config *project.Config) ([]by
 	}
 	if config != nil {
 		for _, app := range runtimeAppsForMetadata(config) {
-			prefix := strEnvPrefix(app.Name)
+			prefix := project.AppEnvironmentPrefix(app.Name)
 			if prefix != "" {
 				keys[prefix+"_CACHE_DRIVER"] = struct{}{}
 			}
@@ -412,13 +455,12 @@ func composeRedisServiceWithoutProfile(path string) bool {
 	return inRedis
 }
 
-// resourceRenderValuesForPlan produces stable strings and service flags for environment and Compose templates.
-func resourceRenderValuesForPlan(plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent) resourceRenderValues {
-	return resourceRenderValuesForPlanWithConsumers(plan, components, intent, nil)
-}
-
 // resourceRenderValuesForPlanWithConsumers includes environment-resolved named and App-scoped service activity.
-func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent, consumers []project.EffectiveResourceConsumer) resourceRenderValues {
+func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent, consumers []project.EffectiveResourceConsumer) (resourceRenderValues, error) {
+	servicePlan, err := project.ResolveServicePlanWithConsumers(plan, components, intent, consumers)
+	if err != nil {
+		return resourceRenderValues{}, fmt.Errorf("resolve resource services: %w", err)
+	}
 	values := resourceRenderValues{}
 	set := func(key project.ResourceKey, active *string, supported *string) {
 		selection, ok := plan.Selection(key)
@@ -450,33 +492,21 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.StorageFaviconsDriver = named.Active
 		}
 	}
-	values.RedisActive = resourcePlanUsesDriver(plan, components, "redis", true)
 	values.RedisSupported = components.Docker && resourcePlanUsesDriver(plan, components, "redis", false)
-	mode, _ := intent.Mode(project.ServiceRedis)
-	values.RedisLocal = components.Docker && mode == project.LocalServiceModeLocal
-	values.RedisExternal = values.RedisActive && !values.RedisLocal
-	if len(consumers) > 0 {
-		servicePlan, err := project.ResolveServicePlanWithConsumers(plan, components, intent, consumers)
-		if err == nil {
-			values.RedisActive = false
-			values.RedisLocal = false
-			values.RedisExternal = false
-			for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
-				switch requirement.State {
-				case project.ServiceStateActiveLocal, project.ServiceStateLocalRequestedUnused:
-					values.RedisLocal = true
-				case project.ServiceStateExternalRequired:
-					if requirement.EndpointAffinity == "" {
-						values.RedisExternal = true
-					}
-				}
-				if len(requirement.ActiveConsumers) > 0 {
-					values.RedisActive = true
-				}
+	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
+		switch requirement.State {
+		case project.ServiceStateActiveLocal, project.ServiceStateLocalRequestedUnused:
+			values.RedisLocal = true
+		case project.ServiceStateExternalRequired:
+			if requirement.EndpointAffinity == "" {
+				values.RedisExternal = true
 			}
 		}
+		if len(requirement.ActiveConsumers) > 0 {
+			values.RedisActive = true
+		}
 	}
-	return values
+	return values, nil
 }
 
 // DriverEnvironmentPlaceholders renders only opt-in driver hints selected by the effective build contract.

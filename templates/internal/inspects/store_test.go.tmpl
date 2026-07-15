@@ -2,6 +2,7 @@ package inspects
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -123,6 +124,7 @@ func TestInspectStoreSupportsConcurrentIngestAndRead(t *testing.T) {
 	const writers = 8
 	const recordsPerWriter = 100
 	var wg sync.WaitGroup
+	errors := make(chan error, writers*recordsPerWriter*3)
 	for writer := 0; writer < writers; writer++ {
 		writer := writer
 		wg.Add(1)
@@ -130,16 +132,26 @@ func TestInspectStoreSupportsConcurrentIngestAndRead(t *testing.T) {
 			defer wg.Done()
 			for idx := 0; idx < recordsPerWriter; idx++ {
 				inspectID := "inspect-" + strconv.Itoa(writer) + "-" + strconv.Itoa(idx)
-				_ = manager.Ingest(context.Background(), Record{Summary: InspectSummary{
+				if err := manager.Ingest(context.Background(), Record{Summary: InspectSummary{
 					TraceID: inspectID,
 					Source:  runtime.SourceJobs.String(),
-				}})
-				_, _, _ = manager.ByID(context.Background(), inspectID)
-				_, _ = manager.Recent(context.Background(), RecentQuery{Limit: 16})
+				}}); err != nil {
+					errors <- fmt.Errorf("ingest %s: %w", inspectID, err)
+				}
+				if _, _, err := manager.ByID(context.Background(), inspectID); err != nil {
+					errors <- fmt.Errorf("read %s by ID: %w", inspectID, err)
+				}
+				if _, err := manager.Recent(context.Background(), RecentQuery{Limit: 16}); err != nil {
+					errors <- fmt.Errorf("read recent after %s: %w", inspectID, err)
+				}
 			}
 		}()
 	}
 	wg.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
 
 	recent, err := manager.Recent(context.Background(), RecentQuery{Limit: writers * recordsPerWriter})
 	if err != nil {

@@ -75,7 +75,7 @@ type DevWatchMatchers struct {
 
 // Empty reports whether the matcher set has no configured rules.
 func (m DevWatchMatchers) Empty() bool {
-	return len(m.Include) == 0 && len(m.Exclude) == 0
+	return len(m.Include) == 0 && len(m.Exclude) == 0 && len(m.Extra) == 0
 }
 
 // IsLegacy reports whether the watcher uses the historical wgo flag grammar.

@@ -13,6 +13,7 @@ import (
 	"github.com/goforj/str"
 )
 
+// cacheAccessorTemplateData keeps named cache methods and special session handling in one render snapshot.
 type cacheAccessorTemplateData struct {
 	HasSessions   bool
 	Names         []cacheAccessorName
@@ -20,11 +21,13 @@ type cacheAccessorTemplateData struct {
 	AccessorNames []cacheAccessorName
 }
 
+// cacheAccessorName binds an environment store name to its generated Go method.
 type cacheAccessorName struct {
 	Method string
 	Store  string
 }
 
+// cacheConfigTemplateData keeps compiled drivers and named stores aligned while rendering the manager.
 type cacheConfigTemplateData struct {
 	CompiledDrivers []string
 	Drivers         []cacheDriverSpec
@@ -35,6 +38,7 @@ type cacheConfigTemplateData struct {
 	AccessorNames   []cacheAccessorName
 }
 
+// cacheDriverSpec captures the import and constructor metadata needed to emit one cache driver branch.
 type cacheDriverSpec struct {
 	ConstName    string
 	Constructor  string
@@ -46,6 +50,7 @@ type cacheDriverSpec struct {
 	Fields       []cacheConfigField
 }
 
+// cacheConfigField binds a driver configuration field to its generated value expression.
 type cacheConfigField struct {
 	Name  string
 	Value string
@@ -253,6 +258,7 @@ func discoverCacheStoreNames(projectDir string) []string {
 	return names
 }
 
+// renderCacheAccessors keeps generated methods aligned with the named stores discovered for this build.
 func renderCacheAccessors(names []string) ([]byte, error) {
 	data := cacheAccessorTemplateData{
 		OtherNames:    make([]cacheAccessorName, 0, len(names)),
@@ -484,6 +490,7 @@ var cacheRootKeys = []string{
 	"ENCRYPTION_KEY",
 }
 
+// Manager owns the cache stores generated from the project's build contract.
 type Manager struct {
 	defaultStore *cache.Cache
 	sessions     *cache.Cache
@@ -493,28 +500,35 @@ type Manager struct {
 	observer     Observer
 }
 
+// Instance gives tooling a uniform view of each generated cache store.
 type Instance struct {
 	Name      string
 	Store     *cache.Cache
 	IsDefault bool
 }
 
+// ReadinessCheck pairs a stable cache name with its health probe.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
 }
 
+// Observer decouples generated cache instrumentation from its metrics and tracing consumers.
 type Observer interface {
+	// OnCacheOp gives generated cache wrappers one stable hook for operation telemetry.
 	OnCacheOp(ctx context.Context, event CacheOpEvent)
 }
 
+// CacheOpEvent adds the logical store name to the cache runtime's operation event.
 type CacheOpEvent struct {
 	Name string
 	cache.CacheOpEvent
 }
 
+// ObserverFunc lets a callback participate in the generated cache observer contract.
 type ObserverFunc func(ctx context.Context, event CacheOpEvent)
 
+// OnCacheOp adapts a callback so generated managers can compose it with interface-based observers.
 func (f ObserverFunc) OnCacheOp(ctx context.Context, event CacheOpEvent) {
 	if f == nil {
 		return
@@ -522,8 +536,10 @@ func (f ObserverFunc) OnCacheOp(ctx context.Context, event CacheOpEvent) {
 	f(ctx, event)
 }
 
+// observerChain retains multiple cache observers without exposing composition to callers.
 type observerChain []Observer
 
+// OnCacheOp preserves registration order when a cache operation is fanned out to multiple observers.
 func (c observerChain) OnCacheOp(ctx context.Context, event CacheOpEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -533,10 +549,12 @@ func (c observerChain) OnCacheOp(ctx context.Context, event CacheOpEvent) {
 	}
 }
 
+// NewManager builds cache instances from the environment contract captured by this generated artifact.
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("CACHE"))
 }
 
+// WithObserver adds observability without replacing observers already attached by framework wiring.
 func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
@@ -575,6 +593,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	return m
 }
 
+// ReadinessChecks exposes one probe per generated cache so health reflects every configured store.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	if m == nil {
 		return nil
@@ -602,6 +621,7 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
+// newManagerFromEnv constructs only the named cache stores captured when this artifact was generated.
 func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 	defaultStore, err := buildStore(string(defaultCacheName), cacheScope)
 	if err != nil {
@@ -714,6 +734,7 @@ func cacheDriverCompiled(driver string) bool {
 	return false
 }
 
+// cacheDefaultTTL preserves expiration when configuration is missing or non-positive.
 func cacheDefaultTTL(scope env.Scope) time.Duration {
 	seconds := scope.GetInt("DEFAULT_TTL_SECONDS", "300")
 	if seconds <= 0 {
@@ -722,6 +743,7 @@ func cacheDefaultTTL(scope env.Scope) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// cacheMemoryCleanupInterval preserves periodic cleanup when configuration is missing or non-positive.
 func cacheMemoryCleanupInterval(scope env.Scope) time.Duration {
 	seconds := scope.GetInt("MEMORY_CLEANUP_SECONDS", "600")
 	if seconds <= 0 {
@@ -730,6 +752,7 @@ func cacheMemoryCleanupInterval(scope env.Scope) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// cachePrefix keeps the default namespace stable while allowing an explicit application prefix.
 func cachePrefix(scope env.Scope) string {
 	value := scope.Get("PREFIX", "app")
 	if value == "" {
@@ -738,6 +761,7 @@ func cachePrefix(scope env.Scope) string {
 	return value
 }
 
+// cacheFileDir isolates named file stores when no directory is supplied explicitly.
 func cacheFileDir(name string, scope env.Scope) string {
 	value := strings.TrimSpace(scope.Get("FILE_DIR", ""))
 	if value != "" {
@@ -750,6 +774,7 @@ func cacheFileDir(name string, scope env.Scope) string {
 	return filepath.Join(base, name)
 }
 
+// cacheSQLiteDSN isolates named SQLite stores when the driver uses its generated default path.
 func cacheSQLiteDSN(name string) string {
 	base := filepath.Join(os.TempDir(), "cache-sqlite")
 	if name == "" || name == string(defaultCacheName) {
@@ -758,6 +783,7 @@ func cacheSQLiteDSN(name string) string {
 	return filepath.Join(base, name+".db")
 }
 
+// cacheAddresses normalizes comma-separated endpoints before they reach multi-server cache drivers.
 func cacheAddresses(scope env.Scope) []string {
 	value := strings.TrimSpace(scope.Get("ADDRESSES", ""))
 	if value == "" {
@@ -774,6 +800,7 @@ func cacheAddresses(scope env.Scope) []string {
 	return out
 }
 
+// cacheRedisTLSConfig leaves plaintext connections untouched unless TLS is explicitly selected.
 func cacheRedisTLSConfig(scope env.Scope) *tls.Config {
 	if !scope.GetBool("TLS", "false") {
 		return nil
@@ -783,6 +810,7 @@ func cacheRedisTLSConfig(scope env.Scope) *tls.Config {
 	}
 }
 
+// cacheCompression constrains environment values to codecs supported by the cache runtime.
 func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
 	switch strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none"))) {
 	case "", "none":
@@ -796,6 +824,7 @@ func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
 	}
 }
 
+// cacheEncryptionKey treats blank configuration as encryption disabled instead of an empty secret.
 func cacheEncryptionKey(scope env.Scope) []byte {
 	value := strings.TrimSpace(scope.Get("ENCRYPTION_KEY", ""))
 	if value == "" {
@@ -804,6 +833,7 @@ func cacheEncryptionKey(scope env.Scope) []byte {
 	return []byte(value)
 }
 
+// cacheReadinessCheck adapts both wrapper and driver readiness contracts to one generated probe.
 func cacheReadinessCheck(ctx context.Context, store *cache.Cache) error {
 	if store == nil {
 		return nil
@@ -820,6 +850,7 @@ func cacheReadinessCheck(ctx context.Context, store *cache.Cache) error {
 }
 
 {{- if .HasNATS }}
+// buildNATSStore reuses an existing JetStream bucket or provisions it from the generated cache contract.
 func buildNATSStore(name string, scope env.Scope, baseConfig cachecore.BaseConfig) (cachecore.Store, error) {
 	url := strings.TrimSpace(scope.Get("URL", env.Get("NATS_URL", "nats://127.0.0.1:4222")))
 	if url == "" {
@@ -869,6 +900,7 @@ func buildNATSStore(name string, scope env.Scope, baseConfig cachecore.BaseConfi
 	}), nil
 }
 
+// cacheNATSBucket gives each named cache a stable, isolated JetStream bucket.
 func cacheNATSBucket(name string) string {
 	if name == "" || name == string(defaultCacheName) {
 		return "CACHE"
@@ -880,6 +912,7 @@ func cacheNATSBucket(name string) string {
 	return "CACHE_" + value
 }
 
+// cacheNATSHistory clamps history to the range accepted by JetStream key-value buckets.
 func cacheNATSHistory(scope env.Scope) uint8 {
 	value := scope.GetInt("HISTORY", "1")
 	if value < 1 {
@@ -891,6 +924,7 @@ func cacheNATSHistory(scope env.Scope) uint8 {
 	return uint8(value)
 }
 
+// cacheNATSBucketTTL preserves zero as the JetStream convention for no bucket-wide expiration.
 func cacheNATSBucketTTL(scope env.Scope) time.Duration {
 	seconds := scope.GetInt("BUCKET_TTL_SECONDS", "0")
 	if seconds <= 0 {

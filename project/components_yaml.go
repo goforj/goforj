@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// componentYAMLKeys is intentionally independent from wizard order so persisted config stays stable when the UI is regrouped.
 var componentYAMLKeys = []ComponentKey{
 	ComponentCLI,
 	ComponentDemoApp,

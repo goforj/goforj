@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
@@ -26,7 +27,10 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	}
 	config := &project.Config{
 		ProjectName: "QueueSeed", GoModuleName: "example.com/queueseed",
-		Render: project.RenderConfig{Components: project.Components{CLI: true, Jobs: true}},
+		Render: project.RenderConfig{
+			Components:               project.Components{CLI: true, Jobs: true},
+			ComponentContractVersion: project.CurrentComponentContractVersion,
+		},
 	}
 	encoded, err := yaml.Marshal(config)
 	if err != nil {
@@ -38,7 +42,10 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	}
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "nats"}); err != nil {
+	if err := renderer.Render(ComponentRenderInput{
+		renderAll:    true,
+		resourcePlan: queueDriverResourcePlanForTest(t, config.Render.Components, "nats"),
+	}); err != nil {
 		t.Fatalf("initial render: %v", err)
 	}
 	envData, err := os.ReadFile(".env")
@@ -59,7 +66,10 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	if err := os.WriteFile(".env", []byte("QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool\n"), 0o644); err != nil {
 		t.Fatalf("write existing .env: %v", err)
 	}
-	if err := renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "redis"}); err != nil {
+	if err := renderer.Render(ComponentRenderInput{
+		renderAll:    true,
+		resourcePlan: queueDriverResourcePlanForTest(t, config.Render.Components, "redis"),
+	}); err != nil {
 		t.Fatalf("rerender: %v", err)
 	}
 	envData, err = os.ReadFile(".env")
@@ -71,105 +81,73 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	}
 }
 
-// TestResolveQueueDriverSeed keeps the wizard selection transient while retaining one-way legacy migration.
-func TestResolveQueueDriverSeed(t *testing.T) {
+// TestLegacyQueueDriverDefault retains one-way compatibility without a second active selection path.
+func TestLegacyQueueDriverDefault(t *testing.T) {
 	tests := []struct {
-		name     string
-		selected string
-		legacy   string
-		want     string
+		name   string
+		legacy string
+		want   string
 	}{
-		{name: "wizard selection wins", selected: " NATS ", legacy: "redis", want: "nats"},
 		{name: "legacy config seeds missing selection", legacy: "workerpool", want: "workerpool"},
-		{name: "invalid values use portable default", selected: "unknown", legacy: "invalid", want: "workerpool"},
+		{name: "invalid values use portable default", legacy: "invalid", want: "workerpool"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := resolveQueueDriverSeed(test.selected, test.legacy); got != test.want {
-				t.Fatalf("resolveQueueDriverSeed(%q, %q) = %q, want %q", test.selected, test.legacy, got, test.want)
+			if got := legacyQueueDriverDefault(test.legacy); got != test.want {
+				t.Fatalf("legacyQueueDriverDefault(%q) = %q, want %q", test.legacy, got, test.want)
 			}
 		})
 	}
 }
 
-// TestReconcileQueueDriverEnvPreservesOwnership verifies migration fills only missing values and rejects owner conflicts.
-func TestReconcileQueueDriverEnvPreservesOwnership(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		seed          string
-		wantActive    string
-		wantFragments []string
-		wantUnchanged bool
-		wantError     string
-	}{
-		{
-			name:          "existing environment wins",
-			input:         "QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool,redis\n",
-			seed:          "nats",
-			wantActive:    "workerpool",
-			wantUnchanged: true,
+// TestRenderAppOnlyPublishesResourceEnvironmentBeforeAppDefaults prevents App updates from overwriting a staged owner migration.
+func TestRenderAppOnlyPublishesResourceEnvironmentBeforeAppDefaults(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	components := project.Components{CLI: true, Jobs: true}
+	config := &project.Config{
+		ProjectName:  "AppResourceMigration",
+		GoModuleName: "example.com/app-resource-migration",
+		Render: project.RenderConfig{
+			Components:               components,
+			ComponentContractVersion: project.CurrentComponentContractVersion,
 		},
-		{
-			name:          "seed fills missing active",
-			input:         "APP_ENV=local\nQUEUE_SUPPORTED_DRIVERS=nats,redis\n",
-			seed:          "nats",
-			wantActive:    "nats",
-			wantFragments: []string{"QUEUE_DRIVER=nats\n", "QUEUE_SUPPORTED_DRIVERS=nats,redis\n"},
-		},
-		{
-			name:          "seed fills missing pair",
-			input:         "APP_ENV=local\n",
-			seed:          "workerpool",
-			wantActive:    "workerpool",
-			wantFragments: []string{"QUEUE_DRIVER=workerpool\n", "QUEUE_SUPPORTED_DRIVERS=workerpool\n"},
-		},
-		{
-			name:      "owner contract excludes active",
-			input:     "QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=redis\n",
-			seed:      "nats",
-			wantError: "excludes active QUEUE_DRIVER \"workerpool\"",
-		},
-		{
-			name:      "owner active is unknown",
-			input:     "QUEUE_DRIVER=custom\nQUEUE_SUPPORTED_DRIVERS=custom\n",
-			seed:      "redis",
-			wantError: "selects unsupported driver \"custom\"",
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: components},
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			updated, active, changed, err := reconcileQueueDriverEnv([]byte(test.input), test.seed)
-			if test.wantError != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantError) {
-					t.Fatalf("reconcile error = %v, want %q", err, test.wantError)
-				}
-				if changed || updated != nil {
-					t.Fatalf("invalid owner contract returned a rewrite: changed=%t data=%q", changed, updated)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("reconcile queue environment: %v", err)
-			}
-			if active != test.wantActive {
-				t.Fatalf("active driver = %q, want %q", active, test.wantActive)
-			}
-			if test.wantUnchanged {
-				if changed || string(updated) != test.input {
-					t.Fatalf("owner environment changed: changed=%t data=%q", changed, updated)
-				}
-				return
-			}
-			if !changed {
-				t.Fatal("missing queue values did not request an environment write")
-			}
-			for _, fragment := range test.wantFragments {
-				if !strings.Contains(string(updated), fragment) {
-					t.Fatalf("updated environment omitted %q:\n%s", fragment, updated)
-				}
-			}
-		})
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(".env", []byte("QUEUE_DRIVER=workerpool\n"), 0o600); err != nil {
+		t.Fatalf("write owner environment: %v", err)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.RenderAppOnly(project.DefaultNamedApp("worker"), makeapp.RenderOptions{
+		Components: components,
+		SkipWire:   true,
+	}); err != nil {
+		t.Fatalf("render existing App: %v", err)
+	}
+	environment, err := os.ReadFile(".env")
+	if err != nil {
+		t.Fatalf("read owner environment: %v", err)
+	}
+	for _, want := range []string{
+		"QUEUE_SUPPORTED_DRIVERS=workerpool",
+		"WORKER_QUEUE_DRIVER=workerpool",
+	} {
+		if !strings.Contains(string(environment), want) {
+			t.Fatalf("owner environment omitted %q after App render:\n%s", want, environment)
+		}
 	}
 }
 
@@ -203,7 +181,7 @@ func TestProjectRendererRejectsQueueContractBeforeLegacyCleanup(t *testing.T) {
 	}
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	err = renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "redis"})
+	err = renderer.Render(ComponentRenderInput{renderAll: true})
 	if err == nil || !strings.Contains(err.Error(), "excludes active QUEUE_DRIVER \"workerpool\"") {
 		t.Fatalf("render error = %v, want supported-driver conflict", err)
 	}

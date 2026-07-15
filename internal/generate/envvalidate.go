@@ -42,6 +42,7 @@ func discoverPrimitiveChildNames(projectDir string, resourcePrefix string, rootK
 	return sortStrings(names)
 }
 
+// primitiveEnvContract keeps every generator's accepted environment shape explicit and driver-aware.
 type primitiveEnvContract struct {
 	Prefix                string
 	DefaultDriver         string
@@ -323,7 +324,7 @@ func appPrefixedActiveDrivers(projectDir string, resourcePrefix string, defaultD
 func generationAppEnvPrefixes(projectDir string) []string {
 	prefixes := map[string]struct{}{}
 	addName := func(name string) {
-		if prefix := generationAppEnvPrefix(name); prefix != "" {
+		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
 			prefixes[prefix] = struct{}{}
 		}
 	}
@@ -373,7 +374,7 @@ func generationAppEnvPrefixesForResource(projectDir string, resourcePrefix strin
 	enabled := map[string]struct{}{}
 	configured := map[string]struct{}{}
 	for name, appConfig := range config.Apps {
-		prefix := generationAppEnvPrefix(name)
+		prefix := project.AppEnvironmentPrefix(name)
 		if prefix == "" {
 			continue
 		}
@@ -388,7 +389,7 @@ func generationAppEnvPrefixesForResource(projectDir string, resourcePrefix strin
 		if _, exists := configured[name]; exists || !generationComponentsSupportResource(defaultComponents, resourcePrefix) {
 			return
 		}
-		if prefix := generationAppEnvPrefix(name); prefix != "" {
+		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
 			enabled[prefix] = struct{}{}
 		}
 	}
@@ -427,21 +428,6 @@ func generationComponentsSupportResource(components project.Components, resource
 	}
 }
 
-// generationAppEnvPrefix mirrors the generated runtime's normalization for named App overlays.
-func generationAppEnvPrefix(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" || name == project.DefaultAppName {
-		return ""
-	}
-	parts := strings.FieldsFunc(name, func(character rune) bool {
-		return character == '-' || character == '_' || character == ' ' || character == '.'
-	})
-	for index := range parts {
-		parts[index] = strings.ToUpper(parts[index])
-	}
-	return strings.Join(parts, "_")
-}
-
 // validGenerationAppEnvPrefix rejects malformed ambient keys before they can widen a compiled manifest.
 func validGenerationAppEnvPrefix(prefix string) bool {
 	if prefix == "" || strings.HasPrefix(prefix, "_") || strings.HasSuffix(prefix, "_") || strings.Contains(prefix, "__") {
@@ -475,6 +461,7 @@ func effectivePrimitiveDriver(value, fallback string) string {
 	return driver
 }
 
+// allowedPrimitiveKeys combines shared and driver-specific keys so stale settings fail before code generation.
 func allowedPrimitiveKeys(contract primitiveEnvContract, driver string) (map[string]struct{}, error) {
 	allowed := make(map[string]struct{}, len(contract.CommonKeys)+1)
 	for key := range contract.CommonKeys {
@@ -517,6 +504,7 @@ func splitScopedEnvKey(value string, rootKeys []string) (child string, rootKey s
 	return "", "", false
 }
 
+// makeSet avoids repeated linear scans in environment validation paths with overlapping key inventories.
 func makeSet(values ...string) map[string]struct{} {
 	set := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -525,6 +513,7 @@ func makeSet(values ...string) map[string]struct{} {
 	return set
 }
 
+// parseSupportedDrivers distinguishes an omitted build manifest from an explicit, validated driver set.
 func parseSupportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}) (map[string]struct{}, error) {
 	raw := str.Of(env.WithPrefix(prefix).Get("SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
 	if raw == "" {
@@ -547,6 +536,7 @@ func parseSupportedDrivers(prefix string, knownDrivers map[string]map[string]str
 	return set, nil
 }
 
+// supportedDrivers uses catalog fallbacks only when the owner environment has not declared a build manifest.
 func supportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}, fallback []string) ([]string, error) {
 	set, err := parseSupportedDrivers(prefix, knownDrivers)
 	if err != nil {
@@ -570,6 +560,7 @@ func supportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}
 	return sortStrings(out), nil
 }
 
+// sortStrings keeps generated imports, manifests, and validation errors deterministic across runs.
 func sortStrings(set map[string]struct{}) []string {
 	if len(set) == 0 {
 		return nil

@@ -125,7 +125,7 @@ func TestEventsEnvironmentUsesProjectEnvelopeAndAppParticipation(t *testing.T) {
 			plan := defaultResourcePlanForTest(t, components)
 			renderer := NewProjectRenderer(logger.NewSilentLogger())
 			renderer.config = test.config
-			renderer.resourcePlan = plan
+			renderer.resources.plan = plan
 			renderer.stats = &renderStats{}
 			path := filepath.Join(t.TempDir(), ".env")
 			if err := renderer.renderTemplateFile(path, ".env.tmpl", test.config); err != nil {
@@ -242,7 +242,10 @@ func TestResourceTemplatesRetainLocalDatabaseForDockerProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
-	values := resourceRenderValuesForPlanWithConsumers(plan, components, project.LocalServiceIntent{}, consumers)
+	values, err := resourceRenderValuesForPlanWithConsumers(plan, components, project.LocalServiceIntent{}, consumers)
+	if err != nil {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
+	}
 	if !values.DatabaseMySQL || values.DatabaseExternal {
 		t.Fatalf("database render policy = mysql:%t external:%t, want Docker-managed MySQL", values.DatabaseMySQL, values.DatabaseExternal)
 	}
@@ -367,9 +370,11 @@ func renderResourceTemplatesWithConsumers(t *testing.T, components project.Compo
 	}
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	renderer.config = config
-	renderer.resourcePlan = plan
-	renderer.localServiceIntent = intent
-	renderer.serviceConsumers = cloneEffectiveResourceConsumers(consumers)
+	renderer.resources = resourceRenderState{
+		plan:             plan,
+		serviceIntent:    intent,
+		serviceConsumers: cloneEffectiveResourceConsumers(consumers),
+	}
 	renderer.stats = &renderStats{}
 	environmentPath := filepath.Join(root, ".env")
 	if err := renderer.renderTemplateFile(environmentPath, ".env.tmpl", config); err != nil {

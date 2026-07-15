@@ -200,6 +200,9 @@ func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
 	}
+	cache, _ := resourcePlan.Selection(ResourceCache)
+	cache.Active = "redis"
+	resourcePlan = resourcePlan.WithSelection(ResourceCache, cache)
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{})
 	if err != nil {
 		t.Fatalf("ResolveServicePlan returned error: %v", err)
@@ -208,10 +211,10 @@ func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
 	if !exists {
 		t.Fatal("Redis requirement does not exist")
 	}
-	requirement.SupportedConsumers[0] = "changed"
+	requirement.ActiveConsumers[0] = "changed"
 	original, _ := servicePlan.Requirement(ServiceRedis)
-	if original.SupportedConsumers[0] == "changed" {
-		t.Fatal("Requirement returned an aliased supported-consumer slice")
+	if original.ActiveConsumers[0] == "changed" {
+		t.Fatal("Requirement returned an aliased active-consumer slice")
 	}
 }
 

@@ -381,7 +381,7 @@ func appScopedEnvKey(app project.App, key string) string {
 	if app.Name == "" || app.Name == project.DefaultAppName {
 		return key
 	}
-	prefix := strEnvPrefix(app.Name)
+	prefix := project.AppEnvironmentPrefix(app.Name)
 	if prefix == "" {
 		return key
 	}

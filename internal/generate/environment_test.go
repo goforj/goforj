@@ -13,7 +13,7 @@ func TestGenerateProjectFilesUsesEnvironmentExampleFallback(t *testing.T) {
 	writeGenerationEnvironmentFile(t, root, ".env.example", "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis\n")
 	unsetGenerationEnvironment(t, "CACHE_DRIVER", "CACHE_SUPPORTED_DRIVERS")
 
-	if _, _, err := GenerateProjectFiles(root, false, true, false, false, false, false); err != nil {
+	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 
@@ -34,7 +34,7 @@ func TestGenerateProjectFilesPrefersEnvironmentFile(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "redis")
 	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")
 
-	if _, _, err := GenerateProjectFiles(root, false, true, false, false, false, false); err != nil {
+	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestGenerateProjectFilesReloadsBeforeEnvironmentExampleFallback(t *testing.
 
 	redisRoot := newGenerationCacheProject(t)
 	writeGenerationEnvironmentFile(t, redisRoot, ".env", "CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=redis\n")
-	if _, _, err := GenerateProjectFiles(redisRoot, false, true, false, false, false, false); err != nil {
+	if _, _, err := GenerateProjectFiles(redisRoot, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("generate Redis project: %v", err)
 	}
 	if source := readGeneratedCacheManager(t, redisRoot); !strings.Contains(source, `"github.com/goforj/cache/driver/rediscache"`) {
@@ -59,7 +59,7 @@ func TestGenerateProjectFilesReloadsBeforeEnvironmentExampleFallback(t *testing.
 
 	memoryRoot := newGenerationCacheProject(t)
 	writeGenerationEnvironmentFile(t, memoryRoot, ".env.example", "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
-	if _, _, err := GenerateProjectFiles(memoryRoot, false, true, false, false, false, false); err != nil {
+	if _, _, err := GenerateProjectFiles(memoryRoot, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("generate clean-checkout project: %v", err)
 	}
 	if source := readGeneratedCacheManager(t, memoryRoot); strings.Contains(source, `"github.com/goforj/cache/driver/rediscache"`) {
@@ -74,7 +74,7 @@ func TestGenerateProjectFilesIgnoresAmbientDriverManifest(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "redis")
 	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")
 
-	if _, _, err := GenerateProjectFiles(root, false, true, false, false, false, false); err != nil {
+	if _, _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
 

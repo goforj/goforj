@@ -16,6 +16,12 @@ func defaultResourcePlanForTest(t *testing.T, components project.Components) pro
 	return plan
 }
 
+// initializeDefaultResourceStateForTest gives direct renderer helper tests the validated state normally prepared by Render.
+func initializeDefaultResourceStateForTest(t *testing.T, renderer *ProjectRenderer) {
+	t.Helper()
+	renderer.resources.plan = defaultResourcePlanForTest(t, project.ProjectComponents(renderer.config))
+}
+
 // redisResourcePlanForTest derives an explicit Redis-active plan without reintroducing a persisted preset identity.
 func redisResourcePlanForTest(t *testing.T, components project.Components) project.ResourcePlan {
 	t.Helper()
@@ -34,6 +40,21 @@ func redisResourcePlanForTest(t *testing.T, components project.Components) proje
 	normalized, err := plan.Normalized(components)
 	if err != nil {
 		t.Fatalf("normalize Redis resource plan: %v", err)
+	}
+	return normalized
+}
+
+// queueDriverResourcePlanForTest replaces the Queue selection without relying on retired renderer-only state.
+func queueDriverResourcePlanForTest(t *testing.T, components project.Components, driver string) project.ResourcePlan {
+	t.Helper()
+	plan := defaultResourcePlanForTest(t, components)
+	plan = plan.WithSelection(project.ResourceQueue, project.DriverSelection{
+		Active:    driver,
+		Supported: []string{driver},
+	})
+	normalized, err := plan.Normalized(components)
+	if err != nil {
+		t.Fatalf("normalize %s Queue resource plan: %v", driver, err)
 	}
 	return normalized
 }
