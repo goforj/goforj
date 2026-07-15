@@ -1069,15 +1069,14 @@ func TestShellSplitArgsPreservesQuotedFragments(t *testing.T) {
 	}
 }
 
-func TestCopyEnvMapProducesIndependentClone(t *testing.T) {
-	original := map[string]string{"FOO": "bar"}
-	cloned := copyEnvMap(original)
-	cloned["FOO"] = "baz"
-	if reflect.DeepEqual(original, cloned) {
-		t.Fatalf("expected clone to be independent of original")
-	}
-	if original["FOO"] != "bar" {
-		t.Fatalf("expected original map to remain unchanged, got %#v", original)
+// TestCopyDevWatchesClonesEnvironment protects configured watchers from mutations made during per-App expansion.
+func TestCopyDevWatchesClonesEnvironment(t *testing.T) {
+	original := []project.DevWatch{{Env: map[string]string{"FOO": "bar"}}}
+	copied := copyDevWatches(original)
+	copied[0].Env["FOO"] = "baz"
+
+	if original[0].Env["FOO"] != "bar" {
+		t.Fatalf("copyDevWatches() mutated the configured environment: %#v", original[0].Env)
 	}
 }
 
@@ -1574,8 +1573,8 @@ func TestDevBuildJobsPreserveStructuredExecutionContext(t *testing.T) {
 	}
 }
 
-// TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol keeps machine records out of human build output.
-func TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol(t *testing.T) {
+// TestRunDevSubprocessDisablesWatcherProgressProtocol keeps machine records out of human build output.
+func TestRunDevSubprocessDisablesWatcherProgressProtocol(t *testing.T) {
 	t.Setenv("FORJ_BUILD_PROGRESS", "1")
 	testCases := []struct {
 		name string
@@ -1588,9 +1587,15 @@ func TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol(t *testing.
 		t.Run(testCase.name, func(t *testing.T) {
 			var out bytes.Buffer
 			var errOut bytes.Buffer
-			err := runDevSubprocessCommandInDir(&out, &errOut, `printf '%s' "$FORJ_BUILD_PROGRESS"`, "", testCase.env, true)
+			err := runDevSubprocess(devSubprocessRun{
+				command:    `printf '%s' "$FORJ_BUILD_PROGRESS"`,
+				env:        testCase.env,
+				stdout:     &out,
+				stderr:     &errOut,
+				transcript: true,
+			})
 			if err != nil {
-				t.Fatalf("runDevSubprocessCommandInDir() error = %v", err)
+				t.Fatalf("runDevSubprocess() error = %v", err)
 			}
 			if got := out.String(); got != "0" {
 				t.Fatalf("FORJ_BUILD_PROGRESS = %q, want disabled", got)
