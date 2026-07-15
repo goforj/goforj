@@ -3,7 +3,6 @@ package apiindex
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/goforj/goforj/project"
@@ -151,9 +150,9 @@ func (r *Runner) prepareDefault(options runOptions) (prepared preparedRun, err e
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := resolveProjectRoot(root)
 	if err != nil {
-		return preparedRun{}, fmt.Errorf("resolve API index project root %q: %w", root, err)
+		return preparedRun{}, err
 	}
 	target := r.resolveApp()
 	paths := defaultPaths(target)

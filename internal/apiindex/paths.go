@@ -31,6 +31,22 @@ func resolvePaths(input paths) (paths, error) {
 	return input, nil
 }
 
+// resolveProjectRoot rejects missing or non-directory roots before source absence can be mistaken for an intentional skip.
+func resolveProjectRoot(root string) (string, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve API index project root %q: %w", root, err)
+	}
+	info, err := os.Stat(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("inspect API index project root %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("API index project root %q is not a directory", root)
+	}
+	return absRoot, nil
+}
+
 // defaultPaths keeps each app's contract separate while retaining legacy paths for the default app.
 func defaultPaths(target project.App) paths {
 	if target.Name == "" || target.Name == project.DefaultAppName {
