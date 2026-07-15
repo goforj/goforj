@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
@@ -35,7 +36,7 @@ func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
 	}
 
 	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
-	environmentExample := string(RenderEnvironmentExample([]byte(environment)))
+	environmentExample := string(envfile.RedactExample([]byte(environment)))
 	if !strings.Contains(environment, "STORAGE_PUBLIC_DRIVER=s3") {
 		t.Fatalf("rendered environment ignored the generated public-storage selection:\n%s", environment)
 	}
