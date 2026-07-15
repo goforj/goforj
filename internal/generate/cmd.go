@@ -26,9 +26,9 @@ type GenerationSelection struct {
 
 // GenerationResult names file counts so callers cannot transpose positional integer returns.
 type GenerationResult struct {
-	// TotalFiles reports every file considered by the selected generators.
+	// TotalFiles reports the current artifacts owned by the selected generators.
 	TotalFiles int
-	// ChangedFiles reports the subset written or removed during this run.
+	// ChangedFiles reports current artifacts written and legacy artifacts removed during this run.
 	ChangedFiles int
 }
 

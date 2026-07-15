@@ -256,10 +256,15 @@ func generateQueueFiles(input generationInput) (int, error) {
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "runtime.go"))
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "manager.go"))
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "queues_gen.go"))
-	_ = os.Remove(filepath.Join(input.projectDir, "internal", "queues", "config_gen.go"))
+	for _, name := range queueLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "queues", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
