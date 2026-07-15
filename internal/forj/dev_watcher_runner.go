@@ -77,41 +77,45 @@ type devWatcherControllerOptions struct {
 	reconcile bool
 }
 
-// startNativeWatchers compiles configuration and starts one shared watcher/process controller.
-func startNativeWatchers(
-	config *project.Config,
-	streamer *devwatchStreamer,
-	outWriter io.Writer,
-	errWriter io.Writer,
-	soundOnError bool,
-	reconcile bool,
-) ([]runningWatcher, <-chan watcherExit, error) {
-	compiled, err := compileDevWatchers(config)
+// devWatcherRuntime keeps handles, controller, and exit stream together so restart paths cannot drain a different generation.
+type devWatcherRuntime struct {
+	session    *devWatchSession
+	watchers   []runningWatcher
+	controller *devWatcherController
+	exitCh     <-chan watcherExit
+}
+
+// startDevWatcherRuntime derives startup controls from the session so watcher policy has one source of truth.
+func startDevWatcherRuntime(session *devWatchSession) (*devWatcherRuntime, error) {
+	watcherRuntime := &devWatcherRuntime{session: session}
+	compiled, err := compileDevWatchers(session.config)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if len(compiled) == 0 {
-		return nil, nil, nil
+		return watcherRuntime, nil
 	}
 	controller, err := newDevWatcherControllerWithOptions(
 		compiled,
-		streamer,
-		outWriter,
-		errWriter,
-		soundOnError,
-		devWatcherControllerOptions{reconcile: reconcile},
+		session.streamer,
+		session.outWriter,
+		session.errWriter,
+		session.config.Dev.SoundOnWatchError,
+		devWatcherControllerOptions{reconcile: session.reconcile},
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	watchers := make([]runningWatcher, 0, len(compiled))
+	watcherRuntime.controller = controller
+	watcherRuntime.exitCh = controller.exitCh
+	watcherRuntime.watchers = make([]runningWatcher, 0, len(compiled))
 	names := make([]string, 0, len(compiled))
 	for _, watcher := range compiled {
-		watchers = append(watchers, runningWatcher{id: watcher.ID, name: watcher.Name, native: controller})
+		watcherRuntime.watchers = append(watcherRuntime.watchers, runningWatcher{id: watcher.ID, name: watcher.Name, native: controller})
 		names = append(names, watcher.Name)
 	}
-	emitWatcherLifecycleSummary(controller.outWriter, streamer, names, watcherStateStarted)
-	return watchers, controller.exitCh, nil
+	emitWatcherLifecycleSummary(controller.outWriter, session.streamer, names, watcherStateStarted)
+	return watcherRuntime, nil
 }
 
 // newDevWatcherController establishes physical coverage before starting any configured command.

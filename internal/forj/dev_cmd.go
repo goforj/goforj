@@ -990,19 +990,11 @@ watcherLoop:
 			return err
 		}
 		session.config.Dev.Watches = devWatchesForApps(session.config, session.baseWatches)
-		watchers, exitCh, err := startNativeWatchers(
-			session.config,
-			session.streamer,
-			session.outWriter,
-			session.errWriter,
-			session.config.Dev.SoundOnWatchError,
-			session.reconcile,
-		)
+		runtime, err := startDevWatcherRuntime(session)
 		if err != nil {
 			return err
 		}
 		if session.reconcile {
-			controller := nativeDevWatcherController(watchers)
 			reconcileErr := runDevWatcherReconciliation(
 				session.config,
 				session.outWriter,
@@ -1012,11 +1004,11 @@ watcherLoop:
 			session.reconcile = false
 			session.reconcileFrontendDeps = false
 			if reconcileErr != nil {
-				stopAndDrainWatchers(watchers, exitCh, session.outWriter, session.streamer, true)
+				runtime.stopAndDrain(true)
 				return fmt.Errorf("dev watcher reconciliation failed: %w", reconcileErr)
 			}
-			if controller != nil {
-				controller.finishReconciliation(true)
+			if runtime.controller != nil {
+				runtime.controller.finishReconciliation(true)
 			}
 		}
 		printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
@@ -1026,13 +1018,11 @@ watcherLoop:
 				disableDevFooter(session.outWriter)
 				disableDevFooter(session.errWriter)
 				fmt.Println(buildDevFooterSeparatorLine())
-				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
-				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				runtime.stopAndDrain(true)
 				return errDevInterrupted
 			case <-session.restartCh:
 				writeDevActionLine(session.outWriter, "Restarting dev watchers")
-				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
-				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				runtime.stopAndDrain(true)
 				drainRestartSignals(session.restartCh)
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
@@ -1044,19 +1034,18 @@ watcherLoop:
 				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
 				spaRootsBeforeBuild := structuredDevSPARoots(session.config)
 				if err := session.reloadProjectConfig(); err != nil {
-					stopAndDrainWatchers(watchers, exitCh, session.outWriter, session.streamer, true)
+					runtime.stopAndDrain(true)
 					return err
 				}
 				if hasNewStructuredDevSPARoot(spaRootsBeforeBuild, session.config) {
 					session.reconcileFrontendDeps = true
 				}
-				controller := nativeDevWatcherController(watchers)
-				if controller != nil {
+				if runtime.controller != nil {
 					quiesceContext, cancelQuiesce := devWatchStopContext(session.stopCh)
-					err := controller.quiesceBuilds(quiesceContext)
+					err := runtime.controller.quiesceBuilds(quiesceContext)
 					cancelQuiesce()
 					if err != nil {
-						stopAndDrainWatchers(watchers, exitCh, session.outWriter, session.streamer, true)
+						runtime.stopAndDrain(true)
 						if errors.Is(err, context.Canceled) {
 							return errDevInterrupted
 						}
@@ -1064,12 +1053,12 @@ watcherLoop:
 					}
 				}
 				if err := envx.Reload(); err != nil {
-					stopAndDrainWatchers(watchers, exitCh, session.outWriter, session.streamer, true)
+					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
 				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
-					if controller != nil {
-						controller.resumeBuilds()
+					if runtime.controller != nil {
+						runtime.controller.resumeBuilds()
 					}
 					console.Errorf("forj build failed: %v", err)
 					resetDevFooterLine(session.outWriter)
@@ -1080,8 +1069,7 @@ watcherLoop:
 					continue
 				}
 				session.reconcile = shouldReconcileStructuredDevApps(session.config)
-				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
-				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				runtime.stopAndDrain(true)
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
 					return err
@@ -1110,22 +1098,22 @@ watcherLoop:
 			case <-session.renderCh:
 				writeDevActionLine(session.outWriter, "Rendering app and restarting watchers")
 				spaRootsBeforeRender := structuredDevSPARoots(session.config)
-				waitForStop := beginStopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				waitForStop := runtime.beginStop(5*time.Second, true)
 				if err := session.reloadProjectConfig(); err != nil {
 					waitForStop()
-					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+					runtime.drainAllExits(true)
 					return err
 				}
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
 					waitForStop()
-					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+					runtime.drainAllExits(true)
 					return err
 				}
 				session.streamer = refreshedStreamer
 				renderErr := runDevRenderCommand(session.outWriter, session.errWriter)
 				waitForStop()
-				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				runtime.drainAllExits(true)
 				if renderErr != nil {
 					disableDevFooter(session.outWriter)
 					disableDevFooter(session.errWriter)
@@ -1172,15 +1160,8 @@ watcherLoop:
 				if err := runDevTranscriptCommand(session.outWriter, session.errWriter, "Running "+req.DisplayName, req.ShellCommand); err != nil {
 					_, _ = fmt.Fprintf(session.outWriter, "%s %v\n", console.ErrorMark(), err)
 				}
-			case exit := <-exitCh:
-				emitWatcherLifecycleLine(session.outWriter, session.streamer, exit.name, watcherStateStopped)
-				remaining := removeWatcherByID(watchers, exit.id)
-				if len(remaining) == 0 && len(watchers) > 0 && watchers[0].native != nil {
-					watchers[0].native.stop(5 * time.Second)
-				} else {
-					stopWatchers(remaining, 5*time.Second, session.outWriter, session.streamer, false)
-				}
-				drainWatcherExits(exitCh, len(watchers)-1, session.outWriter, session.streamer, false)
+			case exit := <-runtime.exitCh:
+				runtime.stopAfterExit(exit, 5*time.Second)
 				if err := watcherExitError(exit); err != nil {
 					return err
 				}
@@ -1191,16 +1172,6 @@ watcherLoop:
 			}
 		}
 	}
-}
-
-// nativeDevWatcherController returns the shared controller behind logical watcher handles.
-func nativeDevWatcherController(watchers []runningWatcher) *devWatcherController {
-	for _, watcher := range watchers {
-		if watcher.native != nil {
-			return watcher.native
-		}
-	}
-	return nil
 }
 
 // devWatchStopContext makes a session stop interrupt build quiescing without leaking a waiter goroutine.
@@ -2009,42 +1980,40 @@ func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-// stopWatchers gracefully terminates every running watcher process.
-// Coordinated shutdowns (restart/render/Ctrl+C) collapse the in-progress signal
-// into one summary line; single watcher failures still emit per-watcher stops.
-func stopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer, collapse bool) {
-	wait := beginStopWatchers(watchers, timeout, out, streamer, collapse)
+// stop waits for every logical handle because one native controller may publish multiple terminal events.
+func (runtime *devWatcherRuntime) stop(timeout time.Duration, collapse bool) {
+	wait := runtime.beginStop(timeout, collapse)
 	wait()
 }
 
-// stopAndDrainWatchers completes controller cleanup before an outer-loop error is returned.
-func stopAndDrainWatchers(watchers []runningWatcher, exitCh <-chan watcherExit, out io.Writer, streamer *devwatchStreamer, collapse bool) {
-	stopWatchers(watchers, 5*time.Second, out, streamer, collapse)
-	drainWatcherExits(exitCh, len(watchers), out, streamer, collapse)
+// stopAndDrain completes controller cleanup before the outer loop replaces this runtime generation.
+func (runtime *devWatcherRuntime) stopAndDrain(collapse bool) {
+	runtime.stop(5*time.Second, collapse)
+	runtime.drainAllExits(collapse)
 }
 
-// beginStopWatchers starts shutdown concurrently because native handles share one controller.
-func beginStopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer, collapse bool) func() {
+// beginStop lets render preparation overlap graceful process termination without losing the final wait boundary.
+func (runtime *devWatcherRuntime) beginStop(timeout time.Duration, collapse bool) func() {
 	if collapse {
-		names := make([]string, 0, len(watchers))
-		for _, watcher := range watchers {
+		names := make([]string, 0, len(runtime.watchers))
+		for _, watcher := range runtime.watchers {
 			if watcher.proc == nil && watcher.native == nil {
 				continue
 			}
 			names = append(names, watcher.name)
 		}
-		emitWatcherLifecycleSummary(out, streamer, names, watcherStateStopping)
+		emitWatcherLifecycleSummary(runtime.session.outWriter, runtime.session.streamer, names, watcherStateStopping)
 	}
-	for _, watcher := range watchers {
+	for _, watcher := range runtime.watchers {
 		if watcher.proc == nil && watcher.native == nil {
 			continue
 		}
 		if !collapse {
-			emitWatcherLifecycleLine(out, streamer, watcher.name, watcherStateStopping)
+			emitWatcherLifecycleLine(runtime.session.outWriter, runtime.session.streamer, watcher.name, watcherStateStopping)
 		}
 	}
 	var wg sync.WaitGroup
-	for _, watcher := range watchers {
+	for _, watcher := range runtime.watchers {
 		if watcher.proc == nil && watcher.native == nil {
 			continue
 		}
@@ -2061,20 +2030,38 @@ func beginStopWatchers(watchers []runningWatcher, timeout time.Duration, out io.
 	return wg.Wait
 }
 
-// drainWatcherExits drains a fixed number of exit events to ensure goroutines finish cleanly.
-func drainWatcherExits(exitCh <-chan watcherExit, count int, out io.Writer, streamer *devwatchStreamer, collapse bool) {
+// drainExits consumes a fixed number of owned exit events so watcher goroutines finish cleanly.
+func (runtime *devWatcherRuntime) drainExits(count int, collapse bool) {
 	names := make([]string, 0, count)
 	for i := 0; i < count; i++ {
-		exit := <-exitCh
+		exit := <-runtime.exitCh
 		if collapse {
 			names = append(names, exit.name)
 			continue
 		}
-		emitWatcherLifecycleLine(out, streamer, exit.name, watcherStateStopped)
+		emitWatcherLifecycleLine(runtime.session.outWriter, runtime.session.streamer, exit.name, watcherStateStopped)
 	}
 	if collapse {
-		emitWatcherLifecycleSummary(out, streamer, names, watcherStateStopped)
+		emitWatcherLifecycleSummary(runtime.session.outWriter, runtime.session.streamer, names, watcherStateStopped)
 	}
+}
+
+// drainAllExits uses the owned handle count so callers cannot split exit accounting from its watcher generation.
+func (runtime *devWatcherRuntime) drainAllExits(collapse bool) {
+	runtime.drainExits(len(runtime.watchers), collapse)
+}
+
+// stopAfterExit prevents an unexpected single exit from leaving sibling processes or the shared controller running.
+func (runtime *devWatcherRuntime) stopAfterExit(exit watcherExit, timeout time.Duration) {
+	emitWatcherLifecycleLine(runtime.session.outWriter, runtime.session.streamer, exit.name, watcherStateStopped)
+	watcherCount := len(runtime.watchers)
+	runtime.watchers = removeWatcherByID(runtime.watchers, exit.id)
+	if len(runtime.watchers) == 0 && watcherCount > 0 && runtime.controller != nil {
+		runtime.controller.stop(timeout)
+	} else {
+		runtime.stop(timeout, false)
+	}
+	runtime.drainExits(watcherCount-1, false)
 }
 
 // drainRestartSignals empties pending restart notifications.
