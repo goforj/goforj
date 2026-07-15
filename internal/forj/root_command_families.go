@@ -55,7 +55,7 @@ type runtimeCommands struct {
 // NewRuntimeCommands constructs the runtime family around its shared logger and API index runner.
 func NewRuntimeCommands(appLogger *logger.AppLogger, runner *apiindex.Runner) *runtimeCommands {
 	return &runtimeCommands{
-		dev:  *NewDevCmd(appLogger),
+		dev:  DevCmd{},
 		down: *NewDownCmd(appLogger),
 		run:  *build.NewRunCmd(appLogger, runner),
 	}

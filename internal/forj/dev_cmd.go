@@ -24,7 +24,6 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/devwatch"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
@@ -33,9 +32,8 @@ import (
 
 var errDevInterrupted = errors.New("dev interrupted")
 
-type DevCmd struct {
-	logger *logger.AppLogger
-}
+// DevCmd runs the project development lifecycle from durable project configuration.
+type DevCmd struct{}
 
 type devRuntimeState struct {
 	restartCh      chan struct{}
@@ -67,12 +65,9 @@ type devWatchSession struct {
 	reconcileFrontendDeps bool
 }
 
+// Signature declares the development command exposed by the root CLI.
 func (*DevCmd) Signature() string {
 	return `name:"dev" help:"Run development watchers"`
-}
-
-func NewDevCmd(logger *logger.AppLogger) *DevCmd {
-	return &DevCmd{logger: logger}
 }
 
 func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
