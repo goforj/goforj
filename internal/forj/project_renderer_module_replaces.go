@@ -9,13 +9,11 @@ import (
 	"strings"
 )
 
+// moduleReplacesStateFile records only entries owned by the renderer so later runs cannot remove user-managed replacements.
 const moduleReplacesStateFile = ".goforj.module_replaces.json"
 
+// applyModuleReplaces reconciles renderer-owned replacements after project configuration has been loaded.
 func (p *ProjectRenderer) applyModuleReplaces() error {
-	if p == nil || p.config == nil {
-		return nil
-	}
-
 	current := normalizedModuleReplaces(p.config.Render.ModuleReplaces)
 	previous, err := p.workspace.loadManagedModuleReplaces()
 	if err != nil {
@@ -54,6 +52,7 @@ func (p *ProjectRenderer) applyModuleReplaces() error {
 	return nil
 }
 
+// normalizedModuleReplaces excludes incomplete entries before they reach go mod edit or renderer-owned state.
 func normalizedModuleReplaces(values map[string]string) map[string]string {
 	out := make(map[string]string)
 	for module, target := range values {
@@ -67,6 +66,7 @@ func normalizedModuleReplaces(values map[string]string) map[string]string {
 	return out
 }
 
+// sortedModuleKeys keeps go.mod edits and renderer state deterministic across map iteration order.
 func sortedModuleKeys(values map[string]string) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -76,6 +76,7 @@ func sortedModuleKeys(values map[string]string) []string {
 	return keys
 }
 
+// countManagedStillPresent separates retained entries from replacements the renderer removed during this run.
 func countManagedStillPresent(previous []string, current map[string]string) int {
 	count := 0
 	for _, module := range previous {
