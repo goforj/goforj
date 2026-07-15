@@ -269,6 +269,8 @@ steps:
         import (
                 "github.com/goforj/cache"
 
+                "{{module}}/internal/caches"
+
   - title: Add Repository Providers
     explain: |
       Add the source repository, cached repository provider, and named cache provider.
@@ -290,7 +292,7 @@ steps:
       path: app/wire/inject_services_app.go
       language: go
       old: |
-        func provideInspectManager() *inspects.Manager {
+        // appSet is a wire set that provides application-level services and dependencies.
       new: |
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {
                 return users.NewCachedUserRepository(source, profileCache)
@@ -300,7 +302,7 @@ steps:
                 return manager.Profiles()
         }
 
-        func provideInspectManager() *inspects.Manager {
+        // appSet is a wire set that provides application-level services and dependencies.
 
   - title: Add Repository Tests
     explain: |
