@@ -36,6 +36,14 @@ func TestValidateRenderedComponentContractsAcceptsProjectAndAppSelections(t *tes
 				"worker": {Components: project.Components{CLI: true, Jobs: true}},
 			},
 		},
+		{
+			name:       "named App primitive with disabled sibling",
+			components: project.Components{CLI: true},
+			apps: map[string]project.AppConfig{
+				"billing-worker": {Components: project.Components{CLI: true, Events: true}},
+				"observer":       {Components: project.Components{CLI: true}},
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -43,6 +51,105 @@ func TestValidateRenderedComponentContractsAcceptsProjectAndAppSelections(t *tes
 			root, config, apps := writeRenderedContractFixture(t, test.components, test.apps)
 			if err := validateRenderedComponentContracts(root, config, apps); err != nil {
 				t.Fatalf("validateRenderedComponentContracts() error: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateRenderedComponentContractsChecksNamedAppEnvironmentOwnership verifies exact App prefixes follow each primitive selection independently.
+func TestValidateRenderedComponentContractsChecksNamedAppEnvironmentOwnership(t *testing.T) {
+	for _, contract := range renderedPrimitiveContracts {
+		contract := contract
+		t.Run(contract.label, func(t *testing.T) {
+			enabledComponents := project.Components{CLI: true}
+			enabledComponents.SetEnabled(contract.key, true)
+			configuredApps := map[string]project.AppConfig{
+				"billing-worker": {Components: enabledComponents},
+				"observer":       {Components: project.Components{CLI: true}},
+			}
+
+			for _, environmentPath := range []string{".env", ".env.example"} {
+				environmentPath := environmentPath
+				t.Run("missing enabled key in "+environmentPath, func(t *testing.T) {
+					root, config, apps := writeRenderedContractFixture(t, project.Components{CLI: true}, configuredApps)
+					key := "BILLING_WORKER_" + contract.environmentPrefix + "_DRIVER"
+					path := filepath.Join(root, environmentPath)
+					source, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatalf("read %s: %v", environmentPath, err)
+					}
+					writeRenderedContractFile(t, root, environmentPath, strings.Replace(string(source), key+"=default\n", "", 1))
+
+					err = validateRenderedComponentContracts(root, config, apps)
+					if err == nil || !strings.Contains(err.Error(), "App billing-worker requires "+key+" in "+environmentPath) {
+						t.Fatalf("validateRenderedComponentContracts() error = %v, want missing named-App %s key", err, contract.label)
+					}
+				})
+
+				t.Run("disabled sibling key in "+environmentPath, func(t *testing.T) {
+					root, config, apps := writeRenderedContractFixture(t, project.Components{CLI: true}, configuredApps)
+					key := "OBSERVER_" + contract.environmentPrefix + "_DRIVER"
+					path := filepath.Join(root, environmentPath)
+					source, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatalf("read %s: %v", environmentPath, err)
+					}
+					writeRenderedContractFile(t, root, environmentPath, string(source)+key+"=default\n")
+
+					err = validateRenderedComponentContracts(root, config, apps)
+					if err == nil || !strings.Contains(err.Error(), "App observer is disabled but "+environmentPath+" defines "+key) {
+						t.Fatalf("validateRenderedComponentContracts() error = %v, want disabled sibling %s key failure", err, contract.label)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestValidateRenderedComponentContractsRequiresPairedAppAccessors verifies default-instance and manager accessors remain one generated surface.
+func TestValidateRenderedComponentContractsRequiresPairedAppAccessors(t *testing.T) {
+	tests := []struct {
+		name       string
+		components project.Components
+		markers    []string
+	}{
+		{name: "Cache", components: project.Components{CLI: true, Cache: true}, markers: []string{"func (a *App) Cache()", "func (a *App) Caches()"}},
+		{name: "Events", components: project.Components{CLI: true, Events: true}, markers: []string{"func (a *App) Bus()", "func (a *App) Events()"}},
+		{name: "Jobs", components: project.Components{CLI: true, Jobs: true}, markers: []string{"func (a *App) Queue()", "func (a *App) Queues()"}},
+	}
+	for _, test := range tests {
+		for _, marker := range test.markers {
+			marker := marker
+			t.Run(test.name+"/"+marker, func(t *testing.T) {
+				root, config, apps := writeRenderedContractFixture(t, test.components, nil)
+				path := filepath.Join(apps[0].WireDir, "app.go")
+				source, err := os.ReadFile(filepath.Join(root, path))
+				if err != nil {
+					t.Fatalf("read %s: %v", path, err)
+				}
+				writeRenderedContractFile(t, root, path, strings.Replace(string(source), marker+" {}\n", "", 1))
+
+				err = validateRenderedComponentContracts(root, config, apps)
+				if err == nil || !strings.Contains(err.Error(), "requires marker \""+marker+"\"") {
+					t.Fatalf("validateRenderedComponentContracts() error = %v, want missing paired accessor", err)
+				}
+			})
+		}
+	}
+}
+
+// TestValidateRenderedComponentContractsRejectsPrimitiveSubmodules verifies deselection excludes nested modules as well as each primitive's base module.
+func TestValidateRenderedComponentContractsRejectsPrimitiveSubmodules(t *testing.T) {
+	for _, contract := range renderedPrimitiveContracts {
+		contract := contract
+		t.Run(contract.label, func(t *testing.T) {
+			root, config, apps := writeRenderedContractFixture(t, project.Components{CLI: true}, nil)
+			modulePath := contract.modulePath + "/driver/test"
+			writeRenderedContractFile(t, root, "go.mod", "module example.com/render\n\ngo 1.26\n\nrequire "+modulePath+" v0.1.0\n")
+
+			err := validateRenderedComponentContracts(root, config, apps)
+			if err == nil || !strings.Contains(err.Error(), "is disabled but directly requires module "+modulePath) {
+				t.Fatalf("validateRenderedComponentContracts() error = %v, want nested %s module failure", err, contract.label)
 			}
 		})
 	}
@@ -203,6 +310,18 @@ func writeRenderedContractFixture(t *testing.T, components project.Components, c
 			runtimeLines[marker.path] = append(runtimeLines[marker.path], marker.marker+" {}", "")
 		}
 	}
+	for _, app := range apps {
+		prefix := project.AppEnvironmentPrefix(app.Name)
+		if prefix == "" {
+			continue
+		}
+		appComponents := renderedAppComponents(config, app)
+		for _, contract := range renderedPrimitiveContracts {
+			if appComponents.Enabled(contract.key) {
+				environmentLines = append(environmentLines, prefix+"_"+contract.environmentPrefix+"_DRIVER=default")
+			}
+		}
+	}
 	moduleLines = append(moduleLines, ")")
 	writeRenderedContractFile(t, root, ".env", strings.Join(environmentLines, "\n")+"\n")
 	writeRenderedContractFile(t, root, ".env.example", strings.Join(environmentLines, "\n")+"\n")
@@ -220,7 +339,9 @@ func writeRenderedContractFixture(t *testing.T, components project.Components, c
 		appLines := []string{"package wire", ""}
 		for _, contract := range renderedPrimitiveContracts {
 			if appComponents.Enabled(contract.key) {
-				appLines = append(appLines, contract.appMarker+" {}", "")
+				for _, marker := range contract.appMarkers {
+					appLines = append(appLines, marker+" {}", "")
+				}
 			}
 		}
 		writeRenderedContractFile(t, root, filepath.Join(app.WireDir, "app.go"), strings.Join(appLines, "\n"))

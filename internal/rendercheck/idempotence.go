@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
+
+const appOwnedIdempotenceMarker = "// RenderCheck owner sentinel: rerenders must preserve this App-owned file.\n"
 
 // appComponentSelection keeps map ordering out of stable component comparisons.
 type appComponentSelection struct {
@@ -16,18 +19,25 @@ type appComponentSelection struct {
 	components project.Components
 }
 
-// renderedConfigSnapshot captures the exact canonical config and its user-selected component boundaries.
-type renderedConfigSnapshot struct {
-	configBytes []byte
-	components  project.Components
-	apps        []appComponentSelection
+// renderedFileSnapshot records one representative App-owned file after the sentinel adds a user edit.
+type renderedFileSnapshot struct {
+	path     string
+	contents []byte
+}
+
+// renderIdempotenceSnapshot captures canonical config state and a representative App-owned edit surface.
+type renderIdempotenceSnapshot struct {
+	configBytes   []byte
+	components    project.Components
+	apps          []appComponentSelection
+	appOwnedFiles []renderedFileSnapshot
 }
 
 // validateRenderIdempotence proves repeat rendering and default generation preserve the initial canonical contract.
 func (worker renderComboWorker) validateRenderIdempotence(expected *project.Config, apps []project.App) error {
-	baseline, err := captureRenderedConfigSnapshot(worker.workspaceRoot, expected)
+	baseline, err := captureRenderIdempotenceSnapshot(worker.workspaceRoot, expected, apps)
 	if err != nil {
-		return fmt.Errorf("capture canonical config: %w", err)
+		return fmt.Errorf("capture render idempotence baseline: %w", err)
 	}
 	for _, command := range []string{"render", "generate"} {
 		if err := worker.runForj(command); err != nil {
@@ -47,23 +57,28 @@ func (worker renderComboWorker) validateRenderIdempotence(expected *project.Conf
 	return nil
 }
 
-// captureRenderedConfigSnapshot requires the first render to finish the one-way migration before it becomes the baseline.
-func captureRenderedConfigSnapshot(root string, expected *project.Config) (renderedConfigSnapshot, error) {
+// captureRenderIdempotenceSnapshot requires the first render to finish one-way migrations before recording the baseline.
+func captureRenderIdempotenceSnapshot(root string, expected *project.Config, apps []project.App) (renderIdempotenceSnapshot, error) {
 	configBytes, config, err := readCanonicalRenderedConfig(root)
 	if err != nil {
-		return renderedConfigSnapshot{}, err
+		return renderIdempotenceSnapshot{}, err
 	}
 	snapshot := renderedConfigSelection(config)
 	expectedSelection := renderedConfigSelection(expected)
 	if err := snapshot.validateSelection(expectedSelection); err != nil {
-		return renderedConfigSnapshot{}, fmt.Errorf("rendered selection differs from requested selection: %w", err)
+		return renderIdempotenceSnapshot{}, fmt.Errorf("rendered selection differs from requested selection: %w", err)
+	}
+	appOwnedFiles, err := captureAppOwnedFileSnapshots(root, apps)
+	if err != nil {
+		return renderIdempotenceSnapshot{}, err
 	}
 	snapshot.configBytes = configBytes
+	snapshot.appOwnedFiles = appOwnedFiles
 	return snapshot, nil
 }
 
 // validateUnchanged rejects byte churn as well as component widening that a rewritten config could otherwise conceal.
-func (snapshot renderedConfigSnapshot) validateUnchanged(root string) error {
+func (snapshot renderIdempotenceSnapshot) validateUnchanged(root string) error {
 	configBytes, config, err := readCanonicalRenderedConfig(root)
 	if err != nil {
 		return err
@@ -71,7 +86,64 @@ func (snapshot renderedConfigSnapshot) validateUnchanged(root string) error {
 	if !bytes.Equal(configBytes, snapshot.configBytes) {
 		return fmt.Errorf(".goforj.yml bytes changed")
 	}
-	return renderedConfigSelection(config).validateSelection(snapshot)
+	if err := renderedConfigSelection(config).validateSelection(snapshot); err != nil {
+		return err
+	}
+	return validateRenderedFilesUnchanged(root, snapshot.appOwnedFiles)
+}
+
+// captureAppOwnedFileSnapshots adds a harmless owner edit to a small explicit surface before recording exact bytes.
+func captureAppOwnedFileSnapshots(root string, apps []project.App) ([]renderedFileSnapshot, error) {
+	snapshots := make([]renderedFileSnapshot, 0, len(apps)*3)
+	for _, app := range apps {
+		app = projectlayout.NormalizeApp(app)
+		paths := []string{
+			filepath.Join(app.AppDir, "lifecycle.go"),
+			filepath.Join(app.WireDir, "inject_services_app.go"),
+		}
+		jobsPath := filepath.Join(app.WireDir, "inject_jobs_app.go")
+		if _, err := os.Stat(filepath.Join(root, jobsPath)); err == nil {
+			paths = append(paths, jobsPath)
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("inspect App-owned file %s: %w", jobsPath, err)
+		}
+
+		for _, path := range paths {
+			fullPath := filepath.Join(root, path)
+			contents, err := os.ReadFile(fullPath)
+			if err != nil {
+				return nil, fmt.Errorf("read App-owned file %s: %w", path, err)
+			}
+			info, err := os.Stat(fullPath)
+			if err != nil {
+				return nil, fmt.Errorf("inspect App-owned file %s: %w", path, err)
+			}
+			marked := append([]byte(nil), contents...)
+			if len(marked) > 0 && marked[len(marked)-1] != '\n' {
+				marked = append(marked, '\n')
+			}
+			marked = append(marked, appOwnedIdempotenceMarker...)
+			if err := os.WriteFile(fullPath, marked, info.Mode().Perm()); err != nil {
+				return nil, fmt.Errorf("mark App-owned file %s: %w", path, err)
+			}
+			snapshots = append(snapshots, renderedFileSnapshot{path: path, contents: marked})
+		}
+	}
+	return snapshots, nil
+}
+
+// validateRenderedFilesUnchanged reports the first owner edit that a repeated command rewrote or removed.
+func validateRenderedFilesUnchanged(root string, snapshots []renderedFileSnapshot) error {
+	for _, snapshot := range snapshots {
+		contents, err := os.ReadFile(filepath.Join(root, snapshot.path))
+		if err != nil {
+			return fmt.Errorf("read App-owned file %s: %w", snapshot.path, err)
+		}
+		if !bytes.Equal(contents, snapshot.contents) {
+			return fmt.Errorf("App-owned file %s bytes changed", snapshot.path)
+		}
+	}
+	return nil
 }
 
 // readCanonicalRenderedConfig verifies migration metadata and mapping syntax have disappeared from persisted config.
@@ -95,8 +167,8 @@ func readCanonicalRenderedConfig(root string) ([]byte, *project.Config, error) {
 }
 
 // renderedConfigSelection reduces a full config to the selections that rerendering is forbidden to widen.
-func renderedConfigSelection(config *project.Config) renderedConfigSnapshot {
-	snapshot := renderedConfigSnapshot{}
+func renderedConfigSelection(config *project.Config) renderIdempotenceSnapshot {
+	snapshot := renderIdempotenceSnapshot{}
 	if config == nil {
 		return snapshot
 	}
@@ -116,7 +188,7 @@ func renderedConfigSelection(config *project.Config) renderedConfigSnapshot {
 }
 
 // validateSelection reports the exact App scope that drifted so matrix failures remain actionable.
-func (snapshot renderedConfigSnapshot) validateSelection(expected renderedConfigSnapshot) error {
+func (snapshot renderIdempotenceSnapshot) validateSelection(expected renderIdempotenceSnapshot) error {
 	if snapshot.components != expected.components {
 		return fmt.Errorf("default App components = %#v, want %#v", snapshot.components, expected.components)
 	}

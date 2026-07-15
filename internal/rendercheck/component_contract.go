@@ -24,7 +24,7 @@ type renderedPrimitiveContract struct {
 	environmentKeys   []string
 	modulePath        string
 	runtimeMarkers    []renderedContentMarker
-	appMarker         string
+	appMarkers        []string
 }
 
 // renderedContentMarker keeps shared runtime files testable without snapshotting their unrelated contents.
@@ -51,7 +51,7 @@ var renderedPrimitiveContracts = []renderedPrimitiveContract{
 		runtimeMarkers: []renderedContentMarker{
 			{path: "internal/runtime/discovery.go", marker: "func DiscoverCacheInstances()"},
 		},
-		appMarker: "func (a *App) Caches()",
+		appMarkers: []string{"func (a *App) Cache()", "func (a *App) Caches()"},
 	},
 	{
 		key:          project.ComponentEvents,
@@ -74,7 +74,7 @@ var renderedPrimitiveContracts = []renderedPrimitiveContract{
 		runtimeMarkers: []renderedContentMarker{
 			{path: "internal/runtime/discovery.go", marker: "func DiscoverEventInstances()"},
 		},
-		appMarker: "func (a *App) Events()",
+		appMarkers: []string{"func (a *App) Bus()", "func (a *App) Events()"},
 	},
 	{
 		key:               project.ComponentStorage,
@@ -90,7 +90,7 @@ var renderedPrimitiveContracts = []renderedPrimitiveContract{
 		runtimeMarkers: []renderedContentMarker{
 			{path: "internal/runtime/discovery.go", marker: "func DiscoverStorageInstances()"},
 		},
-		appMarker: "func (a *App) Storage()",
+		appMarkers: []string{"func (a *App) Storage()"},
 	},
 	{
 		key:          project.ComponentJobs,
@@ -112,7 +112,7 @@ var renderedPrimitiveContracts = []renderedPrimitiveContract{
 			{path: "internal/runtime/discovery.go", marker: "func DiscoverQueueInstances()"},
 			{path: "internal/runtime/timeouts.go", marker: "func (s *Timeouts) QueueShutdownTimeout()"},
 		},
-		appMarker: "func (a *App) Queues()",
+		appMarkers: []string{"func (a *App) Queue()", "func (a *App) Queues()"},
 	},
 }
 
@@ -134,7 +134,9 @@ func validateRenderedComponentContracts(root string, config *project.Config, app
 		violations = append(violations, contract.validateProject(root, enabled, projectComponents.Grafana, directModules, environments)...)
 		for _, app := range apps {
 			components := renderedAppComponents(config, app)
-			violations = append(violations, contract.validateApp(root, app, components.Enabled(contract.key))...)
+			enabled := components.Enabled(contract.key)
+			violations = append(violations, contract.validateApp(root, app, enabled)...)
+			violations = append(violations, contract.validateAppEnvironment(app, enabled, environments)...)
 		}
 	}
 	if len(violations) == 0 {
@@ -209,8 +211,12 @@ func (contract renderedPrimitiveContract) validateProject(root string, enabled b
 	if enabled && !directModules[contract.modulePath] {
 		violations = append(violations, fmt.Sprintf("%s requires direct module %s", contract.label, contract.modulePath))
 	}
-	if !enabled && directModules[contract.modulePath] {
-		violations = append(violations, fmt.Sprintf("%s is disabled but directly requires module %s", contract.label, contract.modulePath))
+	if !enabled {
+		for modulePath := range directModules {
+			if modulePath == contract.modulePath || strings.HasPrefix(modulePath, contract.modulePath+"/") {
+				violations = append(violations, fmt.Sprintf("%s is disabled but directly requires module %s", contract.label, modulePath))
+			}
+		}
 	}
 
 	for _, runtimeMarker := range contract.runtimeMarkers {
@@ -235,14 +241,44 @@ func (contract renderedPrimitiveContract) validateApp(root string, app project.A
 	if err != nil {
 		return []string{fmt.Sprintf("%s App %s cannot inspect %s: %v", contract.label, app.Name, path, err)}
 	}
-	if strings.Contains(string(source), contract.appMarker) == enabled {
+	violations := make([]string, 0)
+	for _, marker := range contract.appMarkers {
+		if strings.Contains(string(source), marker) == enabled {
+			continue
+		}
+		state := "requires"
+		if !enabled {
+			state = "is disabled but retains"
+		}
+		violations = append(violations, fmt.Sprintf("%s App %s %s marker %q in %s", contract.label, app.Name, state, marker, path))
+	}
+	return violations
+}
+
+// validateAppEnvironment checks the generated driver overlay for one named App without confusing shared root defaults with default-App ownership.
+func (contract renderedPrimitiveContract) validateAppEnvironment(app project.App, enabled bool, environments map[string]map[string]bool) []string {
+	prefix := project.AppEnvironmentPrefix(app.Name)
+	if prefix == "" {
 		return nil
 	}
-	state := "requires"
-	if !enabled {
-		state = "is disabled but retains"
+	key := prefix + "_" + contract.environmentPrefix + "_DRIVER"
+	violations := make([]string, 0)
+	for path, assignments := range environments {
+		required := enabled && path != ".env.host"
+		if assignments[key] == required {
+			continue
+		}
+		if required {
+			violations = append(violations, fmt.Sprintf("%s App %s requires %s in %s", contract.label, app.Name, key, path))
+			continue
+		}
+		if enabled {
+			violations = append(violations, fmt.Sprintf("%s App %s must not define %s in %s", contract.label, app.Name, key, path))
+			continue
+		}
+		violations = append(violations, fmt.Sprintf("%s App %s is disabled but %s defines %s", contract.label, app.Name, path, key))
 	}
-	return []string{fmt.Sprintf("%s App %s %s marker %q in %s", contract.label, app.Name, state, contract.appMarker, path)}
+	return violations
 }
 
 // ownsEnvironmentKey recognizes framework-owned root, metrics, and named-App driver assignments for one primitive.
