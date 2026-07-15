@@ -84,7 +84,6 @@ Related generated/runtime glue:
 - Product surface is `inspect`
 - Correlation field remains `trace_id`
 - Inspect history is retained in a private, bounded in-memory store owned by Lighthouse
-- Lighthouse runtime/dashboard state uses `caches.Lighthouse()`
 
 Do not reintroduce env-driven cache indirection like:
 - `LIGHTHOUSE_INSPECT_CACHE`
