@@ -150,9 +150,8 @@ apps:
 		t.Fatalf("write project config: %v", err)
 	}
 	t.Setenv("FORJ_APP", "ship")
-	paths := defaultPaths(project.DefaultNamedApp("ship"))
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultNamedApp("ship")))
 	for _, path := range []string{paths.out, paths.diagnostics, paths.openAPI} {
-		path = filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir artifact directory: %v", err)
 		}
@@ -161,16 +160,7 @@ apps:
 		}
 	}
 
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
-	status, err := newTestRunner().RunDefault(Options{})
+	status, err := newTestRunner().RunDefault(Options{Root: root})
 	if err != nil {
 		t.Fatalf("run CLI-only API index: %v", err)
 	}
@@ -195,9 +185,8 @@ func TestRunnerRequiresCompositionForWebAPIApp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
-	paths := defaultPaths(project.DefaultApp())
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultApp()))
 	for _, path := range []string{paths.out, paths.diagnostics, paths.openAPI} {
-		path = filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir artifact directory: %v", err)
 		}
@@ -206,16 +195,7 @@ func TestRunnerRequiresCompositionForWebAPIApp(t *testing.T) {
 		}
 	}
 
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
-	status, err := newTestRunner().RunDefault(Options{})
+	status, err := newTestRunner().RunDefault(Options{Root: root})
 	if err == nil || !strings.Contains(err.Error(), `API index for app "app" requires route composition "app/routes.go"`) {
 		t.Fatalf("expected missing composition error, got %v", err)
 	}

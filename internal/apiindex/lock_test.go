@@ -29,18 +29,18 @@ func TestArtifactLockSharesWebindexProcessLock(t *testing.T) {
 	t.Cleanup(func() { _ = direct.Release() })
 
 	started := make(chan struct{})
-	acquired := make(chan *webindex.ArtifactPublicationLock, 1)
+	acquired := make(chan artifactPublicationLock, 1)
 	errors := make(chan error, 1)
 	go func() {
 		close(started)
-		lock, lockErr := acquireArtifactLock(paths)
+		lock, lockErr := (webindexArtifactLockCoordinator{}).acquire(paths)
 		if lockErr != nil {
 			errors <- lockErr
 			return
 		}
 		acquired <- lock
 	}()
-	<-started
+	waitForPublicationSignal(t, "GoForj lock acquisition to start", started)
 
 	select {
 	case lock := <-acquired:

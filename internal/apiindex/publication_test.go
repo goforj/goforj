@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,11 +16,9 @@ import (
 
 // TestCandidateRemainsIsolatedUntilPublication verifies preparation alone cannot replace active artifacts.
 func TestCandidateRemainsIsolatedUntilPublication(t *testing.T) {
-	root, paths := writeStagedFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	defer restoreWorkingDirectory()
+	fixture := writeStagedFixture(t)
 
-	prepared, err := newTestRunner().prepareDefault(runOptions{})
+	prepared, err := newTestRunner().prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare API index: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestCandidateRemainsIsolatedUntilPublication(t *testing.T) {
 	}
 	stagingDir := pending.stagingDir
 
-	assertArtifactContents(t, paths, previousArtifacts(paths))
+	assertArtifactContents(t, fixture.paths, fixture.previous)
 
 	pending.discard()
 	if _, err := os.Stat(stagingDir); !errors.Is(err, os.ErrNotExist) {
@@ -39,26 +39,24 @@ func TestCandidateRemainsIsolatedUntilPublication(t *testing.T) {
 
 // TestCandidatePublishPromotesValidatedArtifacts verifies explicit publication replaces the complete active set.
 func TestCandidatePublishPromotesValidatedArtifacts(t *testing.T) {
-	root, paths := writeStagedFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	defer restoreWorkingDirectory()
+	fixture := writeStagedFixture(t)
 
-	prepared, err := newTestRunner().prepareDefault(runOptions{})
+	prepared, err := newTestRunner().prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare API index: %v", err)
 	}
 	pending := prepared.candidate
 	stagingDir := pending.stagingDir
 	want := map[string][]byte{
-		paths.out:         append([]byte(nil), pending.candidates.out.content...),
-		paths.diagnostics: append([]byte(nil), pending.candidates.diagnostics.content...),
-		paths.openAPI:     append([]byte(nil), pending.candidates.openAPI.content...),
+		fixture.paths.out:         append([]byte(nil), pending.candidates.out.content...),
+		fixture.paths.diagnostics: append([]byte(nil), pending.candidates.diagnostics.content...),
+		fixture.paths.openAPI:     append([]byte(nil), pending.candidates.openAPI.content...),
 	}
 
 	if err := pending.Publish(); err != nil {
 		t.Fatalf("publish candidate: %v", err)
 	}
-	assertArtifactContents(t, paths, want)
+	assertArtifactContents(t, fixture.paths, want)
 	for path, content := range want {
 		if !json.Valid(content) {
 			t.Fatalf("published artifact %s is invalid JSON", path)
@@ -82,29 +80,27 @@ func TestCandidatePublishRejectsMissingStagingState(t *testing.T) {
 
 // TestNoChangePublicationPreservesModTimes verifies identical contracts do not trigger watcher-visible writes.
 func TestNoChangePublicationPreservesModTimes(t *testing.T) {
-	root, paths := writeStagedFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	defer restoreWorkingDirectory()
+	fixture := writeStagedFixture(t)
 
 	runner := newTestRunner()
-	if _, err := runner.RunDefault(Options{}); err != nil {
+	if _, err := runner.RunDefault(Options{Root: fixture.root}); err != nil {
 		t.Fatalf("first API index run: %v", err)
 	}
 	fixedTime := time.Unix(1_700_000_000, 123_000_000)
-	for _, path := range artifactPaths(paths) {
+	for _, path := range artifactPaths(fixture.paths) {
 		if err := os.Chtimes(path, fixedTime, fixedTime); err != nil {
 			t.Fatalf("set artifact modtime %s: %v", path, err)
 		}
 	}
 
-	status, err := runner.RunDefault(Options{})
+	status, err := runner.RunDefault(Options{Root: fixture.root})
 	if err != nil {
 		t.Fatalf("no-change API index run: %v", err)
 	}
 	if !strings.HasPrefix(status, "app app, unchanged, ") || !strings.Contains(status, " operation") || !strings.Contains(status, " schema") || !strings.Contains(status, " diagnostic") {
 		t.Fatalf("no-change status does not include outcome and counts: %q", status)
 	}
-	for _, path := range artifactPaths(paths) {
+	for _, path := range artifactPaths(fixture.paths) {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatalf("stat artifact %s: %v", path, err)
@@ -113,7 +109,7 @@ func TestNoChangePublicationPreservesModTimes(t *testing.T) {
 			t.Fatalf("artifact %s modtime = %s, want %s", path, info.ModTime(), fixedTime)
 		}
 	}
-	assertNoStagingDirectories(t, filepath.Dir(paths.out))
+	assertNoStagingDirectories(t, filepath.Dir(fixture.paths.out))
 }
 
 // TestCLIOnlyCleanupWaitsForPublication verifies stale artifacts remain active until cleanup is committed.
@@ -131,13 +127,11 @@ apps:
 		t.Fatalf("write project config: %v", err)
 	}
 	t.Setenv("FORJ_APP", "ship")
-	paths := defaultPaths(project.DefaultNamedApp("ship"))
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultNamedApp("ship")))
 	previous := previousArtifacts(paths)
-	writeArtifacts(t, root, paths, previous)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	defer restoreWorkingDirectory()
+	writeArtifacts(t, paths, previous)
 
-	prepared, err := newTestRunner().prepareDefault(runOptions{})
+	prepared, err := newTestRunner().prepareDefault(runOptions{root: root})
 	if err != nil {
 		t.Fatalf("prepare CLI-only cleanup: %v", err)
 	}
@@ -160,18 +154,16 @@ apps:
 
 // TestCandidateRejectsConcurrentActiveArtifactChange verifies publication uses the prepare snapshot as a compare-and-swap boundary.
 func TestCandidateRejectsConcurrentActiveArtifactChange(t *testing.T) {
-	root, paths := writeStagedFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	defer restoreWorkingDirectory()
+	fixture := writeStagedFixture(t)
 
-	prepared, err := newTestRunner().prepareDefault(runOptions{})
+	prepared, err := newTestRunner().prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare API index: %v", err)
 	}
 	pending := prepared.candidate
 	defer pending.discard()
 	concurrent := []byte("{\"generation\":\"concurrent\"}\n")
-	if err := os.WriteFile(paths.diagnostics, concurrent, 0o644); err != nil {
+	if err := os.WriteFile(fixture.paths.diagnostics, concurrent, 0o644); err != nil {
 		t.Fatalf("write concurrent artifact: %v", err)
 	}
 
@@ -182,78 +174,197 @@ func TestCandidateRejectsConcurrentActiveArtifactChange(t *testing.T) {
 	if !strings.Contains(err.Error(), "app app, rejected") {
 		t.Fatalf("publish error = %v, want App-scoped rejected outcome", err)
 	}
-	previous := previousArtifacts(paths)
-	previous[paths.diagnostics] = concurrent
-	assertArtifactContents(t, paths, previous)
+	want := previousArtifacts(fixture.paths)
+	want[fixture.paths.diagnostics] = concurrent
+	assertArtifactContents(t, fixture.paths, want)
 }
 
 // TestCandidatePublicationLockSerializesInterleavedWriters verifies identical writers converge without crossing the per-file CAS gap.
 func TestCandidatePublicationLockSerializesInterleavedWriters(t *testing.T) {
-	root, paths := writeStagedFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	defer restoreWorkingDirectory()
+	fixture := writeStagedFixture(t)
 
 	runner := newTestRunner()
-	firstRun, err := runner.prepareDefault(runOptions{})
+	firstRun, err := runner.prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare first API index writer: %v", err)
 	}
 	first := firstRun.candidate
 	defer first.discard()
-	secondRun, err := runner.prepareDefault(runOptions{})
+	secondRun, err := runner.prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare second API index writer: %v", err)
 	}
 	second := secondRun.candidate
 	defer second.discard()
+	locks := newQueuedPublicationCoordinator()
+	first.locks = locks
+	second.locks = locks
 
 	firstMutation := make(chan struct{})
 	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseFirst)
+		})
+	}
+	publisherDone := make(chan struct{}, 2)
+	startedPublishers := 0
+	startPublisher := func(candidate *preparedCandidate, result chan<- error) {
+		startedPublishers++
+		go func() {
+			defer func() {
+				publisherDone <- struct{}{}
+			}()
+			result <- candidate.publish()
+		}()
+	}
+	t.Cleanup(func() {
+		release()
+		locks.stop()
+		waitForPublisherCleanup(t, startedPublishers, publisherDone)
+	})
 	first.afterArtifactMutation = func(index int, _ string) {
 		if index != 0 {
 			return
 		}
 		close(firstMutation)
-		<-releaseFirst
+		select {
+		case <-releaseFirst:
+		case <-time.After(publicationTestTimeout):
+			t.Error("first publisher remained held at the interleaving point")
+		}
 	}
 	firstResult := make(chan error, 1)
-	go func() { firstResult <- first.publish() }()
+	startPublisher(first, firstResult)
 	select {
 	case <-firstMutation:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first publisher did not reach deterministic interleaving point")
+	case err := <-firstResult:
+		t.Fatalf("first publisher exited before the interleaving point: %v", err)
+	case <-time.After(publicationTestTimeout):
+		t.Fatal("first publisher did not reach the interleaving point")
 	}
 
 	secondResult := make(chan error, 1)
-	go func() { secondResult <- second.publish() }()
-	select {
-	case err := <-secondResult:
-		t.Fatalf("second publisher bypassed shared lock: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	startPublisher(second, secondResult)
+	waitForPublicationSignal(t, "second publisher to enter the held lock", locks.secondAcquireStarted)
+	release()
+	firstErr := waitForPublicationResult(t, "first publisher", firstResult)
+	secondErr := waitForPublicationResult(t, "second publisher", secondResult)
+	if firstErr != nil {
+		t.Fatalf("first publication failed: %v", firstErr)
 	}
-	close(releaseFirst)
-	if err := <-firstResult; err != nil {
-		t.Fatalf("first publication failed: %v", err)
-	}
-	if err := <-secondResult; err != nil {
-		t.Fatalf("identical second publication should converge after lock handoff: %v", err)
+	if secondErr != nil {
+		t.Fatalf("identical second publication should converge after lock handoff: %v", secondErr)
 	}
 
 	want := map[string][]byte{
-		paths.out:         first.candidates.out.content,
-		paths.diagnostics: first.candidates.diagnostics.content,
-		paths.openAPI:     first.candidates.openAPI.content,
+		fixture.paths.out:         first.candidates.out.content,
+		fixture.paths.diagnostics: first.candidates.diagnostics.content,
+		fixture.paths.openAPI:     first.candidates.openAPI.content,
 	}
-	assertArtifactContents(t, paths, want)
+	assertArtifactContents(t, fixture.paths, want)
+}
+
+// publicationTestTimeout bounds every worker and coordination wait in publication tests.
+const publicationTestTimeout = 5 * time.Second
+
+// queuedPublicationCoordinator deterministically exposes when a second publisher is waiting for ownership.
+type queuedPublicationCoordinator struct {
+	token                chan struct{}
+	acquireCalls         atomic.Int32
+	secondAcquireStarted chan struct{}
+	stopped              chan struct{}
+}
+
+// queuedPublicationLock makes release safe when normal completion and test cleanup converge on the same owner.
+type queuedPublicationLock struct {
+	coordinator *queuedPublicationCoordinator
+	releaseOnce sync.Once
+}
+
+// newQueuedPublicationCoordinator starts with one token so the first publisher can reach the controlled mutation point without extra setup.
+func newQueuedPublicationCoordinator() *queuedPublicationCoordinator {
+	coordinator := &queuedPublicationCoordinator{
+		token:                make(chan struct{}, 1),
+		secondAcquireStarted: make(chan struct{}),
+		stopped:              make(chan struct{}),
+	}
+	coordinator.token <- struct{}{}
+	return coordinator
+}
+
+// acquire records the second attempt while the first publisher still owns the single publication token.
+func (c *queuedPublicationCoordinator) acquire(_ paths) (artifactPublicationLock, error) {
+	if c.acquireCalls.Add(1) == 2 {
+		close(c.secondAcquireStarted)
+	}
+	select {
+	case <-c.token:
+		return &queuedPublicationLock{coordinator: c}, nil
+	case <-c.stopped:
+		return nil, errors.New("queued publication coordinator stopped")
+	}
+}
+
+// Release hands ownership to the next admitted publisher without allowing transactions to overlap.
+func (l *queuedPublicationLock) Release() error {
+	l.releaseOnce.Do(func() {
+		select {
+		case l.coordinator.token <- struct{}{}:
+		case <-l.coordinator.stopped:
+		}
+	})
+	return nil
+}
+
+// stop releases blocked test publishers when an earlier assertion ends the test.
+func (c *queuedPublicationCoordinator) stop() {
+	close(c.stopped)
+}
+
+// waitForPublicationSignal bounds synchronization failures so a broken coordinator cannot hang the package suite.
+func waitForPublicationSignal(t *testing.T, description string, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(publicationTestTimeout):
+		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
+// waitForPublicationResult bounds worker completion so a lock regression fails with its publication context.
+func waitForPublicationResult(t *testing.T, description string, result <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(publicationTestTimeout):
+		t.Fatalf("timed out waiting for %s", description)
+		return nil
+	}
+}
+
+// waitForPublisherCleanup bounds the complete worker drain so coordination failures cannot hang the package suite.
+func waitForPublisherCleanup(t *testing.T, expected int, completed <-chan struct{}) {
+	t.Helper()
+	timer := time.NewTimer(publicationTestTimeout)
+	defer timer.Stop()
+	for remaining := expected; remaining > 0; remaining-- {
+		select {
+		case <-completed:
+		case <-timer.C:
+			t.Errorf("%d publication goroutine(s) remained blocked during cleanup", remaining)
+			return
+		}
+	}
 }
 
 // TestPreparedCLIOnlyCleanupTreatsAlreadyAbsentSetAsSuccess verifies identical cleanup writers converge after lock handoff.
 func TestPreparedCLIOnlyCleanupTreatsAlreadyAbsentSetAsSuccess(t *testing.T) {
 	fixture := prepareCLIOnlyCleanupFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, fixture.root)
-	defer restoreWorkingDirectory()
 
-	secondRun, err := newTestRunner().prepareDefault(runOptions{})
+	secondRun, err := newTestRunner().prepareDefault(runOptions{root: fixture.root})
 	if err != nil {
 		t.Fatalf("prepare second CLI-only cleanup: %v", err)
 	}
@@ -273,12 +384,10 @@ func TestPreparedCLIOnlyCleanupTreatsAlreadyAbsentSetAsSuccess(t *testing.T) {
 // TestPreparedCLIOnlyCleanupRollsBackInjectedMidSetFailure verifies tombstones preserve the complete stale generation on failure.
 func TestPreparedCLIOnlyCleanupRollsBackInjectedMidSetFailure(t *testing.T) {
 	fixture := prepareCLIOnlyCleanupFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, fixture.root)
-	defer restoreWorkingDirectory()
 
 	injected := errors.New("injected cleanup rename failure")
 	fixture.candidate.renameFile = func(oldPath string, newPath string) error {
-		if filepath.Clean(oldPath) == filepath.Join(fixture.root, fixture.paths.diagnostics) {
+		if filepath.Clean(oldPath) == fixture.paths.diagnostics {
 			return injected
 		}
 		return os.Rename(oldPath, newPath)
@@ -294,16 +403,14 @@ func TestPreparedCLIOnlyCleanupRollsBackInjectedMidSetFailure(t *testing.T) {
 // TestPreparedCLIOnlyCleanupJoinsRollbackFailure verifies the triggering cleanup error is not lost when restoration also fails.
 func TestPreparedCLIOnlyCleanupJoinsRollbackFailure(t *testing.T) {
 	fixture := prepareCLIOnlyCleanupFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, fixture.root)
-	defer restoreWorkingDirectory()
 
 	cleanupErr := errors.New("injected cleanup failure")
 	rollbackErr := errors.New("injected cleanup rollback failure")
 	fixture.candidate.renameFile = func(oldPath string, newPath string) error {
-		if filepath.Clean(oldPath) == filepath.Join(fixture.root, fixture.paths.diagnostics) {
+		if filepath.Clean(oldPath) == fixture.paths.diagnostics {
 			return cleanupErr
 		}
-		if filepath.Clean(newPath) == filepath.Join(fixture.root, fixture.paths.out) && strings.Contains(filepath.Base(oldPath), ".forj-api-index-remove-") {
+		if filepath.Clean(newPath) == fixture.paths.out && strings.Contains(filepath.Base(oldPath), ".forj-api-index-remove-") {
 			return rollbackErr
 		}
 		return os.Rename(oldPath, newPath)
@@ -357,13 +464,11 @@ apps:
 		t.Fatalf("write CLI-only project config: %v", err)
 	}
 	t.Setenv("FORJ_APP", "ship")
-	paths := defaultPaths(project.DefaultNamedApp("ship"))
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultNamedApp("ship")))
 	previous := previousArtifacts(paths)
-	writeArtifacts(t, root, paths, previous)
+	writeArtifacts(t, paths, previous)
 
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	prepared, err := newTestRunner().prepareDefault(runOptions{})
-	restoreWorkingDirectory()
+	prepared, err := newTestRunner().prepareDefault(runOptions{root: root})
 	if err != nil {
 		t.Fatalf("prepare CLI-only cleanup fixture: %v", err)
 	}
@@ -379,8 +484,15 @@ apps:
 	}
 }
 
+// stagedFixture owns a project root and the complete rooted artifact generation prepared beneath it.
+type stagedFixture struct {
+	root     string
+	paths    paths
+	previous map[string][]byte
+}
+
 // writeStagedFixture creates an API-capable app with a previous complete artifact set.
-func writeStagedFixture(t *testing.T) (string, paths) {
+func writeStagedFixture(t *testing.T) stagedFixture {
 	t.Helper()
 	root := t.TempDir()
 	writeFixture(t, root)
@@ -399,9 +511,10 @@ func writeStagedFixture(t *testing.T) (string, paths) {
 	if err := os.WriteFile(routesPath, []byte("package app\n"), 0o644); err != nil {
 		t.Fatalf("write app route composition: %v", err)
 	}
-	paths := defaultPaths(project.DefaultApp())
-	writeArtifacts(t, root, paths, previousArtifacts(paths))
-	return root, paths
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultApp()))
+	previous := previousArtifacts(paths)
+	writeArtifacts(t, paths, previous)
+	return stagedFixture{root: root, paths: paths, previous: previous}
 }
 
 // previousArtifacts returns distinct valid documents so tests can detect any premature replacement.
@@ -413,19 +526,18 @@ func previousArtifacts(paths paths) map[string][]byte {
 	}
 }
 
-// writeArtifacts installs a complete artifact set beneath a temporary project root.
-func writeArtifacts(t *testing.T, root string, paths paths, contents map[string][]byte) {
+// writeArtifacts installs a complete artifact set at the fixture-owned rooted paths.
+func writeArtifacts(t *testing.T, paths paths, contents map[string][]byte) {
 	t.Helper()
 	for _, path := range artifactPaths(paths) {
-		absolutePath := filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(absolutePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("create artifact directory: %v", err)
 		}
 		content, ok := contents[path]
 		if !ok {
 			content = []byte("{}\n")
 		}
-		if err := os.WriteFile(absolutePath, content, 0o644); err != nil {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
 			t.Fatalf("write artifact %s: %v", path, err)
 		}
 	}
@@ -448,23 +560,6 @@ func assertArtifactContents(t *testing.T, paths paths, want map[string][]byte) {
 // artifactPaths keeps lifecycle assertions ordered consistently with publication.
 func artifactPaths(paths paths) []string {
 	return []string{paths.out, paths.diagnostics, paths.openAPI}
-}
-
-// changeWorkingDirectory scopes the process-wide working directory change used by default app resolution.
-func changeWorkingDirectory(t *testing.T, root string) func() {
-	t.Helper()
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("change working directory: %v", err)
-	}
-	return func() {
-		if err := os.Chdir(previous); err != nil {
-			t.Errorf("restore working directory: %v", err)
-		}
-	}
 }
 
 // assertNoStagingDirectories catches leaked candidates after every immediate publication path.

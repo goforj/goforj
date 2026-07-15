@@ -8,8 +8,23 @@ import (
 	"github.com/goforj/web/webindex"
 )
 
-// acquireArtifactLock takes the persistent advisory lock beside the artifact set.
-func acquireArtifactLock(paths paths) (*webindex.ArtifactPublicationLock, error) {
+// artifactPublicationLock limits publication ownership to the release operation required by the transaction.
+type artifactPublicationLock interface {
+	// Release relinquishes ownership after the complete artifact transaction finishes.
+	Release() error
+}
+
+// artifactLockCoordinator serializes a complete artifact transaction before its compare-and-swap check begins.
+type artifactLockCoordinator interface {
+	// acquire waits for exclusive ownership of the artifact set.
+	acquire(paths paths) (artifactPublicationLock, error)
+}
+
+// webindexArtifactLockCoordinator preserves interoperability with publishers using webindex directly.
+type webindexArtifactLockCoordinator struct{}
+
+// acquire takes the persistent webindex advisory lock beside the artifact set.
+func (webindexArtifactLockCoordinator) acquire(paths paths) (artifactPublicationLock, error) {
 	if _, err := artifactDirectory(paths); err != nil {
 		return nil, err
 	}

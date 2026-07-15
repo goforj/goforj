@@ -177,8 +177,14 @@ func (r *Runner) prepareDefault(options runOptions) (prepared preparedRun, err e
 			return preparedRun{report: report}, nil
 		}
 		return preparedRun{
-			candidate: &preparedCandidate{paths: paths, active: active, report: report, remove: true},
-			report:    report,
+			candidate: &preparedCandidate{
+				paths:  paths,
+				active: active,
+				report: report,
+				remove: true,
+				locks:  webindexArtifactLockCoordinator{},
+			},
+			report: report,
 		}, nil
 	}
 	routeComposition, err := existingRouteCompositionPath(target, paths.routeComposition)
@@ -222,6 +228,7 @@ func (r *Runner) prepareDefaultPaths(paths paths, options runOptions) (prepared 
 		stagedPaths: stagedPaths(paths, stagingDir),
 		stagingDir:  stagingDir,
 		active:      before,
+		locks:       webindexArtifactLockCoordinator{},
 	}
 	manifest, err := r.runIndex(candidate.stagedPaths, options)
 	prepared.report = reportFromManifest(paths.appName, outcomeChanged, manifest)

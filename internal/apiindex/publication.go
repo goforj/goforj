@@ -25,6 +25,7 @@ type preparedCandidate struct {
 	candidates            snapshots
 	report                runReport
 	remove                bool
+	locks                 artifactLockCoordinator
 	renameFile            func(string, string) error
 	afterArtifactMutation func(int, string)
 }
@@ -142,7 +143,7 @@ func (p *preparedCandidate) publish() (err error) {
 	if !p.remove && p.stagingDir == "" {
 		return fmt.Errorf("publish API index: candidate has no staging directory")
 	}
-	lock, err := acquireArtifactLock(p.paths)
+	lock, err := p.locks.acquire(p.paths)
 	if err != nil {
 		return err
 	}
