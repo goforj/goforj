@@ -25,10 +25,8 @@ type ProjectResolver struct {
 func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 	env := r.Env
 	components := project.Components{}
-	projectComponents := project.Components{}
 	if r.Config != nil {
 		components = r.Config.Render.Components
-		projectComponents = project.ProjectComponents(r.Config)
 	}
 	webEnabled := r.Config == nil || components.WebAPI || components.WebUI
 	resources := []Resource{}
@@ -53,30 +51,9 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 		if components.HasDatabase() {
 			resources = append(resources, Resource{ID: "database-default", Name: "default", Category: "database", Description: "Default database connection.", Enabled: true, Priority: 10, Source: "component", App: project.DefaultAppName, Owner: "goforj"})
 		}
-		if projectComponents.Jobs {
-			for _, app := range projectResourceApps(r.Config) {
-				if !app.components.Jobs {
-					continue
-				}
-				for _, name := range namedResourcesForApp(env, app.name, "QUEUE") {
-					resources = append(resources, Resource{ID: queueResourceID(app.name, name), Name: name, Category: "queue", Description: "Named queue resource.", Enabled: true, Priority: 10, Source: "env", App: app.name, Runtime: "jobs", Owner: "goforj"})
-				}
-			}
-		}
-		if projectComponents.Cache {
-			for _, name := range namedResources(env, "CACHE") {
-				resources = append(resources, Resource{ID: "cache-" + name, Name: name, Category: "cache", Description: "Named cache resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
-			}
-		}
-		if projectComponents.Storage {
-			for _, name := range namedResources(env, "STORAGE") {
-				resources = append(resources, Resource{ID: "storage-" + name, Name: name, Category: "storage", Description: "Named storage disk resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
-			}
-		}
-		if projectComponents.Events {
-			for _, name := range namedResources(env, "EVENTS") {
-				resources = append(resources, Resource{ID: "events-" + name, Name: name, Category: "events", Description: "Named event bus resource.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Owner: "goforj"})
-			}
+		resourceApps := projectResourceApps(r.Config)
+		for _, app := range resourceApps {
+			resources = append(resources, primitiveResourcesForApp(env, resourceApps, app)...)
 		}
 		if components.Mail && components.Docker {
 			resources = append(resources, Resource{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: urlWithPort(env, "MAILPIT_HTTP_PORT", "8025"), Description: "Local development inbox.", Enabled: true, Priority: 10, Source: "component", Owner: "goforj"})
@@ -166,7 +143,8 @@ func envValue(env map[string]string, key string) string {
 	return env[key]
 }
 
-func namedResources(env map[string]string, prefix string) []string {
+// namedResources derives logical names while allowing callers to exclude more specific environment namespaces.
+func namedResources(env map[string]string, prefix string, excludedKeyPrefixes ...string) []string {
 	names := []string{}
 	if strings.TrimSpace(envValue(env, prefix+"_DRIVER")) != "" {
 		names = append(names, "default")
@@ -176,6 +154,16 @@ func namedResources(env map[string]string, prefix string) []string {
 			continue
 		}
 		if key == prefix+"_DRIVER" {
+			continue
+		}
+		excluded := false
+		for _, excludedPrefix := range excludedKeyPrefixes {
+			if strings.HasPrefix(key, excludedPrefix) {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
 			continue
 		}
 		name := strings.TrimSuffix(strings.TrimPrefix(key, prefix+"_"), "_DRIVER")
@@ -215,9 +203,56 @@ func projectResourceApps(config *project.Config) []projectResourceApp {
 	return apps
 }
 
-// namedResourcesForApp combines shared queue definitions with one participating App's overrides.
-func namedResourcesForApp(env map[string]string, appName string, prefix string) []string {
-	names := namedResources(env, prefix)
+// primitiveResourcesForApp keeps component selection authoritative before interpreting shared or App-prefixed environment values.
+func primitiveResourcesForApp(env map[string]string, apps []projectResourceApp, app projectResourceApp) []Resource {
+	definitions := []struct {
+		enabled     bool
+		prefix      string
+		category    string
+		description string
+		runtime     string
+	}{
+		{enabled: app.components.Jobs, prefix: "QUEUE", category: "queue", description: "Named queue resource.", runtime: "jobs"},
+		{enabled: app.components.Cache, prefix: "CACHE", category: "cache", description: "Named cache resource."},
+		{enabled: app.components.Storage, prefix: "STORAGE", category: "storage", description: "Named storage disk resource."},
+		{enabled: app.components.Events, prefix: "EVENTS", category: "events", description: "Named event bus resource."},
+	}
+	resources := []Resource{}
+	for _, definition := range definitions {
+		if !definition.enabled {
+			continue
+		}
+		for _, name := range namedResourcesForApp(env, apps, app.name, definition.prefix) {
+			resources = append(resources, Resource{
+				ID:          appResourceID(definition.category, app.name, name),
+				Name:        name,
+				Category:    definition.category,
+				Description: definition.description,
+				Enabled:     true,
+				Priority:    10,
+				Source:      "env",
+				App:         app.name,
+				Runtime:     definition.runtime,
+				Owner:       "goforj",
+			})
+		}
+	}
+	return resources
+}
+
+// namedResourcesForApp keeps shared definitions available without attributing sibling App overlays to this App.
+func namedResourcesForApp(env map[string]string, apps []projectResourceApp, appName string, prefix string) []string {
+	excludedKeyPrefixes := make([]string, 0, len(apps))
+	for _, app := range apps {
+		if app.name == "" || app.name == project.DefaultAppName {
+			continue
+		}
+		appPrefix := project.AppEnvironmentPrefix(app.name)
+		if appPrefix != "" {
+			excludedKeyPrefixes = append(excludedKeyPrefixes, appPrefix+"_")
+		}
+	}
+	names := namedResources(env, prefix, excludedKeyPrefixes...)
 	if appName == "" || appName == project.DefaultAppName {
 		return names
 	}
@@ -228,12 +263,12 @@ func namedResourcesForApp(env map[string]string, appName string, prefix string) 
 	return uniqueSorted(append(names, namedResources(env, appPrefix+"_"+prefix)...))
 }
 
-// queueResourceID preserves the established default-App IDs while namespacing sibling Apps.
-func queueResourceID(appName string, queueName string) string {
+// appResourceID preserves established default-App IDs while namespacing sibling Apps.
+func appResourceID(category string, appName string, resourceName string) string {
 	if appName == "" || appName == project.DefaultAppName {
-		return "queue-" + queueName
+		return category + "-" + resourceName
 	}
-	return "queue-" + strings.ToLower(appName) + "-" + queueName
+	return category + "-" + strings.ToLower(appName) + "-" + resourceName
 }
 
 func firstNonEmpty(values ...string) string {
