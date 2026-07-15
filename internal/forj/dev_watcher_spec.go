@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -340,7 +341,7 @@ func isNestedDevWorkDir(workDir string) bool {
 
 // frameworkDevAppEnv keeps structured builds and snapshot runtimes aligned with app-aware framework commands.
 func frameworkDevAppEnv(app project.App, configured map[string]string) map[string]string {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	env := copyDevWatchEnv(configured)
 	env["FORJ_APP"] = app.Name
 	if app.Name == project.DefaultAppName {

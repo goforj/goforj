@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -57,8 +58,8 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 
 // migrateLegacyCacheShellCommandOwners moves the former generated Cache command out of preserved App command files.
 func migrateLegacyCacheShellCommandOwners() error {
-	for _, app := range renderApps() {
-		path := filepath.Join(app.AppDir, "commands.go")
+	for _, app := range projectlayout.ConventionalApps(".") {
+		path := filepath.Join(projectlayout.AppDir(".", app), "commands.go")
 		source, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -143,7 +144,7 @@ func planJobsOwnerMigration(config *project.Config) (*jobsOwnerMigration, error)
 		return nil, nil
 	}
 	source := filepath.Join("wire", "inject_jobs_app.go")
-	target := filepath.Join(project.DefaultApp().WireDir, "inject_jobs_app.go")
+	target := filepath.Join(projectlayout.WireDir(".", project.DefaultApp()), "inject_jobs_app.go")
 	sourceExists, err := renderPathExists(source)
 	if err != nil {
 		return nil, err
@@ -184,14 +185,13 @@ func applyJobsOwnerMigration(migration *jobsOwnerMigration) error {
 
 // eventSubscriberOwnerPath returns the current App-owned subscriber injector path.
 func eventSubscriberOwnerPath(app project.App) string {
-	app = normalizeRenderApp(app)
-	return filepath.Join(app.WireDir, "inject_subscribers_app.go")
+	return filepath.Join(projectlayout.WireDir(".", app), "inject_subscribers_app.go")
 }
 
 // legacyEventSubscriberOwnerPaths returns historical subscriber injector paths that belong to one App.
 func legacyEventSubscriberOwnerPaths(app project.App) []string {
-	app = normalizeRenderApp(app)
-	paths := []string{filepath.Join(app.WireDir, "inject_event_subscribers.go")}
+	app = projectlayout.NormalizeApp(app)
+	paths := []string{filepath.Join(projectlayout.WireDir(".", app), "inject_event_subscribers.go")}
 	if app.Name == project.DefaultAppName {
 		paths = append(paths,
 			filepath.Join("wire", "inject_event_subscribers.go"),
@@ -204,7 +204,7 @@ func legacyEventSubscriberOwnerPaths(app project.App) []string {
 // planEventSubscriberOwnerMigrations rejects ambiguous ownership before moving any preserved file.
 func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscriberOwnerMigration, error) {
 	migrations := make([]eventSubscriberOwnerMigration, 0)
-	for _, app := range runtimeAppsForMetadata(config) {
+	for _, app := range projectlayout.RuntimeApps(".", config) {
 		if !appRenderComponents(config, app).Events {
 			continue
 		}
@@ -262,7 +262,7 @@ func applyEventSubscriberOwnerMigrations(migrations []eventSubscriberOwnerMigrat
 
 // repairLegacyEventSubscriberOwnerSetNames updates only the historical package-level set identifier in preserved owner files.
 func repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
-	for _, app := range runtimeAppsForMetadata(config) {
+	for _, app := range projectlayout.RuntimeApps(".", config) {
 		if !appRenderComponents(config, app).Events {
 			continue
 		}
@@ -349,7 +349,7 @@ func renameLegacyEventSubscriberSetIdentifier(path string, source []byte) ([]byt
 func appOwnedWirePathsForApp(app project.App) []string {
 	wireDir := app.WireDir
 	if wireDir == "" {
-		wireDir = project.DefaultApp().WireDir
+		wireDir = projectlayout.WireDir(".", project.DefaultApp())
 	}
 	return []string{
 		filepath.Join(wireDir, "inject_cmd_app.go"),

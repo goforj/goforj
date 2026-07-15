@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -106,7 +107,7 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 			}
 		}
 	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
+	for _, app := range projectlayout.RuntimeApps(".", p.config) {
 		if err := validateLegacyEventOwnerSource(app); err != nil {
 			return err
 		}
@@ -114,8 +115,8 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 			continue
 		}
 		for _, path := range []string{
-			filepath.Join(app.WireDir, "inject_subscribers_app.go"),
-			filepath.Join(app.AppDir, "event_commands.go"),
+			filepath.Join(projectlayout.WireDir(".", app), "inject_subscribers_app.go"),
+			filepath.Join(projectlayout.AppDir(".", app), "event_commands.go"),
 		} {
 			exists, err := renderPathExists(path)
 			if err != nil {
@@ -135,15 +136,15 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 			}
 		}
 		if legacyEventPipelineField(app) {
-			path := filepath.Join(app.AppDir, "commands.go")
+			path := filepath.Join(projectlayout.AppDir(".", app), "commands.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s registers TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
 		}
 		if legacyEventPipelineProvider(app) {
-			path := filepath.Join(app.WireDir, "inject_cmd_app.go")
+			path := filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s provides TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
 		}
 		if legacyEventMakeCommandProvider(app) {
-			path := filepath.Join(app.WireDir, "inject_services_app.go")
+			path := filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s provides Events make commands; automatic Events removal is not supported", app.Name, path)
 		}
 	}
@@ -161,11 +162,11 @@ func (p *ProjectRenderer) validateStorageRenderTransition(projectComponents proj
 			}
 		}
 	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
+	for _, app := range projectlayout.RuntimeApps(".", p.config) {
 		if appRenderComponents(p.config, app).Storage {
 			continue
 		}
-		path := filepath.Join(app.WireDir, "app.go")
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
 		exists, err := appStorageSurfaceExists(path)
 		if err != nil {
 			return err
@@ -188,7 +189,7 @@ func (p *ProjectRenderer) validateJobsRenderTransition(projectComponents project
 			return fmt.Errorf("cannot disable Jobs while %s exists; automatic Jobs removal is not supported", path)
 		}
 	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
+	for _, app := range projectlayout.RuntimeApps(".", p.config) {
 		if appRenderComponents(p.config, app).Jobs {
 			continue
 		}
@@ -280,10 +281,10 @@ func projectJobsResiduePaths() []string {
 
 // appJobsResiduePaths lists generated and owner-controlled Jobs injectors for one App.
 func appJobsResiduePaths(app project.App) []string {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	paths := []string{
-		filepath.Join(app.WireDir, "inject_jobs.go"),
-		filepath.Join(app.WireDir, "inject_jobs_app.go"),
+		filepath.Join(projectlayout.WireDir(".", app), "inject_jobs.go"),
+		filepath.Join(projectlayout.WireDir(".", app), "inject_jobs_app.go"),
 	}
 	if app.Name == project.DefaultAppName {
 		paths = append(paths, filepath.Join("wire", "inject_jobs_app.go"))
@@ -293,8 +294,7 @@ func appJobsResiduePaths(app project.App) []string {
 
 // appJobsRemovalResiduePath finds the first App-owned Jobs accessor or injector that prevents safe component removal.
 func appJobsRemovalResiduePath(app project.App) (string, bool, error) {
-	app = normalizeRenderApp(app)
-	appPath := filepath.Join(app.WireDir, "app.go")
+	appPath := filepath.Join(projectlayout.WireDir(".", app), "app.go")
 	exists, err := appJobsSurfaceExists(appPath)
 	if err != nil {
 		return "", false, err
@@ -406,10 +406,9 @@ func projectEventsResiduePaths() []string {
 
 // validateLegacyEventOwnerSource ensures compatibility flags cannot silently misclassify malformed owner code.
 func validateLegacyEventOwnerSource(app project.App) error {
-	app = normalizeRenderApp(app)
 	for _, path := range []string{
-		filepath.Join(app.AppDir, "commands.go"),
-		filepath.Join(app.WireDir, "inject_cmd_app.go"),
+		filepath.Join(projectlayout.AppDir(".", app), "commands.go"),
+		filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go"),
 	} {
 		if _, _, err := parsedRenderGoFile(path); err != nil {
 			return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
@@ -420,7 +419,7 @@ func validateLegacyEventOwnerSource(app project.App) error {
 
 // validateLegacyAppServiceInjectorOwnership rejects obsolete framework providers that cannot be removed without interpreting owner intent.
 func validateLegacyAppServiceInjectorOwnership(app project.App) error {
-	path := filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go")
+	path := filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go")
 	file, exists, err := parsedRenderGoFile(path)
 	if err != nil {
 		return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
@@ -463,7 +462,7 @@ func legacyAppServiceInjectorRequiresManualMigration(file *ast.File) bool {
 
 // legacyEventMakeCommandProvider reports whether an owner service set still references Events-only make commands.
 func legacyEventMakeCommandProvider(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go"))
+	file, exists, err := parsedRenderGoFile(filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go"))
 	if err != nil || !exists {
 		return false
 	}
@@ -510,7 +509,7 @@ func renderPathExists(path string) (bool, error) {
 
 // legacyEventPipelineField reports whether an owner Commands struct still carries the pre-component Events command field.
 func legacyEventPipelineField(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).AppDir, "commands.go"))
+	file, exists, err := parsedRenderGoFile(filepath.Join(projectlayout.AppDir(".", app), "commands.go"))
 	if err != nil || !exists {
 		return false
 	}
@@ -540,7 +539,7 @@ func legacyEventPipelineField(app project.App) bool {
 
 // legacyEventPipelineProvider reports whether an owner command Wire set already supplies the pre-component Events command.
 func legacyEventPipelineProvider(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_cmd_app.go"))
+	file, exists, err := parsedRenderGoFile(filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go"))
 	if err != nil || !exists {
 		return false
 	}

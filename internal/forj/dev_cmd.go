@@ -25,6 +25,7 @@ import (
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 	"golang.org/x/term"
@@ -317,7 +318,7 @@ func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatab
 	seen := map[string]bool{}
 	databases := make([]devDatabase, 0, len(apps))
 	for _, app := range apps {
-		app = normalizeRenderApp(app)
+		app = projectlayout.NormalizeApp(app)
 		components := appRenderComponents(config, app)
 		if !components.HasDatabase() {
 			continue
@@ -593,7 +594,7 @@ func shouldRunDevAutoMigrate(config *project.Config) bool {
 func devAutoMigrateShellCommand(config *project.Config) string {
 	for _, app := range activeDevAppsForConfig(config) {
 		if appRenderComponents(config, app).HasDatabase() {
-			return "./bin/" + app.Name + " migrate"
+			return projectlayout.RuntimeExecutable(".", app) + " migrate"
 		}
 	}
 	return activeDevAppBinaryPath() + " migrate"
@@ -617,7 +618,7 @@ func activeDevApp() project.App {
 
 // activeDevAppBinaryPath points dev helpers at the active app binary.
 func activeDevAppBinaryPath() string {
-	return "./bin/" + activeDevApp().Name
+	return projectlayout.RuntimeExecutable(".", activeDevApp())
 }
 
 // devWatchesForApps expands the single-app default watchers across every discovered app.
@@ -653,17 +654,14 @@ func devWatchForAppWithConfig(config *project.Config, watch project.DevWatch, ap
 		return devWatchForApp(watch, app), true
 	}
 
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	runCommand, ok := devRunCommandForApp(config, app)
 	if !ok {
 		return project.DevWatch{}, false
 	}
 
 	appWatch := devWatchForApp(watch, app)
-	binary := "./bin/app"
-	if app.Name != project.DefaultAppName {
-		binary = "./bin/" + app.Name
-	}
+	binary := projectlayout.RuntimeExecutable(".", app)
 	appWatch.Exec = strings.TrimSpace(binary + " " + runCommand)
 	return appWatch, true
 }
@@ -673,7 +671,7 @@ func devRunCommandForApp(config *project.Config, app project.App) (string, bool)
 	if config == nil || config.Dev.Run == nil {
 		return "", false
 	}
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	command, ok := config.Dev.Run[app.Name]
 	if !ok {
 		return "", false
@@ -743,7 +741,7 @@ func activeDevApps() []project.App {
 	if appName := requestedDevAppName(); appName != "" {
 		return []project.App{project.DefaultNamedApp(appName)}
 	}
-	apps := configuredDevApps()
+	apps := projectlayout.ConventionalApps(".")
 	if len(apps) == 0 {
 		return []project.App{project.DefaultApp()}
 	}
@@ -772,47 +770,16 @@ func requestedDevAppName() string {
 	return appName
 }
 
-// configuredDevApps discovers all-app dev apps from conventional project layout only.
-func configuredDevApps() []project.App {
-	seen := map[string]project.App{}
-	add := func(app project.App) {
-		app = normalizeRenderApp(app)
-		if app.Name == "" || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
-			return
-		}
-		seen[app.Name] = app
-	}
-	add(project.DefaultApp())
-	for _, app := range discoverConventionalApps() {
-		add(app)
-	}
-
-	apps := make([]project.App, 0, len(seen))
-	if app, ok := seen[project.DefaultAppName]; ok {
-		apps = append(apps, app)
-		delete(seen, project.DefaultAppName)
-	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		apps = append(apps, seen[name])
-	}
-	return apps
-}
-
 // devWatchForApp rewrites one default watcher for a specific app without editing config.
 func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	baseName := watch.Name
 	if app.Name != project.DefaultAppName {
 		watch.Name = strings.ReplaceAll(watch.Name, "App", app.Name)
 	}
-	appBinary := "./bin/" + app.Name
-	appReady := devReadyStampPath(app)
-	appWireGen := filepath.ToSlash(filepath.Join(app.WireDir, "wire_gen\\.go$"))
+	appBinary := projectlayout.RuntimeExecutable(".", app)
+	appReady := projectlayout.RuntimeReadyStamp(".", app)
+	appWireGen := filepath.ToSlash(filepath.Join(projectlayout.WireDir(".", app), "wire_gen\\.go$"))
 	if isDevBuildWatcher(baseName) {
 		watch.Exec = devBuildCommandForApp(watch.Exec, app)
 	} else {
@@ -838,16 +805,6 @@ func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
 // isDevRunWatcher reports whether a watcher supervises a built app process.
 func isDevRunWatcher(name string) bool {
 	return name == "Run App" || strings.HasPrefix(name, "Run ")
-}
-
-// devReadyStampPath returns the app-specific build completion trigger watched by runtime watchers.
-func devReadyStampPath(app project.App) string {
-	app = normalizeRenderApp(app)
-	name := app.Name
-	if name == "" {
-		name = project.DefaultAppName
-	}
-	return "./bin/." + name + ".ready"
 }
 
 // copyDevWatchEnv prevents synthesized app watchers from sharing mutable env maps.
@@ -892,7 +849,7 @@ func devBuildJobs(config *project.Config, missingOnly bool) []devBuildJob {
 	jobs := make([]devBuildJob, 0, len(apps))
 	baseCommand := devBaseBuildCommand(config)
 	for _, app := range apps {
-		app = normalizeRenderApp(app)
+		app = projectlayout.NormalizeApp(app)
 		if missingOnly {
 			if _, err := os.Stat(filepath.Join("bin", app.Name)); err == nil {
 				continue
@@ -964,17 +921,17 @@ func devBaseBuildCommand(config *project.Config) string {
 
 // devBuildCommandForApp derives app builds from the configured default build command.
 func devBuildCommandForApp(baseCommand string, app project.App) string {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	command := strings.TrimSpace(baseCommand)
 	if command == "" {
 		command = "forj build -o ./bin/app"
 	}
 
 	defaultApp := project.DefaultApp()
-	defaultBinary := "./bin/" + defaultApp.Name
-	appBinary := "./bin/" + app.Name
-	defaultPackage := "./" + filepath.ToSlash(filepath.Dir(defaultApp.Entrypoint))
-	appPackage := "./" + filepath.ToSlash(filepath.Dir(app.Entrypoint))
+	defaultBinary := projectlayout.RuntimeExecutable(".", defaultApp)
+	appBinary := projectlayout.RuntimeExecutable(".", app)
+	defaultPackage := "./" + filepath.ToSlash(projectlayout.CommandDir(".", defaultApp))
+	appPackage := "./" + filepath.ToSlash(projectlayout.CommandDir(".", app))
 
 	command = replaceBuildToken(command, defaultBinary, appBinary)
 	command = replaceBuildToken(command, strings.TrimPrefix(defaultBinary, "./"), strings.TrimPrefix(appBinary, "./"))
@@ -1567,15 +1524,15 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 
 // publishDevBuildReadyStamp makes custom successful build commands obey the same runtime publication gate as forj build.
 func publishDevBuildReadyStamp(app project.App) error {
-	app = normalizeRenderApp(app)
-	binary := filepath.Join("bin", app.Name)
+	app = projectlayout.NormalizeApp(app)
+	binary := projectlayout.RuntimeBinary(".", app)
 	if _, err := os.Stat(binary); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("inspect built app binary: %w", err)
 	}
-	ready := devReadyStampPath(app)
+	ready := projectlayout.RuntimeReadyStamp(".", app)
 	if err := os.MkdirAll(filepath.Dir(ready), 0o755); err != nil {
 		return fmt.Errorf("create build ready directory: %w", err)
 	}
@@ -1714,7 +1671,7 @@ func writeDevAppBuildLine(out io.Writer, apps []project.App) {
 func devAppBuildNames(apps []project.App) []string {
 	names := make([]string, 0, len(apps))
 	for _, app := range apps {
-		app = normalizeRenderApp(app)
+		app = projectlayout.NormalizeApp(app)
 		if app.Name == "" {
 			continue
 		}
@@ -1890,7 +1847,7 @@ func devAppNames(apps []project.App) []string {
 	names := make([]string, 0, len(apps))
 	seen := map[string]bool{}
 	for _, app := range apps {
-		app = normalizeRenderApp(app)
+		app = projectlayout.NormalizeApp(app)
 		if app.Name == "" || seen[app.Name] {
 			continue
 		}
@@ -1931,8 +1888,8 @@ func devRuntimeWatcherApp(watcher string) string {
 // clearDevBuildReadyStamps prevents runtime watchers from treating a previous build as current.
 func clearDevBuildReadyStamps(jobs []devBuildJob) {
 	for _, job := range jobs {
-		app := normalizeRenderApp(job.app)
-		_ = os.Remove(devReadyStampPath(app))
+		app := projectlayout.NormalizeApp(job.app)
+		_ = os.Remove(projectlayout.RuntimeReadyStamp(".", app))
 	}
 }
 

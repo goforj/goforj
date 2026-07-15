@@ -26,6 +26,7 @@ import (
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
 	"github.com/joho/godotenv"
@@ -810,7 +811,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return nil
 				}
 				if err := p.writeTemplateMappingsOnce([]templateMapping{
-					mapTemplateTo("frontend/dist/index.html.tmpl", appFrontendDistIndex(project.DefaultApp())),
+					mapTemplateTo("frontend/dist/index.html.tmpl", projectlayout.FrontendDistIndex(".", project.DefaultApp())),
 				}); err != nil {
 					return err
 				}
@@ -1412,7 +1413,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	p.stats = &renderStats{}
 	p.lines = nil
 
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	if app.Name == "" || app.Name == project.DefaultAppName {
 		return makeapp.RemoveResult{}, fmt.Errorf("default app cannot be removed")
 	}
@@ -1429,8 +1430,8 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 
 	var result makeapp.RemoveResult
 	for _, path := range []string{
-		app.AppDir,
-		appFrontendDir(app),
+		projectlayout.AppDir(".", app),
+		projectlayout.FrontendDir(".", app),
 	} {
 		removed, err := removeDirIfExists(path)
 		if err != nil {
@@ -1441,8 +1442,8 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		}
 	}
 	for _, path := range []string{
-		app.Entrypoint,
-		filepath.Join("bin", app.Name),
+		projectlayout.Entrypoint(".", app),
+		projectlayout.RuntimeBinary(".", app),
 	} {
 		removed, err := removeFileIfExists(path)
 		if err != nil {
@@ -1453,7 +1454,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		}
 	}
 
-	cmdDir := filepath.Dir(app.Entrypoint)
+	cmdDir := projectlayout.CommandDir(".", app)
 	removed, err := removeEmptyDirIfEmpty(cmdDir)
 	if err != nil {
 		return result, err
@@ -2355,7 +2356,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	}
 	defaultApp := project.DefaultApp()
 	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
-		p.config.Dev.WirePaths = []string{defaultApp.WireDir}
+		p.config.Dev.WirePaths = []string{projectlayout.WireDir(".", defaultApp)}
 		changed = true
 	}
 	if removeLegacyInitialBuildTask(&p.config.Dev.Pre) {
@@ -2578,10 +2579,7 @@ func hasDevTask(tasks []project.DevTask, want project.DevTask) bool {
 
 // renderNamedApps renders every non-default app discovered from conventional project layout.
 func (p *ProjectRenderer) renderNamedApps() error {
-	apps, err := p.namedAppRenderApps()
-	if err != nil {
-		return err
-	}
+	apps := projectlayout.DiscoveredNamedApps(".")
 	if len(apps) == 1 {
 		app := apps[0]
 		if err := p.renderApp(app); err != nil {
@@ -2720,122 +2718,9 @@ func isMigrationSQLFile(name string) bool {
 	return strings.HasSuffix(name, ".up.sql") || strings.HasSuffix(name, ".down.sql")
 }
 
-// namedAppRenderApps discovers named apps from conventional project layout only.
-func (p *ProjectRenderer) namedAppRenderApps() ([]project.App, error) {
-	seen := map[string]bool{project.DefaultAppName: true}
-	apps := make([]project.App, 0)
-	add := func(app project.App) {
-		app = normalizeRenderApp(app)
-		if app.Name == "" || seen[app.Name] || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
-			return
-		}
-		seen[app.Name] = true
-		apps = append(apps, app)
-	}
-
-	for _, app := range discoverConventionalApps() {
-		add(app)
-	}
-
-	return apps, nil
-}
-
-// discoverConventionalApps treats existing cmd/<app> and app/<app> layouts as source of truth.
-func discoverConventionalApps() []project.App {
-	names := make(map[string]bool)
-	if entries, err := os.ReadDir("cmd"); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if name == project.DefaultAppName || !project.IsSafeAppName(name) {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join("cmd", name, "main.go")); err == nil {
-				names[name] = true
-			}
-		}
-	}
-	if entries, err := os.ReadDir("app"); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
-				continue
-			}
-			if hasConventionalAppFiles(filepath.Join("app", name)) {
-				names[name] = true
-			}
-		}
-	}
-
-	apps := make([]project.App, 0, len(names))
-	for name := range names {
-		apps = append(apps, project.DefaultNamedApp(name))
-	}
-	sort.Slice(apps, func(i, j int) bool {
-		return apps[i].Name < apps[j].Name
-	})
-	return apps
-}
-
-// hasConventionalAppFiles avoids treating arbitrary app subpackages as apps unless they look app-owned.
-func hasConventionalAppFiles(appDir string) bool {
-	for _, path := range []string{
-		filepath.Join(appDir, "wire"),
-		filepath.Join(appDir, "commands.go"),
-		filepath.Join(appDir, "root_cmd.go"),
-		filepath.Join(appDir, "routes.go"),
-		filepath.Join(appDir, "schedules.go"),
-		filepath.Join(appDir, "lifecycle.go"),
-	} {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// normalizeRenderApp fills missing paths from the framework app conventions.
-func normalizeRenderApp(app project.App) project.App {
-	if strings.TrimSpace(app.Name) == "" {
-		return project.DefaultApp()
-	}
-	namedDefault := project.DefaultNamedApp(app.Name)
-	if app.Entrypoint == "" {
-		app.Entrypoint = namedDefault.Entrypoint
-	}
-	if app.AppDir == "" {
-		app.AppDir = namedDefault.AppDir
-	}
-	if app.WireDir == "" {
-		app.WireDir = namedDefault.WireDir
-	}
-	return app
-}
-
-// defaultFrontendDir returns the editable frontend root for the conventional default app.
-func defaultFrontendDir() string {
-	return appFrontendDir(project.DefaultApp())
-}
-
-// appFrontendDir keeps frontend source next to the command package that embeds its build output.
-func appFrontendDir(app project.App) string {
-	app = normalizeRenderApp(app)
-	return filepath.Join(filepath.Dir(app.Entrypoint), "frontend")
-}
-
-// appFrontendDistIndex returns the app-local placeholder path required by go:embed.
-func appFrontendDistIndex(app project.App) string {
-	return filepath.Join(appFrontendDir(app), "dist", "index.html")
-}
-
 // renderApp writes the app entrypoint, composition files, and app-local Wire graph.
 func (p *ProjectRenderer) renderApp(app project.App) error {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	if err := p.writeTemplateMappingsForApp(app, p.appFrameworkMappings(app)); err != nil {
 		return err
 	}
@@ -2859,8 +2744,8 @@ func (p *ProjectRenderer) migrateFrontendDistPlaceholder(app project.App) error 
 	if p.config == nil || !appRenderComponents(p.config, app).WebUI {
 		return nil
 	}
-	app = normalizeRenderApp(app)
-	path := appFrontendDistIndex(app)
+	app = projectlayout.NormalizeApp(app)
+	path := projectlayout.FrontendDistIndex(".", app)
 	content, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -2882,8 +2767,8 @@ func (p *ProjectRenderer) ensureFrontendPlaceholderAssets(app project.App) error
 	if p.config == nil || !appRenderComponents(p.config, app).WebUI {
 		return nil
 	}
-	app = normalizeRenderApp(app)
-	index := appFrontendDistIndex(app)
+	app = projectlayout.NormalizeApp(app)
+	index := projectlayout.FrontendDistIndex(".", app)
 	content, err := os.ReadFile(index)
 	if os.IsNotExist(err) {
 		return nil
@@ -2957,32 +2842,34 @@ func oldFrontendDistPlaceholder(projectName string) string {
 // appFrameworkMappings returns files the CLI can safely refresh on every render.
 func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMapping {
 	components := appRenderComponents(p.config, app)
+	appDir := projectlayout.AppDir(".", app)
+	wireDir := projectlayout.WireDir(".", app)
 	mappings := []templateMapping{
-		mapTemplateTo("cmd/app/main.go.tmpl", app.Entrypoint),
-		mapTemplateTo("app/root_cmd.go.tmpl", filepath.Join(app.AppDir, "root_cmd.go")),
-		mapTemplateTo("wire/app.go.tmpl", filepath.Join(app.WireDir, "app.go")),
-		mapTemplateTo("wire/app_test.go.tmpl", filepath.Join(app.WireDir, "app_test.go")),
-		mapTemplateTo("wire/inject_cmd.go.tmpl", filepath.Join(app.WireDir, "inject_cmd.go")),
-		mapTemplateTo("wire/inject_managers.go.tmpl", filepath.Join(app.WireDir, "inject_managers.go")),
-		mapTemplateTo("wire/wire.go.tmpl", filepath.Join(app.WireDir, "wire.go")),
+		mapTemplateTo("cmd/app/main.go.tmpl", projectlayout.Entrypoint(".", app)),
+		mapTemplateTo("app/root_cmd.go.tmpl", filepath.Join(appDir, "root_cmd.go")),
+		mapTemplateTo("wire/app.go.tmpl", filepath.Join(wireDir, "app.go")),
+		mapTemplateTo("wire/app_test.go.tmpl", filepath.Join(wireDir, "app_test.go")),
+		mapTemplateTo("wire/inject_cmd.go.tmpl", filepath.Join(wireDir, "inject_cmd.go")),
+		mapTemplateTo("wire/inject_managers.go.tmpl", filepath.Join(wireDir, "inject_managers.go")),
+		mapTemplateTo("wire/wire.go.tmpl", filepath.Join(wireDir, "wire.go")),
 	}
 	if components.HasDatabase() {
-		mappings = append(mappings, mapTemplateTo("wire/inject_db.go.tmpl", filepath.Join(app.WireDir, "inject_db.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_db.go.tmpl", filepath.Join(wireDir, "inject_db.go")))
 	}
 	if components.Auth && components.HasDatabase() {
-		mappings = append(mappings, mapTemplateTo("wire/inject_auth.go.tmpl", filepath.Join(app.WireDir, "inject_auth.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_auth.go.tmpl", filepath.Join(wireDir, "inject_auth.go")))
 	}
 	if components.WebAPI || components.WebUI {
-		mappings = append(mappings, mapTemplateTo("wire/inject_http.go.tmpl", filepath.Join(app.WireDir, "inject_http.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_http.go.tmpl", filepath.Join(wireDir, "inject_http.go")))
 	}
 	if components.Scheduler {
-		mappings = append(mappings, mapTemplateTo("wire/inject_scheduler.go.tmpl", filepath.Join(app.WireDir, "inject_scheduler.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_scheduler.go.tmpl", filepath.Join(wireDir, "inject_scheduler.go")))
 	}
 	if components.Jobs {
-		mappings = append(mappings, mapTemplateTo("wire/inject_jobs.go.tmpl", filepath.Join(app.WireDir, "inject_jobs.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_jobs.go.tmpl", filepath.Join(wireDir, "inject_jobs.go")))
 	}
 	if components.Events {
-		mappings = append(mappings, mapTemplateTo("app/event_commands.go.tmpl", filepath.Join(app.AppDir, "event_commands.go")))
+		mappings = append(mappings, mapTemplateTo("app/event_commands.go.tmpl", filepath.Join(appDir, "event_commands.go")))
 	}
 	return mappings
 }
@@ -2990,35 +2877,37 @@ func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMappin
 // appOwnedMappings returns customization files that should be created once and then preserved.
 func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 	components := appRenderComponents(p.config, app)
+	appDir := projectlayout.AppDir(".", app)
+	wireDir := projectlayout.WireDir(".", app)
 	mappings := []templateMapping{
-		mapTemplateTo("app/lifecycle.go.tmpl", filepath.Join(app.AppDir, "lifecycle.go")),
-		mapTemplateTo("app/commands.go.tmpl", filepath.Join(app.AppDir, "commands.go")),
-		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(app.WireDir, "inject_services_app.go")),
-		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(app.WireDir, "inject_cmd_app.go")),
+		mapTemplateTo("app/lifecycle.go.tmpl", filepath.Join(appDir, "lifecycle.go")),
+		mapTemplateTo("app/commands.go.tmpl", filepath.Join(appDir, "commands.go")),
+		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(wireDir, "inject_services_app.go")),
+		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(wireDir, "inject_cmd_app.go")),
 	}
 	if components.Events {
-		mappings = append(mappings, mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(app.WireDir, "inject_subscribers_app.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(wireDir, "inject_subscribers_app.go")))
 	}
 	if components.WebUI {
-		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", appFrontendDistIndex(app)))
+		mappings = append(mappings, mapTemplateTo("frontend/dist/index.html.tmpl", projectlayout.FrontendDistIndex(".", app)))
 	}
 	if components.WebAPI || components.WebUI {
 		mappings = append(mappings,
-			mapTemplateTo("app/routes.go.tmpl", filepath.Join(app.AppDir, "routes.go")),
-			mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", filepath.Join(app.WireDir, "inject_http_controllers_app.go")),
+			mapTemplateTo("app/routes.go.tmpl", filepath.Join(appDir, "routes.go")),
+			mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", filepath.Join(wireDir, "inject_http_controllers_app.go")),
 		)
 	}
 	if components.HasDatabase() {
-		mappings = append(mappings, mapTemplateTo("wire/inject_repositories_app.go.tmpl", filepath.Join(app.WireDir, "inject_repositories_app.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_repositories_app.go.tmpl", filepath.Join(wireDir, "inject_repositories_app.go")))
 	}
 	if components.Scheduler {
 		mappings = append(mappings,
-			mapTemplateTo("app/schedules.go.tmpl", filepath.Join(app.AppDir, "schedules.go")),
-			mapTemplateTo("wire/inject_schedules_app.go.tmpl", filepath.Join(app.WireDir, "inject_schedules_app.go")),
+			mapTemplateTo("app/schedules.go.tmpl", filepath.Join(appDir, "schedules.go")),
+			mapTemplateTo("wire/inject_schedules_app.go.tmpl", filepath.Join(wireDir, "inject_schedules_app.go")),
 		)
 	}
 	if components.Jobs {
-		mappings = append(mappings, mapTemplateTo("wire/inject_jobs_app.go.tmpl", filepath.Join(app.WireDir, "inject_jobs_app.go")))
+		mappings = append(mappings, mapTemplateTo("wire/inject_jobs_app.go.tmpl", filepath.Join(wireDir, "inject_jobs_app.go")))
 	}
 	return mappings
 }
@@ -3372,16 +3261,14 @@ func (p *ProjectRenderer) wireGenerateDirs() []string {
 	}
 
 	dirs := make([]string, 0)
-	add(project.DefaultApp().WireDir, &dirs)
+	add(projectlayout.WireDir(".", project.DefaultApp()), &dirs)
 	if p.config != nil {
 		for _, configured := range p.config.Dev.WirePaths {
 			add(configured, &dirs)
 		}
 	}
-	if apps, err := p.namedAppRenderApps(); err == nil {
-		for _, app := range apps {
-			add(app.WireDir, &dirs)
-		}
+	for _, app := range projectlayout.DiscoveredNamedApps(".") {
+		add(projectlayout.WireDir(".", app), &dirs)
 	}
 	if len(dirs) == 0 {
 		add("wire", &dirs)
@@ -3480,7 +3367,7 @@ func commandExists(name string) bool {
 }
 
 func (p *ProjectRenderer) scaffoldDemoFrontend() error {
-	frontendDir := defaultFrontendDir()
+	frontendDir := projectlayout.FrontendDir(".", project.DefaultApp())
 	if err := p.copyRawPathToDest("demo/frontend", frontendDir); err != nil {
 		return err
 	}
@@ -3500,7 +3387,7 @@ func (p *ProjectRenderer) scaffoldAppStarterKit(app project.App) error {
 	if starterKit == project.StarterKitNone {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(appFrontendDir(app), "package.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(projectlayout.FrontendDir(".", app), "package.json")); err == nil {
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
@@ -3514,7 +3401,7 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 	if starterKit == project.StarterKitNone {
 		return nil
 	}
-	frontendDir := appFrontendDir(app)
+	frontendDir := projectlayout.FrontendDir(".", app)
 	if overwrite {
 		if err := os.RemoveAll(frontendDir); err != nil {
 			return err
@@ -3534,12 +3421,12 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 	}
 	if _, err := os.Stat(filepath.Join(frontendDir, "dist", "index.html")); err != nil {
 		if p.config != nil {
-			if err := p.renderTemplateFile(appFrontendDistIndex(app), "frontend/dist/index.html.tmpl", templateDataForApp(p.config, app)); err != nil {
+			if err := p.renderTemplateFile(projectlayout.FrontendDistIndex(".", app), "frontend/dist/index.html.tmpl", templateDataForApp(p.config, app)); err != nil {
 				return err
 			}
 			return p.ensureFrontendPlaceholderAssets(app)
 		}
-		return p.writeFrontendDistPlaceholder(appFrontendDistIndex(app), defaultFrontendDistPlaceholderContent())
+		return p.writeFrontendDistPlaceholder(projectlayout.FrontendDistIndex(".", app), defaultFrontendDistPlaceholderContent())
 	}
 	return nil
 }
@@ -3611,11 +3498,11 @@ func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
 	content := defaultFrontendDistPlaceholderContent()
 	paths := make([]string, 0)
-	for _, app := range renderApps() {
+	for _, app := range projectlayout.ConventionalApps(".") {
 		if !appRenderComponents(p.config, app).WebUI {
 			continue
 		}
-		paths = append(paths, appFrontendDistIndex(app))
+		paths = append(paths, projectlayout.FrontendDistIndex(".", app))
 	}
 	for _, index := range paths {
 		if _, err := os.Stat(index); err == nil {
@@ -3772,8 +3659,8 @@ func templateDataForApp(config *project.Config, app project.App) templateRenderC
 	if app.Name == "" {
 		app = project.DefaultApp()
 	}
-	appImportPath := filepath.ToSlash(app.AppDir)
-	wireImportPath := filepath.ToSlash(app.WireDir)
+	appImportPath := filepath.ToSlash(projectlayout.AppDir(".", app))
+	wireImportPath := filepath.ToSlash(projectlayout.WireDir(".", app))
 	components := appRenderComponents(config, app)
 	starterKit := appRenderStarterKit(config, app)
 	helpFormat := appRenderHelpFormat(config, app)
@@ -3873,7 +3760,7 @@ func appRenderStarterKit(config *project.Config, app project.App) project.Starte
 
 // runtimeAppMetadataForRender creates the compiled App table with each App's stable component projection.
 func runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
-	apps := runtimeAppsForMetadata(config)
+	apps := projectlayout.RuntimeApps(".", config)
 	out := make([]runtimeAppMetadata, 0, len(apps))
 	for i, app := range apps {
 		out = append(out, runtimeAppMetadata{
@@ -3891,53 +3778,16 @@ func runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
 // runtimeAppMetadataForConfiguredApp includes persisted app config so make:app can
 // assign env defaults before the new conventional files are fully discoverable.
 func runtimeAppMetadataForConfiguredApp(config *project.Config, app project.App) runtimeAppMetadata {
-	metadata := runtimeAppMetadataForAppFromApps(app, runtimeAppsForMetadata(config, app))
+	metadata := runtimeAppMetadataForAppFromApps(app, projectlayout.RuntimeApps(".", config, app))
 	metadata.Components = appRenderComponents(config, app)
 	return metadata
 }
 
-// runtimeAppsForMetadata combines configured and discovered Apps before assigning deterministic runtime indexes.
-func runtimeAppsForMetadata(config *project.Config, extras ...project.App) []project.App {
-	seen := map[string]project.App{}
-	add := func(app project.App) {
-		app = normalizeRenderApp(app)
-		if app.Name == "" || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
-			return
-		}
-		seen[app.Name] = app
-	}
-
-	for _, app := range renderApps() {
-		add(app)
-	}
-	if config != nil {
-		for name := range config.Apps {
-			add(project.DefaultNamedApp(name))
-		}
-	}
-	for _, app := range extras {
-		add(app)
-	}
-
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		if name != project.DefaultAppName {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	apps := []project.App{seen[project.DefaultAppName]}
-	for _, name := range names {
-		apps = append(apps, seen[name])
-	}
-	return apps
-}
-
 func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runtimeAppMetadata {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	seen := map[string]project.App{}
 	for _, candidate := range apps {
-		candidate = normalizeRenderApp(candidate)
+		candidate = projectlayout.NormalizeApp(candidate)
 		if candidate.Name == "" || !project.IsSafeAppName(candidate.Name) || project.IsReservedAppName(candidate.Name) {
 			continue
 		}
@@ -3966,32 +3816,6 @@ func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runti
 		}
 	}
 	return runtimeAppMetadata{Name: app.Name, EnvPrefix: project.AppEnvironmentPrefix(app.Name), HTTPPort: 3000, RuntimeBase: 10000}
-}
-
-// renderApps returns the default app plus named apps in deterministic runtime order.
-func renderApps() []project.App {
-	seen := map[string]bool{}
-	apps := make([]project.App, 0)
-	add := func(app project.App) {
-		app = normalizeRenderApp(app)
-		if app.Name == "" || seen[app.Name] || !project.IsSafeAppName(app.Name) || project.IsReservedAppName(app.Name) {
-			return
-		}
-		seen[app.Name] = true
-		apps = append(apps, app)
-	}
-
-	add(project.DefaultApp())
-	for _, app := range discoverConventionalApps() {
-		add(app)
-	}
-	if len(apps) <= 1 {
-		return apps
-	}
-	sort.SliceStable(apps[1:], func(i, j int) bool {
-		return apps[i+1].Name < apps[j+1].Name
-	})
-	return apps
 }
 
 // writeTemplates renders ordinary templates to their conventional suffix-free destinations.
@@ -4029,7 +3853,7 @@ func (p *ProjectRenderer) writeTemplateMappings(mappings []templateMapping) erro
 
 // writeTemplateMappingsForApp renders mapped templates with app-specific package and import data.
 func (p *ProjectRenderer) writeTemplateMappingsForApp(app project.App, mappings []templateMapping) error {
-	data := templateDataForApp(p.config, normalizeRenderApp(app))
+	data := templateDataForApp(p.config, projectlayout.NormalizeApp(app))
 	for _, mapping := range mappings {
 		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
 			return err
@@ -4169,7 +3993,7 @@ func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) 
 
 // writeTemplateMappingsOnceForApp preserves app-owned files after their first render.
 func (p *ProjectRenderer) writeTemplateMappingsOnceForApp(app project.App, mappings []templateMapping) error {
-	data := templateDataForApp(p.config, normalizeRenderApp(app))
+	data := templateDataForApp(p.config, projectlayout.NormalizeApp(app))
 	for _, mapping := range mappings {
 		if _, err := os.Stat(mapping.dest); err == nil {
 			p.stats.recordSkipped(mapping.dest)
@@ -4304,7 +4128,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 
 	if p.config != nil {
 		if p.config.Render.Components.WebUI {
-			cmd := "cd " + filepath.ToSlash(defaultFrontendDir()) + " && " + generatedFrontendNPMInstallCommand
+			cmd := "cd " + filepath.ToSlash(projectlayout.FrontendDir(".", project.DefaultApp())) + " && " + generatedFrontendNPMInstallCommand
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render(cmd)))
 		}
 		if p.config.Render.StarterKit != project.StarterKitNone && p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase() {

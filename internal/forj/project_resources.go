@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -337,7 +338,7 @@ func removeDisabledCacheEnvironment(source []byte, config *project.Config) ([]by
 		"CACHE_LIGHTHOUSE_DRIVER":      {},
 	}
 	if config != nil {
-		for _, app := range runtimeAppsForMetadata(config) {
+		for _, app := range projectlayout.RuntimeApps(".", config) {
 			prefix := project.AppEnvironmentPrefix(app.Name)
 			if prefix != "" {
 				keys[prefix+"_CACHE_DRIVER"] = struct{}{}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -135,7 +136,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
-	for _, app := range renderApps() {
+	for _, app := range projectlayout.ConventionalApps(".") {
 		components := appRenderComponents(p.config, app)
 		for _, path := range appOwnedWirePathsForApp(app) {
 			if data, err := os.ReadFile(path); err == nil {
@@ -146,10 +147,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 				case "inject_repositories_app.go":
 					updated = syncDemoAppRepositoryInjector(updated, p.config.GoModuleName, components)
 				case "inject_services_app.go":
-					updated = syncLegacyAppServiceInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
+					updated = syncLegacyAppServiceInjector(updated, p.config.GoModuleName, filepath.ToSlash(projectlayout.AppDir(".", app)))
 					updated = syncDemoAppServiceInjector(updated, p.config.GoModuleName, components)
 				case "inject_schedules_app.go":
-					updated = syncLegacyScheduleInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
+					updated = syncLegacyScheduleInjector(updated, p.config.GoModuleName, filepath.ToSlash(projectlayout.AppDir(".", app)))
 				}
 				if updated != string(data) {
 					formatted, err := format.Source([]byte(updated))
