@@ -2,21 +2,17 @@ package scenarios
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	"fmt"
 	"go/format"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
-	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +46,13 @@ type ValidateOptions struct {
 type scenarioCatalog struct {
 	specs []ScenarioSpec
 	byID  map[string]ScenarioSpec
+}
+
+// scenarioDependencyValidator owns graph traversal state so recursive checks cannot receive mismatched indexes or visit sets.
+type scenarioDependencyValidator struct {
+	byID     map[string]ScenarioSpec
+	visiting map[string]bool
+	visited  map[string]bool
 }
 
 // List returns known executable scenario specs.
@@ -123,92 +126,6 @@ func Validate(options ValidateOptions) error {
 		if err := runScenario(options, catalog, spec, forjExec); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// runScenario executes one selected scenario against the same validated catalog used to select it.
-func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) error {
-	root, cleanup, err := scenarioRoot(options, spec)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	console.Actionf("scenario %s", spec.ID)
-	if err := writeScenarioProjectConfig(root, spec); err != nil {
-		return err
-	}
-	if err := runScenarioCommand(options.Logger, root, forjExec, ScenarioCommand{Run: []string{"forj", "render"}}, "render app"); err != nil {
-		return err
-	}
-	if err := applyScenarioDependencies(options.Logger, root, forjExec, catalog.byID, spec, map[string]bool{}); err != nil {
-		return err
-	}
-	for _, step := range spec.Steps {
-		if err := applyScenarioStep(options.Logger, root, forjExec, spec, step); err != nil {
-			return fmt.Errorf("%s step %q: %w", spec.ID, step.Title, err)
-		}
-	}
-	for _, command := range spec.Verify.Commands {
-		if err := runScenarioCommand(options.Logger, root, forjExec, command, "verify"); err != nil {
-			return err
-		}
-	}
-	console.Successf("scenario passed: %s", spec.ID)
-	if options.Keep {
-		console.Infof("scenario workdir: %s", root)
-	}
-	return nil
-}
-
-// scenarioRoot creates an isolated scenario directory only after the scenario ID is known to be path-safe.
-func scenarioRoot(options ValidateOptions, spec ScenarioSpec) (string, func(), error) {
-	if err := validateScenarioID(spec.ID); err != nil {
-		return "", nil, err
-	}
-	if strings.TrimSpace(options.WorkDir) != "" {
-		root := filepath.Join(options.WorkDir, spec.ID)
-		if err := os.RemoveAll(root); err != nil {
-			return "", nil, err
-		}
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			return "", nil, err
-		}
-		return root, nil, nil
-	}
-	root, err := os.MkdirTemp("", "forj-scenario-"+spec.ID+"-")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() {
-		if !options.Keep {
-			_ = os.RemoveAll(root)
-		}
-	}
-	return root, cleanup, nil
-}
-
-// applyScenarioDependencies applies ancestors before their dependents so cumulative scenarios reproduce the documented golden path exactly once.
-func applyScenarioDependencies(log *logger.AppLogger, root, forjExec string, specs map[string]ScenarioSpec, spec ScenarioSpec, applied map[string]bool) error {
-	for _, depID := range spec.DependsOn {
-		dep, ok := specs[depID]
-		if !ok {
-			return fmt.Errorf("%s depends on unknown scenario %q", spec.ID, depID)
-		}
-		if err := applyScenarioDependencies(log, root, forjExec, specs, dep, applied); err != nil {
-			return err
-		}
-		if applied[dep.ID] {
-			continue
-		}
-		for _, step := range dep.Steps {
-			if err := applyScenarioStep(log, root, forjExec, dep, step); err != nil {
-				return fmt.Errorf("%s dependency %s step %q: %w", spec.ID, dep.ID, step.Title, err)
-			}
-		}
-		applied[dep.ID] = true
 	}
 	return nil
 }
@@ -458,22 +375,25 @@ func validateScenarioCatalog(specs []ScenarioSpec) error {
 		}
 	}
 
-	visiting := make(map[string]bool, len(specs))
-	visited := make(map[string]bool, len(specs))
+	validator := scenarioDependencyValidator{
+		byID:     byID,
+		visiting: make(map[string]bool, len(specs)),
+		visited:  make(map[string]bool, len(specs)),
+	}
 	for _, spec := range specs {
-		if err := validateScenarioDependencyGraph(spec, byID, visiting, visited, nil); err != nil {
+		if err := validator.validate(spec, nil); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// validateScenarioDependencyGraph uses visiting and visited sets so shared dependencies are accepted while back edges report their complete cycle.
-func validateScenarioDependencyGraph(spec ScenarioSpec, byID map[string]ScenarioSpec, visiting, visited map[string]bool, path []string) error {
-	if visited[spec.ID] {
+// validate uses distinct visiting and visited sets so shared dependencies are accepted while back edges report their complete cycle.
+func (validator *scenarioDependencyValidator) validate(spec ScenarioSpec, path []string) error {
+	if validator.visited[spec.ID] {
 		return nil
 	}
-	if visiting[spec.ID] {
+	if validator.visiting[spec.ID] {
 		cycleStart := 0
 		for i, id := range path {
 			if id == spec.ID {
@@ -485,15 +405,15 @@ func validateScenarioDependencyGraph(spec ScenarioSpec, byID map[string]Scenario
 		return fmt.Errorf("scenario dependency cycle: %s", strings.Join(cycle, " -> "))
 	}
 
-	visiting[spec.ID] = true
+	validator.visiting[spec.ID] = true
 	path = append(path, spec.ID)
 	for _, dependencyID := range spec.DependsOn {
-		if err := validateScenarioDependencyGraph(byID[dependencyID], byID, visiting, visited, path); err != nil {
+		if err := validator.validate(validator.byID[dependencyID], path); err != nil {
 			return err
 		}
 	}
-	delete(visiting, spec.ID)
-	visited[spec.ID] = true
+	delete(validator.visiting, spec.ID)
+	validator.visited[spec.ID] = true
 	return nil
 }
 
@@ -511,176 +431,6 @@ func scenarioMarkdownPath(outDir, id string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(outDir, id+".md"), nil
-}
-
-// writeScenarioProjectConfig marks scenario selections as current so intentionally absent primitives stay disabled.
-func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
-	cfg := project.Config{
-		ProjectName:  spec.Title,
-		GoModuleName: spec.App.ModuleName,
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			Components:               spec.App.Components,
-			ComponentContractVersion: project.CurrentComponentContractVersion,
-		},
-		Dev: project.DevConfig{
-			Pre:               []project.DevTask{},
-			Down:              []project.DevTask{},
-			DownOnExit:        false,
-			SoundOnWatchError: false,
-			Watches:           []project.DevWatch{},
-			WirePaths:         []string{project.DefaultApp().WireDir},
-		},
-	}
-	body, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(root, ".goforj.yml"), body, 0o644)
-}
-
-// applyScenarioStep preserves the declared action order because later scenario edits can depend on earlier generated content.
-func applyScenarioStep(log *logger.AppLogger, root, forjExec string, spec ScenarioSpec, step ScenarioStep) error {
-	if step.Write != nil {
-		if err := writeScenarioFile(root, spec, *step.Write); err != nil {
-			return err
-		}
-	}
-	if step.Append != nil {
-		if err := appendScenarioFile(root, spec, *step.Append); err != nil {
-			return err
-		}
-	}
-	if step.Replace != nil {
-		if err := replaceScenarioText(root, spec, *step.Replace); err != nil {
-			return err
-		}
-	}
-	if step.Run != nil {
-		if err := runScenarioCommand(log, root, forjExec, *step.Run, step.Title); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// writeScenarioFile formats valid Go sources so executable examples remain stable across generated documentation and tests.
-func writeScenarioFile(root string, spec ScenarioSpec, change ScenarioFileChange) error {
-	path, err := scenarioPath(root, change.Path)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	content := []byte(expandScenarioText(spec, change.Content))
-	if strings.HasSuffix(path, ".go") {
-		if formatted, err := format.Source(content); err == nil {
-			content = formatted
-		}
-	}
-	return os.WriteFile(path, content, 0o644)
-}
-
-// appendScenarioFile preserves existing generated content for scenario steps that intentionally extend a file.
-func appendScenarioFile(root string, spec ScenarioSpec, change ScenarioFileChange) error {
-	path, err := scenarioPath(root, change.Path)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	content := []byte(expandScenarioText(spec, change.Content))
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if _, err := file.Write(content); err != nil {
-		return err
-	}
-	return nil
-}
-
-// replaceScenarioText requires an exact old value so template drift cannot silently produce an incomplete scenario.
-func replaceScenarioText(root string, spec ScenarioSpec, change ScenarioReplace) error {
-	path, err := scenarioPath(root, change.Path)
-	if err != nil {
-		return err
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	oldText := expandScenarioText(spec, change.Old)
-	newText := expandScenarioText(spec, change.New)
-	updated := strings.Replace(string(body), oldText, newText, 1)
-	if updated == string(body) {
-		return fmt.Errorf("replace target not found in %s", change.Path)
-	}
-	return os.WriteFile(path, []byte(updated), 0o644)
-}
-
-// scenarioPath confines every declared file change to the isolated scenario root.
-func scenarioPath(root, rel string) (string, error) {
-	clean := filepath.Clean(strings.TrimSpace(rel))
-	if clean == "." || clean == "" {
-		return "", fmt.Errorf("path is required")
-	}
-	if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
-		return "", fmt.Errorf("invalid scenario path %q", rel)
-	}
-	return filepath.Join(root, clean), nil
-}
-
-// runScenarioCommand substitutes the current Forj executable so scenarios validate the build under test rather than an installed release.
-func runScenarioCommand(log *logger.AppLogger, root, forjExec string, command ScenarioCommand, label string) error {
-	if len(command.Run) == 0 {
-		return fmt.Errorf("command is required")
-	}
-	args := append([]string{}, command.Run...)
-	if args[0] == "forj" {
-		args[0] = forjExec
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir = root
-	cmd.Env = scenarioProcessEnv()
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		text := strings.TrimSpace(out.String())
-		if text == "" {
-			text = err.Error()
-		}
-		log.Error().Str("step", label).Str("command", strings.Join(command.Run, " ")).Str("output", text).Msg("scenario command failed")
-		return fmt.Errorf("%s: %w\n%s", strings.Join(command.Run, " "), err, text)
-	}
-	output := out.String()
-	for _, expected := range command.Contains {
-		if !strings.Contains(output, expected) {
-			return fmt.Errorf("%s: output missing %q\n%s", strings.Join(command.Run, " "), expected, output)
-		}
-	}
-	return nil
-}
-
-// scenarioProcessEnv isolates Go caches so scenario subprocesses do not depend on a developer's global cache state.
-func scenarioProcessEnv() []string {
-	modCache, buildCache := testkit.GoCachePaths()
-	return testkit.ProcessGoEnv("", map[string]string{
-		"GOMODCACHE": modCache,
-		"GOCACHE":    buildCache,
-	})
-}
-
-// expandScenarioText resolves the executable module independently from the documentation-safe module name.
-func expandScenarioText(spec ScenarioSpec, value string) string {
-	value = strings.ReplaceAll(value, "{{module}}", spec.App.ModuleName)
-	return value
 }
 
 // expandScenarioMarkdownText prefers the documentation module so published examples can remain stable across executable fixtures.
