@@ -2469,13 +2469,11 @@ func (*NewProjectCmd) Signature() string {
 func (c *NewProjectCmd) Run() error {
 	printNewProjectBanner()
 
-	// Run the wizard
 	resultModel, err := tea.NewProgram(initialModelWithOptions(newProjectModelOptions{
 		allowNonEmpty: c.AllowNonEmpty,
 	})).Run()
 	if err != nil {
-		fmt.Print("Error running GoForj wizard:", err)
-		os.Exit(1)
+		return fmt.Errorf("run project wizard: %w", err)
 	}
 
 	m, ok := resultModel.(model)
