@@ -252,7 +252,7 @@ func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponent
 
 // seedComposeProfiles appends Redis whenever explicit owner intent asks Compose to retain that local service.
 func seedComposeProfiles(source []byte, plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent) ([]byte, bool) {
-	if !components.Docker || !resourcePlanUsesDriver(plan, components, "redis", false) {
+	if !components.Docker || !resourcePlanIncludesDriver(plan, components, "redis") {
 		return source, false
 	}
 	mode, ok := intent.Mode(project.ServiceRedis)
@@ -346,7 +346,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.StorageFaviconsDriver = named.Active
 		}
 	}
-	values.RedisSupported = components.Docker && resourcePlanUsesDriver(plan, components, "redis", false)
+	values.RedisSupported = components.Docker && resourcePlanIncludesDriver(plan, components, "redis")
 	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
 		switch requirement.State {
 		case project.ServiceStateActiveLocal, project.ServiceStateLocalRequestedUnused:
@@ -465,8 +465,8 @@ func applyDatabaseRenderCapabilities(components *project.Components, plan projec
 	}
 }
 
-// resourcePlanUsesDriver finds active or built-in use across root and generated named resources.
-func resourcePlanUsesDriver(plan project.ResourcePlan, components project.Components, driver string, activeOnly bool) bool {
+// resourcePlanIncludesDriver keeps shared services available when a root selection compiles the driver or a generated named resource activates it.
+func resourcePlanIncludesDriver(plan project.ResourcePlan, components project.Components, driver string) bool {
 	for _, definition := range project.ResourceCatalog() {
 		if !definition.AppliesTo(components) {
 			continue
@@ -478,7 +478,7 @@ func resourcePlanUsesDriver(plan project.ResourcePlan, components project.Compon
 		if selection.Active == driver {
 			return true
 		}
-		if !activeOnly && stringSliceContainsFold(selection.Supported, driver) {
+		if stringSliceContainsFold(selection.Supported, driver) {
 			return true
 		}
 	}
