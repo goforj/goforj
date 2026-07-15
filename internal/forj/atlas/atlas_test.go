@@ -203,11 +203,15 @@ render:
   component_contract: 1
   components:
     cli: true
+    cache: false
     events: false
 `)
-	writeFile(t, filepath.Join(root, ".env"), "EVENTS_AUDIT_DRIVER=redis\n")
+	writeFile(t, filepath.Join(root, ".env"), "CACHE_SESSIONS_DRIVER=redis\nEVENTS_AUDIT_DRIVER=redis\n")
 
 	inventory := Inventory(root)
+	if len(inventory.Caches) != 0 {
+		t.Fatalf("stale Cache env resurrected Atlas caches: %#v", inventory.Caches)
+	}
 	if len(inventory.EventBuses) != 0 {
 		t.Fatalf("stale Events env resurrected Atlas event buses: %#v", inventory.EventBuses)
 	}
@@ -227,11 +231,15 @@ apps:
   events-worker:
     components:
       cli: true
+      cache: true
       events: true
 `)
-	writeFile(t, filepath.Join(root, ".env"), "EVENTS_AUDIT_DRIVER=inproc\n")
+	writeFile(t, filepath.Join(root, ".env"), "CACHE_REPORTS_DRIVER=memory\nEVENTS_AUDIT_DRIVER=inproc\n")
 
 	inventory := Inventory(root)
+	if !containsString(inventory.Caches, "reports") {
+		t.Fatalf("named Cache App did not expose Atlas caches: %#v", inventory.Caches)
+	}
 	if !containsString(inventory.EventBuses, "audit") {
 		t.Fatalf("named Events App did not expose Atlas event buses: %#v", inventory.EventBuses)
 	}
@@ -374,8 +382,14 @@ func TestMetricsMetadataKeepsJobsProjectionAppLocal(t *testing.T) {
 	if counters := metadata["app/http"].Counters; containsString(counters, "queue_jobs_total") {
 		t.Fatalf("default App advertised Jobs counters without Jobs: %#v", counters)
 	}
+	if counters := metadata["app/http"].Counters; !containsString(counters, "cache_operations_total") {
+		t.Fatalf("default App omitted its Cache counters: %#v", counters)
+	}
 	if counters := metadata["worker/jobs"].Counters; !containsString(counters, "queue_jobs_total") {
 		t.Fatalf("worker App omitted its Jobs counters: %#v", counters)
+	}
+	if counters := metadata["worker/jobs"].Counters; containsString(counters, "cache_operations_total") {
+		t.Fatalf("worker App advertised Cache counters without Cache: %#v", counters)
 	}
 }
 

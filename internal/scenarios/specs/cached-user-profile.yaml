@@ -290,7 +290,7 @@ steps:
       path: app/wire/inject_services_app.go
       language: go
       old: |
-        func provideInspectManager(caches *caches.Manager) *inspects.Manager {
+        func provideInspectManager() *inspects.Manager {
       new: |
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {
                 return users.NewCachedUserRepository(source, profileCache)
@@ -300,7 +300,7 @@ steps:
                 return manager.Profiles()
         }
 
-        func provideInspectManager(caches *caches.Manager) *inspects.Manager {
+        func provideInspectManager() *inspects.Manager {
 
   - title: Add Repository Tests
     explain: |

@@ -56,8 +56,12 @@ func TestWriteYAMLPreservesRawComponentDependencies(t *testing.T) {
 	if !loaded.Render.Components.Auth {
 		t.Fatalf("expected auth to remain selected")
 	}
-	if loaded.Render.Components.Mail {
-		t.Fatalf("expected raw yaml to preserve mail=false, got %#v", loaded.Render.Components)
+	if loaded.Render.Components.Mail || loaded.Render.Components.Cache {
+		t.Fatalf("expected raw yaml to preserve unresolved dependencies, got %#v", loaded.Render.Components)
+	}
+	effective := loaded.Render.Components.WithResolvedDependencies()
+	if !effective.Mail || !effective.Cache {
+		t.Fatalf("expected effective Auth dependencies to include Mail and Cache, got %#v", effective)
 	}
 }
 
@@ -193,9 +197,12 @@ func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing
 	wants := map[string]bool{
 		"sentinel_primitives_all_off":                     false,
 		"sentinel_primitives_all_on":                      false,
+		"sentinel_cache_only":                             false,
 		"sentinel_events_only":                            false,
+		"sentinel_storage_only":                           false,
 		"sentinel_web_metrics_grafana_without_primitives": false,
 		"sentinel_named_app_events_only":                  false,
+		"sentinel_named_app_cache_only":                   false,
 		"sentinel_default_events_named_app_off":           false,
 		"sentinel_named_app_jobs_only":                    false,
 		"sentinel_default_jobs_named_app_off":             false,
@@ -203,6 +210,19 @@ func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing
 	for _, combo := range combos {
 		if _, tracked := wants[combo.id]; tracked {
 			wants[combo.id] = true
+		}
+		if combo.id == "sentinel_named_app_cache_only" {
+			if combo.components.Cache {
+				t.Fatal("named-App Cache sentinel unexpectedly enables Cache on the default App")
+			}
+			configured, ok := combo.apps["cache-worker"]
+			if !ok || !configured.Components.Cache {
+				t.Fatalf("named App Cache shape mismatch: %#v", combo.apps)
+			}
+			config := &project.Config{Render: project.RenderConfig{Components: combo.components}, Apps: combo.apps}
+			if !project.ProjectComponents(config).Cache {
+				t.Fatalf("named-App sentinel did not promote Cache into the project envelope: %#v", config)
+			}
 		}
 		if combo.id != "sentinel_named_app_events_only" && combo.id != "sentinel_default_events_named_app_off" {
 			continue

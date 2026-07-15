@@ -48,7 +48,7 @@ func TestResolveServicePlanRedisStates(t *testing.T) {
 
 // TestResolveServicePlanDeduplicatesRedisConsumers verifies one service covers every normal shared Redis resource.
 func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
-	components := Components{Auth: true, DatabaseMySQL: true, Docker: true, Jobs: true, Events: true, Storage: true}
+	components := Components{Auth: true, Cache: true, DatabaseMySQL: true, Docker: true, Jobs: true, Events: true, Storage: true}
 	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceStorage, DriverSelection{Active: "redis", Supported: []string{"local", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
@@ -91,7 +91,7 @@ func TestResolveServicePlanIgnoresStaleDisabledStorage(t *testing.T) {
 
 // TestResolveServicePlanIncludesGeneratedAuthSessions verifies named generated resources affect infrastructure discovery.
 func TestResolveServicePlanIncludesGeneratedAuthSessions(t *testing.T) {
-	components := Components{Auth: true, DatabaseSQLite: true, Docker: true, Events: true}
+	components := Components{Auth: true, Cache: true, DatabaseSQLite: true, Docker: true, Events: true}
 	resourcePlan := servicePlanTestRedisActivePlan(t, components)
 	resourcePlan = resourcePlan.WithSelection(ResourceCache, DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}})
 	servicePlan, err := ResolveServicePlan(resourcePlan, components, LocalServiceIntent{}.WithMode(ServiceRedis, LocalServiceModeLocal))
@@ -195,7 +195,7 @@ func TestResolveServicePlanRejectsUnknownIntentService(t *testing.T) {
 
 // TestServicePlanRequirementReturnsDefensiveCopy protects derived plans from confirmation-layer mutations.
 func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Docker: true}
+	components := Components{Cache: true, DatabaseSQLite: true, Docker: true}
 	resourcePlan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -217,7 +217,7 @@ func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
 
 // TestResolveServicePlanReportsEveryExternalAdvancedDriver verifies the published inventory cannot disappear from confirmation.
 func TestResolveServicePlanReportsEveryExternalAdvancedDriver(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Docker: true, Jobs: true, Mail: true}
+	components := Components{Cache: true, DatabaseMySQL: true, Docker: true, Jobs: true, Mail: true}
 	base, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -259,7 +259,7 @@ func TestResolveServicePlanReportsEveryExternalAdvancedDriver(t *testing.T) {
 
 // TestResolveServicePlanKeepsResourceSpecificEndpointsSeparate prevents apparent provider reuse without an explicit connection mapping.
 func TestResolveServicePlanKeepsResourceSpecificEndpointsSeparate(t *testing.T) {
-	components := Components{DatabasePostgres: true, Docker: true, Jobs: true}
+	components := Components{Cache: true, DatabasePostgres: true, Docker: true, Jobs: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -318,7 +318,7 @@ func TestResolveServicePlanTreatsSMTPAsDevelopmentToolOnlyWithDocker(t *testing.
 
 // TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS verifies endpoint affinity survives provider-name similarity.
 func TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Jobs: true, Events: true}
+	components := Components{Cache: true, DatabaseSQLite: true, Jobs: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -342,7 +342,7 @@ func TestResolveServicePlanDoesNotDeduplicateResourceScopedNATS(t *testing.T) {
 
 // TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis verifies user-authored named resources participate in discovery.
 func TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := Components{Cache: true, DatabaseSQLite: true, Docker: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -364,7 +364,7 @@ func TestResolveServicePlanWithConsumersIncludesArbitraryNamedRedis(t *testing.T
 
 // TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints verifies affinity, rather than driver name, controls deduplication.
 func TestResolveServicePlanWithConsumersSeparatesExternalRedisEndpoints(t *testing.T) {
-	components := Components{DatabaseSQLite: true, Docker: true, Events: true}
+	components := Components{Cache: true, DatabaseSQLite: true, Docker: true, Events: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -410,7 +410,7 @@ func servicePlanTestRedisActivePlan(t *testing.T, components Components) Resourc
 		selection.Active = "redis"
 		plan = plan.WithSelection(key, selection)
 	}
-	if components.Auth {
+	if components.Auth && components.Cache {
 		plan = plan.WithNamedSelection("CACHE_SESSIONS_DRIVER", "redis")
 	}
 	normalized, err := plan.Normalized(components)

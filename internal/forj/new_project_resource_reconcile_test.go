@@ -53,7 +53,7 @@ func TestReconcileNewProjectTargetResourcesHidesInactiveRedisPlacement(t *testin
 
 // TestReconcileNewProjectTargetResourcesPreviewsOwnerValues verifies concrete drivers and exact profile intent win without writes.
 func TestReconcileNewProjectTargetResourcesPreviewsOwnerValues(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Auth: true, WebAPI: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Auth: true, WebAPI: true, Cache: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
 	target := t.TempDir()
@@ -233,10 +233,10 @@ func TestReconcileNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback(t *test
 
 // TestReconcileNewProjectTargetResourcesDiscoversNamedAndAppServices verifies Path preview carries owner scopes into confirmation planning.
 func TestReconcileNewProjectTargetResourcesDiscoversNamedAndAppServices(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	target := t.TempDir()
-	config := []byte("project_name: Existing\nmodule_name: example.com/existing\nrender:\n  components:\n    database_sqlite: true\n    docker: true\napps:\n  billing:\n    components:\n      database_sqlite: true\n")
+	config := []byte("project_name: Existing\nmodule_name: example.com/existing\nrender:\n  components:\n    database_sqlite: true\n    docker: true\n    cache: true\napps:\n  billing:\n    components:\n      database_sqlite: true\n      cache: true\n")
 	if err := os.WriteFile(filepath.Join(target, ".goforj.yml"), config, 0o644); err != nil {
 		t.Fatalf("write existing project config: %v", err)
 	}

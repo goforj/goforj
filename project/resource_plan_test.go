@@ -8,7 +8,7 @@ import (
 
 // TestDefaultResourcePlan locks the portable defaults and built-in transition drivers to concrete contracts.
 func TestDefaultResourcePlan(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true, Storage: true}
+	components := Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Cache: true, Events: true, Storage: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)
@@ -21,9 +21,12 @@ func TestDefaultResourcePlan(t *testing.T) {
 	assertResourceSelection(t, plan, ResourceDatabase, "mysql", []string{"mysql"})
 
 	named := namedResourceSelectionsByKey(plan.GeneratedNamedSelections(components))
-	for _, key := range []string{"CACHE_SESSIONS_DRIVER", "CACHE_INSPECTS_DRIVER", "CACHE_LIGHTHOUSE_DRIVER"} {
-		if named[key].Active != "memory" {
-			t.Fatalf("named cache %s = %q, want memory", key, named[key].Active)
+	if named["CACHE_SESSIONS_DRIVER"].Active != "memory" {
+		t.Fatalf("Auth sessions cache = %q, want memory", named["CACHE_SESSIONS_DRIVER"].Active)
+	}
+	for _, obsolete := range []string{"CACHE_INSPECTS_DRIVER", "CACHE_LIGHTHOUSE_DRIVER"} {
+		if _, exists := named[obsolete]; exists {
+			t.Fatalf("obsolete diagnostic cache %s remains in the resource plan: %#v", obsolete, named)
 		}
 	}
 	if named["STORAGE_PUBLIC_DRIVER"].Active != "local" {
@@ -49,7 +52,68 @@ func TestDefaultResourcePlanOmitsDisabledCapabilities(t *testing.T) {
 	if _, ok := plan.Selection(ResourceStorage); ok {
 		t.Fatal("Storage-disabled plan contains a Storage selection")
 	}
+	if _, ok := plan.Selection(ResourceCache); ok {
+		t.Fatal("Cache-disabled plan contains a Cache selection")
+	}
 	assertResourceSelection(t, plan, ResourceDatabase, "sqlite", []string{"sqlite"})
+}
+
+// TestResourcePlanBoundariesResolveComponentDependencies keeps concise config shapes equivalent to their resolved contracts.
+func TestResourcePlanBoundariesResolveComponentDependencies(t *testing.T) {
+	tests := []struct {
+		name       string
+		components Components
+	}{
+		{name: "Auth", components: Components{Auth: true, DatabaseSQLite: true}},
+		{name: "OAuth through Auth", components: Components{OAuth: true, DatabaseSQLite: true}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resolvedComponents := test.components.WithResolvedDependencies()
+			rawDefault, err := DefaultResourcePlan(test.components)
+			if err != nil {
+				t.Fatalf("DefaultResourcePlan(raw) returned error: %v", err)
+			}
+			resolvedDefault, err := DefaultResourcePlan(resolvedComponents)
+			if err != nil {
+				t.Fatalf("DefaultResourcePlan(resolved) returned error: %v", err)
+			}
+			if !reflect.DeepEqual(rawDefault, resolvedDefault) {
+				t.Fatalf("raw default = %#v, want resolved default %#v", rawDefault, resolvedDefault)
+			}
+			assertResourceSelection(t, rawDefault, ResourceCache, "memory", []string{"memory", "redis"})
+
+			explicit := ResourcePlan{
+				Selections: map[ResourceKey]DriverSelection{
+					ResourceDatabase: {Active: "sqlite", Supported: []string{"sqlite"}},
+					ResourceCache:    {Active: "memory", Supported: []string{"memory", "redis"}},
+					ResourceMail:     {Active: "log", Supported: []string{"log", "smtp"}},
+				},
+				NamedSelections: map[string]string{"CACHE_SESSIONS_DRIVER": "memory"},
+			}
+			rawNormalized, err := explicit.Normalized(test.components)
+			if err != nil {
+				t.Fatalf("Normalized(raw) returned error: %v", err)
+			}
+			resolvedNormalized, err := explicit.Normalized(resolvedComponents)
+			if err != nil {
+				t.Fatalf("Normalized(resolved) returned error: %v", err)
+			}
+			if !reflect.DeepEqual(rawNormalized, resolvedNormalized) {
+				t.Fatalf("raw normalized plan = %#v, want resolved plan %#v", rawNormalized, resolvedNormalized)
+			}
+
+			rawNamed := explicit.GeneratedNamedSelections(test.components)
+			resolvedNamed := explicit.GeneratedNamedSelections(resolvedComponents)
+			if !reflect.DeepEqual(rawNamed, resolvedNamed) {
+				t.Fatalf("raw named selections = %#v, want resolved selections %#v", rawNamed, resolvedNamed)
+			}
+			if namedResourceSelectionsByKey(rawNamed)["CACHE_SESSIONS_DRIVER"].Active != "memory" {
+				t.Fatalf("Auth sessions cache missing from raw component shape: %#v", rawNamed)
+			}
+		})
+	}
 }
 
 // TestResourcePlanNormalizationCannotResurrectDisabledEvents verifies stale transient selections are discarded by component applicability.
@@ -147,7 +211,7 @@ func TestResourcePlanNormalizationCanonicalizesDatabaseAliases(t *testing.T) {
 
 // TestResourcePlanNamedRequirementsLockRootSupport protects generated named-resource portability.
 func TestResourcePlanNamedRequirementsLockRootSupport(t *testing.T) {
-	components := Components{DatabaseMySQL: true, Auth: true, Storage: true}
+	components := Components{DatabaseMySQL: true, Auth: true, Cache: true, Storage: true}
 	plan, err := DefaultResourcePlan(components)
 	if err != nil {
 		t.Fatalf("DefaultResourcePlan returned error: %v", err)

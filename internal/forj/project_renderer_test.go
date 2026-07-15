@@ -77,6 +77,7 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	}
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer.config = &project.Config{Render: project.RenderConfig{Components: project.Components{Cache: true}}}
 	if err := renderer.syncCoreLibrariesInDir(root); err != nil {
 		t.Fatalf("syncCoreLibraries returned error: %v", err)
 	}

@@ -145,3 +145,20 @@ func TestSetAppConfigNormalizesImplicitDatabaseAgainstDefaultApp(t *testing.T) {
 		t.Fatalf("shared database envelope = %#v, want MySQL and Postgres", envelope)
 	}
 }
+
+// TestAppRenderComponentsResolvesDefaultAppDependencies keeps direct App projections aligned with full renders.
+func TestAppRenderComponentsResolvesDefaultAppDependencies(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{Auth: true},
+		},
+	}
+
+	components := appRenderComponents(config, project.DefaultApp())
+	if !components.Cache {
+		t.Fatalf("default App dependencies omitted Cache: %#v", components)
+	}
+	if config.Render.Components.Cache {
+		t.Fatalf("default App projection mutated persisted components: %#v", config.Render.Components)
+	}
+}

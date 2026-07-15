@@ -259,8 +259,11 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func QueueDefaultQueue(name string) string`,
 		},
 		filepath.Join(filepath.Dir(base), "http", "readiness_checks.go.tmpl"): {
-			`func ProvideReadinessChecks(`,
-			`for _, check := range caches.ReadinessChecks() {`,
+			`type ReadinessCheck struct {`,
+			`Check func(context.Context) error`,
+		},
+		filepath.Join(filepath.Dir(base), "..", "wire", "inject_http.go.tmpl"): {
+			`for _, check := range cacheManager.ReadinessChecks() {`,
 			`for _, check := range storage.ReadinessChecks() {`,
 			`for _, check := range events.ReadinessChecks() {`,
 			`for _, check := range queues.ReadinessChecks() {`,
@@ -276,18 +279,21 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(filepath.Dir(base), "..", "app", "commands.go.tmpl"): {
 			`AboutCmd cmd.AboutCmd ` + "`cmd:\"\"`",
-			`CacheShellCmd cmd.CacheShellCmd ` + "`cmd:\"\"`",
 			`DBShellCmd cmd.DBShellCmd ` + "`cmd:\"\"`",
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`HealthCmd cmd.HealthCmd ` + "`cmd:\"\"`",
 			`aboutCmd *cmd.AboutCmd,`,
-			`cacheShellCmd *cmd.CacheShellCmd,`,
 			`dbShellCmd *cmd.DBShellCmd,`,
 			`healthCmd *cmd.HealthCmd,`,
 			`AboutCmd: *aboutCmd,`,
-			`CacheShellCmd: *cacheShellCmd,`,
 			`DBShellCmd: *dbShellCmd,`,
 			`HealthCmd: *healthCmd,`,
+		},
+		filepath.Join(filepath.Dir(base), "..", "app", "root_cmd.go.tmpl"): {
+			`{{- if .Components.Cache }}`,
+			`CacheShellCmd cmd.CacheShellCmd ` + "`cmd:\"\"`",
+			`cacheShellCmd *cmd.CacheShellCmd,`,
+			`CacheShellCmd: *cacheShellCmd,`,
 		},
 		filepath.Join(filepath.Dir(base), "..", "wire", "inject_cmd.go.tmpl"): {
 			`appCommandSet,`,

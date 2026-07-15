@@ -410,8 +410,16 @@ func prSentinelRenderCombos() []renderCombo {
 			},
 		},
 		{
+			id:  "sentinel_cache_only",
+			cfg: project.Components{CLI: true, Docker: true, Cache: true},
+		},
+		{
 			id:  "sentinel_events_only",
 			cfg: project.Components{CLI: true, Docker: true, Events: true},
+		},
+		{
+			id:  "sentinel_storage_only",
+			cfg: project.Components{CLI: true, Docker: true, Storage: true},
 		},
 		{
 			id: "sentinel_web_metrics_grafana_without_primitives",
@@ -486,6 +494,17 @@ func prSentinelRenderCombos() []renderCombo {
 			"events-worker": {Components: mixedEvents},
 		},
 		enabled: append(componentLabels(mixedDefault), "App:events-worker(Events)"),
+	})
+	mixedCache := project.Components{CLI: true, Cache: true}
+	mixedCache.ResolveDependencies()
+	combos = append(combos, renderCombo{
+		id:         "sentinel_named_app_cache_only",
+		components: mixedDefault,
+		starterKit: project.StarterKitNone,
+		apps: map[string]project.AppConfig{
+			"cache-worker": {Components: mixedCache},
+		},
+		enabled: append(componentLabels(mixedDefault), "App:cache-worker(Cache)"),
 	})
 	defaultEvents := project.Components{CLI: true, WebAPI: true, Metrics: true, Events: true, Docker: true}
 	defaultEvents.ResolveDependencies()
