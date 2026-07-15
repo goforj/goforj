@@ -197,6 +197,30 @@ func TestComponentsYAMLSequenceRoundTripUsesCanonicalOrder(t *testing.T) {
 	}
 }
 
+// TestComponentsYAMLLongSequenceUsesReadableBlockStyle keeps canonical config from relying on terminal word wrapping.
+func TestComponentsYAMLLongSequenceUsesReadableBlockStyle(t *testing.T) {
+	config := Config{Render: RenderConfig{Components: Components{
+		CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true,
+		WebAPI: true, WebUI: true, Metrics: true, Observability: true,
+		Grafana: true, Docker: true, DatabaseMySQL: true, Scheduler: true,
+		Cache: true, Events: true, Storage: true, Jobs: true,
+	}}}
+
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal long component sequence: %v", err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, "components: [") {
+		t.Fatalf("long component sequence stayed on one line:\n%s", text)
+	}
+	for _, expected := range []string{"components:\n", "    - cli\n", "    - database_mysql\n", "    - jobs\n"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("long component sequence omitted %q:\n%s", expected, text)
+		}
+	}
+}
+
 // TestComponentsYAMLPreservesEmptySequence verifies empty selections remain visible instead of becoming an omitted mapping.
 func TestComponentsYAMLPreservesEmptySequence(t *testing.T) {
 	input := `render:

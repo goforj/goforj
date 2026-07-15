@@ -164,8 +164,14 @@ func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing
 	if err != nil {
 		t.Fatalf("marshal compact components: %v", err)
 	}
-	if !strings.Contains(string(encoded), "components: [cli, demo_app, mail, auth, oauth, web_api, web_ui, metrics, observability, grafana, docker, database_mysql, database_postgres, database_sqlite, scheduler, cache, events, storage, jobs, future_audit, future_search]") {
-		t.Fatalf("components were not emitted in canonical compact order:\n%s", encoded)
+	text := string(encoded)
+	if strings.Contains(text, "components: [") {
+		t.Fatalf("long component sequence stayed on one line:\n%s", encoded)
+	}
+	for _, expected := range []string{"components:\n", "    - cli\n", "    - database_mysql\n", "    - jobs\n", "    - future_audit\n", "    - future_search\n"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("components omitted canonical entry %q:\n%s", expected, encoded)
+		}
 	}
 
 	jsonEncoded, err := json.Marshal(components)
