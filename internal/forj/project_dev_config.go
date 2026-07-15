@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -25,14 +26,14 @@ func legacyGeneratedDevFrontendInstallTask(app project.App) project.DevTask {
 
 // devFrontendInstallTask builds the app-scoped task identity shared by generation and conservative migration.
 func devFrontendInstallTask(app project.App, installCommand string) project.DevTask {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	name := "Install Frontend Dependencies"
 	if app.Name != project.DefaultAppName {
 		name = "Install " + app.Name + " Frontend Dependencies"
 	}
 	return project.DevTask{
 		Name: name,
-		Cmd:  "cd " + filepath.ToSlash(appFrontendDir(app)) + " && " + installCommand,
+		Cmd:  "cd " + filepath.ToSlash(projectlayout.FrontendDir(".", app)) + " && " + installCommand,
 	}
 }
 
@@ -130,7 +131,7 @@ func migrateGeneratedDevFrontendInstallTasks(config *project.Config) bool {
 
 // generatedDevAppConfig snapshots framework-owned lifecycle behavior into readable project configuration.
 func generatedDevAppConfig(config *project.Config, app project.App, runCommand string) project.DevApp {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	runCommand = strings.TrimSpace(runCommand)
 	build := conventionalDevAppBuildCommand(config, app)
 	configured := project.DevApp{Build: &build}
@@ -148,14 +149,14 @@ func generatedDevAppConfig(config *project.Config, app project.App, runCommand s
 		return configured
 	}
 	configured.SPAs = map[string]project.DevSPA{
-		generatedFrontendSPAName: conventionalDevSPAConfig(projectRelativeDevPath(appFrontendDir(app))),
+		generatedFrontendSPAName: conventionalDevSPAConfig(projectRelativeDevPath(projectlayout.FrontendDir(".", app))),
 	}
 	return configured
 }
 
 // conventionalDevAppBuildCommand returns the editable build snapshot generated for a managed app.
 func conventionalDevAppBuildCommand(config *project.Config, app project.App) project.DevAppCommand {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	command := project.DevAppCommand{
 		Exec:        devBuildCommandForApp("forj build -o ./bin/app", app),
 		Watch:       []string{".go", ".env", ".env.*"},
@@ -173,8 +174,8 @@ func conventionalDevAppBuildCommand(config *project.Config, app project.App) pro
 
 // conventionalDevAppRuntimeCommand returns the bare-binary runtime snapshot generated for a managed app.
 func conventionalDevAppRuntimeCommand(app project.App) project.DevAppCommand {
-	app = normalizeRenderApp(app)
-	return project.DevAppCommand{Exec: "./bin/" + app.Name}
+	app = projectlayout.NormalizeApp(app)
+	return project.DevAppCommand{Exec: projectlayout.RuntimeExecutable(".", app)}
 }
 
 // conventionalDevSPAConfig returns the editable frontend build snapshot generated for an app-owned SPA.
@@ -218,7 +219,7 @@ func migrateGeneratedDevWatchers(config *project.Config) bool {
 
 	runCommands := config.Dev.Run
 	config.Dev.Apps = make(map[string]project.DevApp)
-	for _, app := range configuredDevApps() {
+	for _, app := range projectlayout.ConventionalApps(".") {
 		command, run := legacyDevRunCommandForMigration(runCommands, app.Name)
 		configured := generatedDevAppConfig(config, app, command)
 		if !run {

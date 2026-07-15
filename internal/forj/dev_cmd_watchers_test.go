@@ -13,6 +13,7 @@ import (
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -1567,7 +1568,7 @@ func TestRunDevFrontendDependencySetupIncludesNamedApps(t *testing.T) {
 		t.Fatalf("Chdir() error = %v", err)
 	}
 	for _, app := range []project.App{project.DefaultApp(), project.DefaultNamedApp("portal")} {
-		if err := os.MkdirAll(appFrontendDir(app), 0o755); err != nil {
+		if err := os.MkdirAll(projectlayout.FrontendDir(".", app), 0o755); err != nil {
 			t.Fatalf("MkdirAll(%s) error = %v", app.Name, err)
 		}
 	}

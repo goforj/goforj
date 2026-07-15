@@ -435,43 +435,6 @@ func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
 	}
 }
 
-func TestNamedAppRenderAppsUseConventionsWithoutConfig(t *testing.T) {
-	root := t.TempDir()
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(originalWD) }()
-
-	for _, path := range []string{
-		filepath.Join("cmd", "reporting", "main.go"),
-		filepath.Join("app", "customer-portal", "wire", "wire.go"),
-		filepath.Join("app", "wire", "wire.go"),
-	} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", path, err)
-		}
-		if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	renderer := &ProjectRenderer{config: &project.Config{}}
-	apps, err := renderer.namedAppRenderApps()
-	if err != nil {
-		t.Fatalf("namedAppRenderApps returned error: %v", err)
-	}
-	if len(apps) != 2 {
-		t.Fatalf("expected two named apps, got %#v", apps)
-	}
-	if apps[0].Name != "customer-portal" || apps[1].Name != "reporting" {
-		t.Fatalf("expected sorted conventional apps, got %#v", apps)
-	}
-}
-
 func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()

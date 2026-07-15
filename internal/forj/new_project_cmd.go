@@ -10,6 +10,7 @@ import (
 	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
@@ -372,7 +373,7 @@ func (m *model) finalizeConfig() error {
 	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
-			Watch: frontendNPMWatch(defaultFrontendDir()),
+			Watch: frontendNPMWatch(projectlayout.FrontendDir(".", project.DefaultApp())),
 			Exec:  "npm run dev",
 		})
 	}
@@ -2410,7 +2411,7 @@ func renderAtlasPanelBanner() string {
 
 // packageJSONHasNpmDev checks whether the target-local frontend defines an npm dev script.
 func packageJSONHasNpmDev() bool {
-	path := filepath.Join(defaultFrontendDir(), "package.json")
+	path := filepath.Join(projectlayout.FrontendDir(".", project.DefaultApp()), "package.json")
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return false
