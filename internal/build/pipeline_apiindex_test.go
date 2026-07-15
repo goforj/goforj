@@ -12,6 +12,9 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 )
 
+// pipelineAPIIndexTestTimeout bounds synchronization failures without making ordinary pipeline work timing-dependent.
+const pipelineAPIIndexTestTimeout = 5 * time.Second
+
 // recordingAPIIndexPreparer exposes one focused preparation function to build integration tests.
 type recordingAPIIndexPreparer struct {
 	prepare func(apiindex.Options) (apiindex.Preparation, error)
@@ -49,7 +52,7 @@ func TestPipelineRunDoesNotChangeProcessWorkingDirectory(t *testing.T) {
 	case <-preparing:
 	case err := <-done:
 		t.Fatalf("pipeline stopped before API index preparation: %v", err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(pipelineAPIIndexTestTimeout):
 		t.Fatal("pipeline did not reach API index preparation")
 	}
 	current, err := os.Getwd()
@@ -62,8 +65,22 @@ func TestPipelineRunDoesNotChangeProcessWorkingDirectory(t *testing.T) {
 		t.Fatalf("working directory changed to %q during pipeline, want %q", current, workingDirectory)
 	}
 	close(release)
-	if err := <-done; err != nil {
+	if err := awaitPipelineCompletion(t, done); err != nil {
 		t.Fatalf("run pipeline: %v", err)
+	}
+}
+
+// awaitPipelineCompletion prevents a post-release pipeline regression from hanging the package test process.
+func awaitPipelineCompletion(t *testing.T, done <-chan error) error {
+	t.Helper()
+	timer := time.NewTimer(pipelineAPIIndexTestTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		t.Fatal("timed out waiting for pipeline completion")
+		return nil
 	}
 }
 
