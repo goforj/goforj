@@ -217,7 +217,11 @@ func (c *DevCmd) Run() error {
 		}
 	}
 	if outWriter == nil || errWriter == nil {
-		outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender, requestCommand)
+		output := buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
+		outWriter = output.stdout
+		errWriter = output.stderr
+		shutdownWriters = output.shutdown
+		runtimeState.refreshWriters = output.refresh
 		runtimeState.refreshWriters()
 	}
 
