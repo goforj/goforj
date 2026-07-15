@@ -242,6 +242,10 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 			},
 			projectMarkers: []primitiveTemplateMarker{
 				{path: "internal/cmd/run_cmd.go.tmpl", token: "jobsRuntime *jobs.Runtime"},
+				{path: "internal/runtime/timeouts.go.tmpl", token: `env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT"`},
+				{path: "internal/runtime/timeouts.go.tmpl", token: "func (s *Timeouts) QueueShutdownTimeout()"},
+				{path: "internal/runtime/apps.go.tmpl", token: "func WorkerMetricsPortForApp("},
+				{path: "internal/runtime/apps_test.go.tmpl", token: `t.Setenv("WORKER_METRICS_PORT"`},
 				{path: "internal/runtime/about.go.tmpl", token: "report.Queues = aboutQueueReports()"},
 				{path: "internal/runtime/about.go.tmpl", token: "type AboutQueue struct"},
 				{path: "internal/runtime/discovery.go.tmpl", token: "func DiscoverQueueInstances("},

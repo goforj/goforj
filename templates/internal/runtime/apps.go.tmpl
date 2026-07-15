@@ -156,6 +156,7 @@ func SchedulerMetricsPortForApp(target string) string {
 	return firstEnv(keys, fmt.Sprintf("%d", info.RuntimeBase+1))
 }
 
+{{- if .ProjectComponents.Jobs }}
 // WorkerMetricsPort resolves the worker metrics port for the current app.
 func WorkerMetricsPort() string {
 	return WorkerMetricsPortForApp("")
@@ -170,6 +171,7 @@ func WorkerMetricsPortForApp(target string) string {
 	}
 	return firstEnv(keys, fmt.Sprintf("%d", info.RuntimeBase+2))
 }
+{{- end }}
 
 func appEnvKeys(info AppInfo, suffixes ...string) []string {
 	if info.EnvPrefix == "" {
