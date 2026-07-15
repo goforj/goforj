@@ -12,9 +12,7 @@ import (
 	"time"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
-	{{- if .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
-	{{- end }}
 	"github.com/goforj/queue"
 )
 
@@ -23,9 +21,7 @@ type Worker struct {
 	logger      *logger.AppLogger
 	lighthouse  *LighthouseRuntime
 	appTimeouts *runtime.Timeouts
-	{{- if .ProjectComponents.Jobs }}
 	queues      *queues.Manager
-	{{- end }}
 }
 
 // NewWorker creates a Worker from dependencies that the Jobs wire set guarantees.
@@ -33,17 +29,13 @@ func NewWorker(
 	logger *logger.AppLogger,
 	lighthouse *LighthouseRuntime,
 	appTimeouts *runtime.Timeouts,
-	{{- if .ProjectComponents.Jobs }}
 	queues *queues.Manager,
-	{{- end }}
 ) *Worker {
 	return &Worker{
 		logger:      logger.WithComponent("Jobs"),
 		lighthouse:  lighthouse,
 		appTimeouts: appTimeouts,
-		{{- if .ProjectComponents.Jobs }}
 		queues: queues,
-		{{- end }}
 	}
 }
 
