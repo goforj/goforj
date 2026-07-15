@@ -526,7 +526,7 @@ func NewBus(ctx context.Context) Bus {
 
 // WithObserver instruments every managed bus without replacing observers already attached to the manager.
 func (m *Manager) WithObserver(observer Observer) *Manager {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m
 	}
 	if m.observer == nil {
@@ -549,9 +549,6 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 
 // ReadinessChecks exposes an independently named health probe for every generated event bus.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "events_default",
@@ -561,14 +558,12 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 		},
 	}
 {{- range .Names }}
-	if m.{{ .Field }} != nil {
-		checks = append(checks, ReadinessCheck{
-			Name: "events_{{ .Bus }}",
-			Check: func(ctx context.Context) error {
-				return eventsReadinessCheck(ctx, m.{{ .Field }})
-			},
-		})
-	}
+	checks = append(checks, ReadinessCheck{
+		Name: "events_{{ .Bus }}",
+		Check: func(ctx context.Context) error {
+			return eventsReadinessCheck(ctx, m.{{ .Field }})
+		},
+	})
 {{- end }}
 	return checks
 }
@@ -773,9 +768,6 @@ func driverKind(value Driver) eventscore.Driver {
 
 // eventsReadinessCheck binds readiness work to the caller's context before probing the transport.
 func eventsReadinessCheck(ctx context.Context, bus Bus) error {
-	if bus == nil {
-		return nil
-	}
 	return bus.WithContext(normalizeEventsContext(ctx)).Ready()
 }
 
@@ -801,7 +793,7 @@ type observedSubscription struct {
 
 // wrapObservedBus adds instrumentation once while allowing an existing wrapper's observer chain to evolve.
 func wrapObservedBus(name string, bus Bus, observer Observer) Bus {
-	if bus == nil || observer == nil {
+	if observer == nil {
 		return bus
 	}
 	if wrapped, ok := bus.(*observedBus); ok {
@@ -886,7 +878,7 @@ func (b *observedBus) Subscribe(handler any) (Subscription, error) {
 
 // context guarantees that observer callbacks and delegated calls always receive a usable context.
 func (b *observedBus) context() context.Context {
-	if b == nil || b.ctx == nil {
+	if b.ctx == nil {
 		return context.Background()
 	}
 	return b.ctx
@@ -907,7 +899,7 @@ func (s *observedSubscription) Close() error {
 	var err error
 	s.once.Do(func() {
 		err = s.inner.Close()
-		if err == nil && s.observer != nil {
+		if err == nil {
 			s.observer.OnEventUnsubscribe(s.ctx, EventSubscriptionEvent{
 				Bus:     s.name,
 				Topic:   s.topic,
@@ -1099,9 +1091,7 @@ func (m *Manager) Instances() []Instance {
 		{Name: "default", Bus: m.defaultBus, IsDefault: true},
 	}
 {{- range .Names }}
-	if m.{{ .Field }} != nil {
-		instances = append(instances, Instance{Name: "{{ .Bus }}", Bus: m.{{ .Field }}})
-	}
+	instances = append(instances, Instance{Name: "{{ .Bus }}", Bus: m.{{ .Field }}})
 {{- end }}
 	return instances
 }

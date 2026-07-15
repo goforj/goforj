@@ -622,7 +622,7 @@ func NewManager() (*Manager, error) {
 
 // WithObserver adds observability without replacing observers already attached by framework wiring.
 func (m *Manager) WithObserver(observer Observer) *Manager {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m
 	}
 	if m.observer == nil {
@@ -636,9 +636,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 		}
 	}
 	combined := m.observer
-	if m.defaultDisk != nil {
-		m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, combined)
-	}
+	m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, combined)
 {{- range .Names }}
 	if m.{{ .Disk }} != nil {
 		m.{{ .Disk }} = wrapObservedStorage(m.{{ .Disk }}, "{{ .Disk }}", m.{{ .Disk }}Driver, combined)
@@ -649,7 +647,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 
 // Warnings preserves diagnostics for optional disks whose unavailable infrastructure did not prevent startup.
 func (m *Manager) Warnings() []OptionalDiskWarning {
-	if m == nil || len(m.warnings) == 0 {
+	if len(m.warnings) == 0 {
 		return nil
 	}
 	out := make([]OptionalDiskWarning, len(m.warnings))
@@ -659,9 +657,6 @@ func (m *Manager) Warnings() []OptionalDiskWarning {
 
 // ReadinessChecks exposes one probe per initialized disk so health excludes optional disks skipped at startup.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "storage_default",
@@ -878,9 +873,6 @@ func storageDriverCompiled(driver string) bool {
 
 // storageReadinessCheck prefers explicit driver health contracts and falls back to a lightweight listing operation.
 func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
-	if disk == nil {
-		return nil
-	}
 	if ready, ok := any(disk).(interface{ Ready(context.Context) error }); ok {
 		return ready.Ready(ctx)
 	}
@@ -902,7 +894,7 @@ type observedStorage struct {
 
 // wrapObservedStorage reuses an existing wrapper so adding observers does not stack duplicate instrumentation.
 func wrapObservedStorage(inner storage.Storage, name string, driver string, observer Observer) storage.Storage {
-	if inner == nil || observer == nil {
+	if observer == nil {
 		return inner
 	}
 	if wrapped, ok := inner.(*observedStorage); ok {
@@ -921,9 +913,6 @@ func wrapObservedStorage(inner storage.Storage, name string, driver string, obse
 
 // observe emits one uniform event after a delegated storage operation completes.
 func (s *observedStorage) observe(ctx context.Context, op string, path string, start time.Time, err error) {
-	if s == nil || s.observer == nil {
-		return
-	}
 	s.observer.OnStorageOp(ctx, StorageOpEvent{
 		Operation: op,
 		Disk:      s.name,
@@ -946,7 +935,7 @@ func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
 
 // context supplies a background context for callers that use the context-free storage API.
 func (s *observedStorage) context() context.Context {
-	if s == nil || s.ctx == nil {
+	if s.ctx == nil {
 		return context.Background()
 	}
 	return s.ctx

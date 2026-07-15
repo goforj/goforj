@@ -83,9 +83,6 @@ func NewManager() (*Manager, error) {
 
 // ReadinessChecks exposes one probe per generated cache so health reflects every configured store.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	return []ReadinessCheck{
 		{
 			Name: "cache_default",
@@ -208,16 +205,11 @@ func cacheEncryptionKey(scope env.Scope) []byte {
 
 // cacheReadinessCheck adapts both wrapper and driver readiness contracts to one generated probe.
 func cacheReadinessCheck(ctx context.Context, store *cache.Cache) error {
-	if store == nil {
-		return nil
-	}
 	if ready, ok := any(store).(interface{ Ready() error }); ok {
 		return ready.Ready()
 	}
-	if inner := store.Store(); inner != nil {
-		if ready, ok := any(inner).(interface{ Ready(context.Context) error }); ok {
-			return ready.Ready(ctx)
-		}
+	if ready, ok := any(store.Store()).(interface{ Ready(context.Context) error }); ok {
+		return ready.Ready(ctx)
 	}
 	return nil
 }

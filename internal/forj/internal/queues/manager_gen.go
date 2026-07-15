@@ -74,16 +74,10 @@ func NewManagerWithObserver(observer queue.Observer, logger queue.Logger) (*Mana
 
 // ReadinessChecks exposes an independently named health probe for every generated queue.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "queue_default",
 			Check: func(ctx context.Context) error {
-				if m.defaultQueue == nil {
-					return nil
-				}
 				return m.defaultQueue.Ready(ctx)
 			},
 		},

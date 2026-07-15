@@ -76,9 +76,6 @@ func NewManager() (*Manager, error) {
 
 // ReadinessChecks exposes one probe per generated disk so health reflects every initialized backend.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	return []ReadinessCheck{
 		{
 			Name: "storage_default",
@@ -166,9 +163,6 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 
 // storageReadinessCheck prefers explicit driver health contracts and falls back to a lightweight listing operation.
 func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
-	if disk == nil {
-		return nil
-	}
 	if ready, ok := any(disk).(interface{ Ready(context.Context) error }); ok {
 		return ready.Ready(ctx)
 	}
