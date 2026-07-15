@@ -372,30 +372,35 @@ func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 	}
 }
 
-// TestNewProjectKeepsPrimitiveDefaultsHiddenUntilGatingIsComplete verifies the foundation does not expose premature opt-outs.
-func TestNewProjectKeepsPrimitiveDefaultsHiddenUntilGatingIsComplete(t *testing.T) {
+// TestNewProjectExposesPrimitiveDefaultsAsComponents keeps the common path default-on without adding another wizard stage.
+func TestNewProjectExposesPrimitiveDefaultsAsComponents(t *testing.T) {
 	m := initialModel()
 	if m.config.Render.ComponentContractVersion != project.CurrentComponentContractVersion {
 		t.Fatalf("new project component contract = %d, want %d", m.config.Render.ComponentContractVersion, project.CurrentComponentContractVersion)
 	}
-	hidden := map[project.ComponentKey]bool{
-		project.ComponentCache:   true,
-		project.ComponentEvents:  true,
-		project.ComponentStorage: true,
+	want := map[project.ComponentKey]string{
+		project.ComponentCache:   "Cache",
+		project.ComponentEvents:  "Events",
+		project.ComponentStorage: "File Storage",
+		project.ComponentJobs:    "Background Jobs",
 	}
 	for _, raw := range m.componentList.Items() {
 		item := raw.(ListItem)
-		if hidden[item.Key] {
-			t.Fatalf("primitive %q was exposed in forj new before its disabled contract", item.Key)
+		label, ok := want[item.Key]
+		if !ok {
+			continue
 		}
+		if item.Name != label || !item.Selected {
+			t.Fatalf("primitive row %q = %#v, want selected %q", item.Key, item, label)
+		}
+		delete(want, item.Key)
 	}
-	components := m.selectedComponentConfig()
-	if !components.Cache || !components.Events || !components.Storage {
-		t.Fatalf("hidden primitive defaults were lost while reading wizard selections: %#v", components)
+	if len(want) != 0 {
+		t.Fatalf("new project wizard is missing primitive rows: %#v", want)
 	}
 	m.applyComponentSelection()
-	if !m.config.Render.Components.Cache || !m.config.Render.Components.Events || !m.config.Render.Components.Storage {
-		t.Fatalf("hidden primitive defaults were lost while applying wizard selections: %#v", m.config.Render.Components)
+	if !m.config.Render.Components.Cache || !m.config.Render.Components.Events || !m.config.Render.Components.Storage || !m.config.Render.Components.Jobs {
+		t.Fatalf("primitive defaults were lost while applying wizard selections: %#v", m.config.Render.Components)
 	}
 }
 
@@ -572,8 +577,9 @@ func TestMailSelectionEnablesMailComponent(t *testing.T) {
 	}
 }
 
-func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
+func TestAuthSelectionAlsoEnablesDependencies(t *testing.T) {
 	m := initialModel()
+	m.config.Render.Components.Cache = false
 
 	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
 
@@ -588,9 +594,12 @@ func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
 	if !m.config.Render.Components.WebAPI {
 		t.Fatalf("expected auth selection to force the API capability used by generated auth routes")
 	}
+	if !m.config.Render.Components.Cache {
+		t.Fatalf("expected auth selection to force its Cache dependency")
+	}
 }
 
-func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
+func TestAuthToggleAutoSelectsDependenciesInWizard(t *testing.T) {
 	m := initialModel()
 	m.stage = StageSelectComponents
 
@@ -607,6 +616,9 @@ func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
 	}
 	if !componentSelectedByKey(t, m, project.ComponentMail) {
 		t.Fatalf("expected mail to be auto-selected when auth is selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentCache) {
+		t.Fatalf("expected cache to be auto-selected when auth is selected")
 	}
 }
 

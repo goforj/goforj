@@ -375,11 +375,6 @@ func (m *appWizardModel) applyComponentSelection() {
 	}
 	components, err := project.AppComponentsFromKeys(m.available, keys)
 	if err == nil {
-		for _, definition := range project.AppComponentDefinitions(m.available) {
-			if definition.WizardHidden {
-				components.SetEnabled(definition.Key, m.components.Enabled(definition.Key))
-			}
-		}
 		m.components = components
 	}
 	if command := strings.TrimSpace(m.devRunInput.Value()); command == "" || command == "run" {

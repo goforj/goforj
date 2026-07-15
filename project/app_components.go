@@ -31,6 +31,9 @@ var appWizardComponentKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentCache,
+	ComponentEvents,
+	ComponentStorage,
 	ComponentJobs,
 }
 

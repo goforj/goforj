@@ -342,8 +342,8 @@ func TestWizardShowsCLIComponentSelected(t *testing.T) {
 	}
 }
 
-// TestWizardPreservesHiddenPrimitiveDefaults keeps named Apps compatible before primitive rows are exposed.
-func TestWizardPreservesHiddenPrimitiveDefaults(t *testing.T) {
+// TestWizardShowsPrimitiveComponentsSelectedFromProjectDefaults keeps make:app on the same flat component model as forj new.
+func TestWizardShowsPrimitiveComponentsSelectedFromProjectDefaults(t *testing.T) {
 	model := initialAppWizardModel("ship", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
@@ -351,19 +351,33 @@ func TestWizardPreservesHiddenPrimitiveDefaults(t *testing.T) {
 				Cache:   true,
 				Events:  true,
 				Storage: true,
+				Jobs:    true,
 			},
 		},
 	})
+	want := map[project.ComponentKey]string{
+		project.ComponentCache:   "Cache",
+		project.ComponentEvents:  "Events",
+		project.ComponentStorage: "File Storage",
+		project.ComponentJobs:    "Background Jobs",
+	}
 	for _, raw := range model.componentList.Items() {
 		item := raw.(componentItem)
-		switch item.Key {
-		case project.ComponentCache, project.ComponentEvents, project.ComponentStorage:
-			t.Fatalf("primitive %q was exposed before its disabled App contract", item.Key)
+		label, ok := want[item.Key]
+		if !ok {
+			continue
 		}
+		if item.Name != label || !item.Selected {
+			t.Fatalf("primitive row %q = %#v, want selected %q", item.Key, item, label)
+		}
+		delete(want, item.Key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("make:app wizard is missing primitive rows: %#v", want)
 	}
 	model.applyComponentSelection()
-	if !model.components.Cache || !model.components.Events || !model.components.Storage {
-		t.Fatalf("hidden App primitive defaults were lost: %#v", model.components)
+	if !model.components.Cache || !model.components.Events || !model.components.Storage || !model.components.Jobs {
+		t.Fatalf("App primitive defaults were lost: %#v", model.components)
 	}
 }
 
@@ -592,10 +606,7 @@ func TestWizardShowsAuthComponents(t *testing.T) {
 	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
-				WebAPI:        true,
-				Auth:          true,
-				OAuth:         true,
-				DatabaseMySQL: true,
+				CLI: true,
 			},
 		},
 	})
@@ -609,6 +620,18 @@ func TestWizardShowsAuthComponents(t *testing.T) {
 		if !seen[key] {
 			t.Fatalf("expected app wizard to include auth component %s", key)
 		}
+	}
+	model.setComponentSelected(project.ComponentAuth, true)
+	model.normalizeComponentSelections()
+	if !model.componentSelected(project.ComponentCache) {
+		t.Fatalf("expected the visible Cache row to be selected with Auth")
+	}
+	model.applyComponentSelection()
+	if !model.components.Auth {
+		t.Fatalf("expected selected Auth to remain enabled: %#v", model.components)
+	}
+	if !model.components.Cache {
+		t.Fatalf("expected selected Auth to include its Cache dependency: %#v", model.components)
 	}
 }
 

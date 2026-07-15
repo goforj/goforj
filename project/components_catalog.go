@@ -53,14 +53,13 @@ type ComponentDefinition struct {
 	Requires        []ComponentKey
 	Parent          ComponentKey
 	ExclusiveGroup  string
-	WizardHidden    bool
 }
 
 var componentCatalog = []ComponentDefinition{
 	{Key: ComponentCLI, Label: "CLI", Description: "Add commands to run and manage your app", DefaultSelected: true},
 	{Key: ComponentDocker, Label: "Docker", Description: "Run databases and tools locally", DefaultSelected: true},
 	{Key: ComponentMail, Label: "Mail", Description: "Send email from your app", DefaultSelected: true},
-	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail, ComponentWebAPI}},
+	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail, ComponentWebAPI, ComponentCache}},
 	{Key: ComponentOAuth, Label: "OAuth", Description: "Sign in with external providers", DefaultSelected: true, Requires: []ComponentKey{ComponentAuth}, Parent: ComponentAuth},
 	{Key: ComponentWebAPI, Label: "Web API", Description: "Build endpoints for clients and frontends", DefaultSelected: true},
 	{Key: ComponentWebUI, Label: "Web UI", Description: "Serve a browser frontend", DefaultSelected: true},
@@ -71,9 +70,9 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentDatabasePostgres, Label: "Database (Postgres)", Description: "Store app data in Postgres", ExclusiveGroup: "database"},
 	{Key: ComponentDatabaseSQLite, Label: "Database (SQLite)", Description: "Store app data in SQLite", ExclusiveGroup: "database"},
 	{Key: ComponentScheduler, Label: "Scheduler", Description: "Run tasks on a schedule", DefaultSelected: true},
-	{Key: ComponentCache, Label: "Cache", Description: "Cache temporary and computed values", DefaultSelected: true, WizardHidden: true},
-	{Key: ComponentEvents, Label: "Events", Description: "Publish and subscribe to application events", DefaultSelected: true, WizardHidden: true},
-	{Key: ComponentStorage, Label: "File Storage", Description: "Store private and public files or objects", DefaultSelected: true, WizardHidden: true},
+	{Key: ComponentCache, Label: "Cache", Description: "Cache temporary and computed values", DefaultSelected: true},
+	{Key: ComponentEvents, Label: "Events", Description: "Publish and subscribe to application events", DefaultSelected: true},
+	{Key: ComponentStorage, Label: "File Storage", Description: "Store private and public files or objects", DefaultSelected: true},
 	{Key: ComponentJobs, Label: "Background Jobs", Description: "Send and process work outside requests", DefaultSelected: true},
 }
 
@@ -84,16 +83,9 @@ func ComponentCatalog() []ComponentDefinition {
 	return out
 }
 
-// ProjectWizardComponentDefinitions returns components whose disabled render contract is ready for project creation.
+// ProjectWizardComponentDefinitions returns catalog entries shown in the project component wizard.
 func ProjectWizardComponentDefinitions() []ComponentDefinition {
-	definitions := make([]ComponentDefinition, 0, len(componentCatalog))
-	for _, definition := range componentCatalog {
-		if definition.WizardHidden {
-			continue
-		}
-		definitions = append(definitions, definition)
-	}
-	return definitions
+	return ComponentCatalog()
 }
 
 // ComponentDefinitionByKey returns the definition for a component key.
