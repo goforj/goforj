@@ -277,7 +277,10 @@ func (c *Cmd) runGoBuild(root string, args []string, opts goBuildOptions) error 
 		}
 		if opts.allowRecovery {
 			recovered, recoverErr := c.attemptMissingModuleRecovery(root, detail)
-			if recoverErr == nil && recovered {
+			if recoverErr != nil {
+				return fmt.Errorf("recover missing build modules: %w", recoverErr)
+			}
+			if recovered {
 				opts.allowRecovery = false
 				return c.runGoBuild(root, args, opts)
 			}

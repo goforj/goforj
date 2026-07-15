@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -575,6 +576,27 @@ go get github.com/goforj/storage/driver/redisstorage`)
 	}
 	if build.lastBuildStatus != "synced deps, retried" {
 		t.Fatalf("lastBuildStatus = %q", build.lastBuildStatus)
+	}
+}
+
+// TestRunGoBuildReportsModuleRecoveryFailure verifies a failed go get is not hidden behind the compiler error that triggered it.
+func TestRunGoBuildReportsModuleRecoveryFailure(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/recovery\n\ngo 1.26\n",
+		"main.go": "package main\n\nimport _ \"example.invalid/missing\"\n\nfunc main() {}\n",
+	}
+	for relativePath, contents := range files {
+		if err := os.WriteFile(filepath.Join(root, relativePath), []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relativePath, err)
+		}
+	}
+	recoveryErr := errors.New("go get denied")
+	build := &Cmd{goGetFunc: func([]string) error { return recoveryErr }}
+
+	err := build.runGoBuild(root, []string{"."}, goBuildOptions{allowRecovery: true})
+	if !errors.Is(err, recoveryErr) || !strings.Contains(err.Error(), "recover missing build modules") {
+		t.Fatalf("runGoBuild error = %v, want module recovery failure", err)
 	}
 }
 
