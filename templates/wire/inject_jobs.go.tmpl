@@ -16,8 +16,13 @@ import (
 
 // jobSet is a wire set that provides the queue worker and its dependencies.
 var jobSet = wire.NewSet(
+{{- if .Components.Cache }}
+	jobs.NewCachedBenchmarkRunCmd,
+	jobs.NewCachedLighthouseRuntime,
+{{- else }}
 	jobs.NewBenchmarkRunCmd,
 	jobs.NewLighthouseRuntime,
+{{- end }}
 	jobs.NewRuntime,
 {{- if .ProjectComponents.HasDatabase }}
 {{- if not .Components.HasDatabase }}

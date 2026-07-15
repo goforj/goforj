@@ -43,7 +43,9 @@ Dedicated metrics listeners are intentionally separate from normal application t
 Each framework-owned instrumentation surface can be enabled or disabled independently at startup:
 
 - `METRICS_HTTP_ENABLED`
+{{- if .ProjectComponents.Cache }}
 - `METRICS_CACHE_ENABLED`
+{{- end }}
 {{- if .ProjectComponents.Storage }}
 - `METRICS_STORAGE_ENABLED`
 {{- end }}
@@ -76,7 +78,9 @@ Prometheus names use underscores and suffixes. For example, the GoForj metric `h
 | --- | --- | --- |
 | HTTP | `http_requests_total`, `http_requests_by_route_total`, `http_request_duration_seconds`, `http_request_duration_by_route_seconds`, `http_requests_inflight`, `http_responses_client_errors_total`, `http_responses_server_errors_total` | `app`, `source`, `method`, `route`, `status` |
 | Auth | `auth_flows_total`, `auth_flow_duration_seconds` | `app`, `flow`, `status`, `reason`, `provider` |
+{{- if .ProjectComponents.Cache }}
 | Cache | `cache_operations_total`, `cache_operation_duration_seconds` | `app`, `source`, `cache`, `driver`, `operation`, `category`, `status`, `hit` |
+{{- end }}
 {{- if .ProjectComponents.Storage }}
 | Storage | `storage_operations_total`, `storage_operation_duration_seconds` | `app`, `source`, `disk`, `driver`, `operation`, `category`, `status` |
 {{- end }}
@@ -419,6 +423,7 @@ Route latency P95:
 )
 ```
 
+{{ if .ProjectComponents.Cache }}
 ### Cache
 
 Hit rate by named cache:
@@ -439,6 +444,8 @@ topk(10,
   )
 )
 ```
+
+{{- end }}
 
 {{ if .ProjectComponents.Storage }}
 ### Storage

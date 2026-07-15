@@ -179,12 +179,10 @@ var resourceCatalog = []ResourceDefinition{
 			}, Order: 100},
 		},
 		NamedResources: []GeneratedNamedResourceDefinition{
-			{Resource: ResourceCache, Name: "inspects", Label: "Inspection cache", EnvironmentKey: "CACHE_INSPECTS_DRIVER", DefaultDriver: "memory"},
-			{Resource: ResourceCache, Name: "lighthouse", Label: "Lighthouse cache", EnvironmentKey: "CACHE_LIGHTHOUSE_DRIVER", DefaultDriver: "memory"},
 			{Resource: ResourceCache, Name: "settings", Label: "Demo settings cache", EnvironmentKey: "CACHE_SETTINGS_DRIVER", RequiredComponent: ComponentDemoApp, DefaultDriver: "memory"},
 			{Resource: ResourceCache, Name: "sessions", Label: "Auth sessions", EnvironmentKey: "CACHE_SESSIONS_DRIVER", RequiredComponent: ComponentAuth, DefaultDriver: "memory"},
 		},
-		applicable: func(Components) bool { return true },
+		applicable: func(components Components) bool { return components.Cache },
 	},
 	{
 		Key:         ResourceQueue,

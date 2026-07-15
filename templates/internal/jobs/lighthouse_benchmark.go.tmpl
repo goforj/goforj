@@ -9,17 +9,21 @@ import (
 	"sync/atomic"
 	"time"
 
+{{- if .ProjectComponents.Cache }}
 	"github.com/goforj/cache"
+{{- end }}
 	"github.com/goforj/queue"
 {{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
 {{- end }}
-	"{{.GoModuleName}}/internal/runtime"
+{{- if .ProjectComponents.Cache }}
 	"{{.GoModuleName}}/internal/caches"
+{{- end }}
 {{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
 	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/runtime"
 {{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
@@ -33,7 +37,9 @@ type benchmarkCatalogItem struct {
 }
 
 type benchmarkRunner struct {
+{{- if .ProjectComponents.Cache }}
 	caches   *caches.Manager
+{{- end }}
 	queues   *queues.Manager
 {{- if .ProjectComponents.Storage }}
 	storages *storages.Manager
@@ -47,7 +53,6 @@ type benchmarkRunner struct {
 
 // newBenchmarkRunner retains only the managers available in the current App projection.
 func newBenchmarkRunner(
-	caches *caches.Manager,
 	queues *queues.Manager,
 {{- if .ProjectComponents.Storage }}
 	storages *storages.Manager,
@@ -59,7 +64,6 @@ func newBenchmarkRunner(
 {{- end }}
 ) *benchmarkRunner {
 	return &benchmarkRunner{
-		caches:   caches,
 		queues:   queues,
 {{- if .ProjectComponents.Storage }}
 		storages: storages,
@@ -151,13 +155,17 @@ type BenchmarkSuiteResult struct {
 // catalog advertises only suites whose required managers are available to this App.
 func (r *benchmarkRunner) catalog() map[string]any {
 	catalog := map[string]any{
-		"cache": map[string]any{
-			"instances": benchmarkCacheCatalog(),
-		},
 		"queue": map[string]any{
 			"instances": benchmarkQueueCatalog(r.queues),
 		},
 	}
+{{- if .ProjectComponents.Cache }}
+	if r.caches != nil {
+		catalog["cache"] = map[string]any{
+			"instances": benchmarkCacheCatalog(),
+		}
+	}
+{{- end }}
 {{- if .ProjectComponents.HasDatabase }}
 	if r.db != nil {
 		catalog["db"] = map[string]any{
@@ -175,6 +183,8 @@ func (r *benchmarkRunner) catalog() map[string]any {
 	return catalog
 }
 
+{{- if .ProjectComponents.Cache }}
+// benchmarkCacheCatalog projects generated stores into the bounded Lighthouse benchmark catalog.
 func benchmarkCacheCatalog() []benchmarkCatalogItem {
 	instances := runtime.DiscoverCacheInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
@@ -186,6 +196,7 @@ func benchmarkCacheCatalog() []benchmarkCatalogItem {
 	}
 	return items
 }
+{{- end }}
 
 func benchmarkQueueCatalog(queues *queues.Manager) []benchmarkCatalogItem {
 	instances := runtime.DiscoverQueueInstances()
@@ -266,8 +277,10 @@ func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (Ben
 	started := time.Now()
 	instanceName := optionalBenchmarkName(req.Instance)
 	switch r.suiteName(req.Suite) {
+{{- if .ProjectComponents.Cache }}
 	case "cache":
 		return r.runCache(ctx, instanceName, duration, req.Concurrency, payloadSize, started)
+{{- end }}
 	case "queue":
 		return r.runQueue(ctx, instanceName, duration, req.Concurrency, payloadSize, req.Queue, started)
 	case "db":
@@ -290,7 +303,9 @@ func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (Ben
 // runBenchmark shares the Lighthouse runner contract with the generated CLI benchmark command.
 func runBenchmark(
 	ctx context.Context,
+{{- if .ProjectComponents.Cache }}
 	caches *caches.Manager,
+{{- end }}
 	queues *queues.Manager,
 {{- if .ProjectComponents.Storage }}
 	storages *storages.Manager,
@@ -302,8 +317,7 @@ func runBenchmark(
 {{- end }}
 	req BenchmarkRunRequest,
 ) (BenchmarkSuiteResult, error) {
-	return newBenchmarkRunner(
-		caches,
+	runner := newBenchmarkRunner(
 		queues,
 {{- if .ProjectComponents.Storage }}
 		storages,
@@ -313,17 +327,27 @@ func runBenchmark(
 {{- else }}
 		nil,
 {{- end }}
-	).run(ctx, req)
+	)
+{{- if .ProjectComponents.Cache }}
+	runner.caches = caches
+{{- end }}
+	return runner.run(ctx, req)
 }
 
 func (r *benchmarkRunner) suiteName(suite string) string {
 	value := strings.TrimSpace(strings.ToLower(suite))
 	if value == "" {
-		return "cache"
+{{- if .ProjectComponents.Cache }}
+		if r.caches != nil {
+			return "cache"
+		}
+{{- end }}
+		return "queue"
 	}
 	return value
 }
 
+{{- if .ProjectComponents.Cache }}
 func (r *benchmarkRunner) cacheInstances() map[string]*cache.Cache {
 	out := map[string]*cache.Cache{}
 	if r.caches == nil {
@@ -337,6 +361,7 @@ func (r *benchmarkRunner) cacheInstances() map[string]*cache.Cache {
 	}
 	return out
 }
+{{- end }}
 
 func (r *benchmarkRunner) queueInstances() map[string]*queue.Queue {
 	out := map[string]*queue.Queue{}
@@ -369,6 +394,8 @@ func (r *benchmarkRunner) storageInstances() map[string]storage.Storage {
 }
 {{- end }}
 
+{{- if .ProjectComponents.Cache }}
+// runCache rejects unavailable App-local Cache support before invoking the shared benchmark implementation.
 func (r *benchmarkRunner) runCache(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	concurrency = benchmarkConcurrency(concurrency, 8, 256)
 	if r.caches == nil || r.caches.Default() == nil {
@@ -383,6 +410,7 @@ func (r *benchmarkRunner) runCache(ctx context.Context, instanceName string, dur
 	}
 	return runCacheBenchmark(ctx, r.caches, duration, concurrency, payloadSize, started)
 }
+{{- end }}
 
 func (r *benchmarkRunner) runQueue(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
 	concurrency = benchmarkConcurrency(concurrency, 8, 1024)

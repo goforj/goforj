@@ -1,0 +1,151 @@
+package inspects
+
+import (
+	"context"
+	"strconv"
+	"sync"
+	"testing"
+
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// TestInspectStoreRetainsNewestRecordsWithinMaxTotal verifies retention, ordering, filtering, and upserts share one bounded index.
+func TestInspectStoreRetainsNewestRecordsWithinMaxTotal(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_MAX_TOTAL", "2")
+	manager := NewManager()
+
+	for _, record := range []Record{
+		{Summary: InspectSummary{TraceID: "inspect-1", Source: runtime.SourceHTTP.String(), Name: "first"}},
+		{Summary: InspectSummary{TraceID: "inspect-2", Source: runtime.SourceJobs.String(), Name: "second"}},
+		{Summary: InspectSummary{TraceID: "inspect-3", Source: runtime.SourceHTTP.String(), Name: "third"}},
+	} {
+		if err := manager.Ingest(context.Background(), record); err != nil {
+			t.Fatalf("ingest %s: %v", record.Summary.TraceID, err)
+		}
+	}
+
+	recent, err := manager.Recent(context.Background(), RecentQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if len(recent) != 2 || recent[0].TraceID != "inspect-3" || recent[1].TraceID != "inspect-2" {
+		t.Fatalf("recent order = %#v, want inspect-3 then inspect-2", recent)
+	}
+	if _, ok, err := manager.ByID(context.Background(), "inspect-1"); err != nil {
+		t.Fatalf("load evicted record: %v", err)
+	} else if ok {
+		t.Fatal("expected oldest record to be evicted")
+	}
+
+	if err := manager.Ingest(context.Background(), Record{Summary: InspectSummary{
+		TraceID: "inspect-2",
+		Source:  runtime.SourceJobs.String(),
+		Name:    "second-updated",
+	}}); err != nil {
+		t.Fatalf("upsert inspect-2: %v", err)
+	}
+	recent, err = manager.Recent(context.Background(), RecentQuery{Source: runtime.SourceJobs, Limit: 10})
+	if err != nil {
+		t.Fatalf("recent jobs: %v", err)
+	}
+	if len(recent) != 1 || recent[0].TraceID != "inspect-2" || recent[0].Name != "second-updated" {
+		t.Fatalf("filtered recent = %#v", recent)
+	}
+}
+
+// TestInspectStoreReturnsDetachedRecords verifies callers cannot mutate retained records through write or read aliases.
+func TestInspectStoreReturnsDetachedRecords(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	manager := NewManager()
+	record := Record{
+		Summary: InspectSummary{
+			TraceID: "inspect-copy",
+			Source:  runtime.SourceHTTP.String(),
+			Labels:  map[string]string{"route": "/original"},
+		},
+		Events: []InspectEvent{
+			{
+				Kind: EventKindHTTP,
+				Attributes: map[string]any{
+					"nested": map[string]any{"value": "original"},
+				},
+				HTTP: &HTTPExchange{RequestHeadersRaw: []HTTPHeader{
+					{Name: "X-Test", Value: "original"},
+				}},
+			},
+		},
+	}
+	if err := manager.Ingest(context.Background(), record); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	record.Summary.Labels["route"] = "/mutated"
+	record.Events[0].Attributes["nested"].(map[string]any)["value"] = "mutated"
+	record.Events[0].HTTP.RequestHeadersRaw[0].Value = "mutated"
+
+	stored, ok, err := manager.ByID(context.Background(), "inspect-copy")
+	if err != nil || !ok {
+		t.Fatalf("load stored record: ok=%v err=%v", ok, err)
+	}
+	if stored.Summary.Labels["route"] != "/original" || stored.Events[0].Attributes["nested"].(map[string]any)["value"] != "original" || stored.Events[0].HTTP.RequestHeadersRaw[0].Value != "original" {
+		t.Fatalf("write-side mutation reached retained record: %#v", stored)
+	}
+
+	stored.Summary.Labels["route"] = "/read-mutated"
+	stored.Events[0].Attributes["nested"].(map[string]any)["value"] = "read-mutated"
+	stored.Events[0].HTTP.RequestHeadersRaw[0].Value = "read-mutated"
+	reloaded, ok, err := manager.ByID(context.Background(), "inspect-copy")
+	if err != nil || !ok {
+		t.Fatalf("reload stored record: ok=%v err=%v", ok, err)
+	}
+	if reloaded.Summary.Labels["route"] != "/original" || reloaded.Events[0].Attributes["nested"].(map[string]any)["value"] != "original" || reloaded.Events[0].HTTP.RequestHeadersRaw[0].Value != "original" {
+		t.Fatalf("read-side mutation reached retained record: %#v", reloaded)
+	}
+
+	recent, err := manager.Recent(context.Background(), RecentQuery{Limit: 1})
+	if err != nil || len(recent) != 1 {
+		t.Fatalf("recent stored record: count=%d err=%v", len(recent), err)
+	}
+	recent[0].Labels["route"] = "/recent-mutated"
+	recentAgain, err := manager.Recent(context.Background(), RecentQuery{Limit: 1})
+	if err != nil || len(recentAgain) != 1 || recentAgain[0].Labels["route"] != "/original" {
+		t.Fatalf("recent mutation reached retained summary: recent=%#v err=%v", recentAgain, err)
+	}
+}
+
+// TestInspectStoreSupportsConcurrentIngestAndRead exercises the store's read and write lock boundary.
+func TestInspectStoreSupportsConcurrentIngestAndRead(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_MAX_TOTAL", "32")
+	manager := NewManager()
+
+	const writers = 8
+	const recordsPerWriter = 100
+	var wg sync.WaitGroup
+	for writer := 0; writer < writers; writer++ {
+		writer := writer
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := 0; idx < recordsPerWriter; idx++ {
+				inspectID := "inspect-" + strconv.Itoa(writer) + "-" + strconv.Itoa(idx)
+				_ = manager.Ingest(context.Background(), Record{Summary: InspectSummary{
+					TraceID: inspectID,
+					Source:  runtime.SourceJobs.String(),
+				}})
+				_, _, _ = manager.ByID(context.Background(), inspectID)
+				_, _ = manager.Recent(context.Background(), RecentQuery{Limit: 16})
+			}
+		}()
+	}
+	wg.Wait()
+
+	recent, err := manager.Recent(context.Background(), RecentQuery{Limit: writers * recordsPerWriter})
+	if err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if len(recent) != 32 {
+		t.Fatalf("retained record count = %d, want 32", len(recent))
+	}
+}

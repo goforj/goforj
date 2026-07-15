@@ -4,7 +4,7 @@
 package {{.AppPackageName}}
 
 import (
-{{- if .Components.HasRuntime }}
+{{- if or .Components.HasRuntime .Components.Cache }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
@@ -32,6 +32,9 @@ type RootCmd struct {
 {{- if .Components.Jobs }}
 	BenchmarkRunCmd    jobs.BenchmarkRunCmd    `cmd:""`
 	ExampleHelloJobCmd jobs.ExampleHelloJobCmd `cmd:""`
+{{- end }}
+{{- if .Components.Cache }}
+	CacheShellCmd cmd.CacheShellCmd `cmd:""`
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 	HttpServeCmd http.ServeCmd `cmd:""`
@@ -81,6 +84,9 @@ func NewRootCmd(
 	benchmarkRunCmd *jobs.BenchmarkRunCmd,
 	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
 {{- end }}
+{{- if .Components.Cache }}
+	cacheShellCmd *cmd.CacheShellCmd,
+{{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 	httpServeCmd *http.ServeCmd,
 {{- end }}
@@ -126,6 +132,9 @@ func NewRootCmd(
 {{- if .Components.Jobs }}
 		BenchmarkRunCmd:    *benchmarkRunCmd,
 		ExampleHelloJobCmd: *exampleHelloJobCmd,
+{{- end }}
+{{- if .Components.Cache }}
+		CacheShellCmd: *cacheShellCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 		HttpServeCmd: *httpServeCmd,

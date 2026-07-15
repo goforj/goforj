@@ -262,6 +262,7 @@
       "title": "Database P95",
       "type": "stat"
     },
+{{- if .ProjectComponents.Cache }}
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": {
@@ -303,6 +304,7 @@
       "title": "Cache Hit Rate",
       "type": "stat"
     },
+{{- end }}
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": {
@@ -548,7 +550,8 @@
           "legendFormat": "database p95",
           "range": true,
           "refId": "B"
-        },
+        }
+{{- if .ProjectComponents.Cache }},
         {
           "editorMode": "code",
           "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(cache_operation_duration_seconds_bucket{app=~\"$app\", category=\"read\"}[$__rate_interval]))) or vector(0)",
@@ -556,6 +559,7 @@
           "range": true,
           "refId": "C"
         }
+{{- end }}
 {{- if .ProjectComponents.Storage }},
         {
           "editorMode": "code",
@@ -756,7 +760,8 @@
       ],
       "title": "{{ if .ProjectComponents.Jobs }}Queue And {{ end }}Scheduler Hotspots",
       "type": "timeseries"
-    },
+    }
+{{- if or .ProjectComponents.Cache .ProjectComponents.Storage }},
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": {
@@ -795,6 +800,7 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
+{{- if .ProjectComponents.Cache }}
         {
           "editorMode": "code",
           "expr": "topk(12, sum by (cache, operation, status) (rate(cache_operations_total{app=~\"$app\", status!=\"ok\"}[$__rate_interval])))",
@@ -802,7 +808,9 @@
           "range": true,
           "refId": "A"
         }
-{{- if .ProjectComponents.Storage }},
+{{- if .ProjectComponents.Storage }},{{ end }}
+{{- end }}
+{{- if .ProjectComponents.Storage }}
         {
           "editorMode": "code",
           "expr": "topk(12, sum by (disk, operation, status) (rate(storage_operations_total{app=~\"$app\", status!=\"ok\"}[$__rate_interval])))",
@@ -812,9 +820,10 @@
         }
 {{- end }}
       ],
-      "title": "Cache{{ if .ProjectComponents.Storage }} And Storage{{ end }} Hotspots",
+      "title": "{{ if .ProjectComponents.Cache }}Cache{{ if .ProjectComponents.Storage }} And {{ end }}{{ end }}{{ if .ProjectComponents.Storage }}Storage{{ end }} Hotspots",
       "type": "timeseries"
     }
+{{- end }}
 {{- if or .ProjectComponents.Events .ProjectComponents.Mail }},
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },

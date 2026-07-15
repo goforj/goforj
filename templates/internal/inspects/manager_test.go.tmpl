@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	goforjcache "github.com/goforj/cache"
 	"{{.GoModuleName}}/internal/runtime"
 )
 
@@ -40,29 +39,7 @@ func newTestManager(t *testing.T) *Manager {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	return NewManager(store)
-}
-
-func TestInternalCacheOperationsUseLighthouseSource(t *testing.T) {
-	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
-
-	var observed runtime.Source
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	store.WithObserver(goforjcache.ObserverFunc(func(ctx context.Context, _ goforjcache.CacheOpEvent) {
-		if observed == "" {
-			observed = runtime.SourceFromContext(ctx)
-		}
-	}))
-	manager := NewManager(store)
-
-	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
-	manager.Finish(ctx, statusOK, nil)
-
-	if observed != runtime.SourceLighthouse {
-		t.Fatalf("expected internal cache source %q, got %q", runtime.SourceLighthouse, observed)
-	}
+	return NewManager()
 }
 
 // TestPrimitiveObservationEventsRetainNormalizedAttributes verifies the owned DTO boundary preserves the existing inspect timeline contract.
@@ -151,8 +128,7 @@ func TestManagerBuffersInFlightUntilFinish(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), "http", "request", map[string]string{"path": "/health"})
 	recorder := RecorderFromContext(ctx)
@@ -189,36 +165,6 @@ func TestManagerBuffersInFlightUntilFinish(t *testing.T) {
 	}
 }
 
-func TestManagerPersistsSummaryAndEventsSeparately(t *testing.T) {
-	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
-
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
-
-	ctx := manager.Begin(context.Background(), "http", "request", map[string]string{"path": "/health"})
-	recorder := RecorderFromContext(ctx)
-	recorder.RecordEvent(InspectEvent{
-		Kind:    EventKindLog,
-		Message: "hello",
-	})
-	inspectID := recorder.InspectID()
-	manager.Finish(ctx, statusOK, nil)
-
-	if _, ok, err := goforjcache.Get[InspectSummary](store, inspectSummaryKey(inspectID)); err != nil {
-		t.Fatalf("summary get error = %v", err)
-	} else if !ok {
-		t.Fatal("expected summary key to exist")
-	}
-	if events, ok, err := goforjcache.Get[[]InspectEvent](store, inspectEventsKey(inspectID)); err != nil {
-		t.Fatalf("events get error = %v", err)
-	} else if !ok {
-		t.Fatal("expected events key to exist")
-	} else if len(events) != 1 {
-		t.Fatalf("expected 1 persisted event, got %d", len(events))
-	}
-}
-
 func TestNewConfigFallsBackToMaxTotalWhenUnset(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
@@ -237,8 +183,7 @@ func TestManagerRespectsMaxInflight(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 	manager.config.MaxInflight = 1
 
 	first := manager.Begin(context.Background(), "http", "first", nil)
@@ -256,8 +201,7 @@ func TestManagerRespectsSampleRate(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	manager.config.SampleRate = 0
 	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-out", nil)); recorder != nil {
@@ -274,8 +218,7 @@ func TestManagerRetainsLatestEventsInOrderWithinMaxEvents(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 	manager.config.MaxEvents = 3
 
 	ctx := manager.Begin(context.Background(), "http", "request", nil)
@@ -319,8 +262,7 @@ func TestBeginBindsSourceAndRecorderWithSingleInspectContext(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "GET /health", nil)
 	recorder := RecorderFromContext(ctx)
@@ -340,8 +282,7 @@ func TestFinishedInspectContextRemainsUsable(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
 	type contextKey struct{}
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	base := context.WithValue(context.Background(), contextKey{}, "preserved")
 	ctx := manager.Begin(base, runtime.SourceHTTP, "GET /health", nil)
@@ -370,8 +311,7 @@ func TestManagerPublishOnlySkipsLocalPersistence(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 	publisher := &capturePublisher{}
 	manager.SetPublisher(publisher)
 	manager.SetPublishOnly(true)
@@ -408,8 +348,7 @@ func TestManagerCaptureGateSkipsNewInspect(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 	active := false
 	manager.SetCaptureGate(func() bool {
 		return active
@@ -433,8 +372,7 @@ func TestRecordQueryEventNormalizesInspectEvent(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), "jobs", "query-run", nil)
 	recorder := RecorderFromContext(ctx)
@@ -497,8 +435,7 @@ func TestRecordMailEventNormalizesInspectEvent(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), "jobs", "mail-run", nil)
 	recorder := RecorderFromContext(ctx)
@@ -545,8 +482,7 @@ func TestRecordLogNormalizesInspectEvent(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), "jobs", "log-run", nil)
 	recorder := RecorderFromContext(ctx)
@@ -594,8 +530,7 @@ func TestRecordHTTPExchangeNormalizesInspectEvent(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), "http", "request", nil)
 	recorder := RecorderFromContext(ctx)
@@ -661,8 +596,7 @@ func TestRecordHTTPExchangeFromHeadersNormalizesInspectEvent(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
 
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	manager := NewManager(store)
+	manager := NewManager()
 
 	ctx := manager.Begin(context.Background(), "http", "request", nil)
 	recorder := RecorderFromContext(ctx)

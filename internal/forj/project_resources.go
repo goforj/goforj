@@ -42,8 +42,6 @@ type resourceRenderValues struct {
 	StorageFaviconsDriver    string
 	MailDriver               string
 	MailSupportedDrivers     string
-	CacheInspectsDriver      string
-	CacheLighthouseDriver    string
 	CacheSettingsDriver      string
 	CacheSessionsDriver      string
 	RedisActive              bool
@@ -99,6 +97,11 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		p.localServiceIntent = localServiceIntentFromEnvironment(source, p.localServiceIntent)
 	}
 	projectComponents := p.projectRenderComponents()
+	if !projectComponents.Cache {
+		var removedCacheEnvironment bool
+		source, removedCacheEnvironment = removeDisabledCacheEnvironment(source, p.config)
+		p.pendingEnvironmentWrite = p.pendingEnvironmentWrite || removedCacheEnvironment
+	}
 	updated, effective, changed, err := reconcileResourceEnvironment(
 		source,
 		p.resourcePlan,
@@ -199,9 +202,15 @@ func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponent
 
 // reconcileResourceEnvironment applies owner precedence and fills only missing initialization keys.
 func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, components project.Components, portableDefaults bool) ([]byte, project.ResourcePlan, bool, error) {
+	components = components.WithResolvedDependencies()
+	removedDisabledCache := false
+	if !components.Cache {
+		source, removedDisabledCache = removeDisabledCacheEnvironment(source, nil)
+	}
+	source, removedObsoleteDiagnosticCache := removeObsoleteDiagnosticCacheEnvironment(source)
 	lines := strings.Split(string(source), "\n")
 	effective := seed.Clone()
-	changed := false
+	changed := removedDisabledCache || removedObsoleteDiagnosticCache
 
 	for _, definition := range project.ResourceCatalog() {
 		if !definition.AppliesTo(components) {
@@ -268,6 +277,67 @@ func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, comp
 		updated += "\n"
 	}
 	return []byte(updated), normalized, true, nil
+}
+
+// removeDisabledCacheEnvironment prunes only framework-owned Cache assignments after the project envelope disables Cache.
+func removeDisabledCacheEnvironment(source []byte, config *project.Config) ([]byte, bool) {
+	keys := map[string]struct{}{
+		"METRICS_CACHE_ENABLED":        {},
+		"CACHE_DRIVER":                 {},
+		"CACHE_SUPPORTED_DRIVERS":      {},
+		"CACHE_PREFIX":                 {},
+		"CACHE_DEFAULT_TTL_SECONDS":    {},
+		"CACHE_MEMORY_CLEANUP_SECONDS": {},
+		"CACHE_SETTINGS_DRIVER":        {},
+		"CACHE_SESSIONS_DRIVER":        {},
+		"CACHE_INSPECTS_DRIVER":        {},
+		"CACHE_LIGHTHOUSE_DRIVER":      {},
+	}
+	if config != nil {
+		for _, app := range runtimeAppsForMetadata(config) {
+			prefix := strEnvPrefix(app.Name)
+			if prefix != "" {
+				keys[prefix+"_CACHE_DRIVER"] = struct{}{}
+			}
+		}
+	}
+
+	lines := strings.Split(string(source), "\n")
+	filtered := make([]string, 0, len(lines))
+	changed := false
+	for _, line := range lines {
+		key, _, _, ok := parseEnvironmentExampleAssignment(line)
+		if ok {
+			if _, remove := keys[key]; remove {
+				changed = true
+				continue
+			}
+		}
+		filtered = append(filtered, line)
+	}
+	if !changed {
+		return source, false
+	}
+	return []byte(strings.Join(filtered, "\n")), true
+}
+
+// removeObsoleteDiagnosticCacheEnvironment removes retired framework-owned diagnostic stores from environment contracts.
+func removeObsoleteDiagnosticCacheEnvironment(source []byte) ([]byte, bool) {
+	lines := strings.Split(string(source), "\n")
+	filtered := make([]string, 0, len(lines))
+	changed := false
+	for _, line := range lines {
+		key, _, _, ok := parseEnvironmentExampleAssignment(line)
+		if ok && (key == "CACHE_INSPECTS_DRIVER" || key == "CACHE_LIGHTHOUSE_DRIVER") {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	if !changed {
+		return source, false
+	}
+	return []byte(strings.Join(filtered, "\n")), true
 }
 
 // localServiceIntentFromEnvironment reconstructs concrete owner intent from exact Compose profile tokens.
@@ -370,10 +440,6 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 	values.DatabaseExternal = (values.DatabaseMySQL || values.DatabasePostgres) && !components.Docker
 	for _, named := range plan.GeneratedNamedSelections(components) {
 		switch named.EnvironmentKey {
-		case "CACHE_INSPECTS_DRIVER":
-			values.CacheInspectsDriver = named.Active
-		case "CACHE_LIGHTHOUSE_DRIVER":
-			values.CacheLighthouseDriver = named.Active
 		case "CACHE_SETTINGS_DRIVER":
 			values.CacheSettingsDriver = named.Active
 		case "CACHE_SESSIONS_DRIVER":

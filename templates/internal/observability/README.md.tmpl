@@ -133,7 +133,9 @@ Grafana is provisioned with:
 
 - datasource: VictoriaMetrics
 - dashboards:
+{{- if .ProjectComponents.Cache }}
   - Cache Overview
+{{- end }}
 {{- if .ProjectComponents.Storage }}
   - Storage Overview
 {{- end }}
@@ -159,7 +161,17 @@ Grafana is provisioned with:
 
 The dashboards are authored against GoForj's metric contract rather than generic third-party dashboard imports.
 
-Every generated dashboard includes an App filter backed by the emitted `app` metric label. Most primitive dashboards also include filters for named accessors. For example, the Cache Overview can be filtered to one named cache{{ if .ProjectComponents.Storage }}, the Storage Overview can be filtered to one disk{{ end }}, and the Database Overview can be filtered to one connection or table.
+Every generated dashboard includes an App filter backed by the emitted `app` metric label. Primitive dashboards also include filters for named accessors when applicable.
+
+{{- if .ProjectComponents.Cache }}
+- Cache Overview can be filtered to one named cache.
+{{- end }}
+{{- if .ProjectComponents.Storage }}
+- Storage Overview can be filtered to one disk.
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+- Database Overview can be filtered to one connection or table.
+{{- end }}
 
 If rendered dashboards do not refresh immediately:
 
@@ -179,7 +191,10 @@ The most useful query dimensions are:
 - `app`: which App composition app emitted the metric, such as `app`, `billing`, or `customer-portal`.
 - `source`: which logical source emitted the metric.
 - `process`: which scrape target exposed the metric.
-- `cache`, `mailer`, and `connection`: which named primitive handled the work.
+{{- if .ProjectComponents.Cache }}
+- `cache`: which named cache handled the work.
+{{- end }}
+- `mailer` and `connection`: which named primitive handled the work.
 {{- if .ProjectComponents.Storage }}
 - `disk`: which named storage disk handled the work.
 {{- end }}

@@ -1,11 +1,9 @@
 package http
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
@@ -13,7 +11,6 @@ import (
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-	goforjcache "github.com/goforj/cache"
 )
 
 type httpRuntimeBenchmarkMode struct {
@@ -117,8 +114,7 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 
 	var inspectManager *inspects.Manager
 	if mode.inspect {
-		store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
-		inspectManager = inspects.NewManager(store)
+		inspectManager = inspects.NewManager()
 		inspectManager.SetPublisher(noopRuntimeBenchmarkPublisher{})
 		inspectManager.SetPublishOnly(true)
 	}

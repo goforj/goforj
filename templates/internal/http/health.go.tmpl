@@ -136,14 +136,10 @@ func readinessCheckDriver(checkType string, checkName string) string {
 		return cacheDriver(checkName)
 	case "db":
 		return dbDriver(checkName)
-{{- if .ProjectComponents.Storage }}
 	case "storage":
 		return storageDriver(checkName)
-{{- end }}
-{{- if .ProjectComponents.Events }}
 	case "events":
 		return eventDriver(checkName)
-{{- end }}
 	case "queue":
 		return queueDriver(checkName)
 	default:
@@ -151,6 +147,7 @@ func readinessCheckDriver(checkType string, checkName string) string {
 	}
 }
 
+// cacheDriver resolves the configured driver for one Cache readiness check.
 func cacheDriver(name string) string {
 	key := "CACHE_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
@@ -159,6 +156,7 @@ func cacheDriver(name string) string {
 	return strings.TrimSpace(env.Get(key, env.Get("CACHE_DRIVER", "memory")))
 }
 
+// dbDriver resolves the configured driver for one Database readiness check.
 func dbDriver(name string) string {
 	key := "DB_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
@@ -167,7 +165,6 @@ func dbDriver(name string) string {
 	return strings.TrimSpace(env.Get(key, env.Get("DB_DRIVER", "")))
 }
 
-{{ if .ProjectComponents.Storage }}
 // storageDriver resolves the configured driver for one Storage readiness check.
 func storageDriver(name string) string {
 	key := "STORAGE_DRIVER"
@@ -176,9 +173,7 @@ func storageDriver(name string) string {
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("STORAGE_DRIVER", "local")))
 }
-{{- end }}
 
-{{ if .ProjectComponents.Events }}
 // eventDriver resolves the configured driver for one Events readiness check.
 func eventDriver(name string) string {
 	key := "EVENTS_DRIVER"
@@ -187,8 +182,8 @@ func eventDriver(name string) string {
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("EVENTS_DRIVER", "inproc")))
 }
-{{- end }}
 
+// queueDriver resolves the configured driver for one Queue readiness check.
 func queueDriver(name string) string {
 	key := "QUEUE_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {

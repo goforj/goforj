@@ -1,7 +1,9 @@
 package jobs
 
 import (
+{{- if or .ProjectComponents.Cache .ProjectComponents.Storage .ProjectComponents.HasDatabase }}
 	"bytes"
+{{- end }}
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,15 +22,18 @@ import (
 	"sync/atomic"
 	"time"
 
+{{- if .ProjectComponents.Cache }}
 	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
+{{- end }}
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 {{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
 {{- end }}
-	"{{.GoModuleName}}/internal/runtime"
+{{- if .ProjectComponents.Cache }}
 	"{{.GoModuleName}}/internal/caches"
+{{- end }}
 {{- if .ProjectComponents.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
@@ -40,6 +45,7 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/runtime"
 {{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
@@ -51,7 +57,6 @@ type LighthouseRuntime struct {
 	logger       *logger.AppLogger
 	queues       *queues.Manager
 	defaultQueue *queue.Queue
-	timeline     *queueTimeline
 	benchmarks   *benchmarkRunner
 	inspects     *inspects.Manager
 {{- if .ProjectComponents.Metrics }}
@@ -67,7 +72,6 @@ var (
 // NewLighthouseRuntime creates the Lighthouse runtime for the jobs process.
 func NewLighthouseRuntime(
 	logger *logger.AppLogger,
-	caches *caches.Manager,
 {{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
 {{- end }}
@@ -81,23 +85,17 @@ func NewLighthouseRuntime(
 {{- end }}
 ) *LighthouseRuntime {
 	componentLogger := logger.WithComponent("Jobs")
-	var lighthouseCacheStore cachecore.Store
-	if caches != nil {
-		if instance := caches.Lighthouse(); instance != nil {
-			lighthouseCacheStore = instance.Store()
-		}
-	}
 	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
 		logger:       componentLogger,
 		queues:       queues,
 		defaultQueue: queues.Default(),
-		timeline:     newQueueTimeline(lighthouseCacheStore),
 		inspects:     inspectManager,
 {{- if .ProjectComponents.Metrics }}
 		metrics:      metricsManager,
 {{- end }}
-		benchmarks: newBenchmarkRunner(caches, queues,
+		benchmarks: newBenchmarkRunner(
+			queues,
 {{- if .ProjectComponents.Storage }}
 			storage,
 {{- end }}
@@ -109,6 +107,42 @@ func NewLighthouseRuntime(
 		),
 	}
 }
+
+{{- if .ProjectComponents.Cache }}
+// NewCachedLighthouseRuntime creates the Jobs Lighthouse runtime with Cache benchmarks enabled for this App.
+func NewCachedLighthouseRuntime(
+	logger *logger.AppLogger,
+	cacheManager *caches.Manager,
+{{- if .ProjectComponents.Storage }}
+	storage *storages.Manager,
+{{- end }}
+	queues *queues.Manager,
+	inspectManager *inspects.Manager,
+{{- if .ProjectComponents.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+	dbConnections *database.Connections,
+{{- end }}
+) *LighthouseRuntime {
+	runtime := NewLighthouseRuntime(
+		logger,
+{{- if .ProjectComponents.Storage }}
+		storage,
+{{- end }}
+		queues,
+		inspectManager,
+{{- if .ProjectComponents.Metrics }}
+		metricsManager,
+{{- end }}
+{{- if .ProjectComponents.HasDatabase }}
+		dbConnections,
+{{- end }}
+	)
+	runtime.benchmarks.caches = cacheManager
+	return runtime
+}
+{{- end }}
 
 // Start boots the dev console agent for the jobs process.
 func (c *LighthouseRuntime) Start(ctx context.Context) {
@@ -136,25 +170,6 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 		queueInstance.Register(lighthouseBenchmarkQueueJobType, handleLighthouseBenchmarkQueueTask)
 	}
 
-	if c.defaultQueue != nil {
-		go func() {
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					snapshot, err := queueStats(ctx, c.defaultQueue)
-					if err != nil {
-						continue
-					}
-					c.recordSnapshot(snapshot)
-				}
-			}
-		}()
-	}
-
 	c.registerCLICommands(ctx)
 	c.registerQueueCommands(ctx)
 	c.registerBenchmarkCommands(ctx)
@@ -162,10 +177,6 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 	go func() {
 		_ = c.agent.Start(ctx)
 	}()
-}
-
-func (c *LighthouseRuntime) recordSnapshot(snapshot queue.StatsSnapshot) {
-	c.timeline.Record(time.Now(), snapshot)
 }
 
 func (c *LighthouseRuntime) registerCLICommands(ctx context.Context) {
@@ -235,6 +246,7 @@ func optionalBenchmarkName(name string) string {
 	return value
 }
 
+{{- if .ProjectComponents.Cache }}
 func runCacheBenchmark(ctx context.Context, manager *caches.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
 	if manager == nil {
 		return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
@@ -474,6 +486,7 @@ func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
 	}
 	return string(cachecore.DriverMemory)
 }
+{{- end }}
 
 // enforceBenchmarkDriver reconciles benchmark metadata with each generated runtime driver contract.
 func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
@@ -481,6 +494,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 		report.Extra = map[string]any{}
 	}
 	switch report.Suite {
+{{- if .ProjectComponents.Cache }}
 	case "cache":
 		driver := runtime.NormalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {
@@ -498,6 +512,7 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 		report.Driver = driver
 		report.Extra["driver"] = driver
 		report.Extra["configured_driver"] = driver
+{{- end }}
 	case "queue":
 		driver := runtime.NormalizeQueueDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {

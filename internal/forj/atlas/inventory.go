@@ -59,6 +59,10 @@ func Inventory(root string) mcp.Inventory {
 	if cfg != nil {
 		projectComponents = project.ProjectComponents(cfg)
 	}
+	caches := []string(nil)
+	if projectComponents.Cache {
+		caches = resourceNames(env, "CACHE", cacheEnvKeys)
+	}
 	disks := []string(nil)
 	if projectComponents.Storage {
 		disks = resourceNames(env, "STORAGE", storageEnvKeys)
@@ -73,7 +77,7 @@ func Inventory(root string) mcp.Inventory {
 		Schedules:  discoverAppSymbols(root, apps, "schedules.go", scheduleNamePattern, identityLabel),
 		Commands:   discoverAppSymbols(root, apps, "commands.go", commandFieldPattern, identityLabel),
 		Queues:     resourceLinkLabels(links, "queue"),
-		Caches:     resourceNames(env, "CACHE", cacheEnvKeys),
+		Caches:     caches,
 		Disks:      disks,
 		EventBuses: eventBuses,
 		Resources:  links,
@@ -373,9 +377,9 @@ func metricsMetadata(apps []atlasproject.App, cfg *project.Config, env map[strin
 
 // metricsCounters advertises only metric families owned by the App's selected runtime surfaces.
 func metricsCounters(components project.Components) []string {
-	counters := []string{
-		"http_requests_total",
-		"cache_operations_total",
+	counters := []string{"http_requests_total"}
+	if components.Cache {
+		counters = append(counters, "cache_operations_total")
 	}
 	if components.Jobs {
 		counters = append(counters, "queue_jobs_total")

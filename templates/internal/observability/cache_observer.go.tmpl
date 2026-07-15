@@ -22,9 +22,6 @@ func CacheMetricsObserver(metricsManager *metrics.Manager) caches.Observer {
 // CacheInspectObserver records cache operations in the inspect timeline.
 func CacheInspectObserver(inspectManager *inspects.Manager) caches.Observer {
 	return caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
-		if inspects.IsInternalContext(ctx) {
-			return
-		}
 		inspectManager.RecordCacheEvent(ctx, cacheInspectEvent(event))
 	})
 }

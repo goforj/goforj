@@ -3,21 +3,21 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/runtime"
-	"{{.GoModuleName}}/internal/caches"
 {{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
+	{{- if or .ProjectComponents.Storage .ProjectComponents.Events .ProjectComponents.Mail }}
 	"errors"
+	{{- end }}
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/goforj/env/v2"
-	goforjcache "github.com/goforj/cache"
 	gmetrics "github.com/goforj/metrics"
 {{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
@@ -108,8 +108,10 @@ type Manager struct {
 	databasePoolMaxLifetimeClosed *metricCounterVec
 	databasePoolSnapshots         map[string]databasePoolSnapshot
 {{- end }}
-	cacheOperations         *metricCounterVec
-	cacheOperationLatency   *metricHistogramVec
+	{{- if .ProjectComponents.Cache }}
+	cacheOperations       *metricCounterVec
+	cacheOperationLatency *metricHistogramVec
+	{{- end }}
 {{- if .ProjectComponents.Storage }}
 	storageOperations       *metricCounterVec
 	storageOperationLatency *metricHistogramVec
@@ -141,7 +143,9 @@ type Config struct {
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	Monitoring bool
 {{- end }}
-	Cache     bool
+	{{- if .ProjectComponents.Cache }}
+	Cache bool
+	{{- end }}
 {{- if .ProjectComponents.Storage }}
 	Storage   bool
 {{- end }}
@@ -254,12 +258,14 @@ func NewConfig() Config {
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 		Monitoring: env.GetBool("METRICS_MONITORING_ENABLED", "true"),
 {{- end }}
-		Cache:     env.GetBool("METRICS_CACHE_ENABLED", "true"),
+	{{- if .ProjectComponents.Cache }}
+		Cache: runtime.CurrentApp().Components.Cache && env.GetBool("METRICS_CACHE_ENABLED", "true"),
+	{{- end }}
 {{- if .ProjectComponents.Storage }}
 		Storage:   runtime.CurrentApp().Components.Storage && env.GetBool("METRICS_STORAGE_ENABLED", "true"),
 {{- end }}
 {{- if .ProjectComponents.Events }}
-		Events:    env.GetBool("METRICS_EVENTS_ENABLED", "true"),
+		Events:    runtime.CurrentApp().Components.Events && env.GetBool("METRICS_EVENTS_ENABLED", "true"),
 {{- end }}
 {{- if .ProjectComponents.Mail }}
 		Mail:      runtime.CurrentApp().Components.Mail && env.GetBool("METRICS_MAIL_ENABLED", "true"),
@@ -565,6 +571,7 @@ func NewManagerWithConfig(config Config) *Manager {
 		}, metricLabelKeys("connection", "driver")),
 		databasePoolSnapshots: make(map[string]databasePoolSnapshot),
 {{- end }}
+	{{- if .ProjectComponents.Cache }}
 		cacheOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "cache.operations",
 			Help: "Total cache operations by source, cache, driver, operation, category, status, and hit result.",
@@ -576,6 +583,7 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, metricLabelKeys("source", "cache", "driver", "operation", "category"), gmetrics.DurationBounds(cacheDurationBounds())),
+	{{- end }}
 {{- if .ProjectComponents.Storage }}
 		storageOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "storage.operations",
@@ -701,9 +709,6 @@ func (m *Manager) MonitoringEnabled() bool {
 }
 {{- end }}
 
-func (m *Manager) CacheEnabled() bool {
-	return m.config.Cache
-}
 
 {{ if .ProjectComponents.Storage }}
 // StorageEnabled reports whether Storage metrics are enabled for this runtime.
@@ -1055,25 +1060,6 @@ func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.D
 }
 {{- end }}
 
-type cacheMetricLabelSet struct {
-	Source    string
-	Name      string
-	Driver    string
-	Operation string
-	Category  string
-	Status    string
-	HitLabel  string
-}
-
-// RecordCacheOperation updates framework-owned cache metrics from cache observer events.
-func (m *Manager) RecordCacheOperation(ctx context.Context, event caches.CacheOpEvent) {
-	if !m.CacheEnabled() {
-		return
-	}
-	labels := m.cacheMetricLabels(ctx, event)
-	m.cacheOperations.WithLabelValues(labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category, labels.Status, labels.HitLabel).Inc()
-	m.observeDuration(m.cacheOperationLatency, event.Duration, labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category)
-}
 
 {{ if .ProjectComponents.Storage }}
 // storageMetricLabelSet contains bounded Storage dimensions for metric instruments.
@@ -1403,18 +1389,6 @@ func (m *Manager) observeDuration(histogram *metricHistogramVec, duration time.D
 	histogram.WithLabelValues(labels...).ObserveDuration(duration)
 }
 
-func (m *Manager) cacheMetricLabels(ctx context.Context, event caches.CacheOpEvent) cacheMetricLabelSet {
-	labels := cacheMetricLabelSet{
-		Source:    m.metricSource(ctx),
-		Name:      cacheNameLabel(event.Name),
-		Driver:    cacheDriverLabel(string(event.Driver)),
-		Operation: cacheOperationLabel(event.Operation),
-		Status:    cacheStatusLabel(event.Err),
-	}
-	labels.Category = cacheCategoryLabel(labels.Operation)
-	labels.HitLabel = cacheHitLabel(labels.Operation, event.Hit, event.Err)
-	return labels
-}
 
 {{ if .ProjectComponents.Storage }}
 // storageMetricLabels normalizes Storage operation dimensions into bounded metric labels.
@@ -1826,110 +1800,8 @@ type databasePoolSnapshot struct {
 }
 {{- end }}
 
-func cacheNameLabel(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "default"
-	}
-	return name
-}
 
-func cacheDriverLabel(driver string) string {
-	driver = strings.TrimSpace(strings.ToLower(driver))
-	if driver == "" {
-		return "unknown"
-	}
-	return driver
-}
-
-func cacheOperationLabel(operation string) string {
-	operation = strings.TrimSpace(strings.ToLower(operation))
-	if operation == "" {
-		return "other"
-	}
-	return operation
-}
-
-func cacheCategoryLabel(operation string) string {
-	switch operation {
-	case "get", "get_bytes", "get_string", "get_json", "pull", "remember", "remember_json", "remember_stale":
-		return "read"
-	case "set", "set_string", "set_json", "add":
-		return "write"
-	case "delete", "delete_many", "flush":
-		return "delete"
-	case "increment", "decrement":
-		return "counter"
-	case "try_lock", "lock", "unlock":
-		return "lock"
-	case "refresh_ahead":
-		return "refresh"
-	default:
-		return "other"
-	}
-}
-
-func cacheStatusLabel(err error) string {
-	switch {
-	case err == nil:
-		return "ok"
-	case errors.Is(err, goforjcache.ErrInspectorUnsupported),
-		errors.Is(err, goforjcache.ErrUnsupportedCodec):
-		return "unsupported"
-	case errors.Is(err, goforjcache.ErrEncryptionKey),
-		errors.Is(err, goforjcache.ErrValueTooLarge),
-		errors.Is(err, goforjcache.ErrEncryptValueTooBig),
-		errors.Is(err, goforjcache.ErrCorruptCompression),
-		errors.Is(err, goforjcache.ErrDecryptFailed):
-		return "invalid"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	}
-	if strings.Contains(strings.ToLower(err.Error()), "timeout") {
-		return "timeout"
-	}
-	return "error"
-}
-
-func cacheDurationBounds() []time.Duration {
-	return []time.Duration{
-		100 * time.Nanosecond,
-		250 * time.Nanosecond,
-		500 * time.Nanosecond,
-		time.Microsecond,
-		2500 * time.Nanosecond,
-		5 * time.Microsecond,
-		10 * time.Microsecond,
-		25 * time.Microsecond,
-		50 * time.Microsecond,
-		100 * time.Microsecond,
-		250 * time.Microsecond,
-		500 * time.Microsecond,
-		time.Millisecond,
-		2500 * time.Microsecond,
-		5 * time.Millisecond,
-		10 * time.Millisecond,
-		25 * time.Millisecond,
-		50 * time.Millisecond,
-	}
-}
-
-func cacheHitLabel(operation string, hit bool, err error) string {
-	if err != nil {
-		return "na"
-	}
-	switch operation {
-	case "get", "get_bytes", "get_string", "get_json", "pull", "remember", "remember_json":
-		if hit {
-			return "hit"
-		}
-		return "miss"
-	default:
-		return "na"
-	}
-}
-
-{{ if .ProjectComponents.Storage }}
+	{{ if .ProjectComponents.Storage }}
 // storageDiskLabel supplies a stable label for the default Storage disk.
 func storageDiskLabel(name string) string {
 	name = strings.TrimSpace(name)

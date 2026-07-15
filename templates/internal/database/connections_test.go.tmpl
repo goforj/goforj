@@ -9,7 +9,6 @@ import (
 
 	"github.com/goforj/env/v2"
 {{- if .Components.Metrics }}
-	goforjcache "github.com/goforj/cache"
 	"{{.GoModuleName}}/internal/metrics"
 	"{{.GoModuleName}}/internal/inspects"
 	gmetrics "github.com/goforj/metrics"
@@ -353,7 +352,6 @@ func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testin
 	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
 	manager := metrics.NewManagerWithConfig(metrics.Config{
 		HTTP:     true,
-		Cache:    true,
 		{{- if .ProjectComponents.Storage }}
 		Storage:  true,
 		{{- end }}
@@ -374,8 +372,7 @@ func TestNewConnectionsDisablesDatabaseMetricsWithoutDisablingInspects(t *testin
 		Mail:     true,
 		{{- end }}
 	})
-	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
-	inspectManager := inspects.NewManager(store)
+	inspectManager := inspects.NewManager()
 	conns := NewConnections(manager, inspectManager)
 	if conns.metrics == nil {
 		t.Fatal("expected metrics manager to be stored on connections")
