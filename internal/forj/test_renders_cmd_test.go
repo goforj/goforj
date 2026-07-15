@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/project"
-	"gopkg.in/yaml.v3"
 )
 
 // TestRenderComboWorkerReturnsInvalidAppFailure verifies worker validation failures return to the coordinator instead of terminating the process.
@@ -88,92 +87,6 @@ func TestReportRenderComboFailurePreservesDiagnostics(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("failure output missing %q:\n%s", want, output)
 		}
-	}
-}
-
-func TestWriteYAMLPreservesRenderComponents(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".goforj.yml")
-	cfg := project.Config{
-		ProjectName:  "RenderPreferred",
-		GoModuleName: "example.com/renderpreferred",
-		Render: project.RenderConfig{
-			Components: project.Components{
-				WebAPI:         true,
-				Auth:           true,
-				DatabaseSQLite: true,
-			},
-		},
-	}
-
-	if err := WriteYAML(path, cfg); err != nil {
-		t.Fatalf("write yaml: %v", err)
-	}
-
-	loaded := readWrittenConfig(t, path)
-	if !loaded.Render.Components.WebAPI || !loaded.Render.Components.Auth || !loaded.Render.Components.DatabaseSQLite {
-		t.Fatalf("render components not preserved: %#v", loaded.Render.Components)
-	}
-}
-
-func TestWriteYAMLPreservesRawComponentDependencies(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".goforj.yml")
-	cfg := project.Config{
-		ProjectName:  "DependencyShape",
-		GoModuleName: "example.com/dependencyshape",
-		Render: project.RenderConfig{
-			Components: project.Components{
-				Auth:           true,
-				WebAPI:         true,
-				DatabaseSQLite: true,
-			},
-		},
-	}
-
-	if err := WriteYAML(path, cfg); err != nil {
-		t.Fatalf("write yaml: %v", err)
-	}
-
-	loaded := readWrittenConfig(t, path)
-	if !loaded.Render.Components.Auth {
-		t.Fatalf("expected auth to remain selected")
-	}
-	if loaded.Render.Components.Mail || loaded.Render.Components.Cache {
-		t.Fatalf("expected raw yaml to preserve unresolved dependencies, got %#v", loaded.Render.Components)
-	}
-	effective := loaded.Render.Components.WithResolvedDependencies()
-	if !effective.Mail || !effective.Cache {
-		t.Fatalf("expected effective Auth dependencies to include Mail and Cache, got %#v", effective)
-	}
-}
-
-func TestWriteYAMLAppliesDefaultsWithoutMutatingComponents(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".goforj.yml")
-	cfg := project.Config{
-		ProjectName:  "Defaults",
-		GoModuleName: "example.com/defaults",
-		Render: project.RenderConfig{
-			Components: project.Components{
-				CLI:           true,
-				WebAPI:        true,
-				DatabaseMySQL: true,
-			},
-		},
-	}
-
-	if err := WriteYAML(path, cfg); err != nil {
-		t.Fatalf("write yaml: %v", err)
-	}
-
-	loaded := readWrittenConfig(t, path)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read written config: %v", err)
-	}
-	if strings.Contains(string(data), "queue_driver:") {
-		t.Fatalf("test render config persisted wizard-only queue choice:\n%s", data)
-	}
-	if !loaded.Render.Components.CLI || !loaded.Render.Components.WebAPI || !loaded.Render.Components.DatabaseMySQL {
-		t.Fatalf("render components changed unexpectedly: %#v", loaded.Render.Components)
 	}
 }
 
@@ -471,18 +384,4 @@ func renderCombosInclude(combos []renderCombo, matches func(project.Components) 
 		}
 	}
 	return false
-}
-
-func readWrittenConfig(t *testing.T, path string) project.Config {
-	t.Helper()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read yaml: %v", err)
-	}
-	var loaded project.Config
-	if err := yaml.Unmarshal(data, &loaded); err != nil {
-		t.Fatalf("unmarshal yaml: %v", err)
-	}
-	return loaded
 }

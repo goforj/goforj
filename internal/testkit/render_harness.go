@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/project"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -241,12 +240,7 @@ func LocalSiblingRepoPath(t *testing.T, name string) string {
 // WriteProjectConfigFile writes a current-contract configuration for an integration render.
 func WriteProjectConfigFile(t *testing.T, dir string, cfg project.Config) {
 	t.Helper()
-	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
-	body, err := yaml.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal .goforj.yml: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".goforj.yml"), body, 0o644); err != nil {
+	if err := WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
 	}
 }

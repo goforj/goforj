@@ -97,7 +97,7 @@ func (cmd *TestRenderCmd) Run() error {
 	}
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
-	if err := WriteYAML(ymlPath, cfg); err != nil {
+	if err := testkit.WriteProjectConfig(ymlPath, cfg); err != nil {
 		return err
 	}
 	if err := writeConventionalAppMarker(dir, "customer-portal"); err != nil {
@@ -190,7 +190,7 @@ func (cmd *TestRenderCmd) runCLIOnlyAPIIndexRender(forjExec string, modCache str
 			ModuleReplaces: moduleReplaces,
 		},
 	}
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), config); err != nil {
+	if err := testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), config); err != nil {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "render CLI-only App", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
