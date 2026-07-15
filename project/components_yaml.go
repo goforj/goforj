@@ -33,6 +33,8 @@ var retiredLegacyComponentYAMLKeys = map[ComponentKey]struct{}{
 	"stress_test": {},
 }
 
+const componentYAMLInlineLimit = 120
+
 // UnmarshalYAML accepts historical boolean mappings and canonical component-name sequences.
 func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
@@ -83,16 +85,29 @@ func (c *Components) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
-// MarshalYAML emits enabled component keys in a stable flow sequence for concise project configuration.
+// MarshalYAML emits enabled component keys in a stable sequence and expands only selections that would create an overlong line.
 func (c Components) MarshalYAML() (any, error) {
-	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+	names := make([]string, 0, len(componentYAMLKeys))
 	for _, key := range componentYAMLKeys {
 		if !c.Enabled(key) {
 			continue
 		}
-		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: string(key)})
+		names = append(names, string(key))
+	}
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: componentYAMLSequenceStyle(names)}
+	for _, name := range names {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})
 	}
 	return node, nil
+}
+
+// componentYAMLSequenceStyle keeps short selections scan-friendly without creating an overlong config line.
+func componentYAMLSequenceStyle(names []string) yaml.Style {
+	line := "components: [" + strings.Join(names, ", ") + "]"
+	if len(line) <= componentYAMLInlineLimit {
+		return yaml.FlowStyle
+	}
+	return 0
 }
 
 // NeedsComponentMigration reports whether any component selection was loaded from the historical boolean mapping.

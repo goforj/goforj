@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -111,6 +112,8 @@ const DefaultAppName = "app"
 // CurrentComponentContractVersion identifies configs where omitted primitive component keys mean disabled.
 const CurrentComponentContractVersion = 1
 
+const componentYAMLInlineLimit = 120
+
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
 	Components               Components        `yaml:"components" json:"components"`
@@ -212,7 +215,7 @@ func setCompactAppComponentSequenceStyle(node *yaml.Node) {
 			}
 			for fieldIndex := 0; fieldIndex+1 < len(app.Content); fieldIndex += 2 {
 				if app.Content[fieldIndex].Value == "components" && app.Content[fieldIndex+1].Kind == yaml.SequenceNode {
-					app.Content[fieldIndex+1].Style = yaml.FlowStyle
+					app.Content[fieldIndex+1].Style = componentYAMLNodeSequenceStyle(app.Content[fieldIndex+1])
 				}
 			}
 		}
@@ -300,11 +303,29 @@ func (c Components) MarshalYAML() (any, error) {
 	sort.Strings(unknown)
 	names = append(names, unknown...)
 
-	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: componentYAMLSequenceStyle(names)}
 	for _, name := range names {
 		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})
 	}
 	return node, nil
+}
+
+// componentYAMLNodeSequenceStyle applies the same readable line limit to untyped per-App component lists.
+func componentYAMLNodeSequenceStyle(node *yaml.Node) yaml.Style {
+	names := make([]string, 0, len(node.Content))
+	for _, entry := range node.Content {
+		names = append(names, entry.Value)
+	}
+	return componentYAMLSequenceStyle(names)
+}
+
+// componentYAMLSequenceStyle keeps short selections scan-friendly without creating an overlong config line.
+func componentYAMLSequenceStyle(names []string) yaml.Style {
+	line := "components: [" + strings.Join(names, ", ") + "]"
+	if len(line) <= componentYAMLInlineLimit {
+		return yaml.FlowStyle
+	}
+	return 0
 }
 
 // setComponentEnabled enables a known component and reports whether the name is recognized.
