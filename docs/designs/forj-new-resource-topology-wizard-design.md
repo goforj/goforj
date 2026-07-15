@@ -21,12 +21,12 @@ can resolve safely on their behalf.
 - Database engines remain concrete, mutually exclusive choices in
   **Components**: MySQL, Postgres, and SQLite.
 - There is no normal **App Resources** stage after Components.
-- New Apps start cache, enabled jobs, and events on implementations that run
+- When selected, Cache, Jobs, and Events start on implementations that run
   inside the App.
-- The corresponding Redis implementations are included in the generated App
+- Their corresponding Redis implementations are included in the generated App
   by default, but Redis is inactive and does not start.
-- Storage remains local by default. Mail keeps its existing development
-  defaults and includes the common log/SMTP pair.
+- When selected, File Storage remains local by default. Mail keeps its existing
+  development defaults and includes the common log/SMTP pair.
 - No App-wide resource shape, profile, or mode is introduced, and the wizard
   does not label an App Standalone, Shared, or Portable.
 - Per-resource Advanced selection and a guided switch command are follow-up
@@ -34,8 +34,8 @@ can resolve safely on their behalf.
 
 The concise product promise is:
 
-> Cache, jobs, and events start without Redis. Redis support is included so the
-> same generated App can switch later.
+> Selected cache, jobs, and events start without Redis. Redis support is
+> included so the same generated App can switch later.
 
 This promise is intentionally scoped. A project may still require MySQL,
 Postgres, mail delivery, object storage, or another service explicitly selected
@@ -145,14 +145,14 @@ The following table is the normal new-project policy:
 | Resource | Applies when | Active by default | Included in the App | Service effect at creation |
 | --- | --- | --- | --- | --- |
 | Database | A database component is selected | selected engine | selected engine | local MySQL/Postgres with Docker, external without Docker, none for SQLite |
-| Cache | always | `memory` | `memory,redis` | Redis remains inactive |
+| Cache | Cache is enabled | `memory` | `memory,redis` | Redis remains inactive |
 | Queue | Jobs is enabled | `workerpool` | `workerpool,redis` | Redis remains inactive |
-| Events | always | `inproc` | `inproc,redis` | Redis remains inactive |
-| Storage | always | `local` | `local` | none |
+| Events | Events is enabled | `inproc` | `inproc,redis` | Redis remains inactive |
+| Storage | File Storage is enabled | `local` | `local` | none |
 | Mail | Mail and Docker are enabled | `smtp` | `log,smtp` | Mailpit is a development tool |
 | Mail | Mail is enabled without Docker | `log` | `log,smtp` | none; external SMTP may be configured later |
 
-The generated defaults are therefore:
+When their corresponding components are enabled, the generated defaults are:
 
 ```env
 CACHE_DRIVER=memory
@@ -163,7 +163,8 @@ EVENTS_DRIVER=inproc
 EVENTS_SUPPORTED_DRIVERS=inproc,redis
 ```
 
-Queue variables are omitted when Jobs is disabled.
+Cache, Queue, Events, and Storage variables are omitted when their corresponding
+components are disabled.
 
 The Demo App remains a documented exception to the normal database build
 contract. It starts with MySQL and includes SQLite when its generated fallback
@@ -287,10 +288,11 @@ Rendering uses one immutable effective snapshot with this precedence:
 3. committed `.env.example` values for missing generation defaults.
 
 Cache, queue, events, storage, mail, database, Compose, validation, and
-generated documentation consume the same snapshot. Confirmation shows only
-concrete owner overrides discovered during read-only target reconciliation.
-Unrelated ambient process variables must not widen a generated artifact through
-stale global environment state.
+generated documentation consume the same snapshot. The normal wizard does not
+turn existing owner values into another preview or decision screen; it applies
+them during read-only target preparation and reports only conflicts that block
+a safe render. Unrelated ambient process variables must not widen a generated
+artifact through stale global environment state.
 
 For an existing target, `forj new --allow-non-empty` reconciles environment
 state after Path is selected and before confirmation or any write. Existing
@@ -477,17 +479,18 @@ Before any project file is written:
 - MySQL, Postgres, and SQLite remain visible exclusive choices in Components.
 - The normal wizard contains no App Resources stage or Resources progress item.
 - The queue-only Runtime question remains removed.
-- New Apps activate memory cache, workerpool jobs when enabled, and in-process
-  events.
-- New Apps include the corresponding Redis drivers by default.
+- Selected Cache, Jobs, and Events components activate memory cache, workerpool
+  jobs, and in-process events.
+- Selected Cache, Jobs, and Events components include the corresponding Redis
+  drivers by default.
 - Included inactive Redis does not initialize a client or start a service.
 - Docker projects render one inactive profiled Redis definition that can be
   activated later without rerendering Compose.
 - Ordinary MySQL and Postgres projects include only their selected database
   driver; changing database engines remains an explicit rebuild and migration
   concern unless support was deliberately widened.
-- Storage remains local by default, and Mail retains its documented log/SMTP
-  policy.
+- Selected File Storage remains local by default, and Mail retains its
+  documented log/SMTP policy.
 - Existing `.env` values remain authoritative during rerender.
 - A clean checkout reproduces the supported-driver build contract from the
   committed safe environment contract.

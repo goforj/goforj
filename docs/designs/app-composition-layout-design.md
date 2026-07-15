@@ -581,7 +581,7 @@ The project-level component set is the currently rendered support surface, not a
 
 `make:app` should reuse the same component catalog and starter-kit catalog as `forj new`, filtered to app-safe choices. The interactive app wizard should show the app-affecting choices that can be compiled into the project, not only the choices used by the default app. This keeps the additional app creation flow from feeling artificially constrained by the first app's choices.
 
-The interactive app wizard should stay focused on choices that change the generated app surface: Web API, Web UI, Auth, OAuth, database driver, scheduler, and jobs. Auth and OAuth are not separate deployable runtimes, but they do affect route exposure, Wire inputs, generated environment, and supporting dependencies, so hiding them would make app creation less transparent. Synthetic stress tooling should live in a separate harness instead of becoming part of app composition.
+The interactive app wizard should stay focused on choices that change the generated app surface: Web API, Web UI, Auth, OAuth, Mail, database driver, Scheduler, Cache, Events, File Storage, and Background Jobs. Auth and OAuth are not separate deployable runtimes, but they do affect route exposure, Wire inputs, generated environment, and supporting dependencies, so hiding them would make app creation less transparent. Synthetic stress tooling should live in a separate harness instead of becoming part of app composition.
 
 Project-only capabilities such as Docker, Observability, Grafana, and Demo App stay project-level. They can be available because the project has them, but they should not become per-app toggles unless a later feature gives them app-specific runtime meaning.
 
