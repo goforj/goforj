@@ -1124,13 +1124,18 @@ func TestFormatWatcherLifecycleSummary(t *testing.T) {
 	}
 }
 
-func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
+// TestDevWatcherRuntimeDrainExitsEmitsStoppedLines keeps unexpected exits individually attributable.
+func TestDevWatcherRuntimeDrainExitsEmitsStoppedLines(t *testing.T) {
 	var out bytes.Buffer
 	exitCh := make(chan watcherExit, 2)
 	exitCh <- watcherExit{name: "API"}
 	exitCh <- watcherExit{name: "Scheduler"}
+	runtime := &devWatcherRuntime{
+		session: &devWatchSession{outWriter: &out},
+		exitCh:  exitCh,
+	}
 
-	drainWatcherExits(exitCh, 2, &out, nil, false)
+	runtime.drainExits(2, false)
 
 	got := out.String()
 	if !contains(got, "API") || !contains(got, "Scheduler") {
@@ -1141,13 +1146,18 @@ func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
 	}
 }
 
-func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
+// TestDevWatcherRuntimeDrainExitsEmitsStoppedSummaryWhenCollapsed keeps coordinated shutdown output compact.
+func TestDevWatcherRuntimeDrainExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
 	var out bytes.Buffer
 	exitCh := make(chan watcherExit, 2)
 	exitCh <- watcherExit{name: "API"}
 	exitCh <- watcherExit{name: "Scheduler"}
+	runtime := &devWatcherRuntime{
+		session: &devWatchSession{outWriter: &out},
+		exitCh:  exitCh,
+	}
 
-	drainWatcherExits(exitCh, 2, &out, nil, true)
+	runtime.drainExits(2, true)
 
 	got := out.String()
 	if !contains(got, "Watchers") {
@@ -1161,15 +1171,20 @@ func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
 	}
 }
 
-func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
+// TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed keeps one lifecycle line for coordinated shutdowns.
+func TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	var out bytes.Buffer
 	watchers := []runningWatcher{
 		{name: "Build App", proc: &execx.Process{}},
 		{name: "Wire", proc: &execx.Process{}},
 		{name: "API", proc: &execx.Process{}},
 	}
+	runtime := &devWatcherRuntime{
+		session:  &devWatchSession{outWriter: &out},
+		watchers: watchers,
+	}
 
-	stopWatchers(watchers, 0, &out, nil, true)
+	runtime.stop(0, true)
 
 	got := out.String()
 	if !contains(got, "Watchers") {
@@ -1186,29 +1201,39 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	}
 }
 
-func TestStopWatchersShutsDownProcessesInParallel(t *testing.T) {
+// TestDevWatcherRuntimeStopShutsDownProcessesInParallel prevents multi-App shutdown time from scaling per watcher.
+func TestDevWatcherRuntimeStopShutsDownProcessesInParallel(t *testing.T) {
 	script := "trap 'sleep 0.25; exit 0' INT TERM; while true; do sleep 0.05; done"
 	watchers := []runningWatcher{
 		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
 		{name: "Billing", proc: execx.Command("sh", "-c", script).Start()},
 	}
+	runtime := &devWatcherRuntime{
+		session:  &devWatchSession{outWriter: io.Discard},
+		watchers: watchers,
+	}
 
 	start := time.Now()
-	stopWatchers(watchers, 2*time.Second, io.Discard, nil, true)
+	runtime.stop(2*time.Second, true)
 	elapsed := time.Since(start)
 	if elapsed > 450*time.Millisecond {
 		t.Fatalf("expected parallel shutdown, took %s", elapsed)
 	}
 }
 
-func TestBeginStopWatchersReturnsBeforeProcessesExit(t *testing.T) {
+// TestDevWatcherRuntimeBeginStopReturnsBeforeProcessesExit preserves render work that overlaps process shutdown.
+func TestDevWatcherRuntimeBeginStopReturnsBeforeProcessesExit(t *testing.T) {
 	script := "trap 'sleep 0.3; exit 0' INT TERM; while true; do sleep 0.05; done"
 	watchers := []runningWatcher{
 		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
 	}
+	runtime := &devWatcherRuntime{
+		session:  &devWatchSession{outWriter: io.Discard},
+		watchers: watchers,
+	}
 
 	start := time.Now()
-	waitForStop := beginStopWatchers(watchers, 2*time.Second, io.Discard, nil, true)
+	waitForStop := runtime.beginStop(2*time.Second, true)
 	elapsed := time.Since(start)
 	if elapsed > 150*time.Millisecond {
 		t.Fatalf("expected shutdown request to return before process exit, took %s", elapsed)
