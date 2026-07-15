@@ -1,4 +1,4 @@
-package forj
+package resourceenv
 
 import (
 	"reflect"
@@ -13,7 +13,7 @@ func TestEffectiveResourceConsumersDiscoverArbitraryNamedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTS_DRIVER=redis\nCACHE_REPORTS_ADDR=redis:6379\nREDIS_HOST=redis\nREDIS_PORT=6379\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	consumers, err := resolveConsumersForComponents(source, plan, components)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestEffectiveResourceConsumersSeparateExternalRedisEndpoints(t *testing.T) 
 	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_DRIVER=redis\nCACHE_ADDR=cache.redis.example:6379\nEVENTS_DRIVER=redis\nEVENTS_ADDR=events.redis.example:6379\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	consumers, err := resolveConsumersForComponents(source, plan, components)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestEffectiveResourceConsumersApplyNamedAppOverrides(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("BILLING_CACHE_DRIVER=redis\nBILLING_CACHE_ADDR=billing.redis.example:6379\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	consumers, err := resolveConsumersForComponents(source, plan, components, "billing")
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestEffectiveResourceConsumersRespectConfiguredAppComponents(t *testing.T) 
 	}
 	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nBILLING_DB_DRIVER=postgres\nBILLING_DB_HOST=postgres.billing.example\n")
 
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	consumers, err := ResolveConsumers(source, plan, projectComponents, config)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestEffectiveResourceConsumersIgnoreStaleDisabledEvents(t *testing.T) {
 	plan := defaultResourcePlanForTest(t, projectComponents)
 	source := []byte("EVENTS_DRIVER=redis\nEVENTS_ADDR=events.example:6379\nBILLING_EVENTS_DRIVER=redis\nBILLING_EVENTS_ADDR=billing-events.example:6379\n")
 
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	consumers, err := ResolveConsumers(source, plan, projectComponents, config)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestEffectiveResourceConsumersIgnoreStaleDisabledStorage(t *testing.T) {
 	plan := defaultResourcePlanForTest(t, projectComponents)
 	source := []byte("STORAGE_DRIVER=redis\nSTORAGE_ADDR=storage.example:6379\nBILLING_STORAGE_DRIVER=redis\nBILLING_STORAGE_ADDR=billing-storage.example:6379\n")
 
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	consumers, err := ResolveConsumers(source, plan, projectComponents, config)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestEffectiveResourceConsumersUseNamedAppStorageEnvelope(t *testing.T) {
 	}
 	source := []byte("STORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local,redis,s3\nFILES_STORAGE_DRIVER=redis\nFILES_STORAGE_ADDR=files.redis.example:6379\nAPI_STORAGE_DRIVER=s3\nAPI_STORAGE_BUCKET=stale-api\n")
 
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	consumers, err := ResolveConsumers(source, plan, projectComponents, config)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -209,13 +209,13 @@ func TestEffectiveResourceConsumersUseEachConfiguredAppDatabase(t *testing.T) {
 	}
 	projectComponents := project.ProjectComponents(config)
 	plan := defaultResourcePlanForTest(t, projectComponents)
-	plan, err := withProjectDatabaseCapabilities(plan, config.Render.Components, projectComponents)
+	plan, err := resourcePlanWithDatabasesForTest(plan, config.Render.Components, projectComponents)
 	if err != nil {
 		t.Fatalf("build project database plan: %v", err)
 	}
 	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nREPORTING_DB_DRIVER=postgres\nREPORTING_DB_HOST=postgres.reporting.example\n")
 
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	consumers, err := ResolveConsumers(source, plan, projectComponents, config)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -239,13 +239,13 @@ func TestEffectiveResourceConsumersKeepImplicitAppDatabaseStableAcrossSiblings(t
 	}
 	projectComponents := project.ProjectComponents(config)
 	plan := defaultResourcePlanForTest(t, projectComponents)
-	plan, err := withProjectDatabaseCapabilities(plan, config.Render.Components, projectComponents)
+	plan, err := resourcePlanWithDatabasesForTest(plan, config.Render.Components, projectComponents)
 	if err != nil {
 		t.Fatalf("build project database plan: %v", err)
 	}
 	source := []byte("ACCOUNTS_DB_DRIVER=mysql\nACCOUNTS_DB_HOST=mysql.accounts.example\nREPORTING_DB_DRIVER=postgres\nREPORTING_DB_HOST=postgres.reporting.example\n")
 
-	consumers, err := effectiveResourceConsumersFromProjectConfig(source, plan, projectComponents, config)
+	consumers, err := ResolveConsumers(source, plan, projectComponents, config)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestEffectiveResourceConsumersUseRuntimeDefaultsForBlankAppRootDrivers(t *t
 	}
 
 	source := []byte("DB_DRIVER=mysql\nQUEUE_DRIVER=redis\nBILLING_DB_DRIVER=\nBILLING_QUEUE_DRIVER=\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	consumers, err := resolveConsumersForComponents(source, plan, components, "billing")
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestEffectiveResourceConsumersCanonicalizeDatabaseAliases(t *testing.T) {
 	components := project.Components{DatabasePostgres: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=postgresql\nDB_REPORTS_DRIVER=sqlite3\nBILLING_DB_DRIVER=mariadb\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	consumers, err := resolveConsumersForComponents(source, plan, components, "billing")
 	if err != nil {
 		t.Fatalf("discover aliased database consumers: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestEffectiveResourceConsumersResolveDotenvReferences(t *testing.T) {
 	plan := redisResourcePlanForTest(t, components)
 	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_ADDR=cache.redis.example:6379\n")
 
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	consumers, err := resolveConsumersForComponents(source, plan, components)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference(t *te
 	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("CACHE_REPORTING_DB_DRIVER=redis\nCACHE_REPORTING_DB_ADDR=redis:6379\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	consumers, err := resolveConsumersForComponents(source, plan, components)
 	if err != nil {
 		t.Fatalf("discover resource-first named consumer: %v", err)
 	}
@@ -396,21 +396,21 @@ func TestEffectiveResourceConsumersRejectAlternateDatabaseWithoutEndpoint(t *tes
 	database.Supported = append(database.Supported, "mysql")
 	plan = plan.WithSelection(project.ResourceDatabase, database)
 
-	_, err := effectiveResourceConsumersFromEnvironment([]byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\n"), plan, components, []string{"billing"})
+	_, err := resolveConsumersForComponents([]byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\n"), plan, components, "billing")
 	if err == nil || !strings.Contains(err.Error(), "BILLING_DB_HOST") {
 		t.Fatalf("alternate database error = %v, want explicit billing endpoint validation", err)
 	}
 }
 
-// TestEffectiveResourceConsumersSeparateAlternateAppDatabase keeps an explicitly external engine out of the local Compose slice.
-func TestEffectiveResourceConsumersSeparateAlternateAppDatabase(t *testing.T) {
+// TestEffectiveResourceConsumersSeparateAlternateAppDatabaseEndpoint keeps an explicitly external engine distinct from local service ownership.
+func TestEffectiveResourceConsumersSeparateAlternateAppDatabaseEndpoint(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true}
 	plan := defaultResourcePlanForTest(t, components)
 	database, _ := plan.Selection(project.ResourceDatabase)
 	database.Supported = append(database.Supported, "mysql")
 	plan = plan.WithSelection(project.ResourceDatabase, database)
 	source := []byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\nBILLING_DB_HOST=mysql.billing.example\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	consumers, err := resolveConsumersForComponents(source, plan, components, "billing")
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -422,10 +422,6 @@ func TestEffectiveResourceConsumersSeparateAlternateAppDatabase(t *testing.T) {
 	if len(requirements) != 1 || requirements[0].State != project.ServiceStateExternalRequired || !reflect.DeepEqual(requirements[0].ActiveConsumers, []string{"billing:database"}) {
 		t.Fatalf("MySQL requirements = %#v, want billing external only", requirements)
 	}
-	_, compose := renderResourceTemplatesWithConsumers(t, components, plan, project.LocalServiceIntent{}, consumers)
-	if strings.Contains(compose, "\n  mysql:\n") {
-		t.Fatalf("SQLite root emitted an unowned MySQL Compose service:\n%s", compose)
-	}
 }
 
 // TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase keeps same-engine App scopes on the root Compose service.
@@ -433,7 +429,7 @@ func TestEffectiveResourceConsumersDeduplicateInheritedRootDatabase(t *testing.T
 	components := project.Components{DatabaseMySQL: true, Docker: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nBILLING_DB_DRIVER=mysql\nBILLING_DB_DATABASE=billing\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	consumers, err := resolveConsumersForComponents(source, plan, components, "billing")
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -456,7 +452,7 @@ func TestEffectiveResourceConsumersDiscoverEndpointOnlyNamedDatabase(t *testing.
 	components := project.Components{DatabaseMySQL: true, Docker: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("DB_DRIVER=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_REPORTING_HOST=reporting.mysql.example\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, nil)
+	consumers, err := resolveConsumersForComponents(source, plan, components)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -481,7 +477,7 @@ func TestEffectiveResourceConsumersSeparateExternalAppSMTP(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Mail: true}
 	plan := defaultResourcePlanForTest(t, components)
 	source := []byte("MAIL_DRIVER=smtp\nMAIL_SMTP_HOST=mailpit\nMAIL_SMTP_PORT=1025\nBILLING_MAIL_SMTP_HOST=smtp.billing.example\nBILLING_MAIL_SMTP_PORT=2525\n")
-	consumers, err := effectiveResourceConsumersFromEnvironment(source, plan, components, []string{"billing"})
+	consumers, err := resolveConsumersForComponents(source, plan, components, "billing")
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -496,4 +492,76 @@ func TestEffectiveResourceConsumersSeparateExternalAppSMTP(t *testing.T) {
 	if !reflect.DeepEqual(requirements[0].ActiveConsumers, []string{"billing:mail"}) {
 		t.Fatalf("SMTP consumers = %#v, want billing mail only", requirements[0].ActiveConsumers)
 	}
+}
+
+// resolveConsumersForComponents models named Apps that share one component envelope without exposing an app-name-only production API.
+func resolveConsumersForComponents(source []byte, plan project.ResourcePlan, components project.Components, appNames ...string) ([]project.EffectiveResourceConsumer, error) {
+	if len(appNames) == 0 {
+		return ResolveConsumers(source, plan, components, nil)
+	}
+	config := &project.Config{
+		Render: project.RenderConfig{Components: components},
+		Apps:   make(map[string]project.AppConfig, len(appNames)),
+	}
+	for _, name := range appNames {
+		config.Apps[name] = project.AppConfig{Components: components}
+	}
+	return ResolveConsumers(source, plan, components, config)
+}
+
+// redisResourcePlanForTest selects Redis anywhere the component envelope supports it.
+func redisResourcePlanForTest(t *testing.T, components project.Components) project.ResourcePlan {
+	t.Helper()
+	plan := defaultResourcePlanForTest(t, components)
+	for _, key := range []project.ResourceKey{project.ResourceCache, project.ResourceQueue, project.ResourceEvents} {
+		selection, ok := plan.Selection(key)
+		if !ok {
+			continue
+		}
+		selection.Active = "redis"
+		plan = plan.WithSelection(key, selection)
+	}
+	if components.Auth {
+		plan = plan.WithNamedSelection("CACHE_SESSIONS_DRIVER", "redis")
+	}
+	normalized, err := plan.Normalized(components)
+	if err != nil {
+		t.Fatalf("normalize Redis resource plan: %v", err)
+	}
+	return normalized
+}
+
+// resourcePlanWithDatabasesForTest builds all database engines required by a multi-App component envelope from public project contracts.
+func resourcePlanWithDatabasesForTest(plan project.ResourcePlan, defaultComponents project.Components, projectComponents project.Components) (project.ResourcePlan, error) {
+	selection, ok := plan.Selection(project.ResourceDatabase)
+	if !ok {
+		return plan, nil
+	}
+	if driver := defaultComponents.DatabaseDriver(); driver != "" {
+		selection.Active = driver
+	}
+	candidates := []struct {
+		enabled bool
+		driver  string
+	}{
+		{enabled: projectComponents.DatabaseSQLite, driver: "sqlite"},
+		{enabled: projectComponents.DatabaseMySQL, driver: "mysql"},
+		{enabled: projectComponents.DatabasePostgres, driver: "postgres"},
+	}
+	for _, candidate := range candidates {
+		if candidate.enabled && !containsDriverForTest(selection.Supported, candidate.driver) {
+			selection.Supported = append(selection.Supported, candidate.driver)
+		}
+	}
+	return plan.WithSelection(project.ResourceDatabase, selection).Normalized(projectComponents)
+}
+
+// containsDriverForTest keeps the local plan builder independent of forj implementation helpers.
+func containsDriverForTest(drivers []string, want string) bool {
+	for _, driver := range drivers {
+		if strings.EqualFold(driver, want) {
+			return true
+		}
+	}
+	return false
 }

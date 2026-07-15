@@ -1,4 +1,4 @@
-package forj
+package resourceenv
 
 import (
 	"crypto/sha256"
@@ -42,21 +42,8 @@ type resourceEndpointResolution struct {
 	local    bool
 }
 
-// effectiveResourceConsumersFromEnvironment resolves root, named, and App-prefixed resource scopes without mutating owner input.
-func effectiveResourceConsumersFromEnvironment(source []byte, plan project.ResourcePlan, components project.Components, appNames []string) ([]project.EffectiveResourceConsumer, error) {
-	appComponents := make(map[string]project.Components, len(appNames))
-	for _, name := range appNames {
-		appComponents[strings.ToLower(strings.TrimSpace(name))] = components
-	}
-	resolver, err := newResourceConsumerResolver(source, plan, components)
-	if err != nil {
-		return nil, err
-	}
-	return resolver.resolve(components, appNames, appComponents)
-}
-
-// effectiveResourceConsumersFromProjectConfig applies each configured App's actual participation to resource discovery.
-func effectiveResourceConsumersFromProjectConfig(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
+// ResolveConsumers applies each configured App's actual participation to resource discovery.
+func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
 	defaultComponents := projectComponents
 	appNames := configuredResourceAppNames(config)
 	appComponents := make(map[string]project.Components, len(appNames))
