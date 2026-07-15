@@ -7,7 +7,7 @@ import (
 	"github.com/goforj/wire"
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
-{{- if and .Components.DemoApp .Components.Jobs }}
+{{- if .Components.DemoApp }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
@@ -16,12 +16,12 @@ import (
 // appJobSet is a wire set that contains application-level jobs.
 var appJobSet = wire.NewSet(
 	registerJobHandlers,
-	{{- if and .Components.DemoApp .Components.Jobs }}
+	{{- if .Components.DemoApp }}
 	alerts.NewDispatchJob,
 	{{- end }}
 	jobs.NewExampleHelloJob,
 	jobs.NewExampleHelloJobCmd,
-	{{- if and .Components.DemoApp .Components.Jobs }}
+	{{- if .Components.DemoApp }}
 	monitoring.NewCheckService,
 	monitoring.NewMonitorCheckJob,
 	{{- end }}
@@ -34,13 +34,13 @@ type jobHandlerRegistration struct{}
 func registerJobHandlers(
 	queueManager *queues.Manager,
 	exampleHelloJob *jobs.ExampleHelloJob,
-	{{- if and .Components.DemoApp .Components.Jobs }}
+	{{- if .Components.DemoApp }}
 	dispatchJob *alerts.DispatchJob,
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *jobHandlerRegistration {
 	queueManager.Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
-	{{- if and .Components.DemoApp .Components.Jobs }}
+	{{- if .Components.DemoApp }}
 	queueManager.Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
 	queueManager.Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
 	{{- end }}
