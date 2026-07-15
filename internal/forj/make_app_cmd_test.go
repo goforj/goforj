@@ -939,6 +939,16 @@ func TestMakeAppCmdRejectsNativeCommandName(t *testing.T) {
 	}
 }
 
+// hasDevTask reports whether generated task configuration contains the expected normalized entry.
+func hasDevTask(tasks []project.DevTask, want project.DevTask) bool {
+	for _, task := range tasks {
+		if strings.TrimSpace(task.Name) == want.Name && strings.TrimSpace(task.Cmd) == want.Cmd {
+			return true
+		}
+	}
+	return false
+}
+
 func readMakeAppTestFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
