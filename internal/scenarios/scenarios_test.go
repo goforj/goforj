@@ -48,9 +48,9 @@ func TestScenarioSpecsDeclareCumulativePrimitiveDependencies(t *testing.T) {
 		{id: "cached-user-profile", want: project.Components{Cache: true}},
 		{id: "file-upload-storage", want: project.Components{Cache: true, Storage: true}},
 		{id: "users-created-event", want: project.Components{Cache: true, Events: true}},
-		{id: "reports-generate-job", want: project.Components{Cache: true, Events: true, Storage: true}},
-		{id: "reports-daily-schedule", want: project.Components{Cache: true, Events: true, Storage: true}},
-		{id: "runtime-observability", want: project.Components{Cache: true, Events: true, Storage: true}},
+		{id: "reports-generate-job", want: project.Components{Cache: true, Events: true, Storage: true, Jobs: true}},
+		{id: "reports-daily-schedule", want: project.Components{Cache: true, Events: true, Storage: true, Jobs: true}},
+		{id: "runtime-observability", want: project.Components{Cache: true, Events: true, Storage: true, Jobs: true}},
 	}
 	for _, test := range tests {
 		t.Run(test.id, func(t *testing.T) {
@@ -62,6 +62,7 @@ func TestScenarioSpecsDeclareCumulativePrimitiveDependencies(t *testing.T) {
 				Cache:   spec.App.Components.Cache,
 				Events:  spec.App.Components.Events,
 				Storage: spec.App.Components.Storage,
+				Jobs:    spec.App.Components.Jobs,
 			}
 			if got != test.want {
 				t.Fatalf("scenario primitive components = %#v, want %#v", got, test.want)

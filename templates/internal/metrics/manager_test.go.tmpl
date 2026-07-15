@@ -6,7 +6,7 @@ import (
 {{- if .ProjectComponents.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	"database/sql"
 {{- end }}
 	"net/http"
@@ -17,7 +17,7 @@ import (
 {{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	"github.com/goforj/scheduler/v2"
 {{- end }}
 {{- if .ProjectComponents.Events }}
@@ -89,13 +89,13 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 {{- if .ProjectComponents.Jobs }}
 	t.Setenv("METRICS_QUEUE_ENABLED", "false")
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	t.Setenv("METRICS_DATABASE_ENABLED", "false")
 {{- end }}
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 	t.Setenv("METRICS_AUTH_ENABLED", "false")
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	t.Setenv("METRICS_SCHEDULER_ENABLED", "false")
 {{- end }}
 
@@ -128,20 +128,56 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 		t.Fatal("expected queue metrics to be disabled")
 	}
 {{- end }}
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 	if cfg.Database {
 		t.Fatal("expected database metrics to be disabled")
 	}
 {{- end }}
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 	if cfg.Auth {
 		t.Fatal("expected auth metrics to be disabled")
 	}
 {{- end }}
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 	if cfg.Scheduler {
 		t.Fatal("expected scheduler metrics to be disabled")
 	}
+{{- end }}
+}
+
+// TestNewConfigFollowsCurrentAppComponents verifies shared Metrics code activates only for the selected App.
+func TestNewConfigFollowsCurrentAppComponents(t *testing.T) {
+{{- range .RuntimeApps }}
+	t.Run("{{ .Name }}", func(t *testing.T) {
+		t.Setenv("FORJ_APP", "{{ .Name }}")
+{{- if $.ProjectComponents.HasDatabase }}
+		t.Setenv("METRICS_DATABASE_ENABLED", "true")
+{{- end }}
+{{- if $.ProjectComponents.Auth }}
+		t.Setenv("METRICS_AUTH_ENABLED", "true")
+{{- end }}
+{{- if $.ProjectComponents.Scheduler }}
+		t.Setenv("METRICS_SCHEDULER_ENABLED", "true")
+{{- end }}
+
+		cfg := NewConfig()
+		_ = cfg
+{{- if $.ProjectComponents.HasDatabase }}
+		if got, want := cfg.Database, {{ .Components.HasDatabase }}; got != want {
+			t.Fatalf("Database metrics enabled = %t, want %t", got, want)
+		}
+{{- end }}
+{{- if $.ProjectComponents.Auth }}
+		if got, want := cfg.Auth, {{ .Components.Auth }}; got != want {
+			t.Fatalf("Auth metrics enabled = %t, want %t", got, want)
+		}
+{{- end }}
+{{- if $.ProjectComponents.Scheduler }}
+		if got, want := cfg.Scheduler, {{ .Components.Scheduler }}; got != want {
+			t.Fatalf("Scheduler metrics enabled = %t, want %t", got, want)
+		}
+{{- end }}
+	})
 {{- end }}
 }
 
@@ -419,9 +455,9 @@ func TestRecordHTTPRequestReusesHTTPMetricChildren(t *testing.T) {
 	}
 }
 
-{{- if .Components.Auth }}
+{{- if .ProjectComponents.Auth }}
 func TestRecordAuthFlowTracksOutcomeAndLatency(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Auth: true})
 
 	manager.RecordAuthFlow("login", "succeeded", "na", "na", 25*time.Millisecond)
 	manager.RecordAuthFlow("oauth_callback", "conflict", "identity_link_required", "github", 40*time.Millisecond)
@@ -637,9 +673,9 @@ func TestRecordQueueEventEmitsSourceLabel(t *testing.T) {
 }
 {{- end }}
 
-{{- if .Components.Scheduler }}
+{{- if .ProjectComponents.Scheduler }}
 func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Scheduler: true})
 	ctx := runtime.WithSource(context.Background(), runtime.SourceApp)
 
 	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
@@ -747,7 +783,7 @@ func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 }
 
 func TestRecordSchedulerJobUsesSourceLabelFromContext(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Scheduler: true})
 	ctx := runtime.WithSource(context.Background(), runtime.SourceScheduler)
 
 	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
@@ -771,9 +807,9 @@ func TestRecordSchedulerJobUsesSourceLabelFromContext(t *testing.T) {
 }
 {{- end }}
 
-{{- if .Components.HasDatabase }}
+{{- if .ProjectComponents.HasDatabase }}
 func TestRecordDatabaseStatementTracksLabeledSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Database: true})
 
 	manager.RecordDatabaseStatement(DatabaseStatementMetricEvent{
 		Connection: "analytics",
@@ -820,7 +856,7 @@ func TestRecordDatabaseStatementTracksLabeledSeries(t *testing.T) {
 }
 
 func TestRecordDatabaseQueryFingerprintTracksSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Database: true})
 
 	manager.RecordDatabaseQueryFingerprint(DatabaseQueryFingerprintMetricEvent{
 		Connection:  "analytics",
@@ -840,7 +876,7 @@ func TestRecordDatabaseQueryFingerprintTracksSeries(t *testing.T) {
 }
 
 func TestRecordDatabaseQueryFingerprintInfoTracksSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Database: true})
 
 	manager.RecordDatabaseQueryFingerprintInfo(DatabaseQueryFingerprintMetricEvent{
 		Connection:  "analytics",
@@ -862,7 +898,7 @@ func TestRecordDatabaseQueryFingerprintInfoTracksSeries(t *testing.T) {
 }
 
 func TestRecordDatabaseSlowQueryTracksFingerprintSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Database: true})
 
 	manager.RecordDatabaseSlowQuery(DatabaseSlowQueryMetricEvent{
 		Connection:  "analytics",
@@ -897,7 +933,7 @@ func TestRecordDatabaseSlowQueryTracksFingerprintSeries(t *testing.T) {
 }
 
 func TestRecordDatabasePoolStatsTracksSeries(t *testing.T) {
-	manager := NewManager()
+	manager := NewManagerWithConfig(Config{Database: true})
 
 	manager.RecordDatabasePoolStats("analytics", "postgres", sql.DBStats{
 		OpenConnections: 6,

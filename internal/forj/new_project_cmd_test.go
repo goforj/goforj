@@ -288,7 +288,11 @@ func TestProjectPathDoesNotCarryTargetResourceIntentForward(t *testing.T) {
 	if m.stage != StageConfirm {
 		t.Fatalf("first target did not advance to confirmation: stage=%v error=%q", m.stage, m.errorMsg)
 	}
-	if mode, ok := m.effectiveIntent.Mode(project.ServiceRedis); !ok || mode != project.LocalServiceModeLocal {
+	preparation, err := m.selectedResourcePreparation()
+	if err != nil {
+		t.Fatalf("prepare first target resources: %v", err)
+	}
+	if mode, ok := preparation.serviceIntent.Mode(project.ServiceRedis); !ok || mode != project.LocalServiceModeLocal {
 		t.Fatalf("first target Redis intent = %q selected=%t, want local", mode, ok)
 	}
 
@@ -300,7 +304,11 @@ func TestProjectPathDoesNotCarryTargetResourceIntentForward(t *testing.T) {
 	if m.stage != StageConfirm {
 		t.Fatalf("second target did not advance to confirmation: stage=%v error=%q", m.stage, m.errorMsg)
 	}
-	if mode, ok := m.effectiveIntent.Mode(project.ServiceRedis); ok {
+	preparation, err = m.selectedResourcePreparation()
+	if err != nil {
+		t.Fatalf("prepare second target resources: %v", err)
+	}
+	if mode, ok := preparation.serviceIntent.Mode(project.ServiceRedis); ok {
 		t.Fatalf("second target inherited Redis intent %q", mode)
 	}
 }
@@ -970,11 +978,11 @@ func TestDefaultResourcePlanCoordinatesJobsWithoutWizardStage(t *testing.T) {
 	if m.stage != StageAtlasSupport {
 		t.Fatalf("expected Atlas after extras, got %v", m.stage)
 	}
-	plan, err := m.selectedResourcePlan()
+	preparation, err := m.selectedResourcePreparation()
 	if err != nil {
-		t.Fatalf("selectedResourcePlan returned error: %v", err)
+		t.Fatalf("selectedResourcePreparation returned error: %v", err)
 	}
-	queue, ok := plan.Selection(project.ResourceQueue)
+	queue, ok := preparation.plan.Selection(project.ResourceQueue)
 	if !ok || queue.Active != "workerpool" || !reflect.DeepEqual(queue.Supported, []string{"workerpool", "redis"}) {
 		t.Fatalf("default queue selection = %#v, exists %v", queue, ok)
 	}

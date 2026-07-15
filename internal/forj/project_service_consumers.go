@@ -141,7 +141,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 		if appName == "" || appName == project.DefaultAppName {
 			continue
 		}
-		if prefix := strEnvPrefix(appName); prefix != "" {
+		if prefix := project.AppEnvironmentPrefix(appName); prefix != "" {
 			prefixNames[prefix] = appName
 		}
 	}
@@ -149,7 +149,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 		markerIndex := -1
 		var markerDefinition project.ResourceDefinition
 		for _, definition := range project.ResourceCatalog() {
-			marker := "_" + resourceEnvironmentPrefix(definition.Key) + "_"
+			marker := "_" + definition.EnvironmentPrefix + "_"
 			index := strings.Index(key, marker)
 			if index > 0 && (markerIndex < 0 || index < markerIndex) {
 				markerIndex = index
@@ -179,7 +179,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 // resourceFirstAppPrefix keeps ordinary RESOURCE_<NAME> scopes out of inferred App topology while allowing configured Apps with the same slug.
 func resourceFirstAppPrefix(prefix string) bool {
 	for _, definition := range project.ResourceCatalog() {
-		resourcePrefix := resourceEnvironmentPrefix(definition.Key)
+		resourcePrefix := definition.EnvironmentPrefix
 		if prefix == resourcePrefix || strings.HasPrefix(prefix, resourcePrefix+"_") {
 			return true
 		}
@@ -189,7 +189,7 @@ func resourceFirstAppPrefix(prefix string) bool {
 
 // resourceAppPrefixEvidence limits inference to keys that can change a resource's driver or endpoint topology.
 func resourceAppPrefixEvidence(key string, definition project.ResourceDefinition) bool {
-	resourcePrefix := resourceEnvironmentPrefix(definition.Key) + "_"
+	resourcePrefix := definition.EnvironmentPrefix + "_"
 	if !strings.HasPrefix(key, resourcePrefix) {
 		return false
 	}
@@ -235,6 +235,10 @@ func resourceSuffixMatches(value string, suffixes ...string) bool {
 
 // effectiveNamedResourceDrivers resolves generated and arbitrary named driver scopes for one App overlay.
 func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, plan project.ResourcePlan, components project.Components, resource project.ResourceKey, rootDriver string) map[string]string {
+	definition, ok := project.ResourceDefinitionByKey(resource)
+	if !ok {
+		return nil
+	}
 	drivers := map[string]string{}
 	for _, named := range plan.GeneratedNamedSelections(components) {
 		if named.Resource != resource {
@@ -247,7 +251,7 @@ func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, p
 		drivers[strings.ToLower(named.Name)] = strings.ToLower(strings.TrimSpace(fallback))
 	}
 
-	prefix := resourceEnvironmentPrefix(resource) + "_"
+	prefix := definition.EnvironmentPrefix + "_"
 	appMarker := ""
 	if appPrefix != "" {
 		appMarker = appPrefix + "_"
@@ -266,7 +270,7 @@ func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, p
 			name, endpointScope := namedResourceEndpointScope(baseKey, resource)
 			if endpointScope {
 				if _, exists := drivers[name]; !exists {
-					drivers[name] = namedResourceDefaultDriver(resource, rootDriver)
+					drivers[name] = definition.NamedDriverDefault(rootDriver)
 				}
 			}
 			continue
@@ -282,7 +286,7 @@ func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, p
 		driverKey := prefix + name + "_DRIVER"
 		driver, set := resourceOverlayValue(values, appPrefix, driverKey)
 		if !set || strings.TrimSpace(driver) == "" {
-			driver = namedResourceDefaultDriver(resource, rootDriver)
+			driver = definition.NamedDriverDefault(rootDriver)
 		}
 		drivers[strings.ToLower(name)] = strings.ToLower(strings.TrimSpace(driver))
 	}
@@ -295,7 +299,7 @@ func namedResourceEndpointScope(key string, resource project.ResourceKey) (strin
 	if !ok {
 		return "", false
 	}
-	resourcePrefix := resourceEnvironmentPrefix(resource) + "_"
+	resourcePrefix := definition.EnvironmentPrefix + "_"
 	scopedKey := strings.TrimPrefix(key, resourcePrefix)
 	for _, suffix := range resourceEndpointSuffixes(definition) {
 		marker := "_" + suffix
@@ -322,7 +326,7 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 		seen[suffix] = true
 		suffixes = append(suffixes, suffix)
 	}
-	resourcePrefix := resourceEnvironmentPrefix(definition.Key) + "_"
+	resourcePrefix := definition.EnvironmentPrefix + "_"
 	for _, endpoint := range definitionEndpointEnvironment(definition) {
 		add(strings.TrimPrefix(strings.ToUpper(endpoint.Key), resourcePrefix))
 	}
@@ -342,7 +346,11 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 
 // effectiveResourceDriver applies App overlay semantics before falling back to the generator's empty-driver default.
 func effectiveResourceDriver(values map[string]string, appPrefix string, resource project.ResourceKey, name string, fallback string) string {
-	key := resourceEnvironmentPrefix(resource)
+	definition, ok := project.ResourceDefinitionByKey(resource)
+	if !ok {
+		return ""
+	}
+	key := definition.EnvironmentPrefix
 	if name != "" {
 		key += "_" + strings.ToUpper(name)
 	}
@@ -356,47 +364,9 @@ func effectiveResourceDriver(values map[string]string, appPrefix string, resourc
 		return value
 	}
 	if appPrefix != "" && name == "" {
-		return rootResourceDefaultDriver(resource)
+		return definition.DefaultDriver
 	}
-	return namedResourceDefaultDriver(resource, fallback)
-}
-
-// rootResourceDefaultDriver mirrors each generated manager's fallback after a blank App overlay replaces the root value.
-func rootResourceDefaultDriver(resource project.ResourceKey) string {
-	switch resource {
-	case project.ResourceDatabase:
-		return "sqlite"
-	case project.ResourceCache:
-		return "memory"
-	case project.ResourceQueue:
-		return "workerpool"
-	case project.ResourceEvents:
-		return "inproc"
-	case project.ResourceStorage:
-		return "local"
-	case project.ResourceMail:
-		return "log"
-	default:
-		return ""
-	}
-}
-
-// namedResourceDefaultDriver mirrors generator defaults when an explicit named driver is empty.
-func namedResourceDefaultDriver(resource project.ResourceKey, rootDriver string) string {
-	switch resource {
-	case project.ResourceDatabase, project.ResourceQueue:
-		return strings.ToLower(strings.TrimSpace(rootDriver))
-	case project.ResourceCache:
-		return "memory"
-	case project.ResourceEvents:
-		return "inproc"
-	case project.ResourceStorage:
-		return "local"
-	case project.ResourceMail:
-		return "log"
-	default:
-		return strings.ToLower(strings.TrimSpace(rootDriver))
-	}
+	return definition.NamedDriverDefault(fallback)
 }
 
 // effectiveResourceConsumer derives catalog service metadata and a credential-safe endpoint identity.
@@ -410,7 +380,7 @@ func effectiveResourceConsumer(values map[string]string, appPrefix string, resou
 	if !ok {
 		return project.EffectiveResourceConsumer{}, fmt.Errorf("effective consumer %s selects unknown %s driver %q", consumerName, definition.Label, driverName)
 	}
-	affinity, local, err := resourceEndpointAffinity(values, appPrefix, resource, name, driver, localDatabaseDriver, components)
+	affinity, local, err := resourceEndpointAffinity(values, appPrefix, definition, name, driver, localDatabaseDriver, components)
 	if err != nil {
 		return project.EffectiveResourceConsumer{}, fmt.Errorf("effective consumer %s: %w", consumerName, err)
 	}
@@ -424,7 +394,8 @@ func effectiveResourceConsumer(values map[string]string, appPrefix string, resou
 }
 
 // resourceEndpointAffinity mirrors endpoint fallback without exposing credentials in service plans.
-func resourceEndpointAffinity(values map[string]string, appPrefix string, resource project.ResourceKey, name string, driver project.DriverDefinition, localDatabaseDriver string, components project.Components) (string, bool, error) {
+func resourceEndpointAffinity(values map[string]string, appPrefix string, definition project.ResourceDefinition, name string, driver project.DriverDefinition, localDatabaseDriver string, components project.Components) (string, bool, error) {
+	resource := definition.Key
 	if driver.Service == "" {
 		return "", false, nil
 	}
@@ -476,7 +447,7 @@ func resourceEndpointAffinity(values map[string]string, appPrefix string, resour
 
 	parts := []string{}
 	for _, placeholder := range driver.Environment {
-		rootPrefix := resourceEnvironmentPrefix(resource) + "_"
+		rootPrefix := definition.EnvironmentPrefix + "_"
 		suffix := strings.TrimPrefix(strings.ToUpper(placeholder.Key), rootPrefix)
 		if suffix == "" || strings.Contains(suffix, "PASSWORD") || strings.Contains(suffix, "SECRET") || strings.Contains(suffix, "TOKEN") || strings.Contains(suffix, "KEY") {
 			continue
@@ -583,7 +554,11 @@ func databaseEndpointKey(appPrefix string, name string, suffix string) string {
 
 // resourceScopedValue reads a root or named key through one App overlay.
 func resourceScopedValue(values map[string]string, appPrefix string, resource project.ResourceKey, name string, suffix string) string {
-	key := resourceEnvironmentPrefix(resource)
+	definition, ok := project.ResourceDefinitionByKey(resource)
+	if !ok {
+		return ""
+	}
+	key := definition.EnvironmentPrefix
 	if name != "" {
 		key += "_" + strings.ToUpper(name)
 	}
@@ -602,14 +577,6 @@ func resourceOverlayValue(values map[string]string, appPrefix string, key string
 	}
 	value, ok := values[key]
 	return value, ok
-}
-
-// resourceEnvironmentPrefix maps catalog keys to their generated dotenv scope.
-func resourceEnvironmentPrefix(resource project.ResourceKey) string {
-	if resource == project.ResourceDatabase {
-		return "DB"
-	}
-	return strings.ToUpper(string(resource))
 }
 
 // effectiveResourceConsumerName formats stable identities shared with the pure service planner.

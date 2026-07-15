@@ -221,7 +221,7 @@ func namedResourcesForApp(env map[string]string, appName string, prefix string) 
 	if appName == "" || appName == project.DefaultAppName {
 		return names
 	}
-	appPrefix := resourceAppEnvPrefix(appName)
+	appPrefix := project.AppEnvironmentPrefix(appName)
 	if appPrefix == "" {
 		return names
 	}
@@ -234,17 +234,6 @@ func queueResourceID(appName string, queueName string) string {
 		return "queue-" + queueName
 	}
 	return "queue-" + strings.ToLower(appName) + "-" + queueName
-}
-
-// resourceAppEnvPrefix mirrors the generated runtime convention for App environment overlays.
-func resourceAppEnvPrefix(appName string) string {
-	parts := strings.FieldsFunc(strings.TrimSpace(appName), func(r rune) bool {
-		return r == '-' || r == '_' || r == ' ' || r == '.'
-	})
-	for i, part := range parts {
-		parts[i] = strings.ToUpper(part)
-	}
-	return strings.Join(parts, "_")
 }
 
 func firstNonEmpty(values ...string) string {

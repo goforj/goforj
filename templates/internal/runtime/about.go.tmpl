@@ -49,6 +49,7 @@ var (
 		"ENCRYPTION_KEY",
 	}
 {{- end }}
+{{- if .ProjectComponents.Jobs }}
 	aboutQueueRootKeys = []string{
 		"DRIVER",
 		"WORKERS",
@@ -72,6 +73,7 @@ var (
 		"PROCESSING_RECOVERY_GRACE_SECONDS",
 		"PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
 	}
+{{- end }}
 {{- if .ProjectComponents.Storage }}
 	aboutStorageRootKeys = []string{
 		"DRIVER",
@@ -206,7 +208,9 @@ type AboutReport struct {
 	Caches      []AboutCache       `json:"caches,omitempty"`
 {{- end }}
 	Mails       []AboutMail        `json:"mails,omitempty"`
+{{- if .ProjectComponents.Jobs }}
 	Queues      []AboutQueue       `json:"queues,omitempty"`
+{{- end }}
 {{- if .ProjectComponents.Storage }}
 	Storages    []AboutStorage     `json:"storages,omitempty"`
 {{- end }}
@@ -274,6 +278,8 @@ type AboutMail struct {
 	Details   []AboutField `json:"details,omitempty"`
 }
 
+{{ if .ProjectComponents.Jobs }}
+// AboutQueue describes one configured Queue without exposing credentials.
 type AboutQueue struct {
 	Name         string       `json:"name"`
 	IsDefault    bool         `json:"is_default"`
@@ -284,6 +290,7 @@ type AboutQueue struct {
 	Summary      string       `json:"summary"`
 	Details      []AboutField `json:"details,omitempty"`
 }
+{{- end }}
 
 {{ if .ProjectComponents.Storage }}
 // AboutStorage describes one configured Storage disk without exposing credentials.
@@ -335,8 +342,12 @@ func (s *AboutService) Build() AboutReport {
 		Network: AboutNetwork{
 			AppURL: env.Get("APP_URL", "http://localhost:3000"),
 		},
-		Mails:  aboutMailReports(),
 	}
+{{- if .ProjectComponents.Mail }}
+	if appComponents.Mail {
+		report.Mails = aboutMailReports()
+	}
+{{- end }}
 {{- if .ProjectComponents.Cache }}
 	if appComponents.Cache {
 		report.Caches = aboutCacheReports()
@@ -413,9 +424,11 @@ func (s *AboutService) sections(report AboutReport, appComponents AppComponents)
 		sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
 	}
 {{- end }}
-	sections = append(sections,
-		AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)},
-	)
+{{- if .ProjectComponents.Mail }}
+	if appComponents.Mail {
+		sections = append(sections, AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)})
+	}
+{{- end }}
 {{- if .ProjectComponents.Cache }}
 	if appComponents.Cache {
 		sections = append(sections, AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)})
@@ -515,6 +528,8 @@ func aboutCacheConnections(caches []AboutCache) []AboutConnectionData {
 }
 {{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// aboutQueueConnections projects Queue reports into the shared About section shape.
 func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(queues))
 	for _, queue := range queues {
@@ -526,6 +541,7 @@ func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
 	}
 	return connections
 }
+{{- end }}
 
 func aboutMailConnections(mails []AboutMail) []AboutConnectionData {
 	connections := make([]AboutConnectionData, 0, len(mails))
@@ -585,6 +601,11 @@ func aboutComponents(appComponents AppComponents) []string {
 {{- if .ProjectComponents.Events }}
 	if appComponents.Events {
 		components = append(components, "events")
+	}
+{{- end }}
+{{- if .ProjectComponents.Mail }}
+	if appComponents.Mail {
+		components = append(components, "mail")
 	}
 {{- end }}
 	components = append(components, "lighthouse")
@@ -709,6 +730,8 @@ func aboutCacheReports() []AboutCache {
 }
 {{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// aboutQueueReports describes only the active App's configured Queues.
 func aboutQueueReports() []AboutQueue {
 	instances := DiscoverQueueInstances()
 	reports := make([]AboutQueue, 0, len(instances))
@@ -730,6 +753,7 @@ func aboutQueueReports() []AboutQueue {
 	}
 	return reports
 }
+{{- end }}
 
 func aboutMailReports() []AboutMail {
 	names := aboutScopedNames("MAIL", aboutMailRootKeys)
@@ -814,8 +838,10 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 {{- end }}
 	case "MAIL":
 		return aboutAnySet(scope, "DRIVER", "FROM_ADDRESS", "FROM_NAME", "SMTP_HOST", "RESEND_ENDPOINT", "POSTMARK_ENDPOINT", "MAILGUN_DOMAIN", "SENDGRID_ENDPOINT", "SES_REGION")
+{{- if .ProjectComponents.Jobs }}
 	case "QUEUE":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "NAME", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
+{{- end }}
 {{- if .ProjectComponents.Storage }}
 	case "STORAGE":
 		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
@@ -949,6 +975,8 @@ func aboutCacheDetails(name string) []AboutField {
 }
 {{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// aboutQueueDetails builds the non-secret diagnostic fields for one Queue.
 func aboutQueueDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("QUEUE", name)
 	rootScope := env.WithPrefix("QUEUE")
@@ -991,6 +1019,7 @@ func aboutQueueDetails(name string) []AboutField {
 	return details
 }
 
+// aboutQueueWorkers resolves per-instance worker counts before falling back to the Queue root defaults.
 func aboutQueueWorkers(scope env.Scope, rootScope env.Scope) string {
 	workers := strings.TrimSpace(scope.Get("WORKERS", ""))
 	if workers == "" {
@@ -1007,6 +1036,7 @@ func aboutQueueWorkers(scope env.Scope, rootScope env.Scope) string {
 	}
 	return workers
 }
+{{- end }}
 
 func aboutMailDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("MAIL", name)
@@ -1305,6 +1335,8 @@ func aboutFirstNonEmpty(values ...string) string {
 	return ""
 }
 
+{{ if .ProjectComponents.Jobs }}
+// queueRedisLogLevelAbout resolves the current and legacy Redis logging keys for Queue diagnostics.
 func queueRedisLogLevelAbout(scope env.Scope) string {
 	raw := strings.TrimSpace(scope.Get("SERVER_LOG_LEVEL", ""))
 	if raw == "" {
@@ -1315,6 +1347,7 @@ func queueRedisLogLevelAbout(scope env.Scope) string {
 	}
 	return strings.ToLower(raw)
 }
+{{- end }}
 
 func aboutDetailSummary(details []AboutField) string {
 	if len(details) == 0 {

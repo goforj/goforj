@@ -145,7 +145,7 @@ func loadAppScopedEnv() error {
 	if err := env.Reload(); err != nil {
 		return err
 	}
-	prefix := appEnvPrefix(os.Getenv("FORJ_APP"))
+	prefix := project.AppEnvironmentPrefix(os.Getenv("FORJ_APP"))
 	if prefix == "" {
 		return nil
 	}
@@ -163,17 +163,6 @@ func loadAppScopedEnv() error {
 		}
 	}
 	return nil
-}
-
-// appEnvPrefix converts a conventional App name into its environment prefix.
-func appEnvPrefix(appName string) string {
-	parts := strings.FieldsFunc(strings.TrimSpace(appName), func(r rune) bool {
-		return r == '-' || r == '_' || r == ' ' || r == '.'
-	})
-	for i := range parts {
-		parts[i] = strings.ToUpper(parts[i])
-	}
-	return strings.Join(parts, "_")
 }
 
 // insertBuildPassthroughBoundary prevents Kong from splitting Go's single-dash flags into framework short options.

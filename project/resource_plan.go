@@ -46,38 +46,15 @@ type LocalServiceIntent struct {
 func DefaultResourcePlan(components Components) (ResourcePlan, error) {
 	components = components.WithResolvedDependencies()
 	plan := ResourcePlan{Selections: map[ResourceKey]DriverSelection{}}
-	if components.HasDatabase() {
-		driver := components.DatabaseDriver()
-		if components.DemoApp {
-			driver = "mysql"
+	for _, definition := range ResourceCatalog() {
+		if !definition.AppliesTo(components) {
+			continue
 		}
-		if driver == "" {
-			return ResourcePlan{}, fmt.Errorf("database capability requires a selected database driver")
+		selection, err := definition.DefaultSelection(components)
+		if err != nil {
+			return ResourcePlan{}, err
 		}
-		supported := []string{driver}
-		if components.DemoApp {
-			supported = []string{"sqlite", "mysql"}
-		}
-		plan.Selections[ResourceDatabase] = DriverSelection{Active: driver, Supported: supported}
-	}
-	if components.Cache {
-		plan.Selections[ResourceCache] = DriverSelection{Active: "memory", Supported: []string{"memory", "redis"}}
-	}
-	if components.Events {
-		plan.Selections[ResourceEvents] = DriverSelection{Active: "inproc", Supported: []string{"inproc", "redis"}}
-	}
-	if components.Jobs {
-		plan.Selections[ResourceQueue] = DriverSelection{Active: "workerpool", Supported: []string{"workerpool", "redis"}}
-	}
-	if components.Storage {
-		plan.Selections[ResourceStorage] = DriverSelection{Active: "local", Supported: []string{"local"}}
-	}
-	if components.Mail {
-		active := "log"
-		if components.Docker {
-			active = "smtp"
-		}
-		plan.Selections[ResourceMail] = DriverSelection{Active: active, Supported: []string{"log", "smtp"}}
+		plan.Selections[definition.Key] = selection
 	}
 	plan.NamedSelections = defaultGeneratedNamedDrivers(components)
 	return plan.Normalized(components)
@@ -230,7 +207,7 @@ func (p ResourcePlan) GeneratedNamedSelections(components Components) []Generate
 				driver = named.DefaultDriver
 			}
 			selections = append(selections, GeneratedNamedResourceSelection{
-				Resource:       named.Resource,
+				Resource:       definition.Key,
 				Name:           named.Name,
 				Label:          named.Label,
 				EnvironmentKey: named.EnvironmentKey,

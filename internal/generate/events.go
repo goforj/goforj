@@ -13,6 +13,7 @@ import (
 	"github.com/goforj/str"
 )
 
+// eventConfigTemplateData keeps compiled transports and named buses aligned while rendering the manager.
 type eventConfigTemplateData struct {
 	CompiledDrivers  []string
 	Drivers          []eventDriverSpec
@@ -21,16 +22,19 @@ type eventConfigTemplateData struct {
 	Names            []eventAccessorName
 }
 
+// eventAccessorTemplateData carries the named bus methods emitted for one project snapshot.
 type eventAccessorTemplateData struct {
 	Names []eventAccessorName
 }
 
+// eventAccessorName binds an environment bus name to its generated field and Go method.
 type eventAccessorName struct {
 	Method string
 	Field  string
 	Bus    string
 }
 
+// eventDriverSpec captures the imports and capabilities needed to emit one event transport branch.
 type eventDriverSpec struct {
 	CaseName     string
 	DriverName   string
@@ -42,6 +46,7 @@ type eventDriverSpec struct {
 	Fields       []eventConfigField
 }
 
+// eventConfigField binds a transport configuration field to its generated value expression.
 type eventConfigField struct {
 	Name  string
 	Value string
@@ -389,6 +394,7 @@ var eventRootKeys = []string{
 	"INPROC_BUFFER",
 }
 
+// Manager owns the event buses generated from the project's build contract.
 type Manager struct {
 	defaultBus Bus
 	observer Observer
@@ -397,43 +403,59 @@ type Manager struct {
 {{- end }}
 }
 
+// Instance gives tooling a uniform view of each generated event bus.
 type Instance struct {
 	Name      string
 	Bus       Bus
 	IsDefault bool
 }
 
+// ReadinessCheck pairs a stable event-bus name with its health probe.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
 }
 
+// Observer decouples generated event instrumentation from its metrics and tracing consumers.
 type Observer interface {
+	// OnEventPublish observes the outcome of each publish attempt across generated buses.
 	OnEventPublish(ctx context.Context, event EventPublishEvent)
+	// OnEventSubscribe observes successful and failed handler registrations across generated buses.
 	OnEventSubscribe(ctx context.Context, event EventSubscriptionEvent)
+	// OnEventUnsubscribe observes subscription shutdown without coupling callers to a transport.
 	OnEventUnsubscribe(ctx context.Context, event EventSubscriptionEvent)
+	// OnEventDeliveryStart marks the beginning of an instrumented handler invocation.
 	OnEventDeliveryStart(ctx context.Context, event EventDeliveryEvent)
+	// OnEventDeliveryFinish reports the result and duration of an instrumented handler invocation.
 	OnEventDeliveryFinish(ctx context.Context, event EventDeliveryEvent)
 }
 
+// ObserverFunc lets publish-only callbacks participate in the broader event observer contract.
 type ObserverFunc func(ctx context.Context, event EventPublishEvent)
 
+// OnEventPublish lets a publish-only callback satisfy the broader Observer contract.
 func (fn ObserverFunc) OnEventPublish(ctx context.Context, event EventPublishEvent) {
 	if fn != nil {
 		fn(ctx, event)
 	}
 }
 
+// OnEventSubscribe intentionally ignores subscription notifications for publish-only callbacks.
 func (ObserverFunc) OnEventSubscribe(context.Context, EventSubscriptionEvent) {}
 
+// OnEventUnsubscribe intentionally ignores unsubscribe notifications for publish-only callbacks.
 func (ObserverFunc) OnEventUnsubscribe(context.Context, EventSubscriptionEvent) {}
 
+// OnEventDeliveryStart intentionally ignores delivery-start notifications for publish-only callbacks.
 func (ObserverFunc) OnEventDeliveryStart(context.Context, EventDeliveryEvent) {}
 
+// OnEventDeliveryFinish intentionally ignores delivery-finish notifications for publish-only callbacks.
 func (ObserverFunc) OnEventDeliveryFinish(context.Context, EventDeliveryEvent) {}
 
+// observerChain retains multiple event observers without exposing composition to callers.
 type observerChain []Observer
 
+// OnEventPublish preserves registration order while fanning publish notifications out across observers.
 func (c observerChain) OnEventPublish(ctx context.Context, event EventPublishEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -443,6 +465,7 @@ func (c observerChain) OnEventPublish(ctx context.Context, event EventPublishEve
 	}
 }
 
+// OnEventSubscribe preserves registration order while fanning subscription notifications out across observers.
 func (c observerChain) OnEventSubscribe(ctx context.Context, event EventSubscriptionEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -452,6 +475,7 @@ func (c observerChain) OnEventSubscribe(ctx context.Context, event EventSubscrip
 	}
 }
 
+// OnEventUnsubscribe preserves registration order while fanning unsubscribe notifications out across observers.
 func (c observerChain) OnEventUnsubscribe(ctx context.Context, event EventSubscriptionEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -461,6 +485,7 @@ func (c observerChain) OnEventUnsubscribe(ctx context.Context, event EventSubscr
 	}
 }
 
+// OnEventDeliveryStart preserves registration order while fanning delivery-start notifications out across observers.
 func (c observerChain) OnEventDeliveryStart(ctx context.Context, event EventDeliveryEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -470,6 +495,7 @@ func (c observerChain) OnEventDeliveryStart(ctx context.Context, event EventDeli
 	}
 }
 
+// OnEventDeliveryFinish preserves registration order while fanning delivery-finish notifications out across observers.
 func (c observerChain) OnEventDeliveryFinish(ctx context.Context, event EventDeliveryEvent) {
 	for _, observer := range c {
 		if observer == nil {
@@ -479,14 +505,17 @@ func (c observerChain) OnEventDeliveryFinish(ctx context.Context, event EventDel
 	}
 }
 
+// NewManager builds the configured event buses with a background lifecycle context.
 func NewManager() (*Manager, error) {
 	return NewManagerWithContext(context.Background())
 }
 
+// NewManagerWithContext builds the configured event buses with caller-controlled initialization context.
 func NewManagerWithContext(ctx context.Context) (*Manager, error) {
 	return newManagerFromEnv(normalizeEventsContext(ctx), env.WithPrefix("EVENTS"))
 }
 
+// NewBus preserves single-bus construction while surfacing initialization failures through an error bus.
 func NewBus(ctx context.Context) Bus {
 	manager, err := NewManagerWithContext(ctx)
 	if err != nil {
@@ -495,6 +524,7 @@ func NewBus(ctx context.Context) Bus {
 	return manager.Default()
 }
 
+// WithObserver instruments every managed bus without replacing observers already attached to the manager.
 func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
@@ -517,6 +547,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	return m
 }
 
+// ReadinessChecks exposes an independently named health probe for every generated event bus.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	if m == nil {
 		return nil
@@ -542,6 +573,7 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
+// ActiveDriver reports the root event driver selected by EVENTS_* configuration.
 func ActiveDriver() Driver {
 	return activeDriverForScope(env.WithPrefix("EVENTS"))
 }
@@ -578,6 +610,7 @@ func activeDriverForScope(scope env.Scope) Driver {
 	}
 }
 
+// newManagerFromEnv keeps default and named buses on the same scoped configuration path.
 func newManagerFromEnv(ctx context.Context, eventsScope env.Scope) (*Manager, error) {
 	defaultBus, err := buildBus(ctx, eventsScope)
 	if err != nil {
@@ -677,6 +710,7 @@ func eventsRedisClient(scope env.Scope) *redis.Client {
 }
 {{- end }}
 
+// eventsCSV normalizes list-valued settings so blank entries never reach a driver.
 func eventsCSV(scope env.Scope, key string, fallback string) []string {
 	raw := str.Of(scope.Get(key, fallback)).TrimSpace().String()
 	if raw == "" {
@@ -693,15 +727,18 @@ func eventsCSV(scope env.Scope, key string, fallback string) []string {
 	return values
 }
 
+// eventsDurationSeconds keeps second-based driver settings typed at their configuration boundary.
 func eventsDurationSeconds(scope env.Scope, key string, fallback int) time.Duration {
 	return time.Duration(scope.GetInt(key, fmt.Sprintf("%d", fallback))) * time.Second
 }
 
+// eventsDurationMilliseconds keeps millisecond-based driver settings typed at their configuration boundary.
 func eventsDurationMilliseconds(scope env.Scope, key string, fallback int) time.Duration {
 	return time.Duration(scope.GetInt(key, fmt.Sprintf("%d", fallback))) * time.Millisecond
 }
 
 {{- if .HasNATSJetStream }}
+// eventsJetStreamStorage defaults unknown values to memory so local event buses remain self-contained.
 func eventsJetStreamStorage(value string) jetstream.StorageType {
 	switch str.Of(value).TrimSpace().ToLower().String() {
 	case "file":
@@ -712,6 +749,7 @@ func eventsJetStreamStorage(value string) jetstream.StorageType {
 }
 {{- end }}
 
+// driverKind translates generated driver choices into the eventscore API's stable enumeration.
 func driverKind(value Driver) eventscore.Driver {
 	switch value {
 	case DriverNull:
@@ -733,6 +771,7 @@ func driverKind(value Driver) eventscore.Driver {
 	}
 }
 
+// eventsReadinessCheck binds readiness work to the caller's context before probing the transport.
 func eventsReadinessCheck(ctx context.Context, bus Bus) error {
 	if bus == nil {
 		return nil
@@ -740,6 +779,7 @@ func eventsReadinessCheck(ctx context.Context, bus Bus) error {
 	return bus.WithContext(normalizeEventsContext(ctx)).Ready()
 }
 
+// observedBus decorates any event transport with context-aware lifecycle telemetry.
 type observedBus struct {
 	name     string
 	inner    Bus
@@ -747,6 +787,7 @@ type observedBus struct {
 	ctx      context.Context
 }
 
+// observedSubscription emits one unsubscribe event even when callers close repeatedly.
 type observedSubscription struct {
 	inner    Subscription
 	observer Observer
@@ -758,6 +799,7 @@ type observedSubscription struct {
 	once     sync.Once
 }
 
+// wrapObservedBus adds instrumentation once while allowing an existing wrapper's observer chain to evolve.
 func wrapObservedBus(name string, bus Bus, observer Observer) Bus {
 	if bus == nil || observer == nil {
 		return bus
@@ -774,20 +816,24 @@ func wrapObservedBus(name string, bus Bus, observer Observer) Bus {
 	}
 }
 
+// Driver preserves the underlying transport identity through the observer wrapper.
 func (b *observedBus) Driver() Driver {
 	return b.inner.Driver()
 }
 
+// Ready probes the underlying bus with the context bound to this wrapper.
 func (b *observedBus) Ready() error {
 	return b.inner.WithContext(b.context()).Ready()
 }
 
+// WithContext clones the wrapper so per-call context binding cannot mutate a shared bus.
 func (b *observedBus) WithContext(ctx context.Context) API {
 	clone := *b
 	clone.ctx = normalizeEventsContext(ctx)
 	return &clone
 }
 
+// Publish reports the delegated publish outcome and duration to the configured observer.
 func (b *observedBus) Publish(event any) error {
 	startedAt := time.Now()
 	ctx := b.context()
@@ -802,6 +848,7 @@ func (b *observedBus) Publish(event any) error {
 	return err
 }
 
+// Subscribe instruments delivery and lifecycle notifications while preserving the handler's original signature.
 func (b *observedBus) Subscribe(handler any) (Subscription, error) {
 	ctx := b.context()
 	wrappedHandler, topic, handlerName, err := wrapObservedHandler(handler, b.observer, b.name, b.inner.Driver())
@@ -837,6 +884,7 @@ func (b *observedBus) Subscribe(handler any) (Subscription, error) {
 	}, nil
 }
 
+// context guarantees that observer callbacks and delegated calls always receive a usable context.
 func (b *observedBus) context() context.Context {
 	if b == nil || b.ctx == nil {
 		return context.Background()
@@ -844,14 +892,17 @@ func (b *observedBus) context() context.Context {
 	return b.ctx
 }
 
+// Start preserves the managed lifecycle behavior of the wrapped bus.
 func (b *observedBus) Start(ctx context.Context) error {
 	return b.inner.Start(ctx)
 }
 
+// Close preserves the managed shutdown behavior of the wrapped bus.
 func (b *observedBus) Close(ctx context.Context) error {
 	return b.inner.Close(ctx)
 }
 
+// Close emits at most one unsubscribe notification after the underlying subscription closes successfully.
 func (s *observedSubscription) Close() error {
 	var err error
 	s.once.Do(func() {
@@ -868,6 +919,7 @@ func (s *observedSubscription) Close() error {
 	return err
 }
 
+// eventBusLabel keeps observer labels stable for the unnamed default bus.
 func eventBusLabel(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -876,6 +928,7 @@ func eventBusLabel(name string) string {
 	return name
 }
 
+// eventTopicLabel derives a stable observer topic when an event does not provide one explicitly.
 func eventTopicLabel(event any) string {
 	if event == nil {
 		return "unknown"
@@ -899,6 +952,7 @@ func eventTopicLabel(event any) string {
 	return strings.ReplaceAll(str.Of(name).Snake("_").String(), "_", ".")
 }
 
+// wrapObservedHandler validates supported handler shapes before adding reflected delivery instrumentation.
 func wrapObservedHandler(handler any, observer Observer, busName string, driver Driver) (any, string, string, error) {
 	if handler == nil {
 		return nil, "unknown", "unknown", goforjevents.ErrInvalidHandler
@@ -967,6 +1021,7 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 	return wrapped.Interface(), topic, handlerName, nil
 }
 
+// sampleEventValue creates a representative value so topic labels can be derived before delivery.
 func sampleEventValue(typ reflect.Type) reflect.Value {
 	if typ.Kind() == reflect.Pointer {
 		return reflect.New(indirectType(typ))
@@ -974,6 +1029,7 @@ func sampleEventValue(typ reflect.Type) reflect.Value {
 	return reflect.Zero(typ)
 }
 
+// indirectType resolves pointer layers before constructing a representative event value.
 func indirectType(typ reflect.Type) reflect.Type {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
@@ -981,6 +1037,7 @@ func indirectType(typ reflect.Type) reflect.Type {
 	return typ
 }
 
+// eventHandlerLabel favors a stable runtime function name while safely handling invalid reflected values.
 func eventHandlerLabel(fn reflect.Value) string {
 	if !fn.IsValid() || fn.Kind() != reflect.Func {
 		return "unknown"

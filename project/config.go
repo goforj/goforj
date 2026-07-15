@@ -382,14 +382,8 @@ func (c Components) HasRuntime() bool {
 // ValidateRenderContract reports invalid component combinations that cannot be rendered coherently.
 func (c Components) ValidateRenderContract() error {
 	c = c.WithResolvedDependencies()
-	if c.Auth && !c.WebAPI {
-		return fmt.Errorf("auth component requires web_api")
-	}
 	if c.Auth && !c.HasDatabase() {
 		return fmt.Errorf("auth component requires a database")
-	}
-	if c.OAuth && !c.Auth {
-		return fmt.Errorf("oauth component requires auth")
 	}
 	if c.OAuth && !c.HasDatabase() {
 		return fmt.Errorf("oauth component requires a database")

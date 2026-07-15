@@ -21,12 +21,11 @@ const (
 
 // ServiceRequirement describes one deduplicated infrastructure service and the resources that led to it.
 type ServiceRequirement struct {
-	Key                ServiceKey
-	Label              string
-	State              ServiceState
-	EndpointAffinity   string
-	ActiveConsumers    []string
-	SupportedConsumers []string
+	Key              ServiceKey
+	Label            string
+	State            ServiceState
+	EndpointAffinity string
+	ActiveConsumers  []string
 }
 
 // EffectiveResourceConsumer describes one environment-resolved root, named, or App-scoped resource consumer.
@@ -91,12 +90,11 @@ func ResolveServicePlanWithConsumers(resourcePlan ResourcePlan, components Compo
 			continue
 		}
 		servicePlan.Requirements = append(servicePlan.Requirements, ServiceRequirement{
-			Key:                identity.key,
-			Label:              discovery.label,
-			State:              state,
-			EndpointAffinity:   identity.endpointAffinity,
-			ActiveConsumers:    append([]string(nil), discovery.activeConsumers...),
-			SupportedConsumers: append([]string(nil), discovery.supportedConsumers...),
+			Key:              identity.key,
+			Label:            discovery.label,
+			State:            state,
+			EndpointAffinity: identity.endpointAffinity,
+			ActiveConsumers:  append([]string(nil), discovery.activeConsumers...),
 		})
 	}
 	return servicePlan, nil
@@ -370,7 +368,6 @@ func appendUniqueConsumer(consumers []string, consumer string) []string {
 func cloneServiceRequirement(requirement ServiceRequirement) ServiceRequirement {
 	cloned := requirement
 	cloned.ActiveConsumers = append([]string(nil), requirement.ActiveConsumers...)
-	cloned.SupportedConsumers = append([]string(nil), requirement.SupportedConsumers...)
 	return cloned
 }
 

@@ -12,6 +12,7 @@ import (
 	"{{.GoModuleName}}/internal/caches"
 )
 
+// cacheMetricLabelSet keeps cache metric dimensions consistent across counters and histograms.
 type cacheMetricLabelSet struct {
 	Source    string
 	Name      string

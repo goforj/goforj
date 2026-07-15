@@ -10,14 +10,14 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestReconcileNewProjectTargetResourcesLeavesUntouchedTargetsAlone verifies empty and future destinations retain the proposal.
-func TestReconcileNewProjectTargetResourcesLeavesUntouchedTargetsAlone(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesLeavesUntouchedTargetsAlone verifies empty and future destinations retain the proposal.
+func TestPrepareNewProjectTargetResourcesLeavesUntouchedTargetsAlone(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
 	proposed := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	targets := []string{t.TempDir(), filepath.Join(t.TempDir(), "not-created")}
 	for _, target := range targets {
-		result, err := reconcileNewProjectTargetResources(target, proposed, components, intent)
+		result, err := prepareNewProjectTargetResources(target, proposed, components, intent)
 		if err != nil {
 			t.Fatalf("reconcile target %q: %v", target, err)
 		}
@@ -27,32 +27,11 @@ func TestReconcileNewProjectTargetResourcesLeavesUntouchedTargetsAlone(t *testin
 		if !reflect.DeepEqual(result.serviceIntent, intent) {
 			t.Fatalf("target %q changed intent\nwant: %#v\ngot:  %#v", target, intent, result.serviceIntent)
 		}
-		if result.hasOverrides || result.overrideSummary != "" {
-			t.Fatalf("target %q reported overrides: %#v", target, result)
-		}
 	}
 }
 
-// TestReconcileNewProjectTargetResourcesHidesInactiveRedisPlacement keeps ordinary owner files out of the simplified confirmation.
-func TestReconcileNewProjectTargetResourcesHidesInactiveRedisPlacement(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
-	proposed := defaultResourcePlanForTest(t, components)
-	target := t.TempDir()
-	if err := os.WriteFile(filepath.Join(target, ".env"), []byte("APP_NAME=Existing\n"), 0o600); err != nil {
-		t.Fatalf("write existing environment: %v", err)
-	}
-
-	result, err := reconcileNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{})
-	if err != nil {
-		t.Fatalf("reconcile existing target: %v", err)
-	}
-	if result.hasOverrides || result.overrideSummary != "" {
-		t.Fatalf("inactive Redis placement leaked into confirmation: %#v", result)
-	}
-}
-
-// TestReconcileNewProjectTargetResourcesPreviewsOwnerValues verifies concrete drivers and exact profile intent win without writes.
-func TestReconcileNewProjectTargetResourcesPreviewsOwnerValues(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesResolvesOwnerValues verifies concrete drivers and exact profile intent win without writes.
+func TestPrepareNewProjectTargetResourcesResolvesOwnerValues(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Auth: true, WebAPI: true, Cache: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
@@ -70,7 +49,7 @@ func TestReconcileNewProjectTargetResourcesPreviewsOwnerValues(t *testing.T) {
 		t.Fatalf("write existing environment: %v", err)
 	}
 
-	result, err := reconcileNewProjectTargetResources(target, proposed, components, intent)
+	result, err := prepareNewProjectTargetResources(target, proposed, components, intent)
 	if err != nil {
 		t.Fatalf("reconcile existing target: %v", err)
 	}
@@ -92,8 +71,8 @@ func TestReconcileNewProjectTargetResourcesPreviewsOwnerValues(t *testing.T) {
 	if !ok || mode != project.LocalServiceModeLocal {
 		t.Fatalf("effective Redis intent = %q selected=%t, want local", mode, ok)
 	}
-	if !result.hasOverrides || !strings.Contains(result.overrideSummary, "Cache default: Redis") || !strings.Contains(result.overrideSummary, "Redis service: local") {
-		t.Fatalf("override summary = %q", result.overrideSummary)
+	if !result.servicePlan.HasActiveLocal() {
+		t.Fatalf("owner-selected Redis did not produce a local service plan: %#v", result.servicePlan)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -104,8 +83,8 @@ func TestReconcileNewProjectTargetResourcesPreviewsOwnerValues(t *testing.T) {
 	}
 }
 
-// TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample verifies a committed fallback cannot replace wizard choices.
-func TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample verifies a committed fallback cannot replace wizard choices.
+func TestPrepareNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Events: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
@@ -116,7 +95,7 @@ func TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *
 		t.Fatalf("write safe environment example: %v", err)
 	}
 
-	result, err := reconcileNewProjectTargetResources(target, proposed, components, intent)
+	result, err := prepareNewProjectTargetResources(target, proposed, components, intent)
 	if err != nil {
 		t.Fatalf("reconcile safe example: %v", err)
 	}
@@ -128,9 +107,6 @@ func TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *
 	if mode != project.LocalServiceModeLocal {
 		t.Fatalf("safe fallback replaced explicit local Redis intent with %q", mode)
 	}
-	if result.hasOverrides || result.overrideSummary != "" {
-		t.Fatalf("lower-precedence safe fallback reported owner overrides: %#v", result)
-	}
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read safe environment example: %v", err)
@@ -140,8 +116,8 @@ func TestReconcileNewProjectTargetResourcesKeepsExplicitPlanAboveSafeExample(t *
 	}
 }
 
-// TestReconcileNewProjectTargetResourcesPrefersOwnerEnvironment verifies the safe example cannot replace concrete runtime ownership.
-func TestReconcileNewProjectTargetResourcesPrefersOwnerEnvironment(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesPrefersOwnerEnvironment verifies the safe example cannot replace concrete runtime ownership.
+func TestPrepareNewProjectTargetResourcesPrefersOwnerEnvironment(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
@@ -153,7 +129,7 @@ func TestReconcileNewProjectTargetResourcesPrefersOwnerEnvironment(t *testing.T)
 		t.Fatalf("write safe environment example: %v", err)
 	}
 
-	result, err := reconcileNewProjectTargetResources(target, proposed, components, intent)
+	result, err := prepareNewProjectTargetResources(target, proposed, components, intent)
 	if err != nil {
 		t.Fatalf("reconcile owner environment: %v", err)
 	}
@@ -161,13 +137,10 @@ func TestReconcileNewProjectTargetResourcesPrefersOwnerEnvironment(t *testing.T)
 	if events.Active != "inproc" {
 		t.Fatalf("safe example replaced owner events driver with %q", events.Active)
 	}
-	if result.hasOverrides {
-		t.Fatalf("matching owner environment should not report example overrides: %q", result.overrideSummary)
-	}
 }
 
-// TestReconcileNewProjectTargetResourcesRejectsInvalidOwnerContract verifies mismatch errors cannot produce partial target edits.
-func TestReconcileNewProjectTargetResourcesRejectsInvalidOwnerContract(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesRejectsInvalidOwnerContract verifies mismatch errors cannot produce partial target edits.
+func TestPrepareNewProjectTargetResourcesRejectsInvalidOwnerContract(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Jobs: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	target := t.TempDir()
@@ -177,7 +150,7 @@ func TestReconcileNewProjectTargetResourcesRejectsInvalidOwnerContract(t *testin
 		t.Fatalf("write invalid environment: %v", err)
 	}
 
-	_, err := reconcileNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{})
+	_, err := prepareNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{})
 	if err == nil || !strings.Contains(err.Error(), "excludes active") {
 		t.Fatalf("reconcile error = %v, want active/support mismatch", err)
 	}
@@ -190,8 +163,8 @@ func TestReconcileNewProjectTargetResourcesRejectsInvalidOwnerContract(t *testin
 	}
 }
 
-// TestReconcileNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback protects explicit-plan precedence during migration.
-func TestReconcileNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback protects explicit-plan precedence during migration.
+func TestPrepareNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Jobs: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	target := t.TempDir()
@@ -201,26 +174,23 @@ func TestReconcileNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback(t *test
 		t.Fatalf("write legacy project config: %v", err)
 	}
 
-	explicitResult, err := reconcileNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{})
+	explicitResult, err := prepareNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{})
 	if err != nil {
 		t.Fatalf("reconcile explicit queue plan: %v", err)
 	}
 	explicitQueue, _ := explicitResult.plan.Selection(project.ResourceQueue)
-	if explicitQueue.Active != "workerpool" || explicitResult.hasOverrides {
-		t.Fatalf("legacy queue replaced explicit plan: selection=%#v summary=%q", explicitQueue, explicitResult.overrideSummary)
+	if explicitQueue.Active != "workerpool" {
+		t.Fatalf("legacy queue replaced explicit plan: selection=%#v", explicitQueue)
 	}
 
 	incomplete := proposed.WithoutSelection(project.ResourceQueue)
-	fallbackResult, err := reconcileNewProjectTargetResources(target, incomplete, components, project.LocalServiceIntent{})
+	fallbackResult, err := prepareNewProjectTargetResources(target, incomplete, components, project.LocalServiceIntent{})
 	if err != nil {
 		t.Fatalf("reconcile legacy queue fallback: %v", err)
 	}
 	fallbackQueue, _ := fallbackResult.plan.Selection(project.ResourceQueue)
 	if fallbackQueue.Active != "nats" || !reflect.DeepEqual(fallbackQueue.Supported, []string{"nats"}) {
 		t.Fatalf("legacy queue fallback = %#v", fallbackQueue)
-	}
-	if !fallbackResult.hasOverrides || !strings.Contains(fallbackResult.overrideSummary, "legacy config") {
-		t.Fatalf("legacy fallback summary = %q", fallbackResult.overrideSummary)
 	}
 	after, readErr := os.ReadFile(configPath)
 	if readErr != nil {
@@ -231,8 +201,8 @@ func TestReconcileNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback(t *test
 	}
 }
 
-// TestReconcileNewProjectTargetResourcesDiscoversNamedAndAppServices verifies Path preview carries owner scopes into confirmation planning.
-func TestReconcileNewProjectTargetResourcesDiscoversNamedAndAppServices(t *testing.T) {
+// TestPrepareNewProjectTargetResourcesDiscoversNamedAndAppServices verifies Path preparation carries owner scopes into rendering.
+func TestPrepareNewProjectTargetResourcesDiscoversNamedAndAppServices(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	proposed := defaultResourcePlanForTest(t, components)
 	target := t.TempDir()
@@ -252,29 +222,12 @@ func TestReconcileNewProjectTargetResourcesDiscoversNamedAndAppServices(t *testi
 		t.Fatalf("write existing environment: %v", err)
 	}
 
-	result, err := reconcileNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal))
+	result, err := prepareNewProjectTargetResources(target, proposed, components, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal))
 	if err != nil {
 		t.Fatalf("reconcile existing target: %v", err)
 	}
-	for _, want := range []string{"Named/App service use", "Redis local", "cache:reports", "billing:cache:reports", "Redis external", "billing:cache"} {
-		if !strings.Contains(result.overrideSummary, want) {
-			t.Errorf("override summary omitted %q: %q", want, result.overrideSummary)
-		}
-	}
-	if !result.hasOverrides {
-		t.Fatalf("service-impacting scoped resources were not reported: %q", result.overrideSummary)
-	}
-	for _, leaked := range []string{"redis:6379", "billing.redis.example", "owner", "top-secret"} {
-		if strings.Contains(result.overrideSummary, leaked) {
-			t.Errorf("override summary leaked %q: %q", leaked, result.overrideSummary)
-		}
-	}
-	resolved, err := project.ResolveServicePlanWithConsumers(result.plan, components, result.serviceIntent, result.serviceConsumers)
-	if err != nil {
-		t.Fatalf("resolve effective target services: %v", err)
-	}
-	local := resolved.RequirementsInState(project.ServiceStateActiveLocal)
-	external := resolved.RequirementsInState(project.ServiceStateExternalRequired)
+	local := result.servicePlan.RequirementsInState(project.ServiceStateActiveLocal)
+	external := result.servicePlan.RequirementsInState(project.ServiceStateExternalRequired)
 	if len(local) != 1 || !reflect.DeepEqual(local[0].ActiveConsumers, []string{"cache:reports", "billing:cache:reports"}) {
 		t.Fatalf("local named Redis requirement = %#v", local)
 	}

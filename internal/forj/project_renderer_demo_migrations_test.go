@@ -10,6 +10,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestDemoMigrationsRenderToTopLevelMigrations keeps demo migrations in the project-owned migration directory.
 func TestDemoMigrationsRenderToTopLevelMigrations(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -36,6 +37,7 @@ func TestDemoMigrationsRenderToTopLevelMigrations(t *testing.T) {
 			},
 		},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 
 	includeDemoInternal := func(tmpl string) bool {
 		// Mirror project renderer behavior when jobs are enabled.

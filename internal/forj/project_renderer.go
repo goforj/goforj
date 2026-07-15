@@ -5,16 +5,12 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"go/ast"
 	"go/format"
-	"go/parser"
-	"go/token"
 	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -75,10 +71,19 @@ func (e *wireGenerateError) Unwrap() error {
 type ComponentRenderInput struct {
 	components         project.Components
 	renderAll          bool
-	queueDriver        string
 	resourcePlan       project.ResourcePlan
 	localServiceIntent project.LocalServiceIntent
 	serviceConsumers   []project.EffectiveResourceConsumer
+}
+
+// resourceRenderState keeps transient resource decisions together so repeated renders cannot reuse partial state.
+type resourceRenderState struct {
+	plan                    project.ResourcePlan
+	serviceIntent           project.LocalServiceIntent
+	serviceConsumers        []project.EffectiveResourceConsumer
+	explicitPlan            bool
+	pendingEnvironment      []byte
+	pendingEnvironmentWrite bool
 }
 
 // ProjectRenderer renders project files from the current config and template set.
@@ -88,13 +93,7 @@ type ProjectRenderer struct {
 	stats                   *renderStats
 	lines                   []string
 	timings                 bool
-	queueDriver             string
-	resourcePlan            project.ResourcePlan
-	localServiceIntent      project.LocalServiceIntent
-	serviceConsumers        []project.EffectiveResourceConsumer
-	explicitResourcePlan    bool
-	pendingEnvironment      []byte
-	pendingEnvironmentWrite bool
+	resources               resourceRenderState
 	removeLegacyQueueDriver bool
 	writeEnvironmentFile    func(string, []byte, fs.FileMode) error
 }
@@ -267,13 +266,7 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.stats = &renderStats{}
 	p.lines = nil
-	p.queueDriver = ""
-	p.resourcePlan = project.ResourcePlan{}
-	p.localServiceIntent = project.LocalServiceIntent{}
-	p.serviceConsumers = cloneEffectiveResourceConsumers(input.serviceConsumers)
-	p.explicitResourcePlan = false
-	p.pendingEnvironment = nil
-	p.pendingEnvironmentWrite = false
+	p.resources = resourceRenderState{}
 	p.removeLegacyQueueDriver = false
 
 	if input.renderAll {
@@ -313,41 +306,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := validateCacheRenderTransition(projectComponents); err != nil {
 		return err
 	}
-	selectedQueueDriver := input.queueDriver
-	if selection, ok := input.resourcePlan.Selection(project.ResourceQueue); ok {
-		selectedQueueDriver = selection.Active
-	}
-	// The transient plan seeds .env only; legacy YAML remains a migration source until environment initialization succeeds.
-	p.queueDriver = resolveQueueDriverSeed(selectedQueueDriver, p.config.Render.LegacyQueueDriver())
-	if len(input.resourcePlan.Selections) > 0 {
-		plan, err := normalizeExplicitResourcePlan(input.resourcePlan, projectComponents)
-		if err != nil {
-			return err
-		}
-		p.resourcePlan = plan
-		p.explicitResourcePlan = true
-		p.localServiceIntent = input.localServiceIntent
-	} else {
-		plan, err := compatibilityResourcePlan(projectComponents, p.queueDriver)
-		if err != nil {
-			return err
-		}
-		p.resourcePlan = plan
-	}
-	var err error
-	p.resourcePlan, err = withProjectDatabaseCapabilities(p.resourcePlan, p.config.Render.Components, projectComponents)
-	if err != nil {
+	if err := p.prepareResourceRenderState(input, projectComponents); err != nil {
 		return err
 	}
-	if input.renderAll {
-		if err := p.prepareResourceEnvironment(); err != nil {
-			return err
-		}
-	}
 	projectComponents = p.projectRenderComponents()
-	if _, err := project.ResolveServicePlanWithConsumers(p.resourcePlan, projectComponents, p.localServiceIntent, p.serviceConsumers); err != nil {
-		return fmt.Errorf("resolve effective App services: %w", err)
-	}
 	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
 	if !p.config.Render.Components.WebUI {
 		p.config.Render.StarterKit = project.StarterKitNone
@@ -383,11 +345,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Environment Files Initialization",
 			enabled: input.renderAll,
 			action: func() error {
-				if p.pendingEnvironmentWrite {
-					if err := p.writeEnvironmentFile(".env", p.pendingEnvironment, 0o644); err != nil {
-						return fmt.Errorf("write resource environment: %w", err)
-					}
-					p.pendingEnvironmentWrite = false
+				if err := p.publishPendingResourceEnvironment(); err != nil {
+					return err
 				}
 				envTemplates := []string{
 					".env.tmpl",
@@ -1267,81 +1226,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	return nil
 }
 
-// resolveQueueDriverSeed prefers the current wizard choice while tolerating legacy project configuration.
-func resolveQueueDriverSeed(selected string, legacy string) string {
-	if driver := normalizeQueueDriver(selected); driver != "" {
-		return driver
-	}
+// legacyQueueDriverDefault keeps old config readable while new choices flow through ResourcePlan.
+func legacyQueueDriverDefault(legacy string) string {
 	if driver := normalizeQueueDriver(legacy); driver != "" {
 		return driver
 	}
 	return "workerpool"
-}
-
-// reconcileQueueDriverEnvironment migrates applicable queue state before the legacy YAML source can be removed.
-func (p *ProjectRenderer) reconcileQueueDriverEnvironment() error {
-	if !p.projectRenderComponents().Jobs {
-		return nil
-	}
-	const path = ".env"
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read queue environment: %w", err)
-	}
-	updated, effective, changed, err := reconcileQueueDriverEnv(data, p.queueDriver)
-	if err != nil {
-		return err
-	}
-	p.queueDriver = effective
-	if !changed {
-		return nil
-	}
-	if err := p.writeEnvironmentFile(path, updated, 0o644); err != nil {
-		return fmt.Errorf("write queue environment: %w", err)
-	}
-	return nil
-}
-
-// reconcileQueueDriverEnv fills missing queue ownership keys without widening an existing build contract.
-func reconcileQueueDriverEnv(data []byte, seed string) ([]byte, string, bool, error) {
-	lines := strings.Split(string(data), "\n")
-	active, activeSet := envAssignment(lines, "QUEUE_DRIVER")
-	supported, supportedSet := envAssignment(lines, "QUEUE_SUPPORTED_DRIVERS")
-
-	effective := normalizeQueueDriver(active)
-	if activeSet && strings.TrimSpace(active) != "" && effective == "" {
-		return nil, "", false, fmt.Errorf("QUEUE_DRIVER in .env selects unsupported driver %q; choose a supported queue driver before rerendering", active)
-	}
-	if effective == "" {
-		effective = normalizeQueueDriver(seed)
-	}
-	if effective == "" {
-		effective = "redis"
-	}
-	if supportedSet && strings.TrimSpace(supported) != "" && !driverListContains(supported, effective) {
-		return nil, "", false, fmt.Errorf("QUEUE_SUPPORTED_DRIVERS in .env excludes active QUEUE_DRIVER %q; add %q before rerendering", effective, effective)
-	}
-
-	changed := false
-	if !activeSet || strings.TrimSpace(active) == "" {
-		lines = setFinalEnvAssignment(lines, "QUEUE_DRIVER", effective)
-		changed = true
-	}
-	if !supportedSet || strings.TrimSpace(supported) == "" {
-		lines = setFinalEnvAssignment(lines, "QUEUE_SUPPORTED_DRIVERS", effective)
-		changed = true
-	}
-	if !changed {
-		return data, effective, false, nil
-	}
-	updated := strings.Join(lines, "\n")
-	if !strings.HasSuffix(updated, "\n") {
-		updated += "\n"
-	}
-	return []byte(updated), effective, true, nil
 }
 
 // envAssignment returns the final concrete assignment for a key to match dotenv override ordering.
@@ -1463,6 +1353,12 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		appConfigChanged = true
 		p.setAppDevRun(app.Name, opts.DevRunCommand)
 	}
+	if err := p.prepareResourceRenderState(ComponentRenderInput{renderAll: true}, project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
+	if err := p.publishPendingResourceEnvironment(); err != nil {
+		return err
+	}
 	if err := p.migrateAppOwnedWireFilenames(); err != nil {
 		return err
 	}
@@ -1478,11 +1374,14 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		}
 	}
 
+	if projectCapabilitiesChanged {
+		// A new App has no conventional files for the full renderer to discover yet, so this reconciles shared capabilities while the App-specific render below materializes its graph.
+		if err := p.Render(ComponentRenderInput{renderAll: true}); err != nil {
+			return err
+		}
+	}
 	if err := p.renderApp(app); err != nil {
 		return err
-	}
-	if projectCapabilitiesChanged {
-		return p.Render(ComponentRenderInput{renderAll: true})
 	}
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
@@ -1586,6 +1485,12 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 			return result, fmt.Errorf("reconcile shared Cache surface after removing App %q: %w", app.Name, err)
 		}
 		return result, nil
+	}
+	if err := p.prepareResourceRenderState(ComponentRenderInput{renderAll: true}, afterProjectComponents); err != nil {
+		return result, err
+	}
+	if err := p.publishPendingResourceEnvironment(); err != nil {
+		return result, err
 	}
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
@@ -1720,10 +1625,12 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 		return false, err
 	}
 	helpFormat = project.NormalizeHelpFormat(helpFormat)
+	existing := p.config.Apps[name]
 	p.config.Apps[name] = project.AppConfig{
 		Components: components,
 		StarterKit: starterKit,
 		HelpFormat: helpFormat,
+		Extra:      existing.Extra,
 	}
 	return project.ProjectComponents(p.config) != before, nil
 }
@@ -1803,7 +1710,7 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	if app.Name == "" || app.Name == project.DefaultAppName {
 		return nil
 	}
-	prefix := strEnvPrefix(app.Name)
+	prefix := project.AppEnvironmentPrefix(app.Name)
 	if prefix == "" {
 		return nil
 	}
@@ -2078,21 +1985,6 @@ func prefixDatabaseName(prefix string, fallback string) string {
 	return name
 }
 
-// strEnvPrefix converts app slugs into env-safe prefixes without relying on config.
-func strEnvPrefix(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	parts := strings.FieldsFunc(name, func(r rune) bool {
-		return r == '-' || r == '_' || r == ' ' || r == '.'
-	})
-	for i, part := range parts {
-		parts[i] = strings.ToUpper(part)
-	}
-	return strings.Join(parts, "_")
-}
-
 // upsertEnvDefaults preserves existing env files while filling missing app defaults.
 func upsertEnvDefaults(path string, defaults map[string]string) error {
 	if len(defaults) == 0 {
@@ -2174,7 +2066,7 @@ func removeEnvSectionHeader(lines []string, appName string) []string {
 
 // removeAppEnvDefaults deletes app-prefixed overrides when an app is removed.
 func removeAppEnvDefaults(path string, appName string) (bool, error) {
-	prefix := strEnvPrefix(appName)
+	prefix := project.AppEnvironmentPrefix(appName)
 	if prefix == "" {
 		return false, nil
 	}
@@ -3062,570 +2954,6 @@ func oldFrontendDistPlaceholder(projectName string) string {
 </html>`, projectName)
 }
 
-// validateCacheRenderTransition allows generated Cache cleanup while rejecting files the App owns.
-func validateCacheRenderTransition(components project.Components) error {
-	if components.Cache {
-		return nil
-	}
-	entries, err := os.ReadDir(filepath.Join("internal", "caches"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	generated := map[string]struct{}{
-		"README.md":        {},
-		"accessors_gen.go": {},
-		"manager_gen.go":   {},
-	}
-	for _, entry := range entries {
-		if _, ok := generated[entry.Name()]; ok && !entry.IsDir() {
-			continue
-		}
-		return fmt.Errorf("Cache is disabled but internal/caches/%s is not a generated Cache artifact; move or remove it before rendering", entry.Name())
-	}
-	return nil
-}
-
-// cleanupDisabledCacheGeneratedFiles removes only framework-owned Cache artifacts after transition validation succeeds.
-func cleanupDisabledCacheGeneratedFiles() error {
-	paths := []string{
-		filepath.Join("internal", "caches", "README.md"),
-		filepath.Join("internal", "caches", "accessors_gen.go"),
-		filepath.Join("internal", "caches", "manager_gen.go"),
-		filepath.Join("internal", "cmd", "cache_shell_cmd.go"),
-		filepath.Join("internal", "observability", "cache_observer.go"),
-		filepath.Join("internal", "observability", "cache_observer_test.go"),
-		filepath.Join("internal", "metrics", "cache_metrics_gen.go"),
-		filepath.Join("internal", "metrics", "cache_metrics_gen_test.go"),
-		filepath.Join("containers", "observability", "grafana", "dashboards", "cache-overview.json"),
-	}
-	for _, path := range paths {
-		if err := removeIfExists(path); err != nil {
-			return err
-		}
-	}
-	_, err := removeEmptyDirIfEmpty(filepath.Join("internal", "caches"))
-	return err
-}
-
-// validateEventsRenderTransition rejects unsupported removal states before rendering can leave a stale Events surface behind.
-func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents project.Components) error {
-	if !projectComponents.Events {
-		for _, path := range projectEventsResiduePaths() {
-			if exists, err := renderPathExists(path); err != nil {
-				return err
-			} else if exists {
-				return fmt.Errorf("cannot disable Events while %s exists; automatic Events removal is not supported", path)
-			}
-		}
-	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
-		if err := validateLegacyEventOwnerSource(app); err != nil {
-			return err
-		}
-		if appRenderComponents(p.config, app).Events {
-			continue
-		}
-		for _, path := range []string{
-			filepath.Join(app.WireDir, "inject_subscribers_app.go"),
-			filepath.Join(app.AppDir, "event_commands.go"),
-		} {
-			exists, err := renderPathExists(path)
-			if err != nil {
-				return err
-			}
-			if exists {
-				return fmt.Errorf("cannot disable Events for App %q while %s exists; automatic Events removal is not supported", app.Name, path)
-			}
-		}
-		for _, path := range legacyEventSubscriberOwnerPaths(app) {
-			exists, err := renderPathExists(path)
-			if err != nil {
-				return err
-			}
-			if exists {
-				return fmt.Errorf("cannot disable Events for App %q while legacy subscriber owner %s exists; migrate or reconcile that App-owned file first", app.Name, path)
-			}
-		}
-		if legacyEventPipelineField(app) {
-			path := filepath.Join(app.AppDir, "commands.go")
-			return fmt.Errorf("cannot disable Events for App %q while %s registers TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
-		}
-		if legacyEventPipelineProvider(app) {
-			path := filepath.Join(app.WireDir, "inject_cmd_app.go")
-			return fmt.Errorf("cannot disable Events for App %q while %s provides TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
-		}
-		if legacyEventMakeCommandProvider(app) {
-			path := filepath.Join(app.WireDir, "inject_services_app.go")
-			return fmt.Errorf("cannot disable Events for App %q while %s provides Events make commands; automatic Events removal is not supported", app.Name, path)
-		}
-	}
-	return nil
-}
-
-// validateStorageRenderTransition rejects unsupported removal states before rendering can leave stale Storage code or obscure owner references.
-func (p *ProjectRenderer) validateStorageRenderTransition(projectComponents project.Components) error {
-	if !projectComponents.Storage {
-		for _, path := range projectStorageResiduePaths() {
-			if exists, err := renderPathExists(path); err != nil {
-				return err
-			} else if exists {
-				return fmt.Errorf("cannot disable Storage while %s exists; automatic Storage removal is not supported", path)
-			}
-		}
-	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
-		if appRenderComponents(p.config, app).Storage {
-			continue
-		}
-		path := filepath.Join(app.WireDir, "app.go")
-		exists, err := appStorageSurfaceExists(path)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("cannot disable Storage for App %q while %s exposes the generated Storage API; automatic Storage removal is not supported", app.Name, path)
-		}
-	}
-	return nil
-}
-
-// validateJobsRenderTransition rejects unsupported removal states before rendering can strand Jobs source or App-owned providers.
-func (p *ProjectRenderer) validateJobsRenderTransition(projectComponents project.Components) error {
-	if !projectComponents.Jobs {
-		path, exists, err := projectJobsRemovalResiduePath()
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("cannot disable Jobs while %s exists; automatic Jobs removal is not supported", path)
-		}
-	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
-		if appRenderComponents(p.config, app).Jobs {
-			continue
-		}
-		path, exists, err := appJobsRemovalResiduePath(app)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("cannot disable Jobs for App %q while %s contains generated Jobs accessors or wiring; automatic Jobs removal is not supported", app.Name, path)
-		}
-	}
-	return nil
-}
-
-// legacyJobsFrameworkPaths lists obsolete generated Jobs files retained only for cleanup compatibility.
-func legacyJobsFrameworkPaths() []string {
-	return []string{
-		filepath.Join("internal", "jobs", "devconsole.go"),
-		filepath.Join("internal", "jobs", "queue_registration.go"),
-	}
-}
-
-// projectJobsRemovalResiduePath centralizes the ownership boundary so renders and App removal reject the same residue.
-func projectJobsRemovalResiduePath() (string, bool, error) {
-	for _, path := range projectJobsResiduePaths() {
-		exists, residuePath, err := jobsRemovalResidueExists(path)
-		if err != nil {
-			return "", false, err
-		}
-		if exists {
-			return residuePath, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-// jobsRemovalResidueExists treats empty shells as harmless because earlier renderers can leave component directories behind.
-func jobsRemovalResidueExists(path string) (bool, string, error) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false, "", nil
-	}
-	if err != nil {
-		return false, "", fmt.Errorf("inspect component transition path %s: %w", path, err)
-	}
-	if !info.IsDir() {
-		return true, path, nil
-	}
-
-	legacyFramework := make(map[string]struct{}, len(legacyJobsFrameworkPaths()))
-	for _, frameworkPath := range legacyJobsFrameworkPaths() {
-		legacyFramework[filepath.Clean(frameworkPath)] = struct{}{}
-	}
-	residuePath := ""
-	err = filepath.WalkDir(path, func(candidate string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if _, frameworkOwned := legacyFramework[filepath.Clean(candidate)]; frameworkOwned {
-			return nil
-		}
-		residuePath = candidate
-		return fs.SkipAll
-	})
-	if err != nil {
-		return false, "", fmt.Errorf("inspect Jobs transition directory %s: %w", path, err)
-	}
-	return residuePath != "", residuePath, nil
-}
-
-// projectJobsResiduePaths stays explicit so local Queue runtime data is never mistaken for project-owned Jobs source.
-func projectJobsResiduePaths() []string {
-	return []string{
-		filepath.Join("internal", "jobs"),
-		filepath.Join("internal", "queues"),
-		filepath.Join("internal", "makecmd", "make_job_cmd.go"),
-		filepath.Join("internal", "makecmd", "make_job_cmd_test.go"),
-		filepath.Join("internal", "makecmd", "make_queue_cmd.go"),
-		filepath.Join("internal", "makecmd", "make_queue_cmd_test.go"),
-		filepath.Join("internal", "makecmd", "job.tmpl"),
-		filepath.Join("internal", "observability", "queue_observer.go"),
-		filepath.Join("internal", "observability", "queue_observer_test.go"),
-		filepath.Join("containers", "observability", "grafana", "dashboards", "queue-overview.json"),
-	}
-}
-
-// appJobsResiduePaths lists generated and owner-controlled Jobs injectors for one App.
-func appJobsResiduePaths(app project.App) []string {
-	app = normalizeRenderApp(app)
-	paths := []string{
-		filepath.Join(app.WireDir, "inject_jobs.go"),
-		filepath.Join(app.WireDir, "inject_jobs_app.go"),
-	}
-	if app.Name == project.DefaultAppName {
-		paths = append(paths, filepath.Join("wire", "inject_jobs_app.go"))
-	}
-	return paths
-}
-
-// appJobsRemovalResiduePath finds the first App-owned Jobs accessor or injector that prevents safe component removal.
-func appJobsRemovalResiduePath(app project.App) (string, bool, error) {
-	app = normalizeRenderApp(app)
-	appPath := filepath.Join(app.WireDir, "app.go")
-	exists, err := appJobsSurfaceExists(appPath)
-	if err != nil {
-		return "", false, err
-	}
-	if exists {
-		return appPath, true, nil
-	}
-	for _, path := range appJobsResiduePaths(app) {
-		exists, err := renderPathExists(path)
-		if err != nil {
-			return "", false, err
-		}
-		if exists {
-			return path, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-// appJobsSurfaceExists detects Queue accessors from receiver syntax without matching comments, strings, fields, or free functions.
-func appJobsSurfaceExists(path string) (bool, error) {
-	file, exists, err := parsedRenderGoFile(path)
-	if err != nil {
-		return false, fmt.Errorf("parse Jobs transition path %s: %w", path, err)
-	}
-	if !exists {
-		return false, nil
-	}
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name == nil || !receiverListNamesType(function.Recv, "App") {
-			continue
-		}
-		if function.Name.Name == "Queue" || function.Name.Name == "Queues" {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// receiverListNamesType recognizes pointer and generic receiver forms for one declared type.
-func receiverListNamesType(receivers *ast.FieldList, want string) bool {
-	if receivers == nil || len(receivers.List) != 1 {
-		return false
-	}
-	return receiverExpressionNamesType(receivers.List[0].Type, want)
-}
-
-// receiverExpressionNamesType unwraps receiver syntax without relying on source text.
-func receiverExpressionNamesType(expression ast.Expr, want string) bool {
-	switch value := expression.(type) {
-	case *ast.Ident:
-		return value.Name == want
-	case *ast.StarExpr:
-		return receiverExpressionNamesType(value.X, want)
-	case *ast.IndexExpr:
-		return receiverExpressionNamesType(value.X, want)
-	case *ast.IndexListExpr:
-		return receiverExpressionNamesType(value.X, want)
-	default:
-		return false
-	}
-}
-
-// projectStorageResiduePaths lists generated artifacts that prove an existing project still owns a Storage surface.
-func projectStorageResiduePaths() []string {
-	return []string{
-		filepath.Join("internal", "storages"),
-		filepath.Join("internal", "observability", "storage_observer.go"),
-		filepath.Join("internal", "observability", "storage_observer_test.go"),
-		filepath.Join("containers", "observability", "grafana", "dashboards", "storage-overview.json"),
-	}
-}
-
-// appStorageSurfaceExists detects the generated App accessor without treating comments or unrelated owner files as removal proof.
-func appStorageSurfaceExists(path string) (bool, error) {
-	file, exists, err := parsedRenderGoFile(path)
-	if err != nil {
-		return false, fmt.Errorf("parse Storage transition path %s: %w", path, err)
-	}
-	if !exists {
-		return false, nil
-	}
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Recv == nil || function.Name == nil || function.Name.Name != "Storage" {
-			continue
-		}
-		return true, nil
-	}
-	return false, nil
-}
-
-// projectEventsResiduePaths lists component-owned artifacts that a disabled render cannot safely remove or leave active.
-func projectEventsResiduePaths() []string {
-	return []string{
-		filepath.Join("internal", "events"),
-		filepath.Join("internal", "makecmd", "make_event_cmd.go"),
-		filepath.Join("internal", "makecmd", "make_event_cmd_test.go"),
-		filepath.Join("internal", "makecmd", "make_subscriber_cmd.go"),
-		filepath.Join("internal", "makecmd", "make_subscriber_cmd_test.go"),
-		filepath.Join("internal", "makecmd", "event.tmpl"),
-		filepath.Join("internal", "makecmd", "subscriber.tmpl"),
-		filepath.Join("internal", "observability", "event_observer.go"),
-		filepath.Join("internal", "cmd", "test_event_pipeline_cmd.go"),
-		filepath.Join("containers", "observability", "grafana", "dashboards", "events-overview.json"),
-	}
-}
-
-// validateLegacyEventOwnerSource ensures compatibility flags cannot silently misclassify malformed owner code.
-func validateLegacyEventOwnerSource(app project.App) error {
-	app = normalizeRenderApp(app)
-	for _, path := range []string{
-		filepath.Join(app.AppDir, "commands.go"),
-		filepath.Join(app.WireDir, "inject_cmd_app.go"),
-	} {
-		if _, _, err := parsedRenderGoFile(path); err != nil {
-			return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
-		}
-	}
-	return validateLegacyAppServiceInjectorOwnership(app)
-}
-
-// validateLegacyAppServiceInjectorOwnership rejects obsolete framework providers that cannot be removed without interpreting owner intent.
-func validateLegacyAppServiceInjectorOwnership(app project.App) error {
-	path := filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go")
-	file, exists, err := parsedRenderGoFile(path)
-	if err != nil {
-		return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
-	}
-	if !exists || !legacyAppServiceInjectorRequiresManualMigration(file) {
-		return nil
-	}
-	return fmt.Errorf("cannot automatically migrate legacy Events/Redis providers in App-owned %s; reconcile provideSharedRedisClient or the Redis-backed events.NewBus provider manually so custom providers remain intact", path)
-}
-
-// legacyAppServiceInjectorRequiresManualMigration identifies executable legacy providers without matching comments or string literals.
-func legacyAppServiceInjectorRequiresManualMigration(file *ast.File) bool {
-	if file == nil {
-		return false
-	}
-	found := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch value := node.(type) {
-		case *ast.FuncDecl:
-			if value.Name != nil && value.Name.Name == "provideSharedRedisClient" {
-				found = true
-				return false
-			}
-		case *ast.CallExpr:
-			if !selectorExpressionMatches(value.Fun, "events", "NewBus") {
-				return true
-			}
-			for _, argument := range value.Args {
-				identifier, ok := argument.(*ast.Ident)
-				if ok && identifier.Name == "redisClient" {
-					found = true
-					return false
-				}
-			}
-		}
-		return !found
-	})
-	return found
-}
-
-// legacyEventMakeCommandProvider reports whether an owner service set still references Events-only make commands.
-func legacyEventMakeCommandProvider(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go"))
-	if err != nil || !exists {
-		return false
-	}
-	return astFileContainsSelector(file, "makecmd", "NewEventCmd", "NewSubscriberCmd")
-}
-
-// astFileContainsSelector reports whether parsed owner code references any requested qualified selector.
-func astFileContainsSelector(file *ast.File, packageName string, selectorNames ...string) bool {
-	if file == nil {
-		return false
-	}
-	wanted := make(map[string]struct{}, len(selectorNames))
-	for _, selectorName := range selectorNames {
-		wanted[selectorName] = struct{}{}
-	}
-	found := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		expression, ok := node.(ast.Expr)
-		if !ok {
-			return true
-		}
-		for selectorName := range wanted {
-			if selectorExpressionMatches(expression, packageName, selectorName) {
-				found = true
-				return false
-			}
-		}
-		return !found
-	})
-	return found
-}
-
-// renderPathExists reports whether a generated or App-owned transition path remains without masking filesystem errors.
-func renderPathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("inspect component transition path %s: %w", path, err)
-}
-
-// legacyEventPipelineField reports whether an owner Commands struct still carries the pre-component Events command field.
-func legacyEventPipelineField(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).AppDir, "commands.go"))
-	if err != nil || !exists {
-		return false
-	}
-	for _, declaration := range file.Decls {
-		general, ok := declaration.(*ast.GenDecl)
-		if !ok || general.Tok != token.TYPE {
-			continue
-		}
-		for _, specification := range general.Specs {
-			typeSpec, ok := specification.(*ast.TypeSpec)
-			if !ok || typeSpec.Name.Name != "Commands" {
-				continue
-			}
-			commands, ok := typeSpec.Type.(*ast.StructType)
-			if !ok {
-				continue
-			}
-			for _, field := range commands.Fields.List {
-				if selectorExpressionMatches(field.Type, "cmd", "TestEventPipelineCmd") {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// legacyEventPipelineProvider reports whether an owner command Wire set already supplies the pre-component Events command.
-func legacyEventPipelineProvider(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_cmd_app.go"))
-	if err != nil || !exists {
-		return false
-	}
-	for _, declaration := range file.Decls {
-		general, ok := declaration.(*ast.GenDecl)
-		if !ok || general.Tok != token.VAR {
-			continue
-		}
-		for _, specification := range general.Specs {
-			valueSpec, ok := specification.(*ast.ValueSpec)
-			if !ok || !astIdentifierListContains(valueSpec.Names, "appCommandSet") {
-				continue
-			}
-			found := false
-			for _, value := range valueSpec.Values {
-				ast.Inspect(value, func(node ast.Node) bool {
-					if expression, ok := node.(ast.Expr); ok && selectorExpressionMatches(expression, "cmd", "NewTestEventPipelineCmd") {
-						found = true
-						return false
-					}
-					return !found
-				})
-				if found {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// parsedRenderGoFile parses existing owner code so compatibility flags cannot be triggered by comments or unrelated text.
-func parsedRenderGoFile(path string) (*ast.File, bool, error) {
-	source, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, true, err
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
-	if err != nil {
-		return nil, true, err
-	}
-	return file, true, nil
-}
-
-// selectorExpressionMatches recognizes one qualified selector, including pointer-wrapped field types.
-func selectorExpressionMatches(expression ast.Expr, packageName string, selectorName string) bool {
-	if pointer, ok := expression.(*ast.StarExpr); ok {
-		expression = pointer.X
-	}
-	selector, ok := expression.(*ast.SelectorExpr)
-	if !ok || selector.Sel.Name != selectorName {
-		return false
-	}
-	identifier, ok := selector.X.(*ast.Ident)
-	return ok && identifier.Name == packageName
-}
-
-// astIdentifierListContains reports whether a declaration names the requested variable.
-func astIdentifierListContains(identifiers []*ast.Ident, want string) bool {
-	for _, identifier := range identifiers {
-		if identifier.Name == want {
-			return true
-		}
-	}
-	return false
-}
-
 // appFrameworkMappings returns files the CLI can safely refresh on every render.
 func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMapping {
 	components := appRenderComponents(p.config, app)
@@ -3740,1194 +3068,6 @@ func writeFileAtomically(path string, data []byte, defaultMode fs.FileMode) erro
 		return err
 	}
 	return os.Rename(temporaryPath, path)
-}
-
-// cleanupLegacyGeneratedFiles removes obsolete framework-owned artifacts while preserving App-owned source.
-func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
-	legacyPaths := []string{
-		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
-		filepath.Join("internal", "cmd", "generate_cmd.go"),
-		"main.go",
-		filepath.Join("app", "providers.go"),
-		filepath.Join("internal", "storage", "generate_cmd.go"),
-		filepath.Join("internal", "database", "generate_cmd.go"),
-		filepath.Join("internal", "database", "generate_cmd_test.go"),
-		filepath.Join("internal", "lighthouse", "project_config.go"),
-		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
-		filepath.Join("internal", "cmd", "monitor_seed_cmd.go"),
-		filepath.Join("internal", "cmd", "monitor_reset_cmd.go"),
-		filepath.Join("internal", "cmd", "monitor_retention_cmd.go"),
-		filepath.Join("internal", "cmd", "monitor_poll_cmd.go"),
-		filepath.Join("internal", "cmd", "push_monitor_trigger_cmd.go"),
-		filepath.Join("internal", "cmd", "test_monitor_poll_loop_cmd.go"),
-		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
-		filepath.Join("internal", "cmd", "about_service.go"),
-		filepath.Join("internal", "cmd", "standalone.go"),
-		filepath.Join("internal", "cmd", "signatures.go"),
-		filepath.Join("internal", "cmd", "app_commands.go"),
-		filepath.Join("internal", "cmd", "root_cmd.go"),
-		filepath.Join("internal", "cmd", "wire.go"),
-		filepath.Join("internal", "cmd", "skip_boot.go"),
-		filepath.Join("internal", "cmd", "skip_boot_test.go"),
-		// Old generated files from before app terminology replaced the app-target model.
-		filepath.Join("internal", "cmd", "target_identity.go"),
-		filepath.Join("internal", "runtime", "targets.go"),
-		filepath.Join("internal", "runtime", "targets_test.go"),
-		filepath.Join("internal", "observability", "observers.go"),
-		filepath.Join("internal", "observability", "observers_test.go"),
-		filepath.Join("internal", "router", "routes_registry.go"),
-		filepath.Join("internal", "http", "devconsole.go"),
-		filepath.Join("internal", "http", "route.go"),
-		filepath.Join("internal", "http", "middleware_non_200.go"),
-		filepath.Join("internal", "http", "routes_list.go"),
-		filepath.Join("internal", "http", "routes_list_test.go"),
-		filepath.Join("internal", "lifecycle", "README.md"),
-		filepath.Join("internal", "lifecycle", "manager.go"),
-		filepath.Join("internal", "lifecycle", "manager_test.go"),
-		filepath.Join("internal", "lifecycle", "settings.go"),
-		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
-		filepath.Join("internal", "app", "README.md"),
-		filepath.Join("internal", "app", "about.go"),
-		filepath.Join("internal", "app", "discovery.go"),
-		filepath.Join("internal", "app", "lifecycle.go"),
-		filepath.Join("internal", "app", "lifecycle_registry.go"),
-		filepath.Join("internal", "app", "lifecycle_test.go"),
-		filepath.Join("internal", "app", "manager.go"),
-		filepath.Join("internal", "app", "manager_test.go"),
-		filepath.Join("internal", "app", "registry.go"),
-		filepath.Join("internal", "app", "runtime.go"),
-		filepath.Join("internal", "app", "runtime_host.go"),
-		filepath.Join("internal", "app", "runtime_host_test.go"),
-		filepath.Join("internal", "app", "source.go"),
-		filepath.Join("internal", "app", "timeouts.go"),
-		filepath.Join("internal", "scheduler", "devconsole.go"),
-		filepath.Join("internal", "scheduler", "app_schedules.go"),
-		filepath.Join("internal", "scheduler", "cmd.go"),
-		filepath.Join("internal", "scheduler", "lighthouse.go"),
-		filepath.Join("internal", "scheduler", "runtime.go"),
-		filepath.Join("internal", "scheduler", "scheduler.go"),
-		filepath.Join("internal", "scheduler", "scheduler_registry.go"),
-		filepath.Join("internal", "schedules", "scheduler_registry.go"),
-		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
-		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
-		filepath.Join("wire", "app.go"),
-		filepath.Join("wire", "app_test.go"),
-		filepath.Join("wire", "inject_app_services.go"),
-		filepath.Join("wire", "inject_services_app.go"),
-		filepath.Join("wire", "inject_auth.go"),
-		filepath.Join("wire", "inject_cache.go"),
-		filepath.Join("wire", "inject_cmd.go"),
-		filepath.Join("wire", "inject_db.go"),
-		filepath.Join("wire", "inject_http.go"),
-		filepath.Join("wire", "inject_http_controllers.go"),
-		filepath.Join("wire", "inject_controllers_app.go"),
-		filepath.Join("wire", "inject_http_controllers_app.go"),
-		filepath.Join("wire", "inject_jobs.go"),
-		filepath.Join("wire", "inject_mail.go"),
-		filepath.Join("wire", "inject_queue.go"),
-		filepath.Join("wire", "inject_repositories.go"),
-		filepath.Join("wire", "inject_repositories_app.go"),
-		filepath.Join("wire", "inject_scheduler.go"),
-		filepath.Join("wire", "inject_scheduler_schedules.go"),
-		filepath.Join("wire", "inject_schedules_app.go"),
-		filepath.Join("wire", "inject_storage.go"),
-		filepath.Join("wire", "wire.go"),
-		filepath.Join("wire", "wire_gen.go"),
-		filepath.Join("app", "wire", "inject_app_services.go"),
-		filepath.Join("app", "wire", "inject_cache.go"),
-		filepath.Join("app", "wire", "inject_events.go"),
-		filepath.Join("app", "wire", "inject_http_controllers.go"),
-		filepath.Join("app", "wire", "inject_inspects.go"),
-		filepath.Join("app", "wire", "inject_mail.go"),
-		filepath.Join("app", "wire", "inject_queue.go"),
-		filepath.Join("app", "wire", "inject_repositories.go"),
-		filepath.Join("app", "wire", "inject_scheduler_schedules.go"),
-		filepath.Join("app", "wire", "inject_storage.go"),
-	}
-	legacyPaths = append(legacyPaths, legacyJobsFrameworkPaths()...)
-	for _, path := range legacyPaths {
-		if err := removeIfExists(path); err != nil {
-			return err
-		}
-	}
-	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(filepath.Join("internal", "lifecycle")); err != nil {
-		return err
-	}
-	if err := os.Remove(filepath.Join("wire")); err != nil && !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
-		return err
-	}
-	if err := p.syncLegacyGeneratedTemplates(); err != nil {
-		return err
-	}
-
-	for _, app := range renderApps() {
-		components := appRenderComponents(p.config, app)
-		for _, path := range appOwnedWirePathsForApp(app) {
-			if data, err := os.ReadFile(path); err == nil {
-				updated := syncAppOwnedWireSetNames(string(data))
-				switch filepath.Base(path) {
-				case "inject_jobs_app.go":
-					updated = syncDemoAppJobInjector(updated, p.config.GoModuleName, components)
-				case "inject_repositories_app.go":
-					updated = syncDemoAppRepositoryInjector(updated, p.config.GoModuleName, components)
-				case "inject_services_app.go":
-					updated = syncLegacyAppServiceInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
-					updated = syncDemoAppServiceInjector(updated, p.config.GoModuleName, components)
-				case "inject_schedules_app.go":
-					updated = syncLegacyScheduleInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
-				}
-				if updated != string(data) {
-					formatted, err := format.Source([]byte(updated))
-					if err != nil {
-						return fmt.Errorf("gofmt %s: %w", path, err)
-					}
-					if err := os.WriteFile(path, formatted, 0o644); err != nil {
-						return err
-					}
-				}
-			} else if !os.IsNotExist(err) {
-				return err
-			}
-		}
-	}
-
-	appServiceInjectorPath := filepath.Join("app", "wire", "inject_services_app.go")
-	if data, err := os.ReadFile(appServiceInjectorPath); err == nil {
-		updated := syncLegacyAppServiceInjector(string(data), p.config.GoModuleName, "app")
-		if updated != string(data) {
-			formatted, err := format.Source([]byte(updated))
-			if err != nil {
-				return fmt.Errorf("gofmt %s: %w", appServiceInjectorPath, err)
-			}
-			if err := os.WriteFile(appServiceInjectorPath, formatted, 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	appLifecyclePath := filepath.Join("app", "lifecycle.go")
-	if data, err := os.ReadFile(appLifecyclePath); err == nil {
-		updated := syncLegacyAppLifecycleRegistry(string(data), p.config.GoModuleName)
-		if updated != string(data) {
-			formatted, err := format.Source([]byte(updated))
-			if err != nil {
-				return fmt.Errorf("gofmt %s: %w", appLifecyclePath, err)
-			}
-			if err := os.WriteFile(appLifecyclePath, formatted, 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	scheduleInjectorPath := filepath.Join("app", "wire", "inject_schedules_app.go")
-	if data, err := os.ReadFile(scheduleInjectorPath); err == nil {
-		updated := syncLegacyScheduleInjector(string(data), p.config.GoModuleName, "app")
-		if updated != string(data) {
-			formatted, err := format.Source([]byte(updated))
-			if err != nil {
-				return fmt.Errorf("gofmt %s: %w", scheduleInjectorPath, err)
-			}
-			if err := os.WriteFile(scheduleInjectorPath, formatted, 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	// Migrate legacy scheduler command names in preserved app-owned schedules.
-	appSchedulesPath := filepath.Join("app", "schedules.go")
-	if data, err := os.ReadFile(appSchedulesPath); err == nil {
-		updated := syncLegacyScheduleInjectorPackage(string(data))
-		updated = strings.ReplaceAll(updated, "demo:push-monitor-trigger", "monitor:push-test-trigger")
-		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
-		if updated != string(data) {
-			formatted, err := format.Source([]byte(updated))
-			if err != nil {
-				return fmt.Errorf("gofmt %s: %w", appSchedulesPath, err)
-			}
-			if err := os.WriteFile(appSchedulesPath, formatted, 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	defaultHealthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
-	projectComponents := project.ProjectComponents(p.config)
-	projectHealthEnabled := projectComponents.WebAPI || projectComponents.WebUI
-	appCommandsPath := filepath.Join("app", "commands.go")
-	if data, err := os.ReadFile(appCommandsPath); err == nil {
-		updated := syncCommandsName(string(data))
-		updated = syncHealthCommands(updated, defaultHealthEnabled)
-		if updated != string(data) {
-			formatted, err := format.Source([]byte(updated))
-			if err != nil {
-				return fmt.Errorf("gofmt %s: %w", appCommandsPath, err)
-			}
-			if err := os.WriteFile(appCommandsPath, formatted, 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	cmdWirePath := filepath.Join("app", "wire", "inject_cmd.go")
-	if data, err := os.ReadFile(cmdWirePath); err == nil {
-		updated := syncHealthCommandWire(string(data), defaultHealthEnabled)
-		if updated != string(data) {
-			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	prebootPath := filepath.Join("internal", "cmd", "preboot.go")
-	if data, err := os.ReadFile(prebootPath); err == nil {
-		updated := syncHealthPreboot(string(data), projectHealthEnabled)
-		if updated != string(data) {
-			if err := os.WriteFile(prebootPath, []byte(updated), 0o644); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if projectHealthEnabled {
-		if err := p.renderTemplateFile(filepath.Join("internal", "cmd", "health_cmd.go"), "internal/cmd/health_cmd.go.tmpl", p.config); err != nil {
-			return err
-		}
-		if err := p.renderTemplateFile(filepath.Join("internal", "cmd", "health_cmd_test.go"), "internal/cmd/health_cmd_test.go.tmpl", p.config); err != nil {
-			return err
-		}
-	} else {
-		if err := removeIfExists(filepath.Join("internal", "cmd", "health_cmd.go")); err != nil {
-			return err
-		}
-		if err := removeIfExists(filepath.Join("internal", "cmd", "health_cmd_test.go")); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// syncLegacyGeneratedTemplates refreshes only framework-owned templates whose historical shapes are unambiguous.
-func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
-	type templateSync struct {
-		dest     string
-		tmpl     string
-		matches  []string
-		requires []string
-	}
-
-	if err := validateLegacyAppServiceInjectorOwnership(project.DefaultApp()); err != nil {
-		return err
-	}
-
-	syncs := []templateSync{
-		{
-			dest: "internal/lighthouse/server.go",
-			tmpl: "internal/lighthouse/server.go.tmpl",
-			matches: []string{
-				`"/project"`,
-				"project.DevConfig",
-				"*DevConfig",
-				"func loadProjectConfig() (*Config, error)",
-				"var config Config",
-				`group.GET("/*"`,
-			},
-			requires: []string{
-				`"/auth/dev-session"`,
-				`group.GET("/*"`,
-				p.config.GoModuleName + "/project",
-			},
-		},
-		{
-			dest: filepath.Join("internal", "jobs", "worker.go"),
-			tmpl: "internal/jobs/worker.go.tmpl",
-			matches: []string{
-				"internal/alerts",
-				"internal/monitoring",
-				"hello *ExampleHelloJob,",
-				"monitorCheck *monitoring.MonitorCheckJob,",
-				"alertDispatch *alerts.DispatchJob,",
-			},
-		},
-	}
-
-	for _, sync := range syncs {
-		data, err := os.ReadFile(sync.dest)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return err
-		}
-		content := string(data)
-		needsRewrite := false
-		for _, match := range sync.matches {
-			if strings.Contains(content, match) {
-				needsRewrite = true
-				break
-			}
-		}
-		if !needsRewrite {
-			for _, required := range sync.requires {
-				if !strings.Contains(content, required) {
-					needsRewrite = true
-					break
-				}
-			}
-		}
-		if !needsRewrite {
-			continue
-		}
-		if err := p.renderTemplateFile(sync.dest, sync.tmpl, p.config); err != nil {
-			return err
-		}
-	}
-
-	if _, err := os.Stat(filepath.Join("project", "config.go")); os.IsNotExist(err) {
-		if err := p.renderTemplateFile(
-			filepath.Join("project", "config.go"),
-			"project/config.go.tmpl",
-			p.config,
-		); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config_patch.go")); os.IsNotExist(err) {
-		if err := p.renderTemplateFile(
-			filepath.Join("internal", "lighthouse", "project_config_patch.go"),
-			"internal/lighthouse/project_config_patch.go.tmpl",
-			p.config,
-		); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	if err := removeIfExists(filepath.Join("internal", "lighthouse", "project_config.go")); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// eventSubscriberOwnerMigration describes one unambiguous legacy owner move.
-type eventSubscriberOwnerMigration struct {
-	source string
-	target string
-}
-
-// jobsOwnerMigration describes the preserved default-App Jobs injector move from the former top-level Wire package.
-type jobsOwnerMigration struct {
-	source string
-	target string
-}
-
-// migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
-func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
-	eventMigrations, err := planEventSubscriberOwnerMigrations(p.config)
-	if err != nil {
-		return err
-	}
-	jobsMigration, err := planJobsOwnerMigration(p.config)
-	if err != nil {
-		return err
-	}
-	if err := applyEventSubscriberOwnerMigrations(eventMigrations); err != nil {
-		return err
-	}
-	if err := applyJobsOwnerMigration(jobsMigration); err != nil {
-		return err
-	}
-	if err := migrateLegacyCacheShellCommandOwners(); err != nil {
-		return err
-	}
-	if err := repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
-		return err
-	}
-	return migratePreservedFile(
-		filepath.Join("app", "wire", "inject_controllers_app.go"),
-		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
-	)
-}
-
-// migrateLegacyCacheShellCommandOwners moves the former generated Cache command out of preserved App command files.
-func migrateLegacyCacheShellCommandOwners() error {
-	for _, app := range renderApps() {
-		path := filepath.Join(app.AppDir, "commands.go")
-		source, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return err
-		}
-		updated, changed, err := removeLegacyCacheShellCommandSource(path, source)
-		if err != nil {
-			return err
-		}
-		if !changed {
-			continue
-		}
-		if err := writeFileAtomically(path, updated, 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// removeLegacyCacheShellCommandSource removes the former generated Cache command wiring without depending on gofmt alignment.
-func removeLegacyCacheShellCommandSource(path string, source []byte) ([]byte, bool, error) {
-	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
-	if err != nil {
-		return nil, false, fmt.Errorf("parse legacy Cache command owner %s: %w", path, err)
-	}
-	cacheShellSelectors := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		if ok && selectorExpressionMatches(selector, "cmd", "CacheShellCmd") {
-			cacheShellSelectors++
-		}
-		return true
-	})
-	if cacheShellSelectors == 0 {
-		return source, false, nil
-	}
-	if cacheShellSelectors != 2 {
-		return nil, false, fmt.Errorf("cannot migrate legacy Cache command owner %s because its CacheShellCmd wiring was customized or is incomplete; move CacheShellCmd out of the App-owned Commands type manually", path)
-	}
-
-	targets := []*regexp.Regexp{
-		regexp.MustCompile(`^[ \t]*CacheShellCmd[ \t]+cmd\.CacheShellCmd[ \t]+` + "`cmd:\"\"`" + `[ \t\r]*$`),
-		regexp.MustCompile(`^[ \t]*cacheShellCmd[ \t]+\*cmd\.CacheShellCmd,[ \t\r]*$`),
-		regexp.MustCompile(`^[ \t]*CacheShellCmd:[ \t]*\*cacheShellCmd,[ \t\r]*$`),
-	}
-	found := make([]int, len(targets))
-	lines := strings.SplitAfter(string(source), "\n")
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		candidate := strings.TrimSuffix(line, "\n")
-		matched := false
-		for index, target := range targets {
-			if !target.MatchString(candidate) {
-				continue
-			}
-			found[index]++
-			matched = true
-			break
-		}
-		if matched {
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-	for _, count := range found {
-		if count != 1 {
-			return nil, false, fmt.Errorf("cannot migrate legacy Cache command owner %s because its CacheShellCmd wiring was customized or is incomplete; move CacheShellCmd out of the App-owned Commands type manually", path)
-		}
-	}
-	updated := []byte(strings.Join(filtered, ""))
-	if _, err := parser.ParseFile(token.NewFileSet(), path, updated, 0); err != nil {
-		return nil, false, fmt.Errorf("validate migrated Cache command owner %s: %w", path, err)
-	}
-	return updated, true, nil
-}
-
-// planJobsOwnerMigration rejects destination collisions before a legacy owner is moved byte-for-byte.
-func planJobsOwnerMigration(config *project.Config) (*jobsOwnerMigration, error) {
-	if config == nil || !appRenderComponents(config, project.DefaultApp()).Jobs {
-		return nil, nil
-	}
-	source := filepath.Join("wire", "inject_jobs_app.go")
-	target := filepath.Join(project.DefaultApp().WireDir, "inject_jobs_app.go")
-	sourceExists, err := renderPathExists(source)
-	if err != nil {
-		return nil, err
-	}
-	if !sourceExists {
-		return nil, nil
-	}
-	targetExists, err := renderPathExists(target)
-	if err != nil {
-		return nil, err
-	}
-	if targetExists {
-		return nil, fmt.Errorf("cannot migrate legacy Jobs owner %s to %s because both exist; reconcile the App-owned files manually", source, target)
-	}
-	return &jobsOwnerMigration{source: source, target: target}, nil
-}
-
-// applyJobsOwnerMigration moves the preserved injector only while its destination remains unclaimed.
-func applyJobsOwnerMigration(migration *jobsOwnerMigration) error {
-	if migration == nil {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(migration.target), 0o755); err != nil {
-		return fmt.Errorf("prepare Jobs owner destination %s: %w", migration.target, err)
-	}
-	targetExists, err := renderPathExists(migration.target)
-	if err != nil {
-		return err
-	}
-	if targetExists {
-		return fmt.Errorf("cannot migrate legacy Jobs owner %s to %s because the destination now exists; reconcile the App-owned files manually", migration.source, migration.target)
-	}
-	if err := os.Rename(migration.source, migration.target); err != nil {
-		return fmt.Errorf("migrate legacy Jobs owner %s to %s: %w", migration.source, migration.target, err)
-	}
-	return nil
-}
-
-// eventSubscriberOwnerPath returns the current App-owned subscriber injector path.
-func eventSubscriberOwnerPath(app project.App) string {
-	app = normalizeRenderApp(app)
-	return filepath.Join(app.WireDir, "inject_subscribers_app.go")
-}
-
-// legacyEventSubscriberOwnerPaths returns historical subscriber injector paths that belong to one App.
-func legacyEventSubscriberOwnerPaths(app project.App) []string {
-	app = normalizeRenderApp(app)
-	paths := []string{filepath.Join(app.WireDir, "inject_event_subscribers.go")}
-	if app.Name == project.DefaultAppName {
-		paths = append(paths,
-			filepath.Join("wire", "inject_event_subscribers.go"),
-			filepath.Join("wire", "inject_subscribers_app.go"),
-		)
-	}
-	return paths
-}
-
-// planEventSubscriberOwnerMigrations rejects ambiguous ownership before moving any preserved file.
-func planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscriberOwnerMigration, error) {
-	migrations := make([]eventSubscriberOwnerMigration, 0)
-	for _, app := range runtimeAppsForMetadata(config) {
-		if !appRenderComponents(config, app).Events {
-			continue
-		}
-		target := eventSubscriberOwnerPath(app)
-		sources := make([]string, 0)
-		for _, source := range legacyEventSubscriberOwnerPaths(app) {
-			exists, err := renderPathExists(source)
-			if err != nil {
-				return nil, err
-			}
-			if exists {
-				sources = append(sources, source)
-			}
-		}
-		if len(sources) == 0 {
-			continue
-		}
-		targetExists, err := renderPathExists(target)
-		if err != nil {
-			return nil, err
-		}
-		if targetExists {
-			return nil, fmt.Errorf("cannot migrate legacy Events subscriber owner %s to %s because both exist; reconcile the App-owned files manually", strings.Join(sources, ", "), target)
-		}
-		if len(sources) > 1 {
-			return nil, fmt.Errorf("cannot migrate multiple legacy Events subscriber owners %s to %s; reconcile the App-owned files manually", strings.Join(sources, ", "), target)
-		}
-		if _, _, err := parsedRenderGoFile(sources[0]); err != nil {
-			return nil, fmt.Errorf("parse legacy Events subscriber owner %s: %w", sources[0], err)
-		}
-		migrations = append(migrations, eventSubscriberOwnerMigration{source: sources[0], target: target})
-	}
-	return migrations, nil
-}
-
-// applyEventSubscriberOwnerMigrations moves only plans whose destination remains unclaimed.
-func applyEventSubscriberOwnerMigrations(migrations []eventSubscriberOwnerMigration) error {
-	for _, migration := range migrations {
-		if err := os.MkdirAll(filepath.Dir(migration.target), 0o755); err != nil {
-			return fmt.Errorf("prepare Events subscriber owner destination %s: %w", migration.target, err)
-		}
-		targetExists, err := renderPathExists(migration.target)
-		if err != nil {
-			return err
-		}
-		if targetExists {
-			return fmt.Errorf("cannot migrate legacy Events subscriber owner %s to %s because the destination now exists; reconcile the App-owned files manually", migration.source, migration.target)
-		}
-		if err := os.Rename(migration.source, migration.target); err != nil {
-			return fmt.Errorf("migrate legacy Events subscriber owner %s to %s: %w", migration.source, migration.target, err)
-		}
-	}
-	return nil
-}
-
-// repairLegacyEventSubscriberOwnerSetNames updates only the historical package-level set identifier in preserved owner files.
-func repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
-	for _, app := range runtimeAppsForMetadata(config) {
-		if !appRenderComponents(config, app).Events {
-			continue
-		}
-		path := eventSubscriberOwnerPath(app)
-		source, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("read Events subscriber owner %s: %w", path, err)
-		}
-		updated, changed, err := renameLegacyEventSubscriberSetIdentifier(path, source)
-		if err != nil {
-			return err
-		}
-		if !changed {
-			continue
-		}
-		if err := writeFileAtomically(path, updated, 0o644); err != nil {
-			return fmt.Errorf("repair Events subscriber owner %s: %w", path, err)
-		}
-	}
-	return nil
-}
-
-// renameLegacyEventSubscriberSetIdentifier rewrites bound identifiers while preserving owner formatting, comments, strings, and providers.
-func renameLegacyEventSubscriberSetIdentifier(path string, source []byte) ([]byte, bool, error) {
-	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, path, source, parser.ParseComments)
-	if err != nil {
-		return nil, false, fmt.Errorf("parse Events subscriber owner %s: %w", path, err)
-	}
-	legacyObject := file.Scope.Lookup("eventSubscriberSet")
-	if legacyObject == nil {
-		return source, false, nil
-	}
-	if legacyObject.Kind != ast.Var {
-		return nil, false, fmt.Errorf("cannot repair Events subscriber owner %s because eventSubscriberSet is not a package-level variable; reconcile the App-owned file manually", path)
-	}
-	if file.Scope.Lookup("appSubscriberSet") != nil {
-		return nil, false, fmt.Errorf("cannot repair Events subscriber owner %s because both eventSubscriberSet and appSubscriberSet are declared; reconcile the App-owned file manually", path)
-	}
-	tokenFile := fileSet.File(file.Pos())
-	if tokenFile == nil {
-		return nil, false, fmt.Errorf("locate Events subscriber owner source positions for %s", path)
-	}
-	type sourceRange struct {
-		start int
-		end   int
-	}
-	ranges := make([]sourceRange, 0)
-	ast.Inspect(file, func(node ast.Node) bool {
-		identifier, ok := node.(*ast.Ident)
-		if !ok || identifier.Obj != legacyObject {
-			return true
-		}
-		ranges = append(ranges, sourceRange{
-			start: tokenFile.Offset(identifier.Pos()),
-			end:   tokenFile.Offset(identifier.End()),
-		})
-		return true
-	})
-	if len(ranges) == 0 {
-		return nil, false, fmt.Errorf("locate eventSubscriberSet declaration in Events subscriber owner %s", path)
-	}
-	sort.Slice(ranges, func(left int, right int) bool {
-		return ranges[left].start < ranges[right].start
-	})
-	var updated bytes.Buffer
-	cursor := 0
-	for _, sourceRange := range ranges {
-		if sourceRange.start < cursor || sourceRange.end > len(source) {
-			return nil, false, fmt.Errorf("repair overlapping eventSubscriberSet identifiers in Events subscriber owner %s", path)
-		}
-		updated.Write(source[cursor:sourceRange.start])
-		updated.WriteString("appSubscriberSet")
-		cursor = sourceRange.end
-	}
-	updated.Write(source[cursor:])
-	return updated.Bytes(), true, nil
-}
-
-// appOwnedWirePathsForApp lists render-once injectors that may need compatibility repairs.
-func appOwnedWirePathsForApp(app project.App) []string {
-	wireDir := app.WireDir
-	if wireDir == "" {
-		wireDir = project.DefaultApp().WireDir
-	}
-	return []string{
-		filepath.Join(wireDir, "inject_cmd_app.go"),
-		filepath.Join(wireDir, "inject_http_controllers_app.go"),
-		filepath.Join(wireDir, "inject_jobs_app.go"),
-		filepath.Join(wireDir, "inject_repositories_app.go"),
-		filepath.Join(wireDir, "inject_schedules_app.go"),
-		filepath.Join(wireDir, "inject_services_app.go"),
-		filepath.Join(wireDir, "inject_subscribers_app.go"),
-	}
-}
-
-// migratePreservedFile renames a render-once file only when the replacement does not already exist.
-func migratePreservedFile(oldPath string, newPath string) error {
-	if _, err := os.Stat(oldPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if _, err := os.Stat(newPath); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return os.Rename(oldPath, newPath)
-}
-
-// syncAppOwnedWireSetNames updates preserved app-owned injectors to the current set naming contract.
-func syncAppOwnedWireSetNames(content string) string {
-	updated := strings.ReplaceAll(content, "cmdAppSet", "appCommandSet")
-	updated = strings.ReplaceAll(updated, "httpAppControllerSet", "appHttpControllerSet")
-	updated = strings.ReplaceAll(updated, "appControllerSet", "appHttpControllerSet")
-	updated = strings.ReplaceAll(updated, "httpControllerSet provides all HTTP route controllers.", "appHttpControllerSet provides all HTTP route controllers.")
-	updated = strings.ReplaceAll(updated, "jobAppSet", "appJobSet")
-	updated = strings.ReplaceAll(updated, "schedulerScheduleSet", "appScheduleSet")
-	return updated
-}
-
-// syncDemoAppJobInjector repairs early app job injectors that omitted demo job providers.
-func syncDemoAppJobInjector(content string, moduleName string, components project.Components) string {
-	if !components.DemoApp || !components.Jobs || strings.TrimSpace(moduleName) == "" {
-		return content
-	}
-	updated := content
-	updated = ensureGoImport(updated, moduleName+"/internal/alerts", "")
-	updated = ensureGoImport(updated, moduleName+"/internal/monitoring", "")
-	for _, provider := range []string{
-		"\talerts.NewDispatchJob,",
-		"\tmonitoring.NewCheckService,",
-		"\tmonitoring.NewMonitorCheckJob,",
-	} {
-		if !strings.Contains(updated, strings.TrimSpace(provider)) {
-			updated = insertIntoWireSet(updated, "appJobSet", provider)
-		}
-	}
-	return updated
-}
-
-// syncDemoAppRepositoryInjector repairs early app repository injectors that omitted demo repositories.
-func syncDemoAppRepositoryInjector(content string, moduleName string, components project.Components) string {
-	if !components.DemoApp || !components.HasDatabase() || strings.TrimSpace(moduleName) == "" {
-		return content
-	}
-	updated := content
-	for _, importPath := range []string{
-		moduleName + "/internal/appsettings",
-		moduleName + "/internal/models",
-		moduleName + "/internal/notification",
-	} {
-		updated = ensureGoImport(updated, importPath, "")
-	}
-	if strings.Contains(updated, "wire.Value(repositorySetPlaceholder{})") {
-		updated = strings.Replace(updated, "\twire.Value(repositorySetPlaceholder{}),\n", "", 1)
-	}
-	for _, provider := range []string{
-		"\tappsettings.NewAppSettingRepo,",
-		"\tmodels.NewAlertDispatchEventRepo,",
-		"\tmodels.NewIncidentRepo,",
-		"\tmodels.NewMonitorCheckRepo,",
-		"\tmodels.NewMonitorCheckRollupRepo,",
-		"\tmodels.NewMonitorRepo,",
-		"\tnotification.NewChannelRepo,",
-	} {
-		if !strings.Contains(updated, strings.TrimSpace(provider)) {
-			updated = insertIntoWireSet(updated, "repositorySet", provider)
-		}
-	}
-	return updated
-}
-
-// syncDemoAppServiceInjector repairs early app service injectors that omitted demo providers.
-func syncDemoAppServiceInjector(content string, moduleName string, components project.Components) string {
-	if !components.DemoApp || !components.HasDatabase() || strings.TrimSpace(moduleName) == "" {
-		return content
-	}
-	updated := content
-	for _, importPath := range []string{
-		moduleName + "/internal/appsettings",
-		moduleName + "/internal/logger",
-		moduleName + "/internal/monitoring",
-		moduleName + "/internal/notification",
-	} {
-		updated = ensureGoImport(updated, importPath, "")
-	}
-	for _, provider := range []string{
-		"\tmonitoring.NewIncidentTransitionService,",
-		"\tmonitoring.NewRetentionService,",
-		"\tnotification.NewManager,",
-		"\tpreseedDemoDefaults,",
-	} {
-		if !strings.Contains(updated, strings.TrimSpace(provider)) {
-			updated = insertIntoWireSet(updated, "appSet", provider)
-		}
-	}
-	if !strings.Contains(updated, "type demoPreseedReady struct{}") {
-		updated = strings.TrimRight(updated, "\n") + demoPreseedReadyBlock() + "\n"
-	}
-	return updated
-}
-
-// demoPreseedReadyBlock restores demo preseed wiring for apps rendered before the provider split.
-func demoPreseedReadyBlock() string {
-	return `
-
-type demoPreseedReady struct{}
-
-func preseedDemoDefaults(
-	logger *logger.AppLogger,
-	settingRepo *appsettings.AppSettingRepo,
-	channelRepo *notification.ChannelRepo,
-) (*demoPreseedReady, error) {
-	setupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)
-	if inserted, err := settingRepo.PreseedDefaults(setupCtx); err != nil {
-		return nil, err
-	} else if inserted > 0 {
-		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
-	}
-	if inserted, err := channelRepo.PreseedDefaults(setupCtx); err != nil {
-		return nil, err
-	} else if inserted > 0 {
-		logger.Info().Int("inserted", inserted).Msg("notification channels preseeded")
-	}
-	return &demoPreseedReady{}, nil
-}
-`
-}
-
-// syncLegacyScheduleInjectorPackage updates preserved schedule wiring after the scheduler package rename.
-func syncLegacyScheduleInjectorPackage(content string) string {
-	updated := strings.ReplaceAll(content, "/internal/scheduler", "/internal/schedules")
-	updated = strings.ReplaceAll(updated, "scheduler.AppSchedules", "schedules.AppSchedules")
-	updated = strings.ReplaceAll(updated, "scheduler.NewAppSchedules", "schedules.NewAppSchedules")
-	updated = strings.ReplaceAll(updated, "scheduler.ScheduleRegistry", "schedules.ScheduleRegistry")
-	updated = strings.ReplaceAll(updated, "scheduler.RegisterRecurring", "schedules.RegisterRecurring")
-	updated = strings.ReplaceAll(updated, "*scheduler.Scheduler", "*schedules.Scheduler")
-	return updated
-}
-
-// syncLegacyScheduleInjector updates preserved app schedule wiring after schedule registration moved to app/.
-func syncLegacyScheduleInjector(content string, moduleName string, appImportPath string) string {
-	moduleName = strings.TrimSpace(moduleName)
-	if moduleName == "" {
-		return syncLegacyScheduleInjectorPackage(content)
-	}
-
-	updated := syncLegacyScheduleInjectorPackage(content)
-	appImportPath = strings.Trim(filepath.ToSlash(strings.TrimSpace(appImportPath)), "/")
-	if appImportPath == "" {
-		appImportPath = "app"
-	}
-	schedulesPath := moduleName + "/internal/schedules"
-	compositionAppPath := moduleName + "/" + appImportPath
-	appPackageName := project.AppPackageName(filepath.Base(appImportPath))
-	updated = ensureGoImport(updated, schedulesPath, "")
-	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
-	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
-	updated = replaceQualifiedIdentifier(updated, "targetapp.NewScheduleRegistry", appPackageName+".NewScheduleRegistry")
-	updated = replaceQualifiedIdentifier(updated, "targetapp.ScheduleRegistry", appPackageName+".ScheduleRegistry")
-	updated = replaceQualifiedIdentifier(updated, "compositionapp.NewScheduleRegistry", appPackageName+".NewScheduleRegistry")
-	updated = replaceQualifiedIdentifier(updated, "compositionapp.ScheduleRegistry", appPackageName+".ScheduleRegistry")
-	updated = ensureGoImport(updated, compositionAppPath, "")
-	updated = strings.ReplaceAll(updated, "\tschedules.NewAppSchedules,", "\tProvideAppSchedules,")
-
-	if !strings.Contains(updated, "func ProvideAppSchedules(") {
-		updated = appendProvideAppSchedules(updated)
-	}
-	if !strings.Contains(updated, appPackageName+".NewScheduleRegistry") {
-		updated = insertIntoWireSet(updated, "appScheduleSet", "\t"+appPackageName+".NewScheduleRegistry,")
-	}
-	scheduleBinding := "wire.Bind(new(schedules.ScheduleRegistry), new(*" + appPackageName + ".ScheduleRegistry))"
-	if !strings.Contains(updated, scheduleBinding) {
-		updated = insertIntoWireSet(updated, "appScheduleSet", "\t"+scheduleBinding+",")
-	}
-	return dedupeWireSetProviders(updated, "appScheduleSet")
-}
-
-// appendProvideAppSchedules adds the explicit zero-arg provider Wire needs for an empty legacy container.
-func appendProvideAppSchedules(content string) string {
-	content = strings.TrimRight(content, "\n")
-	return content + `
-
-// ProvideAppSchedules creates the legacy AppSchedules container.
-func ProvideAppSchedules() *schedules.AppSchedules {
-	return schedules.NewAppSchedules()
-}
-`
-}
-
-// syncLegacyAppServiceInjector updates preserved app service wiring after lifecycle moved to app/.
-func syncLegacyAppServiceInjector(content string, moduleName string, appImportPath string) string {
-	moduleName = strings.TrimSpace(moduleName)
-	if moduleName == "" {
-		return content
-	}
-
-	updated := content
-	updated = replaceQualifiedIdentifier(updated, "app.NewTimeouts", "runtime.NewTimeouts")
-	updated = replaceQualifiedIdentifier(updated, "app.BackgroundSourceContext", "runtime.BackgroundSourceContext")
-	updated = replaceQualifiedIdentifier(updated, "app.SourceStartup", "runtime.SourceStartup")
-	updated = replaceQualifiedIdentifier(updated, "runtimeapp.NewTimeouts", "runtime.NewTimeouts")
-	updated = replaceQualifiedIdentifier(updated, "runtimeapp.BackgroundSourceContext", "runtime.BackgroundSourceContext")
-	updated = replaceQualifiedIdentifier(updated, "runtimeapp.SourceStartup", "runtime.SourceStartup")
-
-	legacyRuntimePath := moduleName + "/internal/app"
-	runtimePath := moduleName + "/internal/runtime"
-	appImportPath = strings.Trim(filepath.ToSlash(strings.TrimSpace(appImportPath)), "/")
-	if appImportPath == "" {
-		appImportPath = "app"
-	}
-	compositionAppPath := moduleName + "/" + appImportPath
-	appPackageName := project.AppPackageName(filepath.Base(appImportPath))
-	updated = replaceQualifiedIdentifier(updated, "app.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
-	// targetapp was emitted by early multi-app renders; keep this as a legacy migration shim only.
-	updated = replaceQualifiedIdentifier(updated, "targetapp.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
-	updated = replaceQualifiedIdentifier(updated, "compositionapp.NewLifecycleRegistry", appPackageName+".NewLifecycleRegistry")
-	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
-	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
-	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
-	updated = ensureGoImport(updated, compositionAppPath, "")
-	updated = removeFrameworkMetricsProviderFromAppServiceInjector(updated, moduleName)
-	return updated
-}
-
-// removeFrameworkMetricsProviderFromAppServiceInjector moves metrics manager ownership back to framework-managed wiring.
-func removeFrameworkMetricsProviderFromAppServiceInjector(content string, moduleName string) string {
-	updated := strings.Replace(content, "\tmetrics.NewManager,\n", "", 1)
-	updated = strings.Replace(updated, "\t"+strconv.Quote(moduleName+"/internal/metrics")+"\n", "", 1)
-	return updated
-}
-
-// syncLegacyAppLifecycleRegistry updates preserved app lifecycle registration imports after the runtime package rename.
-func syncLegacyAppLifecycleRegistry(content string, moduleName string) string {
-	moduleName = strings.TrimSpace(moduleName)
-	if moduleName == "" {
-		return content
-	}
-
-	updated := content
-	for _, name := range []string{
-		"Lifecycle",
-		"BeforeStartup",
-		"Startup",
-		"AfterStartup",
-		"BeforeShutdown",
-		"Shutdown",
-		"AfterShutdown",
-	} {
-		updated = replaceQualifiedIdentifier(updated, "runtimeapp."+name, "runtime."+name)
-	}
-
-	legacyRuntimePath := moduleName + "/internal/app"
-	runtimePath := moduleName + "/internal/runtime"
-	updated = replaceGoImportPath(updated, legacyRuntimePath, runtimePath, "")
-	updated = replaceGoImportPath(updated, runtimePath, runtimePath, "")
-	return updated
-}
-
-// replaceQualifiedIdentifier rewrites an old qualifier without touching longer aliases.
-func replaceQualifiedIdentifier(content string, old string, replacement string) string {
-	re := regexp.MustCompile(`(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(old))
-	return re.ReplaceAllString(content, `${1}`+replacement)
-}
-
-// replaceGoImportPath rewrites an existing import to a new path and optional alias.
-func replaceGoImportPath(content string, oldPath string, newPath string, alias string) string {
-	oldQuotedPath := strconv.Quote(oldPath)
-	newQuotedPath := strconv.Quote(newPath)
-	replacement := "\t" + newQuotedPath
-	if alias != "" {
-		replacement = "\t" + alias + " " + newQuotedPath
-	}
-	replacements := map[string]string{
-		"\t" + oldQuotedPath:                replacement,
-		"\tapp " + oldQuotedPath:            replacement,
-		"\tcompositionapp " + oldQuotedPath: replacement,
-		"\truntimeapp " + oldQuotedPath:     replacement,
-		"\truntime " + oldQuotedPath:        replacement,
-		// targetapp is legacy-only compatibility for preserved render-once files.
-		"\ttargetapp " + oldQuotedPath: replacement,
-	}
-	for from, to := range replacements {
-		content = strings.ReplaceAll(content, from, to)
-	}
-	return content
-}
-
-// ensureGoImport inserts a named import into the first import block when missing.
-func ensureGoImport(content string, importPath string, alias string) string {
-	if strings.Contains(content, strconv.Quote(importPath)) {
-		if alias != "" {
-			return replaceGoImportPath(content, importPath, importPath, alias)
-		}
-		return content
-	}
-	importStart := strings.Index(content, "import (\n")
-	if importStart == -1 {
-		return content
-	}
-	insertAt := importStart + len("import (\n")
-	importLine := "\t" + strconv.Quote(importPath) + "\n"
-	if alias != "" {
-		importLine = "\t" + alias + " " + strconv.Quote(importPath) + "\n"
-	}
-	return content[:insertAt] + importLine + content[insertAt:]
-}
-
-// insertIntoWireSet inserts a provider before the named wire set closes.
-func insertIntoWireSet(content string, setName string, provider string) string {
-	lines := strings.Split(content, "\n")
-	inSet := false
-	for i, line := range lines {
-		if !inSet && strings.Contains(line, "var "+setName+" = wire.NewSet(") {
-			inSet = true
-			continue
-		}
-		if inSet && strings.TrimSpace(line) == ")" {
-			lines = append(lines[:i], append([]string{provider}, lines[i:]...)...)
-			return strings.Join(lines, "\n")
-		}
-	}
-	return content
-}
-
-// dedupeWireSetProviders removes duplicate provider entries left by older compatibility migrations.
-func dedupeWireSetProviders(content string, setName string) string {
-	lines := strings.Split(content, "\n")
-	inSet := false
-	seen := map[string]bool{}
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if !inSet && strings.Contains(line, "var "+setName+" = wire.NewSet(") {
-			inSet = true
-			out = append(out, line)
-			continue
-		}
-		if inSet {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == ")" {
-				inSet = false
-				out = append(out, line)
-				continue
-			}
-			if trimmed != "" {
-				if seen[trimmed] {
-					continue
-				}
-				seen[trimmed] = true
-			}
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
-}
-
-// syncCommandsName migrates preserved app command registration away from the legacy AppCommands name.
-func syncCommandsName(content string) string {
-	updated := strings.ReplaceAll(content, "// AppCommands wires application-specific commands into the CLI.", "// Commands wires application-specific commands into the CLI.")
-	updated = strings.ReplaceAll(updated, "type AppCommands struct {", "type Commands struct {")
-	updated = strings.ReplaceAll(updated, "// NewAppCommands creates a new AppCommands instance with the given commands.", "// NewCommands creates a new Commands instance with the given commands.")
-	updated = strings.ReplaceAll(updated, "func NewAppCommands(", "func NewCommands(")
-	updated = strings.ReplaceAll(updated, ") *AppCommands {", ") *Commands {")
-	updated = strings.ReplaceAll(updated, "return &AppCommands{", "return &Commands{")
-	return updated
-}
-
-func syncHealthCommandWire(content string, enabled bool) string {
-	const healthLine = "\tcmd.NewHealthCmd,\n"
-	if !enabled {
-		return strings.Replace(content, healthLine, "", 1)
-	}
-	if strings.Contains(content, healthLine) {
-		return content
-	}
-	anchor := "\tcmd.NewAboutCmd,\n"
-	if strings.Contains(content, anchor) {
-		return strings.Replace(content, anchor, anchor+healthLine, 1)
-	}
-	return content
-}
-
-// syncHealthPreboot keeps preserved preboot command dispatch aligned with HTTP component availability.
-func syncHealthPreboot(content string, enabled bool) string {
-	const healthLine = "\tfunc() interface{} { return NewHealthCmd() },\n"
-	if !enabled {
-		return strings.Replace(content, healthLine, "", 1)
-	}
-	if strings.Contains(content, healthLine) {
-		return content
-	}
-	anchor := "\tfunc() interface{} { return NewAboutCmd() },\n"
-	if strings.Contains(content, anchor) {
-		return strings.Replace(content, anchor, anchor+healthLine, 1)
-	}
-	return content
-}
-
-// syncHealthCommands keeps preserved command registration aligned with HTTP component availability.
-func syncHealthCommands(content string, enabled bool) string {
-	const fieldLine = "\tHealthCmd cmd.HealthCmd `cmd:\"\"`\n"
-	const paramLine = "\thealthCmd *cmd.HealthCmd,\n"
-	const assignLine = "\t\tHealthCmd: *healthCmd,\n"
-	if !enabled {
-		return removeLinesContaining(content, "HealthCmd", "healthCmd")
-	}
-	updated := content
-	if !strings.Contains(updated, "HealthCmd") {
-		updated = insertAfterLineContaining(updated, "AboutCmd", fieldLine)
-	}
-	if !strings.Contains(updated, "healthCmd") {
-		updated = insertAfterLineContaining(updated, "aboutCmd", paramLine)
-	}
-	if !strings.Contains(updated, "HealthCmd:") {
-		updated = insertAfterLineContaining(updated, "AboutCmd:", assignLine)
-	}
-	return updated
-}
-
-// insertAfterLineContaining performs narrow render-once migrations without reformatting whole files.
-func insertAfterLineContaining(content string, fragment string, insertedLine string) string {
-	lines := strings.SplitAfter(content, "\n")
-	for i, line := range lines {
-		if !strings.Contains(line, fragment) {
-			continue
-		}
-		inserted := []string{insertedLine}
-		lines = append(lines[:i+1], append(inserted, lines[i+1:]...)...)
-		return strings.Join(lines, "")
-	}
-	return content
-}
-
-// removeLinesContaining removes component-specific lines from preserved files when a component is disabled.
-func removeLinesContaining(content string, fragments ...string) string {
-	var builder strings.Builder
-	for _, line := range strings.SplitAfter(content, "\n") {
-		remove := false
-		for _, fragment := range fragments {
-			if strings.Contains(line, fragment) {
-				remove = true
-				break
-			}
-		}
-		if !remove {
-			builder.WriteString(line)
-		}
-	}
-	return builder.String()
 }
 
 // createGoMod initializes the go.mod for the project
@@ -5277,16 +3417,7 @@ func installWire() (string, error) {
 
 // runGenerateAll regenerates only the packages authorized by the durable project component contract.
 func (p *ProjectRenderer) runGenerateAll() error {
-	projectComponents := p.projectRenderComponents()
-	count, _, err := generate.GenerateProjectFiles(
-		".",
-		projectComponents.Storage,
-		projectComponents.Cache,
-		projectComponents.Jobs,
-		projectComponents.Events,
-		projectComponents.HasDatabase(),
-		projectComponents.Observability,
-	)
+	count, _, err := generate.GenerateProjectFiles(".", generate.GenerationSelectionFromComponents(p.projectRenderComponents()))
 	if err != nil {
 		return err
 	}
@@ -5571,8 +3702,12 @@ func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl strin
 		return fmt.Errorf("parse template %s: %w", tmpl, err)
 	}
 
+	templateInput, err := p.prepareTemplateData(data)
+	if err != nil {
+		return err
+	}
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, p.templateData(data)); err != nil {
+	if err := t.Execute(&buf, templateInput); err != nil {
 		return err
 	}
 
@@ -5603,37 +3738,32 @@ func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl strin
 	return nil
 }
 
-// templateData projects durable project configuration into the established template-facing shape.
-func templateData(data any) any {
-	switch value := data.(type) {
+// prepareTemplateData adds transient environment and service decisions without placing them in durable project configuration.
+func (p *ProjectRenderer) prepareTemplateData(data any) (any, error) {
+	value := data
+	switch config := data.(type) {
 	case *project.Config:
-		return templateDataForApp(value, project.DefaultApp())
+		value = templateDataForApp(config, project.DefaultApp())
 	case project.Config:
-		cfg := value
-		return templateDataForApp(&cfg, project.DefaultApp())
-	case templateRenderConfig:
-		return value
-	default:
-		return data
+		value = templateDataForApp(&config, project.DefaultApp())
 	}
-}
-
-// templateData adds transient environment and service decisions without placing them in durable project configuration.
-func (p *ProjectRenderer) templateData(data any) any {
-	value := templateData(data)
 	if config, ok := value.(templateRenderConfig); ok {
 		config.ProjectComponents = project.ProjectComponents(config.Config)
-		applyDatabaseRenderCapabilities(&config.ProjectComponents, p.resourcePlan)
-		config.Resources = resourceRenderValuesForPlanWithConsumers(p.resourcePlan, config.ProjectComponents, p.localServiceIntent, p.serviceConsumers)
-		return config
+		applyDatabaseRenderCapabilities(&config.ProjectComponents, p.resources.plan)
+		resources, err := resourceRenderValuesForPlanWithConsumers(p.resources.plan, config.ProjectComponents, p.resources.serviceIntent, p.resources.serviceConsumers)
+		if err != nil {
+			return nil, err
+		}
+		config.Resources = resources
+		return config, nil
 	}
-	return value
+	return value, nil
 }
 
 // projectRenderComponents derives shared capabilities and includes environment-owned database build support.
 func (p *ProjectRenderer) projectRenderComponents() project.Components {
 	components := project.ProjectComponents(p.config)
-	applyDatabaseRenderCapabilities(&components, p.resourcePlan)
+	applyDatabaseRenderCapabilities(&components, p.resources.plan)
 	return components
 }
 
@@ -5749,7 +3879,7 @@ func runtimeAppMetadataForRender(config *project.Config) []runtimeAppMetadata {
 		out = append(out, runtimeAppMetadata{
 			Name:        app.Name,
 			Index:       i,
-			EnvPrefix:   appEnvPrefix(app.Name),
+			EnvPrefix:   project.AppEnvironmentPrefix(app.Name),
 			HTTPPort:    3000 + i,
 			RuntimeBase: 10000 + i*10,
 			Components:  appRenderComponents(config, app),
@@ -5830,12 +3960,12 @@ func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runti
 		return runtimeAppMetadata{
 			Name:        app.Name,
 			Index:       index,
-			EnvPrefix:   appEnvPrefix(app.Name),
+			EnvPrefix:   project.AppEnvironmentPrefix(app.Name),
 			HTTPPort:    3000 + index,
 			RuntimeBase: 10000 + index*10,
 		}
 	}
-	return runtimeAppMetadata{Name: app.Name, EnvPrefix: appEnvPrefix(app.Name), HTTPPort: 3000, RuntimeBase: 10000}
+	return runtimeAppMetadata{Name: app.Name, EnvPrefix: project.AppEnvironmentPrefix(app.Name), HTTPPort: 3000, RuntimeBase: 10000}
 }
 
 // renderApps returns the default app plus named apps in deterministic runtime order.
@@ -5862,35 +3992,6 @@ func renderApps() []project.App {
 		return apps[i+1].Name < apps[j+1].Name
 	})
 	return apps
-}
-
-// appEnvPrefix converts app slugs into the uppercase env prefix used by generated defaults.
-func appEnvPrefix(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" || name == project.DefaultAppName {
-		return ""
-	}
-	var builder strings.Builder
-	lastWasSeparator := true
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z':
-			builder.WriteRune(r - 'a' + 'A')
-			lastWasSeparator = false
-		case r >= 'A' && r <= 'Z':
-			builder.WriteRune(r)
-			lastWasSeparator = false
-		case r >= '0' && r <= '9':
-			builder.WriteRune(r)
-			lastWasSeparator = false
-		default:
-			if !lastWasSeparator {
-				builder.WriteByte('_')
-				lastWasSeparator = true
-			}
-		}
-	}
-	return strings.Trim(builder.String(), "_")
 }
 
 // writeTemplates renders ordinary templates to their conventional suffix-free destinations.

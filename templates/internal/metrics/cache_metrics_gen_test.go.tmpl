@@ -19,19 +19,31 @@ import (
 func TestNewConfigReadsCacheEnvironmentFlag(t *testing.T) {
 	{{- range .RuntimeApps }}
 	{{- if .Components.Cache }}
-	t.Setenv("FORJ_APP", "{{.Name}}")
+	t.Run("{{.Name}} enables Cache metrics", func(t *testing.T) {
+		t.Setenv("FORJ_APP", "{{.Name}}")
+		t.Setenv("METRICS_CACHE_ENABLED", "1")
+		if cfg := NewConfig(); !cfg.Cache {
+			t.Fatal("expected Cache metrics to be enabled")
+		}
+
+		t.Setenv("METRICS_CACHE_ENABLED", "0")
+		if cfg := NewConfig(); cfg.Cache {
+			t.Fatal("expected Cache metrics to be disabled")
+		}
+	})
 	{{- end }}
 	{{- end }}
-	t.Setenv("METRICS_CACHE_ENABLED", "1")
-	if cfg := NewConfig(); !cfg.Cache {
-		t.Fatal("expected Cache metrics to be enabled")
-	}
-
-	t.Setenv("METRICS_CACHE_ENABLED", "0")
-
-	if cfg := NewConfig(); cfg.Cache {
-		t.Fatal("expected Cache metrics to be disabled")
-	}
+	{{- range .RuntimeApps }}
+	{{- if not .Components.Cache }}
+	t.Run("{{.Name}} excludes Cache metrics", func(t *testing.T) {
+		t.Setenv("FORJ_APP", "{{.Name}}")
+		t.Setenv("METRICS_CACHE_ENABLED", "1")
+		if cfg := NewConfig(); cfg.Cache {
+			t.Fatal("expected Cache metrics to remain disabled for an App without Cache")
+		}
+	})
+	{{- end }}
+	{{- end }}
 }
 
 // TestRecordCacheOperationTracksLabeledSeries verifies Cache metrics retain bounded dimensions.

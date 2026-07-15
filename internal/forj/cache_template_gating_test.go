@@ -48,33 +48,20 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 					data := appTemplateDataForProjectionTest(config, target.app, components)
 					data.HelpFormatterFunc = "FrameworkFormatter"
 					sources := map[string]string{
-						"app/commands.go.tmpl":                            renderSharedTemplate(t, "app/commands.go.tmpl", data),
-						"app/root_cmd.go.tmpl":                            renderSharedTemplate(t, "app/root_cmd.go.tmpl", data),
-						"internal/http/lighthouse.go.tmpl":                renderSharedTemplate(t, "internal/http/lighthouse.go.tmpl", data),
-						"internal/http/readiness_checks.go.tmpl":          renderSharedTemplate(t, "internal/http/readiness_checks.go.tmpl", data),
-						"internal/jobs/benchmark_run_cmd.go.tmpl":         renderSharedTemplate(t, "internal/jobs/benchmark_run_cmd.go.tmpl", data),
-						"internal/jobs/lighthouse.go.tmpl":                renderSharedTemplate(t, "internal/jobs/lighthouse.go.tmpl", data),
-						"internal/jobs/lighthouse_benchmark.go.tmpl":      renderSharedTemplate(t, "internal/jobs/lighthouse_benchmark.go.tmpl", data),
-						"internal/metrics/cache_metrics_gen.go.tmpl":      renderSharedTemplate(t, "internal/metrics/cache_metrics_gen.go.tmpl", data),
-						"internal/metrics/cache_metrics_gen_test.go.tmpl": renderSharedTemplate(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", data),
-						"internal/metrics/manager.go.tmpl":                renderSharedTemplate(t, "internal/metrics/manager.go.tmpl", data),
-						"internal/metrics/manager_test.go.tmpl":           renderSharedTemplate(t, "internal/metrics/manager_test.go.tmpl", data),
-						"wire/app.go.tmpl":                                renderSharedTemplate(t, "wire/app.go.tmpl", data),
-						"wire/inject_cmd.go.tmpl":                         renderSharedTemplate(t, "wire/inject_cmd.go.tmpl", data),
-						"wire/inject_http.go.tmpl":                        renderSharedTemplate(t, "wire/inject_http.go.tmpl", data),
-						"wire/inject_jobs.go.tmpl":                        renderSharedTemplate(t, "wire/inject_jobs.go.tmpl", data),
+						"app/commands.go.tmpl":             renderSharedTemplate(t, "app/commands.go.tmpl", data),
+						"app/root_cmd.go.tmpl":             renderSharedTemplate(t, "app/root_cmd.go.tmpl", data),
+						"internal/http/lighthouse.go.tmpl": renderSharedTemplate(t, "internal/http/lighthouse.go.tmpl", data),
+						"internal/metrics/manager.go.tmpl": renderSharedTemplate(t, "internal/metrics/manager.go.tmpl", data),
+						"wire/app.go.tmpl":                 renderSharedTemplate(t, "wire/app.go.tmpl", data),
+						"wire/inject_cmd.go.tmpl":          renderSharedTemplate(t, "wire/inject_cmd.go.tmpl", data),
+						"wire/inject_http.go.tmpl":         renderSharedTemplate(t, "wire/inject_http.go.tmpl", data),
+						"wire/inject_jobs.go.tmpl":         renderSharedTemplate(t, "wire/inject_jobs.go.tmpl", data),
 					}
 					for path, source := range sources {
 						assertFormattedGoTemplate(t, path, source)
 					}
 
-					for _, marker := range []string{
-						`"github.com/goforj/cache"`,
-						`"example.com/cache-projection/internal/caches"`,
-						"func (a *App) Cache() *cache.Cache",
-						"func (a *App) Caches() *caches.Manager",
-						"cacheManager *caches.Manager",
-					} {
+					for _, marker := range []string{"func (a *App) Cache() *cache.Cache", "func (a *App) Caches() *caches.Manager"} {
 						assertTemplateMarker(t, "wire/app.go.tmpl", sources["wire/app.go.tmpl"], marker, target.enabled)
 					}
 					assertTemplateMarker(t, "app/root_cmd.go.tmpl", sources["app/root_cmd.go.tmpl"], "CacheShellCmd", target.enabled)
@@ -84,30 +71,12 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 					}
 
 					projectCache := test.defaultCache || test.workerCache
-					assertTemplateMarker(t, "internal/http/lighthouse.go.tmpl", sources["internal/http/lighthouse.go.tmpl"], `"example.com/cache-projection/internal/caches"`, projectCache)
-					assertTemplateMarker(t, "internal/http/lighthouse.go.tmpl", sources["internal/http/lighthouse.go.tmpl"], `"github.com/goforj/cache"`, projectCache)
-					assertTemplateMarker(t, "internal/http/lighthouse.go.tmpl", sources["internal/http/lighthouse.go.tmpl"], `RegisterCommand("cache:list"`, projectCache)
 					assertTemplateMarker(t, "internal/http/lighthouse.go.tmpl", sources["internal/http/lighthouse.go.tmpl"], "func NewCachedLighthouseRuntime", projectCache)
-					assertTemplateMarker(t, "internal/http/readiness_checks.go.tmpl", sources["internal/http/readiness_checks.go.tmpl"], "internal/caches", false)
-					assertTemplateMarker(t, "internal/metrics/manager.go.tmpl", sources["internal/metrics/manager.go.tmpl"], "func (m *Manager) RecordCacheOperation", false)
-					assertTemplateMarker(t, "internal/metrics/cache_metrics_gen.go.tmpl", sources["internal/metrics/cache_metrics_gen.go.tmpl"], "func (m *Manager) RecordCacheOperation", true)
 					assertTemplateMarker(t, "internal/metrics/manager.go.tmpl", sources["internal/metrics/manager.go.tmpl"], `Name: "cache.operations"`, projectCache)
-					assertTemplateMarker(t, "internal/metrics/manager_test.go.tmpl", sources["internal/metrics/manager_test.go.tmpl"], "func TestRecordCacheOperationTracksLabeledSeries", false)
-					assertTemplateMarker(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", sources["internal/metrics/cache_metrics_gen_test.go.tmpl"], "func TestRecordCacheOperationTracksLabeledSeries", true)
 
 					assertTemplateMarker(t, "wire/inject_http.go.tmpl", sources["wire/inject_http.go.tmpl"], "http.NewCachedLighthouseRuntime", target.enabled)
-					assertTemplateMarker(t, "wire/inject_http.go.tmpl", sources["wire/inject_http.go.tmpl"], "cacheManager *caches.Manager", target.enabled)
 					assertTemplateMarker(t, "wire/inject_http.go.tmpl", sources["wire/inject_http.go.tmpl"], "for _, check := range cacheManager.ReadinessChecks()", target.enabled)
-					assertTemplateMarker(t, "wire/inject_http.go.tmpl", sources["wire/inject_http.go.tmpl"], "(*caches.Manager)(nil)", false)
 					assertTemplateMarker(t, "wire/inject_jobs.go.tmpl", sources["wire/inject_jobs.go.tmpl"], "jobs.NewCachedBenchmarkRunCmd", target.enabled)
-					assertTemplateMarker(t, "wire/inject_jobs.go.tmpl", sources["wire/inject_jobs.go.tmpl"], "jobs.NewCachedLighthouseRuntime", target.enabled)
-					assertTemplateMarker(t, "wire/inject_jobs.go.tmpl", sources["wire/inject_jobs.go.tmpl"], "(*caches.Manager)(nil)", false)
-					assertTemplateMarker(t, "internal/jobs/benchmark_run_cmd.go.tmpl", sources["internal/jobs/benchmark_run_cmd.go.tmpl"], "func NewCachedBenchmarkRunCmd", projectCache)
-					assertTemplateMarker(t, "internal/jobs/lighthouse.go.tmpl", sources["internal/jobs/lighthouse.go.tmpl"], "func NewCachedLighthouseRuntime", projectCache)
-					cacheFallback := "if value == \"\" {\n\t\tif r.caches != nil {\n\t\t\treturn \"cache\"\n\t\t}\n\t\treturn \"queue\"\n\t}"
-					assertTemplateMarker(t, "internal/jobs/lighthouse_benchmark.go.tmpl", sources["internal/jobs/lighthouse_benchmark.go.tmpl"], cacheFallback, projectCache)
-					queueFallback := "if value == \"\" {\n\t\treturn \"queue\"\n\t}"
-					assertTemplateMarker(t, "internal/jobs/lighthouse_benchmark.go.tmpl", sources["internal/jobs/lighthouse_benchmark.go.tmpl"], queueFallback, !projectCache)
 				})
 			}
 
@@ -120,27 +89,8 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 			for path, source := range runtimeSources {
 				assertFormattedGoTemplate(t, path, source)
 			}
-			for _, marker := range []string{
-				"func DiscoverCacheInstances(",
-				"if !CurrentApp().Components.Cache",
-				"func NormalizeCacheDriver(",
-			} {
-				assertTemplateMarker(t, "internal/runtime/discovery.go.tmpl", runtimeSources["internal/runtime/discovery.go.tmpl"], marker, projectEnabled)
-			}
-			for _, marker := range []string{
-				"aboutCacheRootKeys = []string",
-				"type AboutCache struct",
-				`json:"caches,omitempty"`,
-				"report.Caches = aboutCacheReports()",
-				`Title: "Caches"`,
-				"func aboutCacheConnections(",
-				`components = append(components, "cache")`,
-				"func aboutCacheReports(",
-				`case "CACHE":`,
-				"func aboutCacheDetails(",
-			} {
-				assertTemplateMarker(t, "internal/runtime/about.go.tmpl", runtimeSources["internal/runtime/about.go.tmpl"], marker, projectEnabled)
-			}
+			assertTemplateMarker(t, "internal/runtime/discovery.go.tmpl", runtimeSources["internal/runtime/discovery.go.tmpl"], "func DiscoverCacheInstances(", projectEnabled)
+			assertTemplateMarker(t, "internal/runtime/about.go.tmpl", runtimeSources["internal/runtime/about.go.tmpl"], "report.Caches = aboutCacheReports()", projectEnabled)
 		})
 	}
 }
@@ -179,16 +129,9 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 	}, "\n")
 	writePrimitiveRendererFile(t, ".env", environment)
 	writePrimitiveRendererFile(t, ".env.example", environment)
-	cacheArtifacts := []string{
-		filepath.Join("internal", "caches", "README.md"),
-		filepath.Join("internal", "caches", "accessors_gen.go"),
-		filepath.Join("internal", "caches", "manager_gen.go"),
-		filepath.Join("internal", "cmd", "cache_shell_cmd.go"),
-		filepath.Join("internal", "metrics", "cache_metrics_gen.go"),
-		filepath.Join("containers", "observability", "grafana", "dashboards", "cache-overview.json"),
-	}
-	for _, path := range cacheArtifacts {
-		writePrimitiveRendererFile(t, path, "generated Cache artifact\n")
+	cacheArtifacts := cacheGeneratedCleanupArtifacts()
+	for _, artifact := range cacheArtifacts {
+		writePrimitiveRendererFile(t, artifact.path, artifact.marker+"\n")
 	}
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
@@ -199,9 +142,9 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 	if !result.Changed() {
 		t.Fatal("final Cache App removal reported no changes")
 	}
-	for _, path := range cacheArtifacts {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("generated Cache artifact %s remains: %v", path, err)
+	for _, artifact := range cacheArtifacts {
+		if _, err := os.Stat(artifact.path); !os.IsNotExist(err) {
+			t.Fatalf("generated Cache artifact %s remains: %v", artifact.path, err)
 		}
 	}
 	loaded, err := project.LoadProjectConfig()

@@ -20,13 +20,12 @@ type primitiveTemplateMarker struct {
 
 // primitiveTemplateContract captures the minimal generated surface that distinguishes one optional primitive.
 type primitiveTemplateContract struct {
-	name             string
+	key              project.ComponentKey
 	appMarkers       []primitiveTemplateMarker
 	projectMarkers   []primitiveTemplateMarker
 	disabledBridge   primitiveTemplateMarker
 	rootEnvironment  string
 	namedEnvironment string
-	dashboardMarker  string
 }
 
 // TestPrimitiveTemplateProjection covers all-off and both mixed-App directions through one shared projection matrix.
@@ -43,11 +42,11 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 
 	for _, contract := range primitiveTemplateContracts() {
 		contract := contract
-		t.Run(contract.name, func(t *testing.T) {
+		t.Run(string(contract.key), func(t *testing.T) {
 			for _, scenario := range scenarios {
 				scenario := scenario
 				t.Run(scenario.name, func(t *testing.T) {
-					config := primitiveProjectionConfig(contract.name, scenario.defaultEnabled, scenario.workerEnabled)
+					config := primitiveProjectionConfig(t, contract.key, scenario.defaultEnabled, scenario.workerEnabled)
 					projectEnabled := scenario.defaultEnabled || scenario.workerEnabled
 					sharedData := templateDataForApp(config, project.DefaultApp())
 					sharedData.Resources = primitiveProjectionResources()
@@ -79,7 +78,7 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 								bridgeEnabled := projectEnabled && !target.enabled
 								assertProjectedTemplateMarker(t, contract.disabledBridge, data, bridgeEnabled)
 							}
-							assertPrimitiveAppMappings(t, renderer, contract.name, target.app, target.enabled)
+							assertPrimitiveAppMappings(t, renderer, contract.key, target.app, target.enabled)
 						})
 					}
 				})
@@ -92,11 +91,108 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 	t.Run("dashboard conditionals", testPrimitiveDashboardProjection)
 }
 
+// TestSharedMetricsFollowProjectAndAppProjection verifies named-App-only capabilities still compile while runtime flags remain App-local.
+func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
+	config := &project.Config{
+		GoModuleName: "example.com/metrics-projection",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, Metrics: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{
+				CLI: true, Auth: true, DatabaseSQLite: true, Scheduler: true,
+			}},
+		},
+	}
+	data := templateDataForApp(config, project.DefaultApp())
+	manager := renderSharedTemplate(t, "internal/metrics/manager.go.tmpl", data)
+	managerTests := renderSharedTemplate(t, "internal/metrics/manager_test.go.tmpl", data)
+	assertFormattedGoTemplate(t, "internal/metrics/manager.go.tmpl", manager)
+	assertFormattedGoTemplate(t, "internal/metrics/manager_test.go.tmpl", managerTests)
+
+	for _, token := range []string{
+		`"database/sql"`,
+		`"github.com/goforj/scheduler/v2"`,
+		"authFlows",
+		"func (m *Manager) RecordSchedulerJob",
+		"type DatabaseStatementMetricEvent struct",
+		`runtime.CurrentApp().Components.HasDatabase() && env.GetBool("METRICS_DATABASE_ENABLED", "true")`,
+		`runtime.CurrentApp().Components.Auth && env.GetBool("METRICS_AUTH_ENABLED", "true")`,
+		`runtime.CurrentApp().Components.Scheduler && env.GetBool("METRICS_SCHEDULER_ENABLED", "true")`,
+	} {
+		assertTemplateMarker(t, "internal/metrics/manager.go.tmpl", manager, token, true)
+	}
+	for _, token := range []string{
+		"func TestRecordAuthFlowTracksOutcomeAndLatency",
+		"func TestRecordSchedulerJobTracksOutcomesAndDuration",
+		"func TestRecordDatabaseStatementTracksLabeledSeries",
+		"if got, want := cfg.Database, false; got != want",
+		"if got, want := cfg.Database, true; got != want",
+	} {
+		assertTemplateMarker(t, "internal/metrics/manager_test.go.tmpl", managerTests, token, true)
+	}
+	assertTemplateMarker(t, "internal/metrics/manager.go.tmpl", manager, "monitoringSidebarRequests", false)
+}
+
+// TestMailAboutBehaviorCoversEveryAppProjection verifies generated behavior coverage includes Mail-enabled and Mail-disabled Apps.
+func TestMailAboutBehaviorCoversEveryAppProjection(t *testing.T) {
+	config := &project.Config{
+		GoModuleName: "example.com/mail-projection",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, Mail: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"worker": {Components: project.Components{CLI: true}},
+		},
+	}
+	data := templateDataForApp(config, project.DefaultApp())
+	tests := renderSharedTemplate(t, "internal/runtime/apps_test.go.tmpl", data)
+	assertFormattedGoTemplate(t, "internal/runtime/apps_test.go.tmpl", tests)
+
+	for _, token := range []string{
+		"func TestAboutServiceFollowsCurrentAppMailComponent",
+		`{name: "app", want: true}`,
+		`{name: "worker", want: false}`,
+		`slices.Contains(report.Build.Components, "mail")`,
+		`slices.ContainsFunc(report.Sections`,
+	} {
+		assertTemplateMarker(t, "internal/runtime/apps_test.go.tmpl", tests, token, true)
+	}
+}
+
+// TestCacheMetricsConfigTestsCoverEveryApp verifies generated tests exercise each participating and excluded App independently.
+func TestCacheMetricsConfigTestsCoverEveryApp(t *testing.T) {
+	config := &project.Config{
+		GoModuleName: "example.com/cache-metrics-projection",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, Cache: true, Metrics: true,
+		}},
+		Apps: map[string]project.AppConfig{
+			"observer": {Components: project.Components{CLI: true}},
+			"worker":   {Components: project.Components{CLI: true, Cache: true}},
+		},
+	}
+	data := templateDataForApp(config, project.DefaultApp())
+	tests := renderSharedTemplate(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", data)
+	assertFormattedGoTemplate(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", tests)
+
+	for _, token := range []string{
+		`t.Run("app enables Cache metrics"`,
+		`t.Run("worker enables Cache metrics"`,
+		`t.Run("observer excludes Cache metrics"`,
+	} {
+		assertTemplateMarker(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", tests, token, true)
+	}
+	if got, want := strings.Count(tests, `t.Setenv("FORJ_APP"`), 3; got != want {
+		t.Fatalf("generated Cache config App selections = %d, want %d", got, want)
+	}
+}
+
 // primitiveTemplateContracts returns the high-signal markers that are not already exercised by real render sentinels.
 func primitiveTemplateContracts() []primitiveTemplateContract {
 	return []primitiveTemplateContract{
 		{
-			name: "Events",
+			key: project.ComponentEvents,
 			appMarkers: []primitiveTemplateMarker{
 				{path: "wire/app.go.tmpl", token: "func (a *App) Events() *events.Manager"},
 				{path: "app/root_cmd.go.tmpl", token: "GeneratedEventCommands"},
@@ -108,16 +204,14 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 				{path: "internal/runtime/discovery.go.tmpl", token: "func DiscoverEventInstances("},
 				{path: "internal/metrics/manager.go.tmpl", token: "func (m *Manager) RecordEventPublish"},
 				{path: "internal/metrics/manager.go.tmpl", token: `runtime.CurrentApp().Components.Events && env.GetBool("METRICS_EVENTS_ENABLED", "true")`},
-				{path: "internal/metrics/manager_test.go.tmpl", token: "NewManagerWithConfig(Config{Events: true})"},
 				{path: "containers/observability/grafana/seed-dashboards.sh.tmpl", token: "goforj-events-overview"},
 				{path: "internal/makecmd/README.md.tmpl", token: "make:event"},
 			},
 			rootEnvironment:  "\nEVENTS_DRIVER=inproc",
 			namedEnvironment: "\nWORKER_EVENTS_DRIVER=inproc",
-			dashboardMarker:  "events_",
 		},
 		{
-			name: "Storage",
+			key: project.ComponentStorage,
 			appMarkers: []primitiveTemplateMarker{
 				{path: "wire/app.go.tmpl", token: "func (a *App) Storage() *storages.Manager"},
 				{path: "wire/inject_managers.go.tmpl", token: "func provideStorageManager("},
@@ -127,17 +221,15 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 				{path: "internal/runtime/about.go.tmpl", token: "report.Storages = aboutStorageReports()"},
 				{path: "internal/runtime/discovery.go.tmpl", token: "func DiscoverStorageInstances("},
 				{path: "internal/metrics/manager.go.tmpl", token: "func (m *Manager) RecordStorageOperation"},
-				{path: "internal/metrics/manager_test.go.tmpl", token: "NewManagerWithConfig(Config{Storage: true})"},
 				{path: "containers/observability/grafana/seed-dashboards.sh.tmpl", token: "goforj-storage-overview"},
 				{path: "internal/observability/README.md.tmpl", token: "Storage Overview"},
 			},
 			disabledBridge:   primitiveTemplateMarker{path: "wire/inject_managers.go.tmpl", token: "func provideDisabledStorageManager("},
 			rootEnvironment:  "\nSTORAGE_DRIVER=local",
 			namedEnvironment: "\nWORKER_STORAGE_DRIVER=local",
-			dashboardMarker:  "storage_",
 		},
 		{
-			name: "Jobs",
+			key: project.ComponentJobs,
 			appMarkers: []primitiveTemplateMarker{
 				{path: "wire/app.go.tmpl", token: "func (a *App) Queues() *queues.Manager"},
 				{path: "wire/inject_cmd.go.tmpl", token: "jobsRuntime *jobs.Runtime"},
@@ -147,6 +239,9 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 			projectMarkers: []primitiveTemplateMarker{
 				{path: "internal/cmd/run_cmd.go.tmpl", token: "jobsRuntime *jobs.Runtime"},
 				{path: "internal/runtime/about.go.tmpl", token: "report.Queues = aboutQueueReports()"},
+				{path: "internal/runtime/about.go.tmpl", token: "type AboutQueue struct"},
+				{path: "internal/runtime/discovery.go.tmpl", token: "func DiscoverQueueInstances("},
+				{path: "internal/runtime/discovery.go.tmpl", token: "func NormalizeQueueDriver("},
 				{path: "internal/metrics/manager.go.tmpl", token: "func (m *Manager) RecordQueueEvent"},
 				{path: "containers/observability/grafana/seed-dashboards.sh.tmpl", token: "goforj-queue-overview"},
 				{path: "internal/makecmd/README.md.tmpl", token: "make:job"},
@@ -154,17 +249,17 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 			disabledBridge:   primitiveTemplateMarker{path: "wire/inject_cmd.go.tmpl", token: "(*jobs.Runtime)(nil)"},
 			rootEnvironment:  "\nQUEUE_DRIVER=workerpool",
 			namedEnvironment: "\nWORKER_QUEUE_DRIVER=workerpool",
-			dashboardMarker:  "queue_jobs_",
 		},
 	}
 }
 
 // primitiveProjectionConfig creates two Apps whose primitive participation can vary independently.
-func primitiveProjectionConfig(name string, defaultEnabled bool, workerEnabled bool) *project.Config {
+func primitiveProjectionConfig(t *testing.T, key project.ComponentKey, defaultEnabled bool, workerEnabled bool) *project.Config {
+	t.Helper()
 	defaultComponents := primitiveProjectionBaseComponents()
 	workerComponents := primitiveProjectionBaseComponents()
-	setPrimitiveComponent(&defaultComponents, name, defaultEnabled)
-	setPrimitiveComponent(&workerComponents, name, workerEnabled)
+	setPrimitiveProjectionComponent(t, &defaultComponents, key, defaultEnabled)
+	setPrimitiveProjectionComponent(t, &workerComponents, key, workerEnabled)
 	return &project.Config{
 		GoModuleName: "example.com/primitive-projection",
 		Render: project.RenderConfig{
@@ -199,29 +294,17 @@ func primitiveProjectionResources() resourceRenderValues {
 	}
 }
 
-// setPrimitiveComponent changes one optional primitive without widening unrelated component state.
-func setPrimitiveComponent(components *project.Components, name string, enabled bool) {
-	switch name {
-	case "Events":
-		components.Events = enabled
-	case "Storage":
-		components.Storage = enabled
-	case "Jobs":
-		components.Jobs = enabled
-	}
-}
-
-// primitiveComponentEnabled reports one optional primitive from a component projection.
-func primitiveComponentEnabled(components project.Components, name string) bool {
-	switch name {
-	case "Events":
-		return components.Events
-	case "Storage":
-		return components.Storage
-	case "Jobs":
-		return components.Jobs
+// setPrimitiveProjectionComponent rejects unsupported keys so a table mistake cannot silently erase coverage.
+func setPrimitiveProjectionComponent(t *testing.T, components *project.Components, key project.ComponentKey, enabled bool) {
+	t.Helper()
+	switch key {
+	case project.ComponentEvents, project.ComponentStorage, project.ComponentJobs:
+		components.SetEnabled(key, enabled)
 	default:
-		return false
+		t.Fatalf("unsupported primitive projection component %q", key)
+	}
+	if got := components.Enabled(key); got != enabled {
+		t.Fatalf("primitive projection component %q enabled = %t, want %t", key, got, enabled)
 	}
 }
 
@@ -239,25 +322,27 @@ func assertProjectedTemplateMarker(t *testing.T, marker primitiveTemplateMarker,
 }
 
 // assertPrimitiveAppMappings verifies component-specific framework and owner files stay App-local.
-func assertPrimitiveAppMappings(t *testing.T, renderer *ProjectRenderer, name string, app project.App, want bool) {
+func assertPrimitiveAppMappings(t *testing.T, renderer *ProjectRenderer, key project.ComponentKey, app project.App, want bool) {
 	t.Helper()
 	var frameworkPath string
 	var ownerPath string
-	switch name {
-	case "Events":
+	switch key {
+	case project.ComponentEvents:
 		frameworkPath = filepath.Join(app.AppDir, "event_commands.go")
 		ownerPath = filepath.Join(app.WireDir, "inject_subscribers_app.go")
-	case "Jobs":
+	case project.ComponentJobs:
 		frameworkPath = filepath.Join(app.WireDir, "inject_jobs.go")
 		ownerPath = filepath.Join(app.WireDir, "inject_jobs_app.go")
-	default:
+	case project.ComponentStorage:
 		return
+	default:
+		t.Fatalf("unsupported primitive mapping component %q", key)
 	}
 	if got := templateMappingDestExists(renderer.appFrameworkMappings(app), frameworkPath); got != want {
-		t.Fatalf("%s framework mapping %s presence = %t, want %t", name, frameworkPath, got, want)
+		t.Fatalf("%s framework mapping %s presence = %t, want %t", key, frameworkPath, got, want)
 	}
 	if got := templateMappingDestExists(renderer.appOwnedMappings(app), ownerPath); got != want {
-		t.Fatalf("%s owner mapping %s presence = %t, want %t", name, ownerPath, got, want)
+		t.Fatalf("%s owner mapping %s presence = %t, want %t", key, ownerPath, got, want)
 	}
 }
 
@@ -274,7 +359,7 @@ func templateMappingDestExists(mappings []templateMapping, want string) bool {
 
 // testEventCommandProjection preserves legacy command owners while keeping future owner templates Events-neutral.
 func testEventCommandProjection(t *testing.T) {
-	config := primitiveProjectionConfig("Events", true, false)
+	config := primitiveProjectionConfig(t, project.ComponentEvents, true, false)
 	base := templateDataForApp(config, project.DefaultApp())
 	tests := []struct {
 		name                  string
@@ -361,15 +446,12 @@ func testPrimitiveDashboardProjection(t *testing.T) {
 	for _, contract := range primitiveTemplateContracts() {
 		for _, enabled := range []bool{false, true} {
 			components := primitiveProjectionBaseComponents()
-			setPrimitiveComponent(&components, contract.name, enabled)
+			setPrimitiveProjectionComponent(t, &components, contract.key, enabled)
 			config := &project.Config{Render: project.RenderConfig{Components: components}}
 			body := renderSharedTemplate(t, "containers/observability/grafana/dashboards/platform-overview.json.tmpl", templateDataForApp(config, project.DefaultApp()))
 			var decoded any
 			if err := json.Unmarshal([]byte(body), &decoded); err != nil {
-				t.Fatalf("%s enabled=%t Platform Overview is invalid JSON: %v\n%s", contract.name, enabled, err, body)
-			}
-			if contract.dashboardMarker != "" {
-				assertTemplateMarker(t, "platform-overview.json.tmpl", body, contract.dashboardMarker, enabled)
+				t.Fatalf("%s enabled=%t Platform Overview is invalid JSON: %v\n%s", contract.key, enabled, err, body)
 			}
 		}
 	}

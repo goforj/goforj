@@ -75,7 +75,10 @@ func TestDriverEnvironmentPlaceholdersDeduplicateSharedScopeKeys(t *testing.T) {
 	cache, _ := plan.Selection(project.ResourceCache)
 	cache.Supported = append(cache.Supported, "mysql", "postgres")
 	plan = plan.WithSelection(project.ResourceCache, cache)
-	values := resourceRenderValuesForPlan(plan, components, project.LocalServiceIntent{})
+	values, err := resourceRenderValuesForPlanWithConsumers(plan, components, project.LocalServiceIntent{}, nil)
+	if err != nil {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
+	}
 	placeholders := values.DriverEnvironmentPlaceholders()
 	if count := strings.Count(placeholders, "# CACHE_DSN="); count != 1 {
 		t.Fatalf("CACHE_DSN placeholder count = %d, want one:\n%s", count, placeholders)
@@ -93,7 +96,10 @@ func TestDriverEnvironmentPlaceholdersPreferActiveSharedKeyExample(t *testing.T)
 	queue.Active = "rabbitmq"
 	queue.Supported = append(queue.Supported, "nats", "rabbitmq")
 	plan = plan.WithSelection(project.ResourceQueue, queue)
-	values := resourceRenderValuesForPlan(plan, components, project.LocalServiceIntent{})
+	values, err := resourceRenderValuesForPlanWithConsumers(plan, components, project.LocalServiceIntent{}, nil)
+	if err != nil {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
+	}
 	placeholders := values.DriverEnvironmentPlaceholders()
 	if count := strings.Count(placeholders, "# QUEUE_URL="); count != 1 {
 		t.Fatalf("QUEUE_URL placeholder count = %d, want one:\n%s", count, placeholders)
@@ -145,7 +151,7 @@ func TestExternalResourceTemplatesDoNotInventLocalHosts(t *testing.T) {
 
 // TestPortableRedisTemplatesRetainLocalTransitionDefaults preserves the normal inactive bridge and explicit unused-local intent.
 func TestPortableRedisTemplatesRetainLocalTransitionDefaults(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true}
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	hostEnvironment := renderResourceHostEnvironment(t, components, plan, project.LocalServiceIntent{})
@@ -184,8 +190,7 @@ func renderResourceHostEnvironment(t *testing.T, components project.Components, 
 	}
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	renderer.config = config
-	renderer.resourcePlan = plan
-	renderer.localServiceIntent = intent
+	renderer.resources = resourceRenderState{plan: plan, serviceIntent: intent}
 	renderer.stats = &renderStats{}
 	path := filepath.Join(root, ".env.host")
 	if err := renderer.renderTemplateFile(path, ".env.host.tmpl", config); err != nil {

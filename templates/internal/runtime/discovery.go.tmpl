@@ -41,6 +41,7 @@ func DiscoverCacheInstances() []PrimitiveInstance {
 }
 {{- end }}
 
+{{ if .ProjectComponents.Jobs }}
 // DiscoverQueueInstances returns configured queue instances with normalized driver names.
 func DiscoverQueueInstances() []PrimitiveInstance {
 	if !CurrentApp().Components.Jobs {
@@ -63,6 +64,7 @@ func DiscoverQueueInstances() []PrimitiveInstance {
 	}
 	return out
 }
+{{- end }}
 
 {{ if .ProjectComponents.Storage }}
 // DiscoverStorageInstances returns configured storage instances with normalized driver names for participating Apps.
@@ -127,6 +129,7 @@ func DiscoverDatabaseInstances() []PrimitiveInstance {
 	return out
 }
 
+{{ if .ProjectComponents.Jobs }}
 // QueueDefaultQueue returns the backend queue name for the named queue instance.
 func QueueDefaultQueue(name string) string {
 	name = normalizedAppInstanceName(name)
@@ -161,6 +164,7 @@ func QueuePhysicalName(name string) string {
 	return prefix + name
 }
 
+// normalizedAppInstanceName keeps Queue instance lookup consistent with environment key normalization.
 func normalizedAppInstanceName(name string) string {
 	value := strings.ToLower(strings.TrimSpace(name))
 	if value == "" {
@@ -168,6 +172,7 @@ func normalizedAppInstanceName(name string) string {
 	}
 	return value
 }
+{{- end }}
 
 {{ if .ProjectComponents.Cache }}
 // NormalizeCacheDriver reduces Cache driver aliases to their generated canonical names.
@@ -204,6 +209,8 @@ func NormalizeCacheDriver(v string) string {
 }
 {{- end }}
 
+{{ if .ProjectComponents.Jobs }}
+// NormalizeQueueDriver reduces Queue driver aliases to their generated canonical names.
 func NormalizeQueueDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
@@ -233,6 +240,7 @@ func NormalizeQueueDriver(v string) string {
 		return driver
 	}
 }
+{{- end }}
 
 {{ if .ProjectComponents.Storage }}
 // NormalizeStorageDriver reduces Storage driver aliases to their generated canonical names.

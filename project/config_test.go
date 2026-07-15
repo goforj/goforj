@@ -447,13 +447,13 @@ func TestProjectComponentsDerivesNamedAppCapabilitiesWithoutChangingDefaultApp(t
 		Render: RenderConfig{Components: defaultComponents},
 		Apps: map[string]AppConfig{
 			"reporting": {
-				Components: Components{CLI: true, WebAPI: true, DatabasePostgres: true, Jobs: true},
+				Components: Components{CLI: true, Mail: true, WebAPI: true, DatabasePostgres: true, Jobs: true},
 			},
 		},
 	}
 
 	envelope := ProjectComponents(config)
-	if !envelope.DatabaseMySQL || !envelope.DatabasePostgres || !envelope.Jobs {
+	if !envelope.Mail || !envelope.DatabaseMySQL || !envelope.DatabasePostgres || !envelope.Jobs {
 		t.Fatalf("project envelope missing named-App capabilities: %#v", envelope)
 	}
 	if !envelope.Docker || !envelope.Metrics {

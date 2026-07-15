@@ -448,30 +448,23 @@ func shouldRetryWire(detail string) bool {
 
 // generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate optional primitives.
 func (p Pipeline) generateProjectFiles() (string, error) {
-	storageEnabled := hasDir(filepath.Join(".", "internal", "storages"))
-	cacheEnabled := hasDir(filepath.Join(".", "internal", "caches"))
-	eventsEnabled := hasDir(filepath.Join(".", "internal", "events"))
-	jobsEnabled := hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues"))
+	selection := generate.GenerationSelection{
+		Storage:       hasDir(filepath.Join(".", "internal", "storages")),
+		Cache:         hasDir(filepath.Join(".", "internal", "caches")),
+		Mail:          hasDir(filepath.Join(".", "internal", "mail")),
+		Queue:         hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues")),
+		Events:        hasDir(filepath.Join(".", "internal", "events")),
+		Database:      hasDir(filepath.Join(".", "internal", "database")),
+		Observability: hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
+	}
 	config, err := project.LoadProjectConfig()
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load project generation config: %w", err)
 	}
 	if config != nil {
-		components := project.ProjectComponents(config)
-		storageEnabled = components.Storage
-		cacheEnabled = components.Cache
-		eventsEnabled = components.Events
-		jobsEnabled = components.Jobs
+		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
 	}
-	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
-		".",
-		storageEnabled,
-		cacheEnabled,
-		jobsEnabled,
-		eventsEnabled,
-		hasDir(filepath.Join(".", "internal", "database")),
-		hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
-	)
+	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(".", selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
 	}

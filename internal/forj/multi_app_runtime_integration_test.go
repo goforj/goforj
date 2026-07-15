@@ -140,7 +140,7 @@ func renderMultiAppRuntimeTestApp(t *testing.T, dir string) {
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := runQuietly(func() error {
-		return renderer.Render(ComponentRenderInput{renderAll: true, queueDriver: "workerpool"})
+		return renderer.Render(ComponentRenderInput{renderAll: true})
 	}); err != nil {
 		t.Fatalf("render multi-app runtime app: %v", err)
 	}

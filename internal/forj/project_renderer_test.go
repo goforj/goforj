@@ -130,17 +130,6 @@ func TestSyncCoreLibrariesAddsTemplDependencyForTemplStarter(t *testing.T) {
 	}
 }
 
-func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
-	data, err := os.ReadFile("project_renderer.go")
-	if err != nil {
-		t.Fatalf("read project_renderer.go: %v", err)
-	}
-	source := string(data)
-	if !strings.Contains(source, `requires: []string{`) || !strings.Contains(source, `"/auth/dev-session"`) {
-		t.Fatal("expected project renderer sync to require the lighthouse dev session auth route")
-	}
-}
-
 func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "docker-compose.yml.tmpl"))
 	if err != nil {
@@ -773,6 +762,7 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 }
 
+// TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController protects the templ starter's HTTP ownership boundary.
 func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -799,6 +789,7 @@ func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T)
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.renderApp(project.DefaultApp()); err != nil {
 		t.Fatalf("renderApp returned error: %v", err)
 	}
@@ -1487,6 +1478,7 @@ func TestRenderAppPreservesCustomFrontendPlaceholder(t *testing.T) {
 	}
 }
 
+// TestRenderAppWritesDefaultAppShape verifies the direct helper emits every default App composition boundary.
 func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -1512,6 +1504,7 @@ func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 		},
 		stats: &renderStats{},
 	}
+	initializeDefaultResourceStateForTest(t, renderer)
 	if err := renderer.renderApp(project.DefaultApp()); err != nil {
 		t.Fatalf("renderApp returned error: %v", err)
 	}

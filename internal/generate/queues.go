@@ -15,16 +15,19 @@ import (
 	"github.com/goforj/str"
 )
 
+// queueAccessorTemplateData carries the named queue methods emitted for one project snapshot.
 type queueAccessorTemplateData struct {
 	GoModuleName string
 	Names        []queueAccessorName
 }
 
+// queueAccessorName binds an environment queue name to its generated Go method.
 type queueAccessorName struct {
 	Method string
 	Queue  string
 }
 
+// queueConfigTemplateData keeps compiled transports, worker wiring, and named queues aligned during rendering.
 type queueConfigTemplateData struct {
 	CompiledDrivers []string
 	GoModuleName    string
@@ -37,6 +40,7 @@ type queueConfigTemplateData struct {
 	Names           []queueAccessorName
 }
 
+// queueDriverSpec captures the import and constructor metadata needed to emit one queue transport branch.
 type queueDriverSpec struct {
 	ConstName     string
 	Constructor   string
@@ -48,6 +52,7 @@ type queueDriverSpec struct {
 	DriverLiteral string
 }
 
+// queueConfigField binds a transport configuration field to its generated value expression.
 type queueConfigField struct {
 	Name  string
 	Value string
@@ -264,6 +269,7 @@ func discoverQueueNames(projectDir string) []string {
 	return names
 }
 
+// renderQueueAccessors keeps named queue methods aligned with the same project snapshot used by the manager.
 func renderQueueAccessors(projectDir string, names []string) ([]byte, error) {
 	moduleName, err := readModuleName(projectDir)
 	if err != nil {
@@ -290,6 +296,7 @@ func renderQueueAccessors(projectDir string, names []string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// readModuleName resolves the generated runtime import path from the target project's module declaration.
 func readModuleName(projectDir string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(projectDir, "go.mod"))
 	if err != nil {
@@ -491,6 +498,7 @@ var queueRootKeys = []string{
 	"PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
 }
 
+// Manager owns the queues and worker settings generated from the project's build contract.
 type Manager struct {
 	defaultQueue *queue.Queue
 	defaultQueueName string
@@ -503,6 +511,7 @@ type Manager struct {
 {{- end }}
 }
 
+// Instance gives tooling a uniform view of each generated queue and its worker count.
 type Instance struct {
 	Name      string
 	Queue     *queue.Queue
@@ -510,6 +519,7 @@ type Instance struct {
 	IsDefault bool
 }
 
+// ReadinessCheck pairs a stable queue name with its health probe.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
@@ -587,14 +597,17 @@ func recordQueuedJobPayload(ctx context.Context, job queue.Job) {
 	})
 }
 
+// NewManager builds configured queues without optional runtime instrumentation.
 func NewManager() (*Manager, error) {
 	return NewManagerWithObserver(nil, nil, nil)
 }
 
+// NewManagerWithObserver centralizes queue construction when runtime instrumentation is available.
 func NewManagerWithObserver(observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger, inspectManager)
 }
 
+// ReadinessChecks exposes an independently named health probe for every generated queue.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	if m == nil {
 		return nil
@@ -644,7 +657,7 @@ func (m *Manager) Register(jobType string, fn func(context.Context, queue.Messag
 	})
 }
 
-// Dispatch enqueues work on the default queue with background context.
+// Dispatch applies the generated default queue before recording payload telemetry and handing work to the transport.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 	if queue.DriverOptions(job).QueueName == "" {
 		queueName := strings.TrimSpace(m.defaultQueueName)
@@ -657,7 +670,7 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 	return m.defaultQueue.Dispatch(job)
 }
 
-// WithContext returns a queue manager bound to the provided context.
+// WithContext clones the manager so per-call context binding cannot mutate shared queue handles.
 func (m *Manager) WithContext(ctx context.Context) *Manager {
 	clone := *m
 	clone.ctx = ctx
@@ -672,6 +685,7 @@ func (m *Manager) WithContext(ctx context.Context) *Manager {
 	return &clone
 }
 
+// newManagerFromEnv keeps default and named queues on the same scoped configuration path.
 func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
 	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, queueScope, observer, logger)
 	if err != nil {
@@ -755,6 +769,7 @@ func queueDriverCompiled(driver string) bool {
 	return false
 }
 
+// queueWorkerCount preserves a usable worker pool when scoped configuration is missing or non-positive.
 func queueWorkerCount(scope env.Scope, rootScope env.Scope) int {
 	workers := queueInt(scope, rootScope, "WORKERS", "30")
 	if workers <= 0 {
@@ -766,6 +781,7 @@ func queueWorkerCount(scope env.Scope, rootScope env.Scope) int {
 	return workers
 }
 
+// queueDefaultQueue applies resource-specific naming before falling back to root queue configuration.
 func queueDefaultQueue(name string, scope env.Scope, rootScope env.Scope) string {
 	value := strings.TrimSpace(scope.Get("NAME", ""))
 	if value != "" {
@@ -790,6 +806,7 @@ func queueDefaultQueue(name string, scope env.Scope, rootScope env.Scope) string
 	return queuePhysicalName(value)
 }
 
+// queuePhysicalName namespaces implicit queue names so multiple Apps can share one transport safely.
 func queuePhysicalName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -806,6 +823,7 @@ func queuePhysicalName(name string) string {
 	return prefix + name
 }
 
+// queueString gives named queue settings precedence while retaining root configuration as a shared fallback.
 func queueString(scope env.Scope, rootScope env.Scope, key string, fallback string) string {
 	if value := strings.TrimSpace(scope.Get(key, "")); value != "" {
 		return value
@@ -816,6 +834,7 @@ func queueString(scope env.Scope, rootScope env.Scope, key string, fallback stri
 	return fallback
 }
 
+// queueInt falls back deterministically when an environment value is not a valid integer.
 func queueInt(scope env.Scope, rootScope env.Scope, key string, fallback string) int {
 	value := queueString(scope, rootScope, key, fallback)
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
@@ -826,6 +845,7 @@ func queueInt(scope env.Scope, rootScope env.Scope, key string, fallback string)
 	return parsed
 }
 
+// queueDuration falls back deterministically when an environment value is not a valid duration.
 func queueDuration(scope env.Scope, rootScope env.Scope, key string, fallback string) time.Duration {
 	value := queueString(scope, rootScope, key, fallback)
 	parsed, err := time.ParseDuration(strings.TrimSpace(value))
@@ -837,6 +857,7 @@ func queueDuration(scope env.Scope, rootScope env.Scope, key string, fallback st
 }
 
 {{- if .HasRedis }}
+// queueRedisAddr preserves queue-specific endpoints while sharing the global Redis fallback contract.
 func queueRedisAddr(scope env.Scope, rootScope env.Scope) string {
 	addr := strings.TrimSpace(queueString(scope, rootScope, "ADDR", ""))
 	if addr != "" {
@@ -845,6 +866,7 @@ func queueRedisAddr(scope env.Scope, rootScope env.Scope) string {
 	return fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379"))
 }
 
+// queueRedisWeights guarantees that Redis workers retain the configured default queue when weights are absent.
 func queueRedisWeights(scope env.Scope, defaultQueue string) map[string]int {
 	raw := strings.TrimSpace(scope.Get("QUEUES", ""))
 	if raw == "" {
@@ -875,6 +897,7 @@ func queueRedisWeights(scope env.Scope, defaultQueue string) map[string]int {
 	return weights
 }
 
+// queueRedisLogLevel translates environment text into the Redis driver's constrained log-level enumeration.
 func queueRedisLogLevel(scope env.Scope, rootScope env.Scope) redisqueue.ServerLogLevel {
 	raw := strings.TrimSpace(queueString(scope, rootScope, "SERVER_LOG_LEVEL", ""))
 	if raw == "" {
@@ -898,6 +921,7 @@ func queueRedisLogLevel(scope env.Scope, rootScope env.Scope) redisqueue.ServerL
 {{- end }}
 
 {{- if .HasURLBased }}
+// queueURL lets named queues override a shared transport URL without losing the driver's fallback.
 func queueURL(scope env.Scope, rootScope env.Scope, fallback string) string {
 	value := strings.TrimSpace(queueString(scope, rootScope, "URL", fallback))
 	if value == "" {
@@ -908,6 +932,7 @@ func queueURL(scope env.Scope, rootScope env.Scope, fallback string) string {
 {{- end }}
 
 {{- if .HasSQL }}
+// queueDurationSeconds prevents non-positive SQL lease settings from disabling recovery behavior accidentally.
 func queueDurationSeconds(scope env.Scope, rootScope env.Scope, key string, fallbackSeconds int) time.Duration {
 	seconds := queueInt(scope, rootScope, key, fmt.Sprintf("%d", fallbackSeconds))
 	if seconds <= 0 {
@@ -916,6 +941,7 @@ func queueDurationSeconds(scope env.Scope, rootScope env.Scope, key string, fall
 	return time.Duration(seconds) * time.Second
 }
 
+// queueSQLiteDSN isolates named queues in resource-specific local database files.
 func queueSQLiteDSN(name string) string {
 	base := filepath.Join(os.TempDir(), "queue-sqlite")
 	if name == "" || name == string(defaultQueueName) {
