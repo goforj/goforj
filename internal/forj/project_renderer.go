@@ -373,165 +373,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					".env.host.tmpl",
 				}
 				localEnvTemplate := ".env.local.tmpl"
-				ensureEnvDefaults := func(path string, allowAppKey bool) error {
-					content, err := p.workspace.readFile(path)
-					if err != nil {
-						return err
-					}
-					text := string(content)
-					needsURL := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_URL=")
-					needsAppDiagToken := path == ".env" && !strings.Contains(text, "APP_DIAG_TOKEN=")
-					needsSecret := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_SECRET=")
-					needsEnabled := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_ENABLED=")
-					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
-					needsForjMakeOpen := path == ".env" && !strings.Contains(text, "FORJ_MAKE_OPEN=")
-					needsForjEditor := path == ".env" && !strings.Contains(text, "FORJ_EDITOR=")
-					needsGrafanaPortDefault := false
-					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
-					needsJWTSecret := false
-
-					appKey := ""
-					appDiagToken := ""
-					secretValue := ""
-					jwtSecret := ""
-					jwtLineIdx := -1
-					lines := strings.Split(text, "\n")
-					filteredLines := make([]string, 0, len(lines))
-					seenLighthouseSecret := false
-					for _, line := range lines {
-						trimmed := strings.TrimSpace(line)
-						if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-							filteredLines = append(filteredLines, line)
-							continue
-						}
-						if strings.HasPrefix(trimmed, "APP_KEY=") {
-							appKey = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_KEY="))
-							filteredLines = append(filteredLines, line)
-							continue
-						}
-						if strings.HasPrefix(trimmed, "LIGHTHOUSE_SECRET=") {
-							if !seenLighthouseSecret {
-								secretValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "LIGHTHOUSE_SECRET="))
-								filteredLines = append(filteredLines, line)
-								seenLighthouseSecret = true
-							}
-							continue
-						}
-						if strings.HasPrefix(trimmed, "APP_DIAG_TOKEN=") {
-							appDiagToken = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_DIAG_TOKEN="))
-							filteredLines = append(filteredLines, line)
-							continue
-						}
-						if strings.HasPrefix(trimmed, "API_JWT_SECRET_KEY=") {
-							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "API_JWT_SECRET_KEY="))
-							filteredLines = append(filteredLines, line)
-							jwtLineIdx = len(filteredLines) - 1
-							continue
-						}
-						filteredLines = append(filteredLines, line)
-					}
-					lines = filteredLines
-					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
-						needsJWTSecret = true
-					}
-					if path == ".env" && p.config.Render.Components.Grafana {
-						lines, needsGrafanaPortDefault = migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
-					}
-					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsSwagger || needsForjMakeOpen || needsForjEditor || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
-						return nil
-					}
-					if needsAppDiagToken && appDiagToken == "" {
-						value, err := generateAppDiagToken()
-						if err != nil {
-							return fmt.Errorf("failed to generate app diagnostics token: %w", err)
-						}
-						appDiagToken = value
-					}
-					if needsSecret && secretValue == "" {
-						value, err := generateLighthouseSecret()
-						if err != nil {
-							return fmt.Errorf("failed to generate lighthouse secret: %w", err)
-						}
-						secretValue = value
-					}
-					if needsJWTSecret {
-						value, err := generateJWTSecretKey()
-						if err != nil {
-							return fmt.Errorf("failed to generate JWT secret: %w", err)
-						}
-						jwtSecret = value
-					}
-					if needsKey && appKey == "" {
-						key, err := crypt.GenerateAppKey()
-						if err != nil {
-							return fmt.Errorf("failed to generate app key: %w", err)
-						}
-						appKey = key
-					}
-					writeLines := make([]string, 0)
-					if needsKey && appKey != "" {
-						writeLines = append(writeLines, fmt.Sprintf("APP_KEY=%s", appKey))
-					}
-					if needsAppDiagToken && appDiagToken != "" {
-						writeLines = append(writeLines, fmt.Sprintf("APP_DIAG_TOKEN=%s", appDiagToken))
-					}
-					if needsURL {
-						writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/lighthouse/ws/agent")
-					}
-					if needsSecret {
-						writeLines = append(writeLines, fmt.Sprintf("LIGHTHOUSE_SECRET=%s", secretValue))
-					}
-					if needsEnabled {
-						writeLines = append(writeLines, "LIGHTHOUSE_ENABLED=true")
-					}
-					if needsSwagger {
-						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
-					}
-					if needsForjMakeOpen || needsForjEditor {
-						if len(writeLines) > 0 {
-							writeLines = append(writeLines, "")
-						}
-						if !strings.Contains(text, "# Forj") {
-							writeLines = append(writeLines, "# Forj")
-						}
-						if needsForjMakeOpen {
-							writeLines = append(writeLines, "FORJ_MAKE_OPEN=auto # options: auto, always, never")
-						}
-						if needsForjEditor {
-							writeLines = append(writeLines, "# Optional editor command for make commands; falls back to common GUI editors.")
-							writeLines = append(writeLines, "FORJ_EDITOR=")
-						}
-					}
-					if needsJWTSecret && jwtSecret != "" {
-						if jwtLineIdx >= 0 && jwtLineIdx < len(lines) {
-							lines[jwtLineIdx] = fmt.Sprintf("API_JWT_SECRET_KEY=%s", jwtSecret)
-						} else {
-							writeLines = append(writeLines, fmt.Sprintf("API_JWT_SECRET_KEY=%s", jwtSecret))
-						}
-					}
-					if len(writeLines) > 0 {
-						lines = append(lines, writeLines...)
-					}
-					updated := strings.Join(lines, "\n")
-					if !strings.HasSuffix(updated, "\n") {
-						updated += "\n"
-					}
-					if updated == text {
-						return nil
-					}
-					if err := p.workspace.writeFileAtomically(path, []byte(updated), 0o644); err != nil {
-						return err
-					}
-					return nil
-				}
 				missingEnvTemplates := make([]string, 0, len(envTemplates))
 				for _, tmpl := range envTemplates {
 					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, ""), ".tmpl")
 					if exists, err := p.workspace.exists(name); err != nil {
 						return err
 					} else if exists {
-						allowAppKey := name == ".env"
-						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
+						if err := p.ensureEnvironmentDefaults(name); err != nil {
 							return err
 						}
 						continue
@@ -2272,26 +2120,6 @@ func (p *ProjectRenderer) flushRenderLines(start int) {
 	p.lines = p.lines[:start]
 }
 
-// migrateGeneratedEnvDefault updates old generated defaults without overriding custom app owner values.
-func migrateGeneratedEnvDefault(lines []string, key string, oldValue string, newValue string) ([]string, bool) {
-	prefix := key + "="
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, prefix) {
-			continue
-		}
-		value := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
-		if value != oldValue {
-			return lines, false
-		}
-		updated := make([]string, len(lines))
-		copy(updated, lines)
-		updated[i] = key + "=" + newValue
-		return updated, true
-	}
-	return lines, false
-}
-
 func renderDebugEnabled() bool {
 	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(key))
@@ -2878,7 +2706,6 @@ func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 
 // writeProjectConfig persists renderer-owned YAML without exposing a partially written configuration.
 func writeProjectConfig(path string, cfg *project.Config) error {
-	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
