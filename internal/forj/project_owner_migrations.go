@@ -30,7 +30,13 @@ type jobsOwnerMigration struct {
 
 // migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
 func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
-	eventMigrations, err := p.workspace.planEventSubscriberOwnerMigrations(p.config)
+	discovery, err := projectlayout.Discover(p.workspace.discoveryRoot())
+	if err != nil {
+		return fmt.Errorf("discover Apps for owner migrations: %w", p.workspace.logicalError(err))
+	}
+	conventionalApps := discovery.ConventionalApps()
+	runtimeApps := discovery.RuntimeApps(p.config)
+	eventMigrations, err := p.workspace.planEventSubscriberOwnerMigrations(p.config, runtimeApps)
 	if err != nil {
 		return err
 	}
@@ -44,10 +50,10 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 	if err := p.workspace.applyJobsOwnerMigration(jobsMigration); err != nil {
 		return err
 	}
-	if err := p.workspace.migrateLegacyCacheShellCommandOwners(); err != nil {
+	if err := p.workspace.migrateLegacyCacheShellCommandOwners(conventionalApps); err != nil {
 		return err
 	}
-	if err := p.workspace.repairLegacyEventSubscriberOwnerSetNames(p.config); err != nil {
+	if err := p.workspace.repairLegacyEventSubscriberOwnerSetNames(p.config, runtimeApps); err != nil {
 		return err
 	}
 	return p.workspace.migratePreservedFile(
@@ -57,8 +63,8 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 }
 
 // migrateLegacyCacheShellCommandOwners repairs preserved commands inside one project workspace.
-func (w projectRenderWorkspace) migrateLegacyCacheShellCommandOwners() error {
-	for _, app := range projectlayout.ConventionalApps(w.discoveryRoot()) {
+func (w projectRenderWorkspace) migrateLegacyCacheShellCommandOwners(apps []project.App) error {
+	for _, app := range apps {
 		path := filepath.Join(projectlayout.AppDir(".", app), "commands.go")
 		source, err := w.readFile(path)
 		if err != nil {
@@ -202,9 +208,9 @@ func legacyEventSubscriberOwnerPaths(app project.App) []string {
 }
 
 // planEventSubscriberOwnerMigrations resolves preserved Events owners inside one project workspace.
-func (w projectRenderWorkspace) planEventSubscriberOwnerMigrations(config *project.Config) ([]eventSubscriberOwnerMigration, error) {
+func (w projectRenderWorkspace) planEventSubscriberOwnerMigrations(config *project.Config, apps []project.App) ([]eventSubscriberOwnerMigration, error) {
 	migrations := make([]eventSubscriberOwnerMigration, 0)
-	for _, app := range projectlayout.RuntimeApps(w.discoveryRoot(), config) {
+	for _, app := range apps {
 		if !appRenderComponents(config, app).Events {
 			continue
 		}
@@ -261,8 +267,8 @@ func (w projectRenderWorkspace) applyEventSubscriberOwnerMigrations(migrations [
 }
 
 // repairLegacyEventSubscriberOwnerSetNames updates preserved Events owners inside one project workspace.
-func (w projectRenderWorkspace) repairLegacyEventSubscriberOwnerSetNames(config *project.Config) error {
-	for _, app := range projectlayout.RuntimeApps(w.discoveryRoot(), config) {
+func (w projectRenderWorkspace) repairLegacyEventSubscriberOwnerSetNames(config *project.Config, apps []project.App) error {
+	for _, app := range apps {
 		if !appRenderComponents(config, app).Events {
 			continue
 		}

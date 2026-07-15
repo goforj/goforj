@@ -15,6 +15,10 @@ import (
 
 // cleanupLegacyGeneratedFiles removes obsolete framework-owned artifacts while preserving App-owned source.
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
+	discovery, err := projectlayout.Discover(p.workspace.discoveryRoot())
+	if err != nil {
+		return fmt.Errorf("discover Apps for legacy cleanup: %w", p.workspace.logicalError(err))
+	}
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
 		filepath.Join("internal", "cmd", "generate_cmd.go"),
@@ -134,7 +138,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
-	for _, app := range projectlayout.ConventionalApps(p.workspace.discoveryRoot()) {
+	for _, app := range discovery.ConventionalApps() {
 		components := appRenderComponents(p.config, app)
 		for _, path := range appOwnedWirePathsForApp(app) {
 			if data, err := p.workspace.readFile(path); err == nil {
