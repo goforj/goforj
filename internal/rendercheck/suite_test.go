@@ -246,6 +246,34 @@ func TestSuiteListWritesSelectedShard(t *testing.T) {
 	}
 }
 
+// TestShardRenderCombosRejectsInvalidConfiguration keeps malformed CI shard settings from silently running the wrong matrix.
+func TestShardRenderCombosRejectsInvalidConfiguration(t *testing.T) {
+	tests := []struct {
+		name  string
+		count string
+		index string
+		want  string
+	}{
+		{name: "count is not an integer", count: "two", want: `invalid FORJ_TEST_RENDERS_SHARD_COUNT="two"`},
+		{name: "count is below minimum", count: "0", want: `invalid FORJ_TEST_RENDERS_SHARD_COUNT="0"`},
+		{name: "index is not an integer", count: "2", index: "one", want: `invalid FORJ_TEST_RENDERS_SHARD_INDEX="one"`},
+		{name: "index is below minimum", count: "2", index: "-1", want: `invalid FORJ_TEST_RENDERS_SHARD_INDEX="-1"`},
+		{name: "index is outside count", count: "1", index: "1", want: "FORJ_TEST_RENDERS_SHARD_INDEX=1 must be < FORJ_TEST_RENDERS_SHARD_COUNT=1"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FORJ_TEST_RENDERS_SHARD_COUNT", test.count)
+			t.Setenv("FORJ_TEST_RENDERS_SHARD_INDEX", test.index)
+
+			_, _, err := shardRenderCombos([]renderCombo{{id: "fixture"}})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("shardRenderCombos() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 // TestSuiteListReturnsFlushErrors verifies buffered table output cannot fail silently at the public listing boundary.
 func TestSuiteListReturnsFlushErrors(t *testing.T) {
 	suite, err := NewSuite(renderProfileSmoke, false)
