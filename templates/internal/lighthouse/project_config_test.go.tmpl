@@ -266,8 +266,7 @@ apps:
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
 		t.Fatalf("unmarshal versionless component contract: %v", err)
 	}
-	if config.Render.ComponentContractVersion != project.CurrentComponentContractVersion ||
-		!config.Render.Components.Cache || !config.Render.Components.Events || !config.Render.Components.Storage {
+	if !config.Render.Components.Cache || !config.Render.Components.Events || !config.Render.Components.Storage {
 		t.Fatalf("default App was not migrated to the current primitive contract: %#v", config.Render)
 	}
 	for _, name := range []string{"api", "worker"} {
@@ -294,6 +293,15 @@ apps:
 	}
 	if strings.Contains(string(encoded), "component_contract:") {
 		t.Fatalf("migrated component config retained the obsolete marker:\n%s", encoded)
+	}
+}
+
+// TestProjectConfigRejectsUnsupportedLegacyComponentContract prevents an older generated project from guessing at future marker semantics.
+func TestProjectConfigRejectsUnsupportedLegacyComponentContract(t *testing.T) {
+	var config project.Config
+	err := yaml.Unmarshal([]byte("render:\n  components: [cli]\n  component_contract: 2\n"), &config)
+	if err == nil || !strings.Contains(err.Error(), "unsupported component contract version 2") {
+		t.Fatalf("unmarshal error = %v, want unsupported component contract diagnostic", err)
 	}
 }
 

@@ -23,8 +23,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 	files := map[string][]string{
 		filepath.Join("project", "config.go.tmpl"): {
 			`package project`,
-			`CurrentComponentContractVersion`,
-			`ComponentContractVersion int`,
+			`legacyComponentContractVersion`,
 			`Watch    any`,
 			`Root     string`,
 			`Roots    []string`,
@@ -56,6 +55,12 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`func loadProjectConfig() (*project.Config, error)`,
 		},
 	}
+	forbiddenSnippets := map[string][]string{
+		filepath.Join("project", "config.go.tmpl"): {
+			`CurrentComponentContractVersion`,
+			`ComponentContractVersion int`,
+		},
+	}
 	for name, snippets := range files {
 		content, err := os.ReadFile(filepath.Join(templatesRoot, name))
 		if err != nil {
@@ -64,6 +69,11 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 		for _, snippet := range snippets {
 			if !strings.Contains(string(content), snippet) {
 				t.Fatalf("expected Lighthouse template %s to contain %q", name, snippet)
+			}
+		}
+		for _, snippet := range forbiddenSnippets[name] {
+			if strings.Contains(string(content), snippet) {
+				t.Fatalf("expected Lighthouse template %s to omit retired API %q", name, snippet)
 			}
 		}
 	}

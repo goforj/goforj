@@ -109,21 +109,19 @@ func (c *DevConfig) SetApps(apps map[string]any) {
 // DefaultAppName is the implicit single-app name.
 const DefaultAppName = "app"
 
-// CurrentComponentContractVersion identifies the only legacy component marker accepted while decoding existing configs.
-const CurrentComponentContractVersion = 1
-
 const componentYAMLInlineLimit = 120
+
+// legacyComponentContractVersion is the only retired marker whose mapping semantics this project can migrate safely.
+const legacyComponentContractVersion = 1
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components               Components        `yaml:"components" json:"components"`
-	StarterKit               string            `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat               string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion            string            `yaml:"goforj_version" json:"goforj_version"`
-	// ComponentContractVersion retains the deprecated marker in memory only while existing configs are decoded.
-	ComponentContractVersion int `yaml:"-" json:"-"`
-	ModuleReplaces           map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
-	Extra                    map[string]any    `yaml:",inline" json:"-"`
+	Components     Components        `yaml:"components" json:"components"`
+	StarterKit     string            `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat     string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion  string            `yaml:"goforj_version" json:"goforj_version"`
+	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+	Extra          map[string]any    `yaml:",inline" json:"-"`
 }
 
 // UnmarshalYAML consumes obsolete render fields so config rewrites cannot preserve them as extensions.
@@ -134,11 +132,6 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*c = RenderConfig(fields)
-	if marker := yamlMappingValue(value, "component_contract"); marker != nil {
-		if err := marker.Decode(&c.ComponentContractVersion); err != nil {
-			return fmt.Errorf("decode legacy component contract: %w", err)
-		}
-	}
 	delete(c.Extra, "component_contract")
 	delete(c.Extra, "queue_driver")
 	return nil
@@ -172,15 +165,19 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode project config: %w", err)
 	}
 	*c = ProjectConfig(fields)
-	version := c.Render.ComponentContractVersion
-	if version < 0 || version > CurrentComponentContractVersion {
-		return fmt.Errorf("decode project config: unsupported component contract version %d; this project supports version %d", version, CurrentComponentContractVersion)
-	}
 	render := yamlMappingValue(value, "render")
+	version := 0
+	if marker := yamlMappingValue(render, "component_contract"); marker != nil {
+		if err := marker.Decode(&version); err != nil {
+			return fmt.Errorf("decode legacy component contract: %w", err)
+		}
+	}
+	if version < 0 || version > legacyComponentContractVersion {
+		return fmt.Errorf("decode project config: unsupported component contract version %d; this project supports version %d", version, legacyComponentContractVersion)
+	}
 	renderComponents := yamlMappingValue(render, "components")
-	legacyDefaults := version < CurrentComponentContractVersion && (renderComponents == nil || renderComponents.Kind == yaml.MappingNode)
+	legacyDefaults := version < legacyComponentContractVersion && (renderComponents == nil || renderComponents.Kind == yaml.MappingNode)
 	if legacyDefaults {
-		c.Render.ComponentContractVersion = CurrentComponentContractVersion
 		c.Render.Components.enableLegacyPrimitiveDefaults()
 	}
 	if err := normalizeAppComponents(c.Apps, legacyDefaults); err != nil {
