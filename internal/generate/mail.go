@@ -479,7 +479,7 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 
 // WithObserver rebuilds the manager because mail drivers capture their observer when they are constructed.
 func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m, nil
 	}
 	combined := observer

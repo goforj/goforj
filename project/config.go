@@ -288,9 +288,6 @@ func (c Components) Enabled(key ComponentKey) bool {
 
 // SetEnabled toggles a component by catalog key.
 func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
-	if c == nil {
-		return
-	}
 	switch key {
 	case ComponentCLI:
 		c.CLI = enabled
@@ -335,9 +332,6 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 
 // ResolveDependencies applies dependency rules in-place without mutating the original config source.
 func (c *Components) ResolveDependencies() {
-	if c == nil {
-		return
-	}
 	if c.DemoApp {
 		c.Cache = true
 		c.Events = true

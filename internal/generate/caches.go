@@ -556,7 +556,7 @@ func NewManager() (*Manager, error) {
 
 // WithObserver adds observability without replacing observers already attached by framework wiring.
 func (m *Manager) WithObserver(observer Observer) *Manager {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m
 	}
 	if m.observer == nil {
@@ -570,24 +570,18 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 		}
 	}
 	combined := m.observer
-	if m.defaultStore != nil {
-		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
-			combined.OnCacheOp(ctx, CacheOpEvent{Name: "default", CacheOpEvent: event})
-		}))
-	}
+	m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+		combined.OnCacheOp(ctx, CacheOpEvent{Name: "default", CacheOpEvent: event})
+	}))
 {{- range .Names }}
 {{- if eq .Store "sessions" }}
-	if m.sessions != nil {
-		m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
-			combined.OnCacheOp(ctx, CacheOpEvent{Name: "sessions", CacheOpEvent: event})
-		}))
-	}
+	m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+		combined.OnCacheOp(ctx, CacheOpEvent{Name: "sessions", CacheOpEvent: event})
+	}))
 {{- else }}
-	if m.{{ .Store }} != nil {
-		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
-			combined.OnCacheOp(ctx, CacheOpEvent{Name: "{{ .Store }}", CacheOpEvent: event})
-		}))
-	}
+	m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+		combined.OnCacheOp(ctx, CacheOpEvent{Name: "{{ .Store }}", CacheOpEvent: event})
+	}))
 {{- end }}
 {{- end }}
 	return m
@@ -595,9 +589,6 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 
 // ReadinessChecks exposes one probe per generated cache so health reflects every configured store.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "cache_default",
@@ -835,16 +826,11 @@ func cacheEncryptionKey(scope env.Scope) []byte {
 
 // cacheReadinessCheck adapts both wrapper and driver readiness contracts to one generated probe.
 func cacheReadinessCheck(ctx context.Context, store *cache.Cache) error {
-	if store == nil {
-		return nil
-	}
 	if ready, ok := any(store).(interface{ Ready() error }); ok {
 		return ready.Ready()
 	}
-	if inner := store.Store(); inner != nil {
-		if ready, ok := any(inner).(interface{ Ready(context.Context) error }); ok {
-			return ready.Ready(ctx)
-		}
+	if ready, ok := any(store.Store()).(interface{ Ready(context.Context) error }); ok {
+		return ready.Ready(ctx)
 	}
 	return nil
 }

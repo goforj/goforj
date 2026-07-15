@@ -609,16 +609,10 @@ func NewManagerWithObserver(observer queue.Observer, logger queue.Logger, inspec
 
 // ReadinessChecks exposes an independently named health probe for every generated queue.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "queue_default",
 			Check: func(ctx context.Context) error {
-				if m.defaultQueue == nil {
-					return nil
-				}
 				return m.defaultQueue.Ready(ctx)
 			},
 		},
@@ -626,9 +620,6 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 		{
 			Name: "queue_{{ .Queue }}",
 			Check: func(ctx context.Context) error {
-				if m.{{ .Queue }} == nil {
-					return nil
-				}
 				return m.{{ .Queue }}.Ready(ctx)
 			},
 		},
@@ -642,7 +633,7 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
 	m.defaultQueue.Register(jobType, func(ctx context.Context, msg queue.Message) error {
 		ctx = runtime.WithSource(ctx, runtime.SourceJobs)
-		if m != nil && m.inspects != nil {
+		if m.inspects != nil {
 			ctx = m.inspects.Begin(ctx, runtime.SourceJobs, jobType, map[string]string{
 				"job_name": jobType,
 			})
@@ -650,7 +641,7 @@ func (m *Manager) Register(jobType string, fn func(context.Context, queue.Messag
 			defer m.inspects.Finish(ctx, "", nil)
 		}
 		err := fn(ctx, msg)
-		if m != nil && m.inspects != nil && err != nil {
+		if m.inspects != nil && err != nil {
 			m.inspects.Finish(ctx, "error", err)
 		}
 		return err
@@ -674,13 +665,9 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 func (m *Manager) WithContext(ctx context.Context) *Manager {
 	clone := *m
 	clone.ctx = ctx
-	if m.defaultQueue != nil {
-		clone.defaultQueue = m.defaultQueue.WithContext(ctx)
-	}
+	clone.defaultQueue = m.defaultQueue.WithContext(ctx)
 {{- range .Names }}
-	if m.{{ .Queue }} != nil {
-		clone.{{ .Queue }} = m.{{ .Queue }}.WithContext(ctx)
-	}
+	clone.{{ .Queue }} = m.{{ .Queue }}.WithContext(ctx)
 {{- end }}
 	return &clone
 }

@@ -304,9 +304,6 @@ type ReadinessCheck struct {
 
 // ReadinessChecks exposes one stable probe per generated connection so health reporting stays independent of accessor names.
 func (c *Connections) ReadinessChecks() []ReadinessCheck {
-	if c == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "db_default",
