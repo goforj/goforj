@@ -1007,7 +1007,7 @@ const (
 func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
 watcherLoop:
 	for {
-		if err := reloadDevWatchSessionConfig(session); err != nil {
+		if err := session.reloadProjectConfig(); err != nil {
 			return err
 		}
 		session.config.Dev.Watches = devWatchesForApps(session.config, session.baseWatches)
@@ -1064,7 +1064,7 @@ watcherLoop:
 			case <-session.buildCh:
 				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
 				spaRootsBeforeBuild := structuredDevSPARoots(session.config)
-				if err := reloadDevWatchSessionConfig(session); err != nil {
+				if err := session.reloadProjectConfig(); err != nil {
 					stopAndDrainWatchers(watchers, exitCh, session.outWriter, session.streamer, true)
 					return err
 				}
@@ -1132,7 +1132,7 @@ watcherLoop:
 				writeDevActionLine(session.outWriter, "Rendering app and restarting watchers")
 				spaRootsBeforeRender := structuredDevSPARoots(session.config)
 				waitForStop := beginStopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
-				if err := reloadDevWatchSessionConfig(session); err != nil {
+				if err := session.reloadProjectConfig(); err != nil {
 					waitForStop()
 					drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
 					return err
@@ -1154,7 +1154,7 @@ watcherLoop:
 					console.Errorf("forj render failed: %v", renderErr)
 					return fmt.Errorf("forj render failed: %w", renderErr)
 				}
-				if err := reloadDevWatchSessionConfig(session); err != nil {
+				if err := session.reloadProjectConfig(); err != nil {
 					return err
 				}
 				session.reconcile = shouldReconcileStructuredDevApps(session.config)
@@ -1237,11 +1237,8 @@ func devWatchStopContext(stop <-chan struct{}) (context.Context, context.CancelF
 	return ctx, cancel
 }
 
-// reloadDevWatchSessionConfig keeps long-running dev sessions aligned with make:app and render metadata changes.
-func reloadDevWatchSessionConfig(session *devWatchSession) error {
-	if session == nil {
-		return nil
-	}
+// reloadProjectConfig keeps a long-running dev session aligned with make:app and render metadata changes.
+func (session *devWatchSession) reloadProjectConfig() error {
 	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return err
