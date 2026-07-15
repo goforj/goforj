@@ -222,8 +222,6 @@ The initial local-default policy includes:
 | Named resource | Active by default | Reason |
 | --- | --- | --- |
 | Auth sessions | `memory` | new Apps must not require Redis to start |
-| Inspection cache | `memory` | diagnostic state is intentionally process-local |
-| Lighthouse cache | `memory` | inspection state is local to its process |
 | Demo settings cache | `memory` | it is a database-backed optimization |
 | Generated queues | inherit root | queue generation already follows the root driver |
 | Generated event buses | `inproc` | existing named-event behavior remains explicit |
