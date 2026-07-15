@@ -38,16 +38,16 @@ func TestRunnerStrictFailurePreservesActiveArtifacts(t *testing.T) {
 		}
 	}
 
-	pending, report, err := newTestRunner().prepareDefaultPaths(paths, runOptions{strict: true})
-	if pending != nil {
+	prepared, err := newTestRunner().prepareDefaultPaths(paths, runOptions{strict: true})
+	if prepared.candidate != nil {
 		t.Fatal("strict diagnostics unexpectedly returned a publishable candidate")
 	}
 	var diagnosticsErr *webindex.DiagnosticsError
 	if !errors.As(err, &diagnosticsErr) {
 		t.Fatalf("strict runner error = %T %v, want DiagnosticsError", err, err)
 	}
-	if report.appName != "app" || report.outcome != outcomeRejected || report.diagnostics == 0 {
-		t.Fatalf("strict failure report = %#v, want active app and diagnostic count", report)
+	if prepared.report.appName != "app" || prepared.report.outcome != outcomeRejected || prepared.report.diagnostics == 0 {
+		t.Fatalf("strict failure report = %#v, want active app and diagnostic count", prepared.report)
 	}
 	for _, path := range artifactPaths(paths) {
 		content, readErr := os.ReadFile(path)

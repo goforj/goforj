@@ -168,7 +168,7 @@ func TestPipelinePrepareAPIIndexThreadsStrictAndReportsCounts(t *testing.T) {
 // TestBuildAndRunCommandsExposeAPIIndexStrictFlag verifies ordinary commands avoid claiming the generic strict flag.
 func TestBuildAndRunCommandsExposeAPIIndexStrictFlag(t *testing.T) {
 	appLogger := logger.NewSilentLogger()
-	runner := apiindex.NewRunner(appLogger, ActiveApp)
+	runner := apiindex.NewRunner(ActiveApp)
 	buildCommand := NewCmd(appLogger, runner)
 	buildParser, err := kong.New(buildCommand)
 	if err != nil {

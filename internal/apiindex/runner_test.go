@@ -7,13 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
 // newTestRunner mirrors the CLI's late-bound App selection without coupling this package back to build.
 func newTestRunner() *Runner {
-	return NewRunner(logger.NewSilentLogger(), func() project.App {
+	return NewRunner(func() project.App {
 		appName := strings.TrimSpace(os.Getenv("FORJ_APP"))
 		if project.IsSafeAppName(appName) {
 			return project.DefaultNamedApp(appName)
@@ -22,19 +21,32 @@ func newTestRunner() *Runner {
 	})
 }
 
-// TestRunnerRunWritesArtifacts verifies direct indexing honors caller-selected artifact paths.
-func TestRunnerRunWritesArtifacts(t *testing.T) {
+// runIndexAtPaths keeps low-level path coverage out of Runner's production API.
+func runIndexAtPaths(t *testing.T, input paths) {
+	t.Helper()
+	resolvedPaths, err := resolvePaths(input)
+	if err != nil {
+		t.Fatalf("resolve paths: %v", err)
+	}
+	if _, err := newTestRunner().runIndex(resolvedPaths, runOptions{}); err != nil {
+		t.Fatalf("run API index: %v", err)
+	}
+}
+
+// TestRunIndexWritesArtifacts verifies direct indexing honors caller-selected artifact paths.
+func TestRunIndexWritesArtifacts(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root)
 
-	runner := newTestRunner()
 	out := filepath.Join(root, "build", "api_index.json")
 	diagnostics := filepath.Join(root, "build", "api_index.diagnostics.json")
 	openAPI := filepath.Join(root, "build", "openapi.json")
-
-	if err := runner.Run(root, out, diagnostics, openAPI, false); err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
+	runIndexAtPaths(t, paths{
+		root:        root,
+		out:         out,
+		diagnostics: diagnostics,
+		openAPI:     openAPI,
+	})
 
 	for _, p := range []string{out, diagnostics, openAPI} {
 		if _, err := os.Stat(p); err != nil {
@@ -43,8 +55,8 @@ func TestRunnerRunWritesArtifacts(t *testing.T) {
 	}
 }
 
-// TestRunnerSkipsRuntimeDataDir verifies generated and dependency data cannot leak into source discovery.
-func TestRunnerSkipsRuntimeDataDir(t *testing.T) {
+// TestRunIndexSkipsRuntimeDataDir verifies generated and dependency data cannot leak into source discovery.
+func TestRunIndexSkipsRuntimeDataDir(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root)
 	dataDir := filepath.Join(root, "_data", "mariadb", "billing")
@@ -79,14 +91,15 @@ func (c *Controller) Leak(ctx any) error { return nil }`
 		t.Fatalf("write ignored node_modules file: %v", err)
 	}
 
-	runner := newTestRunner()
 	out := filepath.Join(root, "build", "api_index.json")
 	diagnostics := filepath.Join(root, "build", "api_index.diagnostics.json")
 	openAPI := filepath.Join(root, "build", "openapi.json")
-
-	if err := runner.Run(root, out, diagnostics, openAPI, false); err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
+	runIndexAtPaths(t, paths{
+		root:        root,
+		out:         out,
+		diagnostics: diagnostics,
+		openAPI:     openAPI,
+	})
 	body, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatalf("read api index: %v", err)

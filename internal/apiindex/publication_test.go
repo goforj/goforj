@@ -12,22 +12,18 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// prepareTestCandidate exposes status formatting without keeping a test seam in production code.
-func prepareTestCandidate(runner *Runner) (*preparedCandidate, string, error) {
-	prepared, report, err := runner.prepareDefault(runOptions{})
-	return prepared, report.status(), err
-}
-
 // TestCandidateRemainsIsolatedUntilPublication verifies preparation alone cannot replace active artifacts.
 func TestCandidateRemainsIsolatedUntilPublication(t *testing.T) {
 	root, paths := writeStagedFixture(t)
 	restoreWorkingDirectory := changeWorkingDirectory(t, root)
 	defer restoreWorkingDirectory()
 
-	pending, status, err := prepareTestCandidate(newTestRunner())
+	prepared, err := newTestRunner().prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare API index: %v", err)
 	}
+	pending := prepared.candidate
+	status := prepared.report.status()
 	if !strings.HasPrefix(status, "app app, changed, ") || !strings.Contains(status, " operation") || !strings.Contains(status, " schema") || !strings.Contains(status, " diagnostic") {
 		t.Fatalf("prepare status does not include outcome and counts: %q", status)
 	}
@@ -47,10 +43,11 @@ func TestCandidatePublishPromotesValidatedArtifacts(t *testing.T) {
 	restoreWorkingDirectory := changeWorkingDirectory(t, root)
 	defer restoreWorkingDirectory()
 
-	pending, _, err := prepareTestCandidate(newTestRunner())
+	prepared, err := newTestRunner().prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare API index: %v", err)
 	}
+	pending := prepared.candidate
 	stagingDir := pending.stagingDir
 	want := map[string][]byte{
 		paths.out:         append([]byte(nil), pending.candidates.out.content...),
@@ -140,10 +137,12 @@ apps:
 	restoreWorkingDirectory := changeWorkingDirectory(t, root)
 	defer restoreWorkingDirectory()
 
-	pending, status, err := prepareTestCandidate(newTestRunner())
+	prepared, err := newTestRunner().prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare CLI-only cleanup: %v", err)
 	}
+	pending := prepared.candidate
+	status := prepared.report.status()
 	if status != "app ship, cleaned (no web API), 0 operations, 0 schemas, 0 diagnostics" {
 		t.Fatalf("cleanup status = %q", status)
 	}
@@ -165,10 +164,11 @@ func TestCandidateRejectsConcurrentActiveArtifactChange(t *testing.T) {
 	restoreWorkingDirectory := changeWorkingDirectory(t, root)
 	defer restoreWorkingDirectory()
 
-	pending, _, err := prepareTestCandidate(newTestRunner())
+	prepared, err := newTestRunner().prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare API index: %v", err)
 	}
+	pending := prepared.candidate
 	defer pending.discard()
 	concurrent := []byte("{\"generation\":\"concurrent\"}\n")
 	if err := os.WriteFile(paths.diagnostics, concurrent, 0o644); err != nil {
@@ -194,15 +194,17 @@ func TestCandidatePublicationLockSerializesInterleavedWriters(t *testing.T) {
 	defer restoreWorkingDirectory()
 
 	runner := newTestRunner()
-	first, _, err := prepareTestCandidate(runner)
+	firstRun, err := runner.prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare first API index writer: %v", err)
 	}
+	first := firstRun.candidate
 	defer first.discard()
-	second, _, err := prepareTestCandidate(runner)
+	secondRun, err := runner.prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare second API index writer: %v", err)
 	}
+	second := secondRun.candidate
 	defer second.discard()
 
 	firstMutation := make(chan struct{})
@@ -247,21 +249,21 @@ func TestCandidatePublicationLockSerializesInterleavedWriters(t *testing.T) {
 
 // TestPreparedCLIOnlyCleanupTreatsAlreadyAbsentSetAsSuccess verifies identical cleanup writers converge after lock handoff.
 func TestPreparedCLIOnlyCleanupTreatsAlreadyAbsentSetAsSuccess(t *testing.T) {
-	root, paths, first, _ := prepareCLIOnlyCleanupFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
+	fixture := prepareCLIOnlyCleanupFixture(t)
+	restoreWorkingDirectory := changeWorkingDirectory(t, fixture.root)
 	defer restoreWorkingDirectory()
 
-	second, _, err := prepareTestCandidate(newTestRunner())
+	secondRun, err := newTestRunner().prepareDefault(runOptions{})
 	if err != nil {
 		t.Fatalf("prepare second CLI-only cleanup: %v", err)
 	}
-	if err := first.publish(); err != nil {
+	if err := fixture.candidate.publish(); err != nil {
 		t.Fatalf("publish first CLI-only cleanup: %v", err)
 	}
-	if err := second.publish(); err != nil {
+	if err := secondRun.candidate.publish(); err != nil {
 		t.Fatalf("identical second cleanup should converge: %v", err)
 	}
-	for _, path := range artifactPaths(paths) {
+	for _, path := range artifactPaths(fixture.paths) {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("CLI-only artifact %q remained after converged cleanup: %v", path, err)
 		}
@@ -270,43 +272,43 @@ func TestPreparedCLIOnlyCleanupTreatsAlreadyAbsentSetAsSuccess(t *testing.T) {
 
 // TestPreparedCLIOnlyCleanupRollsBackInjectedMidSetFailure verifies tombstones preserve the complete stale generation on failure.
 func TestPreparedCLIOnlyCleanupRollsBackInjectedMidSetFailure(t *testing.T) {
-	root, paths, pending, previous := prepareCLIOnlyCleanupFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
+	fixture := prepareCLIOnlyCleanupFixture(t)
+	restoreWorkingDirectory := changeWorkingDirectory(t, fixture.root)
 	defer restoreWorkingDirectory()
 
 	injected := errors.New("injected cleanup rename failure")
-	pending.renameFile = func(oldPath string, newPath string) error {
-		if filepath.Clean(oldPath) == filepath.Join(root, paths.diagnostics) {
+	fixture.candidate.renameFile = func(oldPath string, newPath string) error {
+		if filepath.Clean(oldPath) == filepath.Join(fixture.root, fixture.paths.diagnostics) {
 			return injected
 		}
 		return os.Rename(oldPath, newPath)
 	}
-	err := pending.publish()
+	err := fixture.candidate.publish()
 	if !errors.Is(err, injected) {
 		t.Fatalf("cleanup error = %v, want injected rename failure", err)
 	}
-	assertArtifactContents(t, paths, previous)
-	assertNoTombstones(t, filepath.Dir(paths.out))
+	assertArtifactContents(t, fixture.paths, fixture.previous)
+	assertNoTombstones(t, filepath.Dir(fixture.paths.out))
 }
 
 // TestPreparedCLIOnlyCleanupJoinsRollbackFailure verifies the triggering cleanup error is not lost when restoration also fails.
 func TestPreparedCLIOnlyCleanupJoinsRollbackFailure(t *testing.T) {
-	root, paths, pending, _ := prepareCLIOnlyCleanupFixture(t)
-	restoreWorkingDirectory := changeWorkingDirectory(t, root)
+	fixture := prepareCLIOnlyCleanupFixture(t)
+	restoreWorkingDirectory := changeWorkingDirectory(t, fixture.root)
 	defer restoreWorkingDirectory()
 
 	cleanupErr := errors.New("injected cleanup failure")
 	rollbackErr := errors.New("injected cleanup rollback failure")
-	pending.renameFile = func(oldPath string, newPath string) error {
-		if filepath.Clean(oldPath) == filepath.Join(root, paths.diagnostics) {
+	fixture.candidate.renameFile = func(oldPath string, newPath string) error {
+		if filepath.Clean(oldPath) == filepath.Join(fixture.root, fixture.paths.diagnostics) {
 			return cleanupErr
 		}
-		if filepath.Clean(newPath) == filepath.Join(root, paths.out) && strings.Contains(filepath.Base(oldPath), ".forj-api-index-remove-") {
+		if filepath.Clean(newPath) == filepath.Join(fixture.root, fixture.paths.out) && strings.Contains(filepath.Base(oldPath), ".forj-api-index-remove-") {
 			return rollbackErr
 		}
 		return os.Rename(oldPath, newPath)
 	}
-	err := pending.publish()
+	err := fixture.candidate.publish()
 	if !errors.Is(err, cleanupErr) || !errors.Is(err, rollbackErr) {
 		t.Fatalf("joined cleanup error = %v, want cleanup and rollback causes", err)
 	}
@@ -331,8 +333,16 @@ func TestRollbackArtifactsJoinsEveryFailure(t *testing.T) {
 	}
 }
 
+// cliOnlyCleanupFixture keeps the deferred cleanup and its expected stale generation together.
+type cliOnlyCleanupFixture struct {
+	root      string
+	paths     paths
+	candidate *preparedCandidate
+	previous  map[string][]byte
+}
+
 // prepareCLIOnlyCleanupFixture creates one deferred cleanup transaction with three distinct stale artifacts.
-func prepareCLIOnlyCleanupFixture(t *testing.T) (string, paths, *preparedCandidate, map[string][]byte) {
+func prepareCLIOnlyCleanupFixture(t *testing.T) cliOnlyCleanupFixture {
 	t.Helper()
 	root := t.TempDir()
 	config := `render:
@@ -352,15 +362,21 @@ apps:
 	writeArtifacts(t, root, paths, previous)
 
 	restoreWorkingDirectory := changeWorkingDirectory(t, root)
-	pending, _, err := prepareTestCandidate(newTestRunner())
+	prepared, err := newTestRunner().prepareDefault(runOptions{})
 	restoreWorkingDirectory()
 	if err != nil {
 		t.Fatalf("prepare CLI-only cleanup fixture: %v", err)
 	}
+	pending := prepared.candidate
 	if pending == nil || !pending.remove {
 		t.Fatal("CLI-only fixture did not produce deferred cleanup")
 	}
-	return root, paths, pending, previous
+	return cliOnlyCleanupFixture{
+		root:      root,
+		paths:     paths,
+		candidate: pending,
+		previous:  previous,
+	}
 }
 
 // writeStagedFixture creates an API-capable app with a previous complete artifact set.
