@@ -14,7 +14,6 @@ import (
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,11 +266,18 @@ func makeAtlasModeItems() []list.Item {
 	}
 }
 
-// makeAtlasAgentItems converts Atlas agent detection into wizard rows.
-func makeAtlasAgentItems() []list.Item {
+// atlasAgentChoices keeps the wizard's detected recommendations stable through final installation.
+type atlasAgentChoices struct {
+	items       []list.Item
+	recommended []string
+}
+
+// makeAtlasAgentChoices captures wizard rows and recommendations before project creation changes filesystem context.
+func makeAtlasAgentChoices() atlasAgentChoices {
 	options := atlas.AgentOptions(context.Background(), ".")
+	recommendedNames := atlas.RecommendedAgents(context.Background(), ".")
 	recommended := map[string]bool{}
-	for _, name := range atlas.RecommendedAgents(context.Background(), ".") {
+	for _, name := range recommendedNames {
 		recommended[name] = true
 	}
 	items := make([]list.Item, 0, len(options))
@@ -283,7 +289,7 @@ func makeAtlasAgentItems() []list.Item {
 			Selected:    recommended[option.Name],
 		})
 	}
-	return items
+	return atlasAgentChoices{items: items, recommended: recommendedNames}
 }
 
 // makeAtlasSurfaceItems returns install surfaces with the recommended defaults selected.
@@ -318,6 +324,7 @@ type model struct {
 	starterKitApplicable bool
 	resourcePreparation  *newProjectResourcePreparation
 	atlasMode            atlasMode
+	atlasRecommendations []string
 }
 
 const wizardWidth = 90
@@ -370,7 +377,7 @@ func (m *model) finalizeConfig() error {
 		}
 	}
 
-	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev() {
+	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev(m.targetPath) {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
 			Watch: frontendNPMWatch(projectlayout.FrontendDir(".", project.DefaultApp())),
@@ -454,7 +461,8 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 	atlasModeList.SetShowStatusBar(false)
 	atlasModeList.SetShowPagination(false)
 
-	atlasAgentList := list.New(makeAtlasAgentItems(), delegate, 42, 4)
+	atlasAgents := makeAtlasAgentChoices()
+	atlasAgentList := list.New(atlasAgents.items, delegate, 42, 4)
 	atlasAgentList.Title = "Atlas Agents"
 	atlasAgentList.SetShowFilter(false)
 	atlasAgentList.SetShowHelp(false)
@@ -490,6 +498,7 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		atlasAgentList:       atlasAgentList,
 		atlasSurfaceList:     atlasSurfaceList,
 		atlasMode:            atlasModeRecommended,
+		atlasRecommendations: append([]string(nil), atlasAgents.recommended...),
 		allowNonEmpty:        options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
@@ -631,7 +640,7 @@ func (m model) selectedAtlasAgents() []string {
 		return nil
 	}
 	if m.atlasMode != atlasModeCustom {
-		return atlas.RecommendedAgents(context.Background(), ".")
+		return append([]string(nil), m.atlasRecommendations...)
 	}
 	return m.selectedCustomAtlasAgents()
 }
@@ -1738,7 +1747,7 @@ func (m model) previewAtlasAgents() []string {
 		return nil
 	}
 	if mode != atlasModeCustom {
-		return atlas.RecommendedAgents(context.Background(), ".")
+		return append([]string(nil), m.atlasRecommendations...)
 	}
 	return m.selectedCustomAtlasAgents()
 }
@@ -2410,9 +2419,12 @@ func renderAtlasPanelBanner() string {
 }
 
 // packageJSONHasNpmDev checks whether the target-local frontend defines an npm dev script.
-func packageJSONHasNpmDev() bool {
-	path := filepath.Join(projectlayout.FrontendDir(".", project.DefaultApp()), "package.json")
-	data, err := ioutil.ReadFile(path)
+func packageJSONHasNpmDev(root string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	path := filepath.Join(root, projectlayout.FrontendDir(".", project.DefaultApp()), "package.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
@@ -2474,7 +2486,14 @@ func (c *NewProjectCmd) Run() error {
 	if m.cancelled {
 		return nil
 	}
+	return c.createProject(m)
+}
 
+// createProject publishes one completed wizard model without changing process-wide working-directory state.
+func (c *NewProjectCmd) createProject(m model) error {
+	if m.stage != StageDone {
+		return fmt.Errorf("project wizard must be completed before creation")
+	}
 	var targetPath string
 	targetPath = m.targetPath
 	if targetPath == "" {
@@ -2483,18 +2502,16 @@ func (c *NewProjectCmd) Run() error {
 	if targetPath == "" {
 		return fmt.Errorf("target path could not be determined")
 	}
+	targetPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		return fmt.Errorf("resolve target path: %w", err)
+	}
 
 	if err := os.MkdirAll(targetPath, 0755); err != nil {
 		return fmt.Errorf("failed to create target path: %w", err)
 	}
-	if err := os.Chdir(targetPath); err != nil {
-		return fmt.Errorf("failed to change to target path: %w", err)
-	}
 
-	// write .goforj.yml in target path using the model config
-	if err := m.finalizeConfig(); err != nil {
-		return err
-	}
+	// StageConfirm finalized the model before the wizard returned it for publication.
 	m.targetPath = targetPath
 
 	var buf bytes.Buffer
@@ -2518,6 +2535,7 @@ func (c *NewProjectCmd) Run() error {
 	}
 	i := ComponentRenderInput{
 		renderAll:          true,
+		root:               targetPath,
 		resourcePlan:       preparation.plan,
 		localServiceIntent: preparation.serviceIntent,
 		serviceConsumers:   preparation.serviceConsumers,
