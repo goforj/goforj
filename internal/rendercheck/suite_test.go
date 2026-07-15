@@ -354,6 +354,7 @@ func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing
 		"sentinel_events_only",
 		"sentinel_storage_only",
 		"sentinel_web_metrics_grafana_without_primitives",
+		"sentinel_legacy_component_mappings",
 		"sentinel_default_events_named_app_off",
 		"sentinel_default_jobs_named_app_off",
 	} {
@@ -408,6 +409,33 @@ func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing
 				t.Fatalf("named App %q unexpectedly enables %q: %#v", test.appName, test.key, combo.apps)
 			}
 		})
+	}
+}
+
+// TestPRRenderProfileLimitsIdempotenceChecksToMigrationBoundaries keeps the expensive second render intentional.
+func TestPRRenderProfileLimitsIdempotenceChecksToMigrationBoundaries(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	want := map[string]bool{
+		"sentinel_primitives_all_on":                      true,
+		"sentinel_web_metrics_grafana_without_primitives": true,
+		"sentinel_legacy_component_mappings":              true,
+	}
+	for _, combo := range combos {
+		if combo.validateIdempotence != want[combo.id] {
+			t.Fatalf("combo %q validateIdempotence = %t, want %t", combo.id, combo.validateIdempotence, want[combo.id])
+		}
+	}
+	legacy := requireRenderComboID(t, combos, "sentinel_legacy_component_mappings")
+	if !legacy.legacyConfig {
+		t.Fatal("legacy component sentinel does not write historical mappings")
+	}
+	for scope, components := range map[string]project.Components{
+		"default App": legacy.components,
+		"worker":      legacy.apps["worker"].Components,
+	} {
+		if !components.Cache || !components.Events || !components.Storage {
+			t.Fatalf("%s expected migration selection omits a legacy-default primitive: %#v", scope, components)
+		}
 	}
 }
 

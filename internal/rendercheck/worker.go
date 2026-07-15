@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/console"
-	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
 
@@ -108,7 +107,7 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 	ymlPath := filepath.Join(worker.workspaceRoot, ".goforj.yml")
 
 	if err := timer.Track("write_yaml", func() error {
-		return testkit.WriteProjectConfig(ymlPath, cfg)
+		return writeRenderComboConfig(ymlPath, cfg, combo.legacyConfig)
 	}); err != nil {
 		return newRenderComboFailure("failed to write config", comboID, &cfg, err)
 	}
@@ -119,29 +118,7 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 	}
 
 	if err := timer.Track("forj_render", func() error {
-		render := exec.Command(worker.forjExecutable, "render")
-		render.Dir = worker.workspaceRoot
-		render.Env = append(os.Environ(),
-			"GOMODCACHE="+worker.moduleCache,
-			"GOCACHE="+worker.buildCache,
-		)
-
-		var stdout, stderr strings.Builder
-		render.Stdout = &stdout
-		render.Stderr = &stderr
-
-		if err := render.Run(); err != nil {
-			return formatCommandFailure("forj render", err, stdout.String(), stderr.String())
-		}
-		if renderDebugEnabled() {
-			if stdout.Len() > 0 {
-				fmt.Printf("%s\n", strings.TrimSpace(stdout.String()))
-			}
-			if stderr.Len() > 0 {
-				fmt.Printf("%s\n", strings.TrimSpace(stderr.String()))
-			}
-		}
-		return nil
+		return worker.runForj("render")
 	}); err != nil {
 		return newRenderComboFailure("render failed", comboID, &cfg, err)
 	}
@@ -150,6 +127,13 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 		return validateRenderedComponentContracts(worker.workspaceRoot, &cfg, apps)
 	}); err != nil {
 		return newRenderComboFailure("component contract failed", comboID, &cfg, err)
+	}
+	if combo.validateIdempotence {
+		if err := timer.Track("render_idempotence", func() error {
+			return worker.validateRenderIdempotence(&cfg, apps)
+		}); err != nil {
+			return newRenderComboFailure("render idempotence failed", comboID, &cfg, err)
+		}
 	}
 
 	if combo.starterKit == project.StarterKitTemplHTMX {
