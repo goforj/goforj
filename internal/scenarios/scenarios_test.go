@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -123,7 +124,7 @@ func TestUnsafeScenarioIDCannotMutateOutsideRoots(t *testing.T) {
 			name: "validate",
 			run: func(t *testing.T, specDir, operationRoot string) error {
 				t.Helper()
-				return Validate(ValidateOptions{SpecDir: specDir, WorkDir: operationRoot, ForjExec: "unused"})
+				return Validate(ValidateOptions{Logger: logger.NewSilentLogger(), SpecDir: specDir, WorkDir: operationRoot, ForjExec: "unused"})
 			},
 		},
 	}
@@ -169,6 +170,13 @@ func TestUnsafeScenarioIDCannotMutateOutsideRoots(t *testing.T) {
 				t.Fatalf("operation root was touched before catalog validation: %v", statErr)
 			}
 		})
+	}
+}
+
+// TestValidateRequiresLogger establishes the execution logger before subprocess failures need it.
+func TestValidateRequiresLogger(t *testing.T) {
+	if err := Validate(ValidateOptions{}); err == nil || !strings.Contains(err.Error(), "logger is required") {
+		t.Fatalf("Validate() error = %v, want logger invariant", err)
 	}
 }
 

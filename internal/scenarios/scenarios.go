@@ -106,6 +106,9 @@ func Generate(options GenerateOptions) error {
 
 // Validate runs executable scenarios against rendered apps.
 func Validate(options ValidateOptions) error {
+	if options.Logger == nil {
+		return fmt.Errorf("scenario logger is required")
+	}
 	catalog, err := loadScenarioCatalog(options.SpecDir)
 	if err != nil {
 		return err
