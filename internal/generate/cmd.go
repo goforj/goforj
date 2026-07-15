@@ -63,7 +63,14 @@ func (c *Cmd) Run() error {
 		}
 	}
 	if !selected || c.Cache {
-		if _, err := os.Stat(filepath.Join("internal", "caches")); err == nil {
+		cacheEnabled, err := projectCacheEnabled(".")
+		if err != nil {
+			return fmt.Errorf("load project Cache selection: %w", err)
+		}
+		if c.Cache && !cacheEnabled {
+			return fmt.Errorf("cannot generate Cache: the Cache component is disabled in .goforj.yml")
+		}
+		if cacheEnabled {
 			if _, err := GenerateCacheFiles("."); err != nil {
 				return err
 			}
@@ -153,16 +160,14 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if includeCache {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "caches")); err == nil {
-			written, err := GenerateCacheFiles(projectDir)
-			if err != nil {
-				return totalFiles, changedFiles, err
-			}
-			ranAny = true
-			totalFiles += 2
-			changedFiles += written
-			modTidyNeeded = modTidyNeeded || written > 0
+		written, err := GenerateCacheFiles(projectDir)
+		if err != nil {
+			return totalFiles, changedFiles, err
 		}
+		ranAny = true
+		totalFiles += 2
+		changedFiles += written
+		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if _, err := os.Stat(filepath.Join(projectDir, "internal", "mail")); err == nil {
 		written, err := GenerateMailFiles(projectDir)
@@ -240,6 +245,25 @@ func projectStorageEnabled(projectDir string) (bool, error) {
 		return false, err
 	}
 	return project.ProjectComponents(config).Storage, nil
+}
+
+// projectCacheEnabled resolves durable Cache intent first and retains directory inference only for projects without GoForj configuration.
+func projectCacheEnabled(projectDir string) (bool, error) {
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err == nil {
+		return project.ProjectComponents(config).Cache, nil
+	}
+	if !os.IsNotExist(err) {
+		return false, err
+	}
+	info, statErr := os.Stat(filepath.Join(projectDir, "internal", "caches"))
+	if statErr == nil {
+		return info.IsDir(), nil
+	}
+	if !os.IsNotExist(statErr) {
+		return false, statErr
+	}
+	return false, nil
 }
 
 // projectJobsEnabled resolves durable Jobs intent first and retains directory inference only for projects without GoForj configuration.

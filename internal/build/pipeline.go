@@ -449,6 +449,7 @@ func shouldRetryWire(detail string) bool {
 // generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate optional primitives.
 func (p Pipeline) generateProjectFiles() (string, error) {
 	storageEnabled := hasDir(filepath.Join(".", "internal", "storages"))
+	cacheEnabled := hasDir(filepath.Join(".", "internal", "caches"))
 	eventsEnabled := hasDir(filepath.Join(".", "internal", "events"))
 	jobsEnabled := hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues"))
 	config, err := project.LoadProjectConfig()
@@ -458,13 +459,14 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 	if config != nil {
 		components := project.ProjectComponents(config)
 		storageEnabled = components.Storage
+		cacheEnabled = components.Cache
 		eventsEnabled = components.Events
 		jobsEnabled = components.Jobs
 	}
 	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
 		".",
 		storageEnabled,
-		hasDir(filepath.Join(".", "internal", "caches")),
+		cacheEnabled,
 		jobsEnabled,
 		eventsEnabled,
 		hasDir(filepath.Join(".", "internal", "database")),

@@ -282,6 +282,77 @@ func TestCmdRunGeneratesStorageFromEnabledProjectConfig(t *testing.T) {
 	}
 }
 
+// TestCmdRunUsesCacheIntentForGeneration verifies config intent wins over stale directories while legacy projects retain directory fallback.
+func TestCmdRunUsesCacheIntentForGeneration(t *testing.T) {
+	disabledConfig := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components: [cli]\n"
+	enabledConfig := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components: [cli, cache]\n"
+	tests := []struct {
+		name          string
+		config        string
+		staleCache    bool
+		explicitCache bool
+		wantError     string
+		wantGenerated bool
+	}{
+		{name: "disabled config ignores stale directory", config: disabledConfig, staleCache: true},
+		{name: "explicit Cache rejects disabled config", config: disabledConfig, staleCache: true, explicitCache: true, wantError: "Cache component is disabled"},
+		{name: "enabled config creates Cache package", config: enabledConfig, wantGenerated: true},
+		{name: "legacy project uses Cache directory", staleCache: true, wantGenerated: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.staleCache {
+				if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
+					t.Fatalf("create Cache package: %v", err)
+				}
+			}
+			if test.config != "" {
+				if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(test.config), 0o644); err != nil {
+					t.Fatalf("write project config: %v", err)
+				}
+			}
+			environment := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n"
+			if !test.wantGenerated {
+				environment = "CACHE_DRIVER=unknown\nCACHE_SUPPORTED_DRIVERS=unknown\n"
+			}
+			if err := os.WriteFile(filepath.Join(root, ".env"), []byte(environment), 0o644); err != nil {
+				t.Fatalf("write Cache environment: %v", err)
+			}
+
+			originalWD, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("get working directory: %v", err)
+			}
+			if err := os.Chdir(root); err != nil {
+				t.Fatalf("change working directory: %v", err)
+			}
+			originalTidy := goModTidyRunner
+			goModTidyRunner = func(string) error { return nil }
+			t.Cleanup(func() {
+				goModTidyRunner = originalTidy
+				_ = os.Chdir(originalWD)
+			})
+
+			err = (&Cmd{Cache: test.explicitCache}).Run()
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("Cache generation error = %v, want %q", err, test.wantError)
+				}
+			} else if err != nil {
+				t.Fatalf("generate Cache surface: %v", err)
+			}
+			for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
+				_, statErr := os.Stat(filepath.Join("internal", "caches", name))
+				if got := statErr == nil; got != test.wantGenerated {
+					t.Fatalf("generated Cache file %s presence = %t, want %t: %v", name, got, test.wantGenerated, statErr)
+				}
+			}
+		})
+	}
+}
+
 // TestCmdRunUsesJobsIntentForQueueGeneration verifies config intent wins over stale directories while legacy projects retain directory fallback.
 func TestCmdRunUsesJobsIntentForQueueGeneration(t *testing.T) {
 	disabledConfig := "project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components:\n    cli: true\n    jobs: false\n"

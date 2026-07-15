@@ -8,6 +8,39 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 )
 
+// TestPipelineGenerationIgnoresStaleCacheDirectoryWhenComponentDisabled verifies builds cannot resurrect Cache generation from package residue.
+func TestPipelineGenerationIgnoresStaleCacheDirectoryWhenComponentDisabled(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
+		t.Fatalf("create stale Cache directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  component_contract: 1\n  components: [cli]\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("CACHE_DRIVER=unknown\nCACHE_SUPPORTED_DRIVERS=unknown\n"), 0o644); err != nil {
+		t.Fatalf("write stale Cache environment: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
+	if _, err := pipeline.generateProjectFiles(); err != nil {
+		t.Fatalf("generate project files: %v", err)
+	}
+	for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
+		if _, err := os.Stat(filepath.Join("internal", "caches", name)); !os.IsNotExist(err) {
+			t.Fatalf("Cache-disabled build generated Cache file %s: %v", name, err)
+		}
+	}
+}
+
 // TestPipelineGenerationIgnoresStaleEventsDirectoryWhenComponentDisabled verifies builds select Events from config rather than filesystem residue.
 func TestPipelineGenerationIgnoresStaleEventsDirectoryWhenComponentDisabled(t *testing.T) {
 	root := t.TempDir()
