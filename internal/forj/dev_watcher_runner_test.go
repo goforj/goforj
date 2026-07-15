@@ -208,7 +208,7 @@ func TestDevWatcherControllerTracksRuntimeExitGeneration(t *testing.T) {
 	}
 	select {
 	case exit := <-controller.exitCh:
-		if exit.native == nil || exit.native.PID != 202 || exit.err == nil {
+		if exit.process == nil || exit.process.PID != 202 || exit.err == nil {
 			t.Fatalf("current runtime exit = %+v, want matching terminal completion", exit)
 		}
 	default:
@@ -260,7 +260,7 @@ func TestDevWatcherControllerTracksRuntimeExitGeneration(t *testing.T) {
 	}
 	select {
 	case exit := <-immediateController.exitCh:
-		if exit.native == nil || exit.native.PID != 303 {
+		if exit.process == nil || exit.process.PID != 303 {
 			t.Fatalf("immediate runtime exit = %+v, want PID 303", exit)
 		}
 	default:
@@ -279,7 +279,7 @@ func TestDevWatcherControllerImmediateRuntimeExitUsesPublishedPID(t *testing.T) 
 
 	select {
 	case exit := <-controller.exitCh:
-		if exit.native == nil || exit.native.PID <= 0 || exit.native.ExitCode != 23 || exit.err == nil {
+		if exit.process == nil || exit.process.PID <= 0 || exit.process.ExitCode != 23 || exit.err == nil {
 			t.Fatalf("immediate runtime exit = %+v, want published PID and code 23", exit)
 		}
 	case <-time.After(4 * time.Second):

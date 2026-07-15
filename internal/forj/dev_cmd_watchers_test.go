@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
@@ -1171,20 +1171,30 @@ func TestDevWatcherRuntimeDrainExitsEmitsStoppedSummaryWhenCollapsed(t *testing.
 	}
 }
 
+// TestStartDevWatcherRuntimeOwnsEmptyGeneration keeps the controller dependency required even when configuration has no logical watchers.
+func TestStartDevWatcherRuntimeOwnsEmptyGeneration(t *testing.T) {
+	runtime, err := startDevWatcherRuntime(&devWatchSession{
+		config: &project.Config{}, outWriter: io.Discard, errWriter: io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("start empty watcher generation: %v", err)
+	}
+	if runtime.controller == nil {
+		t.Fatal("empty watcher generation did not own a controller")
+	}
+	if len(runtime.watchers) != 0 || runtime.exitCh == nil {
+		t.Fatalf("empty watcher generation = %#v, want no logical handles and an owned exit stream", runtime)
+	}
+
+	runtime.stopAndDrain(true)
+}
+
 // TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed keeps one lifecycle line for coordinated shutdowns.
 func TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	var out bytes.Buffer
-	watchers := []runningWatcher{
-		{name: "Build App", proc: &execx.Process{}},
-		{name: "Wire", proc: &execx.Process{}},
-		{name: "API", proc: &execx.Process{}},
-	}
-	runtime := &devWatcherRuntime{
-		session:  &devWatchSession{outWriter: &out},
-		watchers: watchers,
-	}
+	runtime := newDormantDevWatcherRuntime(t, &out, "Build App", "Wire", "API")
 
-	runtime.stop(0, true)
+	runtime.stopAndDrain(true)
 
 	got := out.String()
 	if !contains(got, "Watchers") {
@@ -1201,45 +1211,72 @@ func TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	}
 }
 
-// TestDevWatcherRuntimeStopShutsDownProcessesInParallel prevents multi-App shutdown time from scaling per watcher.
-func TestDevWatcherRuntimeStopShutsDownProcessesInParallel(t *testing.T) {
-	script := "trap 'sleep 0.25; exit 0' INT TERM; while true; do sleep 0.05; done"
-	watchers := []runningWatcher{
-		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
-		{name: "Billing", proc: execx.Command("sh", "-c", script).Start()},
-	}
-	runtime := &devWatcherRuntime{
-		session:  &devWatchSession{outWriter: io.Discard},
-		watchers: watchers,
-	}
+// TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit preserves render work that overlaps controller shutdown.
+func TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit(t *testing.T) {
+	runtime := newDormantDevWatcherRuntime(t, io.Discard, "App")
+	releaseShutdown := make(chan struct{})
+	runtime.controller.wait.Add(1)
+	go func() {
+		<-releaseShutdown
+		runtime.controller.wait.Done()
+	}()
 
-	start := time.Now()
-	runtime.stop(2*time.Second, true)
-	elapsed := time.Since(start)
-	if elapsed > 450*time.Millisecond {
-		t.Fatalf("expected parallel shutdown, took %s", elapsed)
+	returned := make(chan func(), 1)
+	go func() {
+		returned <- runtime.beginStop(2*time.Second, true)
+	}()
+	var waitForStop func()
+	select {
+	case waitForStop = <-returned:
+	case <-time.After(2 * time.Second):
+		close(releaseShutdown)
+		t.Fatal("beginStop waited for controller shutdown")
+	}
+	close(releaseShutdown)
+	waitForStop()
+	runtime.drainAllExits(true)
+}
+
+// TestDevWatcherRuntimeStopAfterExitReportsEveryLogicalHandle keeps one unexpected exit attributable while the shared generation shuts down.
+func TestDevWatcherRuntimeStopAfterExitReportsEveryLogicalHandle(t *testing.T) {
+	var out bytes.Buffer
+	runtime := newDormantDevWatcherRuntime(t, &out, "API", "Scheduler")
+	runtime.controller.publishExit("API", "API", &devwatch.Exit{Name: "API", ExitCode: 7}, nil)
+	exit := <-runtime.exitCh
+
+	runtime.stopAfterExit(exit, time.Second)
+
+	got := out.String()
+	if !contains(got, "API") || !contains(got, "Scheduler") {
+		t.Fatalf("expected every watcher name in lifecycle output, got %q", got)
+	}
+	if strings.Count(got, "stopping") != 1 || strings.Count(got, "stopped") != 2 {
+		t.Fatalf("unexpected single-exit lifecycle output %q", got)
 	}
 }
 
-// TestDevWatcherRuntimeBeginStopReturnsBeforeProcessesExit preserves render work that overlaps process shutdown.
-func TestDevWatcherRuntimeBeginStopReturnsBeforeProcessesExit(t *testing.T) {
-	script := "trap 'sleep 0.3; exit 0' INT TERM; while true; do sleep 0.05; done"
-	watchers := []runningWatcher{
-		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
+// newDormantDevWatcherRuntime creates one native generation whose logical handles can be tested without starting child processes.
+func newDormantDevWatcherRuntime(t *testing.T, out io.Writer, names ...string) *devWatcherRuntime {
+	t.Helper()
+	compiled := make([]devCompiledWatcher, 0, len(names))
+	watchers := make([]runningWatcher, 0, len(names))
+	for _, name := range names {
+		compiled = append(compiled, devCompiledWatcher{
+			ID: name, Name: name, Kind: devWatcherCustom, Postpone: true,
+			Command: devwatch.Command{Shell: "exit 0"},
+		})
+		watchers = append(watchers, runningWatcher{id: name, name: name})
 	}
-	runtime := &devWatcherRuntime{
-		session:  &devWatchSession{outWriter: io.Discard},
-		watchers: watchers,
+	controller := newDevWatcherRunnerTestController(t, compiled)
+	t.Cleanup(func() {
+		controller.stop(time.Second)
+	})
+	return &devWatcherRuntime{
+		session:    &devWatchSession{outWriter: out},
+		watchers:   watchers,
+		controller: controller,
+		exitCh:     controller.exitCh,
 	}
-
-	start := time.Now()
-	waitForStop := runtime.beginStop(2*time.Second, true)
-	elapsed := time.Since(start)
-	if elapsed > 150*time.Millisecond {
-		t.Fatalf("expected shutdown request to return before process exit, took %s", elapsed)
-	}
-
-	waitForStop()
 }
 
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
