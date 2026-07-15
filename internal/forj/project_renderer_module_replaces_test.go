@@ -25,14 +25,15 @@ func TestApplyModuleReplacesAddsAndRemovesManagedEntries(t *testing.T) {
 	}
 	defer func() { _ = os.Chdir(wd) }()
 
-	renderer := &ProjectRenderer{config: &project.Config{
-		Render: project.RenderConfig{
+	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
+		config: &project.Config{Render: project.RenderConfig{
 			ModuleReplaces: map[string]string{
 				"github.com/goforj/web":   "../web",
 				"github.com/goforj/cache": "../cache",
 			},
-		},
-	}}
+		}},
+	}
 
 	if err := renderer.applyModuleReplaces(); err != nil {
 		t.Fatalf("apply replaces: %v", err)
@@ -91,13 +92,14 @@ func TestApplyModuleReplacesRemovesStateFileWhenEmpty(t *testing.T) {
 	}
 	defer func() { _ = os.Chdir(wd) }()
 
-	renderer := &ProjectRenderer{config: &project.Config{
-		Render: project.RenderConfig{
+	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
+		config: &project.Config{Render: project.RenderConfig{
 			ModuleReplaces: map[string]string{
 				"github.com/goforj/web": "../web",
 			},
-		},
-	}}
+		}},
+	}
 	if err := renderer.applyModuleReplaces(); err != nil {
 		t.Fatalf("apply replaces: %v", err)
 	}

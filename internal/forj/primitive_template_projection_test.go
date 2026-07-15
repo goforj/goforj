@@ -30,6 +30,7 @@ type primitiveTemplateContract struct {
 
 // TestPrimitiveTemplateProjection covers all-off and both mixed-App directions through one shared projection matrix.
 func TestPrimitiveTemplateProjection(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	scenarios := []struct {
 		name           string
 		defaultEnabled bool
@@ -48,7 +49,7 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 				t.Run(scenario.name, func(t *testing.T) {
 					config := primitiveProjectionConfig(t, contract.key, scenario.defaultEnabled, scenario.workerEnabled)
 					projectEnabled := scenario.defaultEnabled || scenario.workerEnabled
-					sharedData := templateDataForApp(config, project.DefaultApp())
+					sharedData := workspace.templateDataForApp(config, project.DefaultApp())
 					sharedData.Resources = primitiveProjectionResources()
 
 					for _, marker := range contract.projectMarkers {
@@ -58,7 +59,7 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 					assertTemplateMarker(t, ".env.tmpl", environment, contract.rootEnvironment, projectEnabled)
 					assertTemplateMarker(t, ".env.tmpl", environment, contract.namedEnvironment, scenario.workerEnabled)
 
-					renderer := &ProjectRenderer{config: config}
+					renderer := projectRendererForTest(t, config)
 					apps := []struct {
 						app     project.App
 						enabled bool
@@ -69,7 +70,7 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 					for _, target := range apps {
 						target := target
 						t.Run(target.app.Name, func(t *testing.T) {
-							data := templateDataForApp(config, target.app)
+							data := workspace.templateDataForApp(config, target.app)
 							data.Resources = primitiveProjectionResources()
 							for _, marker := range contract.appMarkers {
 								assertProjectedTemplateMarker(t, marker, data, target.enabled)
@@ -93,6 +94,7 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 
 // TestSharedMetricsFollowProjectAndAppProjection verifies named-App-only capabilities still compile while runtime flags remain App-local.
 func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		GoModuleName: "example.com/metrics-projection",
 		Render: project.RenderConfig{Components: project.Components{
@@ -104,7 +106,7 @@ func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
 			}},
 		},
 	}
-	data := templateDataForApp(config, project.DefaultApp())
+	data := workspace.templateDataForApp(config, project.DefaultApp())
 	manager := renderSharedTemplate(t, "internal/metrics/manager.go.tmpl", data)
 	managerTests := renderSharedTemplate(t, "internal/metrics/manager_test.go.tmpl", data)
 	assertFormattedGoTemplate(t, "internal/metrics/manager.go.tmpl", manager)
@@ -136,6 +138,7 @@ func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
 
 // TestMailAboutBehaviorCoversEveryAppProjection verifies generated behavior coverage includes Mail-enabled and Mail-disabled Apps.
 func TestMailAboutBehaviorCoversEveryAppProjection(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		GoModuleName: "example.com/mail-projection",
 		Render: project.RenderConfig{Components: project.Components{
@@ -145,7 +148,7 @@ func TestMailAboutBehaviorCoversEveryAppProjection(t *testing.T) {
 			"worker": {Components: project.Components{CLI: true}},
 		},
 	}
-	data := templateDataForApp(config, project.DefaultApp())
+	data := workspace.templateDataForApp(config, project.DefaultApp())
 	tests := renderSharedTemplate(t, "internal/runtime/apps_test.go.tmpl", data)
 	assertFormattedGoTemplate(t, "internal/runtime/apps_test.go.tmpl", tests)
 
@@ -162,6 +165,7 @@ func TestMailAboutBehaviorCoversEveryAppProjection(t *testing.T) {
 
 // TestCacheMetricsConfigTestsCoverEveryApp verifies generated tests exercise each participating and excluded App independently.
 func TestCacheMetricsConfigTestsCoverEveryApp(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		GoModuleName: "example.com/cache-metrics-projection",
 		Render: project.RenderConfig{Components: project.Components{
@@ -172,7 +176,7 @@ func TestCacheMetricsConfigTestsCoverEveryApp(t *testing.T) {
 			"worker":   {Components: project.Components{CLI: true, Cache: true}},
 		},
 	}
-	data := templateDataForApp(config, project.DefaultApp())
+	data := workspace.templateDataForApp(config, project.DefaultApp())
 	tests := renderSharedTemplate(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", data)
 	assertFormattedGoTemplate(t, "internal/metrics/cache_metrics_gen_test.go.tmpl", tests)
 
@@ -359,8 +363,9 @@ func templateMappingDestExists(mappings []templateMapping, want string) bool {
 
 // testEventCommandProjection preserves legacy command owners while keeping future owner templates Events-neutral.
 func testEventCommandProjection(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := primitiveProjectionConfig(t, project.ComponentEvents, true, false)
-	base := templateDataForApp(config, project.DefaultApp())
+	base := workspace.templateDataForApp(config, project.DefaultApp())
 	tests := []struct {
 		name                  string
 		legacyField           bool
@@ -422,11 +427,13 @@ func testEventSharedExamples(t *testing.T) {
 
 // testPrimitiveDashboardProjection verifies optional dashboard fragments remain valid JSON in both component states.
 func testPrimitiveDashboardProjection(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	for _, enabled := range []bool{false, true} {
 		components := primitiveProjectionBaseComponents()
 		components.Cache = enabled
 		config := &project.Config{Render: project.RenderConfig{Components: components}}
-		body := renderSharedTemplate(t, "containers/observability/grafana/dashboards/platform-overview.json.tmpl", templateDataForApp(config, project.DefaultApp()))
+		data := workspace.templateDataForApp(config, project.DefaultApp())
+		body := renderSharedTemplate(t, "containers/observability/grafana/dashboards/platform-overview.json.tmpl", data)
 		var decoded any
 		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 			t.Fatalf("Cache enabled=%t Platform Overview is invalid JSON: %v\n%s", enabled, err, body)
@@ -434,10 +441,10 @@ func testPrimitiveDashboardProjection(t *testing.T) {
 		assertTemplateMarker(t, "platform-overview.json.tmpl", body, "cache_operations_total", enabled)
 		assertTemplateMarker(t, "platform-overview.json.tmpl", body, "cache read p95", enabled)
 
-		seed := renderSharedTemplate(t, "containers/observability/grafana/seed-dashboards.sh.tmpl", templateDataForApp(config, project.DefaultApp()))
+		seed := renderSharedTemplate(t, "containers/observability/grafana/seed-dashboards.sh.tmpl", data)
 		assertTemplateMarker(t, "seed-dashboards.sh.tmpl", seed, "goforj-cache-overview", enabled)
 
-		readme := renderSharedTemplate(t, "internal/observability/README.md.tmpl", templateDataForApp(config, project.DefaultApp()))
+		readme := renderSharedTemplate(t, "internal/observability/README.md.tmpl", data)
 		assertTemplateMarker(t, "internal/observability/README.md.tmpl", readme, "Cache Overview", enabled)
 		assertTemplateMarker(t, "internal/observability/README.md.tmpl", readme, "named cache", enabled)
 		assertTemplateMarker(t, "internal/observability/README.md.tmpl", readme, "`cache`: which named cache handled the work", enabled)
@@ -448,20 +455,14 @@ func testPrimitiveDashboardProjection(t *testing.T) {
 			components := primitiveProjectionBaseComponents()
 			setPrimitiveProjectionComponent(t, &components, contract.key, enabled)
 			config := &project.Config{Render: project.RenderConfig{Components: components}}
-			body := renderSharedTemplate(t, "containers/observability/grafana/dashboards/platform-overview.json.tmpl", templateDataForApp(config, project.DefaultApp()))
+			data := workspace.templateDataForApp(config, project.DefaultApp())
+			body := renderSharedTemplate(t, "containers/observability/grafana/dashboards/platform-overview.json.tmpl", data)
 			var decoded any
 			if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 				t.Fatalf("%s enabled=%t Platform Overview is invalid JSON: %v\n%s", contract.key, enabled, err, body)
 			}
 		}
 	}
-}
-
-// appTemplateDataForProjectionTest builds the established per-App render projection without invoking a project render.
-func appTemplateDataForProjectionTest(config *project.Config, app project.App, components project.Components) templateRenderConfig {
-	data := templateDataForApp(config, app)
-	data.Components = components
-	return data
 }
 
 // renderSharedTemplate executes one embedded template against explicit projection data without writing a rendered project.

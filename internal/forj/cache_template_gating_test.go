@@ -25,6 +25,7 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			workspace := currentProjectRenderWorkspace(t)
 			config := &project.Config{
 				GoModuleName: "example.com/cache-projection",
 				Render: project.RenderConfig{Components: project.Components{
@@ -45,7 +46,8 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 			for _, target := range apps {
 				t.Run(target.app.Name, func(t *testing.T) {
 					components := appRenderComponents(config, target.app)
-					data := appTemplateDataForProjectionTest(config, target.app, components)
+					data := workspace.templateDataForApp(config, target.app)
+					data.Components = components
 					data.HelpFormatterFunc = "FrameworkFormatter"
 					sources := map[string]string{
 						"app/commands.go.tmpl":             renderSharedTemplate(t, "app/commands.go.tmpl", data),
@@ -81,7 +83,8 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 			}
 
 			projectEnabled := test.defaultCache || test.workerCache
-			sharedData := appTemplateDataForProjectionTest(config, project.DefaultApp(), config.Render.Components)
+			sharedData := workspace.templateDataForApp(config, project.DefaultApp())
+			sharedData.Components = config.Render.Components
 			runtimeSources := map[string]string{
 				"internal/runtime/about.go.tmpl":     renderSharedTemplate(t, "internal/runtime/about.go.tmpl", sharedData),
 				"internal/runtime/discovery.go.tmpl": renderSharedTemplate(t, "internal/runtime/discovery.go.tmpl", sharedData),

@@ -87,6 +87,7 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			Render: project.RenderConfig{Components: project.Components{WebUI: true}, StarterKit: project.StarterKitReact},
 		},
@@ -193,6 +194,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/testapp",
 			Render: project.RenderConfig{
@@ -360,6 +362,7 @@ func TestScaffoldTemplHTMXStarterKitWithoutAuthOmitsAuthRoutes(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/testapp",
 			Render: project.RenderConfig{
@@ -423,6 +426,7 @@ templ stale() {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/testapp",
 			Render: project.RenderConfig{
@@ -495,6 +499,7 @@ func TestFrontendDistPlaceholderUsesNamedApps(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			Render: project.RenderConfig{
 				Components: project.Components{WebUI: true},
