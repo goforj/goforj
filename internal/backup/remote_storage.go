@@ -47,9 +47,9 @@ func (l StorageObjectLister) ListObjects(ctx context.Context, prefix string) ([]
 // ConfiguredObjectStorage opens a configured S3-compatible App disk.
 func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
 	prefix := storageEnvPrefix(name)
-	parseBool := func(key string) bool {
-		value, _ := strconv.ParseBool(os.Getenv(prefix + key))
-		return value
+	usePathStyle, err := parseEnvBool(prefix + "USE_PATH_STYLE")
+	if err != nil {
+		return ObjectStorage{}, err
 	}
 	cfg := s3storage.Config{
 		Bucket:          os.Getenv(prefix + "BUCKET"),
@@ -57,7 +57,7 @@ func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
 		Region:          os.Getenv(prefix + "REGION"),
 		AccessKeyID:     os.Getenv(prefix + "ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv(prefix + "SECRET_ACCESS_KEY"),
-		UsePathStyle:    parseBool("USE_PATH_STYLE"),
+		UsePathStyle:    usePathStyle,
 		Prefix:          os.Getenv(prefix + "PREFIX"),
 	}
 	disk, err := storage.Build(cfg)
@@ -76,13 +76,17 @@ func ConfiguredBackupRepository() (BackupRepository, error) {
 	if driver != "s3" && driver != "b2-s3" {
 		return nil, fmt.Errorf("unsupported backup repository driver %q", driver)
 	}
+	usePathStyle, err := parseEnvBool("APP_BACKUP_S3_USE_PATH_STYLE")
+	if err != nil {
+		return nil, err
+	}
 	cfg := s3storage.Config{
 		Bucket:          os.Getenv("APP_BACKUP_S3_BUCKET"),
 		Endpoint:        os.Getenv("APP_BACKUP_S3_ENDPOINT"),
 		Region:          os.Getenv("APP_BACKUP_S3_REGION"),
 		AccessKeyID:     os.Getenv("APP_BACKUP_S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("APP_BACKUP_S3_SECRET_ACCESS_KEY"),
-		UsePathStyle:    parseEnvBool("APP_BACKUP_S3_USE_PATH_STYLE"),
+		UsePathStyle:    usePathStyle,
 		Prefix:          os.Getenv("APP_BACKUP_S3_PREFIX"),
 	}
 	disk, err := storage.Build(cfg)
@@ -101,8 +105,15 @@ func storageEnvPrefix(name string) string {
 	return "STORAGE_" + strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name)) + "_"
 }
 
-// parseEnvBool parses an optional boolean environment value.
-func parseEnvBool(key string) bool {
-	value, _ := strconv.ParseBool(os.Getenv(key))
-	return value
+// parseEnvBool keeps omitted storage flags optional while rejecting misspelled boolean values before opening infrastructure.
+func parseEnvBool(key string) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s value %q: %w", key, value, err)
+	}
+	return parsed, nil
 }
