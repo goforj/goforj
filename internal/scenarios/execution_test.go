@@ -88,3 +88,83 @@ func TestAppendAndCloseScenarioFileReportsEveryFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateScenarioWorkspacePreservesExistingPaths proves a caller-selected work root never grants ownership of a preexisting scenario directory.
+func TestCreateScenarioWorkspacePreservesExistingPaths(t *testing.T) {
+	workRoot := t.TempDir()
+	preexisting := filepath.Join(workRoot, "example")
+	if err := os.MkdirAll(preexisting, 0o755); err != nil {
+		t.Fatalf("create preexisting directory: %v", err)
+	}
+	sentinel := filepath.Join(preexisting, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("preserve"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	workspace, err := createScenarioWorkspace(
+		ValidateOptions{WorkDir: workRoot},
+		ScenarioSpec{ID: "example"},
+	)
+	if err != nil {
+		t.Fatalf("create scenario workspace: %v", err)
+	}
+	if workspace.root == preexisting {
+		t.Fatalf("workspace reused preexisting path %q", preexisting)
+	}
+	if !workspace.removeAfter {
+		t.Fatal("temporary workspace under a selected root must be cleaned by default")
+	}
+	if err := workspace.cleanupAfter(nil); err != nil {
+		t.Fatalf("clean scenario workspace: %v", err)
+	}
+	if body, err := os.ReadFile(sentinel); err != nil || string(body) != "preserve" {
+		t.Fatalf("preexisting sentinel after cleanup = %q, %v", body, err)
+	}
+}
+
+// TestReplaceTextRequiresOneTarget keeps template drift from applying a scenario edit at an arbitrary location.
+func TestReplaceTextRequiresOneTarget(t *testing.T) {
+	root := t.TempDir()
+	execution := scenarioExecution{workspace: scenarioWorkspace{root: root}}
+	path := filepath.Join(root, "example.txt")
+	tests := []struct {
+		name        string
+		content     string
+		old         string
+		replacement string
+		wantErr     string
+	}{
+		{name: "empty target", content: "value\n", replacement: "replacement", wantErr: "replace target is required"},
+		{name: "unchanged target", content: "value\n", old: "value", replacement: "value", wantErr: "replacement must differ from target"},
+		{name: "missing target", content: "value\n", old: "other", replacement: "replacement", wantErr: "replace target not found"},
+		{name: "ambiguous target", content: "value\nvalue\n", old: "value", replacement: "replacement", wantErr: "replace target occurs 2 times"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(test.content), 0o644); err != nil {
+				t.Fatalf("write replacement fixture: %v", err)
+			}
+			err := execution.replaceText(ScenarioSpec{}, ScenarioReplace{
+				Path: "example.txt",
+				Old:  test.old,
+				New:  test.replacement,
+			})
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("replaceText() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+// TestWriteFileRejectsInvalidGo reports the originating scenario file before a later build obscures the syntax error.
+func TestWriteFileRejectsInvalidGo(t *testing.T) {
+	execution := scenarioExecution{workspace: scenarioWorkspace{root: t.TempDir()}}
+	err := execution.writeFile(ScenarioSpec{}, ScenarioFileChange{
+		Path:    "broken.go",
+		Content: "package broken\nfunc Broken(\n",
+	})
+	if err == nil || !strings.Contains(err.Error(), "format broken.go") {
+		t.Fatalf("writeFile() error = %v, want formatting failure", err)
+	}
+}

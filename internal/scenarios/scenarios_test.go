@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
+	"gopkg.in/yaml.v3"
 )
 
 // TestLoadEmbeddedScenarioSpecs verifies the shipped catalog is non-empty and includes the golden-path entry point.
@@ -38,6 +39,10 @@ func TestValidateScenarioCatalog(t *testing.T) {
 		specs   []ScenarioSpec
 		wantErr string
 	}{
+		{
+			name:    "empty catalog",
+			wantErr: "scenario catalog is empty",
+		},
 		{
 			name:    "absolute ID",
 			specs:   []ScenarioSpec{{ID: "/tmp/escape"}},
@@ -104,6 +109,22 @@ func TestValidateScenarioCatalog(t *testing.T) {
 				t.Fatalf("validate catalog error = %q, want substring %q", err, test.wantErr)
 			}
 		})
+	}
+}
+
+// TestDecodeScenarioSpecRejectsUnknownFields prevents misspelled spec keys from silently disappearing from published scenarios.
+func TestDecodeScenarioSpecRejectsUnknownFields(t *testing.T) {
+	_, err := decodeScenarioSpec([]byte("id: example\ntitle: Example\nmarkdown:\n  intros: typo\n"))
+	if err == nil || !strings.Contains(err.Error(), "field intros not found") {
+		t.Fatalf("decodeScenarioSpec() error = %v, want unknown-field failure", err)
+	}
+}
+
+// TestDecodeScenarioSpecRejectsTrailingDocuments keeps one file from smuggling an unvalidated second scenario document.
+func TestDecodeScenarioSpecRejectsTrailingDocuments(t *testing.T) {
+	_, err := decodeScenarioSpec([]byte("id: first\ntitle: First\n---\nid: second\ntitle: Second\n"))
+	if err == nil || !strings.Contains(err.Error(), "multiple YAML documents") {
+		t.Fatalf("decodeScenarioSpec() error = %v, want trailing-document failure", err)
 	}
 }
 
@@ -209,7 +230,7 @@ func TestScenarioSpecsDeclareCumulativePrimitiveDependencies(t *testing.T) {
 		{id: "json-api-route", want: project.Components{}},
 		{id: "cached-user-profile", want: project.Components{Cache: true}},
 		{id: "file-upload-storage", want: project.Components{Cache: true, Storage: true}},
-		{id: "users-created-event", want: project.Components{Cache: true, Events: true}},
+		{id: "users-created-event", want: project.Components{Cache: true, Events: true, Storage: true}},
 		{id: "reports-generate-job", want: project.Components{Cache: true, Events: true, Storage: true, Jobs: true}},
 		{id: "reports-daily-schedule", want: project.Components{Cache: true, Events: true, Storage: true, Jobs: true}},
 		{id: "runtime-observability", want: project.Components{Cache: true, Events: true, Storage: true, Jobs: true}},
@@ -243,7 +264,10 @@ func TestRenderScenarioMarkdownIncludesVerificationBanner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("select spec: %v", err)
 	}
-	body := renderScenarioMarkdown(specs[0])
+	body, err := renderScenarioMarkdown(specs[0])
+	if err != nil {
+		t.Fatalf("render markdown: %v", err)
+	}
 	for _, token := range []string{
 		"::: info Verified Scenario",
 		"forj make:controller users",
@@ -253,6 +277,50 @@ func TestRenderScenarioMarkdownIncludesVerificationBanner(t *testing.T) {
 		if !strings.Contains(body, token) {
 			t.Fatalf("generated markdown missing %q\n%s", token, body)
 		}
+	}
+}
+
+// TestRenderScenarioMarkdownQuotesFrontMatter keeps punctuation and line breaks from changing YAML structure.
+func TestRenderScenarioMarkdownQuotesFrontMatter(t *testing.T) {
+	spec := ScenarioSpec{
+		Title:       "Reports: daily #1",
+		Description: "First line\nsecond line",
+	}
+	body, err := renderScenarioMarkdown(spec)
+	if err != nil {
+		t.Fatalf("render markdown: %v", err)
+	}
+
+	frontMatter := strings.SplitN(body, "---\n", 3)
+	if len(frontMatter) != 3 {
+		t.Fatalf("generated markdown has invalid front matter:\n%s", body)
+	}
+	var metadata struct {
+		Title       string `yaml:"title"`
+		Description string `yaml:"description"`
+	}
+	if err := yaml.Unmarshal([]byte(frontMatter[1]), &metadata); err != nil {
+		t.Fatalf("decode front matter: %v", err)
+	}
+	if metadata.Title != spec.Title || metadata.Description != spec.Description {
+		t.Fatalf("front matter = %#v, want title %q and description %q", metadata, spec.Title, spec.Description)
+	}
+}
+
+// TestRenderScenarioMarkdownRejectsInvalidGo keeps documentation generation from publishing malformed complete files.
+func TestRenderScenarioMarkdownRejectsInvalidGo(t *testing.T) {
+	_, err := renderScenarioMarkdown(ScenarioSpec{
+		Steps: []ScenarioStep{{
+			Title: "Broken file",
+			Write: &ScenarioFileChange{
+				Path:     "broken.go",
+				Language: "go",
+				Content:  "package broken\nfunc Broken(\n",
+			},
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "format broken.go") {
+		t.Fatalf("renderScenarioMarkdown() error = %v, want formatting failure", err)
 	}
 }
 
@@ -270,5 +338,12 @@ func TestScenarioGenerateCheckDetectsDrift(t *testing.T) {
 
 	if err := Generate(GenerateOptions{OutDir: dir, Check: true, IDs: []string{"json-api-route"}}); err == nil {
 		t.Fatal("expected check to detect drift")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read stale doc after check: %v", err)
+	}
+	if string(body) != "stale\n" {
+		t.Fatalf("check mode rewrote stale doc:\n%s", body)
 	}
 }
