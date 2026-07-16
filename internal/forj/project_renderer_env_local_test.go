@@ -52,7 +52,10 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}
-	if !strings.Contains(string(envData), "QUEUE_DRIVER=nats ") || !strings.Contains(string(envData), "QUEUE_SUPPORTED_DRIVERS=nats ") {
+	environmentLines := strings.Split(string(envData), "\n")
+	queueDriver, queueDriverSet := envfile.Lookup(environmentLines, "QUEUE_DRIVER")
+	supportedDrivers, supportedDriversSet := envfile.Lookup(environmentLines, "QUEUE_SUPPORTED_DRIVERS")
+	if !queueDriverSet || queueDriver != "nats" || !supportedDriversSet || supportedDrivers != "nats" {
 		t.Fatalf("wizard queue choice was not seeded into .env:\n%s", envData)
 	}
 	configData, err := os.ReadFile(".goforj.yml")
@@ -411,6 +414,9 @@ func TestProjectRendererAlwaysRendersEnvLocalWithInspectDefaults(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf(".env.local missing %q\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "AUTH_SESSION_IDLE_TTL") {
+		t.Fatalf(".env.local contains an inert auth override:\n%s", text)
 	}
 
 	if err := os.WriteFile(envLocalPath, []byte("LIGHTHOUSE_INSPECT_ENABLED=false\n"), 0o644); err != nil {

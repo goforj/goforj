@@ -81,7 +81,10 @@ OAuth policy defaults:
 - linking is explicit
 - provider-created users can exist before a local password is set
 
-Generated OAuth env vars are included only when `OAuth` is enabled, and provider credentials are commented out by default in `.env`.
+Generated `.env` files do not include OAuth credential stubs. Providers remain
+disabled until their required credentials are configured, and each generated
+app documents the GitHub, Google, Microsoft, and Apple credential matrix in
+`internal/auth/README.md`.
 
 ## Local Development
 

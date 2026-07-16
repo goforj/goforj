@@ -24,6 +24,17 @@ Resource makers such as `make:queue` update App configuration instead of creatin
 
 `make:model` inspects your database schema, generates models + repositories, and wires repositories into Wire. It also supports relationships and per-field encryption/compression hooks.
 
+## Opening Generated Files
+
+File-generating commands try to open new files when a supported desktop editor is available. Override that behavior in your environment when needed:
+
+```env
+FORJ_MAKE_OPEN=auto # options: auto, always, never
+FORJ_EDITOR=code
+```
+
+`FORJ_EDITOR` accepts an editor command. Leave it unset to use the normal editor discovery order.
+
 ## Quick Start
 
 ```

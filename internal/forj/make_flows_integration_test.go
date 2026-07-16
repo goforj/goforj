@@ -204,11 +204,11 @@ func NewCommands(
 	runForj(t, "make:queue", "reports", "--workers", "2", "--name", "production-report-jobs")
 	assertFileContains(t, filepath.Join(projectDir, ".env"), []string{
 		"# Queue",
-		"# Named queues can prioritize work by allocating workers:",
 		"QUEUE_REPORTS_NAME=production-report-jobs",
 		"QUEUE_REPORTS_WORKERS=2",
 	})
 	assertFileNotContains(t, filepath.Join(projectDir, ".env"), []string{
+		"# Named queues can prioritize work by allocating workers:",
 		"# QUEUE_REPORTS_NAME=reports",
 		"# QUEUE_REPORTS_WORKERS=2",
 		"QUEUE_QUEUES",
