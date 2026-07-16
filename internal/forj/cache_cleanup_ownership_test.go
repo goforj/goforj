@@ -74,6 +74,65 @@ func TestCacheOwnerEnvironmentPathsDiscoversOnlyRootFiles(t *testing.T) {
 	}
 }
 
+// TestCacheIgnoredAppEnvironmentAssignmentRequiresAResourceBoundary verifies colliding App prefixes cannot hide shared Cache assignments.
+func TestCacheIgnoredAppEnvironmentAssignmentRequiresAResourceBoundary(t *testing.T) {
+	ignoredApps := map[string]bool{"cache": true, "cache-reader": true}
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{name: "shared root", key: "CACHE_DRIVER"},
+		{name: "shared named resource matching App prefix", key: "CACHE_READER_DRIVER"},
+		{name: "shared named resource", key: "CACHE_SESSIONS_DRIVER"},
+		{name: "resource-named App Cache overlay", key: "CACHE_CACHE_DRIVER", want: true},
+		{name: "resource-prefixed App Cache overlay", key: "CACHE_READER_CACHE_REPORTS_DRIVER", want: true},
+		{name: "resource-named App Events overlay", key: "CACHE_EVENTS_DRIVER", want: true},
+		{name: "resource-prefixed App Storage overlay", key: "CACHE_READER_STORAGE_ARCHIVE_DRIVER", want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := cacheIgnoredAppEnvironmentAssignment(test.key, ignoredApps); got != test.want {
+				t.Fatalf("cacheIgnoredAppEnvironmentAssignment(%q) = %t, want %t", test.key, got, test.want)
+			}
+		})
+	}
+}
+
+// TestCacheOwnerEnvironmentDependencyKeepsSharedCacheAcrossAppPrefixCollision prevents last-Cache cleanup from erasing owner configuration that merely shares an App prefix.
+func TestCacheOwnerEnvironmentDependencyKeepsSharedCacheAcrossAppPrefixCollision(t *testing.T) {
+	t.Chdir(t.TempDir())
+	app := project.DefaultNamedApp("cache")
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{
+			app.Name: {Components: project.Components{CLI: true, Cache: true}},
+		},
+	}
+	writeCacheCleanupFixture(t, ".env", strings.Join([]string{
+		"CACHE_DRIVER=memory",
+		"CACHE_SUPPORTED_DRIVERS=memory",
+		"CACHE_REPORTS_DRIVER=redis",
+		"",
+		"# Cache",
+		"CACHE_CACHE_DRIVER=memory",
+		"",
+	}, "\n"))
+
+	path, key, err := projectRendererForTest(t, config).cacheOwnerEnvironmentDependency(
+		project.Components{CLI: true},
+		nil,
+		[]project.App{app},
+	)
+	if err != nil {
+		t.Fatalf("inspect Cache owner environment: %v", err)
+	}
+	if path != ".env" || key != "CACHE_REPORTS_DRIVER" {
+		t.Fatalf("Cache owner environment dependency = %q, %q, want .env, CACHE_REPORTS_DRIVER", path, key)
+	}
+}
+
 // TestNamedAppCacheDeselectionRemovesOnlyGeneratedDefaults verifies a named App can drop Cache without retaining framework environment residue.
 func TestNamedAppCacheDeselectionRemovesOnlyGeneratedDefaults(t *testing.T) {
 	usePrimitiveRendererRoot(t)

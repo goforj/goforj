@@ -242,14 +242,18 @@ func primitiveResourcesForApp(env map[string]string, apps []projectResourceApp, 
 
 // namedResourcesForApp keeps shared definitions available without attributing sibling App overlays to this App.
 func namedResourcesForApp(env map[string]string, apps []projectResourceApp, appName string, prefix string) []string {
-	excludedKeyPrefixes := make([]string, 0, len(apps))
+	definitions := project.ResourceCatalog()
+	excludedKeyPrefixes := make([]string, 0, len(apps)*len(definitions))
 	for _, app := range apps {
 		if app.name == "" || app.name == project.DefaultAppName {
 			continue
 		}
 		appPrefix := project.AppEnvironmentPrefix(app.name)
-		if appPrefix != "" {
-			excludedKeyPrefixes = append(excludedKeyPrefixes, appPrefix+"_")
+		if appPrefix == "" {
+			continue
+		}
+		for _, definition := range definitions {
+			excludedKeyPrefixes = append(excludedKeyPrefixes, appPrefix+"_"+definition.EnvironmentPrefix+"_")
 		}
 	}
 	names := namedResources(env, prefix, excludedKeyPrefixes...)
