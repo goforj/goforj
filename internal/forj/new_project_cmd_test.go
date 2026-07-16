@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,10 +10,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
 )
+
+// initialModel keeps default test setup concise without exposing a production-only forwarding helper.
+func initialModel() model {
+	return initialModelWithOptions(newProjectModelOptions{})
+}
 
 func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
 	t.Helper()
@@ -349,6 +357,106 @@ func TestEnsureNewProjectConfigCanBeWrittenRejectsExistingConfig(t *testing.T) {
 	}
 }
 
+// TestNewProjectCreationKeepsWorkInsideTarget verifies project creation does not use process cwd as hidden renderer or command state.
+func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "project with spaces")
+	frontendDir := filepath.Join(target, projectlayout.FrontendDir(".", project.DefaultApp()))
+	if err := os.MkdirAll(frontendDir, 0o755); err != nil {
+		t.Fatalf("create target frontend: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(frontendDir, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatalf("write target package.json: %v", err)
+	}
+
+	sentinel := t.TempDir()
+	t.Chdir(sentinel)
+	commandLog := installNewProjectCommandProbe(t)
+	m := initialModel()
+	m.targetPath = target
+	m.atlasMode = atlasModeSkip
+	m.config.ProjectName = "Rooted App"
+	m.config.GoModuleName = "example.com/rooted"
+	m.config.Render.Components = project.Components{CLI: true, WebAPI: true, WebUI: true}
+	m.config.Render.StarterKit = project.StarterKitNone
+	appLogger := logger.NewSilentLogger()
+	cmd := NewNewProjectCmd(appLogger, NewProjectRenderer(appLogger))
+	if err := m.finalizeConfig(); err != nil {
+		t.Fatalf("finalize project config: %v", err)
+	}
+	m.stage = StageDone
+	if err := cmd.createProject(m); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if cwd, err := os.Getwd(); err != nil || cwd != sentinel {
+		t.Fatalf("working directory = %q, %v; want unchanged %q", cwd, err, sentinel)
+	}
+	for _, path := range []string{".goforj.yml", "go.mod", filepath.Join("cmd", "app", "main.go")} {
+		if _, err := os.Stat(filepath.Join(target, path)); err != nil {
+			t.Fatalf("target output %s: %v", path, err)
+		}
+		if _, err := os.Stat(filepath.Join(sentinel, path)); !os.IsNotExist(err) {
+			t.Fatalf("process cwd received project output %s: %v", path, err)
+		}
+	}
+	assertNewProjectCommandsRootedAt(t, commandLog, target)
+
+	config, err := project.LoadProjectConfigAt(target)
+	if err != nil {
+		t.Fatalf("load target config: %v", err)
+	}
+	if len(config.Dev.Watches) != 1 || config.Dev.Watches[0].Name != "NPM" {
+		t.Fatalf("target package.json was not used for lifecycle discovery: %#v", config.Dev.Watches)
+	}
+}
+
+// installNewProjectCommandProbe installs deterministic Go and Wire commands that record each process directory.
+func installNewProjectCommandProbe(t *testing.T) string {
+	t.Helper()
+	toolsDir := t.TempDir()
+	logPath := filepath.Join(toolsDir, "commands.log")
+	script := `#!/bin/sh
+printf '%s\n' "$PWD" >> "$FORJ_NEW_PROJECT_COMMAND_LOG"
+if [ "$1" = "mod" ] && [ "$2" = "init" ]; then
+  printf 'module %s\n\ngo 1.25\n' "$3" > go.mod
+fi
+`
+	for _, name := range []string{"go", "wire"} {
+		if err := os.WriteFile(filepath.Join(toolsDir, name), []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake %s command: %v", name, err)
+		}
+	}
+	t.Setenv("FORJ_NEW_PROJECT_COMMAND_LOG", logPath)
+	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+// assertNewProjectCommandsRootedAt verifies every observed subprocess stayed within the new project tree.
+func assertNewProjectCommandsRootedAt(t *testing.T, logPath string, target string) {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	directories := make([]string, 0)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		directories = append(directories, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read command log lines: %v", err)
+	}
+	if len(directories) == 0 {
+		t.Fatal("project creation did not run any observed commands")
+	}
+	for _, directory := range directories {
+		relative, err := filepath.Rel(target, directory)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			t.Fatalf("command directory %q is outside target %q", directory, target)
+		}
+	}
+}
+
 // TestNewProjectComponentsExposeConcreteDatabaseEngines keeps the stateful database choice in the component checklist.
 func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 	m := initialModel()
@@ -383,9 +491,6 @@ func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 // TestNewProjectExposesPrimitiveDefaultsAsComponents keeps the common path default-on without adding another wizard stage.
 func TestNewProjectExposesPrimitiveDefaultsAsComponents(t *testing.T) {
 	m := initialModel()
-	if m.config.Render.ComponentContractVersion != project.CurrentComponentContractVersion {
-		t.Fatalf("new project component contract = %d, want %d", m.config.Render.ComponentContractVersion, project.CurrentComponentContractVersion)
-	}
 	want := map[project.ComponentKey]string{
 		project.ComponentCache:   "Cache",
 		project.ComponentEvents:  "Events",
@@ -860,6 +965,11 @@ func TestAtlasRecommendedMovesToProjectPath(t *testing.T) {
 	}
 	if len(m.selectedAtlasAgents()) == 0 {
 		t.Fatalf("expected recommended atlas agents")
+	}
+	m.atlasRecommendations = []string{"wizard-snapshot"}
+	t.Chdir(t.TempDir())
+	if got := m.atlasInstallOptions(t.TempDir()).Agents; !reflect.DeepEqual(got, m.atlasRecommendations) {
+		t.Fatalf("Atlas install agents = %v, want wizard snapshot %v", got, m.atlasRecommendations)
 	}
 }
 

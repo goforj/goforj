@@ -398,7 +398,7 @@ func TestAppPrefixedActiveDriversDoNotClassifyResourceFirstScopes(t *testing.T) 
 	t.Setenv("CACHE_REPORTS_DRIVER", "redis")
 	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "memcached")
 	t.Setenv("STORAGE_CACHE_DRIVER", "memory")
-	drivers := appPrefixedActiveDrivers(t.TempDir(), "CACHE", "memory", false)
+	drivers := appPrefixedActiveDrivers(ambientGenerationInput(t.TempDir()), "CACHE", "memory", false)
 	for _, active := range drivers {
 		switch active.key {
 		case "CACHE_REPORTS_DRIVER", "CACHE_PAGE_CACHE_DRIVER", "STORAGE_CACHE_DRIVER":
@@ -414,18 +414,12 @@ func TestGenerateStorageFilesIgnoresDisabledAppOverlays(t *testing.T) {
 	config := `project_name: Storage overlays
 module_name: example.com/storage-overlays
 render:
-  component_contract: 1
-  components:
-    cli: true
-    storage: true
+  components: [cli, storage]
 apps:
   api:
-    components:
-      cli: true
+    components: [cli]
   files:
-    components:
-      cli: true
-      storage: true
+    components: [cli, storage]
 `
 	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)

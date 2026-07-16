@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -78,9 +79,6 @@ func compileDevWatchers(config *project.Config) ([]devCompiledWatcher, error) {
 
 // validateStructuredDevAppNames prevents lifecycle configuration from escaping conventional app-owned paths.
 func validateStructuredDevAppNames(config *project.Config) error {
-	if config == nil {
-		return nil
-	}
 	names := make([]string, 0, len(config.Dev.Apps))
 	for name := range config.Dev.Apps {
 		names = append(names, name)
@@ -145,7 +143,7 @@ type selectedStructuredDevApp struct {
 
 // selectedStructuredDevApps respects explicit app selection while keeping generated app ordering stable.
 func selectedStructuredDevApps(config *project.Config) []selectedStructuredDevApp {
-	if config == nil || len(config.Dev.Apps) == 0 {
+	if len(config.Dev.Apps) == 0 {
 		return nil
 	}
 	requested := requestedDevAppName()
@@ -214,16 +212,22 @@ func compileStructuredAppBuild(config *project.Config, app project.App, appConfi
 			postpone = commandConfig.Postpone
 		}
 	}
-	watch, pollInterval, err := compileStructuredWatchSpec(id, []string{root}, includes, ignores, nil, nil, debounce, poll)
+	compiledWatch, err := compileStructuredWatchSpec(id, project.DevWatch{
+		Roots:    []string{root},
+		Include:  includes,
+		Ignore:   ignores,
+		Debounce: debounce,
+		Poll:     poll,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("compile %s: %w", name, err)
 	}
 	commandEnv := frameworkDevAppEnv(app, env)
 	commandEnv["FORJ_BUILD_PROGRESS"] = "1"
 	return &devCompiledWatcher{
-		Watch: watch, ID: id, Name: name, Kind: devWatcherAppBuild, App: app.Name,
+		Watch: compiledWatch.spec, ID: id, Name: name, Kind: devWatcherAppBuild, App: app.Name,
 		Command:  devwatch.Command{Shell: execCommand, Dir: workDir, Env: commandEnv},
-		Postpone: postpone, WatchChanges: true, PollInterval: pollInterval,
+		Postpone: postpone, WatchChanges: true, PollInterval: compiledWatch.pollInterval,
 	}, nil
 }
 
@@ -267,19 +271,20 @@ func compileStructuredAppRuntime(app project.App, components project.Components,
 		}
 		runtimeMatchers = append(runtimeMatchers, matcher)
 	}
-	var watch devwatch.Spec
-	var pollInterval time.Duration
+	var compiledWatch compiledStructuredWatchSpec
 	watchChanges := len(runtimeMatchers) > 0
 	if watchChanges {
-		root := commandConfig.Root
-		if strings.TrimSpace(root) == "" {
-			root = "."
+		watchConfig := project.DevWatch{
+			Include:  runtimeMatchers,
+			Ignore:   commandConfig.Ignore,
+			Debounce: commandConfig.Debounce,
+			Poll:     commandConfig.Poll,
+		}
+		if strings.TrimSpace(commandConfig.Root) != "" {
+			watchConfig.Roots = []string{commandConfig.Root}
 		}
 		var err error
-		watch, pollInterval, err = compileStructuredWatchSpec(
-			id, []string{root}, runtimeMatchers, commandConfig.Ignore, nil, nil,
-			commandConfig.Debounce, commandConfig.Poll,
-		)
+		compiledWatch, err = compileStructuredWatchSpec(id, watchConfig)
 		if err != nil {
 			return nil, fmt.Errorf("compile %s: %w", name, err)
 		}
@@ -295,12 +300,12 @@ func compileStructuredAppRuntime(app project.App, components project.Components,
 		env = commandConfig.Env
 	}
 	return &devCompiledWatcher{
-		Watch: watch, ID: id, Name: name, Kind: devWatcherAppRun, App: app.Name,
+		Watch: compiledWatch.spec, ID: id, Name: name, Kind: devWatcherAppRun, App: app.Name,
 		Command: devwatch.Command{
 			Shell: execCommand, Dir: workDir, Env: frameworkDevAppEnv(app, env),
 			Stdin: devWatcherStdin(false),
 		},
-		Postpone: postpone, Restart: true, WatchChanges: watchChanges, PollInterval: pollInterval,
+		Postpone: postpone, Restart: true, WatchChanges: watchChanges, PollInterval: compiledWatch.pollInterval,
 		FullProcessOverride: commandConfig != nil && commandConfig.IsMapping() && !isExplicitConventionalDevRuntime(commandConfig, binary),
 	}, nil
 }
@@ -340,7 +345,7 @@ func isNestedDevWorkDir(workDir string) bool {
 
 // frameworkDevAppEnv keeps structured builds and snapshot runtimes aligned with app-aware framework commands.
 func frameworkDevAppEnv(app project.App, configured map[string]string) map[string]string {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	env := copyDevWatchEnv(configured)
 	env["FORJ_APP"] = app.Name
 	if app.Name == project.DefaultAppName {
@@ -383,7 +388,11 @@ func compileStructuredSPA(app project.App, name string, spa project.DevSPA, buil
 	if len(ignores) == 0 {
 		ignores = conventional.Ignore
 	}
-	watch, _, err := compileStructuredWatchSpec(id, []string{root}, includes, ignores, nil, nil, "", "")
+	compiledWatch, err := compileStructuredWatchSpec(id, project.DevWatch{
+		Roots:   []string{root},
+		Include: includes,
+		Ignore:  ignores,
+	})
 	if err != nil {
 		return devCompiledWatcher{}, fmt.Errorf("compile %s: %w", watchName, err)
 	}
@@ -392,7 +401,7 @@ func compileStructuredSPA(app project.App, name string, spa project.DevSPA, buil
 		onSuccess = append(onSuccess, build.ID)
 	}
 	return devCompiledWatcher{
-		Watch: watch, ID: id, Name: watchName, Kind: devWatcherSPABuild, App: app.Name,
+		Watch: compiledWatch.spec, ID: id, Name: watchName, Kind: devWatcherSPABuild, App: app.Name,
 		Command: devwatch.Command{Shell: command, Dir: root}, Postpone: true,
 		WatchChanges: true, OnSuccess: onSuccess,
 	}, nil
@@ -414,18 +423,7 @@ func compileCustomDevWatcher(watch project.DevWatch, index int) (devCompiledWatc
 		compiled.Watch.Name = id
 		return compiled, nil
 	}
-	roots := watch.Roots
-	if len(roots) == 0 {
-		roots = []string{"."}
-	}
-	includes := append([]string(nil), watch.Include...)
-	includes = append(includes, watch.Files.Include...)
-	ignores := append([]string(nil), watch.Ignore...)
-	ignores = append(ignores, watch.Files.Exclude...)
-	compiledWatch, pollInterval, err := compileStructuredWatchSpec(
-		id, roots, includes, ignores, watch.Dirs.Include, watch.Dirs.Exclude,
-		watch.Debounce, watch.Poll,
-	)
+	compiledWatch, err := compileStructuredWatchSpec(id, watch)
 	if err != nil {
 		return devCompiledWatcher{}, fmt.Errorf("compile dev watcher %q: %w", watch.Name, err)
 	}
@@ -435,56 +433,65 @@ func compileCustomDevWatcher(watch project.DevWatch, index int) (devCompiledWatc
 		env[key] = value
 	}
 	return devCompiledWatcher{
-		Watch: compiledWatch, ID: id, Name: watch.Name, Kind: devWatcherCustom,
+		Watch: compiledWatch.spec, ID: id, Name: watch.Name, Kind: devWatcherCustom,
 		Command: devwatch.Command{
 			Shell: execCommand, Dir: watch.WorkDir, Env: env, Stdin: devWatcherStdin(watch.Stdin),
 		},
 		Postpone: watch.Postpone, Restart: watch.Restart, Exit: watch.Exit,
-		WatchChanges: true, PollInterval: pollInterval,
+		WatchChanges: true, PollInterval: compiledWatch.pollInterval,
 	}, nil
 }
 
-// compileStructuredWatchSpec compiles readable path rules and timing into an engine specification.
-func compileStructuredWatchSpec(
-	name string,
-	roots []string,
-	includes []string,
-	ignores []string,
-	directoryIncludes []string,
-	directoryExcludes []string,
-	debounceValue string,
-	pollValue string,
-) (devwatch.Spec, time.Duration, error) {
+// compiledStructuredWatchSpec keeps the engine specification and polling cadence together after configuration normalization.
+type compiledStructuredWatchSpec struct {
+	spec         devwatch.Spec
+	pollInterval time.Duration
+}
+
+// compileStructuredWatchSpec compiles readable project configuration into one engine specification.
+func compileStructuredWatchSpec(identity string, watch project.DevWatch) (compiledStructuredWatchSpec, error) {
+	roots := watch.Roots
+	if len(roots) == 0 {
+		roots = []string{"."}
+	}
+	includes := append([]string(nil), watch.Include...)
+	includes = append(includes, watch.Files.Include...)
+	ignores := append([]string(nil), watch.Ignore...)
+	ignores = append(ignores, watch.Files.Exclude...)
+
 	includeMatchers, err := compileNativeDevWatchMatchers(includes)
 	if err != nil {
-		return devwatch.Spec{}, 0, err
+		return compiledStructuredWatchSpec{}, err
 	}
 	excludeMatchers, err := compileNativeDevWatchMatchers(ignores)
 	if err != nil {
-		return devwatch.Spec{}, 0, err
+		return compiledStructuredWatchSpec{}, err
 	}
-	directoryIncludeMatchers, err := compileNativeDevWatchMatchers(directoryIncludes)
+	directoryIncludeMatchers, err := compileNativeDevWatchMatchers(watch.Dirs.Include)
 	if err != nil {
-		return devwatch.Spec{}, 0, err
+		return compiledStructuredWatchSpec{}, err
 	}
-	directoryIgnoreValues := append(append([]string(nil), ignores...), directoryExcludes...)
+	directoryIgnoreValues := append(append([]string(nil), ignores...), watch.Dirs.Exclude...)
 	directoryExcludeMatchers, err := compileNativeDevWatchMatchers(directoryIgnoreValues)
 	if err != nil {
-		return devwatch.Spec{}, 0, err
+		return compiledStructuredWatchSpec{}, err
 	}
-	debounce, err := parseDevWatchDuration("debounce", debounceValue, devwatch.DefaultDebounce)
+	debounce, err := parseDevWatchDuration("debounce", watch.Debounce, devwatch.DefaultDebounce)
 	if err != nil {
-		return devwatch.Spec{}, 0, err
+		return compiledStructuredWatchSpec{}, err
 	}
-	poll, err := parseDevWatchDuration("poll", pollValue, 0)
+	poll, err := parseDevWatchDuration("poll", watch.Poll, 0)
 	if err != nil {
-		return devwatch.Spec{}, 0, err
+		return compiledStructuredWatchSpec{}, err
 	}
-	return devwatch.Spec{
-		Name: name, Roots: roots, Includes: includeMatchers, Excludes: excludeMatchers,
-		DirectoryIncludes: directoryIncludeMatchers, DirectoryExcludes: directoryExcludeMatchers,
-		Debounce: debounce, DebounceSet: true,
-	}, poll, nil
+	return compiledStructuredWatchSpec{
+		spec: devwatch.Spec{
+			Name: identity, Roots: roots, Includes: includeMatchers, Excludes: excludeMatchers,
+			DirectoryIncludes: directoryIncludeMatchers, DirectoryExcludes: directoryExcludeMatchers,
+			Debounce: debounce, DebounceSet: true,
+		},
+		pollInterval: poll,
+	}, nil
 }
 
 // compileNativeDevWatchMatchers preserves the simple matcher contract while surfacing invalid regexes early.

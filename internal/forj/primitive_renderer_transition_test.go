@@ -60,9 +60,14 @@ func primitiveRendererContracts() []primitiveRendererContract {
 	}
 }
 
+// primitiveAdditiveContracts includes Cache because additive enablement has the same owner-preservation contract as the other primitives.
+func primitiveAdditiveContracts() []primitiveRendererContract {
+	return append([]primitiveRendererContract{{name: "Cache", key: project.ComponentCache}}, primitiveRendererContracts()...)
+}
+
 // testPrimitiveAdditiveEnablement verifies new component boundaries can be added without rewriting any existing App-owned file.
 func testPrimitiveAdditiveEnablement(t *testing.T) {
-	for _, contract := range primitiveRendererContracts() {
+	for _, contract := range primitiveAdditiveContracts() {
 		contract := contract
 		t.Run(contract.name, func(t *testing.T) {
 			usePrimitiveRendererRoot(t)
@@ -112,11 +117,9 @@ func testPrimitiveAdditiveEnablement(t *testing.T) {
 			if want := primitiveNamedEnvironment(contract.key); !strings.Contains(environment, want) {
 				t.Fatalf("additive %s render omitted %q:\n%s", contract.name, want, environment)
 			}
-			if contract.key == project.ComponentJobs {
-				for _, want := range []string{"QUEUE_DRIVER=workerpool", "QUEUE_SUPPORTED_DRIVERS=workerpool,redis"} {
-					if !strings.Contains(environment, want) {
-						t.Fatalf("additive Jobs render omitted root contract %q:\n%s", want, environment)
-					}
+			for _, want := range primitiveAdditiveRootEnvironment(contract.key) {
+				if !strings.Contains(environment, want) {
+					t.Fatalf("additive %s render omitted root contract %q:\n%s", contract.name, want, environment)
 				}
 			}
 			loaded, err := project.LoadProjectConfig()
@@ -125,6 +128,9 @@ func testPrimitiveAdditiveEnablement(t *testing.T) {
 			}
 			if !loaded.Apps[app.Name].Components.Enabled(contract.key) {
 				t.Fatalf("additive render did not persist %s participation", contract.name)
+			}
+			if contract.key == project.ComponentCache && loaded.Render.Components.Cache {
+				t.Fatal("named App Cache enablement changed the default App selection")
 			}
 		})
 	}
@@ -160,7 +166,7 @@ type App struct{}
 func (a *App) Queues() any { return nil }
 `
 			writePrimitiveRendererFile(t, appPath, appContents)
-			renderer := &ProjectRenderer{config: config}
+			renderer := projectRendererForTest(t, config)
 			if test.removeApp {
 				renderer = NewProjectRenderer(logger.NewSilentLogger())
 				result, err := renderer.RemoveApp(app)
@@ -234,6 +240,7 @@ func testPrimitiveDriverEnvironment(t *testing.T) {
 	for _, contract := range primitiveRendererContracts() {
 		contract := contract
 		t.Run(contract.name, func(t *testing.T) {
+			workspace := currentProjectRenderWorkspace(t)
 			tests := []struct {
 				name        string
 				environment string
@@ -259,7 +266,7 @@ func testPrimitiveDriverEnvironment(t *testing.T) {
 					if test.environment != "" {
 						writePrimitiveRendererFile(t, path, test.environment)
 					}
-					got, err := primitiveDriverDefaultFromEnv(contract.key, path)
+					got, err := workspace.primitiveDriverDefaultFromEnv(contract.key, path)
 					if test.wantError != "" {
 						if err == nil || !strings.Contains(err.Error(), test.wantError) {
 							t.Fatalf("%s driver error = %v, want %q", contract.name, err, test.wantError)
@@ -292,11 +299,10 @@ func primitiveComponentsWith(keys ...project.ComponentKey) project.Components {
 	return components
 }
 
-// primitiveRendererConfig creates an explicit-contract fixture so omissions remain disabled.
+// primitiveRendererConfig creates a canonical selection fixture so omissions remain disabled.
 func primitiveRendererConfig(components project.Components) *project.Config {
 	return &project.Config{Render: project.RenderConfig{
-		Components:               components,
-		ComponentContractVersion: project.CurrentComponentContractVersion,
+		Components: components,
 	}}
 }
 
@@ -343,18 +349,6 @@ func validatePrimitiveTransition(renderer *ProjectRenderer, key project.Componen
 	}
 }
 
-// primitiveAppSurfaceExists calls the syntax-aware App API detector for one primitive.
-func primitiveAppSurfaceExists(key project.ComponentKey, path string) (bool, error) {
-	switch key {
-	case project.ComponentStorage:
-		return appStorageSurfaceExists(path)
-	case project.ComponentJobs:
-		return appJobsSurfaceExists(path)
-	default:
-		panic("unsupported primitive App surface: " + string(key))
-	}
-}
-
 // primitiveRemovalSurface returns the App-local artifact that proves removal is unsafe.
 func primitiveRemovalSurface(app project.App, key project.ComponentKey) (string, string) {
 	switch key {
@@ -385,11 +379,16 @@ func primitiveRootEnvironment(key project.ComponentKey) string {
 
 // primitiveAdditiveConfig creates the smallest existing-project shape supported by each incremental transition.
 func primitiveAdditiveConfig(key project.ComponentKey, app project.App) *project.Config {
-	config := primitiveRendererConfig(primitiveRendererBaseComponents())
+	baseComponents := primitiveRendererBaseComponents()
+	if key == project.ComponentCache {
+		baseComponents.Cache = false
+	}
+	config := primitiveRendererConfig(baseComponents)
 	config.ProjectName = "Additive " + string(key)
 	config.GoModuleName = "example.test/additive-primitive"
-	config.Apps = map[string]project.AppConfig{app.Name: {Components: primitiveRendererBaseComponents()}}
+	config.Apps = map[string]project.AppConfig{app.Name: {Components: baseComponents}}
 	switch key {
+	case project.ComponentCache:
 	case project.ComponentEvents:
 		config.Render.Components = primitiveComponentsWith(project.ComponentEvents)
 	case project.ComponentStorage:
@@ -405,6 +404,8 @@ func primitiveAdditiveConfig(key project.ComponentKey, app project.App) *project
 func primitiveAdditiveEnvironment(key project.ComponentKey) string {
 	base := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n"
 	switch key {
+	case project.ComponentCache:
+		return "OWNER_SENTINEL=keep\n"
 	case project.ComponentEvents:
 		return base + "EVENTS_DRIVER=redis\nEVENTS_SUPPORTED_DRIVERS=inproc,redis\n"
 	case project.ComponentStorage:
@@ -419,6 +420,16 @@ func primitiveAdditiveEnvironment(key project.ComponentKey) string {
 // primitiveAdditiveExpectedPaths returns the new boundaries an incremental App render must create.
 func primitiveAdditiveExpectedPaths(app project.App, key project.ComponentKey) []string {
 	switch key {
+	case project.ComponentCache:
+		return []string{
+			filepath.Join(app.WireDir, "app.go"),
+			filepath.Join(app.WireDir, "inject_managers.go"),
+			filepath.Join("internal", "caches", "README.md"),
+			filepath.Join("internal", "caches", "accessors_gen.go"),
+			filepath.Join("internal", "caches", "manager_gen.go"),
+			filepath.Join("internal", "cmd", "cache_shell_cmd.go"),
+			filepath.Join("internal", "observability", "cache_observer.go"),
+		}
 	case project.ComponentEvents:
 		return []string{filepath.Join(app.AppDir, "event_commands.go"), filepath.Join(app.WireDir, "inject_subscribers_app.go")}
 	case project.ComponentStorage:
@@ -438,6 +449,19 @@ func primitiveAdditiveExpectedPaths(app project.App, key project.ComponentKey) [
 // assertPrimitiveAdditiveSurface verifies the generated App API for an incrementally enabled primitive.
 func assertPrimitiveAdditiveSurface(t *testing.T, app project.App, key project.ComponentKey) {
 	t.Helper()
+	if key == project.ComponentCache {
+		appSource := readPrimitiveRendererFile(t, filepath.Join(app.WireDir, "app.go"))
+		for _, method := range []string{"func (a *App) Cache()", "func (a *App) Caches()"} {
+			if !strings.Contains(appSource, method) {
+				t.Fatalf("additive Cache render omitted %q:\n%s", method, appSource)
+			}
+		}
+		managerSource := readPrimitiveRendererFile(t, filepath.Join(app.WireDir, "inject_managers.go"))
+		if !strings.Contains(managerSource, "provideCacheManager") {
+			t.Fatalf("additive Cache render omitted Cache manager wiring:\n%s", managerSource)
+		}
+		return
+	}
 	if key == project.ComponentEvents {
 		body := readPrimitiveRendererFile(t, filepath.Join(app.AppDir, "event_commands.go"))
 		if !strings.Contains(body, "GeneratedEventCommands") {
@@ -445,7 +469,18 @@ func assertPrimitiveAdditiveSurface(t *testing.T, app project.App, key project.C
 		}
 		return
 	}
-	exists, err := primitiveAppSurfaceExists(key, filepath.Join(app.WireDir, "app.go"))
+	workspace := currentProjectRenderWorkspace(t)
+	appPath := filepath.Join(app.WireDir, "app.go")
+	var exists bool
+	var err error
+	switch key {
+	case project.ComponentStorage:
+		exists, err = workspace.appStorageSurfaceExists(appPath)
+	case project.ComponentJobs:
+		exists, err = workspace.appJobsSurfaceExists(appPath)
+	default:
+		panic("unsupported primitive App surface: " + string(key))
+	}
 	if err != nil {
 		t.Fatalf("inspect additive %s App surface: %v", key, err)
 	}
@@ -457,6 +492,8 @@ func assertPrimitiveAdditiveSurface(t *testing.T, app project.App, key project.C
 // primitiveNamedEnvironment returns the named-App driver assignment expected after additive enablement.
 func primitiveNamedEnvironment(key project.ComponentKey) string {
 	switch key {
+	case project.ComponentCache:
+		return "API_CACHE_DRIVER=memory"
 	case project.ComponentEvents:
 		return "API_EVENTS_DRIVER=redis"
 	case project.ComponentStorage:
@@ -465,6 +502,18 @@ func primitiveNamedEnvironment(key project.ComponentKey) string {
 		return "API_QUEUE_DRIVER=workerpool"
 	default:
 		panic("unsupported primitive component: " + string(key))
+	}
+}
+
+// primitiveAdditiveRootEnvironment returns the shared defaults whose creation is part of an additive primitive transition.
+func primitiveAdditiveRootEnvironment(key project.ComponentKey) []string {
+	switch key {
+	case project.ComponentCache:
+		return []string{"OWNER_SENTINEL=keep", "CACHE_DRIVER=memory", "CACHE_SUPPORTED_DRIVERS=memory"}
+	case project.ComponentJobs:
+		return []string{"QUEUE_DRIVER=workerpool", "QUEUE_SUPPORTED_DRIVERS=workerpool,redis"}
+	default:
+		return nil
 	}
 }
 
@@ -482,15 +531,15 @@ func primitiveLastOwnerResidue(key project.ComponentKey) (string, string) {
 	}
 }
 
-// primitiveDriverDefaultFromEnv resolves one primitive's owner-controlled root driver.
-func primitiveDriverDefaultFromEnv(key project.ComponentKey, path string) (string, error) {
+// primitiveDriverDefaultFromEnv resolves one primitive's owner-controlled root driver inside the test workspace.
+func (w projectRenderWorkspace) primitiveDriverDefaultFromEnv(key project.ComponentKey, path string) (string, error) {
 	switch key {
 	case project.ComponentEvents:
-		return eventDriverDefaultFromEnv(path)
+		return w.eventDriverDefaultFromEnv(path)
 	case project.ComponentStorage:
-		return storageDriverDefaultFromEnv(path)
+		return w.storageDriverDefaultFromEnv(path)
 	case project.ComponentJobs:
-		return queueDriverDefaultFromEnv(path)
+		return w.queueDriverDefaultFromEnv(path)
 	default:
 		panic("unsupported primitive component: " + string(key))
 	}

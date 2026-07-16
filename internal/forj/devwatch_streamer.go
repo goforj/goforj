@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 	"github.com/gorilla/websocket"

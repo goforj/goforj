@@ -54,12 +54,7 @@ dev:
       exec: make legacy
 render:
   starter_kit: vue
-  component_contract: 1
-  components:
-    web_ui: true
-    metrics: true
-    observability: true
-    grafana: true
+  components: [web_ui, metrics, observability, grafana]
   module_replaces:
     github.com/example/dependency: ../dependency
 apps:
@@ -102,7 +97,7 @@ func TestProjectConfigYAMLRoundTripPreservesCompactAppComponents(t *testing.T) {
 	input := `project_name: Test
 module_name: example.com/test
 render:
-  component_contract: 1
+  components: []
 apps:
   billing:
     components: [web_api, jobs]
@@ -135,12 +130,45 @@ apps:
 	}
 }
 
+// TestProjectConfigTreatsVersionlessSequenceAsModern verifies App mapping cleanup cannot widen explicit modern omissions.
+func TestProjectConfigTreatsVersionlessSequenceAsModern(t *testing.T) {
+	input := `render:
+  components: [cli]
+apps:
+  worker:
+    components:
+      cli: true
+      jobs: true
+`
+	var config project.Config
+	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
+		t.Fatalf("unmarshal mixed component shapes: %v", err)
+	}
+	if config.Render.Components.Cache || config.Render.Components.Events || config.Render.Components.Storage {
+		t.Fatalf("default App modern omissions were widened: %#v", config.Render.Components)
+	}
+	settings, ok := config.Apps["worker"].(map[string]any)
+	if !ok {
+		t.Fatalf("worker App settings type = %T, want map", config.Apps["worker"])
+	}
+	components, ok := settings["components"].(project.Components)
+	if !ok || components.Cache || components.Events || components.Storage || !components.Jobs {
+		t.Fatalf("worker App modern omissions changed: %#v", settings["components"])
+	}
+	encoded, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal mixed component shapes: %v", err)
+	}
+	if strings.Contains(string(encoded), "component_contract:") || !strings.Contains(string(encoded), "components: [cli, jobs]") {
+		t.Fatalf("mixed component shapes did not canonicalize without a marker:\n%s", encoded)
+	}
+}
+
 // TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames verifies an
 // older generated project can round-trip component names introduced later.
 func TestComponentsYAMLAcceptsCompactSequenceAndPreservesUnknownNames(t *testing.T) {
 	input := `render:
   components: [jobs, storage, events, cache, scheduler, database_sqlite, database_postgres, database_mysql, docker, grafana, observability, metrics, web_ui, web_api, oauth, auth, mail, demo_app, cli, future_search, future_audit]
-  component_contract: 1
 `
 	var config project.Config
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
@@ -220,10 +248,12 @@ func TestComponentsYAMLMigratesLegacyMappingToCompactSequence(t *testing.T) {
 	}
 }
 
-// TestProjectConfigMigratesVersionlessPrimitivesForEveryApp protects the generated editor's side of the shared component contract.
-func TestProjectConfigMigratesVersionlessPrimitivesForEveryApp(t *testing.T) {
+// TestProjectConfigMigratesLegacyMappingPrimitivesForEveryApp protects the generated editor's side of the shared component contract.
+func TestProjectConfigMigratesLegacyMappingPrimitivesForEveryApp(t *testing.T) {
 	input := `render:
-  components: [cli, jobs]
+  components:
+    cli: true
+    jobs: true
 apps:
   api:
     components: [cli, web_api]
@@ -236,8 +266,7 @@ apps:
 	if err := yaml.Unmarshal([]byte(input), &config); err != nil {
 		t.Fatalf("unmarshal versionless component contract: %v", err)
 	}
-	if config.Render.ComponentContractVersion != project.CurrentComponentContractVersion ||
-		!config.Render.Components.Cache || !config.Render.Components.Events || !config.Render.Components.Storage {
+	if !config.Render.Components.Cache || !config.Render.Components.Events || !config.Render.Components.Storage {
 		t.Fatalf("default App was not migrated to the current primitive contract: %#v", config.Render)
 	}
 	for _, name := range []string{"api", "worker"} {
@@ -255,7 +284,6 @@ apps:
 		t.Fatalf("marshal migrated component contract: %v", err)
 	}
 	for _, expected := range []string{
-		"component_contract: 1",
 		"components: [cli, cache, events, storage, jobs]",
 		"components: [cli, web_api, cache, events, storage]",
 	} {
@@ -263,11 +291,23 @@ apps:
 			t.Fatalf("migrated component contract omitted %q:\n%s", expected, encoded)
 		}
 	}
+	if strings.Contains(string(encoded), "component_contract:") {
+		t.Fatalf("migrated component config retained the obsolete marker:\n%s", encoded)
+	}
+}
+
+// TestProjectConfigRejectsUnsupportedLegacyComponentContract prevents an older generated project from guessing at future marker semantics.
+func TestProjectConfigRejectsUnsupportedLegacyComponentContract(t *testing.T) {
+	var config project.Config
+	err := yaml.Unmarshal([]byte("render:\n  components: [cli]\n  component_contract: 2\n"), &config)
+	if err == nil || !strings.Contains(err.Error(), "unsupported component contract version 2") {
+		t.Fatalf("unmarshal error = %v, want unsupported component contract diagnostic", err)
+	}
 }
 
 {{ if .ProjectComponents.HasRuntime }}
-// TestSaveProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts verifies settings saves cannot reinterpret omitted primitives as legacy defaults.
-func TestSaveProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t *testing.T) {
+// TestSaveProjectConfigUsesSequenceSemanticsForPrimitiveOptOuts verifies settings saves retain omissions without a version marker.
+func TestSaveProjectConfigUsesSequenceSemanticsForPrimitiveOptOuts(t *testing.T) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get working directory: %v", err)
@@ -293,8 +333,11 @@ func TestSaveProjectConfigPersistsCurrentComponentContractForPrimitiveOptOuts(t 
 	if err != nil {
 		t.Fatalf("read saved project config: %v", err)
 	}
-	if !strings.Contains(string(source), "component_contract: 1") {
-		t.Fatalf("saved project config omitted the component contract marker:\n%s", source)
+	if strings.Contains(string(source), "component_contract:") {
+		t.Fatalf("saved project config retained the obsolete component marker:\n%s", source)
+	}
+	if !strings.Contains(string(source), "components: [cli]") {
+		t.Fatalf("saved project config omitted the canonical component sequence:\n%s", source)
 	}
 
 	var loaded project.Config
@@ -587,7 +630,6 @@ func TestMergeLighthouseComponentsPreservesUnknownSettings(t *testing.T) {
 // future enabled name remains compact after a JSON settings update.
 func TestMergeLighthouseComponentsPreservesUnknownCompactNames(t *testing.T) {
 	input := `render:
-  component_contract: 1
   components: [web_api, future_runtime]
 `
 	var current project.Config

@@ -37,7 +37,7 @@ func testPrimitiveResiduePreflight(t *testing.T) {
 					writePrimitiveRendererFile(t, fixturePath, contents)
 
 					components := primitiveRendererBaseComponents()
-					renderer := &ProjectRenderer{config: primitiveRendererConfig(components)}
+					renderer := projectRendererForTest(t, primitiveRendererConfig(components))
 					err := validatePrimitiveTransition(renderer, contract.key, components)
 					if err == nil || !strings.Contains(err.Error(), residuePath) {
 						t.Fatalf("%s transition error = %v, want residue %s", contract.name, err, residuePath)
@@ -86,7 +86,7 @@ func testPrimitiveNonSourceArtifacts(t *testing.T) {
 				writePrimitiveRendererFile(t, path, contents)
 			}
 			components := primitiveRendererBaseComponents()
-			renderer := &ProjectRenderer{config: primitiveRendererConfig(components)}
+			renderer := projectRendererForTest(t, primitiveRendererConfig(components))
 			if err := validatePrimitiveTransition(renderer, test.key, components); err != nil {
 				t.Fatalf("%s non-source artifact blocked removal: %v", test.name, err)
 			}
@@ -137,7 +137,17 @@ func (w *Worker) Queues() any { return nil }
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "app.go")
 			writePrimitiveRendererFile(t, path, test.source)
-			got, err := primitiveAppSurfaceExists(test.key, path)
+			workspace := currentProjectRenderWorkspace(t)
+			var got bool
+			var err error
+			switch test.key {
+			case project.ComponentStorage:
+				got, err = workspace.appStorageSurfaceExists(path)
+			case project.ComponentJobs:
+				got, err = workspace.appJobsSurfaceExists(path)
+			default:
+				t.Fatalf("unsupported primitive App surface: %s", test.key)
+			}
 			if err != nil {
 				t.Fatalf("inspect %s App surface: %v", test.name, err)
 			}

@@ -61,14 +61,16 @@ func openAPIOptions(paths paths, buildTags []string) (webindex.OpenAPIOptions, e
 	if !parsed || !generatedAuthControllerTypesExact(authFiles) {
 		return options, nil
 	}
-	groupAuthSelected, err := sourceFunctionReturnsTypedParameterExpression(
-		paths.routeComposition,
-		"ProvideRoutes",
-		"authService.RequireAuth",
-		"authService",
-		generatedAuthImportPath,
-		"Service",
-	)
+	groupAuthSelected, err := sourceFunctionReturnsTypedParameterExpression(sourceReturnContract{
+		sourcePath:   paths.routeComposition,
+		functionName: "ProvideRoutes",
+		expression:   "authService.RequireAuth",
+		parameter: importedPointerParameterContract{
+			name:       "authService",
+			importPath: generatedAuthImportPath,
+			typeName:   "Service",
+		},
+	})
 	if err != nil {
 		return webindex.OpenAPIOptions{}, err
 	}
@@ -85,26 +87,23 @@ func openAPIOptions(paths paths, buildTags []string) (webindex.OpenAPIOptions, e
 		})
 	}
 
-	authRoutesSelected, err := sourceFunctionReturnsTypedParameterExpression(
-		paths.routeComposition,
-		"ProvideRoutes",
-		"authController.Routes",
-		"authController",
-		generatedAuthImportPath,
-		"Controller",
-	)
+	authControllerRoutes := sourceReturnContract{
+		sourcePath:   paths.routeComposition,
+		functionName: "ProvideRoutes",
+		expression:   "authController.Routes",
+		parameter: importedPointerParameterContract{
+			name:       "authController",
+			importPath: generatedAuthImportPath,
+			typeName:   "Controller",
+		},
+	}
+	authRoutesSelected, err := sourceFunctionReturnsTypedParameterExpression(authControllerRoutes)
 	if err != nil {
 		return webindex.OpenAPIOptions{}, err
 	}
 	if !authRoutesSelected {
-		authRoutesSelected, err = sourceFunctionReturnsTypedParameterExpression(
-			paths.routeComposition,
-			"ProvideAppRoutes",
-			"authController.Routes",
-			"authController",
-			generatedAuthImportPath,
-			"Controller",
-		)
+		authControllerRoutes.functionName = "ProvideAppRoutes"
+		authRoutesSelected, err = sourceFunctionReturnsTypedParameterExpression(authControllerRoutes)
 		if err != nil {
 			return webindex.OpenAPIOptions{}, err
 		}
@@ -298,7 +297,7 @@ func generatedAuthControllerTypesExact(files []*ast.File) bool {
 				if declaration.Name.Name != "RequireAuth" || declaration.Body == nil {
 					continue
 				}
-				_, receiverObject, receiverExact := exactSourceMethodReceiver(declaration, "Service")
+				receiverObject, receiverExact := exactSourceMethodReceiver(declaration, "Service")
 				if receiverExact && sourceFunctionHasFrameworkHandlerSignature(declaration, imports) && sourceGeneratedRequireAuthMethod(declaration, receiverObject, imports) {
 					serviceMethods++
 				}
@@ -388,7 +387,7 @@ func sourceGeneratedRequireAuthMethod(function *ast.FuncDecl, receiverObject *as
 	if !ok || failure.Else != nil || failure.Body == nil || len(failure.Body.List) != 1 || !sourceErrorNotNilCondition(failure.Cond, errorName.Obj) {
 		return false
 	}
-	if !sourceGeneratedContextResponseReturn(failure.Body.List[0], contextObject, imports, "JSON", "StatusUnauthorized") {
+	if !sourceGeneratedUnauthorizedJSONReturn(failure.Body.List[0], contextObject, imports) {
 		return false
 	}
 
@@ -405,8 +404,8 @@ func sourceGeneratedRequireAuthMethod(function *ast.FuncDecl, receiverObject *as
 	return nextOK && next.Obj == nextObject && contextOK && context.Obj == contextObject
 }
 
-// sourceGeneratedContextResponseReturn recognizes the generated direct context response whose status establishes the security contract.
-func sourceGeneratedContextResponseReturn(statement ast.Stmt, contextObject *ast.Object, imports map[string]string, methodName string, statusName string) bool {
+// sourceGeneratedUnauthorizedJSONReturn recognizes the exact generated auth failure response.
+func sourceGeneratedUnauthorizedJSONReturn(statement ast.Stmt, contextObject *ast.Object, imports map[string]string) bool {
 	result, ok := statement.(*ast.ReturnStmt)
 	if !ok || len(result.Results) != 1 {
 		return false
@@ -416,8 +415,8 @@ func sourceGeneratedContextResponseReturn(statement ast.Stmt, contextObject *ast
 		return false
 	}
 	method, ok := call.Fun.(*ast.SelectorExpr)
-	return ok && method.Sel.Name == methodName && sourceSelectorRootMatches(method.X, contextObject) &&
-		sourcePolicySelectorIs(call.Args[0], imports, "net/http", statusName)
+	return ok && method.Sel.Name == "JSON" && sourceSelectorRootMatches(method.X, contextObject) &&
+		sourcePolicySelectorIs(call.Args[0], imports, "net/http", "StatusUnauthorized")
 }
 
 // sourceFrameworkContextParameter returns the exact single framework Context parameter from a function type.
@@ -519,27 +518,27 @@ func sourceFieldListHasOneFrameworkHandler(fields *ast.FieldList, imports map[st
 }
 
 // exactSourceMethodReceiver returns the parser object used to distinguish method-receiver selectors from same-named lexical shadows.
-func exactSourceMethodReceiver(function *ast.FuncDecl, expectedTypeName string) (string, *ast.Object, bool) {
+func exactSourceMethodReceiver(function *ast.FuncDecl, expectedTypeName string) (*ast.Object, bool) {
 	if function == nil || function.Recv == nil || len(function.Recv.List) != 1 {
-		return "", nil, false
+		return nil, false
 	}
 	field := function.Recv.List[0]
 	if len(field.Names) != 1 {
-		return "", nil, false
+		return nil, false
 	}
 	pointer, ok := field.Type.(*ast.StarExpr)
 	if !ok {
-		return "", nil, false
+		return nil, false
 	}
 	typeName, ok := pointer.X.(*ast.Ident)
 	if !ok || typeName.Name != expectedTypeName {
-		return "", nil, false
+		return nil, false
 	}
 	receiver := field.Names[0]
 	if receiver.Obj == nil {
-		return "", nil, false
+		return nil, false
 	}
-	return receiver.Name, receiver.Obj, true
+	return receiver.Obj, true
 }
 
 // generatedAuthRefreshContractExact proves the generated refresh route and handler consume the refresh-session service without relying on middleware spelling.
@@ -554,7 +553,7 @@ func generatedAuthRefreshContractExact(files []*ast.File) bool {
 			if !ok || function.Body == nil {
 				continue
 			}
-			_, receiverObject, exact := exactSourceMethodReceiver(function, "Controller")
+			receiverObject, exact := exactSourceMethodReceiver(function, "Controller")
 			if !exact {
 				continue
 			}
@@ -668,7 +667,7 @@ func sourceGeneratedAuthRefreshMethod(function *ast.FuncDecl, receiverObject *as
 	if !ok || failure.Else != nil || failure.Body == nil || len(failure.Body.List) != 1 || !sourceErrorNotNilCondition(failure.Cond, errorName.Obj) {
 		return false
 	}
-	if !sourceGeneratedContextResponseReturn(failure.Body.List[0], contextObject, imports, "JSON", "StatusUnauthorized") {
+	if !sourceGeneratedUnauthorizedJSONReturn(failure.Body.List[0], contextObject, imports) {
 		return false
 	}
 
@@ -793,19 +792,34 @@ func openAPIDescription(appName string) string {
 	return fmt.Sprintf("OpenAPI contract for the %s GoForj App.", appName)
 }
 
+// sourceReturnContract binds returned source evidence to the concrete parameter authorized to provide it.
+type sourceReturnContract struct {
+	sourcePath   string
+	functionName string
+	expression   string
+	parameter    importedPointerParameterContract
+}
+
+// importedPointerParameterContract identifies the exact generated collaborator accepted by a source function.
+type importedPointerParameterContract struct {
+	name       string
+	importPath string
+	typeName   string
+}
+
 // sourceFunctionReturnsTypedParameterExpression requires returned middleware evidence to originate from one exact imported parameter type.
-func sourceFunctionReturnsTypedParameterExpression(path string, functionName string, expression string, parameterName string, expectedImportPath string, expectedTypeName string) (bool, error) {
-	if strings.TrimSpace(path) == "" || strings.TrimSpace(expectedImportPath) == "" {
+func sourceFunctionReturnsTypedParameterExpression(contract sourceReturnContract) (bool, error) {
+	if strings.TrimSpace(contract.sourcePath) == "" || strings.TrimSpace(contract.parameter.importPath) == "" {
 		return false, nil
 	}
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(contract.sourcePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
-		return false, fmt.Errorf("inspect OpenAPI security source %q: %w", path, err)
+		return false, fmt.Errorf("inspect OpenAPI security source %q: %w", contract.sourcePath, err)
 	}
-	file, _ := parser.ParseFile(token.NewFileSet(), path, content, parser.AllErrors)
+	file, _ := parser.ParseFile(token.NewFileSet(), contract.sourcePath, content, parser.AllErrors)
 	if file == nil {
 		// webindex owns parse diagnostics; this policy bridge must not replace them with a second error path.
 		return false, nil
@@ -813,20 +827,14 @@ func sourceFunctionReturnsTypedParameterExpression(path string, functionName str
 	imports := sourcePolicyImportPaths(file)
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != functionName || function.Body == nil {
+		if !ok || function.Name.Name != contract.functionName || function.Body == nil {
 			continue
 		}
-		parameterObject, exact := exactImportedPointerParameter(
-			function,
-			parameterName,
-			expectedImportPath,
-			expectedTypeName,
-			imports,
-		)
-		if !exact || functionShadowsParameterObject(function.Body, parameterName, parameterObject) {
+		parameterObject, exact := exactImportedPointerParameter(function, contract.parameter, imports)
+		if !exact || functionShadowsParameterObject(function.Body, contract.parameter.name, parameterObject) {
 			return false, nil
 		}
-		return functionReturnsExpression(function.Body.List, expression), nil
+		return functionReturnsExpression(function.Body.List, contract.expression), nil
 	}
 	return false, nil
 }
@@ -855,7 +863,7 @@ func sourcePolicyImportPaths(file *ast.File) map[string]string {
 }
 
 // exactImportedPointerParameter proves that a composition identifier is the generated concrete service rather than a same-named interface or custom package.
-func exactImportedPointerParameter(function *ast.FuncDecl, parameterName string, expectedImportPath string, expectedTypeName string, imports map[string]string) (*ast.Object, bool) {
+func exactImportedPointerParameter(function *ast.FuncDecl, contract importedPointerParameterContract, imports map[string]string) (*ast.Object, bool) {
 	if function == nil || function.Type == nil || function.Type.Params == nil {
 		return nil, false
 	}
@@ -865,15 +873,15 @@ func exactImportedPointerParameter(function *ast.FuncDecl, parameterName string,
 			continue
 		}
 		selector, ok := pointer.X.(*ast.SelectorExpr)
-		if !ok || selector.Sel.Name != expectedTypeName {
+		if !ok || selector.Sel.Name != contract.typeName {
 			continue
 		}
 		qualifier, ok := selector.X.(*ast.Ident)
-		if !ok || qualifier.Obj != nil || imports[qualifier.Name] != expectedImportPath {
+		if !ok || qualifier.Obj != nil || imports[qualifier.Name] != contract.importPath {
 			continue
 		}
 		for _, name := range field.Names {
-			if name.Name == parameterName && name.Obj != nil {
+			if name.Name == contract.name && name.Obj != nil {
 				return name.Obj, true
 			}
 		}

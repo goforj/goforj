@@ -56,8 +56,7 @@ func NewDispatchJob(
 	}
 }
 
-// Enqueue schedules an alert dispatch task on the critical queue so
-// monitor state transitions notify quickly even during heavy poll cycles.
+// Enqueue uses the generated default queue so a fresh Demo App needs no hidden named resource.
 func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -69,7 +68,6 @@ func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) erro
 	_, err = j.queues.WithContext(ctx).Dispatch(
 		queue.NewJob(DispatchJobTypeName).
 			Payload(body).
-			OnQueue("critical").
 			Retry(2).
 			Timeout(15*time.Second),
 	)

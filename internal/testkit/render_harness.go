@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/project"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -33,12 +32,14 @@ var (
 
 const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@v1.2.0"
 
+// RenderProjectRequest keeps config, process environment, and local module substitutions explicit for a real CLI render.
 type RenderProjectRequest struct {
 	Config         project.Config
 	EnvOverrides   map[string]string
 	ModuleReplaces map[string]string
 }
 
+// CleanupIntegrationHarness releases suite-scoped services and binaries after tagged integration tests finish.
 func CleanupIntegrationHarness() {
 	if sharedRedisStop != nil {
 		sharedRedisStop()
@@ -54,6 +55,7 @@ func CleanupIntegrationHarness() {
 	}
 }
 
+// IntegrationEnvOverrides exposes the shared service endpoints that rendered subprocesses must inherit.
 func IntegrationEnvOverrides(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -67,16 +69,19 @@ func IntegrationEnvOverrides(t *testing.T) map[string]string {
 	return overrides
 }
 
+// IntegrationProcessEnv builds a subprocess environment with the harness tools and service endpoints on its path.
 func IntegrationProcessEnv(t *testing.T, overrides map[string]string) []string {
 	t.Helper()
 	return ProcessEnv(EnsureIntegrationToolsDir(t), mergeStringMaps(IntegrationEnvOverrides(t), overrides))
 }
 
+// IntegrationGoProcessEnv adds deterministic Go caches to the ordinary integration subprocess environment.
 func IntegrationGoProcessEnv(t *testing.T, overrides map[string]string) []string {
 	t.Helper()
 	return ProcessGoEnv(EnsureIntegrationToolsDir(t), mergeStringMaps(IntegrationEnvOverrides(t), overrides))
 }
 
+// EnsureIntegrationRedis reuses an explicit Redis endpoint or starts one shared container for the package test process.
 func EnsureIntegrationRedis(t *testing.T) (string, string) {
 	t.Helper()
 
@@ -109,6 +114,7 @@ func EnsureIntegrationRedis(t *testing.T) (string, string) {
 	return sharedRedisHost, sharedRedisPort
 }
 
+// EnsureIntegrationToolsDir installs pinned generator tools once so every rendered project exercises the same binaries.
 func EnsureIntegrationToolsDir(t *testing.T) string {
 	t.Helper()
 
@@ -144,6 +150,7 @@ func EnsureIntegrationToolsDir(t *testing.T) string {
 	return sharedToolsDir
 }
 
+// EnsureIntegrationForjBinary builds one CLI binary so integration cases test a consistent repository snapshot.
 func EnsureIntegrationForjBinary(t *testing.T) string {
 	t.Helper()
 
@@ -168,14 +175,14 @@ func EnsureIntegrationForjBinary(t *testing.T) string {
 			return
 		}
 
-		binPath, cleanup, err := BuildForjBinary("/tmp/gomodcache", "/tmp/gocache")
+		builtForj, err := BuildForjBinary("/tmp/gomodcache", "/tmp/gocache")
 		if err != nil {
 			gomodOut, _ := exec.Command("go", "env", "GOMOD", "GOWORK").CombinedOutput()
 			sharedForjErr = fmt.Errorf("build forj binary: %w\nrepo: %s\ngo env:\n%s", err, repoRoot, strings.TrimSpace(string(gomodOut)))
 			return
 		}
-		sharedForjPath = binPath
-		sharedForjStop = cleanup
+		sharedForjPath = builtForj.Path
+		sharedForjStop = builtForj.Cleanup
 	})
 	if sharedForjErr != nil {
 		t.Fatal(sharedForjErr)
@@ -183,6 +190,7 @@ func EnsureIntegrationForjBinary(t *testing.T) string {
 	return sharedForjPath
 }
 
+// RenderProjectWithForj publishes a project through the real CLI with bounded execution and explicit inputs.
 func RenderProjectWithForj(t *testing.T, dir string, request RenderProjectRequest) {
 	t.Helper()
 
@@ -217,6 +225,7 @@ func RenderProjectWithForj(t *testing.T, dir string, request RenderProjectReques
 	}
 }
 
+// LocalSiblingRepoPath resolves integration replacements from the repository workspace instead of the caller's directory.
 func LocalSiblingRepoPath(t *testing.T, name string) string {
 	t.Helper()
 
@@ -241,16 +250,12 @@ func LocalSiblingRepoPath(t *testing.T, name string) string {
 // WriteProjectConfigFile writes a current-contract configuration for an integration render.
 func WriteProjectConfigFile(t *testing.T, dir string, cfg project.Config) {
 	t.Helper()
-	cfg.Render.ComponentContractVersion = project.CurrentComponentContractVersion
-	body, err := yaml.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal .goforj.yml: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".goforj.yml"), body, 0o644); err != nil {
+	if err := WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
 	}
 }
 
+// integrationRepoRoot fails through the active test so harness callers never continue from an ambiguous working directory.
 func integrationRepoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := RepoRoot()
@@ -260,6 +265,7 @@ func integrationRepoRoot(t *testing.T) string {
 	return root
 }
 
+// mergeStringMaps returns a fresh environment overlay so one integration case cannot mutate shared harness state.
 func mergeStringMaps(base map[string]string, overrides map[string]string) map[string]string {
 	if len(base) == 0 && len(overrides) == 0 {
 		return map[string]string{}

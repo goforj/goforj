@@ -7,6 +7,7 @@ import (
 )
 
 func TestTemplateDataForAppUsesExternalCLIHelpFormatter(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true},
@@ -14,7 +15,7 @@ func TestTemplateDataForAppUsesExternalCLIHelpFormatter(t *testing.T) {
 		},
 	}
 
-	data := templateDataForApp(config, project.DefaultApp())
+	data := workspace.templateDataForApp(config, project.DefaultApp())
 	if data.HelpFormatterFunc != "ExternalCLIFormatter" {
 		t.Fatalf("HelpFormatterFunc = %q, want ExternalCLIFormatter", data.HelpFormatterFunc)
 	}
@@ -24,6 +25,7 @@ func TestTemplateDataForAppUsesExternalCLIHelpFormatter(t *testing.T) {
 }
 
 func TestTemplateDataForAppUsesGuidedHelpFormatter(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true},
@@ -31,7 +33,7 @@ func TestTemplateDataForAppUsesGuidedHelpFormatter(t *testing.T) {
 		},
 	}
 
-	data := templateDataForApp(config, project.DefaultApp())
+	data := workspace.templateDataForApp(config, project.DefaultApp())
 	if data.HelpFormatterFunc != "GuidedFormatter" {
 		t.Fatalf("HelpFormatterFunc = %q, want GuidedFormatter", data.HelpFormatterFunc)
 	}
@@ -41,6 +43,7 @@ func TestTemplateDataForAppUsesGuidedHelpFormatter(t *testing.T) {
 }
 
 func TestTemplateDataForAppPreservesExternalCLIHelpFormatterWithOtherComponents(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{CLI: true, WebAPI: true},
@@ -48,7 +51,7 @@ func TestTemplateDataForAppPreservesExternalCLIHelpFormatterWithOtherComponents(
 		},
 	}
 
-	data := templateDataForApp(config, project.DefaultApp())
+	data := workspace.templateDataForApp(config, project.DefaultApp())
 	if data.HelpFormatterFunc != "ExternalCLIFormatter" {
 		t.Fatalf("HelpFormatterFunc = %q, want ExternalCLIFormatter", data.HelpFormatterFunc)
 	}
@@ -59,6 +62,7 @@ func TestTemplateDataForAppPreservesExternalCLIHelpFormatterWithOtherComponents(
 
 // TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope protects named-App capability isolation.
 func TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{
 		Render: project.RenderConfig{Components: project.Components{CLI: true, WebAPI: true, DatabaseMySQL: true}},
 		Apps: map[string]project.AppConfig{
@@ -66,7 +70,7 @@ func TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope(t *testing.T
 		},
 	}
 
-	defaultData := templateDataForApp(config, project.DefaultApp())
+	defaultData := workspace.templateDataForApp(config, project.DefaultApp())
 	if defaultData.Components.Jobs {
 		t.Fatalf("default App inherited named-App jobs: %#v", defaultData.Components)
 	}
@@ -74,7 +78,7 @@ func TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope(t *testing.T
 		t.Fatalf("project envelope omitted App capabilities: %#v", defaultData.ProjectComponents)
 	}
 
-	workerData := templateDataForApp(config, project.DefaultNamedApp("worker"))
+	workerData := workspace.templateDataForApp(config, project.DefaultNamedApp("worker"))
 	if !workerData.Components.Jobs || workerData.Components.WebAPI || workerData.Components.HasDatabase() {
 		t.Fatalf("worker App components leaked from the default App: %#v", workerData.Components)
 	}
@@ -86,7 +90,7 @@ func TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope(t *testing.T
 // TestSetAppConfigDoesNotPromoteNamedCapabilitiesIntoDefaultApp verifies make:app persists only App-local participation.
 func TestSetAppConfigDoesNotPromoteNamedCapabilitiesIntoDefaultApp(t *testing.T) {
 	defaultComponents := project.Components{CLI: true, WebAPI: true, DatabaseMySQL: true, Docker: true}
-	renderer := &ProjectRenderer{config: &project.Config{
+	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: &project.Config{
 		Render: project.RenderConfig{Components: defaultComponents},
 	}}
 
@@ -113,7 +117,7 @@ func TestSetAppConfigDoesNotPromoteNamedCapabilitiesIntoDefaultApp(t *testing.T)
 
 // TestSetAppConfigNormalizesImplicitDatabaseAgainstDefaultApp verifies an existing sibling cannot choose a new App's database.
 func TestSetAppConfigNormalizesImplicitDatabaseAgainstDefaultApp(t *testing.T) {
-	renderer := &ProjectRenderer{config: &project.Config{
+	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: &project.Config{
 		Render: project.RenderConfig{Components: project.Components{CLI: true}},
 		Apps: map[string]project.AppConfig{
 			"reporting": {Components: project.Components{CLI: true, DatabasePostgres: true}},

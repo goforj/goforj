@@ -13,10 +13,10 @@ import (
 	"sync"
 
 	"github.com/alecthomas/kong"
+	"github.com/goforj/console"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"

@@ -9,15 +9,13 @@ import (
 	"strings"
 )
 
+// moduleReplacesStateFile records only entries owned by the renderer so later runs cannot remove user-managed replacements.
 const moduleReplacesStateFile = ".goforj.module_replaces.json"
 
+// applyModuleReplaces reconciles renderer-owned replacements after project configuration has been loaded.
 func (p *ProjectRenderer) applyModuleReplaces() error {
-	if p == nil || p.config == nil {
-		return nil
-	}
-
 	current := normalizedModuleReplaces(p.config.Render.ModuleReplaces)
-	previous, err := loadManagedModuleReplaces()
+	previous, err := p.workspace.loadManagedModuleReplaces()
 	if err != nil {
 		return err
 	}
@@ -26,19 +24,19 @@ func (p *ProjectRenderer) applyModuleReplaces() error {
 		if _, ok := current[module]; ok {
 			continue
 		}
-		if err := runGoModEdit("-dropreplace", module); err != nil {
+		if err := p.workspace.runGoModEdit("-dropreplace", module); err != nil {
 			return err
 		}
 	}
 
 	modules := sortedModuleKeys(current)
 	for _, module := range modules {
-		if err := runGoModEdit("-replace", fmt.Sprintf("%s=%s", module, current[module])); err != nil {
+		if err := p.workspace.runGoModEdit("-replace", fmt.Sprintf("%s=%s", module, current[module])); err != nil {
 			return err
 		}
 	}
 
-	if err := saveManagedModuleReplaces(modules); err != nil {
+	if err := p.workspace.saveManagedModuleReplaces(modules); err != nil {
 		return err
 	}
 
@@ -54,6 +52,7 @@ func (p *ProjectRenderer) applyModuleReplaces() error {
 	return nil
 }
 
+// normalizedModuleReplaces excludes incomplete entries before they reach go mod edit or renderer-owned state.
 func normalizedModuleReplaces(values map[string]string) map[string]string {
 	out := make(map[string]string)
 	for module, target := range values {
@@ -67,6 +66,7 @@ func normalizedModuleReplaces(values map[string]string) map[string]string {
 	return out
 }
 
+// sortedModuleKeys keeps go.mod edits and renderer state deterministic across map iteration order.
 func sortedModuleKeys(values map[string]string) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -76,6 +76,7 @@ func sortedModuleKeys(values map[string]string) []string {
 	return keys
 }
 
+// countManagedStillPresent separates retained entries from replacements the renderer removed during this run.
 func countManagedStillPresent(previous []string, current map[string]string) int {
 	count := 0
 	for _, module := range previous {
@@ -86,8 +87,9 @@ func countManagedStillPresent(previous []string, current map[string]string) int 
 	return count
 }
 
-func loadManagedModuleReplaces() ([]string, error) {
-	data, err := os.ReadFile(moduleReplacesStateFile)
+// loadManagedModuleReplaces reads renderer-owned replacement state from one project workspace.
+func (w projectRenderWorkspace) loadManagedModuleReplaces() ([]string, error) {
+	data, err := w.readFile(moduleReplacesStateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -101,9 +103,10 @@ func loadManagedModuleReplaces() ([]string, error) {
 	return modules, nil
 }
 
-func saveManagedModuleReplaces(modules []string) error {
+// saveManagedModuleReplaces publishes renderer-owned replacement state inside one project workspace.
+func (w projectRenderWorkspace) saveManagedModuleReplaces(modules []string) error {
 	if len(modules) == 0 {
-		if err := os.Remove(moduleReplacesStateFile); err != nil && !os.IsNotExist(err) {
+		if _, err := w.removeFileIfExists(moduleReplacesStateFile); err != nil {
 			return err
 		}
 		return nil
@@ -113,14 +116,16 @@ func saveManagedModuleReplaces(modules []string) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(moduleReplacesStateFile, data, 0o644)
+	return w.writeFile(moduleReplacesStateFile, data, 0o644)
 }
 
-func runGoModEdit(flag, value string) error {
+// runGoModEdit applies one replacement mutation from inside a project workspace.
+func (w projectRenderWorkspace) runGoModEdit(flag, value string) error {
 	cmd := exec.Command("go", "mod", "edit", flag, value)
-	cmd.Dir = "."
+	cmd.Dir = w.path()
 	cmd.Env = os.Environ()
 	if out, err := cmd.CombinedOutput(); err != nil {
+		err = w.logicalError(err)
 		detail := strings.TrimSpace(string(out))
 		if detail != "" {
 			return fmt.Errorf("go mod edit %s %s: %w (%s)", flag, value, err, detail)

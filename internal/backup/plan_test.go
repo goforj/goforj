@@ -58,3 +58,15 @@ func TestBuildPlanClassifiesS3StorageAsObjectManifest(t *testing.T) {
 		t.Fatalf("unexpected S3 storage plan: %#v", plan.Storage)
 	}
 }
+
+// TestPlanValidateAllowsStorageOnlyBackups verifies database-free Apps can still back up configured storage resources.
+func TestPlanValidateAllowsStorageOnlyBackups(t *testing.T) {
+	plan := Plan{Storage: []StoragePlanResource{{Name: "default", Driver: "local"}}}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("validate storage-only plan: %v", err)
+	}
+	incomplete := Plan{Storage: []StoragePlanResource{{Name: "default"}}}
+	if err := incomplete.Validate(); err == nil {
+		t.Fatal("incomplete storage plan validated successfully")
+	}
+}

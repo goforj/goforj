@@ -6,6 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/internal/envfile"
+	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -99,7 +102,8 @@ func (p *ProjectRenderer) publishPendingResourceEnvironment() error {
 	if !p.resources.pendingEnvironmentWrite {
 		return nil
 	}
-	if err := p.writeEnvironmentFile(".env", p.resources.pendingEnvironment, 0o644); err != nil {
+	err := p.writeEnvironmentFile(p.workspace.path(".env"), p.resources.pendingEnvironment, 0o644)
+	if err := p.workspace.logicalError(err); err != nil {
 		return fmt.Errorf("write resource environment: %w", err)
 	}
 	p.resources.pendingEnvironment = nil
@@ -113,11 +117,11 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	const examplePath = ".env.example"
 	path := ownerPath
 	ownerExists := true
-	source, err := os.ReadFile(path)
+	source, err := p.workspace.readFile(path)
 	if os.IsNotExist(err) {
 		path = examplePath
 		ownerExists = false
-		source, err = os.ReadFile(path)
+		source, err = p.workspace.readFile(path)
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -129,25 +133,38 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		// A committed fallback reproduces an existing build, but it cannot replace a new wizard decision.
 		return nil
 	}
-	_, profilesSet := envAssignment(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
-	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile("docker-compose.yml")
+	if ownerExists {
+		var removedDisabledAppCacheDefaults bool
+		source, removedDisabledAppCacheDefaults = removeDisabledAppCacheDriverDefaults(
+			source,
+			p.config,
+			projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+		)
+		p.resources.pendingEnvironmentWrite = removedDisabledAppCacheDefaults
+	}
+	_, profilesSet := envfile.Lookup(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
+	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile(p.workspace.path("docker-compose.yml"))
 	if legacyLocalRedis {
 		p.resources.serviceIntent = p.resources.serviceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 		if ownerExists {
 			var profileChanged bool
 			source, profileChanged = seedExactComposeProfile(source, "redis")
-			p.resources.pendingEnvironmentWrite = profileChanged
+			p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || profileChanged
 		}
 	} else {
-		p.resources.serviceIntent = localServiceIntentFromEnvironment(source, p.resources.serviceIntent)
+		p.resources.serviceIntent = resourceenv.ResolveServiceIntent(source, p.resources.serviceIntent)
 	}
 	projectComponents := p.projectRenderComponents()
 	if !projectComponents.Cache {
 		var removedCacheEnvironment bool
-		source, removedCacheEnvironment = removeDisabledCacheEnvironment(source, p.config)
+		source, removedCacheEnvironment = resourceenv.RemoveGeneratedAssignments(
+			source,
+			projectComponents,
+			projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
+		)
 		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || removedCacheEnvironment
 	}
-	updated, effective, changed, err := reconcileResourceEnvironment(
+	reconciled, err := resourceenv.Reconcile(
 		source,
 		p.resources.plan,
 		projectComponents,
@@ -156,15 +173,15 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	if err != nil {
 		return err
 	}
-	p.resources.plan = effective
-	consumers, err := effectiveResourceConsumersFromProjectConfig(updated, effective, projectComponents, p.config)
+	p.resources.plan = reconciled.EffectivePlan
+	consumers, err := resourceenv.ResolveConsumers(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}
 	p.resources.serviceConsumers = cloneEffectiveResourceConsumers(consumers)
 	if ownerExists {
-		p.resources.pendingEnvironment = updated
-		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || changed
+		p.resources.pendingEnvironment = reconciled.Source
+		p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || reconciled.Changed
 	}
 	return nil
 }
@@ -242,163 +259,9 @@ func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponent
 	return plan.WithSelection(project.ResourceDatabase, selection).Normalized(projectComponents)
 }
 
-// reconcileResourceEnvironment applies owner precedence and fills only missing initialization keys.
-func reconcileResourceEnvironment(source []byte, seed project.ResourcePlan, components project.Components, portableDefaults bool) ([]byte, project.ResourcePlan, bool, error) {
-	components = components.WithResolvedDependencies()
-	removedDisabledCache := false
-	if !components.Cache {
-		source, removedDisabledCache = removeDisabledCacheEnvironment(source, nil)
-	}
-	source, removedObsoleteDiagnosticCache := removeObsoleteDiagnosticCacheEnvironment(source)
-	lines := strings.Split(string(source), "\n")
-	effective := seed.Clone()
-	changed := removedDisabledCache || removedObsoleteDiagnosticCache
-
-	for _, definition := range project.ResourceCatalog() {
-		if !definition.AppliesTo(components) {
-			effective = effective.WithoutSelection(definition.Key)
-			continue
-		}
-		seedSelection, ok := seed.Selection(definition.Key)
-		if !ok {
-			return nil, project.ResourcePlan{}, false, fmt.Errorf("resource %s has no initialization selection", definition.Label)
-		}
-		activeKey := definition.EnvironmentKey("DRIVER")
-		supportedKey := definition.EnvironmentKey("SUPPORTED_DRIVERS")
-		active, activeSet := envAssignment(lines, activeKey)
-		active = project.CanonicalResourceDriver(definition.Key, active)
-		if !activeSet || active == "" {
-			active = seedSelection.Active
-			lines = setFinalEnvAssignment(lines, activeKey, active)
-			changed = true
-		}
-
-		supportedValue, supportedSet := envAssignment(lines, supportedKey)
-		supported := splitDriverList(supportedValue)
-		for index := range supported {
-			supported[index] = project.CanonicalResourceDriver(definition.Key, supported[index])
-		}
-		if supportedSet && len(supported) > 0 && !stringSliceContainsFold(supported, active) {
-			return nil, project.ResourcePlan{}, false, fmt.Errorf("%s in .env excludes active %s %q; add %q before rerendering", supportedKey, activeKey, active, active)
-		}
-		if !supportedSet || len(supported) == 0 {
-			firstPortableInitialization := (definition.Key == project.ResourceEvents || definition.Key == project.ResourceQueue) && !activeSet && !supportedSet
-			if portableDefaults || firstPortableInitialization {
-				supported = append([]string(nil), seedSelection.Supported...)
-			} else {
-				supported = []string{active}
-			}
-			if !stringSliceContainsFold(supported, active) {
-				supported = append(supported, active)
-			}
-			lines = setFinalEnvAssignment(lines, supportedKey, strings.Join(supported, ","))
-			changed = true
-		}
-		effective = effective.WithSelection(definition.Key, project.DriverSelection{Active: active, Supported: supported})
-	}
-
-	for _, named := range seed.GeneratedNamedSelections(components) {
-		active, activeSet := envAssignment(lines, named.EnvironmentKey)
-		active = project.CanonicalResourceDriver(named.Resource, active)
-		if !activeSet || active == "" {
-			active = named.Active
-			lines = setFinalEnvAssignment(lines, named.EnvironmentKey, active)
-			changed = true
-		}
-		effective = effective.WithNamedSelection(named.EnvironmentKey, active)
-	}
-
-	normalized, err := effective.Normalized(components)
-	if err != nil {
-		return nil, project.ResourcePlan{}, false, fmt.Errorf("environment resource contract: %w", err)
-	}
-	if !changed {
-		return source, normalized, false, nil
-	}
-	updated := strings.Join(lines, "\n")
-	if !strings.HasSuffix(updated, "\n") {
-		updated += "\n"
-	}
-	return []byte(updated), normalized, true, nil
-}
-
-// removeDisabledCacheEnvironment prunes only framework-owned Cache assignments after the project envelope disables Cache.
-func removeDisabledCacheEnvironment(source []byte, config *project.Config) ([]byte, bool) {
-	keys := map[string]struct{}{
-		"METRICS_CACHE_ENABLED":        {},
-		"CACHE_DRIVER":                 {},
-		"CACHE_SUPPORTED_DRIVERS":      {},
-		"CACHE_PREFIX":                 {},
-		"CACHE_DEFAULT_TTL_SECONDS":    {},
-		"CACHE_MEMORY_CLEANUP_SECONDS": {},
-		"CACHE_SETTINGS_DRIVER":        {},
-		"CACHE_SESSIONS_DRIVER":        {},
-		"CACHE_INSPECTS_DRIVER":        {},
-		"CACHE_LIGHTHOUSE_DRIVER":      {},
-	}
-	if config != nil {
-		for _, app := range runtimeAppsForMetadata(config) {
-			prefix := project.AppEnvironmentPrefix(app.Name)
-			if prefix != "" {
-				keys[prefix+"_CACHE_DRIVER"] = struct{}{}
-			}
-		}
-	}
-
-	lines := strings.Split(string(source), "\n")
-	filtered := make([]string, 0, len(lines))
-	changed := false
-	for _, line := range lines {
-		key, _, _, ok := parseEnvironmentExampleAssignment(line)
-		if ok {
-			if _, remove := keys[key]; remove {
-				changed = true
-				continue
-			}
-		}
-		filtered = append(filtered, line)
-	}
-	if !changed {
-		return source, false
-	}
-	return []byte(strings.Join(filtered, "\n")), true
-}
-
-// removeObsoleteDiagnosticCacheEnvironment removes retired framework-owned diagnostic stores from environment contracts.
-func removeObsoleteDiagnosticCacheEnvironment(source []byte) ([]byte, bool) {
-	lines := strings.Split(string(source), "\n")
-	filtered := make([]string, 0, len(lines))
-	changed := false
-	for _, line := range lines {
-		key, _, _, ok := parseEnvironmentExampleAssignment(line)
-		if ok && (key == "CACHE_INSPECTS_DRIVER" || key == "CACHE_LIGHTHOUSE_DRIVER") {
-			changed = true
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-	if !changed {
-		return source, false
-	}
-	return []byte(strings.Join(filtered, "\n")), true
-}
-
-// localServiceIntentFromEnvironment reconstructs concrete owner intent from exact Compose profile tokens.
-func localServiceIntentFromEnvironment(source []byte, fallback project.LocalServiceIntent) project.LocalServiceIntent {
-	lines := strings.Split(string(source), "\n")
-	profiles, profilesSet := envAssignment(lines, "COMPOSE_PROFILES")
-	if profilesSet && exactCSVToken(profiles, string(project.ServiceRedis)) {
-		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	}
-	if _, selected := fallback.Mode(project.ServiceRedis); selected {
-		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
-	}
-	return fallback
-}
-
 // seedComposeProfiles appends Redis whenever explicit owner intent asks Compose to retain that local service.
 func seedComposeProfiles(source []byte, plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent) ([]byte, bool) {
-	if !components.Docker || !resourcePlanUsesDriver(plan, components, "redis", false) {
+	if !components.Docker || !resourcePlanIncludesDriver(plan, components, "redis") {
 		return source, false
 	}
 	mode, ok := intent.Mode(project.ServiceRedis)
@@ -411,12 +274,12 @@ func seedComposeProfiles(source []byte, plan project.ResourcePlan, components pr
 // seedExactComposeProfile appends one profile token without replacing unrelated owner intent.
 func seedExactComposeProfile(source []byte, profile string) ([]byte, bool) {
 	lines := strings.Split(string(source), "\n")
-	profiles, profilesSet := envAssignment(lines, "COMPOSE_PROFILES")
+	profiles, profilesSet := envfile.Lookup(lines, "COMPOSE_PROFILES")
 	if profilesSet && exactCSVToken(profiles, profile) {
 		return source, false
 	}
 	profiles = appendCSVToken(profiles, profile)
-	lines = setFinalEnvAssignment(lines, "COMPOSE_PROFILES", profiles)
+	lines = envfile.SetFinal(lines, "COMPOSE_PROFILES", profiles)
 	updated := strings.Join(lines, "\n")
 	if !strings.HasSuffix(updated, "\n") {
 		updated += "\n"
@@ -492,7 +355,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.StorageFaviconsDriver = named.Active
 		}
 	}
-	values.RedisSupported = components.Docker && resourcePlanUsesDriver(plan, components, "redis", false)
+	values.RedisSupported = resourcePlanIncludesDriver(plan, components, "redis")
 	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
 		switch requirement.State {
 		case project.ServiceStateActiveLocal, project.ServiceStateLocalRequestedUnused:
@@ -611,8 +474,8 @@ func applyDatabaseRenderCapabilities(components *project.Components, plan projec
 	}
 }
 
-// resourcePlanUsesDriver finds active or built-in use across root and generated named resources.
-func resourcePlanUsesDriver(plan project.ResourcePlan, components project.Components, driver string, activeOnly bool) bool {
+// resourcePlanIncludesDriver keeps shared services available when a root selection compiles the driver or a generated named resource activates it.
+func resourcePlanIncludesDriver(plan project.ResourcePlan, components project.Components, driver string) bool {
 	for _, definition := range project.ResourceCatalog() {
 		if !definition.AppliesTo(components) {
 			continue
@@ -624,7 +487,7 @@ func resourcePlanUsesDriver(plan project.ResourcePlan, components project.Compon
 		if selection.Active == driver {
 			return true
 		}
-		if !activeOnly && stringSliceContainsFold(selection.Supported, driver) {
+		if stringSliceContainsFold(selection.Supported, driver) {
 			return true
 		}
 	}

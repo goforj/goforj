@@ -57,9 +57,6 @@ type DevConfig struct {
 // DefaultAppName is the conventional app name used when no named app is selected.
 const DefaultAppName = "app"
 
-// CurrentComponentContractVersion identifies configs where omitted primitive component keys mean disabled.
-const CurrentComponentContractVersion = 1
-
 // App describes one executable app in the project.
 type App struct {
 	Name       string `yaml:"name" json:"name"`
@@ -138,13 +135,12 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components               Components `yaml:"components" json:"components"`
-	StarterKit               StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat               HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion            string     `yaml:"goforj_version" json:"goforj_version"`
-	ComponentContractVersion int        `yaml:"component_contract,omitempty" json:"component_contract,omitempty"`
-	legacyQueueDriverSet     bool
-	legacyQueueDriver        string
+	Components           Components `yaml:"components" json:"components"`
+	StarterKit           StarterKit `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat           HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion        string     `yaml:"goforj_version" json:"goforj_version"`
+	legacyQueueDriverSet bool
+	legacyQueueDriver    string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
 	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 	// Extra preserves render settings introduced by newer GoForj versions during config migration.
@@ -161,7 +157,7 @@ func (c RenderConfig) LegacyQueueDriver() string {
 	return c.legacyQueueDriver
 }
 
-// UnmarshalYAML accepts the obsolete queue choice long enough to migrate it into the environment.
+// UnmarshalYAML accepts obsolete render fields long enough to migrate their behavior without persisting them again.
 func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 	type renderConfigFields RenderConfig
 	var fields renderConfigFields
@@ -169,6 +165,7 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode render config: %w", err)
 	}
 	*c = RenderConfig(fields)
+	delete(c.Extra, "component_contract")
 	delete(c.Extra, "queue_driver")
 	if len(c.Extra) == 0 {
 		c.Extra = nil
@@ -288,9 +285,6 @@ func (c Components) Enabled(key ComponentKey) bool {
 
 // SetEnabled toggles a component by catalog key.
 func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
-	if c == nil {
-		return
-	}
 	switch key {
 	case ComponentCLI:
 		c.CLI = enabled
@@ -335,9 +329,6 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 
 // ResolveDependencies applies dependency rules in-place without mutating the original config source.
 func (c *Components) ResolveDependencies() {
-	if c == nil {
-		return
-	}
 	if c.DemoApp {
 		c.Cache = true
 		c.Events = true

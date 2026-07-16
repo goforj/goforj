@@ -11,7 +11,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -216,21 +215,26 @@ var storageDriverKeys = map[string]map[string]struct{}{
 
 // GenerateStorageFiles writes disk accessors whose selectable backends are fixed by the generation snapshot.
 func GenerateStorageFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
+	return generateStorageFiles(ambientGenerationInput(projectDir))
+}
+
+// generateStorageFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateStorageFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "STORAGE",
 		DefaultDriver: "local",
 		RootKeys:      storageRootKeys,
 		CommonKeys:    storageCommonKeys,
 		DriverKeys:    storageDriverKeys,
-		ChildNames: func(scope env.Scope) []string {
-			return exactScopedChildNames("STORAGE", storageRootKeys)
+		ChildNames: func(environment generationEnvironment) []string {
+			return exactScopedChildNames(environment, "STORAGE", storageRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderStorageConfig(projectDir)
+	manager, err := renderStorageConfig(input)
 	if err != nil {
 		return 0, err
 	}
@@ -238,7 +242,7 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated storage manager: %w", err)
 	}
-	accessors, err := renderStorageAccessors(discoverStorageDiskNames(projectDir))
+	accessors, err := renderStorageAccessors(discoverStorageDiskNames(input))
 	if err != nil {
 		return 0, err
 	}
@@ -247,30 +251,35 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 		return 0, fmt.Errorf("failed to format generated storage accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "storages", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "storages", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(projectDir, "internal", "storages", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "storages", "accessors_gen.go"), formattedAccessors)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(projectDir, "internal", "storages", "runtime.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "storages", "manager.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "storages", "disks_gen.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "storages", "config_gen.go"))
+	for _, name := range storageLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "storages", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
 // discoverStorageDiskNames normalizes App and resource-first scopes into generated accessor names.
-func discoverStorageDiskNames(projectDir string) []string {
-	names := discoverStorageChildren(projectDir)
+func discoverStorageDiskNames(input generationInput) []string {
+	names := discoverStorageChildren(input)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -278,12 +287,12 @@ func discoverStorageDiskNames(projectDir string) []string {
 }
 
 // discoverStorageChildren includes disks declared only through a configured App overlay.
-func discoverStorageChildren(projectDir string) []string {
-	return discoverPrimitiveChildNames(projectDir, "STORAGE", storageRootKeys)
+func discoverStorageChildren(input generationInput) []string {
+	return discoverPrimitiveChildNames(input, "STORAGE", storageRootKeys)
 }
 
 // exactScopedChildNames finds names only when their trailing key matches a complete resource key.
-func exactScopedChildNames(prefix string, rootKeys []string) []string {
+func exactScopedChildNames(environment generationEnvironment, prefix string, rootKeys []string) []string {
 	prefix = strings.TrimSpace(strings.ToUpper(prefix))
 	if prefix == "" {
 		return nil
@@ -307,9 +316,9 @@ func exactScopedChildNames(prefix string, rootKeys []string) []string {
 	names := make([]string, 0)
 	envPrefix := prefix + "_"
 
-	for _, kv := range os.Environ() {
-		key, _, ok := strings.Cut(kv, "=")
-		if !ok || !strings.HasPrefix(key, envPrefix) {
+	for _, entry := range environment.Entries() {
+		key := entry.key
+		if !strings.HasPrefix(key, envPrefix) {
 			continue
 		}
 		suffix := strings.TrimPrefix(key, envPrefix)
@@ -362,29 +371,34 @@ func renderStorageAccessors(names []string) ([]byte, error) {
 }
 
 // renderStorageConfig retains the native local backend without widening the authoritative compiled manifest.
-func renderStorageConfig(projectDir string) ([]byte, error) {
-	names := discoverStorageDiskNames(projectDir)
+func renderStorageConfig(input generationInput) ([]byte, error) {
+	names := discoverStorageDiskNames(input)
 	driverSet := map[string]struct{}{}
-	defaultDriver := effectivePrimitiveDriver(env.Get("STORAGE_DRIVER", "local"), "local")
+	defaultDriver := effectivePrimitiveDriver(input.environment.Get("STORAGE_DRIVER", "local"), "local")
 	driverSet[defaultDriver] = struct{}{}
-	for _, child := range discoverStorageChildren(projectDir) {
-		driver := effectivePrimitiveDriver(env.Get("STORAGE_"+child+"_DRIVER", ""), "local")
+	for _, child := range discoverStorageChildren(input) {
+		driver := effectivePrimitiveDriver(input.environment.Get("STORAGE_"+child+"_DRIVER", ""), "local")
 		driverSet[driver] = struct{}{}
 	}
-	for _, appPrefix := range generationAppEnvPrefixesForResource(projectDir, "STORAGE") {
+	for _, appPrefix := range generationAppEnvPrefixesForResource(input, "STORAGE") {
 		resourcePrefix := appPrefix + "_STORAGE"
-		for _, child := range exactScopedChildNames(resourcePrefix, storageRootKeys) {
-			driver := effectiveAppPrimitiveChildDriver(resourcePrefix, primitiveEnvContract{
-				Prefix:        "STORAGE",
-				DefaultDriver: "local",
-			}, defaultDriver, defaultDriver, child)
+		for _, child := range exactScopedChildNames(input.environment, resourcePrefix, storageRootKeys) {
+			driver := effectiveAppPrimitiveChildDriver(input.environment, appPrimitiveDriverScope{
+				resourcePrefix: resourcePrefix,
+				contract: primitiveEnvContract{
+					Prefix:        "STORAGE",
+					DefaultDriver: "local",
+				},
+				rootDriver:    defaultDriver,
+				appRootDriver: defaultDriver,
+			}, child)
 			driverSet[driver] = struct{}{}
 		}
 	}
-	for _, active := range appPrefixedActiveDrivers(projectDir, "STORAGE", "local", false) {
+	for _, active := range appPrefixedActiveDrivers(input, "STORAGE", "local", false) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers("STORAGE", storageDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "STORAGE", storageDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +636,7 @@ func NewManager() (*Manager, error) {
 
 // WithObserver adds observability without replacing observers already attached by framework wiring.
 func (m *Manager) WithObserver(observer Observer) *Manager {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m
 	}
 	if m.observer == nil {
@@ -636,9 +650,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 		}
 	}
 	combined := m.observer
-	if m.defaultDisk != nil {
-		m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, combined)
-	}
+	m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, combined)
 {{- range .Names }}
 	if m.{{ .Disk }} != nil {
 		m.{{ .Disk }} = wrapObservedStorage(m.{{ .Disk }}, "{{ .Disk }}", m.{{ .Disk }}Driver, combined)
@@ -649,7 +661,7 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 
 // Warnings preserves diagnostics for optional disks whose unavailable infrastructure did not prevent startup.
 func (m *Manager) Warnings() []OptionalDiskWarning {
-	if m == nil || len(m.warnings) == 0 {
+	if len(m.warnings) == 0 {
 		return nil
 	}
 	out := make([]OptionalDiskWarning, len(m.warnings))
@@ -659,9 +671,6 @@ func (m *Manager) Warnings() []OptionalDiskWarning {
 
 // ReadinessChecks exposes one probe per initialized disk so health excludes optional disks skipped at startup.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "storage_default",
@@ -878,9 +887,6 @@ func storageDriverCompiled(driver string) bool {
 
 // storageReadinessCheck prefers explicit driver health contracts and falls back to a lightweight listing operation.
 func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
-	if disk == nil {
-		return nil
-	}
 	if ready, ok := any(disk).(interface{ Ready(context.Context) error }); ok {
 		return ready.Ready(ctx)
 	}
@@ -902,7 +908,7 @@ type observedStorage struct {
 
 // wrapObservedStorage reuses an existing wrapper so adding observers does not stack duplicate instrumentation.
 func wrapObservedStorage(inner storage.Storage, name string, driver string, observer Observer) storage.Storage {
-	if inner == nil || observer == nil {
+	if observer == nil {
 		return inner
 	}
 	if wrapped, ok := inner.(*observedStorage); ok {
@@ -921,9 +927,6 @@ func wrapObservedStorage(inner storage.Storage, name string, driver string, obse
 
 // observe emits one uniform event after a delegated storage operation completes.
 func (s *observedStorage) observe(ctx context.Context, op string, path string, start time.Time, err error) {
-	if s == nil || s.observer == nil {
-		return
-	}
 	s.observer.OnStorageOp(ctx, StorageOpEvent{
 		Operation: op,
 		Disk:      s.name,
@@ -946,7 +949,7 @@ func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
 
 // context supplies a background context for callers that use the context-free storage API.
 func (s *observedStorage) context() context.Context {
-	if s == nil || s.ctx == nil {
+	if s.ctx == nil {
 		return context.Background()
 	}
 	return s.ctx

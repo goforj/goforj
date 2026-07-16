@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/execx"
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
+	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -449,23 +450,27 @@ func TestDevWatchesForAppsDropsRemovedConventionalApp(t *testing.T) {
 	}
 }
 
-func TestDevBuildCommandsBuildEveryApp(t *testing.T) {
+func TestDevBuildJobsBuildEveryApp(t *testing.T) {
 	withConventionalApp(t, "customer-portal")
 
-	got := devBuildCommands(&project.Config{
+	jobs := devBuildJobs(&project.Config{
 		Dev: project.DevConfig{
 			Watches: []project.DevWatch{
 				{Name: "Build App", Exec: "FORJ_BUILD=1 forj build --race -o ./bin/app"},
 			},
 		},
 	})
+	if len(jobs) != 2 {
+		t.Fatalf("devBuildJobs() = %#v, want two active App builds", jobs)
+	}
+	got := []string{jobs[0].command, jobs[1].command}
 	want := []string{"FORJ_BUILD=1 forj build --race -o ./bin/app", "FORJ_BUILD=1 forj customer-portal build --race -o ./bin/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected dev build commands: got %#v want %#v", got, want)
 	}
 }
 
-func TestDevInitialBuildCommandsBuildEveryApp(t *testing.T) {
+func TestDevBuildJobsIncludeAppsWithExistingBinaries(t *testing.T) {
 	withConventionalApp(t, "customer-portal")
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
@@ -474,7 +479,11 @@ func TestDevInitialBuildCommandsBuildEveryApp(t *testing.T) {
 		t.Fatalf("write app binary: %v", err)
 	}
 
-	got := devInitialBuildCommands(&project.Config{})
+	jobs := devBuildJobs(&project.Config{})
+	if len(jobs) != 2 {
+		t.Fatalf("devBuildJobs() = %#v, want existing and missing App binaries rebuilt", jobs)
+	}
+	got := []string{jobs[0].command, jobs[1].command}
 	want := []string{"forj build -o ./bin/app", "forj customer-portal build -o ./bin/customer-portal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial dev build commands: got %#v want %#v", got, want)
@@ -493,7 +502,7 @@ func TestDevBuildCommandForAppRewritesExistingPackageArgument(t *testing.T) {
 func TestDevBuildJobsKeepAppLabels(t *testing.T) {
 	withConventionalApp(t, "billing")
 
-	got := devBuildJobs(&project.Config{}, false)
+	got := devBuildJobs(&project.Config{})
 	if len(got) != 2 {
 		t.Fatalf("expected default and billing build jobs, got %#v", got)
 	}
@@ -1060,15 +1069,14 @@ func TestShellSplitArgsPreservesQuotedFragments(t *testing.T) {
 	}
 }
 
-func TestCopyEnvMapProducesIndependentClone(t *testing.T) {
-	original := map[string]string{"FOO": "bar"}
-	cloned := copyEnvMap(original)
-	cloned["FOO"] = "baz"
-	if reflect.DeepEqual(original, cloned) {
-		t.Fatalf("expected clone to be independent of original")
-	}
-	if original["FOO"] != "bar" {
-		t.Fatalf("expected original map to remain unchanged, got %#v", original)
+// TestCopyDevWatchesClonesEnvironment protects configured watchers from mutations made during per-App expansion.
+func TestCopyDevWatchesClonesEnvironment(t *testing.T) {
+	original := []project.DevWatch{{Env: map[string]string{"FOO": "bar"}}}
+	copied := copyDevWatches(original)
+	copied[0].Env["FOO"] = "baz"
+
+	if original[0].Env["FOO"] != "bar" {
+		t.Fatalf("copyDevWatches() mutated the configured environment: %#v", original[0].Env)
 	}
 }
 
@@ -1115,13 +1123,18 @@ func TestFormatWatcherLifecycleSummary(t *testing.T) {
 	}
 }
 
-func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
+// TestDevWatcherRuntimeDrainExitsEmitsStoppedLines keeps unexpected exits individually attributable.
+func TestDevWatcherRuntimeDrainExitsEmitsStoppedLines(t *testing.T) {
 	var out bytes.Buffer
 	exitCh := make(chan watcherExit, 2)
 	exitCh <- watcherExit{name: "API"}
 	exitCh <- watcherExit{name: "Scheduler"}
+	runtime := &devWatcherRuntime{
+		session: &devWatchSession{outWriter: &out},
+		exitCh:  exitCh,
+	}
 
-	drainWatcherExits(exitCh, 2, &out, nil, false)
+	runtime.drainExits(2, false)
 
 	got := out.String()
 	if !contains(got, "API") || !contains(got, "Scheduler") {
@@ -1132,13 +1145,18 @@ func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
 	}
 }
 
-func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
+// TestDevWatcherRuntimeDrainExitsEmitsStoppedSummaryWhenCollapsed keeps coordinated shutdown output compact.
+func TestDevWatcherRuntimeDrainExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
 	var out bytes.Buffer
 	exitCh := make(chan watcherExit, 2)
 	exitCh <- watcherExit{name: "API"}
 	exitCh <- watcherExit{name: "Scheduler"}
+	runtime := &devWatcherRuntime{
+		session: &devWatchSession{outWriter: &out},
+		exitCh:  exitCh,
+	}
 
-	drainWatcherExits(exitCh, 2, &out, nil, true)
+	runtime.drainExits(2, true)
 
 	got := out.String()
 	if !contains(got, "Watchers") {
@@ -1152,15 +1170,30 @@ func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
 	}
 }
 
-func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
-	var out bytes.Buffer
-	watchers := []runningWatcher{
-		{name: "Build App", proc: &execx.Process{}},
-		{name: "Wire", proc: &execx.Process{}},
-		{name: "API", proc: &execx.Process{}},
+// TestStartDevWatcherRuntimeOwnsEmptyGeneration keeps the controller dependency required even when configuration has no logical watchers.
+func TestStartDevWatcherRuntimeOwnsEmptyGeneration(t *testing.T) {
+	runtime, err := startDevWatcherRuntime(&devWatchSession{
+		config: &project.Config{}, outWriter: io.Discard, errWriter: io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("start empty watcher generation: %v", err)
+	}
+	if runtime.controller == nil {
+		t.Fatal("empty watcher generation did not own a controller")
+	}
+	if len(runtime.watchers) != 0 || runtime.exitCh == nil {
+		t.Fatalf("empty watcher generation = %#v, want no logical handles and an owned exit stream", runtime)
 	}
 
-	stopWatchers(watchers, 0, &out, nil, true)
+	runtime.stopAndDrain(true)
+}
+
+// TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed keeps one lifecycle line for coordinated shutdowns.
+func TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
+	var out bytes.Buffer
+	runtime := newDormantDevWatcherRuntime(t, &out, "Build App", "Wire", "API")
+
+	runtime.stopAndDrain(true)
 
 	got := out.String()
 	if !contains(got, "Watchers") {
@@ -1177,35 +1210,72 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	}
 }
 
-func TestStopWatchersShutsDownProcessesInParallel(t *testing.T) {
-	script := "trap 'sleep 0.25; exit 0' INT TERM; while true; do sleep 0.05; done"
-	watchers := []runningWatcher{
-		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
-		{name: "Billing", proc: execx.Command("sh", "-c", script).Start()},
-	}
+// TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit preserves render work that overlaps controller shutdown.
+func TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit(t *testing.T) {
+	runtime := newDormantDevWatcherRuntime(t, io.Discard, "App")
+	releaseShutdown := make(chan struct{})
+	runtime.controller.wait.Add(1)
+	go func() {
+		<-releaseShutdown
+		runtime.controller.wait.Done()
+	}()
 
-	start := time.Now()
-	stopWatchers(watchers, 2*time.Second, io.Discard, nil, true)
-	elapsed := time.Since(start)
-	if elapsed > 450*time.Millisecond {
-		t.Fatalf("expected parallel shutdown, took %s", elapsed)
+	returned := make(chan func(), 1)
+	go func() {
+		returned <- runtime.beginStop(2*time.Second, true)
+	}()
+	var waitForStop func()
+	select {
+	case waitForStop = <-returned:
+	case <-time.After(2 * time.Second):
+		close(releaseShutdown)
+		t.Fatal("beginStop waited for controller shutdown")
+	}
+	close(releaseShutdown)
+	waitForStop()
+	runtime.drainAllExits(true)
+}
+
+// TestDevWatcherRuntimeStopAfterExitReportsEveryLogicalHandle keeps one unexpected exit attributable while the shared generation shuts down.
+func TestDevWatcherRuntimeStopAfterExitReportsEveryLogicalHandle(t *testing.T) {
+	var out bytes.Buffer
+	runtime := newDormantDevWatcherRuntime(t, &out, "API", "Scheduler")
+	runtime.controller.publishExit("API", "API", &devwatch.Exit{Name: "API", ExitCode: 7}, nil)
+	exit := <-runtime.exitCh
+
+	runtime.stopAfterExit(exit, time.Second)
+
+	got := out.String()
+	if !contains(got, "API") || !contains(got, "Scheduler") {
+		t.Fatalf("expected every watcher name in lifecycle output, got %q", got)
+	}
+	if strings.Count(got, "stopping") != 1 || strings.Count(got, "stopped") != 2 {
+		t.Fatalf("unexpected single-exit lifecycle output %q", got)
 	}
 }
 
-func TestBeginStopWatchersReturnsBeforeProcessesExit(t *testing.T) {
-	script := "trap 'sleep 0.3; exit 0' INT TERM; while true; do sleep 0.05; done"
-	watchers := []runningWatcher{
-		{name: "App", proc: execx.Command("sh", "-c", script).Start()},
+// newDormantDevWatcherRuntime creates one native generation whose logical handles can be tested without starting child processes.
+func newDormantDevWatcherRuntime(t *testing.T, out io.Writer, names ...string) *devWatcherRuntime {
+	t.Helper()
+	compiled := make([]devCompiledWatcher, 0, len(names))
+	watchers := make([]runningWatcher, 0, len(names))
+	for _, name := range names {
+		compiled = append(compiled, devCompiledWatcher{
+			ID: name, Name: name, Kind: devWatcherCustom, Postpone: true,
+			Command: devwatch.Command{Shell: "exit 0"},
+		})
+		watchers = append(watchers, runningWatcher{id: name, name: name})
 	}
-
-	start := time.Now()
-	waitForStop := beginStopWatchers(watchers, 2*time.Second, io.Discard, nil, true)
-	elapsed := time.Since(start)
-	if elapsed > 150*time.Millisecond {
-		t.Fatalf("expected shutdown request to return before process exit, took %s", elapsed)
+	controller := newDevWatcherRunnerTestController(t, compiled)
+	t.Cleanup(func() {
+		controller.stop(time.Second)
+	})
+	return &devWatcherRuntime{
+		session:    &devWatchSession{outWriter: out},
+		watchers:   watchers,
+		controller: controller,
+		exitCh:     controller.exitCh,
 	}
-
-	waitForStop()
 }
 
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
@@ -1483,7 +1553,7 @@ func TestDevBuildJobsPreserveStructuredExecutionContext(t *testing.T) {
 			},
 		},
 	}}}
-	jobs := devBuildJobs(config, false)
+	jobs := devBuildJobs(config)
 	if len(jobs) != 1 {
 		t.Fatalf("devBuildJobs() = %#v, want one billing build", jobs)
 	}
@@ -1503,8 +1573,8 @@ func TestDevBuildJobsPreserveStructuredExecutionContext(t *testing.T) {
 	}
 }
 
-// TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol keeps machine records out of human build output.
-func TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol(t *testing.T) {
+// TestRunDevSubprocessDisablesWatcherProgressProtocol keeps machine records out of human build output.
+func TestRunDevSubprocessDisablesWatcherProgressProtocol(t *testing.T) {
 	t.Setenv("FORJ_BUILD_PROGRESS", "1")
 	testCases := []struct {
 		name string
@@ -1517,9 +1587,15 @@ func TestRunDevSubprocessCommandInDirDisablesWatcherProgressProtocol(t *testing.
 		t.Run(testCase.name, func(t *testing.T) {
 			var out bytes.Buffer
 			var errOut bytes.Buffer
-			err := runDevSubprocessCommandInDir(&out, &errOut, `printf '%s' "$FORJ_BUILD_PROGRESS"`, "", testCase.env, true)
+			err := runDevSubprocess(devSubprocessRun{
+				command:    `printf '%s' "$FORJ_BUILD_PROGRESS"`,
+				env:        testCase.env,
+				stdout:     &out,
+				stderr:     &errOut,
+				transcript: true,
+			})
 			if err != nil {
-				t.Fatalf("runDevSubprocessCommandInDir() error = %v", err)
+				t.Fatalf("runDevSubprocess() error = %v", err)
 			}
 			if got := out.String(); got != "0" {
 				t.Fatalf("FORJ_BUILD_PROGRESS = %q, want disabled", got)
@@ -1540,7 +1616,7 @@ func TestDevBuildJobsTreatExplicitEmptyAppsAsAuthority(t *testing.T) {
 			{Name: "Docs", Include: []string{".md"}, Exec: "make docs"},
 		},
 	}}
-	if jobs := devBuildJobs(native, false); len(jobs) != 0 {
+	if jobs := devBuildJobs(native); len(jobs) != 0 {
 		t.Fatalf("explicit empty dev.apps produced build jobs: %#v", jobs)
 	}
 	if apps := activeDevAppsForConfig(native); len(apps) != 0 {
@@ -1550,7 +1626,7 @@ func TestDevBuildJobsTreatExplicitEmptyAppsAsAuthority(t *testing.T) {
 	legacy := &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{
 		{Name: "Docs", Watch: "-file .md", Exec: "make docs"},
 	}}}
-	if jobs := devBuildJobs(legacy, false); len(jobs) == 0 {
+	if jobs := devBuildJobs(legacy); len(jobs) == 0 {
 		t.Fatal("omitted dev.apps lost legacy App discovery")
 	}
 }
@@ -1567,7 +1643,7 @@ func TestRunDevFrontendDependencySetupIncludesNamedApps(t *testing.T) {
 		t.Fatalf("Chdir() error = %v", err)
 	}
 	for _, app := range []project.App{project.DefaultApp(), project.DefaultNamedApp("portal")} {
-		if err := os.MkdirAll(appFrontendDir(app), 0o755); err != nil {
+		if err := os.MkdirAll(projectlayout.FrontendDir(".", app), 0o755); err != nil {
 			t.Fatalf("MkdirAll(%s) error = %v", app.Name, err)
 		}
 	}

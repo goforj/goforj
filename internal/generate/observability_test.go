@@ -8,12 +8,14 @@ import (
 	"testing"
 )
 
+// metricsTargetWant keeps endpoint and label expectations readable in generated target assertions.
 type metricsTargetWant struct {
 	process string
 	appName string
 	target  string
 }
 
+// TestGenerateObservabilityFilesWritesSingleProcessTargetsByDefaultInStandaloneMode verifies default generation follows the combined App process.
 func TestGenerateObservabilityFilesWritesSingleProcessTargetsByDefaultInStandaloneMode(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 
@@ -64,6 +66,7 @@ func TestGenerateObservabilityFilesWritesLocalMultiTargetsWhenExplicitlySelected
 	assertMetricsTargets(t, targets, "Observability Test App", "staging", want)
 }
 
+// TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalApps verifies conventionally discovered Apps receive stable combined-process targets.
 func TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalApps(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 	writeObservabilityAppMarker(t, projectDir, "billing")
@@ -91,6 +94,7 @@ func TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalApps(t 
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
+// TestGenerateObservabilityFilesWritesLocalMultiTargetsForConventionalApps verifies role ports remain deterministic across conventionally discovered Apps.
 func TestGenerateObservabilityFilesWritesLocalMultiTargetsForConventionalApps(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 	writeObservabilityAppMarker(t, projectDir, "billing")
@@ -125,6 +129,7 @@ func TestGenerateObservabilityFilesWritesLocalMultiTargetsForConventionalApps(t 
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
+// TestGenerateObservabilityFilesFiltersLocalMultiTargetsByAppComponents verifies each App emits only the runtime roles selected for that App.
 func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByAppComponents(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 	writeObservabilityAppMarker(t, projectDir, "billing")
@@ -175,6 +180,7 @@ func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByAppComponents(t *te
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
+// TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode verifies explicit combined-process mode follows the HTTP listener.
 func TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http")
 
@@ -200,6 +206,7 @@ func TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode(t 
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
+// TestGenerateObservabilityFilesWritesComposeTargetsUsingSharedPort verifies Compose roles share the configured metrics port.
 func TestGenerateObservabilityFilesWritesComposeTargetsUsingSharedPort(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 
@@ -234,12 +241,7 @@ func TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled(t *testing.T
 	config := []byte(strings.Join([]string{
 		"project_name: Observability Test App",
 		"render:",
-		"  component_contract: 1",
-		"  components:",
-		"    web_api: true",
-		"    metrics: true",
-		"    observability: true",
-		"    jobs: false",
+		"  components: [web_api, metrics, observability]",
 		"",
 	}, "\n"))
 	if err := os.WriteFile(filepath.Join(projectDir, ".goforj.yml"), config, 0o644); err != nil {
@@ -268,60 +270,221 @@ func TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled(t *testing.T
 	assertMetricsTargets(t, targets, "Observability Test App", "prod", want)
 }
 
-func TestGenerateObservabilityFilesDoesNotTouchTargetsWhenLocalHostEscapeHatchIsEmpty(t *testing.T) {
-	projectDir := observabilityTestProjectDir(t, "http", "jobs")
-	targetsPath := filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json")
-	original := []byte(`["custom"]` + "\n")
-	if err := os.WriteFile(targetsPath, original, 0o644); err != nil {
-		t.Fatalf("write custom targets: %v", err)
+// TestGenerateObservabilityFilesReturnsPlanningErrors verifies invalid project state cannot be mistaken for a successful target refresh.
+func TestGenerateObservabilityFilesReturnsPlanningErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		roles     []string
+		setup     func(t *testing.T, projectDir string)
+		wantError string
+	}{
+		{
+			name:  "malformed project config",
+			roles: []string{"http"},
+			setup: func(t *testing.T, projectDir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(projectDir, ".goforj.yml"), []byte("render: [\n"), 0o644); err != nil {
+					t.Fatalf("write malformed config: %v", err)
+				}
+			},
+			wantError: "load project observability config",
+		},
+		{
+			name: "role inspection error",
+			setup: func(t *testing.T, projectDir string) {
+				t.Helper()
+				internalDir := filepath.Join(projectDir, "internal")
+				if err := os.MkdirAll(internalDir, 0o755); err != nil {
+					t.Fatalf("mkdir internal: %v", err)
+				}
+				if err := os.Symlink("http", filepath.Join(internalDir, "http")); err != nil {
+					t.Fatalf("create role symlink loop: %v", err)
+				}
+			},
+			wantError: "inspect observability api role",
+		},
+		{
+			name:  "app discovery error",
+			roles: []string{"http"},
+			setup: func(t *testing.T, projectDir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(projectDir, "cmd"), []byte("not a directory\n"), 0o644); err != nil {
+					t.Fatalf("write invalid command root: %v", err)
+				}
+			},
+			wantError: "discover observability apps",
+		},
 	}
 
-	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectDir := observabilityTestProjectDir(t, test.roles...)
+			targetsPath := filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json")
+			original := []byte("[\"existing\"]\n")
+			if err := os.WriteFile(targetsPath, original, 0o644); err != nil {
+				t.Fatalf("write existing targets: %v", err)
+			}
+			test.setup(t, projectDir)
+
+			written, err := GenerateObservabilityFiles(projectDir)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("GenerateObservabilityFiles error = %v, want containing %q", err, test.wantError)
+			}
+			if written != 0 {
+				t.Fatalf("written files = %d, want 0", written)
+			}
+			content, readErr := os.ReadFile(targetsPath)
+			if readErr != nil {
+				t.Fatalf("read existing targets: %v", readErr)
+			}
+			if string(content) != string(original) {
+				t.Fatalf("metrics-targets.json was modified after planning error:\n%s", content)
+			}
+		})
+	}
+}
+
+// TestGenerateObservabilityFilesExcludesOnlyDisabledComposeRole verifies one role opt-out cannot suppress unrelated scrape targets.
+func TestGenerateObservabilityFilesExcludesOnlyDisabledComposeRole(t *testing.T) {
+	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
+
+	t.Setenv("APP_NAME", "Observability Test App")
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "compose")
+	t.Setenv("METRICS_PORT", "9400")
+	t.Setenv("OBSERVABILITY_API_METRICS_HOST", "api")
+	t.Setenv("OBSERVABILITY_JOBS_METRICS_HOST", "")
+	t.Setenv("OBSERVABILITY_SCHEDULER_METRICS_HOST", "scheduler")
 
 	written, err := GenerateObservabilityFiles(projectDir)
 	if err != nil {
 		t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
 	}
-	if written != 0 {
-		t.Fatalf("written files = %d, want 0", written)
+	if written != 1 {
+		t.Fatalf("written files = %d, want 1", written)
 	}
 
-	content, err := os.ReadFile(targetsPath)
-	if err != nil {
-		t.Fatalf("read metrics-targets.json: %v", err)
+	targets := readMetricsTargets(t, projectDir)
+	want := []metricsTargetWant{
+		{process: "api", target: "api:9400"},
+		{process: "scheduler", target: "scheduler:9400"},
 	}
-	if string(content) != string(original) {
-		t.Fatalf("metrics-targets.json was modified:\n%s", content)
+	assertMetricsTargets(t, targets, "Observability Test App", "prod", want)
+}
+
+// TestGenerateObservabilityFilesPublishesManagedEmptyTargets verifies stale entries disappear when a managed plan no longer has scrape sources.
+func TestGenerateObservabilityFilesPublishesManagedEmptyTargets(t *testing.T) {
+	tests := []struct {
+		name  string
+		roles []string
+		setup func(t *testing.T)
+	}{
+		{
+			name: "no rendered roles",
+			setup: func(t *testing.T) {
+				t.Helper()
+			},
+		},
+		{
+			name:  "all compose roles excluded",
+			roles: []string{"http", "jobs", "scheduler"},
+			setup: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "compose")
+				t.Setenv("OBSERVABILITY_API_METRICS_HOST", "")
+				t.Setenv("OBSERVABILITY_JOBS_METRICS_HOST", "")
+				t.Setenv("OBSERVABILITY_SCHEDULER_METRICS_HOST", "")
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectDir := observabilityTestProjectDir(t, test.roles...)
+			targetsPath := filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json")
+			if err := os.WriteFile(targetsPath, []byte("[\"stale\"]\n"), 0o644); err != nil {
+				t.Fatalf("write stale targets: %v", err)
+			}
+			test.setup(t)
+
+			written, err := GenerateObservabilityFiles(projectDir)
+			if err != nil {
+				t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
+			}
+			if written != 1 {
+				t.Fatalf("written files = %d, want 1", written)
+			}
+			content, err := os.ReadFile(targetsPath)
+			if err != nil {
+				t.Fatalf("read generated targets: %v", err)
+			}
+			if string(content) != "[]\n" {
+				t.Fatalf("metrics-targets.json = %q, want empty JSON array", content)
+			}
+
+			written, err = GenerateObservabilityFiles(projectDir)
+			if err != nil {
+				t.Fatalf("second GenerateObservabilityFiles returned error: %v", err)
+			}
+			if written != 0 {
+				t.Fatalf("second written files = %d, want 0", written)
+			}
+		})
 	}
 }
 
-func TestGenerateObservabilityFilesDoesNotTouchTargetsWhenModeDisabled(t *testing.T) {
-	projectDir := observabilityTestProjectDir(t, "http", "jobs")
-	targetsPath := filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json")
-	original := []byte(`["custom"]` + "\n")
-	if err := os.WriteFile(targetsPath, original, 0o644); err != nil {
-		t.Fatalf("write custom targets: %v", err)
+// TestGenerateObservabilityFilesPreservesUnmanagedTargets verifies opt-outs remain authoritative before empty managed plans are published.
+func TestGenerateObservabilityFilesPreservesUnmanagedTargets(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{
+			name: "disabled mode",
+			setup: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "disabled")
+			},
+		},
+		{
+			name: "empty local host escape hatch",
+			setup: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "local-single")
+				t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "")
+			},
+		},
 	}
 
-	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "disabled")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectDir := observabilityTestProjectDir(t)
+			targetsPath := filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json")
+			original := []byte("[\"custom\"]\n")
+			if err := os.WriteFile(targetsPath, original, 0o644); err != nil {
+				t.Fatalf("write custom targets: %v", err)
+			}
+			test.setup(t)
 
-	written, err := GenerateObservabilityFiles(projectDir)
-	if err != nil {
-		t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
-	}
-	if written != 0 {
-		t.Fatalf("written files = %d, want 0", written)
-	}
-
-	content, err := os.ReadFile(targetsPath)
-	if err != nil {
-		t.Fatalf("read metrics-targets.json: %v", err)
-	}
-	if string(content) != string(original) {
-		t.Fatalf("metrics-targets.json was modified:\n%s", content)
+			written, err := GenerateObservabilityFiles(projectDir)
+			if err != nil {
+				t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
+			}
+			if written != 0 {
+				t.Fatalf("written files = %d, want 0", written)
+			}
+			content, err := os.ReadFile(targetsPath)
+			if err != nil {
+				t.Fatalf("read custom targets: %v", err)
+			}
+			if string(content) != string(original) {
+				t.Fatalf("metrics-targets.json was modified:\n%s", content)
+			}
+		})
 	}
 }
 
+// observabilityTestProjectDir creates the minimum rendered layout needed to exercise target discovery.
 func observabilityTestProjectDir(t *testing.T, roles ...string) string {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -340,6 +503,7 @@ func observabilityTestProjectDir(t *testing.T, roles ...string) string {
 	return projectDir
 }
 
+// writeObservabilityAppMarker uses the command entrypoint convention so tests cover filesystem-driven App discovery.
 func writeObservabilityAppMarker(t *testing.T, projectDir string, appName string) {
 	t.Helper()
 	path := filepath.Join(projectDir, "cmd", appName, "main.go")
@@ -351,6 +515,7 @@ func writeObservabilityAppMarker(t *testing.T, projectDir string, appName string
 	}
 }
 
+// readMetricsTargets decodes the generated discovery file for behavior-focused assertions.
 func readMetricsTargets(t *testing.T, projectDir string) []metricsTargetEntry {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join(projectDir, "containers", "observability", "vmagent", "metrics-targets.json"))
@@ -364,6 +529,7 @@ func readMetricsTargets(t *testing.T, projectDir string) []metricsTargetEntry {
 	return targets
 }
 
+// assertMetricsTargets compares endpoint ordering and the labels relied on by dashboards and alerts.
 func assertMetricsTargets(t *testing.T, targets []metricsTargetEntry, service string, environment string, want []metricsTargetWant) {
 	t.Helper()
 	if len(targets) != len(want) {

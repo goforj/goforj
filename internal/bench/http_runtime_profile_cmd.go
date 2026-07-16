@@ -10,8 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -27,6 +28,7 @@ type HTTPRuntimeProfileCmd struct {
 	Silent    bool   `help:"Suppress command progress output" short:"s"`
 }
 
+// httpRuntimeProfileResult keeps benchmark metrics and profile reports paired for one runtime mode.
 type httpRuntimeProfileResult struct {
 	Mode          string
 	NSPerOp       float64
@@ -38,14 +40,24 @@ type httpRuntimeProfileResult struct {
 	AllocSpaceTop string
 }
 
+// httpRuntimeBenchmarkMetrics names Go benchmark units so callers cannot transpose positional values.
+type httpRuntimeBenchmarkMetrics struct {
+	nsPerOp     float64
+	bytesPerOp  float64
+	allocsPerOp float64
+}
+
+// Signature keeps the profiling command available to maintainers without exposing it in ordinary help.
 func (*HTTPRuntimeProfileCmd) Signature() string {
 	return `name:"bench:http-runtime-profile" help:"Profile HTTP runtime benchmark modes" hidden:""`
 }
 
+// NewHTTPRuntimeProfileCmd wires profiling output through the shared application logger.
 func NewHTTPRuntimeProfileCmd(logger *logger.AppLogger) *HTTPRuntimeProfileCmd {
 	return &HTTPRuntimeProfileCmd{logger: logger}
 }
 
+// Run uses one rendered artifact for every selected mode so profile comparisons remain meaningful.
 func (cmd *HTTPRuntimeProfileCmd) Run() error {
 	modes, err := parseHTTPRuntimeProfileModes(cmd.Modes)
 	if err != nil {
@@ -63,6 +75,8 @@ func (cmd *HTTPRuntimeProfileCmd) Run() error {
 	if !cmd.Keep {
 		defer os.RemoveAll(dir)
 	}
+	caches := testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
 
 	if !cmd.Silent {
 		testkit.PrintSection("HTTP Runtime Profile")
@@ -82,22 +96,23 @@ func (cmd *HTTPRuntimeProfileCmd) Run() error {
 		},
 	}
 
-	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	builtForj, err := testkit.BuildForjBinary(modCache, buildCache)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
 
 	testBinary := filepath.Join(dir, "http_runtime_bench.test")
-	if err := runStep(cmd.logger, cmd.Silent, "bench-compile", dir, modCache, buildCache, []string{"go", "test", "-c", "-o", testBinary, "./internal/http"}); err != nil {
+	if err := workspace.Run("bench-compile", "go", "test", "-c", "-o", testBinary, "./internal/http"); err != nil {
 		return err
 	}
 
@@ -125,6 +140,7 @@ func (cmd *HTTPRuntimeProfileCmd) Run() error {
 	return nil
 }
 
+// parseHTTPRuntimeProfileModes validates and deduplicates modes before expensive rendering begins.
 func parseHTTPRuntimeProfileModes(raw string) ([]string, error) {
 	allowed := map[string]struct{}{
 		"baseline":     {},
@@ -159,6 +175,7 @@ func parseHTTPRuntimeProfileModes(raw string) ([]string, error) {
 	return out, nil
 }
 
+// runMode keeps one benchmark execution and its profiles under the same mode label.
 func (cmd *HTTPRuntimeProfileCmd) runMode(dir, testBinary, profileDir, mode string) (httpRuntimeProfileResult, error) {
 	if !cmd.Silent {
 		console.Actionf("Profiling HTTP runtime mode %s", mode)
@@ -194,7 +211,7 @@ func (cmd *HTTPRuntimeProfileCmd) runMode(dir, testBinary, profileDir, mode stri
 		)
 	}
 
-	nsPerOp, bytesPerOp, allocsPerOp, err := parseHTTPRuntimeBenchmarkOutput(stdout.String(), mode)
+	metrics, err := parseHTTPRuntimeBenchmarkOutput(stdout.String(), mode)
 	if err != nil {
 		return httpRuntimeProfileResult{}, fmt.Errorf("parse benchmark output for %s: %w\nstdout:\n%s", mode, err, stdout.String())
 	}
@@ -210,9 +227,9 @@ func (cmd *HTTPRuntimeProfileCmd) runMode(dir, testBinary, profileDir, mode stri
 
 	return httpRuntimeProfileResult{
 		Mode:          mode,
-		NSPerOp:       nsPerOp,
-		BytesPerOp:    bytesPerOp,
-		AllocsPerOp:   allocsPerOp,
+		NSPerOp:       metrics.nsPerOp,
+		BytesPerOp:    metrics.bytesPerOp,
+		AllocsPerOp:   metrics.allocsPerOp,
 		CPUProfile:    cpuPath,
 		MemProfile:    memPath,
 		CPUTop:        cpuTop,
@@ -220,7 +237,8 @@ func (cmd *HTTPRuntimeProfileCmd) runMode(dir, testBinary, profileDir, mode stri
 	}, nil
 }
 
-func parseHTTPRuntimeBenchmarkOutput(stdout string, mode string) (float64, float64, float64, error) {
+// parseHTTPRuntimeBenchmarkOutput selects the requested sub-benchmark without mistaking Go tool noise for measurements.
+func parseHTTPRuntimeBenchmarkOutput(stdout string, mode string) (httpRuntimeBenchmarkMetrics, error) {
 	want := "BenchmarkHTTPRuntimeModes/health_route/" + mode
 	for _, line := range strings.Split(stdout, "\n") {
 		line = strings.TrimSpace(line)
@@ -233,21 +251,26 @@ func parseHTTPRuntimeBenchmarkOutput(stdout string, mode string) (float64, float
 		}
 		nsPerOp, err := strconv.ParseFloat(fields[2], 64)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("parse ns/op: %w", err)
+			return httpRuntimeBenchmarkMetrics{}, fmt.Errorf("parse ns/op: %w", err)
 		}
 		bytesPerOp, err := strconv.ParseFloat(fields[4], 64)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("parse B/op: %w", err)
+			return httpRuntimeBenchmarkMetrics{}, fmt.Errorf("parse B/op: %w", err)
 		}
 		allocsPerOp, err := strconv.ParseFloat(fields[6], 64)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("parse allocs/op: %w", err)
+			return httpRuntimeBenchmarkMetrics{}, fmt.Errorf("parse allocs/op: %w", err)
 		}
-		return nsPerOp, bytesPerOp, allocsPerOp, nil
+		return httpRuntimeBenchmarkMetrics{
+			nsPerOp:     nsPerOp,
+			bytesPerOp:  bytesPerOp,
+			allocsPerOp: allocsPerOp,
+		}, nil
 	}
-	return 0, 0, 0, fmt.Errorf("benchmark line not found")
+	return httpRuntimeBenchmarkMetrics{}, fmt.Errorf("benchmark line not found")
 }
 
+// runPprofTop centralizes CPU profile rendering so every mode uses identical pprof flags.
 func runPprofTop(dir, binaryPath, profilePath string, top int) (string, error) {
 	execCmd := exec.Command(
 		"go",
@@ -271,6 +294,7 @@ func runPprofTop(dir, binaryPath, profilePath string, top int) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// runPprofAllocSpaceTop centralizes allocation profile rendering so every mode uses identical pprof flags.
 func runPprofAllocSpaceTop(dir, binaryPath, profilePath string, top int) (string, error) {
 	execCmd := exec.Command(
 		"go",
@@ -295,6 +319,7 @@ func runPprofAllocSpaceTop(dir, binaryPath, profilePath string, top int) (string
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// printResults sorts runtime modes by latency before presenting benchmark and profile details together.
 func (cmd *HTTPRuntimeProfileCmd) printResults(results []httpRuntimeProfileResult) {
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].NSPerOp < results[j].NSPerOp

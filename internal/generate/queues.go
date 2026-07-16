@@ -11,7 +11,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -207,21 +206,26 @@ var queueDriverKeys = map[string]map[string]struct{}{
 
 // GenerateQueueFiles writes queue accessors whose selectable transports are fixed by the generation snapshot.
 func GenerateQueueFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
+	return generateQueueFiles(ambientGenerationInput(projectDir))
+}
+
+// generateQueueFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateQueueFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "QUEUE",
 		DefaultDriver: "workerpool",
 		RootKeys:      queueRootKeys,
 		CommonKeys:    queueCommonKeys,
 		DriverKeys:    queueDriverKeys,
-		ChildNames: func(scope env.Scope) []string {
-			return scope.ChildNames(queueRootKeys)
+		ChildNames: func(environment generationEnvironment) []string {
+			return exactScopedChildNames(environment, "QUEUE", queueRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 		InheritRootDriver:     true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderQueueConfig(projectDir)
+	manager, err := renderQueueConfig(input)
 	if err != nil {
 		return 0, err
 	}
@@ -229,7 +233,7 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated queue manager: %w", err)
 	}
-	accessors, err := renderQueueAccessors(projectDir, discoverQueueNames(projectDir))
+	accessors, err := renderQueueAccessors(input.projectDir, discoverQueueNames(input))
 	if err != nil {
 		return 0, err
 	}
@@ -238,30 +242,35 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 		return 0, fmt.Errorf("failed to format generated queue accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "queues", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "queues", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(projectDir, "internal", "queues", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "queues", "accessors_gen.go"), formattedAccessors)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "runtime.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "manager.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "queues_gen.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "queues", "config_gen.go"))
+	for _, name := range queueLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "queues", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
 // discoverQueueNames includes queues declared only through a configured App overlay.
-func discoverQueueNames(projectDir string) []string {
-	names := discoverPrimitiveChildNames(projectDir, "QUEUE", queueRootKeys)
+func discoverQueueNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "QUEUE", queueRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -312,9 +321,9 @@ func readModuleName(projectDir string) (string, error) {
 }
 
 // renderQueueConfig retains native worker execution code without widening the authoritative compiled manifest.
-func renderQueueConfig(projectDir string) ([]byte, error) {
-	names := discoverQueueNames(projectDir)
-	moduleName, err := readModuleName(projectDir)
+func renderQueueConfig(input generationInput) ([]byte, error) {
+	names := discoverQueueNames(input)
+	moduleName, err := readModuleName(input.projectDir)
 	if err != nil {
 		return nil, err
 	}
@@ -323,18 +332,18 @@ func renderQueueConfig(projectDir string) ([]byte, error) {
 		"sync":       {},
 		"workerpool": {},
 	}
-	defaultDriver := effectivePrimitiveDriver(env.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
+	defaultDriver := effectivePrimitiveDriver(input.environment.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
 	driverSet[defaultDriver] = struct{}{}
-	for _, child := range env.WithPrefix("QUEUE").ChildNames(queueRootKeys) {
-		driver := str.Of(env.Get("QUEUE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
+	for _, child := range exactScopedChildNames(input.environment, "QUEUE", queueRootKeys) {
+		driver := str.Of(input.environment.Get("QUEUE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
 		if driver != "" {
 			driverSet[driver] = struct{}{}
 		}
 	}
-	for _, active := range appPrefixedActiveDrivers(projectDir, "QUEUE", "workerpool", true) {
+	for _, active := range appPrefixedActiveDrivers(input, "QUEUE", "workerpool", true) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers("QUEUE", queueDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "QUEUE", queueDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
@@ -414,10 +423,10 @@ func (m *Manager) {{ .Method }}() *queue.Queue {
 // Instances returns the generated queue instances derived from QUEUE_* configuration.
 func (m *Manager) Instances() []Instance {
 	instances := []Instance{
-		{Name: "default", Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
+		{Name: "default", queueName: m.defaultQueueName, Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
 	}
 {{- range .Names }}
-	instances = append(instances, Instance{Name: "{{ .Queue }}", Queue: m.{{ .Queue }}, Workers: m.{{ .Queue }}Workers})
+	instances = append(instances, Instance{Name: "{{ .Queue }}", queueName: m.{{ .Queue }}QueueName, Queue: m.{{ .Queue }}, Workers: m.{{ .Queue }}Workers})
 {{- end }}
 	return instances
 }`
@@ -507,6 +516,7 @@ type Manager struct {
 	inspects *inspects.Manager
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue
+	{{ .Queue }}QueueName string
 	{{ .Queue }}Workers int
 {{- end }}
 }
@@ -514,6 +524,7 @@ type Manager struct {
 // Instance gives tooling a uniform view of each generated queue and its worker count.
 type Instance struct {
 	Name      string
+	queueName string
 	Queue     *queue.Queue
 	Workers   int
 	IsDefault bool
@@ -609,16 +620,10 @@ func NewManagerWithObserver(observer queue.Observer, logger queue.Logger, inspec
 
 // ReadinessChecks exposes an independently named health probe for every generated queue.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "queue_default",
 			Check: func(ctx context.Context) error {
-				if m.defaultQueue == nil {
-					return nil
-				}
 				return m.defaultQueue.Ready(ctx)
 			},
 		},
@@ -626,9 +631,6 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 		{
 			Name: "queue_{{ .Queue }}",
 			Check: func(ctx context.Context) error {
-				if m.{{ .Queue }} == nil {
-					return nil
-				}
 				return m.{{ .Queue }}.Ready(ctx)
 			},
 		},
@@ -637,36 +639,52 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
-// Register registers a handler on the default queue and stamps jobs source
-// context at the queue execution boundary.
+// Register binds a job handler to every generated queue so workers can consume it from any configured lane.
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
-	m.defaultQueue.Register(jobType, func(ctx context.Context, msg queue.Message) error {
+	for _, instance := range m.Instances() {
+		instance.Queue.Register(jobType, m.instrumentJobHandler(jobType, fn))
+	}
+}
+
+// instrumentJobHandler applies the shared source and inspect contract at every queue execution boundary.
+func (m *Manager) instrumentJobHandler(jobType string, fn func(context.Context, queue.Message) error) func(context.Context, queue.Message) error {
+	return func(ctx context.Context, msg queue.Message) (handlerErr error) {
 		ctx = runtime.WithSource(ctx, runtime.SourceJobs)
-		if m != nil && m.inspects != nil {
+		if m.inspects != nil {
 			ctx = m.inspects.Begin(ctx, runtime.SourceJobs, jobType, map[string]string{
 				"job_name": jobType,
 			})
 			recordJobPayload(ctx, msg)
-			defer m.inspects.Finish(ctx, "", nil)
+			defer func() {
+				status := ""
+				if handlerErr != nil {
+					status = "error"
+				}
+				m.inspects.Finish(ctx, status, handlerErr)
+			}()
 		}
-		err := fn(ctx, msg)
-		if m != nil && m.inspects != nil && err != nil {
-			m.inspects.Finish(ctx, "error", err)
-		}
-		return err
-	})
+		return fn(ctx, msg)
+	}
 }
 
-// Dispatch applies the generated default queue before recording payload telemetry and handing work to the transport.
+// Dispatch routes generated named resources through their own driver and physical queue configuration.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
-	if queue.DriverOptions(job).QueueName == "" {
-		queueName := strings.TrimSpace(m.defaultQueueName)
+	queueName := strings.TrimSpace(queue.DriverOptions(job).QueueName)
+	if queueName == "" || strings.EqualFold(queueName, defaultQueueName) {
+		queueName = strings.TrimSpace(m.defaultQueueName)
 		if queueName == "" {
 			queueName = defaultQueueName
 		}
 		job = job.OnQueue(queueName)
+		recordQueuedJobPayload(m.ctx, job)
+		return m.defaultQueue.Dispatch(job)
 	}
 	recordQueuedJobPayload(m.ctx, job)
+	for _, instance := range m.Instances() {
+		if !instance.IsDefault && strings.EqualFold(instance.Name, queueName) {
+			return instance.Queue.Dispatch(job.OnQueue(instance.queueName))
+		}
+	}
 	return m.defaultQueue.Dispatch(job)
 }
 
@@ -674,13 +692,9 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 func (m *Manager) WithContext(ctx context.Context) *Manager {
 	clone := *m
 	clone.ctx = ctx
-	if m.defaultQueue != nil {
-		clone.defaultQueue = m.defaultQueue.WithContext(ctx)
-	}
+	clone.defaultQueue = m.defaultQueue.WithContext(ctx)
 {{- range .Names }}
-	if m.{{ .Queue }} != nil {
-		clone.{{ .Queue }} = m.{{ .Queue }}.WithContext(ctx)
-	}
+	clone.{{ .Queue }} = m.{{ .Queue }}.WithContext(ctx)
 {{- end }}
 	return &clone
 }
@@ -704,6 +718,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 		return nil, err
 	}
 	manager.{{ .Queue }} = queue{{ .Method }}
+	manager.{{ .Queue }}QueueName = queueDefaultQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
 	manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
 {{- end }}
 

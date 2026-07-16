@@ -11,8 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -27,6 +28,7 @@ type InspectOverheadMeasureCmd struct {
 	Silent     bool `help:"Suppress command progress output" short:"s"`
 }
 
+// inspectOverheadBenchResult names benchmark units for one request scenario and inspect mode.
 type inspectOverheadBenchResult struct {
 	Scenario    string
 	Mode        string
@@ -35,19 +37,23 @@ type inspectOverheadBenchResult struct {
 	AllocsPerOp float64
 }
 
+// inspectOverheadRound keeps one comparison pass intact before cross-round medians are calculated.
 type inspectOverheadRound struct {
 	Index   int
 	Results map[string]inspectOverheadBenchResult
 }
 
+// Signature keeps the measurement command available to maintainers without exposing it in ordinary help.
 func (*InspectOverheadMeasureCmd) Signature() string {
 	return `name:"bench:inspect-overhead" help:"Measure HTTP request overhead with inspects off vs on" hidden:""`
 }
 
+// NewInspectOverheadMeasureCmd wires measurement output through the shared application logger.
 func NewInspectOverheadMeasureCmd(logger *logger.AppLogger) *InspectOverheadMeasureCmd {
 	return &InspectOverheadMeasureCmd{logger: logger}
 }
 
+// Run compares inspect modes against one rendered artifact across repeated rounds.
 func (cmd *InspectOverheadMeasureCmd) Run() error {
 	if cmd.Iterations <= 0 {
 		return fmt.Errorf("iterations must be greater than zero")
@@ -64,6 +70,8 @@ func (cmd *InspectOverheadMeasureCmd) Run() error {
 	if !cmd.Keep {
 		defer os.RemoveAll(dir)
 	}
+	caches := testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
 
 	if !cmd.Silent {
 		testkit.PrintSection("Inspect Overhead")
@@ -82,20 +90,21 @@ func (cmd *InspectOverheadMeasureCmd) Run() error {
 		},
 	}
 
-	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	builtForj, err := testkit.BuildForjBinary(modCache, buildCache)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
 
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
+	if err := workspace.Run("build", "go", "build", "./..."); err != nil {
 		return err
 	}
 
@@ -118,6 +127,7 @@ func (cmd *InspectOverheadMeasureCmd) Run() error {
 	return nil
 }
 
+// runBench executes both inspect modes together so one round shares the same build and host conditions.
 func (cmd *InspectOverheadMeasureCmd) runBench(dir string, round int) (map[string]inspectOverheadBenchResult, error) {
 	if !cmd.Silent {
 		console.Actionf("Running inspect overhead benchmark (round %d/%d)", round, cmd.Rounds)
@@ -151,6 +161,7 @@ func (cmd *InspectOverheadMeasureCmd) runBench(dir string, round int) (map[strin
 	return results, nil
 }
 
+// parseInspectOverheadBenchOutput ignores Go tool noise while retaining scenario and mode identity.
 func parseInspectOverheadBenchOutput(stdout string) (map[string]inspectOverheadBenchResult, error) {
 	results := map[string]inspectOverheadBenchResult{}
 	for _, line := range strings.Split(stdout, "\n") {
@@ -199,6 +210,7 @@ func parseInspectOverheadBenchOutput(stdout string) (map[string]inspectOverheadB
 	return results, nil
 }
 
+// printComparison reports each scenario against its disabled baseline after round aggregation.
 func (cmd *InspectOverheadMeasureCmd) printComparison(rounds []inspectOverheadRound) {
 	byMode := map[string][]inspectOverheadBenchResult{}
 	for _, round := range rounds {
@@ -238,6 +250,7 @@ func (cmd *InspectOverheadMeasureCmd) printComparison(rounds []inspectOverheadRo
 	}
 }
 
+// medianInspectOverhead reduces host jitter without separating the measurements from their scenario metadata.
 func medianInspectOverhead(results []inspectOverheadBenchResult) inspectOverheadBenchResult {
 	if len(results) == 0 {
 		return inspectOverheadBenchResult{}
@@ -257,6 +270,7 @@ func medianInspectOverhead(results []inspectOverheadBenchResult) inspectOverhead
 	return base
 }
 
+// medianFloat64Inspect copies input before sorting so callers retain round order for diagnostics.
 func medianFloat64Inspect(values []float64) float64 {
 	if len(values) == 0 {
 		return 0

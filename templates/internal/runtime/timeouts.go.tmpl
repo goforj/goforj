@@ -9,41 +9,49 @@ import (
 // Timeouts holds app-level lifecycle timeout policy resolved once at startup.
 type Timeouts struct {
 	shutdownTimeout            time.Duration
+{{- if .ProjectComponents.Jobs }}
 	queueShutdownTimeout       time.Duration
+{{- end }}
 	schedulerSubprocessTimeout time.Duration
 }
 
 // NewTimeouts resolves lifecycle timeout policy from env once at boot.
 func NewTimeouts() *Timeouts {
 	appTimeout := env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s")
+{{- if .ProjectComponents.Jobs }}
 	queueTimeout := env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "10s")
+{{- end }}
 	schedulerSubprocessTimeout := env.GetDuration("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", appTimeout.String())
 	return &Timeouts{
 		shutdownTimeout:            appTimeout,
+{{- if .ProjectComponents.Jobs }}
 		queueShutdownTimeout:       queueTimeout,
+{{- end }}
 		schedulerSubprocessTimeout: schedulerSubprocessTimeout,
 	}
 }
 
 // ShutdownTimeout returns the default app shutdown budget.
 func (s *Timeouts) ShutdownTimeout() time.Duration {
-	if s == nil || s.shutdownTimeout <= 0 {
+	if s.shutdownTimeout <= 0 {
 		return 30 * time.Second
 	}
 	return s.shutdownTimeout
 }
 
+{{- if .ProjectComponents.Jobs }}
 // QueueShutdownTimeout returns the queue shutdown budget, falling back to the app budget.
 func (s *Timeouts) QueueShutdownTimeout() time.Duration {
-	if s != nil && s.queueShutdownTimeout > 0 {
+	if s.queueShutdownTimeout > 0 {
 		return s.queueShutdownTimeout
 	}
 	return s.ShutdownTimeout()
 }
+{{- end }}
 
 // SchedulerSubprocessShutdownTimeout returns the shutdown budget for scheduler-owned subprocesses.
 func (s *Timeouts) SchedulerSubprocessShutdownTimeout() time.Duration {
-	if s != nil && s.schedulerSubprocessTimeout > 0 {
+	if s.schedulerSubprocessTimeout > 0 {
 		return s.schedulerSubprocessTimeout
 	}
 	return s.ShutdownTimeout()

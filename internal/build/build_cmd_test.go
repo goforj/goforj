@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,11 +25,11 @@ type stubAPIIndexer struct {
 }
 
 // Prepare writes lightweight artifacts so build tests can focus on pipeline sequencing.
-func (s stubAPIIndexer) Prepare(apiindex.Options) (apiindex.Candidate, string, error) {
+func (s stubAPIIndexer) Prepare(apiindex.Options) (apiindex.Preparation, error) {
 	if err := s.writeArtifacts(); err != nil {
-		return nil, "app app, rejected, 0 operations, 0 schemas, 0 diagnostics", err
+		return apiindex.Preparation{Status: "app app, rejected, 0 operations, 0 schemas, 0 diagnostics"}, err
 	}
-	return nil, "app app, changed, 0 operations, 0 schemas, 0 diagnostics", nil
+	return apiindex.Preparation{Status: "app app, changed, 0 operations, 0 schemas, 0 diagnostics"}, nil
 }
 
 // writeArtifacts preserves the original build integration fixture without exposing Runner internals.
@@ -110,17 +111,8 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 		t.Fatalf("write legacy cache binary: %v", err)
 	}
 
-	previousWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(previousWD) })
-
-	cmd := &Cmd{Root: "."}
-	if _, err := cmd.runPlainGoBuild([]string{"-o", "./bin/app", "./cmd/app"}); err != nil {
+	cmd := &Cmd{Root: root}
+	if _, err := cmd.runPlainGoBuild(root, []string{"-o", "./bin/app", "./cmd/app"}); err != nil {
 		t.Fatalf("runPlainGoBuild returned error: %v", err)
 	}
 	info, err := os.Stat(binPath)
@@ -145,38 +137,40 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	}
 }
 
-func TestAtomicGoBuildArgsUsesUniqueHiddenBuildOutputs(t *testing.T) {
-	firstArgs, firstOutput, firstCleanup, firstOK, err := atomicGoBuildArgs([]string{"-o", "./bin/app", "./cmd/app"})
+// TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs verifies overlapping builds never share unpublished executables.
+func TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs(t *testing.T) {
+	root := t.TempDir()
+	firstPlan, err := planAtomicGoBuild(root, []string{"-o", "./bin/app", "./cmd/app"})
 	if err != nil {
-		t.Fatalf("first atomicGoBuildArgs returned error: %v", err)
+		t.Fatalf("plan first atomic build: %v", err)
 	}
-	if !firstOK {
+	if firstPlan == nil {
 		t.Fatal("expected first build output to use atomic publishing")
 	}
-	defer firstCleanup()
+	defer firstPlan.cleanup()
 
-	secondArgs, secondOutput, secondCleanup, secondOK, err := atomicGoBuildArgs([]string{"-o", "./bin/app", "./cmd/app"})
+	secondPlan, err := planAtomicGoBuild(root, []string{"-o", "./bin/app", "./cmd/app"})
 	if err != nil {
-		t.Fatalf("second atomicGoBuildArgs returned error: %v", err)
+		t.Fatalf("plan second atomic build: %v", err)
 	}
-	if !secondOK {
+	if secondPlan == nil {
 		t.Fatal("expected second build output to use atomic publishing")
 	}
-	defer secondCleanup()
+	defer secondPlan.cleanup()
 
-	if firstOutput.build == secondOutput.build {
-		t.Fatalf("expected unique build outputs, got %q", firstOutput.build)
+	if firstPlan.build == secondPlan.build {
+		t.Fatalf("expected unique build outputs, got %q", firstPlan.build)
 	}
-	if firstOutput.ready != filepath.Join("bin", ".app.ready") || secondOutput.ready != filepath.Join("bin", ".app.ready") {
-		t.Fatalf("expected shared ready stamp path, got %q and %q", firstOutput.ready, secondOutput.ready)
+	if firstPlan.ready != filepath.Join(root, "bin", ".app.ready") || secondPlan.ready != filepath.Join(root, "bin", ".app.ready") {
+		t.Fatalf("expected shared ready stamp path, got %q and %q", firstPlan.ready, secondPlan.ready)
 	}
-	for _, path := range []string{firstOutput.build, secondOutput.build} {
-		if filepath.Dir(path) != filepath.Join("bin", ".forj-build-cache") {
+	for _, path := range []string{firstPlan.build, secondPlan.build} {
+		if filepath.Dir(path) != filepath.Join(root, "bin", ".forj-build-cache") {
 			t.Fatalf("expected hidden build output dir, got %q", path)
 		}
 	}
-	if strings.Contains(strings.Join(firstArgs, " "), "./bin/app") || strings.Contains(strings.Join(secondArgs, " "), "./bin/app") {
-		t.Fatalf("expected go build args to avoid final output path, got %#v and %#v", firstArgs, secondArgs)
+	if strings.Contains(strings.Join(firstPlan.args, " "), "./bin/app") || strings.Contains(strings.Join(secondPlan.args, " "), "./bin/app") {
+		t.Fatalf("expected go build args to avoid final output path, got %#v and %#v", firstPlan.args, secondPlan.args)
 	}
 }
 
@@ -212,18 +206,9 @@ func main() { fmt.Print("beta") }
 		}
 	}
 
-	previousDirectory, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd() error = %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("Chdir() error = %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
-
 	buildPackage := func(packagePath string) error {
-		command := &Cmd{Root: "."}
-		_, buildErr := command.runPlainGoBuild([]string{"-o", "./bin/app", packagePath})
+		command := &Cmd{Root: root}
+		_, buildErr := command.runPlainGoBuild(root, []string{"-o", "./bin/app", packagePath})
 		return buildErr
 	}
 	if err := buildPackage("./cmd/alpha"); err != nil {
@@ -405,7 +390,7 @@ func TestBuildArgsAppendDefaultPackageWhenOnlyFlagsProvided(t *testing.T) {
 		t.Fatalf("mkdir cmd/app: %v", err)
 	}
 	cmd := &Cmd{Root: root, Args: []string{"-o", "./bin/app"}}
-	got := cmd.buildArgs()
+	got := requireBuildArgs(t, cmd)
 	want := []string{"-o", "./bin/app", "./cmd/app"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("build args = %#v, want %#v", got, want)
@@ -419,7 +404,7 @@ func TestBuildArgsAppendDefaultPackageAfterDoubleDashTags(t *testing.T) {
 		t.Fatalf("create default app target: %v", err)
 	}
 	command := &Cmd{Root: root, Args: []string{"--tags", "dev"}}
-	got := command.buildArgs()
+	got := requireBuildArgs(t, command)
 	want := []string{"--tags", "dev", "./cmd/app"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("double-dash tag build args = %v, want %v", got, want)
@@ -448,9 +433,9 @@ func main() {}
 	}
 
 	var indexedTags []string
-	preparer := recordingAPIIndexPreparer{prepare: func(options apiindex.Options) (apiindex.Candidate, string, error) {
+	preparer := recordingAPIIndexPreparer{prepare: func(options apiindex.Options) (apiindex.Preparation, error) {
 		indexedTags = append([]string(nil), options.BuildTags...)
-		return nil, "app app, changed, 0 operations, 0 schemas, 0 diagnostics", nil
+		return apiindex.Preparation{Status: "app app, changed, 0 operations, 0 schemas, 0 diagnostics"}, nil
 	}}
 	command := NewCmd(logger.NewSilentLogger(), preparer)
 	command.Root = root
@@ -472,7 +457,7 @@ func TestBuildArgsUseActiveConventionalTarget(t *testing.T) {
 	t.Setenv("FORJ_APP", "reporting")
 
 	cmd := &Cmd{Root: root}
-	got := cmd.buildArgs()
+	got := requireBuildArgs(t, cmd)
 	want := []string{"-o", "bin/reporting", "./cmd/reporting"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("build args = %#v, want %#v", got, want)
@@ -481,23 +466,14 @@ func TestBuildArgsUseActiveConventionalTarget(t *testing.T) {
 
 func TestLoadWirePathsUsesActiveConventionalTarget(t *testing.T) {
 	root := t.TempDir()
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
 	wireDir := filepath.Join("app", "reporting", "wire")
-	if err := os.MkdirAll(wireDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, wireDir), 0o755); err != nil {
 		t.Fatalf("mkdir target wire dir: %v", err)
 	}
 	t.Setenv("FORJ_APP", "reporting")
 
-	got := loadWirePaths()
-	want := []string{wireDir}
+	got := loadWirePaths(root)
+	want := []string{filepath.Join(root, wireDir)}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("wire paths = %#v, want %#v", got, want)
 	}
@@ -586,7 +562,7 @@ func TestAttemptMissingModuleRecovery(t *testing.T) {
 		return nil
 	}
 
-	recovered, err := build.attemptMissingModuleRecovery(`internal/storages/manager_gen.go:14:2: no required module provides package github.com/goforj/storage/driver/redisstorage; to add it:
+	recovered, err := build.attemptMissingModuleRecovery(".", `internal/storages/manager_gen.go:14:2: no required module provides package github.com/goforj/storage/driver/redisstorage; to add it:
 
 go get github.com/goforj/storage/driver/redisstorage`)
 	if err != nil {
@@ -600,6 +576,27 @@ go get github.com/goforj/storage/driver/redisstorage`)
 	}
 	if build.lastBuildStatus != "synced deps, retried" {
 		t.Fatalf("lastBuildStatus = %q", build.lastBuildStatus)
+	}
+}
+
+// TestRunGoBuildReportsModuleRecoveryFailure verifies a failed go get is not hidden behind the compiler error that triggered it.
+func TestRunGoBuildReportsModuleRecoveryFailure(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/recovery\n\ngo 1.26\n",
+		"main.go": "package main\n\nimport _ \"example.invalid/missing\"\n\nfunc main() {}\n",
+	}
+	for relativePath, contents := range files {
+		if err := os.WriteFile(filepath.Join(root, relativePath), []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relativePath, err)
+		}
+	}
+	recoveryErr := errors.New("go get denied")
+	build := &Cmd{goGetFunc: func([]string) error { return recoveryErr }}
+
+	err := build.runGoBuild(root, []string{"."}, goBuildOptions{allowRecovery: true})
+	if !errors.Is(err, recoveryErr) || !strings.Contains(err.Error(), "recover missing build modules") {
+		t.Fatalf("runGoBuild error = %v, want module recovery failure", err)
 	}
 }
 
@@ -684,7 +681,7 @@ func TestBuildProgressReporterNoopsWithoutTTY(t *testing.T) {
 // from generated app source rather than artifact-specific linker values.
 func TestBuildArgsDoNotInjectLaunchState(t *testing.T) {
 	cmd := &Cmd{Root: t.TempDir()}
-	args := cmd.buildArgs()
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	if strings.Contains(got, "-ldflags") {
 		t.Fatalf("buildArgs() injected launch state: %v", args)
@@ -704,7 +701,7 @@ func TestBuildArgsAddsCompiledEnvDefaultsLdflags(t *testing.T) {
 		EnvDefaults: "FEATURE_A=true,FEATURE_B=false",
 	}
 
-	args := cmd.buildArgs()
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
 	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64="+wantPayload) {
@@ -725,7 +722,7 @@ func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
 		EnvOverrides: "FEATURE_A=true,FEATURE_B=false",
 	}
 
-	args := cmd.buildArgs()
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
 	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvOverridesBase64="+wantPayload) {
@@ -747,7 +744,7 @@ func TestBuildArgsMergesCompiledEnvWithExistingLdflags(t *testing.T) {
 		Args:        []string{"-trimpath", "-ldflags", "-s -w", "-o", "./bin/app", "."},
 	}
 
-	args := cmd.buildArgs()
+	args := requireBuildArgs(t, cmd)
 	got := strings.Join(args, " ")
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true"))
 	want := "-s -w -X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64=" + wantPayload
@@ -762,7 +759,7 @@ func TestValidateCompiledEnvRejectsMalformedEnvDefaults(t *testing.T) {
 	cmd := &Cmd{
 		EnvDefaults: "BROKEN",
 	}
-	if err := cmd.validateCompiledEnv(); err == nil {
+	if err := cmd.validateCompiledEnv(cmd.Root); err == nil {
 		t.Fatal("expected malformed env defaults to fail")
 	}
 }
@@ -773,7 +770,17 @@ func TestValidateCompiledEnvRejectsMalformedEnvOverrides(t *testing.T) {
 	cmd := &Cmd{
 		EnvOverrides: "BROKEN",
 	}
-	if err := cmd.validateCompiledEnv(); err == nil {
+	if err := cmd.validateCompiledEnv(cmd.Root); err == nil {
 		t.Fatal("expected malformed env overrides to fail")
 	}
+}
+
+// requireBuildArgs keeps argument-shape assertions focused while still failing on package-probe errors.
+func requireBuildArgs(t *testing.T, command *Cmd) []string {
+	t.Helper()
+	args, err := command.buildArgs(command.Root)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	return args
 }

@@ -37,10 +37,8 @@ func consumeSuppressedDevEnvTrigger() bool {
 	}
 }
 
+// startDevEnvFileWatcher coordinates env changes outside process watchers so one edit produces one rebuild request.
 func startDevEnvFileWatcher(ctx context.Context, trigger func(), interval time.Duration) func() {
-	if trigger == nil {
-		return func() {}
-	}
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
@@ -75,10 +73,8 @@ func startDevEnvFileWatcher(ctx context.Context, trigger func(), interval time.D
 	}
 }
 
+// startDevAppWatcher waits for a stable conventional App tree before rebuilding the lifecycle graph.
 func startDevAppWatcher(ctx context.Context, trigger func(), interval time.Duration) func() {
-	if trigger == nil {
-		return func() {}
-	}
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
 	}

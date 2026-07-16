@@ -18,9 +18,11 @@ func TestPrimitiveRendererMigrations(t *testing.T) {
 func testPrimitiveLegacyOwners(t *testing.T) {
 	t.Run("preserved migrations", testPrimitivePreservedOwnerMigrations)
 	t.Run("collision preflight", testPrimitiveOwnerMigrationCollisions)
+	t.Run("discovery failure", testPrimitiveOwnerMigrationDiscoveryFailure)
 	t.Run("Events subscriber set rename", testEventSubscriberSetRename)
 	t.Run("Events structured compatibility", testEventStructuredCompatibility)
 	t.Run("Jobs framework cleanup", testJobsLegacyFrameworkCleanup)
+	t.Run("legacy cleanup discovery failure", testLegacyCleanupDiscoveryFailure)
 }
 
 // testPrimitivePreservedOwnerMigrations verifies historical owner paths move without content changes.
@@ -40,7 +42,7 @@ func testPrimitivePreservedOwnerMigrations(t *testing.T) {
 		{
 			name: "Events named App",
 			config: &project.Config{
-				Render: project.RenderConfig{Components: primitiveRendererBaseComponents(), ComponentContractVersion: project.CurrentComponentContractVersion},
+				Render: project.RenderConfig{Components: primitiveRendererBaseComponents()},
 				Apps:   map[string]project.AppConfig{"worker": {Components: primitiveComponentsWith(project.ComponentEvents)}},
 			},
 			source: filepath.Join(project.DefaultNamedApp("worker").WireDir, "inject_event_subscribers.go"),
@@ -58,7 +60,10 @@ func testPrimitivePreservedOwnerMigrations(t *testing.T) {
 			usePrimitiveRendererRoot(t)
 			contents := "package wire\n\n// OwnerSentinel must survive migration.\nvar ownerSentinel = true\n"
 			writePrimitiveRendererFile(t, test.source, contents)
-			renderer := &ProjectRenderer{config: test.config}
+			renderer := &ProjectRenderer{
+				config:    test.config,
+				workspace: currentProjectRenderWorkspace(t),
+			}
 			if err := renderer.migrateAppOwnedWireFilenames(); err != nil {
 				t.Fatalf("migrate %s owner: %v", test.name, err)
 			}
@@ -108,7 +113,10 @@ func testPrimitiveOwnerMigrationCollisions(t *testing.T) {
 			if test.unrelatedSource != "" {
 				writePrimitiveRendererFile(t, test.unrelatedSource, unrelatedContents)
 			}
-			renderer := &ProjectRenderer{config: test.config}
+			renderer := &ProjectRenderer{
+				config:    test.config,
+				workspace: currentProjectRenderWorkspace(t),
+			}
 			err := renderer.migrateAppOwnedWireFilenames()
 			if err == nil || !strings.Contains(err.Error(), test.source) || !strings.Contains(err.Error(), test.target) {
 				t.Fatalf("%s collision error = %v", test.name, err)
@@ -131,6 +139,31 @@ func testPrimitiveOwnerMigrationCollisions(t *testing.T) {
 	}
 }
 
+// testPrimitiveOwnerMigrationDiscoveryFailure verifies layout failures stop owner moves before any file changes.
+func testPrimitiveOwnerMigrationDiscoveryFailure(t *testing.T) {
+	usePrimitiveRendererRoot(t)
+	source := filepath.Join("wire", "inject_jobs_app.go")
+	target := filepath.Join(project.DefaultApp().WireDir, "inject_jobs_app.go")
+	contents := "package wire\n\nvar ownerSentinel = true\n"
+	writePrimitiveRendererFile(t, source, contents)
+	writePrimitiveRendererFile(t, "cmd", "not a directory\n")
+	renderer := &ProjectRenderer{
+		config:    primitiveRendererConfig(primitiveComponentsWith(project.ComponentJobs)),
+		workspace: currentProjectRenderWorkspace(t),
+	}
+
+	err := renderer.migrateAppOwnedWireFilenames()
+	if err == nil || !strings.Contains(err.Error(), "discover Apps for owner migrations") || !strings.Contains(err.Error(), "cmd") {
+		t.Fatalf("owner migration discovery error = %v", err)
+	}
+	if got := readPrimitiveRendererFile(t, source); got != contents {
+		t.Fatal("owner migration discovery failure changed the legacy owner")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("owner migration discovery failure created %s: %v", target, err)
+	}
+}
+
 // testEventSubscriberSetRename verifies identifier repair changes code references without rewriting comments or strings.
 func testEventSubscriberSetRename(t *testing.T) {
 	usePrimitiveRendererRoot(t)
@@ -144,7 +177,10 @@ var historicalName = "eventSubscriberSet"
 func currentSubscriberSet() any { return eventSubscriberSet }
 `
 	writePrimitiveRendererFile(t, path, contents)
-	renderer := &ProjectRenderer{config: primitiveRendererConfig(primitiveComponentsWith(project.ComponentEvents))}
+	renderer := &ProjectRenderer{
+		config:    primitiveRendererConfig(primitiveComponentsWith(project.ComponentEvents)),
+		workspace: currentProjectRenderWorkspace(t),
+	}
 	if err := renderer.migrateAppOwnedWireFilenames(); err != nil {
 		t.Fatalf("repair Events subscriber set: %v", err)
 	}
@@ -174,7 +210,8 @@ type Commands struct { Pipeline cmd.TestEventPipelineCmd }
 
 var appCommandSet = wire.NewSet(cmd.NewTestEventPipelineCmd)
 `)
-		if !legacyEventPipelineField(app) || !legacyEventPipelineProvider(app) {
+		workspace := currentProjectRenderWorkspace(t)
+		if !workspace.legacyEventPipelineField(app) || !workspace.legacyEventPipelineProvider(app) {
 			t.Fatal("structured Events compatibility declarations were not detected")
 		}
 	})
@@ -190,10 +227,13 @@ func provideSharedRedisClient() any { return nil }
 `
 		writePrimitiveRendererFile(t, servicePath, serviceContents)
 		config := &project.Config{
-			Render: project.RenderConfig{Components: primitiveRendererBaseComponents(), ComponentContractVersion: project.CurrentComponentContractVersion},
+			Render: project.RenderConfig{Components: primitiveRendererBaseComponents()},
 			Apps:   map[string]project.AppConfig{"worker": {Components: primitiveComponentsWith(project.ComponentEvents)}},
 		}
-		renderer := &ProjectRenderer{config: config}
+		renderer := &ProjectRenderer{
+			config:    config,
+			workspace: currentProjectRenderWorkspace(t),
+		}
 		err := renderer.validateEventsRenderTransition(project.ProjectComponents(config))
 		if err == nil || !strings.Contains(err.Error(), servicePath) {
 			t.Fatalf("ambiguous Events provider error = %v", err)
@@ -216,7 +256,10 @@ func testJobsLegacyFrameworkCleanup(t *testing.T) {
 	writePrimitiveRendererFile(t, filepath.Join("project", "config.go"), "package project\n")
 	writePrimitiveRendererFile(t, filepath.Join("internal", "lighthouse", "project_config_patch.go"), "package lighthouse\n")
 	components := primitiveComponentsWith(project.ComponentJobs)
-	renderer := &ProjectRenderer{config: primitiveRendererConfig(components)}
+	renderer := &ProjectRenderer{
+		config:    primitiveRendererConfig(components),
+		workspace: currentProjectRenderWorkspace(t),
+	}
 	if err := renderer.validateJobsRenderTransition(components); err != nil {
 		t.Fatalf("legacy Jobs framework files blocked enabled rerender: %v", err)
 	}
@@ -230,5 +273,26 @@ func testJobsLegacyFrameworkCleanup(t *testing.T) {
 	}
 	if got := readPrimitiveRendererFile(t, customPath); got != customContents {
 		t.Fatalf("custom Jobs source changed: %q", got)
+	}
+}
+
+// testLegacyCleanupDiscoveryFailure verifies layout failures stop cleanup before generated files are removed.
+func testLegacyCleanupDiscoveryFailure(t *testing.T) {
+	usePrimitiveRendererRoot(t)
+	sentinel := filepath.Join("internal", "cmd", "generate_all_cmd.go")
+	contents := "package cmd\n\nvar cleanupSentinel = true\n"
+	writePrimitiveRendererFile(t, sentinel, contents)
+	writePrimitiveRendererFile(t, "cmd", "not a directory\n")
+	renderer := &ProjectRenderer{
+		config:    primitiveRendererConfig(primitiveRendererBaseComponents()),
+		workspace: currentProjectRenderWorkspace(t),
+	}
+
+	err := renderer.cleanupLegacyGeneratedFiles()
+	if err == nil || !strings.Contains(err.Error(), "discover Apps for legacy cleanup") || !strings.Contains(err.Error(), "cmd") {
+		t.Fatalf("legacy cleanup discovery error = %v", err)
+	}
+	if got := readPrimitiveRendererFile(t, sentinel); got != contents {
+		t.Fatal("legacy cleanup discovery failure removed or changed an existing generated file")
 	}
 }

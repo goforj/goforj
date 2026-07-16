@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/internal/apiindex"
+	"github.com/goforj/goforj/internal/compileprofile"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -29,7 +30,7 @@ type Cmd struct {
 
 	Root            string   `help:"Project root to build" default:"."`
 	Args            []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
-	compileProfile  CompileProfileReport
+	compileProfile  compileprofile.Report
 	lastBuildStatus string
 	goGetFunc       func([]string) error
 }
@@ -49,14 +50,18 @@ func (*Cmd) Signature() string {
 
 // Run generates project source, prepares API artifacts, and publishes them only after compilation succeeds.
 func (c *Cmd) Run() error {
-	if err := c.validateCompiledEnv(); err != nil {
+	root, err := resolveProjectRoot(c.Root)
+	if err != nil {
+		return err
+	}
+	if err := c.validateCompiledEnv(root); err != nil {
 		return err
 	}
 	buildTags, err := apiindex.BuildTagsFromArgs(c.Args)
 	if err != nil {
 		return err
 	}
-	if err := c.pipeline.Run(c.Root, "build", Step{
+	if err := c.pipeline.Run(root, "build", Step{
 		Name: "go build",
 		Run:  c.buildBinary,
 	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire, APIIndexStrict: c.APIIndexStrict, BuildTags: buildTags}); err != nil {
@@ -68,26 +73,41 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
-func (c *Cmd) buildBinary() (string, error) {
-	args := c.buildArgs()
+// buildBinary compiles and publishes the selected App beneath the pipeline's validated project root.
+func (c *Cmd) buildBinary(root string) (string, error) {
+	args, err := c.buildArgs(root)
+	if err != nil {
+		return "", err
+	}
 	if outIndex := outputArgIndex(args); outIndex >= 0 {
-		if err := os.MkdirAll(filepath.Dir(outputPath(args[outIndex])), 0o755); err != nil {
+		if err := os.MkdirAll(rootedBuildPath(root, filepath.Dir(outputPath(args[outIndex]))), 0o755); err != nil {
 			return "", err
 		}
 	}
 	if c.Profile {
-		return c.buildBinaryWithProfile(args)
+		return c.buildBinaryWithProfile(root, args)
 	}
-	return c.runPlainGoBuild(args)
+	return c.runPlainGoBuild(root, args)
 }
 
-// buildArgs preserves caller-supplied Go build flags while injecting App environment metadata only when that metadata is configured.
-func (c *Cmd) buildArgs() []string {
+// rootedBuildPath anchors relative build artifacts while preserving absolute caller-selected paths.
+func rootedBuildPath(root string, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	return filepath.Join(root, path)
+}
+
+// buildArgs preserves caller-supplied Go build flags while resolving the default App package and configured environment metadata.
+func (c *Cmd) buildArgs(root string) ([]string, error) {
 	envDefaultsEncoded := c.encodedEnvDefaults()
 	envOverridesEncoded := c.encodedEnvOverrides()
 	modulePath := ""
 	if envDefaultsEncoded != "" || envOverridesEncoded != "" {
-		modulePath = c.modulePath()
+		modulePath = c.modulePath(root)
 	}
 	var extraLdflags []string
 	if envDefaultsEncoded != "" {
@@ -102,16 +122,24 @@ func (c *Cmd) buildArgs() []string {
 		if len(extraLdflags) > 0 {
 			args = append(args, "-ldflags", strings.Join(extraLdflags, " "))
 		}
-		return append(args, defaultBuildPackage(c.Root))
+		packagePath, err := resolveDefaultAppPackage(root)
+		if err != nil {
+			return nil, err
+		}
+		return append(args, packagePath), nil
 	}
 	args := append([]string{}, c.Args...)
 	if !hasGoBuildPackageArg(args) {
-		args = append(args, defaultBuildPackage(c.Root))
+		packagePath, err := resolveDefaultAppPackage(root)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, packagePath)
 	}
 	if len(extraLdflags) == 0 {
-		return args
+		return args, nil
 	}
-	return c.withExtraLdflags(args, extraLdflags...)
+	return c.withExtraLdflags(args, extraLdflags...), nil
 }
 
 // hasGoBuildPackageArg reports whether pass-through go build args already name the package to build.
@@ -148,23 +176,6 @@ func hasGoBuildPackageArg(args []string) bool {
 	return false
 }
 
-// defaultBuildPackage keeps generated projects building the real app entrypoint instead of the framework root.
-func defaultBuildPackage(root string) string {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	target := ActiveApp()
-	if packagePath := appPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
-		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
-			return packagePath
-		}
-	}
-	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
-		return "./cmd/app"
-	}
-	return "."
-}
-
 func outputArgIndex(args []string) int {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-o" {
@@ -187,14 +198,14 @@ func outputPath(arg string) string {
 }
 
 // validateCompiledEnv fails before pipeline work because linker injection needs valid assignments and a resolvable module path.
-func (c *Cmd) validateCompiledEnv() error {
+func (c *Cmd) validateCompiledEnv(root string) error {
 	if _, err := parseEnvAssignments(c.EnvDefaults, "--env-defaults"); err != nil {
 		return err
 	}
 	if _, err := parseEnvAssignments(c.EnvOverrides, "--env-overrides"); err != nil {
 		return err
 	}
-	if modulePath := c.modulePath(); modulePath == "" && (strings.TrimSpace(c.EnvDefaults) != "" || strings.TrimSpace(c.EnvOverrides) != "") {
+	if modulePath := c.modulePath(root); modulePath == "" && (strings.TrimSpace(c.EnvDefaults) != "" || strings.TrimSpace(c.EnvOverrides) != "") {
 		if strings.TrimSpace(c.EnvDefaults) != "" {
 			return fmt.Errorf("could not resolve module path from %s/go.mod for env defaults %q", strings.TrimSpace(c.Root), strings.TrimSpace(c.EnvDefaults))
 		}
@@ -294,8 +305,8 @@ func parseEnvAssignments(raw string, flagName string) ([]envDefaultPair, error) 
 	return pairs, nil
 }
 
-func (c *Cmd) modulePath() string {
-	root := c.Root
+// modulePath reads linker metadata from the selected project instead of the caller's working directory.
+func (c *Cmd) modulePath(root string) string {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}

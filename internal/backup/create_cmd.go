@@ -30,12 +30,12 @@ func (c *CreateCmd) Run() error {
 		if err != nil {
 			return err
 		}
-		db, dialect, err := OpenSQLConnection(context.Background(), connection)
+		sqlConnection, err := OpenSQLConnection(context.Background(), connection)
 		if err != nil {
 			return err
 		}
-		defer db.Close()
-		tables, err := ListTables(context.Background(), db, dialect)
+		defer sqlConnection.DB.Close()
+		tables, err := ListTables(context.Background(), sqlConnection.DB, sqlConnection.Dialect)
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,7 @@ func (c *CreateCmd) Run() error {
 			return err
 		}
 		dir := filepath.Join(c.Path, "portable-"+time.Now().UTC().Format("20060102T150405Z"))
-		archive, err := NewPortableService().Create(context.Background(), dir, db, dialect, tables, migrationFingerprint)
+		archive, err := NewPortableService().Create(context.Background(), dir, sqlConnection.DB, sqlConnection.Dialect, tables, migrationFingerprint)
 		if err != nil {
 			return err
 		}
@@ -54,14 +54,14 @@ func (c *CreateCmd) Run() error {
 		fmt.Printf("portable backup complete %s (%d tables)\n", dir, len(archive.Tables))
 		return nil
 	}
-	dir, manifest, err := NewService().Create(context.Background(), c.Path, c.Resource)
+	backup, err := NewService().Create(context.Background(), c.Path, c.Resource)
 	if err != nil {
 		return err
 	}
-	if err := uploadCompletedBackup(context.Background(), dir); err != nil {
+	if err := uploadCompletedBackup(context.Background(), backup.Directory); err != nil {
 		return err
 	}
-	fmt.Printf("backup complete %s (%d resources)\n", dir, len(manifest.Resources))
+	fmt.Printf("backup complete %s (%d resources)\n", backup.Directory, len(backup.Manifest.Resources))
 	return nil
 }
 

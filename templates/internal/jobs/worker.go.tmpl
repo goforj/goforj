@@ -12,42 +12,30 @@ import (
 	"time"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
-	{{- if .ProjectComponents.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
-	{{- end }}
 	"github.com/goforj/queue"
 )
 
-// Worker is a struct that represents a queue worker.
+// Worker owns the generated Queue instances for one Jobs runtime.
 type Worker struct {
 	logger      *logger.AppLogger
 	lighthouse  *LighthouseRuntime
 	appTimeouts *runtime.Timeouts
-	{{- if .ProjectComponents.Jobs }}
 	queues      *queues.Manager
-	{{- end }}
 }
 
-// NewWorker creates a new Worker with the given logger.
+// NewWorker creates a Worker from dependencies that the Jobs wire set guarantees.
 func NewWorker(
 	logger *logger.AppLogger,
 	lighthouse *LighthouseRuntime,
 	appTimeouts *runtime.Timeouts,
-	{{- if .ProjectComponents.Jobs }}
 	queues *queues.Manager,
-	{{- end }}
 ) *Worker {
-	componentLogger := logger
-	if componentLogger != nil {
-		componentLogger = componentLogger.WithComponent("Jobs")
-	}
 	return &Worker{
-		logger:      componentLogger,
+		logger:      logger.WithComponent("Jobs"),
 		lighthouse:  lighthouse,
 		appTimeouts: appTimeouts,
-		{{- if .ProjectComponents.Jobs }}
 		queues: queues,
-		{{- end }}
 	}
 }
 
@@ -99,11 +87,9 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 	return nil
 }
 
+// startManagedQueueWorkers starts every generated Queue because construction already guarantees complete instances.
 func startManagedQueueWorkers(ctx context.Context, instances []queues.Instance) error {
 	for _, instance := range instances {
-		if instance.Queue == nil {
-			continue
-		}
 		if err := instance.Queue.StartWorkers(ctx); err != nil {
 			return err
 		}
@@ -111,6 +97,7 @@ func startManagedQueueWorkers(ctx context.Context, instances []queues.Instance) 
 	return nil
 }
 
+// shutdownManagedQueues stops generated Queues concurrently so one slow backend cannot consume every shutdown budget in sequence.
 func shutdownManagedQueues(ctx context.Context, instances []queues.Instance) error {
 	if len(instances) == 0 {
 		return nil
@@ -118,9 +105,6 @@ func shutdownManagedQueues(ctx context.Context, instances []queues.Instance) err
 	errs := make(chan error, len(instances))
 	var wg sync.WaitGroup
 	for _, instance := range instances {
-		if instance.Queue == nil {
-			continue
-		}
 		queueInstance := instance.Queue
 		wg.Add(1)
 		go func(instance *queue.Queue) {
@@ -140,6 +124,7 @@ func shutdownManagedQueues(ctx context.Context, instances []queues.Instance) err
 	return shutdownErr
 }
 
+// managedActiveJobs reports best-effort activity while shutdown is waiting on work already in flight.
 func managedActiveJobs(instances []queues.Instance) int64 {
 	if len(instances) == 0 {
 		return 0
@@ -150,9 +135,6 @@ func managedActiveJobs(instances []queues.Instance) int64 {
 
 	var total int64
 	for _, instance := range instances {
-		if instance.Queue == nil {
-			continue
-		}
 		snapshot, err := instance.Queue.Stats(statsCtx)
 		if err != nil {
 			continue
@@ -164,8 +146,9 @@ func managedActiveJobs(instances []queues.Instance) int64 {
 	return total
 }
 
+// selectManagedQueues resolves command filters against the manager's generated Queue inventory.
 func selectManagedQueues(manager *queues.Manager, queueNames ...string) ([]queues.Instance, error) {
-	instances := managedQueueInstances(manager)
+	instances := manager.Instances()
 	if len(queueNames) == 0 {
 		return instances, nil
 	}
@@ -202,27 +185,7 @@ func selectManagedQueues(manager *queues.Manager, queueNames ...string) ([]queue
 	return out, nil
 }
 
-func managedQueueInstances(manager *queues.Manager) []queues.Instance {
-	seen := map[*queue.Queue]struct{}{}
-	out := make([]queues.Instance, 0, 4)
-	appendQueue := func(instance queues.Instance) {
-		if instance.Queue == nil {
-			return
-		}
-		if _, ok := seen[instance.Queue]; ok {
-			return
-		}
-		seen[instance.Queue] = struct{}{}
-		out = append(out, instance)
-	}
-	if manager != nil {
-		for _, instance := range manager.Instances() {
-			appendQueue(instance)
-		}
-	}
-	return out
-}
-
+// managedQueueNames produces stable resource names for logs and unknown-Queue diagnostics.
 func managedQueueNames(instances []queues.Instance) []string {
 	names := make([]string, 0, len(instances))
 	for _, instance := range instances {
@@ -262,6 +225,7 @@ func managedQueueWorkerAllocations(instances []queues.Instance) []string {
 	return allocations
 }
 
+// normalizeQueueResourceName applies the same case-insensitive lookup convention as generated accessors.
 func normalizeQueueResourceName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }

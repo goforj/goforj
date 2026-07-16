@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/console"
 	"github.com/goforj/execx"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/web/webindex"
 )

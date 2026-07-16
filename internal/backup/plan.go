@@ -229,14 +229,19 @@ func ConnectionFromEnv(name string) Connection {
 	}
 }
 
-// Validate checks that a plan has a usable strategy and connection identity.
+// Validate rejects incomplete database or storage entries before artifact creation begins.
 func (p Plan) Validate() error {
-	if len(p.Resources) == 0 {
+	if len(p.Resources) == 0 && len(p.Storage) == 0 {
 		return fmt.Errorf("backup plan contains no resources")
 	}
 	for _, resource := range p.Resources {
 		if resource.Connection.Name == "" || resource.Strategy == "" {
-			return fmt.Errorf("backup plan contains an unnamed resource")
+			return fmt.Errorf("backup plan contains an incomplete database resource")
+		}
+	}
+	for _, resource := range p.Storage {
+		if resource.Name == "" || resource.Driver == "" {
+			return fmt.Errorf("backup plan contains an incomplete storage resource")
 		}
 	}
 	return nil

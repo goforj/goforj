@@ -200,11 +200,7 @@ func TestInventoryIgnoresStaleDisabledEventBuses(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
-    cache: false
-    events: false
+  components: [cli]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "CACHE_SESSIONS_DRIVER=redis\nEVENTS_AUDIT_DRIVER=redis\n")
 
@@ -224,15 +220,10 @@ func TestInventoryUsesNamedAppEventsEnvelope(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
+  components: [cli]
 apps:
   events-worker:
-    components:
-      cli: true
-      cache: true
-      events: true
+    components: [cli, cache, events]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "CACHE_REPORTS_DRIVER=memory\nEVENTS_AUDIT_DRIVER=inproc\n")
 
@@ -252,10 +243,7 @@ func TestInventoryIgnoresStaleDisabledStorageDisks(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
-    storage: false
+  components: [cli]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=s3\n")
 
@@ -268,21 +256,17 @@ render:
 	}
 }
 
-// TestInventoryUsesNamedAppStorageEnvelope verifies Atlas exposes shared disks when only a named App participates in Storage.
+// TestInventoryUsesNamedAppStorageEnvelope verifies Atlas attributes shared Storage definitions to the participating App.
 func TestInventoryUsesNamedAppStorageEnvelope(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, ".goforj.yml"), `
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
+  components: [cli]
 apps:
   files:
-    components:
-      cli: true
-      storage: true
+    components: [cli, storage]
 `)
 	writeFile(t, filepath.Join(root, ".env"), "STORAGE_PUBLIC_DRIVER=local\n")
 
@@ -290,8 +274,12 @@ apps:
 	if !containsString(inventory.Disks, "public") {
 		t.Fatalf("named Storage App did not expose Atlas disks: %#v", inventory.Disks)
 	}
-	if _, ok := resourceLinkByID(inventory.Resources, "storage-public"); !ok {
+	resource, ok := resourceLinkByID(inventory.Resources, "storage-files-public")
+	if !ok {
 		t.Fatalf("named Storage App did not expose Atlas resource links: %#v", inventory.Resources)
+	}
+	if resource.App != "files" {
+		t.Fatalf("named Storage resource App = %q, want files", resource.App)
 	}
 }
 
@@ -302,10 +290,7 @@ func TestInventoryIgnoresStaleDisabledQueues(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
-    jobs: false
+  components: [cli]
 `)
 	writeFile(t, filepath.Join(root, ".env"), `
 QUEUE_DRIVER=redis
@@ -331,18 +316,12 @@ func TestInventoryKeepsNamedAppQueuesLocal(t *testing.T) {
 project_name: demo
 module_name: example.com/demo
 render:
-  component_contract: 1
-  components:
-    cli: true
+  components: [cli]
 apps:
   api:
-    components:
-      cli: true
-      web_api: true
+    components: [cli, web_api]
   worker:
-    components:
-      cli: true
-      jobs: true
+    components: [cli, jobs]
 `)
 	writeFile(t, filepath.Join(root, ".env"), `
 QUEUE_DRIVER=workerpool

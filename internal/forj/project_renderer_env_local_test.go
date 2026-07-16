@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -28,8 +29,7 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	config := &project.Config{
 		ProjectName: "QueueSeed", GoModuleName: "example.com/queueseed",
 		Render: project.RenderConfig{
-			Components:               project.Components{CLI: true, Jobs: true},
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: project.Components{CLI: true, Jobs: true},
 		},
 	}
 	encoded, err := yaml.Marshal(config)
@@ -116,8 +116,7 @@ func TestRenderAppOnlyPublishesResourceEnvironmentBeforeAppDefaults(t *testing.T
 		ProjectName:  "AppResourceMigration",
 		GoModuleName: "example.com/app-resource-migration",
 		Render: project.RenderConfig{
-			Components:               components,
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: components,
 		},
 		Apps: map[string]project.AppConfig{
 			"worker": {Components: components},
@@ -345,7 +344,7 @@ func TestProjectRendererDropsInapplicableLegacyQueueDriver(t *testing.T) {
 		t.Fatalf("read environment: %v", err)
 	}
 	for _, line := range strings.Split(string(envData), "\n") {
-		key, _, ok := parseEnvLine(line)
+		key, _, ok := envfile.ParseAssignment(line)
 		if ok && strings.HasPrefix(key, "QUEUE_") {
 			t.Fatalf("Jobs-disabled migration created %s:\n%s", key, envData)
 		}

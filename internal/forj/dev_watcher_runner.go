@@ -77,41 +77,42 @@ type devWatcherControllerOptions struct {
 	reconcile bool
 }
 
-// startNativeWatchers compiles configuration and starts one shared watcher/process controller.
-func startNativeWatchers(
-	config *project.Config,
-	streamer *devwatchStreamer,
-	outWriter io.Writer,
-	errWriter io.Writer,
-	soundOnError bool,
-	reconcile bool,
-) ([]runningWatcher, <-chan watcherExit, error) {
-	compiled, err := compileDevWatchers(config)
+// devWatcherRuntime keeps handles, controller, and exit stream together so restart paths cannot drain a different generation.
+type devWatcherRuntime struct {
+	session    *devWatchSession
+	watchers   []runningWatcher
+	controller *devWatcherController
+	exitCh     <-chan watcherExit
+}
+
+// startDevWatcherRuntime derives startup controls from the session so watcher policy has one source of truth.
+func startDevWatcherRuntime(session *devWatchSession) (*devWatcherRuntime, error) {
+	watcherRuntime := &devWatcherRuntime{session: session}
+	compiled, err := compileDevWatchers(session.config)
 	if err != nil {
-		return nil, nil, err
-	}
-	if len(compiled) == 0 {
-		return nil, nil, nil
+		return nil, err
 	}
 	controller, err := newDevWatcherControllerWithOptions(
 		compiled,
-		streamer,
-		outWriter,
-		errWriter,
-		soundOnError,
-		devWatcherControllerOptions{reconcile: reconcile},
+		session.streamer,
+		session.outWriter,
+		session.errWriter,
+		session.config.Dev.SoundOnWatchError,
+		devWatcherControllerOptions{reconcile: session.reconcile},
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	watchers := make([]runningWatcher, 0, len(compiled))
+	watcherRuntime.controller = controller
+	watcherRuntime.exitCh = controller.exitCh
+	watcherRuntime.watchers = make([]runningWatcher, 0, len(compiled))
 	names := make([]string, 0, len(compiled))
 	for _, watcher := range compiled {
-		watchers = append(watchers, runningWatcher{id: watcher.ID, name: watcher.Name, native: controller})
+		watcherRuntime.watchers = append(watcherRuntime.watchers, runningWatcher{id: watcher.ID, name: watcher.Name})
 		names = append(names, watcher.Name)
 	}
-	emitWatcherLifecycleSummary(controller.outWriter, streamer, names, watcherStateStarted)
-	return watchers, controller.exitCh, nil
+	emitWatcherLifecycleSummary(controller.outWriter, session.streamer, names, watcherStateStarted)
+	return watcherRuntime, nil
 }
 
 // newDevWatcherController establishes physical coverage before starting any configured command.
@@ -948,10 +949,10 @@ func (c *devWatcherController) publishExit(id string, name string, processExit *
 	c.exited[id] = true
 	c.mu.Unlock()
 	select {
-	case c.exitCh <- watcherExit{id: id, name: name, native: processExit, err: err}:
+	case c.exitCh <- watcherExit{id: id, name: name, process: processExit, err: err}:
 	case <-c.ctx.Done():
 		select {
-		case c.exitCh <- watcherExit{id: id, name: name, native: processExit, err: err}:
+		case c.exitCh <- watcherExit{id: id, name: name, process: processExit, err: err}:
 		default:
 		}
 	}
@@ -965,7 +966,7 @@ func (c *devWatcherController) stop(timeout time.Duration) {
 	<-c.stopDone
 }
 
-// stopAll performs controller shutdown once while allowing every runningWatcher handle to wait on it.
+// stopAll closes one native generation before publishing terminal events for each logical watcher handle.
 func (c *devWatcherController) stopAll(timeout time.Duration) {
 	defer close(c.stopDone)
 	c.mu.Lock()
@@ -990,20 +991,20 @@ func (c *devWatcherController) stopAll(timeout time.Duration) {
 	}
 }
 
-// watcherExitOK normalizes legacy execx and native process results for the outer dev loop.
+// watcherExitOK treats synthetic controller exits as successful while preserving native process status.
 func watcherExitOK(exit watcherExit) bool {
-	if exit.native != nil {
-		return exit.native.OK()
+	if exit.process == nil {
+		return true
 	}
-	return exit.result.OK()
+	return exit.process.OK()
 }
 
-// watcherExitCode returns a useful native or compatibility process exit code.
+// watcherExitCode keeps synthetic controller exits at zero while preserving native process status.
 func watcherExitCode(exit watcherExit) int {
-	if exit.native != nil {
-		return exit.native.ExitCode
+	if exit.process == nil {
+		return 0
 	}
-	return exit.result.ExitCode
+	return exit.process.ExitCode
 }
 
 // watcherExitError retains start failures even when the operating system did not create a process result.
@@ -1011,13 +1012,13 @@ func watcherExitError(exit watcherExit) error {
 	if exit.err != nil {
 		return exit.err
 	}
-	if exit.native != nil && exit.native.Err != nil && !exit.native.Intentional() {
-		return exit.native.Err
+	if exit.process != nil && exit.process.Err != nil && !exit.process.Intentional() {
+		return exit.process.Err
 	}
 	return nil
 }
 
 // isIntentionalWatcherExit distinguishes coordinated native stops from command failures.
 func isIntentionalWatcherExit(exit watcherExit) bool {
-	return exit.native != nil && exit.native.Intentional() || errors.Is(exit.err, context.Canceled)
+	return exit.process != nil && exit.process.Intentional() || errors.Is(exit.err, context.Canceled)
 }

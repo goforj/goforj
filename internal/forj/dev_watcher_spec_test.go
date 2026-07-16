@@ -612,28 +612,36 @@ func TestParseLegacyDevWatchOptionsRejectsInvalidInput(t *testing.T) {
 // TestCompileDevWatchTimingDefaultsAndValidation verifies native polling and debounce normalization.
 func TestCompileDevWatchTimingDefaultsAndValidation(t *testing.T) {
 	t.Parallel()
-	watch, poll, err := compileStructuredWatchSpec("docs", []string{"."}, []string{".md"}, nil, nil, nil, "", "")
+	watchConfig := project.DevWatch{Include: []string{".md"}}
+	compiled, err := compileStructuredWatchSpec("docs", watchConfig)
 	if err != nil {
 		t.Fatalf("compileStructuredWatchSpec() defaults error = %v", err)
 	}
-	if watch.Debounce != devwatch.DefaultDebounce || poll != 0 {
-		t.Fatalf("default timing = (%s, %s)", watch.Debounce, poll)
+	if compiled.spec.Debounce != devwatch.DefaultDebounce || compiled.pollInterval != 0 {
+		t.Fatalf("default timing = (%s, %s)", compiled.spec.Debounce, compiled.pollInterval)
+	}
+	if got, want := compiled.spec.Roots, []string{"."}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("default roots = %#v, want %#v", got, want)
 	}
 
-	watch, poll, err = compileStructuredWatchSpec("docs", []string{"."}, []string{".md"}, nil, nil, nil, "40ms", "750ms")
+	watchConfig.Debounce = "40ms"
+	watchConfig.Poll = "750ms"
+	compiled, err = compileStructuredWatchSpec("docs", watchConfig)
 	if err != nil {
 		t.Fatalf("compileStructuredWatchSpec() explicit error = %v", err)
 	}
-	if watch.Debounce != 40*time.Millisecond || poll != 750*time.Millisecond {
-		t.Fatalf("explicit timing = (%s, %s)", watch.Debounce, poll)
+	if compiled.spec.Debounce != 40*time.Millisecond || compiled.pollInterval != 750*time.Millisecond {
+		t.Fatalf("explicit timing = (%s, %s)", compiled.spec.Debounce, compiled.pollInterval)
 	}
 
-	watch, _, err = compileStructuredWatchSpec("docs", []string{"."}, []string{".md"}, nil, nil, nil, "0s", "")
+	watchConfig.Debounce = "0s"
+	watchConfig.Poll = ""
+	compiled, err = compileStructuredWatchSpec("docs", watchConfig)
 	if err != nil {
 		t.Fatalf("compileStructuredWatchSpec() zero debounce error = %v", err)
 	}
-	if watch.Debounce != 0 || !watch.DebounceSet {
-		t.Fatalf("explicit zero debounce = (%s, set %t)", watch.Debounce, watch.DebounceSet)
+	if compiled.spec.Debounce != 0 || !compiled.spec.DebounceSet {
+		t.Fatalf("explicit zero debounce = (%s, set %t)", compiled.spec.Debounce, compiled.spec.DebounceSet)
 	}
 
 	for _, test := range []struct {
@@ -648,7 +656,11 @@ func TestCompileDevWatchTimingDefaultsAndValidation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			_, _, err := compileStructuredWatchSpec("docs", []string{"."}, []string{".md"}, nil, nil, nil, test.debounce, test.poll)
+			_, err := compileStructuredWatchSpec("docs", project.DevWatch{
+				Include:  []string{".md"},
+				Debounce: test.debounce,
+				Poll:     test.poll,
+			})
 			if err == nil {
 				t.Fatal("compileStructuredWatchSpec() unexpectedly accepted invalid timing")
 			}

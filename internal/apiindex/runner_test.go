@@ -7,13 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
 // newTestRunner mirrors the CLI's late-bound App selection without coupling this package back to build.
 func newTestRunner() *Runner {
-	return NewRunner(logger.NewSilentLogger(), func() project.App {
+	return NewRunner(func() project.App {
 		appName := strings.TrimSpace(os.Getenv("FORJ_APP"))
 		if project.IsSafeAppName(appName) {
 			return project.DefaultNamedApp(appName)
@@ -22,19 +21,32 @@ func newTestRunner() *Runner {
 	})
 }
 
-// TestRunnerRunWritesArtifacts verifies direct indexing honors caller-selected artifact paths.
-func TestRunnerRunWritesArtifacts(t *testing.T) {
+// runIndexAtPaths keeps low-level path coverage out of Runner's production API.
+func runIndexAtPaths(t *testing.T, input paths) {
+	t.Helper()
+	resolvedPaths, err := resolvePaths(input)
+	if err != nil {
+		t.Fatalf("resolve paths: %v", err)
+	}
+	if _, err := newTestRunner().runIndex(resolvedPaths, runOptions{}); err != nil {
+		t.Fatalf("run API index: %v", err)
+	}
+}
+
+// TestRunIndexWritesArtifacts verifies direct indexing honors caller-selected artifact paths.
+func TestRunIndexWritesArtifacts(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root)
 
-	runner := newTestRunner()
 	out := filepath.Join(root, "build", "api_index.json")
 	diagnostics := filepath.Join(root, "build", "api_index.diagnostics.json")
 	openAPI := filepath.Join(root, "build", "openapi.json")
-
-	if err := runner.Run(root, out, diagnostics, openAPI, false); err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
+	runIndexAtPaths(t, paths{
+		root:        root,
+		out:         out,
+		diagnostics: diagnostics,
+		openAPI:     openAPI,
+	})
 
 	for _, p := range []string{out, diagnostics, openAPI} {
 		if _, err := os.Stat(p); err != nil {
@@ -43,8 +55,8 @@ func TestRunnerRunWritesArtifacts(t *testing.T) {
 	}
 }
 
-// TestRunnerSkipsRuntimeDataDir verifies generated and dependency data cannot leak into source discovery.
-func TestRunnerSkipsRuntimeDataDir(t *testing.T) {
+// TestRunIndexSkipsRuntimeDataDir verifies generated and dependency data cannot leak into source discovery.
+func TestRunIndexSkipsRuntimeDataDir(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root)
 	dataDir := filepath.Join(root, "_data", "mariadb", "billing")
@@ -79,14 +91,15 @@ func (c *Controller) Leak(ctx any) error { return nil }`
 		t.Fatalf("write ignored node_modules file: %v", err)
 	}
 
-	runner := newTestRunner()
 	out := filepath.Join(root, "build", "api_index.json")
 	diagnostics := filepath.Join(root, "build", "api_index.diagnostics.json")
 	openAPI := filepath.Join(root, "build", "openapi.json")
-
-	if err := runner.Run(root, out, diagnostics, openAPI, false); err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
+	runIndexAtPaths(t, paths{
+		root:        root,
+		out:         out,
+		diagnostics: diagnostics,
+		openAPI:     openAPI,
+	})
 	body, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatalf("read api index: %v", err)
@@ -103,18 +116,9 @@ func TestRunnerDefaultStatusIncludesActiveApp(t *testing.T) {
 	writeRouteComposition(t, root, "customer-portal")
 	t.Setenv("FORJ_APP", "customer-portal")
 
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
 	runner := newTestRunner()
 
-	status, err := runner.RunDefault(Options{})
+	status, err := runner.RunDefault(Options{Root: root})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -122,12 +126,36 @@ func TestRunnerDefaultStatusIncludesActiveApp(t *testing.T) {
 		t.Fatalf("status does not include active app, outcome, and counts: %q", status)
 	}
 
-	status, err = runner.RunDefault(Options{})
+	status, err = runner.RunDefault(Options{Root: root})
 	if err != nil {
 		t.Fatalf("rerun failed: %v", err)
 	}
 	if !strings.HasPrefix(status, "app customer-portal, unchanged, ") || !strings.Contains(status, " operation") || !strings.Contains(status, " schema") || !strings.Contains(status, " diagnostic") {
 		t.Fatalf("no-change status does not include active app, outcome, and counts: %q", status)
+	}
+}
+
+// TestRunnerRejectsInvalidExplicitRoot prevents missing source trees from looking like intentional nonparticipation.
+func TestRunnerRejectsInvalidExplicitRoot(t *testing.T) {
+	fileRoot := filepath.Join(t.TempDir(), "project-file")
+	if err := os.WriteFile(fileRoot, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write project-root fixture: %v", err)
+	}
+	tests := []struct {
+		name string
+		root string
+		want string
+	}{
+		{name: "missing", root: filepath.Join(t.TempDir(), "missing"), want: "inspect API index project root"},
+		{name: "file", root: fileRoot, want: "is not a directory"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := newTestRunner().RunDefault(Options{Root: test.root})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("RunDefault() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -146,9 +174,8 @@ apps:
 		t.Fatalf("write project config: %v", err)
 	}
 	t.Setenv("FORJ_APP", "ship")
-	paths := defaultPaths(project.DefaultNamedApp("ship"))
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultNamedApp("ship")))
 	for _, path := range []string{paths.out, paths.diagnostics, paths.openAPI} {
-		path = filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir artifact directory: %v", err)
 		}
@@ -157,16 +184,7 @@ apps:
 		}
 	}
 
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
-	status, err := newTestRunner().RunDefault(Options{})
+	status, err := newTestRunner().RunDefault(Options{Root: root})
 	if err != nil {
 		t.Fatalf("run CLI-only API index: %v", err)
 	}
@@ -177,6 +195,29 @@ apps:
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("expected stale artifact %s to be removed, got %v", path, err)
 		}
+	}
+}
+
+// TestRunnerPrepareReturnsNilCandidateForCLIOnlyApp ensures callers can use an interface nil check before publishing or discarding optional work.
+func TestRunnerPrepareReturnsNilCandidateForCLIOnlyApp(t *testing.T) {
+	root := t.TempDir()
+	config := `render:
+  components: [cli]
+`
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	preparation, err := newTestRunner().Prepare(Options{Root: root})
+	if err != nil {
+		t.Fatalf("Prepare() error: %v", err)
+	}
+	if preparation.Candidate != nil {
+		t.Fatalf("Prepare() candidate = %T, want nil for CLI-only App without stale artifacts", preparation.Candidate)
+	}
+	wantStatus := "app app, skipped (no web API), 0 operations, 0 schemas, 0 diagnostics"
+	if preparation.Status != wantStatus {
+		t.Fatalf("Prepare() status = %q, want %q", preparation.Status, wantStatus)
 	}
 }
 
@@ -191,9 +232,8 @@ func TestRunnerRequiresCompositionForWebAPIApp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
-	paths := defaultPaths(project.DefaultApp())
+	paths := rootDefaultPaths(root, defaultPaths(project.DefaultApp()))
 	for _, path := range []string{paths.out, paths.diagnostics, paths.openAPI} {
-		path = filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir artifact directory: %v", err)
 		}
@@ -202,16 +242,7 @@ func TestRunnerRequiresCompositionForWebAPIApp(t *testing.T) {
 		}
 	}
 
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(previous) }()
-
-	status, err := newTestRunner().RunDefault(Options{})
+	status, err := newTestRunner().RunDefault(Options{Root: root})
 	if err == nil || !strings.Contains(err.Error(), `API index for app "app" requires route composition "app/routes.go"`) {
 		t.Fatalf("expected missing composition error, got %v", err)
 	}

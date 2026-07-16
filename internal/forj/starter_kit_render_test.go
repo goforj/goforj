@@ -8,8 +8,14 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
+
+// starterKitFrontendDir keeps starter-kit assertions on the canonical default-App layout.
+func starterKitFrontendDir() string {
+	return projectlayout.FrontendDir(".", project.DefaultApp())
+}
 
 func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	orig, err := os.Getwd()
@@ -22,7 +28,7 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	frontendDir := defaultFrontendDir()
+	frontendDir := starterKitFrontendDir()
 	if err := os.MkdirAll(filepath.Join(frontendDir, "dist"), 0o755); err != nil {
 		t.Fatalf("mkdir frontend: %v", err)
 	}
@@ -81,6 +87,7 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			Render: project.RenderConfig{Components: project.Components{WebUI: true}, StarterKit: project.StarterKitReact},
 		},
@@ -91,26 +98,26 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		filepath.Join(defaultFrontendDir(), "package.json"),
-		filepath.Join(defaultFrontendDir(), "components.json"),
-		filepath.Join(defaultFrontendDir(), "src", "App.tsx"),
-		filepath.Join(defaultFrontendDir(), "src", "lib", "auth.ts"),
-		filepath.Join(defaultFrontendDir(), "dist", "index.html"),
-		filepath.Join(defaultFrontendDir(), "dist", "goforj-logo.png"),
-		filepath.Join(defaultFrontendDir(), "dist", "assets"),
+		filepath.Join(starterKitFrontendDir(), "package.json"),
+		filepath.Join(starterKitFrontendDir(), "components.json"),
+		filepath.Join(starterKitFrontendDir(), "src", "App.tsx"),
+		filepath.Join(starterKitFrontendDir(), "src", "lib", "auth.ts"),
+		filepath.Join(starterKitFrontendDir(), "dist", "index.html"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-logo.png"),
+		filepath.Join(starterKitFrontendDir(), "dist", "assets"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
 	}
-	index, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "dist", "index.html"))
+	index, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "dist", "index.html"))
 	if err != nil {
 		t.Fatalf("read react dist index: %v", err)
 	}
 	if !strings.Contains(string(index), "/assets/") || strings.Contains(string(index), "Read the docs") {
 		t.Fatalf("react starter copied fallback index instead of built app index:\n%s", string(index))
 	}
-	appSource, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "src", "App.tsx"))
+	appSource, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "src", "App.tsx"))
 	if err != nil {
 		t.Fatalf("read react app source: %v", err)
 	}
@@ -142,7 +149,7 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 			t.Fatalf("react app source missing %q", expected)
 		}
 	}
-	styleSource, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "src", "style.css"))
+	styleSource, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "src", "style.css"))
 	if err != nil {
 		t.Fatalf("read react style source: %v", err)
 	}
@@ -151,11 +158,11 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 			t.Fatalf("react style source missing %q", expected)
 		}
 	}
-	viteConfig, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "vite.config.ts"))
+	viteConfig, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "vite.config.ts"))
 	if err != nil {
 		t.Fatalf("read react vite config: %v", err)
 	}
-	frontendEnv, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "goforj.env.ts"))
+	frontendEnv, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "goforj.env.ts"))
 	if err != nil {
 		t.Fatalf("read react frontend env helper: %v", err)
 	}
@@ -168,7 +175,7 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 	if strings.Contains(reactDevConfig, "localhost:8080") {
 		t.Fatalf("react dev config should not default the backend proxy to localhost:8080")
 	}
-	if _, err := os.Stat(filepath.Join(defaultFrontendDir(), "node_modules")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(starterKitFrontendDir(), "node_modules")); !os.IsNotExist(err) {
 		t.Fatalf("expected node_modules to be excluded, stat err = %v", err)
 	}
 }
@@ -187,6 +194,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/testapp",
 			Render: project.RenderConfig{
@@ -202,9 +210,9 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		filepath.Join(defaultFrontendDir(), "package.json"),
-		filepath.Join(defaultFrontendDir(), "dist", "app.js"),
-		filepath.Join(defaultFrontendDir(), "dist", "goforj-logo.png"),
+		filepath.Join(starterKitFrontendDir(), "package.json"),
+		filepath.Join(starterKitFrontendDir(), "dist", "app.js"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-logo.png"),
 		filepath.Join("internal", "starterui", "controller.go"),
 		filepath.Join("internal", "starterui", "controller_test.go"),
 		filepath.Join("internal", "starterui", "viewmodels.go"),
@@ -225,11 +233,11 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(defaultFrontendDir(), "node_modules")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(starterKitFrontendDir(), "node_modules")); !os.IsNotExist(err) {
 		t.Fatalf("expected node_modules to be excluded, stat err = %v", err)
 	}
 
-	viteConfig, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "vite.config.ts"))
+	viteConfig, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "vite.config.ts"))
 	if err != nil {
 		t.Fatalf("read templ vite config: %v", err)
 	}
@@ -238,15 +246,15 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 			t.Fatalf("templ vite config missing %q", expected)
 		}
 	}
-	packageJSON, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "package.json"))
+	packageJSON, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "package.json"))
 	if err != nil {
 		t.Fatalf("read templ package json: %v", err)
 	}
-	frontendSource, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "src", "app.ts"))
+	frontendSource, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "src", "app.ts"))
 	if err != nil {
 		t.Fatalf("read templ frontend source: %v", err)
 	}
-	styleSource, err := os.ReadFile(filepath.Join(defaultFrontendDir(), "src", "style.css"))
+	styleSource, err := os.ReadFile(filepath.Join(starterKitFrontendDir(), "src", "style.css"))
 	if err != nil {
 		t.Fatalf("read templ style source: %v", err)
 	}
@@ -354,6 +362,7 @@ func TestScaffoldTemplHTMXStarterKitWithoutAuthOmitsAuthRoutes(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/testapp",
 			Render: project.RenderConfig{
@@ -417,6 +426,7 @@ templ stale() {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/testapp",
 			Render: project.RenderConfig{
@@ -489,6 +499,7 @@ func TestFrontendDistPlaceholderUsesNamedApps(t *testing.T) {
 	}
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			Render: project.RenderConfig{
 				Components: project.Components{WebUI: true},

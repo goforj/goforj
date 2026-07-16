@@ -84,6 +84,7 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 		"SWAGGER_ENABLED":       "false",
 		"CACHE_SESSIONS_DRIVER": "redis",
 		"EVENTS_AUDIT_DRIVER":   "redis",
+		"STORAGE_PUBLIC_DRIVER": "s3",
 	}
 
 	resources, err := RegistryForProject(config, env).List(t.Context())
@@ -102,60 +103,171 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	if _, ok := resourceByID(resources, "cache-sessions"); ok {
 		t.Fatalf("stale Cache env resurrected a disabled resource in %#v", resources)
 	}
+	if _, ok := resourceByID(resources, "storage-public"); ok {
+		t.Fatalf("stale Storage env resurrected a disabled resource in %#v", resources)
+	}
 	if app, ok := resourceByID(resources, "app"); !ok || app.URL != "http://localhost:3000" {
 		t.Fatalf("app = %#v ok=%v", app, ok)
 	}
 }
 
-// TestRegistryUsesNamedAppEventsEnvelope verifies shared Events resources remain visible when only a named App participates.
-func TestRegistryUsesNamedAppEventsEnvelope(t *testing.T) {
-	config := &project.Config{
-		Render: project.RenderConfig{Components: project.Components{CLI: true}},
-		Apps: map[string]project.AppConfig{
-			"events-worker": {Components: project.Components{CLI: true, Events: true}},
+// TestRegistryKeepsPrimitiveResourcesAppLocal verifies each participating App owns shared and prefixed primitive resources.
+func TestRegistryKeepsPrimitiveResourcesAppLocal(t *testing.T) {
+	type expectedResource struct {
+		id       string
+		name     string
+		category string
+		app      string
+	}
+	tests := []struct {
+		name   string
+		config project.Config
+		env    map[string]string
+		want   []expectedResource
+	}{
+		{
+			name: "default App only",
+			config: project.Config{
+				Render: project.RenderConfig{Components: project.Components{CLI: true, Cache: true, Events: true, Storage: true}},
+				Apps: map[string]project.AppConfig{
+					"api": {Components: project.Components{CLI: true}},
+				},
+			},
+			env: map[string]string{
+				"CACHE_SESSIONS_DRIVER":      "memory",
+				"EVENTS_AUDIT_DRIVER":        "inproc",
+				"STORAGE_PUBLIC_DRIVER":      "local",
+				"API_CACHE_PRIVATE_DRIVER":   "redis",
+				"API_EVENTS_PRIVATE_DRIVER":  "redis",
+				"API_STORAGE_PRIVATE_DRIVER": "s3",
+			},
+			want: []expectedResource{
+				{id: "cache-sessions", name: "sessions", category: "cache", app: project.DefaultAppName},
+				{id: "events-audit", name: "audit", category: "events", app: project.DefaultAppName},
+				{id: "storage-public", name: "public", category: "storage", app: project.DefaultAppName},
+			},
+		},
+		{
+			name: "named App only",
+			config: project.Config{
+				Render: project.RenderConfig{Components: project.Components{CLI: true}},
+				Apps: map[string]project.AppConfig{
+					"worker": {Components: project.Components{CLI: true, Cache: true, Events: true, Storage: true}},
+				},
+			},
+			env: map[string]string{
+				"CACHE_DRIVER":                 "memory",
+				"WORKER_CACHE_SESSIONS_DRIVER": "redis",
+				"EVENTS_DRIVER":                "inproc",
+				"WORKER_EVENTS_AUDIT_DRIVER":   "redis",
+				"STORAGE_DRIVER":               "local",
+				"WORKER_STORAGE_PUBLIC_DRIVER": "s3",
+			},
+			want: []expectedResource{
+				{id: "cache-worker-default", name: "default", category: "cache", app: "worker"},
+				{id: "cache-worker-sessions", name: "sessions", category: "cache", app: "worker"},
+				{id: "events-worker-audit", name: "audit", category: "events", app: "worker"},
+				{id: "events-worker-default", name: "default", category: "events", app: "worker"},
+				{id: "storage-worker-default", name: "default", category: "storage", app: "worker"},
+				{id: "storage-worker-public", name: "public", category: "storage", app: "worker"},
+			},
+		},
+		{
+			name: "disjoint and multi-App ownership",
+			config: project.Config{
+				Render: project.RenderConfig{Components: project.Components{CLI: true}},
+				Apps: map[string]project.AppConfig{
+					"api":          {Components: project.Components{CLI: true}},
+					"cache-reader": {Components: project.Components{CLI: true, Cache: true}},
+					"cache-writer": {Components: project.Components{CLI: true, Cache: true}},
+					"event-worker": {Components: project.Components{CLI: true, Events: true}},
+					"files":        {Components: project.Components{CLI: true, Storage: true}},
+				},
+			},
+			env: map[string]string{
+				"CACHE_DRIVER":                        "memory",
+				"CACHE_READER_CACHE_SESSIONS_DRIVER":  "redis",
+				"CACHE_WRITER_CACHE_RESULTS_DRIVER":   "redis",
+				"EVENTS_AUDIT_DRIVER":                 "inproc",
+				"EVENT_WORKER_EVENTS_INTERNAL_DRIVER": "redis",
+				"STORAGE_PUBLIC_DRIVER":               "local",
+				"FILES_STORAGE_ARCHIVE_DRIVER":        "s3",
+				"API_CACHE_STALE_DRIVER":              "redis",
+				"CACHE_READER_EVENTS_STALE_DRIVER":    "redis",
+				"EVENT_WORKER_STORAGE_STALE_DRIVER":   "s3",
+			},
+			want: []expectedResource{
+				{id: "cache-cache-reader-default", name: "default", category: "cache", app: "cache-reader"},
+				{id: "cache-cache-reader-sessions", name: "sessions", category: "cache", app: "cache-reader"},
+				{id: "cache-cache-writer-default", name: "default", category: "cache", app: "cache-writer"},
+				{id: "cache-cache-writer-results", name: "results", category: "cache", app: "cache-writer"},
+				{id: "events-event-worker-audit", name: "audit", category: "events", app: "event-worker"},
+				{id: "events-event-worker-internal", name: "internal", category: "events", app: "event-worker"},
+				{id: "storage-files-archive", name: "archive", category: "storage", app: "files"},
+				{id: "storage-files-public", name: "public", category: "storage", app: "files"},
+			},
 		},
 	}
-	resources, err := RegistryForProject(config, map[string]string{"EVENTS_AUDIT_DRIVER": "inproc"}).List(t.Context())
-	if err != nil {
-		t.Fatalf("list resources: %v", err)
-	}
-	if _, ok := resourceByID(resources, "events-audit"); !ok {
-		t.Fatalf("named Events App did not expose project Events resources: %#v", resources)
-	}
-	if config.Render.Components.Events {
-		t.Fatal("resource discovery widened the default App Events selection")
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configuredDefaultComponents := test.config.Render.Components
+			resources, err := RegistryForProject(&test.config, test.env).List(t.Context())
+			if err != nil {
+				t.Fatalf("list resources: %v", err)
+			}
+			primitiveResources := append(Filter(resources, Category("cache")), Filter(resources, Category("events"))...)
+			primitiveResources = append(primitiveResources, Filter(resources, Category("storage"))...)
+			if len(primitiveResources) != len(test.want) {
+				t.Fatalf("primitive resources = %#v, want %#v", primitiveResources, test.want)
+			}
+			for _, want := range test.want {
+				resource, ok := resourceByID(resources, want.id)
+				if !ok || resource.Name != want.name || resource.Category != want.category || resource.App != want.app {
+					t.Errorf("resource %s = %#v ok=%v, want name=%q category=%q App=%q", want.id, resource, ok, want.name, want.category, want.app)
+				}
+			}
+			if test.config.Render.Components != configuredDefaultComponents {
+				t.Fatal("resource discovery changed the configured default App components")
+			}
+		})
 	}
 }
 
-// TestRegistryIgnoresStaleDisabledStorageResources verifies owner env residue cannot invent Storage participation.
-func TestRegistryIgnoresStaleDisabledStorageResources(t *testing.T) {
-	config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true}}}
-	resources, err := RegistryForProject(config, map[string]string{"STORAGE_PUBLIC_DRIVER": "s3"}).List(t.Context())
-	if err != nil {
-		t.Fatalf("list resources: %v", err)
+// TestNamedResourcesForAppPreservesSharedPrefixCollisions verifies an App name cannot claim the resource namespace before the resource segment appears.
+func TestNamedResourcesForAppPreservesSharedPrefixCollisions(t *testing.T) {
+	apps := []projectResourceApp{
+		{name: project.DefaultAppName},
+		{name: "cache"},
+		{name: "cache-reader"},
 	}
-	if _, ok := resourceByID(resources, "storage-public"); ok {
-		t.Fatalf("stale Storage env resurrected a disabled resource: %#v", resources)
+	env := map[string]string{
+		"CACHE_DRIVER":                        "memory",
+		"CACHE_READER_DRIVER":                 "redis",
+		"CACHE_SESSIONS_DRIVER":               "memory",
+		"CACHE_CACHE_DRIVER":                  "redis",
+		"CACHE_CACHE_PRIVATE_DRIVER":          "redis",
+		"CACHE_EVENTS_AUDIT_DRIVER":           "redis",
+		"CACHE_READER_CACHE_DRIVER":           "redis",
+		"CACHE_READER_CACHE_REPORTS_DRIVER":   "redis",
+		"CACHE_READER_STORAGE_ARCHIVE_DRIVER": "s3",
 	}
-}
+	tests := []struct {
+		name    string
+		appName string
+		want    []string
+	}{
+		{name: "default App", appName: project.DefaultAppName, want: []string{"default", "reader", "sessions"}},
+		{name: "resource-named App", appName: "cache", want: []string{"default", "private", "reader", "sessions"}},
+		{name: "resource-prefixed App", appName: "cache-reader", want: []string{"default", "reader", "reports", "sessions"}},
+	}
 
-// TestRegistryUsesNamedAppStorageEnvelope verifies shared Storage resources remain visible when only a named App participates.
-func TestRegistryUsesNamedAppStorageEnvelope(t *testing.T) {
-	config := &project.Config{
-		Render: project.RenderConfig{Components: project.Components{CLI: true}},
-		Apps: map[string]project.AppConfig{
-			"files": {Components: project.Components{CLI: true, Storage: true}},
-		},
-	}
-	resources, err := RegistryForProject(config, map[string]string{"STORAGE_PUBLIC_DRIVER": "local"}).List(t.Context())
-	if err != nil {
-		t.Fatalf("list resources: %v", err)
-	}
-	if _, ok := resourceByID(resources, "storage-public"); !ok {
-		t.Fatalf("named Storage App did not expose project Storage resources: %#v", resources)
-	}
-	if config.Render.Components.Storage {
-		t.Fatal("resource discovery widened the default App Storage selection")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := namedResourcesForApp(env, apps, test.appName, "CACHE"); !equalStrings(got, test.want) {
+				t.Fatalf("named Cache resources = %#v, want %#v", got, test.want)
+			}
+		})
 	}
 }
 

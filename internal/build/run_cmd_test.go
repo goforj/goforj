@@ -14,7 +14,7 @@ import (
 
 func TestRunCmdRunArgsDefaultsToCurrentPackage(t *testing.T) {
 	cmd := &RunCmd{}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"."}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"."}) {
 		t.Fatalf("expected default run args to target current package, got %#v", got)
 	}
 }
@@ -59,12 +59,11 @@ func TestRunCmdCompileFailurePreventsStartAndAPIIndexPublication(t *testing.T) {
 			}
 			return nil
 		},
-		discard: func() {},
+		discard: func() error { return nil },
 	}
 
-	t.Chdir(root)
 	command := &RunCmd{Root: root}
-	_, err := runFinalAndPublishAPIIndex(Step{Name: "compile and start", Run: command.runBinary}, pending)
+	_, err := runFinalAndPublishAPIIndex(root, Step{Name: "compile and start", Run: command.runBinary}, pending)
 	if err == nil || !strings.Contains(err.Error(), "compile app target") {
 		t.Fatalf("compile failure = %v, want preflight error", err)
 	}
@@ -110,11 +109,9 @@ func main() {
 			t.Fatalf("write fixture %s: %v", relativePath, err)
 		}
 	}
-	t.Chdir(root)
-
 	command := &RunCmd{Root: root}
 	t.Cleanup(func() { _ = command.terminateStartedProcess() })
-	status, err := command.runBinary()
+	status, err := command.runBinary(root)
 	if err != nil {
 		t.Fatalf("start run command: %v", err)
 	}
@@ -167,11 +164,9 @@ func main() {
 			t.Fatalf("write fixture %s: %v", relativePath, err)
 		}
 	}
-	t.Chdir(root)
-
 	resultPath := filepath.Join(root, "run-result.txt")
 	command := &RunCmd{Root: root, Args: []string{resultPath, "hello", "portal"}}
-	if _, err := command.runBinary(); err != nil {
+	if _, err := command.runBinary(root); err != nil {
 		t.Fatalf("start compiled run binary: %v", err)
 	}
 	if err := command.waitForRunProcess(); err != nil {
@@ -196,7 +191,7 @@ func TestRunCmdRunArgsDefaultsToCmdAppWhenPresent(t *testing.T) {
 		t.Fatalf("mkdir cmd/app: %v", err)
 	}
 	cmd := &RunCmd{Root: root}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/app"}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"./cmd/app"}) {
 		t.Fatalf("expected default run args to target cmd/app, got %#v", got)
 	}
 }
@@ -209,7 +204,7 @@ func TestRunCmdRunArgsUseActiveConventionalTarget(t *testing.T) {
 	t.Setenv("FORJ_APP", "reporting")
 
 	cmd := &RunCmd{Root: root}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {
 		t.Fatalf("expected run args to target cmd/reporting, got %#v", got)
 	}
 }
@@ -220,7 +215,7 @@ func TestRunCmdRunArgsPassesAppArgsAfterCurrentPackage(t *testing.T) {
 		t.Fatalf("mkdir cmd/app: %v", err)
 	}
 	cmd := &RunCmd{Root: root, Args: []string{"run", "--port", "4000"}}
-	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/app", "run", "--port", "4000"}) {
+	if got := requireRunArgs(t, cmd); !reflect.DeepEqual(got, []string{"./cmd/app", "run", "--port", "4000"}) {
 		t.Fatalf("expected app args after cmd/app package, got %#v", got)
 	}
 }
@@ -327,6 +322,14 @@ func TestWaitForRunProcessReturnsChildErrorWithoutInterrupt(t *testing.T) {
 	}
 }
 
+// TestWaitForRunProcessRequiresStartedProcess verifies invalid run state fails instead of reporting success or blocking.
+func TestWaitForRunProcessRequiresStartedProcess(t *testing.T) {
+	err := (&RunCmd{}).waitForRunProcess()
+	if err == nil || !strings.Contains(err.Error(), "process was not started") {
+		t.Fatalf("waitForRunProcess error = %v, want missing process state", err)
+	}
+}
+
 func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
 	child := exec.Command("sh", "-c", "exit 7")
 	err := child.Run()
@@ -351,4 +354,14 @@ func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
 	if !ok || gotCode != 7 {
 		t.Fatalf("ChildExitCode() = %d, %v; want 7, true", gotCode, ok)
 	}
+}
+
+// requireRunArgs keeps argument-shape assertions focused while still failing on package-probe errors.
+func requireRunArgs(t *testing.T, command *RunCmd) []string {
+	t.Helper()
+	args, err := command.runArgs()
+	if err != nil {
+		t.Fatalf("run args: %v", err)
+	}
+	return args
 }

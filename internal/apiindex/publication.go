@@ -25,7 +25,9 @@ type preparedCandidate struct {
 	candidates            snapshots
 	report                runReport
 	remove                bool
+	locks                 artifactLockCoordinator
 	renameFile            func(string, string) error
+	removeStagingDir      func(string) error
 	afterArtifactMutation func(int, string)
 }
 
@@ -142,7 +144,7 @@ func (p *preparedCandidate) publish() (err error) {
 	if !p.remove && p.stagingDir == "" {
 		return fmt.Errorf("publish API index: candidate has no staging directory")
 	}
-	lock, err := acquireArtifactLock(p.paths)
+	lock, err := p.locks.acquire(p.paths)
 	if err != nil {
 		return err
 	}
@@ -374,17 +376,20 @@ func restoreFileSnapshot(path string, snapshot fileSnapshot) error {
 	return nil
 }
 
-// Discard removes staged artifacts without changing the active generation.
-func (p *preparedCandidate) Discard() {
-	p.discard()
-}
-
-// discard removes staged files while allowing removal-only candidates that intentionally allocate no staging directory.
-func (p *preparedCandidate) discard() {
+// Discard removes staged artifacts without changing the active generation and reports leaks callers may need to retry.
+func (p *preparedCandidate) Discard() error {
 	if p.stagingDir == "" {
-		return
+		return nil
 	}
-	_ = os.RemoveAll(p.stagingDir)
+	removeStagingDir := os.RemoveAll
+	if p.removeStagingDir != nil {
+		removeStagingDir = p.removeStagingDir
+	}
+	if err := removeStagingDir(p.stagingDir); err != nil {
+		return fmt.Errorf("discard API index staging directory %q: %w", p.stagingDir, err)
+	}
+	p.stagingDir = ""
+	return nil
 }
 
 // equal reports whether two complete artifact generations have identical presence and content.

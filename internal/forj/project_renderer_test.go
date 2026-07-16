@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +15,71 @@ import (
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
+
+// TestProjectRendererExplicitRootScopesDiscoveryAndPublication proves rendering another project never changes or writes through the process cwd.
+func TestProjectRendererExplicitRootScopesDiscoveryAndPublication(t *testing.T) {
+	projectRoot := t.TempDir()
+	sentinelRoot := t.TempDir()
+	t.Chdir(sentinelRoot)
+
+	for _, path := range []string{
+		filepath.Join(projectRoot, "cmd", "worker"),
+		filepath.Join(projectRoot, moduleReplacesStateFile),
+		filepath.Join(sentinelRoot, "cmd", "intruder"),
+		filepath.Join(sentinelRoot, "internal", "events"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("create fixture directory %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(projectRoot, "cmd", "worker", "main.go"),
+		filepath.Join(sentinelRoot, "cmd", "intruder", "main.go"),
+	} {
+		if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	err := renderer.Render(ComponentRenderInput{
+		components: project.Components{Cache: true},
+		root:       projectRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "apply module replaces") {
+		t.Fatalf("Render error = %v, want deliberate module replacement state failure", err)
+	}
+	if strings.Contains(err.Error(), projectRoot) || !strings.Contains(err.Error(), moduleReplacesStateFile) {
+		t.Fatalf("Render error exposed physical root instead of logical path: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(projectRoot, "internal", "caches", "README.md")); err != nil {
+		t.Fatalf("rooted Cache publication missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sentinelRoot, "internal", "caches", "README.md")); !os.IsNotExist(err) {
+		t.Fatalf("sentinel cwd received renderer output: %v", err)
+	}
+	metadata := renderer.workspace.runtimeAppMetadataForRender(renderer.config)
+	if got := runtimeAppNames(metadata); !reflect.DeepEqual(got, []string{"app", "worker"}) {
+		t.Fatalf("runtime App discovery = %v, want project-root Apps only", got)
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get final working directory: %v", err)
+	}
+	if workingDirectory != sentinelRoot {
+		t.Fatalf("working directory = %q, want unchanged sentinel %q", workingDirectory, sentinelRoot)
+	}
+}
+
+// runtimeAppNames extracts stable App names so workspace discovery assertions stay compact.
+func runtimeAppNames(apps []runtimeAppMetadata) []string {
+	names := make([]string, 0, len(apps))
+	for _, app := range apps {
+		names = append(names, app.Name)
+	}
+	return names
+}
 
 func TestGeneratedGitignoreIgnoresRuntimeStorage(t *testing.T) {
 	data, err := templatesFS.ReadFile(".gitignore.tmpl")
@@ -361,7 +425,7 @@ func TestDatabaseComposeDataUsesNamedVolumes(t *testing.T) {
 }
 
 func TestNextStepsIncludeVueAuthLoginHint(t *testing.T) {
-	renderer := &ProjectRenderer{config: &project.Config{
+	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: &project.Config{
 		Render: project.RenderConfig{
 			StarterKit: project.StarterKitVue,
 			Components: project.Components{
@@ -393,7 +457,7 @@ func TestNextStepsIncludeVueAuthLoginHint(t *testing.T) {
 
 // TestNextStepsUseQuietFrontendInstallCommand keeps the manual path aligned with generated dev setup.
 func TestNextStepsUseQuietFrontendInstallCommand(t *testing.T) {
-	renderer := &ProjectRenderer{config: &project.Config{
+	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: &project.Config{
 		Render: project.RenderConfig{
 			StarterKit: project.StarterKitVue,
 			Components: project.Components{WebUI: true},
@@ -408,7 +472,7 @@ func TestNextStepsUseQuietFrontendInstallCommand(t *testing.T) {
 }
 
 func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
-	renderer := &ProjectRenderer{config: &project.Config{
+	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{
 				Observability: true,
@@ -435,66 +499,21 @@ func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
 	}
 }
 
-func TestNamedAppRenderAppsUseConventionsWithoutConfig(t *testing.T) {
-	root := t.TempDir()
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(originalWD) }()
-
-	for _, path := range []string{
-		filepath.Join("cmd", "reporting", "main.go"),
-		filepath.Join("app", "customer-portal", "wire", "wire.go"),
-		filepath.Join("app", "wire", "wire.go"),
-	} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", path, err)
-		}
-		if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	renderer := &ProjectRenderer{config: &project.Config{}}
-	apps, err := renderer.namedAppRenderApps()
-	if err != nil {
-		t.Fatalf("namedAppRenderApps returned error: %v", err)
-	}
-	if len(apps) != 2 {
-		t.Fatalf("expected two named apps, got %#v", apps)
-	}
-	if apps[0].Name != "customer-portal" || apps[1].Name != "reporting" {
-		t.Fatalf("expected sorted conventional apps, got %#v", apps)
-	}
-}
-
 func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	root := t.TempDir()
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(originalWD) }()
-
 	for _, path := range []string{
 		filepath.Join("app", "wire"),
 		filepath.Join("app", "billing", "wire"),
 		filepath.Join("cmd", "billing"),
 	} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join("cmd", "billing", "main.go"), []byte("package main\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "cmd", "billing", "main.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatalf("write billing main: %v", err)
 	}
+	t.Chdir(t.TempDir())
 
 	toolsDir := t.TempDir()
 	wirePath := filepath.Join(toolsDir, "wire")
@@ -504,16 +523,10 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	}
 	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	wireInstallOnce = sync.Once{}
-	wireInstallErr = nil
-	wireBinaryPath = ""
-	defer func() {
-		wireInstallOnce = sync.Once{}
-		wireInstallErr = nil
-		wireBinaryPath = ""
-	}()
-
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.beginRenderInvocation(root); err != nil {
+		t.Fatalf("begin render invocation: %v", err)
+	}
 	start := time.Now()
 	if err := renderer.runWireGenerate(); err != nil {
 		t.Fatalf("runWireGenerate returned error: %v", err)
@@ -541,7 +554,7 @@ func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 
 	components := project.Components{CLI: true, WebAPI: true}
 	config := &project.Config{Render: project.RenderConfig{Components: components}}
-	got := runtimeAppMetadataForRender(config)
+	got := currentProjectRenderWorkspace(t).runtimeAppMetadataForRender(config)
 	want := []runtimeAppMetadata{
 		{Name: "app", Index: 0, EnvPrefix: "", HTTPPort: 3000, RuntimeBase: 10000, Components: components},
 		{Name: "billing", Index: 1, EnvPrefix: "BILLING", HTTPPort: 3001, RuntimeBase: 10010, Components: components},
@@ -578,7 +591,7 @@ func TestRuntimeAppMetadataUsesStableConfiguredAppComponents(t *testing.T) {
 		},
 	}
 
-	got := runtimeAppMetadataForRender(config)
+	got := currentProjectRenderWorkspace(t).runtimeAppMetadataForRender(config)
 	wantNames := []string{"app", "accounts", "billing", "reporting"}
 	if len(got) != len(wantNames) {
 		t.Fatalf("metadata length = %d, want %d: %#v", len(got), len(wantNames), got)
@@ -599,35 +612,6 @@ func TestRuntimeAppMetadataUsesStableConfiguredAppComponents(t *testing.T) {
 	}
 }
 
-func TestMigrateGeneratedEnvDefaultOnlyUpdatesOldDefault(t *testing.T) {
-	lines := []string{
-		"APP_NAME=test",
-		"GRAFANA_PORT=3001",
-		"GRAFANA_ADMIN_USER=admin",
-	}
-
-	got, changed := migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
-	if !changed {
-		t.Fatal("expected old generated default to be migrated")
-	}
-	if got[1] != "GRAFANA_PORT=13001" {
-		t.Fatalf("migrated line = %q", got[1])
-	}
-	if lines[1] != "GRAFANA_PORT=3001" {
-		t.Fatalf("migrateGeneratedEnvDefault mutated input slice: %#v", lines)
-	}
-
-	custom, changed := migrateGeneratedEnvDefault([]string{"GRAFANA_PORT=3100"}, "GRAFANA_PORT", "3001", "13001")
-	if changed {
-		t.Fatalf("custom value should not be migrated: %#v", custom)
-	}
-
-	commented, changed := migrateGeneratedEnvDefault([]string{"# GRAFANA_PORT=3001"}, "GRAFANA_PORT", "3001", "13001")
-	if changed {
-		t.Fatalf("commented value should not be migrated: %#v", commented)
-	}
-}
-
 func TestExpandDefaultMigrationsForNamedApps(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -645,7 +629,7 @@ func TestExpandDefaultMigrationsForNamedApps(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "reporting", "2026_01_02_000001_create_reports.down.sql"), "-- down\n")
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "migrations.go"), "package migrations\n")
 
-	renderer := &ProjectRenderer{}
+	renderer := projectRendererForTest(t, nil)
 	if err := renderer.expandDefaultMigrationsForNamedApps(); err != nil {
 		t.Fatalf("expand migrations: %v", err)
 	}
@@ -719,6 +703,7 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/test",
 			Render: project.RenderConfig{
@@ -775,6 +760,7 @@ func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T)
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/test",
 			Render: project.RenderConfig{
@@ -834,7 +820,10 @@ func TestRemoveLegacyInitialBuildTask(t *testing.T) {
 // TestMigrateGeneratedDevWatchersBuildsNativeAppGraph verifies the conservative
 // migration of a complete historical framework watcher set.
 func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
-	useProjectRendererMigrationRoot(t, "ship", "worker")
+	workspace := projectRendererMigrationWorkspace(t, "ship", "worker")
+	sentinelRoot := t.TempDir()
+	writeProjectRendererTestFile(t, filepath.Join(sentinelRoot, "cmd", "intruder", "main.go"), "package main\n")
+	t.Chdir(sentinelRoot)
 	t.Setenv("FORJ_APP", "ship")
 	config := &project.Config{
 		Render: project.RenderConfig{
@@ -876,7 +865,7 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 		},
 	}
 
-	if !migrateGeneratedDevWatchers(config) {
+	if !workspace.migrateGeneratedDevWatchers(config) {
 		t.Fatal("expected generated watcher set to migrate")
 	}
 	if len(config.Dev.Watches) != 1 || config.Dev.Watches[0].Name != "Docs" {
@@ -907,6 +896,9 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 	if _, ok := config.Dev.Apps["ghost"]; ok {
 		t.Fatalf("legacy dev.run key outside conventional discovery became a managed app: %#v", config.Dev.Apps["ghost"])
 	}
+	if _, ok := config.Dev.Apps["intruder"]; ok {
+		t.Fatalf("process cwd leaked into workspace App discovery: %#v", config.Dev.Apps["intruder"])
+	}
 	encoded, err := yaml.Marshal(config)
 	if err != nil {
 		t.Fatalf("marshal migrated config: %v", err)
@@ -919,7 +911,7 @@ func TestMigrateGeneratedDevWatchersBuildsNativeAppGraph(t *testing.T) {
 
 // TestMigrateGeneratedDevWatchersKeepsEmptyLegacyRunBuildOnly preserves Build App discovery when no runtime is selected.
 func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyRunBuildOnly(t *testing.T) {
-	useProjectRendererMigrationRoot(t, "worker")
+	workspace := projectRendererMigrationWorkspace(t, "worker")
 	config := &project.Config{
 		Apps: map[string]project.AppConfig{
 			"worker": {Components: project.Components{CLI: true}},
@@ -942,7 +934,7 @@ func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyRunBuildOnly(t *testing.T) {
 		},
 	}
 
-	if !migrateGeneratedDevWatchers(config) {
+	if !workspace.migrateGeneratedDevWatchers(config) {
 		t.Fatal("expected explicit empty legacy allowlist to migrate")
 	}
 	if !config.Dev.UsesStructuredApps() || len(config.Dev.Apps) != 2 {
@@ -971,7 +963,7 @@ func TestMigrateGeneratedDevWatchersKeepsEmptyLegacyRunBuildOnly(t *testing.T) {
 
 // TestMigrateGeneratedDevWatchersPreservesAbsentLegacyRunDiscovery retains the pre-allowlist runtime graph without honoring FORJ_APP.
 func TestMigrateGeneratedDevWatchersPreservesAbsentLegacyRunDiscovery(t *testing.T) {
-	useProjectRendererMigrationRoot(t, "server", "ship")
+	workspace := projectRendererMigrationWorkspace(t, "server", "ship")
 	t.Setenv("FORJ_APP", "ship")
 	config := &project.Config{
 		Render: project.RenderConfig{Components: project.Components{WebAPI: true}},
@@ -993,7 +985,7 @@ func TestMigrateGeneratedDevWatchersPreservesAbsentLegacyRunDiscovery(t *testing
 		}},
 	}
 
-	if !migrateGeneratedDevWatchers(config) {
+	if !workspace.migrateGeneratedDevWatchers(config) {
 		t.Fatal("expected absent legacy dev.run model to migrate")
 	}
 	if len(config.Dev.Apps) != 3 {
@@ -1010,21 +1002,18 @@ func TestMigrateGeneratedDevWatchersPreservesAbsentLegacyRunDiscovery(t *testing
 	}
 }
 
-// useProjectRendererMigrationRoot isolates conventional App discovery from the GoForj source tree.
-func useProjectRendererMigrationRoot(t *testing.T, appNames ...string) {
+// projectRendererMigrationWorkspace isolates conventional App discovery from the GoForj source tree.
+func projectRendererMigrationWorkspace(t *testing.T, appNames ...string) projectRenderWorkspace {
 	t.Helper()
 	root := t.TempDir()
-	originalWD, err := os.Getwd()
+	workspace, err := resolveProjectRenderWorkspace(root)
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
+		t.Fatalf("resolve migration workspace: %v", err)
 	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(originalWD) })
 	for _, appName := range appNames {
-		writeProjectRendererTestFile(t, filepath.Join("cmd", appName, "main.go"), "package main\n")
+		writeProjectRendererTestFile(t, workspace.path("cmd", appName, "main.go"), "package main\n")
 	}
+	return workspace
 }
 
 // TestMigrateGeneratedDevWatchersRespectsStructuredAppPresence prevents legacy shapes from expanding a native allowlist.
@@ -1037,6 +1026,7 @@ func TestMigrateGeneratedDevWatchersRespectsStructuredAppPresence(t *testing.T) 
 		{name: "sparse named App", apps: map[string]project.DevApp{"billing": {}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			workspace := projectRendererMigrationWorkspace(t)
 			config := &project.Config{Dev: project.DevConfig{
 				Apps: test.apps,
 				Run:  map[string]string{project.DefaultAppName: "run"},
@@ -1054,7 +1044,7 @@ func TestMigrateGeneratedDevWatchersRespectsStructuredAppPresence(t *testing.T) 
 				},
 			}}
 
-			if migrateGeneratedDevWatchers(config) {
+			if workspace.migrateGeneratedDevWatchers(config) {
 				t.Fatal("native dev.apps presence unexpectedly triggered legacy migration")
 			}
 			if _, exists := config.Dev.Apps[project.DefaultAppName]; exists {
@@ -1070,6 +1060,7 @@ func TestMigrateGeneratedDevWatchersRespectsStructuredAppPresence(t *testing.T) 
 // TestMigrateGeneratedDevWatchersPreservesModifiedFrameworkWatch verifies that
 // familiar names do not override evidence of user customization.
 func TestMigrateGeneratedDevWatchersPreservesModifiedFrameworkWatch(t *testing.T) {
+	workspace := projectRendererMigrationWorkspace(t)
 	config := &project.Config{Dev: project.DevConfig{
 		Run: map[string]string{project.DefaultAppName: "run"},
 		Watches: []project.DevWatch{
@@ -1088,7 +1079,7 @@ func TestMigrateGeneratedDevWatchersPreservesModifiedFrameworkWatch(t *testing.T
 	}}
 	wantWatches := append([]project.DevWatch(nil), config.Dev.Watches...)
 
-	if migrateGeneratedDevWatchers(config) {
+	if workspace.migrateGeneratedDevWatchers(config) {
 		t.Fatal("expected modified framework watcher set not to migrate")
 	}
 	if !reflect.DeepEqual(config.Dev.Watches, wantWatches) {
@@ -1154,6 +1145,7 @@ func TestRenderAppUsesPersistedAppComponents(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Test",
 			GoModuleName: "example.com/test",
@@ -1199,6 +1191,7 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Mixed Launch",
 			GoModuleName: "example.com/mixedlaunch",
@@ -1252,6 +1245,7 @@ func TestRenderAppWritesAppAwareFrontendPlaceholder(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Test",
 			GoModuleName: "example.com/test",
@@ -1299,6 +1293,7 @@ func TestRenderAppMigratesOldFrontendPlaceholder(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Test",
 			GoModuleName: "example.com/test",
@@ -1349,6 +1344,7 @@ func TestRenderAppMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Test",
 			GoModuleName: "example.com/test",
@@ -1399,6 +1395,7 @@ func TestRenderAppMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *testing
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Test",
 			GoModuleName: "example.com/test",
@@ -1447,6 +1444,7 @@ func TestRenderAppPreservesCustomFrontendPlaceholder(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Test",
 			GoModuleName: "example.com/test",
@@ -1491,6 +1489,7 @@ func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			GoModuleName: "example.com/test",
 			Render: project.RenderConfig{
@@ -2066,7 +2065,7 @@ func TestUpsertEnvDefaultsAddsAppDatabaseDriver(t *testing.T) {
 		t.Fatalf("write env: %v", err)
 	}
 
-	err := upsertEnvDefaults(path, appDatabaseEnvDefaults("REPORTING", "postgres", "mysql", false))
+	err := currentProjectRenderWorkspace(t).upsertEnvDefaults(path, appDatabaseEnvDefaults("REPORTING", "postgres", "mysql", false))
 	if err != nil {
 		t.Fatalf("upsert env defaults: %v", err)
 	}
@@ -2106,7 +2105,7 @@ func TestUpsertAppEnvDefaultsGroupsAndOrdersAppKeys(t *testing.T) {
 		"BILLING_API_HTTP_PORT":      "3001",
 		"BILLING_DB_SQLITE_DATABASE": "./_data/sqlite/billing.db",
 	}
-	err := upsertAppEnvDefaults(path, "billing", "BILLING", defaults)
+	err := currentProjectRenderWorkspace(t).upsertAppEnvDefaults(path, "billing", "BILLING", defaults)
 	if err != nil {
 		t.Fatalf("upsert app env defaults: %v", err)
 	}

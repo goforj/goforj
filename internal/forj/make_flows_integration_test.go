@@ -228,6 +228,8 @@ func NewCommands(
 	})
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		"jobs.NewSyncReportsJob",
+		"jobsSyncReportsJob *jobs.SyncReportsJob",
+		"queueManager.Register(jobs.SyncReportsJobTypeName, jobsSyncReportsJob.HandleTask)",
 	})
 	runForj(t, "make:job", "Billing:SyncReports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "billing", "sync_reports_job.go"), []string{
@@ -238,6 +240,8 @@ func NewCommands(
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,
 		"billing.NewSyncReportsJob",
+		"billingSyncReportsJob *billing.SyncReportsJob",
+		"queueManager.Register(billing.SyncReportsJobTypeName, billingSyncReportsJob.HandleTask)",
 	})
 
 	runForj(t, "make:migration", "create_widgets")
@@ -484,6 +488,8 @@ func TestMakeFlowsAppIsolationIntegration(t *testing.T) {
 	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,
 		"billing.NewSendInvoicesJob",
+		"billingSendInvoicesJob *billing.SendInvoicesJob",
+		"queueManager.Register(billing.SendInvoicesJobTypeName, billingSendInvoicesJob.HandleTask)",
 	})
 	assertFileContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_schedules_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,
@@ -502,6 +508,8 @@ func TestMakeFlowsAppIsolationIntegration(t *testing.T) {
 	})
 	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		"billing.NewSendInvoicesJob",
+		"billingSendInvoicesJob *billing.SendInvoicesJob",
+		"queueManager.Register(billing.SendInvoicesJobTypeName, billingSendInvoicesJob.HandleTask)",
 	})
 	assertFileNotContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
 		"billing.NewDailyCloseSchedule",
@@ -522,6 +530,8 @@ func TestMakeFlowsAppIsolationIntegration(t *testing.T) {
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewBuildSummaryJob",
+		"reportsBuildSummaryJob *reports.BuildSummaryJob",
+		"queueManager.Register(reports.BuildSummaryJobTypeName, reportsBuildSummaryJob.HandleTask)",
 	})
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_schedules_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
@@ -538,6 +548,8 @@ func TestMakeFlowsAppIsolationIntegration(t *testing.T) {
 	})
 	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_jobs_app.go"), []string{
 		"reports.NewBuildSummaryJob",
+		"reportsBuildSummaryJob *reports.BuildSummaryJob",
+		"queueManager.Register(reports.BuildSummaryJobTypeName, reportsBuildSummaryJob.HandleTask)",
 	})
 	assertFileNotContains(t, filepath.Join(projectDir, "app", "billing", "wire", "inject_schedules_app.go"), []string{
 		"reports.NewNightlySchedule",

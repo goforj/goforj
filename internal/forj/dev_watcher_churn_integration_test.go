@@ -242,7 +242,7 @@ func runDevWatcherChurnBuildHelper() {
 	}
 	appendDevWatcherChurnLine(os.Getenv("GOFORJ_WATCHER_CHURN_BUILD_LOG"), fmt.Sprintf("build-start:%d", count))
 	appLogger := logger.NewSilentLogger()
-	command := build.NewCmd(appLogger, ProvideAPIIndexRunner(appLogger))
+	command := build.NewCmd(appLogger, ProvideAPIIndexRunner())
 	command.Root = os.Getenv("GOFORJ_WATCHER_CHURN_ROOT")
 	command.SkipWire = true
 	command.Args = []string{"-o", "./bin/app", "./cmd/app"}
@@ -323,7 +323,7 @@ func mergeDevWatcherChurnEnvironment(base []string, overrides map[string]string)
 func writeDevWatcherChurnProject(t *testing.T, root string, version string) {
 	t.Helper()
 	writeDevWatcherChurnFile(t, filepath.Join(root, "go.mod"), "module example.com/watcherchurn\n\ngo 1.24\n", 0o644)
-	writeDevWatcherChurnFile(t, filepath.Join(root, ".goforj.yml"), "project_name: WatcherChurn\ngo_module_name: example.com/watcherchurn\nupdated_at: \"2026-07-13 00:00:00 UTC\"\nrender:\n  components: []\n  component_contract: 1\n", 0o644)
+	writeDevWatcherChurnFile(t, filepath.Join(root, ".goforj.yml"), "project_name: WatcherChurn\ngo_module_name: example.com/watcherchurn\nupdated_at: \"2026-07-13 00:00:00 UTC\"\nrender:\n  components: []\n", 0o644)
 	writeDevWatcherChurnSource(t, root, version, false)
 }
 
