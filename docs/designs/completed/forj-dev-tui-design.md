@@ -83,6 +83,18 @@ footer with short-lived state.
 
 The key implementation rule is to keep ownership explicit.
 
+### `github.com/goforj/console` and Bubble Tea
+
+Direct `forj build` progress uses an isolated `console.Console` and its loader
+for animation, stream coordination, and cleanup. Under `forj dev`, the build
+pipeline emits GoForj's private progress markers and Bubble Tea remains the sole
+owner of interactive screen state.
+
+The console package can provide semantic marks, colors, terminal-cell text
+utilities, and line-oriented presentation. It does not own the dev session
+model, viewport, footer, input handling, cursor lifecycle, or build-marker
+protocol.
+
 ### `internal/forj/dev_tui.go`
 
 This layer should own:

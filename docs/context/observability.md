@@ -40,6 +40,19 @@ Avoid:
 - per-hook trace spam by default
 - leaking implementation details into user-facing logs
 
+## Console Presentation Boundary
+
+The GoForj CLI uses `github.com/goforj/console` for semantic, line-oriented
+presentation. That package owns marks, terminal-aware layout, prompts, loaders,
+progress, and coordination between durable writes and one transient line.
+
+It does not own structured application logs, Lighthouse transport, or the
+Bubble Tea state behind `forj dev`. Use console package helpers for ordinary CLI
+status output, and construct a `*console.Console` when a workflow needs isolated
+writers or terminal policy.
+
+See [Console Output](console.md) for the complete ownership boundary.
+
 ## Process Logs
 
 These are generally good default-visible logs:
@@ -95,11 +108,14 @@ Recent rules learned from storage work:
 - avoid emitting the same warning once per bootstrap process if `forj run` starts multiple subprocesses
 - if the UI hides an unavailable resource, show an explicit unavailable/degraded state instead of silent emptiness
 
-## `APP_LOG_TIME`
+## Generated App Log Timestamps
 
-Console timestamps are gated by:
+Generated application console timestamps are gated by:
 
 - `APP_LOG_TIME`
+
+This setting belongs to the generated app's `internal/logger` console renderer;
+it is not configuration for the sibling `github.com/goforj/console` package.
 
 If timestamps seem present but only show `.000`, the likely issue is emitted timestamp precision, not the renderer.
 

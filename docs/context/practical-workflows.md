@@ -20,6 +20,25 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/apiindex -cou
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/build -count=1
 ```
 
+## Changing `console`
+
+Typical loop:
+
+1. change the reusable behavior in `/workspace/code/console`
+2. keep package-level and `*Console` forms aligned
+3. add source-comment examples with expected output
+4. regenerate the README and run package, docs, and example tests
+5. tag and push the package before bumping GoForj
+
+Do not move GoForj command semantics, its private build-progress protocol, or
+Bubble Tea state into the sibling package. Generated apps also retain their own
+`internal/console` template until that dependency contract is migrated
+separately.
+
+See [Console Output](console.md) and
+[Releasing Sibling Repos](releasing-sibling-repos.md) for the current boundary
+and validation commands.
+
 ## Changing `web`
 
 Typical loop:
@@ -132,6 +151,7 @@ For shutdown, `forj dev` owns watcher process orchestration:
 - do not fix persistent generated-app issues only in the rendered app
 - do not put driver/backend-specific fixes in `goforj` if they belong in `queue`
 - do not put reusable web concerns in GoForj just because the template currently holds them
+- do not reimplement reusable semantic output, terminal layout, prompts, loaders, or progress in GoForj when they belong in `console`
 - do not reintroduce duplicated env parsing in leaf components
 - do not use non-semantic commit subjects when committing GoForj changes
 - do not paper over missing DI wiring with defensive nil checks in commands or services

@@ -12,3 +12,8 @@ The main code involved is still:
 - `internal/forj/dev_tui.go`
 - `internal/forj/devwatch_streamer.go`
 - `internal/build/pipeline.go`
+
+`github.com/goforj/console` owns reusable semantic marks, colors, text utilities,
+and the build loader. Bubble Tea owns the interactive model, input, viewport,
+filtering, and redraw lifecycle. The private build-progress marker protocol stays
+inside GoForj because it connects those two framework-specific surfaces.
