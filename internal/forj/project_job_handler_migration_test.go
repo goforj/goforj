@@ -8,8 +8,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestSyncLegacyJobHandlerRegistrationMigratesKnownJobConstructors verifies old injectors gain registration without guessing at unrelated providers.
-func TestSyncLegacyJobHandlerRegistrationMigratesKnownJobConstructors(t *testing.T) {
+// TestSyncLegacyJobHandlerRegistrationMigratesGeneratedJobConstructors verifies old make:job providers regain the handler wiring their generated contract requires.
+func TestSyncLegacyJobHandlerRegistrationMigratesGeneratedJobConstructors(t *testing.T) {
 	const source = `package wire
 
 import (
@@ -40,17 +40,18 @@ var appJobSet = wire.NewSet(
 	for _, want := range []string{
 		`"example.com/app/internal/queues"`,
 		"registerJobHandlers,",
+		"importsProcessOCRJob *imports.ProcessOCRJob,",
 		"jobsExampleHelloJob *jobs.ExampleHelloJob,",
 		"monitoringMonitorCheckJob *monitoring.MonitorCheckJob,",
+		"queueManager.Register(imports.ProcessOCRJobTypeName, importsProcessOCRJob.HandleTask)",
 		"queueManager.Register(jobs.ExampleHelloJobTypeName, jobsExampleHelloJob.HandleTask)",
 		"queueManager.Register(monitoring.MonitorCheckJobTypeName, monitoringMonitorCheckJob.HandleTask)",
-		"Register preserved provider imports.NewProcessOCRJob here because its handler contract cannot be inferred safely.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("migrated injector omitted %q:\n%s", want, text)
 		}
 	}
-	for _, excluded := range []string{"ProcessOCRJob *", "ExampleHelloJobCmd *", "CheckService *"} {
+	for _, excluded := range []string{"ExampleHelloJobCmd *", "CheckService *"} {
 		if strings.Contains(text, excluded) {
 			t.Errorf("migrated injector treated unrelated provider as a job: %s", excluded)
 		}

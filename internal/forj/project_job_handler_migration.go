@@ -19,11 +19,10 @@ type legacyJobProvider struct {
 	typeName    string
 }
 
-// legacyJobRegistrationPlan keeps known registrations and preserved manual work explicit during migration.
+// legacyJobRegistrationPlan keeps the providers guaranteed to implement the legacy generated-job contract explicit during migration.
 type legacyJobRegistrationPlan struct {
-	providers          []legacyJobProvider
-	manualConstructors []string
-	queuePackageName   string
+	providers        []legacyJobProvider
+	queuePackageName string
 }
 
 // syncLegacyJobHandlerRegistration adds the stable registration seam missing from older App-owned Jobs injectors.
@@ -55,7 +54,7 @@ func syncLegacyJobHandlerRegistration(content string, moduleName string, compone
 	return updated, nil
 }
 
-// legacyJobRegistrationPlanFor recognizes framework jobs without guessing the handler contract of custom constructors.
+// legacyJobRegistrationPlanFor recognizes framework jobs and the stable contract emitted by the legacy make:job generator.
 func legacyJobRegistrationPlanFor(content string, moduleName string) (legacyJobRegistrationPlan, error) {
 	plan := legacyJobRegistrationPlan{queuePackageName: "queues"}
 	file, err := parser.ParseFile(token.NewFileSet(), "inject_jobs_app.go", content, 0)
@@ -85,7 +84,6 @@ func legacyJobRegistrationPlanFor(content string, moduleName string) (legacyJobR
 	}
 	known := knownLegacyJobConstructors(moduleName)
 	seenProviders := map[string]bool{}
-	seenManualConstructors := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		value, ok := node.(*ast.ValueSpec)
 		if !ok || !valueSpecNames(value, "appJobSet") {
@@ -106,14 +104,13 @@ func legacyJobRegistrationPlanFor(content string, moduleName string) (legacyJobR
 				if !ok {
 					continue
 				}
-				typeName, ok := known[imports[packageName.Name]+"."+constructor]
+				importPath := imports[packageName.Name]
+				typeName, ok := known[importPath+"."+constructor]
 				if !ok {
-					manualConstructor := packageName.Name + "." + constructor
-					if strings.HasPrefix(constructor, "New") && strings.HasSuffix(constructor, "Job") && !seenManualConstructors[manualConstructor] {
-						plan.manualConstructors = append(plan.manualConstructors, manualConstructor)
-						seenManualConstructors[manualConstructor] = true
+					typeName, ok = legacyGeneratedJobTypeName(importPath, moduleName, constructor)
+					if !ok {
+						continue
 					}
-					continue
 				}
 				providerKey := packageName.Name + "." + typeName
 				if seenProviders[providerKey] {
@@ -129,6 +126,18 @@ func legacyJobRegistrationPlanFor(content string, moduleName string) (legacyJobR
 		return false
 	})
 	return plan, nil
+}
+
+// legacyGeneratedJobTypeName restores only the module-local constructor contract written by the old make:job generator.
+func legacyGeneratedJobTypeName(importPath string, moduleName string, constructor string) (string, bool) {
+	if importPath == "" || (importPath != moduleName && !strings.HasPrefix(importPath, moduleName+"/")) {
+		return "", false
+	}
+	typeName := strings.TrimPrefix(constructor, "New")
+	if typeName == constructor || typeName == "" || !strings.HasSuffix(typeName, "Job") {
+		return "", false
+	}
+	return typeName, true
 }
 
 // knownLegacyJobConstructors lists the handlers registered by the framework before registration moved into the App injector.
@@ -168,9 +177,6 @@ func legacyJobHandlerRegistrationSource(plan legacyJobRegistrationPlan, includeT
 	for _, provider := range plan.providers {
 		parameter := str.Of(provider.packageName).Camel().String() + provider.typeName
 		source.WriteString("\tqueueManager.Register(" + provider.packageName + "." + provider.typeName + "TypeName, " + parameter + ".HandleTask)\n")
-	}
-	for _, constructor := range plan.manualConstructors {
-		source.WriteString("\t// Register preserved provider " + constructor + " here because its handler contract cannot be inferred safely.\n")
 	}
 	if len(plan.providers) == 0 {
 		source.WriteString("\t_ = queueManager\n")
