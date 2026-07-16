@@ -73,10 +73,28 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+
+	"github.com/goforj/storage"
+	"github.com/goforj/storage/driver/localstorage"
 )
+
+// trackedStorage records generated-manager ownership without reimplementing storage operations.
+type trackedStorage struct {
+	storage.Storage
+	closeCalls *atomic.Int32
+	closeErr   error
+}
+
+// Close records one underlying resource release and returns its configured failure.
+func (s *trackedStorage) Close() error {
+	s.closeCalls.Add(1)
+	return s.closeErr
+}
 
 func TestGeneratedAccessors(t *testing.T) {
 	defaultRoot := t.TempDir()
@@ -148,6 +166,86 @@ func TestGeneratedAccessors(t *testing.T) {
 	if len(observed) == 0 {
 		t.Fatal("expected observer to capture storage operations")
 	}
+
+	t.Run("manager close is idempotent and deduplicates shared disks", func(t *testing.T) {
+		firstInner, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+		if err != nil {
+			t.Fatalf("build first disk: %v", err)
+		}
+		secondInner, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+		if err != nil {
+			t.Fatalf("build second disk: %v", err)
+		}
+		firstErr := errors.New("first close failed")
+		secondErr := errors.New("second close failed")
+		var firstCalls atomic.Int32
+		var secondCalls atomic.Int32
+		first := &trackedStorage{Storage: firstInner, closeCalls: &firstCalls, closeErr: firstErr}
+		second := &trackedStorage{Storage: secondInner, closeCalls: &secondCalls, closeErr: secondErr}
+		owned := &Manager{ownedDisks: []ownedStorageDisk{
+			{name: "default", disk: first},
+			{name: "shared", disk: first},
+			{name: "archive", disk: second},
+		}}
+		closeErr := owned.Close()
+		if !errors.Is(closeErr, firstErr) || !errors.Is(closeErr, secondErr) {
+			t.Fatalf("Close error = %v, want both disk failures", closeErr)
+		}
+		if err := owned.Close(); !errors.Is(err, firstErr) || !errors.Is(err, secondErr) {
+			t.Fatalf("second Close error = %v, want retained failures", err)
+		}
+		if got := firstCalls.Load(); got != 1 {
+			t.Fatalf("shared disk close calls = %d, want 1", got)
+		}
+		if got := secondCalls.Load(); got != 1 {
+			t.Fatalf("archive disk close calls = %d, want 1", got)
+		}
+	})
+
+	t.Run("observer context wrappers share close lifecycle", func(t *testing.T) {
+		inner, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+		if err != nil {
+			t.Fatalf("build observed disk: %v", err)
+		}
+		var closeCalls atomic.Int32
+		tracked := &trackedStorage{Storage: inner, closeCalls: &closeCalls}
+		wrapped := wrapObservedStorage(tracked, "default", "local", ObserverFunc(func(context.Context, StorageOpEvent) {}))
+		derived := wrapped.WithContext(t.Context())
+		if err := derived.(interface{ Close() error }).Close(); err != nil {
+			t.Fatalf("close derived observer: %v", err)
+		}
+		if err := wrapped.(interface{ Close() error }).Close(); err != nil {
+			t.Fatalf("close root observer: %v", err)
+		}
+		if got := closeCalls.Load(); got != 1 {
+			t.Fatalf("observed disk close calls = %d, want 1", got)
+		}
+	})
+
+	t.Run("later initialization failure closes prior disks", func(t *testing.T) {
+		inner, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+		if err != nil {
+			t.Fatalf("build cleanup disk: %v", err)
+		}
+		initializationErr := errors.New("later disk failed")
+		cleanupErr := errors.New("cleanup failed")
+		var closeCalls atomic.Int32
+		opened := &trackedStorage{Storage: inner, closeCalls: &closeCalls, closeErr: cleanupErr}
+		buildCalls := 0
+		_, err = newManagerFromEnvWithBuilder(func(storage.DriverConfig) (storage.Storage, error) {
+			buildCalls++
+			if buildCalls == 1 {
+				return opened, nil
+			}
+			return nil, initializationErr
+		})
+		if !errors.Is(err, initializationErr) || !errors.Is(err, cleanupErr) {
+			t.Fatalf("initialization error = %v, want construction and cleanup failures", err)
+		}
+		if got := closeCalls.Load(); got != 1 {
+			t.Fatalf("previously opened disk close calls = %d, want 1", got)
+		}
+	})
 }
 `
 	if err := os.WriteFile(filepath.Join(root, "internal", "storages", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
@@ -161,6 +259,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
 	cmd := exec.Command("go", "test", pkgPath, "-run", "TestGeneratedAccessors", "-count=1")
 	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/gocache", "GOMODCACHE=/tmp/gomodcache")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated storage package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
@@ -299,9 +398,9 @@ func TestGenerateStorageFilesTracksOptionalDiskWarnings(t *testing.T) {
 		`OptionalDiskWarning`,
 		`type OptionalDiskWarning struct {`,
 		`func (m *Manager) Warnings() []OptionalDiskWarning {`,
-		`diskRedisBacked, warningRedisBacked, err := optionalDiskFromScope(storageScope, storage.DiskName("redis_backed"))`,
+		`diskRedisBacked, warningRedisBacked, err := optionalDiskFromScope(storageScope, storage.DiskName("redis_backed"), build)`,
 		`manager.warnings = append(manager.warnings, *warningRedisBacked)`,
-		`func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {`,
+		`func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName, build func(storage.DriverConfig) (storage.Storage, error)) (storage.Storage, *OptionalDiskWarning, error) {`,
 		`Error:  err.Error(),`,
 	} {
 		if !strings.Contains(source, snippet) {

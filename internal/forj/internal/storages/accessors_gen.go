@@ -6,27 +6,17 @@
 // Named accessors are generated from STORAGE_<NAME>_<KEY> environment variables.
 package storages
 
-import (
-	"github.com/goforj/storage"
-	"github.com/goforj/str"
-)
+import "github.com/goforj/storage"
 
 // Default returns the default storage disk instance derived from STORAGE_* configuration.
 func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
 }
 
-// Names returns the generated storage disk names derived from STORAGE_* configuration.
-func (m *Manager) Names() []string {
-	return []string{"default"}
-}
-
-// Named returns the generated storage disk instance for a configured disk name.
-func (m *Manager) Named(name string) storage.Storage {
-	switch str.Of(name).TrimSpace().ToLower().String() {
-	case "", "default":
-		return m.defaultDisk
-	default:
-		return nil
+// Instances returns the generated storage disk instances derived from STORAGE_* configuration.
+func (m *Manager) Instances() []Instance {
+	instances := []Instance{
+		{Name: "default", Driver: m.defaultDriver, Disk: m.defaultDisk, IsDefault: true},
 	}
+	return instances
 }

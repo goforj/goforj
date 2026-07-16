@@ -260,6 +260,79 @@ func TestObserverChain(t *testing.T) {
 	runFixtureGoTest(t, root, "./internal/caches", "TestObserverChain", nil)
 }
 
+// TestGenerateCacheFilesRejectsInvalidShapingConfiguration proves invalid shaping cannot hide behind fail-closed stores.
+func TestGenerateCacheFilesRejectsInvalidShapingConfiguration(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-shaping-validation-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cacheshapingvalidation",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
+
+	if _, err := GenerateCacheFiles(root); err != nil {
+		t.Fatalf("GenerateCacheFiles returned error: %v", err)
+	}
+
+	testSource := `package caches
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/goforj/cache/cachecore"
+)
+
+// TestInvalidShapingConfiguration verifies manager construction identifies configuration errors before returning a store.
+func TestInvalidShapingConfiguration(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+		want  error
+	}{
+		{name: "invalid encryption key", key: "CACHE_ENCRYPTION_KEY", value: "too-short", want: cachecore.ErrEncryptionKey},
+		{name: "negative max value bytes", key: "CACHE_MAX_VALUE_BYTES", value: "-1", want: cachecore.ErrInvalidMaxValueBytes},
+		{name: "reserved compression", key: "CACHE_COMPRESSION", value: "snappy", want: cachecore.ErrUnsupportedCodec},
+		{name: "unknown compression", key: "CACHE_COMPRESSION", value: "brotli", want: cachecore.ErrUnsupportedCodec},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CACHE_DRIVER", "memory")
+			t.Setenv(tt.key, tt.value)
+
+			manager, err := NewManager()
+			if manager != nil {
+				t.Fatal("expected invalid shaping configuration to return a nil manager")
+			}
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("NewManager error = %v, want %v", err, tt.want)
+			}
+			if !strings.Contains(err.Error(), "cache \"default\": invalid shaping configuration") {
+				t.Fatalf("NewManager error %q does not identify the default cache", err)
+			}
+		})
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "shaping_validation_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/caches", "TestInvalidShapingConfiguration", nil)
+}
+
 func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "redis")
 	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")

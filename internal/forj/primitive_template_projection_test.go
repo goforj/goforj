@@ -116,6 +116,7 @@ func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
 		`"database/sql"`,
 		`"github.com/goforj/scheduler/v2"`,
 		"authFlows",
+		"MustDurationHistogramVec",
 		"func (m *Manager) RecordSchedulerJob",
 		"type DatabaseStatementMetricEvent struct",
 		`runtime.CurrentApp().Components.HasDatabase() && env.GetBool("METRICS_DATABASE_ENABLED", "true")`,
@@ -134,6 +135,52 @@ func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
 		assertTemplateMarker(t, "internal/metrics/manager_test.go.tmpl", managerTests, token, true)
 	}
 	assertTemplateMarker(t, "internal/metrics/manager.go.tmpl", manager, "monitoringSidebarRequests", false)
+	assertTemplateMarker(t, "internal/metrics/manager.go.tmpl", manager, "gmetrics.DurationBounds(", false)
+}
+
+// TestStorageTemplatesExposeBackendDeleteCapabilities keeps generated docs, server payloads, and Lighthouse actions aligned.
+func TestStorageTemplatesExposeBackendDeleteCapabilities(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
+	config := &project.Config{
+		GoModuleName: "example.com/storage-capabilities",
+		Render: project.RenderConfig{Components: project.Components{
+			CLI: true, WebAPI: true, Storage: true,
+		}},
+	}
+	data := workspace.templateDataForApp(config, project.DefaultApp())
+	lighthouse := renderSharedTemplate(t, "internal/http/lighthouse.go.tmpl", data)
+	serverTests := renderSharedTemplate(t, "internal/http/server_test.go.tmpl", data)
+	assertFormattedGoTemplate(t, "internal/http/lighthouse.go.tmpl", lighthouse)
+	assertFormattedGoTemplate(t, "internal/http/server_test.go.tmpl", serverTests)
+	for _, token := range []string{
+		`Deletable    bool   ` + "`json:\"deletable\"`",
+		"func storageEntryDeletable(driver string, entry storage.Entry) bool",
+		`!entry.IsDir || !strings.EqualFold(strings.TrimSpace(driver), "dropbox")`,
+	} {
+		assertTemplateMarker(t, "internal/http/lighthouse.go.tmpl", lighthouse, token, true)
+	}
+	for _, token := range []string{
+		"func TestStorageEntryDeletableFollowsBackendContract",
+		`{name: "Dropbox directory", driver: "dropbox", entry: storage.Entry{IsDir: true}, want: false}`,
+		`{name: "Dropbox file", driver: "dropbox", entry: storage.Entry{IsDir: false}, want: true}`,
+		`{name: "S3 directory", driver: "s3", entry: storage.Entry{IsDir: true}, want: true}`,
+	} {
+		assertTemplateMarker(t, "internal/http/server_test.go.tmpl", serverTests, token, true)
+	}
+
+	for _, check := range []struct {
+		path  string
+		token string
+	}{
+		{path: "internal/lighthouse/ui/src/views/StorageView.vue", token: `v-if="entry.deletable !== false"`},
+		{path: "internal/storages/README.md.tmpl", token: "Dropbox supports file deletion only"},
+	} {
+		content, err := templatesFS.ReadFile(check.path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", check.path, err)
+		}
+		assertTemplateMarker(t, check.path, string(content), check.token, true)
+	}
 }
 
 // TestMailAboutBehaviorCoversEveryAppProjection verifies generated behavior coverage includes Mail-enabled and Mail-disabled Apps.
@@ -218,6 +265,7 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 			key: project.ComponentStorage,
 			appMarkers: []primitiveTemplateMarker{
 				{path: "wire/app.go.tmpl", token: "func (a *App) Storage() *storages.Manager"},
+				{path: "wire/app.go.tmpl", token: "registerStorageShutdown(lifecycleManager, appLogger, storage)"},
 				{path: "wire/inject_managers.go.tmpl", token: "func provideStorageManager("},
 				{path: "wire/inject_http.go.tmpl", token: "for _, check := range storage.ReadinessChecks()"},
 			},

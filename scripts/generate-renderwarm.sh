@@ -101,18 +101,21 @@ root_version_for_module() {
 
 override_version_for_module() {
   case "$1" in
-    github.com/goforj/cache) echo "v0.3.0" ;;
-    github.com/goforj/cache/cachecore) echo "v0.3.0" ;;
-    github.com/goforj/cache/driver/rediscache) echo "v0.3.0" ;;
-    github.com/goforj/events) echo "v0.1.3" ;;
-    github.com/goforj/events/eventscore) echo "v0.1.3" ;;
-    github.com/goforj/events/driver/gcppubsubevents) echo "v0.1.3" ;;
-    github.com/goforj/events/driver/kafkaevents) echo "v0.1.3" ;;
-    github.com/goforj/events/driver/natsevents) echo "v0.1.3" ;;
-    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.1.3" ;;
-    github.com/goforj/events/driver/redisevents) echo "v0.1.3" ;;
-    github.com/goforj/events/driver/snsevents) echo "v0.1.3" ;;
+    github.com/goforj/cache) echo "v0.4.0" ;;
+    github.com/goforj/cache/cachecore) echo "v0.4.0" ;;
+    github.com/goforj/cache/driver/rediscache) echo "v0.4.0" ;;
+    github.com/goforj/events) echo "v0.2.0" ;;
+    github.com/goforj/events/eventscore) echo "v0.2.0" ;;
+    github.com/goforj/events/driver/gcppubsubevents) echo "v0.2.0" ;;
+    github.com/goforj/events/driver/kafkaevents) echo "v0.2.0" ;;
+    github.com/goforj/events/driver/natsevents) echo "v0.2.0" ;;
+    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.2.0" ;;
+    github.com/goforj/events/driver/redisevents) echo "v0.2.0" ;;
+    github.com/goforj/events/driver/snsevents) echo "v0.2.0" ;;
     github.com/goforj/httpx) echo "v1.1.0" ;;
+    github.com/goforj/mail) echo "v0.3.1" ;;
+    github.com/goforj/mail/mailses) echo "v0.3.1" ;;
+    github.com/goforj/metrics) echo "v0.2.0" ;;
     github.com/goforj/null/v6) echo "v6.0.2" ;;
     github.com/goforj/queue) echo "v0.1.16" ;;
     github.com/goforj/scheduler/v2) echo "v2.1.3" ;;
@@ -221,9 +224,6 @@ mkdir -p "$out_dir"
     fi
     printf "\t%s %s\n" "$module" "$version"
   done < "$modules_file"
-  if grep -qx 'github.com/goforj/events/eventscore' "$imports_file"; then
-    printf "\t%s %s\n" "github.com/goforj/events/eventscore" "v0.1.0"
-  fi
   echo ")"
 } > "$out_dir/go.mod"
 

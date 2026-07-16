@@ -519,6 +519,7 @@ type storageEntryInfo struct {
 	IsDir        bool   `json:"is_dir"`
 	Downloadable bool   `json:"downloadable"`
 	URLCapable   bool   `json:"url_capable"`
+	Deletable    bool   `json:"deletable"`
 }
 
 // storageDisks projects the runtime manager into the bounded Lighthouse disk contract.
@@ -601,6 +602,7 @@ func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName str
 		}
 	}
 	items := make([]storageEntryInfo, 0, len(entries))
+	driver := driverNameForDisk(r.storage, selectedDisk)
 	for _, entry := range entries {
 		name := pathpkg.Base(strings.TrimSuffix(entry.Path, "/"))
 		if name == "." || name == "/" || name == "" {
@@ -612,7 +614,8 @@ func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName str
 			Size:         entry.Size,
 			IsDir:        entry.IsDir,
 			Downloadable: !entry.IsDir,
-			URLCapable:   !entry.IsDir && storageDriverSupportsPublicURL(driverNameForDisk(r.storage, selectedDisk)),
+			URLCapable:   !entry.IsDir && storageDriverSupportsPublicURL(driver),
+			Deletable:    storageEntryDeletable(driver, entry),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -738,6 +741,7 @@ func (r *LighthouseRuntime) storagePutPayload(ctx context.Context, diskName stri
 			IsDir:        entry.IsDir,
 			Downloadable: !entry.IsDir,
 			URLCapable:   !entry.IsDir && storageDriverSupportsPublicURL(driverNameForDisk(r.storage, selectedDisk)),
+			Deletable:    storageEntryDeletable(driverNameForDisk(r.storage, selectedDisk), entry),
 		},
 	}, nil
 }
@@ -794,6 +798,7 @@ func (r *LighthouseRuntime) storageMkdirPayload(ctx context.Context, diskName st
 			IsDir:        entry.IsDir,
 			Downloadable: !entry.IsDir,
 			URLCapable:   false,
+			Deletable:    storageEntryDeletable(driverNameForDisk(r.storage, selectedDisk), entry),
 		},
 	}, nil
 }
@@ -836,6 +841,7 @@ func (r *LighthouseRuntime) storageMovePayload(ctx context.Context, diskName str
 			IsDir:        movedEntry.IsDir,
 			Downloadable: !movedEntry.IsDir,
 			URLCapable:   !movedEntry.IsDir && storageDriverSupportsPublicURL(driverNameForDisk(r.storage, selectedDisk)),
+			Deletable:    storageEntryDeletable(driverNameForDisk(r.storage, selectedDisk), movedEntry),
 		},
 	}, nil
 }
@@ -895,6 +901,11 @@ func storageDriverSupportsPublicURL(driver string) bool {
 	default:
 		return false
 	}
+}
+
+// storageEntryDeletable keeps Lighthouse actions within each backend's safe deletion contract.
+func storageEntryDeletable(driver string, entry storage.Entry) bool {
+	return !entry.IsDir || !strings.EqualFold(strings.TrimSpace(driver), "dropbox")
 }
 
 // lighthouseStorageDownload serves bounded file downloads only when this App has a Storage manager.

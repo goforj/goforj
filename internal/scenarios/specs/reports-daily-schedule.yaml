@@ -69,21 +69,9 @@ markdown:
     - title: App wiring
       files:
         - app/wire/inject_services_app.go
-  manual_check_title: Verify The Schedule
+  manual_check_title: Verify the Schedule
   manual_check: |
-    Start a worker in one terminal:
-
-    ```bash
-    forj worker
-    ```
-
-    Start the scheduler in another terminal:
-
-    ```bash
-    forj scheduler
-    ```
-
-    For a fast local check, temporarily use a short interval while developing:
+    For a fast local check, first edit `app/schedules.go` to use a short interval:
 
     ```go
     s.Every(30).Seconds().
@@ -91,21 +79,52 @@ markdown:
       Do(s.InspectTask("reports:daily", r.dailyReports.Run))
     ```
 
-    Return to `DailyAt("04:00")` before treating the schedule as production-shaped.
+    Rebuild after changing the schedule:
+
+    ```bash
+    forj build
+    ```
+
+    With the default process-local `workerpool` driver, start the combined App so the scheduler and Jobs runtime share one process:
+
+    ```bash
+    forj app
+    ```
+
+    After the check, restore `DailyAt("04:00")` in `app/schedules.go` and rebuild again:
+
+    ```bash
+    forj build
+    ```
+
+    To run the scheduler and workers as separate processes, first select a shared queue driver as described in [Reports Generate Job](/scenarios/reports-generate-job#swap-the-driver). Then start each runtime in its own terminal.
+
+    Terminal 1 - worker:
+
+    ```bash
+    forj worker
+    ```
+
+    Terminal 2 - scheduler:
+
+    ```bash
+    forj scheduler
+    ```
   operations:
-    - "Run scheduler processes explicitly with `./bin/app scheduler`."
+    - "Use `./bin/app` when the process-local `workerpool` driver should host the scheduler and Jobs runtime together."
+    - "With a shared queue driver, run the scheduler explicitly with `./bin/app scheduler`."
     - "Keep the scheduler singleton unless your locking strategy supports more than one scheduler process."
-    - "Scale workers separately with `./bin/app worker`."
+    - "Scale workers separately with `./bin/app worker` only when their queue backend is shared with the scheduler."
   common_mistakes:
     - "Do not duplicate report generation logic in the scheduler registry."
     - "Do not use an anonymous callback for `reports:daily`."
     - "Do not treat a schedule as a durable queue."
     - "Do not run multiple scheduler processes unless overlap and locking behavior are intentional."
-    - "Do not skip the worker process; the schedule dispatches jobs, and workers perform the work."
+    - "Do not split the scheduler and workers while using `workerpool`; that driver is process-local."
   next_steps:
     - "Next, follow the full API, event, job, schedule, metrics, inspects, Lighthouse, and log path in [Runtime Observability](/scenarios/runtime-observability)."
 steps:
-  - title: Add A Daily Runner
+  - title: Add a Daily Runner
     explain: |
       Create `internal/reports/daily.go`.
 
@@ -114,42 +133,49 @@ steps:
       path: internal/reports/daily.go
       language: go
       content: |
+        // Package reports keeps scheduled dispatch beside the report workflow it triggers.
         package reports
 
         import (
                 "context"
                 "fmt"
-                )
+        )
 
+        // DailyTarget carries the stable identity required to queue a report without loading the full user model.
         type DailyTarget struct {
                 UserID string
                 Email  string
         }
 
+        // DailyTargetRepository keeps schedule eligibility rules behind the application's persistence boundary.
         type DailyTargetRepository interface {
-                DueForDailyReport(ctx context.Context) ([]DailyTarget, error)
+                // ListDailyReportTargets returns only the stable fields needed to enqueue daily work.
+                ListDailyReportTargets(ctx context.Context) ([]DailyTarget, error)
         }
 
+        // DailyRunner turns one scheduler invocation into queue-backed report jobs without generating reports inline.
         type DailyRunner struct {
                 targets DailyTargetRepository
-                reports ReportQueue
+                queue   ReportQueue
         }
 
-        func NewDailyRunner(targets DailyTargetRepository, reports ReportQueue) *DailyRunner {
+        // NewDailyRunner requires both collaborators so a registered schedule cannot silently skip report work.
+        func NewDailyRunner(targets DailyTargetRepository, queue ReportQueue) *DailyRunner {
                 return &DailyRunner{
                         targets: targets,
-                        reports: reports,
+                        queue:   queue,
                 }
         }
 
+        // Run loads eligible targets at execution time so registration stays declarative and work leaves the scheduler boundary.
         func (r *DailyRunner) Run(ctx context.Context) error {
-                targets, err := r.targets.DueForDailyReport(ctx)
+                targets, err := r.targets.ListDailyReportTargets(ctx)
                 if err != nil {
                         return fmt.Errorf("load daily report targets: %w", err)
                 }
 
                 for _, target := range targets {
-                        if err := r.reports.Queue(ctx, target.UserID, target.Email); err != nil {
+                        if err := r.queue.Queue(ctx, target.UserID, target.Email); err != nil {
                                 return fmt.Errorf("queue daily report for %s: %w", target.UserID, err)
                         }
                 }
@@ -157,7 +183,7 @@ steps:
                 return nil
         }
 
-  - title: Add Daily Targets To The Repository
+  - title: Add Daily Targets to the Repository
     explain: |
       Extend `MemoryUserRepository` so the schedule can ask the repository for due report targets.
     replace:
@@ -177,7 +203,8 @@ steps:
       path: internal/users/repository.go
       language: go
       old: |
-        func (r *MemoryUserRepository) Save(ctx context.Context, user User) (User, error) {
+        // Save serializes ID assignment with persistence so concurrent requests cannot claim the same ID.
+        func (r *MemoryUserRepository) Save(_ context.Context, user User) (User, error) {
         	r.mu.Lock()
         	defer r.mu.Unlock()
 
@@ -189,7 +216,8 @@ steps:
         	return user, nil
         }
       new: |
-        func (r *MemoryUserRepository) Save(ctx context.Context, user User) (User, error) {
+        // Save serializes ID assignment with persistence so concurrent requests cannot claim the same ID.
+        func (r *MemoryUserRepository) Save(_ context.Context, user User) (User, error) {
         	r.mu.Lock()
         	defer r.mu.Unlock()
 
@@ -201,9 +229,10 @@ steps:
         	return user, nil
         }
 
-        func (r *MemoryUserRepository) DueForDailyReport(ctx context.Context) ([]reports.DailyTarget, error) {
-        	r.mu.Lock()
-        	defer r.mu.Unlock()
+        // ListDailyReportTargets keeps selection behind the repository; this in-memory example treats every user as due.
+        func (r *MemoryUserRepository) ListDailyReportTargets(_ context.Context) ([]reports.DailyTarget, error) {
+                r.mu.RLock()
+                defer r.mu.RUnlock()
 
         	targets := make([]reports.DailyTarget, 0, len(r.users))
         	for _, user := range r.users {
@@ -215,7 +244,7 @@ steps:
         	return targets, nil
         }
 
-  - title: Import Reports Into The Schedule Registry
+  - title: Import Reports into the Schedule Registry
     explain: |
       Add the daily runner package to the app-owned schedule registry.
     replace:
@@ -237,7 +266,7 @@ steps:
                 type ScheduleRegistry struct {
       new: |
                 type ScheduleRegistry struct {
-                dailyReports   *reports.DailyRunner
+                        dailyReports *reports.DailyRunner
 
   - title: Add Schedule Registry Constructor Parameter
     explain: |
@@ -249,7 +278,7 @@ steps:
                 func NewScheduleRegistry(
       new: |
                 func NewScheduleRegistry(
-                dailyReports *reports.DailyRunner,
+                        dailyReports *reports.DailyRunner,
 
   - title: Assign Schedule Registry Runner
     explain: |
@@ -261,9 +290,9 @@ steps:
                 return &ScheduleRegistry{
       new: |
                 return &ScheduleRegistry{
-                dailyReports:   dailyReports,
+                        dailyReports: dailyReports,
 
-  - title: Register The Schedule
+  - title: Register the Schedule
     explain: |
       Keep the registry declarative. The registry names the schedule and points to the domain-owned method.
     replace:
@@ -273,24 +302,24 @@ steps:
                 func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
       new: |
                 func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
-                s.DailyAt("04:00").
-                        Name("reports:daily").
-                        Do(s.InspectTask("reports:daily", r.dailyReports.Run))
+                        s.DailyAt("04:00").
+                                Name("reports:daily").
+                                Do(s.InspectTask("reports:daily", r.dailyReports.Run))
 
-  - title: Wire The Runner
+  - title: Wire the Runner
     explain: |
-      Bind the existing report job to the small queueing interface and bind the user repository to daily target lookup.
+      The previous scenario already binds the report job to `ReportQueue`. Add the daily runner and bind the user repository to daily target lookup.
     replace:
       path: app/wire/inject_services_app.go
       language: go
       old: |
-                reports.NewService,
+                provideReportService,
       new: |
-                reports.NewService,
+                provideReportService,
                 reports.NewDailyRunner,
                 wire.Bind(new(reports.DailyTargetRepository), new(*users.MemoryUserRepository)),
 
-  - title: Test The Runner
+  - title: Test the Runner
     explain: |
       Create `internal/reports/daily_test.go`.
 
@@ -299,42 +328,53 @@ steps:
       path: internal/reports/daily_test.go
       language: go
       content: |
+        // Package reports verifies schedule dispatch without starting scheduler or worker runtimes.
         package reports
 
         import (
                 "context"
+                "slices"
                 "testing"
         )
 
-        type fakeDailyTargets struct {
+        // fakeDailyTargetRepository gives the runner a fixed eligibility result without persistence setup.
+        type fakeDailyTargetRepository struct {
                 targets []DailyTarget
         }
 
-        func (f fakeDailyTargets) DueForDailyReport(context.Context) ([]DailyTarget, error) {
-                return f.targets, nil
+        // ListDailyReportTargets returns the fixture's declared targets so the test controls schedule input.
+        func (repo fakeDailyTargetRepository) ListDailyReportTargets(context.Context) ([]DailyTarget, error) {
+                return repo.targets, nil
         }
 
-        type fakeReportQueue struct {
+        // recordingReportQueue exposes queued targets without starting a worker runtime.
+        type recordingReportQueue struct {
                 queued []DailyTarget
         }
 
-        func (f *fakeReportQueue) Queue(_ context.Context, userID string, email string) error {
-                f.queued = append(f.queued, DailyTarget{UserID: userID, Email: email})
+        // Queue records the job-dispatch boundary while satisfying the same interface as the generated report job.
+        func (queue *recordingReportQueue) Queue(_ context.Context, userID string, email string) error {
+                queue.queued = append(queue.queued, DailyTarget{UserID: userID, Email: email})
                 return nil
         }
 
+        // TestDailyRunnerQueuesReports proves one schedule invocation dispatches every eligible target exactly once.
         func TestDailyRunnerQueuesReports(t *testing.T) {
-                queue := &fakeReportQueue{}
+                targets := []DailyTarget{
+                        {UserID: "42", Email: "ada@example.test"},
+                        {UserID: "43", Email: "grace@example.test"},
+                }
+                queue := &recordingReportQueue{}
                 runner := NewDailyRunner(
-                        fakeDailyTargets{targets: []DailyTarget{{UserID: "42", Email: "ada@example.test"}}},
+                        fakeDailyTargetRepository{targets: targets},
                         queue,
                 )
 
                 if err := runner.Run(context.Background()); err != nil {
                         t.Fatalf("run daily reports: %v", err)
                 }
-                if len(queue.queued) != 1 {
-                        t.Fatalf("queued reports = %d", len(queue.queued))
+                if !slices.Equal(queue.queued, targets) {
+                        t.Fatalf("queued reports = %+v, want %+v", queue.queued, targets)
                 }
         }
 

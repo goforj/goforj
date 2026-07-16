@@ -4,12 +4,15 @@ package storages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goforj/env/v2"
@@ -31,6 +34,10 @@ const (
 	driverS3      = "s3"
 	driverSFTP    = "sftp"
 )
+
+var compiledStorageDrivers = []string{
+	"local",
+}
 
 var storageRootKeys = []string{
 	"DRIVER",
@@ -62,15 +69,35 @@ var storageRootKeys = []string{
 	"RCLONE_CONFIG_DATA",
 }
 
-// Manager owns initialized storage disks and their runtime instrumentation.
+// Manager owns the storage disks generated from the project's build contract.
 type Manager struct {
 	defaultDisk   storage.Storage
 	observer      Observer
 	defaultDriver string
 	warnings      []OptionalDiskWarning
+	ownedDisks    []ownedStorageDisk
+	closeOnce     sync.Once
+	closeErr      error
 }
 
-// Instance describes one initialized disk exposed through generated storage discovery.
+// ownedStorageDisk retains the construction name needed for deterministic cleanup diagnostics.
+type ownedStorageDisk struct {
+	name string
+	disk storage.Storage
+}
+
+// storageCloser captures the optional lifecycle exposed by resource-backed storage drivers.
+type storageCloser interface {
+	Close() error
+}
+
+// storageCloserIdentity distinguishes shared pointer-backed closers without assuming every implementation is comparable.
+type storageCloserIdentity struct {
+	typeName string
+	pointer  uintptr
+}
+
+// Instance gives tooling a uniform view of each initialized storage disk.
 type Instance struct {
 	Name      string
 	Driver    string
@@ -78,26 +105,26 @@ type Instance struct {
 	IsDefault bool
 }
 
-// ReadinessCheck names a generated storage probe for framework health reporting.
+// ReadinessCheck pairs a stable disk name with its health probe.
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
 }
 
-// OptionalDiskWarning records an unavailable non-default disk without preventing startup.
+// OptionalDiskWarning retains startup diagnostics when a non-default disk is unavailable.
 type OptionalDiskWarning struct {
 	Name   string
 	Driver string
 	Error  string
 }
 
-// Observer receives completed storage operations without coupling drivers to telemetry packages.
+// Observer decouples generated storage instrumentation from its metrics and tracing consumers.
 type Observer interface {
 	// OnStorageOp gives generated storage wrappers one stable hook for operation telemetry.
 	OnStorageOp(ctx context.Context, event StorageOpEvent)
 }
 
-// StorageOpEvent captures the stable operation details shared with generated observers.
+// StorageOpEvent provides bounded operation details without exposing driver-specific instrumentation.
 type StorageOpEvent struct {
 	Operation string
 	Disk      string
@@ -107,7 +134,7 @@ type StorageOpEvent struct {
 	Duration  time.Duration
 }
 
-// ObserverFunc adapts a callback to the generated storage observer contract.
+// ObserverFunc lets a callback participate in the generated storage observer contract.
 type ObserverFunc func(ctx context.Context, event StorageOpEvent)
 
 // OnStorageOp adapts a callback so generated managers can compose it with interface-based observers.
@@ -118,7 +145,7 @@ func (f ObserverFunc) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	f(ctx, event)
 }
 
-// observerChain preserves observer registration order when telemetry has multiple consumers.
+// observerChain retains multiple storage observers without exposing composition to callers.
 type observerChain []Observer
 
 // OnStorageOp preserves registration order when a storage operation is fanned out to multiple observers.
@@ -134,6 +161,14 @@ func (c observerChain) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 // NewManager builds storage disks from the environment contract captured by this generated artifact.
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
+}
+
+// Close releases every initialized disk once in reverse construction order.
+func (m *Manager) Close() error {
+	m.closeOnce.Do(func() {
+		m.closeErr = closeOwnedStorageDisks(m.ownedDisks)
+	})
+	return m.closeErr
 }
 
 // WithObserver adds observability without replacing observers already attached by framework wiring.
@@ -256,30 +291,38 @@ func storageChildNamesFromEnv() []string {
 
 // newManagerFromEnv eagerly initializes the default disk while allowing generated optional disks to degrade visibly.
 func newManagerFromEnv() (*Manager, error) {
+	return newManagerFromEnvWithBuilder(storage.Build)
+}
+
+// newManagerFromEnvWithBuilder keeps partial-construction cleanup testable without replacing the production builder.
+func newManagerFromEnvWithBuilder(build func(storage.DriverConfig) (storage.Storage, error)) (*Manager, error) {
 	storageScope := env.WithPrefix("STORAGE")
 	defaultCfg, err := buildDiskConfig(defaultDiskName, storageScope)
 	if err != nil {
 		return nil, err
 	}
-	defaultDisk, err := storage.Build(defaultCfg)
+	defaultDisk, err := build(defaultCfg)
 	if err != nil {
 		return nil, fmt.Errorf("storage: initialize disk %q: %w", defaultDiskName, err)
 	}
 	manager := &Manager{
 		defaultDisk:   defaultDisk,
 		defaultDriver: storageDriverNameFromScope(storageScope),
+		ownedDisks: []ownedStorageDisk{
+			{name: string(defaultDiskName), disk: defaultDisk},
+		},
 	}
 	return manager, nil
 }
 
 // optionalDiskFromScope keeps expected infrastructure outages nonfatal for non-default disks while retaining diagnostics.
-func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {
+func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName, build func(storage.DriverConfig) (storage.Storage, error)) (storage.Storage, *OptionalDiskWarning, error) {
 	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
 	cfg, err := buildDiskConfig(name, childScope)
 	if err != nil {
 		return nil, nil, err
 	}
-	disk, err := storage.Build(cfg)
+	disk, err := build(cfg)
 	if err == nil {
 		return disk, nil, nil
 	}
@@ -292,6 +335,45 @@ func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (stora
 		}, nil
 	}
 	return nil, nil, err
+}
+
+// joinStorageInitializationCleanup retains both the construction failure and any cleanup failures it triggered.
+func joinStorageInitializationCleanup(initializationErr error, cleanupErr error) error {
+	if cleanupErr == nil {
+		return initializationErr
+	}
+	return errors.Join(initializationErr, cleanupErr)
+}
+
+// closeOwnedStorageDisks closes unique resource handles in reverse construction order and retains every failure.
+func closeOwnedStorageDisks(disks []ownedStorageDisk) error {
+	seen := map[storageCloserIdentity]struct{}{}
+	var closeErrs []error
+	for i := len(disks) - 1; i >= 0; i-- {
+		closer, ok := disks[i].disk.(storageCloser)
+		if !ok {
+			continue
+		}
+		if identity, identifiable := storageCloseIdentity(closer); identifiable {
+			if _, duplicate := seen[identity]; duplicate {
+				continue
+			}
+			seen[identity] = struct{}{}
+		}
+		if err := closer.Close(); err != nil {
+			closeErrs = append(closeErrs, fmt.Errorf("storage: close disk %q: %w", disks[i].name, err))
+		}
+	}
+	return errors.Join(closeErrs...)
+}
+
+// storageCloseIdentity returns stable identity only for pointer-backed closers that can represent a shared resource.
+func storageCloseIdentity(closer storageCloser) (storageCloserIdentity, bool) {
+	value := reflect.ValueOf(closer)
+	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() {
+		return storageCloserIdentity{}, false
+	}
+	return storageCloserIdentity{typeName: value.Type().String(), pointer: value.Pointer()}, true
 }
 
 // isOptionalStorageDiskError limits startup leniency to missing or unreachable optional backends.
@@ -324,6 +406,9 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 	if driver == "" {
 		driver = driverLocal
 	}
+	if !storageDriverCompiled(driver) {
+		return nil, fmt.Errorf("storage: active driver %q is not built in; compiled choices: %s; run forj generate --storage after updating STORAGE_SUPPORTED_DRIVERS", driver, strings.Join(compiledStorageDrivers, ", "))
+	}
 
 	localRoot := filepath.Join("storage", "app", "private")
 	if name != defaultDiskName {
@@ -345,6 +430,16 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 	}
 }
 
+// storageDriverCompiled reports whether driver is selectable in this generated artifact.
+func storageDriverCompiled(driver string) bool {
+	for _, compiled := range compiledStorageDrivers {
+		if driver == compiled {
+			return true
+		}
+	}
+	return false
+}
+
 // storageReadinessCheck prefers explicit driver health contracts and falls back to a lightweight listing operation.
 func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
 	if ready, ok := any(disk).(interface{ Ready(context.Context) error }); ok {
@@ -357,13 +452,21 @@ func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
 	return err
 }
 
-// observedStorage decorates a disk so every delegated operation emits consistent telemetry.
+// observedStorage decorates any storage driver with context-aware operation telemetry.
 type observedStorage struct {
-	inner    storage.Storage
-	name     string
-	driver   string
-	observer Observer
-	ctx      context.Context
+	inner     storage.Storage
+	name      string
+	driver    string
+	observer  Observer
+	ctx       context.Context
+	lifecycle *observedStorageLifecycle
+}
+
+// observedStorageLifecycle shares one close result across every context-derived observer wrapper.
+type observedStorageLifecycle struct {
+	closer storageCloser
+	once   sync.Once
+	err    error
 }
 
 // wrapObservedStorage reuses an existing wrapper so adding observers does not stack duplicate instrumentation.
@@ -377,12 +480,16 @@ func wrapObservedStorage(inner storage.Storage, name string, driver string, obse
 		wrapped.observer = observer
 		return wrapped
 	}
-	return &observedStorage{
+	wrapped := &observedStorage{
 		inner:    inner,
 		name:     name,
 		driver:   driver,
 		observer: observer,
 	}
+	if closer, ok := inner.(storageCloser); ok {
+		wrapped.lifecycle = &observedStorageLifecycle{closer: closer}
+	}
+	return wrapped
 }
 
 // observe emits one uniform event after a delegated storage operation completes.
@@ -405,6 +512,17 @@ func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
 	}
 	clone.ctx = ctx
 	return &clone
+}
+
+// Close releases the underlying driver once across the root wrapper and every context-derived clone.
+func (s *observedStorage) Close() error {
+	if s.lifecycle == nil || s.lifecycle.closer == nil {
+		return nil
+	}
+	s.lifecycle.once.Do(func() {
+		s.lifecycle.err = s.lifecycle.closer.Close()
+	})
+	return s.lifecycle.err
 }
 
 // context supplies a background context for callers that use the context-free storage API.

@@ -8,48 +8,60 @@ import (
 
 // pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
 var pinnedModuleVersions = map[string]string{
-	"github.com/a-h/templ":                            "v0.3.1020",
-	"github.com/goforj/cache":                         "v0.3.0",
-	"github.com/goforj/cache/cachecore":               "v0.3.0",
-	"github.com/goforj/cache/cachetest":               "v0.3.0",
-	"github.com/goforj/cache/driver/dynamocache":      "v0.3.0",
-	"github.com/goforj/cache/driver/memcachedcache":   "v0.3.0",
-	"github.com/goforj/cache/driver/mysqlcache":       "v0.3.0",
-	"github.com/goforj/cache/driver/natscache":        "v0.3.0",
-	"github.com/goforj/cache/driver/postgrescache":    "v0.3.0",
-	"github.com/goforj/cache/driver/rediscache":       "v0.3.0",
-	"github.com/goforj/cache/driver/sqlcore":          "v0.3.0",
-	"github.com/goforj/cache/driver/sqlitecache":      "v0.3.0",
-	"github.com/goforj/env/v2":                        "v2.3.0",
-	"github.com/goforj/events":                        "v0.1.2",
-	"github.com/goforj/events/eventscore":             "v0.1.2",
-	"github.com/goforj/httpx":                         "v1.1.0",
-	"github.com/goforj/mail":                          "v0.1.0",
-	"github.com/goforj/metrics":                       "v0.1.0",
-	"github.com/goforj/queue":                         "v0.2.1",
-	"github.com/goforj/queue/driver/mysqlqueue":       "v0.2.1",
-	"github.com/goforj/queue/driver/natsqueue":        "v0.2.1",
-	"github.com/goforj/queue/driver/postgresqueue":    "v0.2.1",
-	"github.com/goforj/queue/driver/rabbitmqqueue":    "v0.2.1",
-	"github.com/goforj/queue/driver/redisqueue":       "v0.2.1",
-	"github.com/goforj/queue/driver/sqlitequeue":      "v0.2.1",
-	"github.com/goforj/queue/driver/sqlqueuecore":     "v0.2.1",
-	"github.com/goforj/queue/driver/sqsqueue":         "v0.2.1",
-	"github.com/goforj/scheduler/v2":                  "v2.1.3",
-	"github.com/goforj/storage":                       "v0.4.6",
-	"github.com/goforj/storage/driver/dropboxstorage": "v0.4.6",
-	"github.com/goforj/storage/driver/ftpstorage":     "v0.4.6",
-	"github.com/goforj/storage/driver/gcsstorage":     "v0.4.6",
-	"github.com/goforj/storage/driver/localstorage":   "v0.4.6",
-	"github.com/goforj/storage/driver/memorystorage":  "v0.4.6",
-	"github.com/goforj/storage/driver/rclonestorage":  "v0.4.6",
-	"github.com/goforj/storage/driver/redisstorage":   "v0.4.6",
-	"github.com/goforj/storage/driver/s3storage":      "v0.4.6",
-	"github.com/goforj/storage/driver/sftpstorage":    "v0.4.6",
-	"github.com/goforj/storage/storagecore":           "v0.4.6",
-	"github.com/goforj/web":                           "v0.6.0",
-	"github.com/goforj/str":                           "v1.2.0",
-	"github.com/nats-io/nats.go":                      "v1.50.0",
+	"github.com/a-h/templ":                                "v0.3.1020",
+	"github.com/goforj/cache":                             "v0.4.0",
+	"github.com/goforj/cache/cachecore":                   "v0.4.0",
+	"github.com/goforj/cache/cachetest":                   "v0.4.0",
+	"github.com/goforj/cache/driver/dynamocache":          "v0.4.0",
+	"github.com/goforj/cache/driver/memcachedcache":       "v0.4.0",
+	"github.com/goforj/cache/driver/mysqlcache":           "v0.4.0",
+	"github.com/goforj/cache/driver/natscache":            "v0.4.0",
+	"github.com/goforj/cache/driver/postgrescache":        "v0.4.0",
+	"github.com/goforj/cache/driver/rediscache":           "v0.4.0",
+	"github.com/goforj/cache/driver/sqlcore":              "v0.4.0",
+	"github.com/goforj/cache/driver/sqlitecache":          "v0.4.0",
+	"github.com/goforj/crypt":                             "v1.2.0",
+	"github.com/goforj/env/v2":                            "v2.5.0",
+	"github.com/goforj/events":                            "v0.2.0",
+	"github.com/goforj/events/driver/gcppubsubevents":     "v0.2.0",
+	"github.com/goforj/events/driver/kafkaevents":         "v0.2.0",
+	"github.com/goforj/events/driver/natsevents":          "v0.2.0",
+	"github.com/goforj/events/driver/natsjetstreamevents": "v0.2.0",
+	"github.com/goforj/events/driver/redisevents":         "v0.2.0",
+	"github.com/goforj/events/driver/snsevents":           "v0.2.0",
+	"github.com/goforj/events/eventscore":                 "v0.2.0",
+	"github.com/goforj/events/eventsfake":                 "v0.2.0",
+	"github.com/goforj/events/eventstest":                 "v0.2.0",
+	"github.com/goforj/execx":                             "v1.1.2",
+	"github.com/goforj/httpx":                             "v1.1.0",
+	"github.com/goforj/mail":                              "v0.3.1",
+	"github.com/goforj/mail/mailses":                      "v0.3.1",
+	"github.com/goforj/metrics":                           "v0.2.0",
+	"github.com/goforj/queue":                             "v0.2.1",
+	"github.com/goforj/queue/driver/mysqlqueue":           "v0.2.1",
+	"github.com/goforj/queue/driver/natsqueue":            "v0.2.1",
+	"github.com/goforj/queue/driver/postgresqueue":        "v0.2.1",
+	"github.com/goforj/queue/driver/rabbitmqqueue":        "v0.2.1",
+	"github.com/goforj/queue/driver/redisqueue":           "v0.2.1",
+	"github.com/goforj/queue/driver/sqlitequeue":          "v0.2.1",
+	"github.com/goforj/queue/driver/sqlqueuecore":         "v0.2.1",
+	"github.com/goforj/queue/driver/sqsqueue":             "v0.2.1",
+	"github.com/goforj/scheduler/v2":                      "v2.1.3",
+	"github.com/goforj/storage":                           "v0.5.0",
+	"github.com/goforj/storage/driver/dropboxstorage":     "v0.5.0",
+	"github.com/goforj/storage/driver/ftpstorage":         "v0.5.0",
+	"github.com/goforj/storage/driver/gcsstorage":         "v0.5.0",
+	"github.com/goforj/storage/driver/localstorage":       "v0.5.0",
+	"github.com/goforj/storage/driver/memorystorage":      "v0.5.0",
+	"github.com/goforj/storage/driver/rclonestorage":      "v0.5.0",
+	"github.com/goforj/storage/driver/redisstorage":       "v0.5.0",
+	"github.com/goforj/storage/driver/s3storage":          "v0.5.0",
+	"github.com/goforj/storage/driver/sftpstorage":        "v0.5.0",
+	"github.com/goforj/storage/storagecore":               "v0.5.0",
+	"github.com/goforj/storage/storagetest":               "v0.5.0",
+	"github.com/goforj/web":                               "v0.6.0",
+	"github.com/goforj/str":                               "v1.2.0",
+	"github.com/nats-io/nats.go":                          "v1.50.0",
 }
 
 var rendererSyncModules = []string{
@@ -63,18 +75,48 @@ var rendererSyncModules = []string{
 var cacheRendererSyncModules = []string{
 	"github.com/goforj/cache",
 	"github.com/goforj/cache/cachecore",
+	"github.com/goforj/cache/driver/dynamocache",
+	"github.com/goforj/cache/driver/memcachedcache",
+	"github.com/goforj/cache/driver/mysqlcache",
+	"github.com/goforj/cache/driver/natscache",
+	"github.com/goforj/cache/driver/postgrescache",
 	"github.com/goforj/cache/driver/rediscache",
+	"github.com/goforj/cache/driver/sqlcore",
+	"github.com/goforj/cache/driver/sqlitecache",
 }
 
 var eventsRendererSyncModules = []string{
 	"github.com/goforj/events",
 	"github.com/goforj/events/eventscore",
+	"github.com/goforj/events/driver/gcppubsubevents",
+	"github.com/goforj/events/driver/kafkaevents",
+	"github.com/goforj/events/driver/natsevents",
+	"github.com/goforj/events/driver/natsjetstreamevents",
+	"github.com/goforj/events/driver/redisevents",
+	"github.com/goforj/events/driver/snsevents",
 }
 
 var storageRendererSyncModules = []string{
 	"github.com/goforj/storage",
 	"github.com/goforj/storage/storagecore",
+	"github.com/goforj/storage/driver/dropboxstorage",
+	"github.com/goforj/storage/driver/ftpstorage",
+	"github.com/goforj/storage/driver/gcsstorage",
 	"github.com/goforj/storage/driver/localstorage",
+	"github.com/goforj/storage/driver/memorystorage",
+	"github.com/goforj/storage/driver/rclonestorage",
+	"github.com/goforj/storage/driver/redisstorage",
+	"github.com/goforj/storage/driver/s3storage",
+	"github.com/goforj/storage/driver/sftpstorage",
+}
+
+var mailRendererSyncModules = []string{
+	"github.com/goforj/mail",
+	"github.com/goforj/mail/mailses",
+}
+
+var databaseRendererSyncModules = []string{
+	"github.com/goforj/crypt",
 }
 
 var jobsRendererSyncModules = []string{
@@ -115,6 +157,12 @@ func SyncCoreLibraries(components project.Components) []string {
 	}
 	if components.Storage {
 		modules = append(modules, storageRendererSyncModules...)
+	}
+	if components.Mail {
+		modules = append(modules, mailRendererSyncModules...)
+	}
+	if components.HasDatabase() || components.DemoApp {
+		modules = append(modules, databaseRendererSyncModules...)
 	}
 	if components.Jobs {
 		modules = append(modules, jobsRendererSyncModules...)

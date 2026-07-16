@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,7 +79,11 @@ func Generate(options GenerateOptions) error {
 		return fmt.Errorf("out dir is required")
 	}
 	for _, spec := range specs {
-		body := []byte(renderScenarioMarkdown(spec))
+		rendered, err := renderScenarioMarkdown(spec)
+		if err != nil {
+			return fmt.Errorf("render scenario %s: %w", spec.ID, err)
+		}
+		body := []byte(rendered)
 		path, err := scenarioMarkdownPath(options.OutDir, spec.ID)
 		if err != nil {
 			return err
@@ -305,8 +310,17 @@ func readScenarioSpecs(specDir string) ([]ScenarioSpec, error) {
 // decodeScenarioSpec applies per-file defaults while catalog-wide constraints remain centralized in validateScenarioCatalog.
 func decodeScenarioSpec(body []byte) (ScenarioSpec, error) {
 	var spec ScenarioSpec
-	if err := yaml.Unmarshal(body, &spec); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(body))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&spec); err != nil {
 		return spec, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return spec, fmt.Errorf("multiple YAML documents are not supported")
+		}
+		return spec, fmt.Errorf("decode trailing YAML: %w", err)
 	}
 	if strings.TrimSpace(spec.ID) == "" {
 		return spec, fmt.Errorf("id is required")
@@ -338,6 +352,9 @@ func (catalog scenarioCatalog) selectSpecs(ids []string, all bool) ([]ScenarioSp
 
 // validateScenarioCatalog rejects IDs and dependency graphs that could make execution unsafe or ambiguous.
 func validateScenarioCatalog(specs []ScenarioSpec) error {
+	if len(specs) == 0 {
+		return fmt.Errorf("scenario catalog is empty")
+	}
 	byID := make(map[string]ScenarioSpec, len(specs))
 	for _, spec := range specs {
 		if err := validateScenarioID(spec.ID); err != nil {
@@ -429,17 +446,29 @@ func expandScenarioMarkdownText(spec ScenarioSpec, value string) string {
 }
 
 // renderScenarioMarkdown keeps published guidance derived from the same ordered steps exercised by validation.
-func renderScenarioMarkdown(spec ScenarioSpec) string {
+func renderScenarioMarkdown(spec ScenarioSpec) (string, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\ntitle: %s\ndescription: %s\n---\n\n", spec.Title, spec.Description)
+	fmt.Fprintf(&b, "---\ntitle: %q\ndescription: %q\n---\n\n", spec.Title, spec.Description)
 	fmt.Fprintf(&b, "# %s\n\n", spec.Title)
 	b.WriteString("::: info Verified Scenario\n")
 	b.WriteString("This page is generated from an executable spec. An automated suite renders a fresh App from the current GoForj templates, applies every step below in order, and runs every verification command. If any step fails, the page does not ship.\n")
 	b.WriteString(":::\n\n")
+	writeScenarioIntroduction(&b, spec)
+	writeScenarioFiles(&b, spec)
+	if err := writeScenarioSteps(&b, spec); err != nil {
+		return "", err
+	}
+	writeScenarioVerification(&b, spec)
+	writeScenarioGuidance(&b, spec)
+	return strings.TrimRight(b.String(), "\n") + "\n", nil
+}
+
+// writeScenarioIntroduction keeps the reader's goal and starting state ahead of implementation details.
+func writeScenarioIntroduction(b *strings.Builder, spec ScenarioSpec) {
 	if spec.Markdown.PathPosition > 0 && spec.Markdown.PathTotal > 0 {
-		fmt.Fprintf(&b, "Scenario %d of %d in the [verified path](/scenarios/).", spec.Markdown.PathPosition, spec.Markdown.PathTotal)
+		fmt.Fprintf(b, "Scenario %d of %d in the [verified path](/scenarios/).", spec.Markdown.PathPosition, spec.Markdown.PathTotal)
 		if spec.Markdown.EstimatedMinutes > 0 {
-			fmt.Fprintf(&b, " Plan on about %d minutes.", spec.Markdown.EstimatedMinutes)
+			fmt.Fprintf(b, " Plan on about %d minutes.", spec.Markdown.EstimatedMinutes)
 		}
 		b.WriteString("\n\n")
 	}
@@ -452,9 +481,9 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 		if title == "" {
 			title = "What You Will Build"
 		}
-		fmt.Fprintf(&b, "## %s\n\n", title)
+		fmt.Fprintf(b, "## %s\n\n", title)
 		for _, item := range spec.Markdown.WhatYouBuild {
-			fmt.Fprintf(&b, "- %s\n", item)
+			fmt.Fprintf(b, "- %s\n", item)
 		}
 		b.WriteString("\n")
 	}
@@ -466,7 +495,7 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 		if language == "" {
 			language = "mermaid"
 		}
-		writeCodeBlock(&b, language, diagram.Content, false)
+		writeCodeBlock(b, language, diagram.Content)
 	}
 	if strings.TrimSpace(spec.Markdown.Prerequisites) != "" {
 		b.WriteString("## Prerequisites\n\n")
@@ -486,6 +515,10 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 			b.WriteString("\n\n")
 		}
 	}
+}
+
+// writeScenarioFiles groups human-owned and generated files so readers know which changes they should maintain.
+func writeScenarioFiles(b *strings.Builder, spec ScenarioSpec) {
 	if len(spec.Markdown.FileGroups) > 0 || len(spec.Markdown.Files) > 0 {
 		b.WriteString("## Files\n\n")
 		b.WriteString("This scenario edits or creates:\n\n")
@@ -496,7 +529,7 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 				}
 				title := strings.TrimSpace(group.Title)
 				if title != "" {
-					fmt.Fprintf(&b, "**%s**\n\n", title)
+					fmt.Fprintf(b, "**%s**\n\n", title)
 				}
 				b.WriteString("```text\n")
 				for _, file := range group.Files {
@@ -531,28 +564,34 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 			b.WriteString("\n\n")
 		}
 	}
+}
+
+// writeScenarioSteps renders the same ordered mutations that executable validation applies.
+func writeScenarioSteps(b *strings.Builder, spec ScenarioSpec) error {
 	for i, step := range spec.Steps {
-		fmt.Fprintf(&b, "## Step %d: %s\n\n", i+1, step.Title)
+		fmt.Fprintf(b, "## Step %d: %s\n\n", i+1, step.Title)
 		if strings.TrimSpace(step.Explain) != "" {
 			b.WriteString(strings.TrimSpace(step.Explain))
 			b.WriteString("\n\n")
 		}
 		if step.Write != nil {
-			fmt.Fprintf(&b, "Create or replace `%s`:\n\n", step.Write.Path)
-			writeCodeBlock(&b, step.Write.Language, expandScenarioMarkdownText(spec, step.Write.Content), true)
+			fmt.Fprintf(b, "Create or replace `%s`:\n\n", step.Write.Path)
+			if err := writeFormattedCodeBlock(b, step.Write.Language, expandScenarioMarkdownText(spec, step.Write.Content)); err != nil {
+				return fmt.Errorf("format %s: %w", step.Write.Path, err)
+			}
 		}
 		if step.Append != nil {
-			fmt.Fprintf(&b, "Append to `%s`:\n\n", step.Append.Path)
-			writeCodeBlock(&b, step.Append.Language, expandScenarioMarkdownText(spec, step.Append.Content), false)
+			fmt.Fprintf(b, "Append to `%s`:\n\n", step.Append.Path)
+			writeCodeBlock(b, step.Append.Language, expandScenarioMarkdownText(spec, step.Append.Content))
 		}
 		if step.Replace != nil {
 			newContent := expandScenarioMarkdownText(spec, step.Replace.New)
 			if strings.TrimSpace(newContent) == "" {
-				fmt.Fprintf(&b, "Remove from `%s`:\n\n", step.Replace.Path)
-				writeCodeBlock(&b, step.Replace.Language, expandScenarioMarkdownText(spec, step.Replace.Old), false)
+				fmt.Fprintf(b, "Remove from `%s`:\n\n", step.Replace.Path)
+				writeCodeBlock(b, step.Replace.Language, expandScenarioMarkdownText(spec, step.Replace.Old))
 			} else {
-				fmt.Fprintf(&b, "Update `%s` so it includes:\n\n", step.Replace.Path)
-				writeCodeBlock(&b, step.Replace.Language, newContent, false)
+				fmt.Fprintf(b, "Update `%s` so it includes:\n\n", step.Replace.Path)
+				writeCodeBlock(b, step.Replace.Language, newContent)
 			}
 		}
 		if step.Run != nil && len(step.Run.Run) > 0 {
@@ -561,6 +600,11 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 			b.WriteString("\n```\n\n")
 		}
 	}
+	return nil
+}
+
+// writeScenarioVerification keeps automated proof adjacent to the implementation it protects.
+func writeScenarioVerification(b *strings.Builder, spec ScenarioSpec) {
 	if len(spec.Verify.Commands) > 0 {
 		b.WriteString("## Build and Verify\n\n")
 		for _, command := range spec.Verify.Commands {
@@ -573,18 +617,22 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 			if len(command.Contains) > 0 {
 				b.WriteString("Expected output includes:\n\n")
 				for _, item := range command.Contains {
-					fmt.Fprintf(&b, "- `%s`\n", item)
+					fmt.Fprintf(b, "- `%s`\n", item)
 				}
 				b.WriteString("\n")
 			}
 		}
 	}
+}
+
+// writeScenarioGuidance separates optional operational guidance from the executable golden path.
+func writeScenarioGuidance(b *strings.Builder, spec ScenarioSpec) {
 	if strings.TrimSpace(spec.Markdown.ManualCheck) != "" {
 		title := strings.TrimSpace(spec.Markdown.ManualCheckTitle)
 		if title == "" {
-			title = "Try The Route"
+			title = "Try the Route"
 		}
-		fmt.Fprintf(&b, "## %s\n\n", title)
+		fmt.Fprintf(b, "## %s\n\n", title)
 		b.WriteString(strings.TrimSpace(spec.Markdown.ManualCheck))
 		b.WriteString("\n\n")
 	}
@@ -592,7 +640,7 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 		if strings.TrimSpace(section.Title) == "" || strings.TrimSpace(section.Content) == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "## %s\n\n", strings.TrimSpace(section.Title))
+		fmt.Fprintf(b, "## %s\n\n", strings.TrimSpace(section.Title))
 		b.WriteString(strings.TrimSpace(section.Content))
 		b.WriteString("\n\n")
 	}
@@ -605,12 +653,12 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 		b.WriteString(intro)
 		b.WriteString("\n\n")
 		for _, item := range spec.Markdown.Operations {
-			fmt.Fprintf(&b, "- %s\n", item)
+			fmt.Fprintf(b, "- %s\n", item)
 		}
 		b.WriteString("\n")
 	}
 	if strings.TrimSpace(spec.Markdown.SwapDriver) != "" {
-		b.WriteString("## Swap The Driver\n\n")
+		b.WriteString("## Swap the Driver\n\n")
 		b.WriteString(strings.TrimSpace(spec.Markdown.SwapDriver))
 		b.WriteString("\n\n")
 	}
@@ -622,29 +670,36 @@ func renderScenarioMarkdown(spec ScenarioSpec) string {
 	if len(spec.Markdown.CommonMistakes) > 0 {
 		b.WriteString("## Common Mistakes\n\n::: warning Common mistakes\n")
 		for _, item := range spec.Markdown.CommonMistakes {
-			fmt.Fprintf(&b, "- %s\n", item)
+			fmt.Fprintf(b, "- %s\n", item)
 		}
 		b.WriteString(":::\n\n")
 	}
 	if len(spec.Markdown.NextSteps) > 0 {
 		b.WriteString("## Next Steps\n\n")
 		for _, item := range spec.Markdown.NextSteps {
-			fmt.Fprintf(&b, "- %s\n", item)
+			fmt.Fprintf(b, "- %s\n", item)
 		}
 		b.WriteString("\n")
 	}
-	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+// writeFormattedCodeBlock rejects malformed complete Go files before the generated page can publish them.
+func writeFormattedCodeBlock(b *strings.Builder, language, content string) error {
+	if strings.TrimSpace(language) == "go" {
+		formatted, err := format.Source([]byte(strings.Trim(content, "\n")))
+		if err != nil {
+			return err
+		}
+		content = string(formatted)
+	}
+	writeCodeBlock(b, language, content)
+	return nil
 }
 
 // writeCodeBlock normalizes fenced content so generated Markdown remains deterministic.
-func writeCodeBlock(b *strings.Builder, language, content string, formatContent bool) {
+func writeCodeBlock(b *strings.Builder, language, content string) {
 	language = strings.TrimSpace(language)
 	content = strings.Trim(content, "\n")
-	if formatContent && language == "go" {
-		if formatted, err := format.Source([]byte(content)); err == nil {
-			content = string(formatted)
-		}
-	}
 	fmt.Fprintf(b, "```%s\n", language)
 	b.WriteString(strings.TrimRight(content, "\n"))
 	b.WriteString("\n```\n\n")

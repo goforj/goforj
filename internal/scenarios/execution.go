@@ -35,15 +35,14 @@ type scenarioExecution struct {
 	appliedDependencies map[string]bool
 }
 
+const scenarioCommandTimeout = 3 * time.Minute
+
 // runScenario executes one selected scenario against the same validated catalog used to select it.
-func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) (runErr error) {
+func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) error {
 	workspace, err := createScenarioWorkspace(options, spec)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		runErr = workspace.cleanupAfter(runErr)
-	}()
 
 	execution := scenarioExecution{
 		logger:              options.Logger,
@@ -53,13 +52,14 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 		appliedDependencies: map[string]bool{},
 	}
 	console.Actionf("scenario %s", spec.ID)
-	if err := execution.run(spec); err != nil {
-		return err
-	}
-	console.Successf("scenario passed: %s", spec.ID)
+	runErr := workspace.cleanupAfter(execution.run(spec))
 	if options.Keep {
 		console.Infof("scenario workdir: %s", workspace.root)
 	}
+	if runErr != nil {
+		return runErr
+	}
+	console.Successf("scenario passed: %s", spec.ID)
 	return nil
 }
 
@@ -69,14 +69,14 @@ func createScenarioWorkspace(options ValidateOptions, spec ScenarioSpec) (scenar
 		return scenarioWorkspace{}, err
 	}
 	if strings.TrimSpace(options.WorkDir) != "" {
-		root := filepath.Join(options.WorkDir, spec.ID)
-		if err := os.RemoveAll(root); err != nil {
-			return scenarioWorkspace{}, err
+		if err := os.MkdirAll(options.WorkDir, 0o755); err != nil {
+			return scenarioWorkspace{}, fmt.Errorf("create scenario work root: %w", err)
 		}
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			return scenarioWorkspace{}, err
+		root, err := os.MkdirTemp(options.WorkDir, spec.ID+"-")
+		if err != nil {
+			return scenarioWorkspace{}, fmt.Errorf("create scenario workspace: %w", err)
 		}
-		return scenarioWorkspace{root: root}, nil
+		return scenarioWorkspace{root: root, removeAfter: !options.Keep}, nil
 	}
 	root, err := os.MkdirTemp("", "forj-scenario-"+spec.ID+"-")
 	if err != nil {
@@ -205,9 +205,11 @@ func (execution scenarioExecution) writeFile(spec ScenarioSpec, change ScenarioF
 	}
 	content := []byte(expandScenarioText(spec, change.Content))
 	if strings.HasSuffix(path, ".go") {
-		if formatted, err := format.Source(content); err == nil {
-			content = formatted
+		formatted, err := format.Source(content)
+		if err != nil {
+			return fmt.Errorf("format %s: %w", change.Path, err)
 		}
+		content = formatted
 	}
 	return os.WriteFile(path, content, 0o644)
 }
@@ -247,10 +249,20 @@ func (execution scenarioExecution) replaceText(spec ScenarioSpec, change Scenari
 	}
 	oldText := expandScenarioText(spec, change.Old)
 	newText := expandScenarioText(spec, change.New)
-	updated := strings.Replace(string(body), oldText, newText, 1)
-	if updated == string(body) {
+	if oldText == "" {
+		return fmt.Errorf("replace target is required for %s", change.Path)
+	}
+	if oldText == newText {
+		return fmt.Errorf("replacement must differ from target in %s", change.Path)
+	}
+	matches := strings.Count(string(body), oldText)
+	if matches == 0 {
 		return fmt.Errorf("replace target not found in %s", change.Path)
 	}
+	if matches > 1 {
+		return fmt.Errorf("replace target occurs %d times in %s", matches, change.Path)
+	}
+	updated := strings.Replace(string(body), oldText, newText, 1)
 	return os.WriteFile(path, []byte(updated), 0o644)
 }
 
@@ -275,7 +287,7 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 	if args[0] == "forj" {
 		args[0] = execution.forjExec
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), scenarioCommandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = execution.workspace.root
@@ -289,6 +301,9 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 			text = err.Error()
 		}
 		execution.logger.Error().Str("step", label).Str("command", strings.Join(command.Run, " ")).Str("output", text).Msg("scenario command failed")
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("%s: timed out after %s: %w\n%s", strings.Join(command.Run, " "), scenarioCommandTimeout, context.DeadlineExceeded, text)
+		}
 		return fmt.Errorf("%s: %w\n%s", strings.Join(command.Run, " "), err, text)
 	}
 	for _, expected := range command.Contains {

@@ -73,6 +73,14 @@ Common env vars:
 | MAX_VALUE_BYTES | integer bytes | 0 |
 | ENCRYPTION_KEY | string | empty |
 
+`COMPRESSION` accepts `none` or `gzip`; `snappy` is reserved but unsupported. `ENCRYPTION_KEY` is the raw 16, 24, or 32-byte AES key used for cache values, not the base64-prefixed `APP_KEY` format.
+
+### Persisted value compatibility
+
+Compression and encryption are disabled by default. Enabling either changes the persisted value envelope for normal cache entries. Upgraded processes can still read legacy unshaped values, but older processes cannot read new compressed or encrypted writes.
+
+Deploy every reader before enabling `COMPRESSION` or `ENCRYPTION_KEY`, or pause writes during a mixed-version rollout. Flush or allow encrypted entries to expire before removing an old encryption key. Counter values remain backend-native and are not shaped.
+
 Driver-specific env vars:
 
 | Driver | Env var suffix | Value type | Default |
