@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"golang.org/x/term"
 )
 

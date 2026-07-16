@@ -15,7 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	charmansi "github.com/charmbracelet/x/ansi"
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
 	"golang.org/x/term"
 )

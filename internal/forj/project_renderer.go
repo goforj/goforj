@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/goforj/console"
 	"github.com/goforj/crypt"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"

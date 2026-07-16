@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )

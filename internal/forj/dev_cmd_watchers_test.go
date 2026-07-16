@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
