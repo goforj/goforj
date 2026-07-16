@@ -135,16 +135,9 @@ markdown:
   next_steps:
     - "Next, dispatch queue-backed work from an event subscriber with [Reports Generate Job](/scenarios/reports-generate-job)."
 steps:
-  - title: Configure Events
+  - title: Refresh Event Resources
     explain: |
-      Use the in-process event driver for local development. The generated App exposes `app.Bus()` and `app.Events()`.
-    replace:
-      path: .env
-      language: dotenv
-      old: |
-        EVENTS_INPROC_WORKERS=0 # <=0 defaults to CPU count
-      new: |
-        EVENTS_INPROC_WORKERS=0
+      The generated environment already selects the in-process event driver for local development. Run the build pipeline so the generated App exposes `app.Bus()` and `app.Events()`.
     run:
       run: ["forj", "build"]
 
