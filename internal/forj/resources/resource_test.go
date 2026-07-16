@@ -234,6 +234,43 @@ func TestRegistryKeepsPrimitiveResourcesAppLocal(t *testing.T) {
 	}
 }
 
+// TestNamedResourcesForAppPreservesSharedPrefixCollisions verifies an App name cannot claim the resource namespace before the resource segment appears.
+func TestNamedResourcesForAppPreservesSharedPrefixCollisions(t *testing.T) {
+	apps := []projectResourceApp{
+		{name: project.DefaultAppName},
+		{name: "cache"},
+		{name: "cache-reader"},
+	}
+	env := map[string]string{
+		"CACHE_DRIVER":                        "memory",
+		"CACHE_READER_DRIVER":                 "redis",
+		"CACHE_SESSIONS_DRIVER":               "memory",
+		"CACHE_CACHE_DRIVER":                  "redis",
+		"CACHE_CACHE_PRIVATE_DRIVER":          "redis",
+		"CACHE_EVENTS_AUDIT_DRIVER":           "redis",
+		"CACHE_READER_CACHE_DRIVER":           "redis",
+		"CACHE_READER_CACHE_REPORTS_DRIVER":   "redis",
+		"CACHE_READER_STORAGE_ARCHIVE_DRIVER": "s3",
+	}
+	tests := []struct {
+		name    string
+		appName string
+		want    []string
+	}{
+		{name: "default App", appName: project.DefaultAppName, want: []string{"default", "reader", "sessions"}},
+		{name: "resource-named App", appName: "cache", want: []string{"default", "private", "reader", "sessions"}},
+		{name: "resource-prefixed App", appName: "cache-reader", want: []string{"default", "reader", "reports", "sessions"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := namedResourcesForApp(env, apps, test.appName, "CACHE"); !equalStrings(got, test.want) {
+				t.Fatalf("named Cache resources = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 // TestRegistryIgnoresStaleDisabledQueueResources verifies Queue env cannot invent Background Jobs participation.
 func TestRegistryIgnoresStaleDisabledQueueResources(t *testing.T) {
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true}}}

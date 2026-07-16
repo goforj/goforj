@@ -92,12 +92,18 @@ func (w projectRenderWorkspace) cacheOwnerEnvironmentPaths() ([]string, error) {
 	return append(paths, custom...), nil
 }
 
-// cacheIgnoredAppEnvironmentAssignment excludes assignments removed together with an explicitly deleted App.
+// cacheIgnoredAppEnvironmentAssignment excludes resource overlays removed together with an explicitly deleted App.
 func cacheIgnoredAppEnvironmentAssignment(key string, ignoredApps map[string]bool) bool {
+	definitions := project.ResourceCatalog()
 	for appName := range ignoredApps {
 		prefix := project.AppEnvironmentPrefix(appName)
-		if prefix != "" && strings.HasPrefix(key, prefix+"_") {
-			return true
+		if prefix == "" {
+			continue
+		}
+		for _, definition := range definitions {
+			if strings.HasPrefix(key, prefix+"_"+definition.EnvironmentPrefix+"_") {
+				return true
+			}
 		}
 	}
 	return false
