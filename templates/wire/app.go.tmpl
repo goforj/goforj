@@ -318,6 +318,7 @@ func NewApplication(
 	attachInspectLogSink(appLogger, inspectManager)
 {{- if .Components.Storage }}
 	logStorageWarnings(appLogger, storage)
+	registerStorageShutdown(lifecycleManager, appLogger, storage)
 {{- end }}
 {{- if .Components.HasDatabase }}
 	registerDatabaseShutdown(lifecycleManager, appLogger, db)
@@ -392,6 +393,20 @@ func logStorageWarnings(appLogger *logger.AppLogger, storage *storages.Manager) 
 			Str("details", warning.Error).
 			Msg("Optional storage disk unavailable; skipping")
 	}
+}
+{{- end }}
+
+{{ if .Components.Storage }}
+// registerStorageShutdown releases resource-backed disks through the shared lifecycle manager.
+func registerStorageShutdown(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, storage *storages.Manager) {
+	lifecycleManager.On(runtime.Shutdown, func(context.Context) error {
+		appLogger.Debug().Msg("Shutting down storage disks...")
+		if err := storage.Close(); err != nil {
+			return err
+		}
+		appLogger.Debug().Msg("Storage disks shut down")
+		return nil
+	})
 }
 {{- end }}
 

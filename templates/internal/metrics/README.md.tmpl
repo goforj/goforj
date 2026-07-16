@@ -300,17 +300,17 @@ type Metrics struct {
 func NewMetrics(manager *metrics.Manager) *Metrics {
 	registry := manager.Registry()
 	return &Metrics{
-		duration: registry.MustHistogramVec(gmetrics.Descriptor{
+		duration: registry.MustDurationHistogramVec(gmetrics.Descriptor{
 			Name: "checkout.duration",
 			Help: "Checkout completion latency by payment provider and outcome.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"provider", "status"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		}, []string{"provider", "status"}, gmetrics.DefaultDurationBounds()),
 	}
 }
 
 func (m *Metrics) RecordDuration(provider, status string, dur time.Duration) {
-	m.duration.WithLabelValues(provider, status).Observe(dur.Seconds())
+	m.duration.WithLabelValues(provider, status).ObserveDuration(dur)
 }
 ```
 

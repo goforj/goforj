@@ -664,6 +664,9 @@ func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
 		MaxValueBytes: scope.GetInt("MAX_VALUE_BYTES", "0"),
 		EncryptionKey: cacheEncryptionKey(scope),
 	}
+	if err := cachecore.ValidateBaseConfig(baseConfig); err != nil {
+		return nil, fmt.Errorf("cache %q: invalid shaping configuration: %w", name, err)
+	}
 
 	switch driver {
 	case driverNull:
@@ -809,9 +812,10 @@ func cacheRedisTLSConfig(scope env.Scope) *tls.Config {
 	}
 }
 
-// cacheCompression constrains environment values to codecs supported by the cache runtime.
+// cacheCompression preserves invalid values so manager construction can report configuration mistakes.
 func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
-	switch strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none"))) {
+	value := strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none")))
+	switch value {
 	case "", "none":
 		return cachecore.CompressionNone
 	case "gzip":
@@ -819,7 +823,7 @@ func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
 	case "snappy":
 		return cachecore.CompressionSnappy
 	default:
-		return cachecore.CompressionNone
+		return cachecore.CompressionCodec(value)
 	}
 }
 

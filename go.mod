@@ -15,17 +15,17 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/goforj/atlas v0.3.0
-	github.com/goforj/cache v0.3.0
-	github.com/goforj/cache/cachecore v0.3.0
+	github.com/goforj/cache v0.4.0
+	github.com/goforj/cache/cachecore v0.4.0
 	github.com/goforj/console v0.1.0
-	github.com/goforj/crypt v1.0.0
-	github.com/goforj/env/v2 v2.4.0
-	github.com/goforj/execx v1.1.0
+	github.com/goforj/crypt v1.2.0
+	github.com/goforj/env/v2 v2.5.0
+	github.com/goforj/execx v1.1.2
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1
-	github.com/goforj/storage v0.4.6
-	github.com/goforj/storage/driver/localstorage v0.4.6
-	github.com/goforj/storage/driver/s3storage v0.4.6
+	github.com/goforj/storage v0.5.0
+	github.com/goforj/storage/driver/localstorage v0.5.0
+	github.com/goforj/storage/driver/s3storage v0.5.0
 	github.com/goforj/str v1.2.0
 	github.com/goforj/web v0.6.0
 	github.com/goforj/wire v1.2.0
@@ -98,9 +98,8 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/goforj/cache/cachetest v0.3.0 // indirect
 	github.com/goforj/godump v1.9.0 // indirect
-	github.com/goforj/storage/storagecore v0.4.5 // indirect
+	github.com/goforj/storage/storagecore v0.5.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
@@ -175,6 +174,7 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
