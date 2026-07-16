@@ -15,7 +15,7 @@ The working GoForj name remains `Atlas`.
 
 ## Reference material
 
-- Local GoForj MCP design: `docs/designs/go-mcp-server-design.md`
+- Local GoForj MCP design: `docs/designs/completed/go-mcp-server-design.md`
 - Implementation spec: `/workspace/code/atlas/IMPLEMENTATION.md`
 
 The implementation spec in `github.com/goforj/atlas` is the execution source of

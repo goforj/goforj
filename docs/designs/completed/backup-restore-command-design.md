@@ -2,7 +2,7 @@
 
 Status:
 
-- proposed
+- completed for v1; later backend and operator refinements are follow-up work
 - intended for the framework operator command surface
 - focused first on application-level database and storage backups
 

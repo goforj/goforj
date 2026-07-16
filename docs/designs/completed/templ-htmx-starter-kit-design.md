@@ -2,9 +2,9 @@
 
 Status:
 
-- proposed
+- completed for v1; maker commands and additional polish remain follow-up work
 - intended as GoForj's first official server-rendered template starter kit
-- complementary to the Vue starter kit and planned React starter kit
+- complementary to the Vue and React starter kits
 
 ## Purpose
 
@@ -61,7 +61,7 @@ The generated app should own all view source after render.
 - Existing Vue starter kit:
   `templates/starter-kits/vue/frontend`
 - Planned React starter kit:
-  `docs/designs/react-starter-kit-design.md`
+  `docs/designs/completed/react-starter-kit-design.md`
 - Go `html/template` contextual escaping:
   https://pkg.go.dev/html/template
 - templ components:

@@ -8,9 +8,8 @@ The long-term goal is to grow more first-class GoForj experiences over time whil
 
 Status:
 
-- exploratory
-- not committed to implementation
-- intended to define the boundary before refactoring generated app code
+- completed for v1 through `github.com/goforj/web` and its Echo adapter
+- retained as design history and follow-up context
 
 ## Goal
 

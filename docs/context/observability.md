@@ -169,7 +169,7 @@ The current proving path is:
 4. VictoriaMetrics + Grafana validation
 5. Lighthouse adaptation
 
-If in doubt, read [../designs/metrics-design.md](../designs/metrics-design.md) before expanding the metric set.
+If in doubt, read [../designs/completed/metrics-design.md](../designs/completed/metrics-design.md) before expanding the metric set.
 
 ## Metrics Implementation State
 
