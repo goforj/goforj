@@ -250,6 +250,7 @@
                           {{ movingPath === entry.path ? "Renaming..." : "Rename" }}
                         </Button>
                         <Button
+                          v-if="entry.deletable !== false"
                           variant="outline"
                           size="sm"
                           :disabled="deletingPath === entry.path"
@@ -362,6 +363,7 @@ type StorageEntry = {
   is_dir: boolean;
   downloadable: boolean;
   url_capable: boolean;
+  deletable?: boolean;
 };
 
 type ExplorerPayload = {

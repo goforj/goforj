@@ -1,99 +1,117 @@
 package coredeps
 
 import (
-	"strings"
+	"slices"
 	"testing"
 
 	"github.com/goforj/goforj/project"
 )
 
-// TestSyncCoreLibrariesGatesCacheModules verifies disabled Cache projects do not acquire project-wide Cache dependencies.
+// TestSyncCoreLibrariesGatesCacheModules verifies every Cache module is synchronized only for Cache projects.
 func TestSyncCoreLibrariesGatesCacheModules(t *testing.T) {
-	disabled := SyncCoreLibraries(project.Components{})
-	enabled := SyncCoreLibraries(project.Components{Cache: true})
-
-	for _, module := range []string{
-		"github.com/goforj/cache@",
-		"github.com/goforj/cache/cachecore@",
-		"github.com/goforj/cache/driver/rediscache@",
-	} {
-		if containsModulePrefix(disabled, module) {
-			t.Fatalf("Cache-disabled modules contain %q: %#v", module, disabled)
-		}
-		if !containsModulePrefix(enabled, module) {
-			t.Fatalf("Cache-enabled modules omit %q: %#v", module, enabled)
-		}
-	}
+	assertModulesGated(t, project.Components{}, project.Components{Cache: true}, cacheRendererSyncModules)
 }
 
-// TestSyncCoreLibrariesGatesEventsModules verifies disabled Events projects do not acquire project-wide Events dependencies.
+// TestSyncCoreLibrariesGatesEventsModules verifies every Events runtime module is synchronized only for Events projects.
 func TestSyncCoreLibrariesGatesEventsModules(t *testing.T) {
-	disabled := SyncCoreLibraries(project.Components{})
-	enabled := SyncCoreLibraries(project.Components{Events: true})
-
-	for _, module := range []string{"github.com/goforj/events@", "github.com/goforj/events/eventscore@"} {
-		if containsModulePrefix(disabled, module) {
-			t.Fatalf("Events-disabled modules contain %q: %#v", module, disabled)
-		}
-		if !containsModulePrefix(enabled, module) {
-			t.Fatalf("Events-enabled modules omit %q: %#v", module, enabled)
-		}
-	}
+	assertModulesGated(t, project.Components{}, project.Components{Events: true}, eventsRendererSyncModules)
 }
 
-// TestSyncCoreLibrariesGatesStorageModules verifies disabled Storage projects do not acquire project-wide Storage dependencies.
+// TestSyncCoreLibrariesGatesStorageModules verifies every Storage module is synchronized only for Storage projects.
 func TestSyncCoreLibrariesGatesStorageModules(t *testing.T) {
-	disabled := SyncCoreLibraries(project.Components{})
-	enabled := SyncCoreLibraries(project.Components{Storage: true})
+	assertModulesGated(t, project.Components{}, project.Components{Storage: true}, storageRendererSyncModules)
+}
 
-	for _, module := range []string{
-		"github.com/goforj/storage@",
-		"github.com/goforj/storage/storagecore@",
-		"github.com/goforj/storage/driver/localstorage@",
-	} {
-		if containsModulePrefix(disabled, module) {
-			t.Fatalf("Storage-disabled modules contain %q: %#v", module, disabled)
-		}
-		if !containsModulePrefix(enabled, module) {
-			t.Fatalf("Storage-enabled modules omit %q: %#v", module, enabled)
-		}
-	}
+// TestSyncCoreLibrariesGatesMailModules verifies Mail and its independently versioned SES driver are synchronized only for Mail projects.
+func TestSyncCoreLibrariesGatesMailModules(t *testing.T) {
+	assertModulesGated(t, project.Components{}, project.Components{Mail: true}, mailRendererSyncModules)
+}
+
+// TestSyncCoreLibrariesGatesCryptModule verifies database-capable projects retain the encryption dependency used by generated model hooks.
+func TestSyncCoreLibrariesGatesCryptModule(t *testing.T) {
+	assertModulesGated(t, project.Components{}, project.Components{DatabaseSQLite: true}, databaseRendererSyncModules)
 }
 
 // TestSyncCoreLibrariesGatesJobsModules verifies Queue and every compiled Queue driver remain pinned but are synchronized only for Jobs projects.
 func TestSyncCoreLibrariesGatesJobsModules(t *testing.T) {
-	disabled := SyncCoreLibraries(project.Components{})
-	enabled := SyncCoreLibraries(project.Components{Jobs: true})
+	assertModulesGated(t, project.Components{}, project.Components{Jobs: true}, jobsRendererSyncModules)
+}
 
-	for _, module := range []string{
-		"github.com/goforj/queue",
-		"github.com/goforj/queue/driver/mysqlqueue",
-		"github.com/goforj/queue/driver/natsqueue",
-		"github.com/goforj/queue/driver/postgresqueue",
-		"github.com/goforj/queue/driver/rabbitmqqueue",
-		"github.com/goforj/queue/driver/redisqueue",
-		"github.com/goforj/queue/driver/sqlitequeue",
-		"github.com/goforj/queue/driver/sqlqueuecore",
-		"github.com/goforj/queue/driver/sqsqueue",
-	} {
-		if containsModulePrefix(disabled, module+"@") {
-			t.Fatalf("Jobs-disabled modules contain %q: %#v", module, disabled)
-		}
-		if !containsModulePrefix(enabled, module+"@") {
-			t.Fatalf("Jobs-enabled modules omit %q: %#v", module, enabled)
-		}
-		if _, ok := VersionFor(module); !ok {
-			t.Fatalf("pinned module catalog omits %q", module)
-		}
+// TestQualityReleaseVersionsArePinned prevents independently versioned modules from drifting away from the release set validated by GoForj.
+func TestQualityReleaseVersionsArePinned(t *testing.T) {
+	cases := []struct {
+		module  string
+		version string
+	}{
+		{module: "github.com/goforj/metrics", version: "v0.2.0"},
+		{module: "github.com/goforj/cache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/cachecore", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/cachetest", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/dynamocache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/memcachedcache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/mysqlcache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/natscache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/postgrescache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/rediscache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/sqlcore", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/driver/sqlitecache", version: "v0.4.0"},
+		{module: "github.com/goforj/mail", version: "v0.3.1"},
+		{module: "github.com/goforj/mail/mailses", version: "v0.3.1"},
+		{module: "github.com/goforj/execx", version: "v1.1.2"},
+		{module: "github.com/goforj/events", version: "v0.2.0"},
+		{module: "github.com/goforj/events/eventscore", version: "v0.2.0"},
+		{module: "github.com/goforj/events/driver/gcppubsubevents", version: "v0.2.0"},
+		{module: "github.com/goforj/events/driver/kafkaevents", version: "v0.2.0"},
+		{module: "github.com/goforj/events/driver/natsevents", version: "v0.2.0"},
+		{module: "github.com/goforj/events/driver/natsjetstreamevents", version: "v0.2.0"},
+		{module: "github.com/goforj/events/driver/redisevents", version: "v0.2.0"},
+		{module: "github.com/goforj/events/driver/snsevents", version: "v0.2.0"},
+		{module: "github.com/goforj/events/eventsfake", version: "v0.2.0"},
+		{module: "github.com/goforj/events/eventstest", version: "v0.2.0"},
+		{module: "github.com/goforj/env/v2", version: "v2.5.0"},
+		{module: "github.com/goforj/storage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/storagecore", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/storagetest", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/dropboxstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/ftpstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/gcsstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/localstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/memorystorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/rclonestorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/redisstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/s3storage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage/driver/sftpstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/crypt", version: "v1.2.0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.module, func(t *testing.T) {
+			version, ok := VersionFor(tc.module)
+			if !ok {
+				t.Fatalf("pinned module catalog omits %q", tc.module)
+			}
+			if version != tc.version {
+				t.Fatalf("VersionFor(%q) = %q, want %q", tc.module, version, tc.version)
+			}
+		})
 	}
 }
 
-// containsModulePrefix reports whether a pinned module selection contains the requested module path.
-func containsModulePrefix(modules []string, prefix string) bool {
-	for _, module := range modules {
-		if strings.HasPrefix(module, prefix) {
-			return true
+// assertModulesGated verifies a capability adds exactly its ordered module set and does not leak those modules when disabled.
+func assertModulesGated(t *testing.T, disabledComponents, enabledComponents project.Components, gatedModules []string) {
+	t.Helper()
+
+	disabled := SyncCoreLibraries(disabledComponents)
+	enabled := SyncCoreLibraries(enabledComponents)
+	want := append([]string(nil), disabled...)
+	for _, module := range gatedModules {
+		selection := module + "@" + MustVersionFor(module)
+		if slices.Contains(disabled, selection) {
+			t.Fatalf("disabled modules contain %q: %#v", selection, disabled)
 		}
+		want = append(want, selection)
 	}
-	return false
+	if !slices.Equal(enabled, want) {
+		t.Fatalf("enabled modules = %#v, want %#v", enabled, want)
+	}
 }

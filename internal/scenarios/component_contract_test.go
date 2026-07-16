@@ -39,7 +39,7 @@ func TestWriteScenarioProjectConfigUsesSequenceSemantics(t *testing.T) {
 	if err := yaml.Unmarshal(source, &loaded); err != nil {
 		t.Fatalf("reload scenario config: %v", err)
 	}
-	if loaded.Render.Components.Cache || loaded.Render.Components.Events || loaded.Render.Components.Storage {
+	if loaded.Render.Components.Cache || loaded.Render.Components.Events || loaded.Render.Components.Storage || loaded.Render.Components.Jobs {
 		t.Fatalf("scenario primitive opt-outs changed after reload: %#v", loaded.Render.Components)
 	}
 }

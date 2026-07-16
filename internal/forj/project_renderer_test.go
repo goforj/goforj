@@ -113,8 +113,8 @@ replace github.com/goforj/cache => ../cache
 	pending, skipped, err := coreModulesNeedingSync(goModPath, []string{
 		"github.com/goforj/web@v0.5.2",
 		"github.com/goforj/queue@v0.2.1",
-		"github.com/goforj/cache@v0.3.0",
-		"github.com/goforj/storage@v0.4.6",
+		"github.com/goforj/cache@" + coredeps.MustVersionFor("github.com/goforj/cache"),
+		"github.com/goforj/storage@" + coredeps.MustVersionFor("github.com/goforj/storage"),
 	})
 	if err != nil {
 		t.Fatalf("coreModulesNeedingSync returned error: %v", err)
@@ -122,7 +122,7 @@ replace github.com/goforj/cache => ../cache
 
 	want := []string{
 		"github.com/goforj/queue@v0.2.1",
-		"github.com/goforj/storage@v0.4.6",
+		"github.com/goforj/storage@" + coredeps.MustVersionFor("github.com/goforj/storage"),
 	}
 	if !reflect.DeepEqual(pending, want) {
 		t.Fatalf("pending modules = %#v, want %#v", pending, want)
@@ -153,7 +153,7 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"github.com/goforj/web " + coredeps.MustVersionFor("github.com/goforj/web"),
-		"github.com/goforj/cache v0.3.0",
+		"github.com/goforj/cache " + coredeps.MustVersionFor("github.com/goforj/cache"),
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected go.mod to contain %q:\n%s", want, text)

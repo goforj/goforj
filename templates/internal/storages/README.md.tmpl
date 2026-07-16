@@ -162,6 +162,11 @@ Named generated accessors such as `app.Storage().Public()` do not return errors.
 
 - Local disk paths are resolved relative to the app root unless you provide an absolute path.
 - Disk `prefix` values scope all paths on a disk beneath that prefix.
+- SFTP verifies host keys. Set `KNOWN_HOSTS_PATH` for each SFTP disk; use `INSECURE_IGNORE_HOST_KEY=true` only for an explicitly insecure development endpoint.
+- `Delete` is non-recursive. Most backends can delete files and empty directories, while Dropbox supports file deletion only and returns `storage.ErrUnsupported` for directories.
+- Redis clients sharing a database and prefix must be stopped and upgraded together because older releases cannot read the v2 index written by storage v0.5.
+- Empty and root-like paths identify the immutable logical disk root; `Put`, `Delete`, `Copy`, and `Move` cannot mutate or alias it as an object.
+- The generated App closes resource-backed disks during graceful shutdown.
 - Run `forj generate --storage` after adding or renaming named disks when you want to refresh storage code directly.
 - `forj generate` also regenerates storage accessors and storage driver imports.
 - `forj build` runs the same storage generation step automatically before building.

@@ -61,7 +61,7 @@ jobs:
         run: |
           go test ./... -v
           go test -tags=integration,multiapp ./internal/forj \
-            -run 'TestMakeAppMultiApp(Runtime|SQLiteMigrations)Smoke' \
+            -run '^(TestMakeAppMultiApp(Runtime|SQLiteMigrations)Smoke|TestRunnableScenarioPathIntegration)$' \
             -count=1 -v
 
       # ------------------------------------------------------------------

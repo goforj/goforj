@@ -125,6 +125,26 @@ func TestResourceCatalogSMTPDeclaresEndpointMetadata(t *testing.T) {
 	}
 }
 
+// TestResourceCatalogSFTPDeclaresHostVerification prevents generated guidance from implying unverified SSH is a default.
+func TestResourceCatalogSFTPDeclaresHostVerification(t *testing.T) {
+	definition, _ := ResourceDefinitionByKey(ResourceStorage)
+	driver, _ := definition.Driver("sftp")
+	placeholders := make(map[string]DriverEnvironmentPlaceholder, len(driver.Environment))
+	for _, placeholder := range driver.Environment {
+		placeholders[placeholder.Key] = placeholder
+	}
+	if _, ok := placeholders["STORAGE_KNOWN_HOSTS_PATH"]; !ok {
+		t.Fatal("SFTP known_hosts placeholder is missing")
+	}
+	insecure, ok := placeholders["STORAGE_INSECURE_IGNORE_HOST_KEY"]
+	if !ok {
+		t.Fatal("SFTP insecure host-key placeholder is missing")
+	}
+	if insecure.Example != "false" {
+		t.Fatalf("SFTP insecure host-key example = %q, want false", insecure.Example)
+	}
+}
+
 // resourceDriverUsesBaseEnvironment identifies infrastructure already configured by the concise template contract.
 func resourceDriverUsesBaseEnvironment(service ServiceKey) bool {
 	switch service {

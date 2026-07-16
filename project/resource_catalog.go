@@ -262,6 +262,8 @@ var resourceCatalog = []ResourceDefinition{
 				driverEnvironmentPlaceholder("STORAGE_USER", "root", "SFTP user"),
 				driverEnvironmentPlaceholder("STORAGE_PASSWORD", "", "SFTP password when key authentication is unavailable"),
 				driverEnvironmentPlaceholder("STORAGE_KEY_PATH", "", "SFTP private-key path"),
+				driverEnvironmentPlaceholder("STORAGE_KNOWN_HOSTS_PATH", "", "known_hosts file used to verify the SFTP server"),
+				driverEnvironmentPlaceholder("STORAGE_INSECURE_IGNORE_HOST_KEY", "false", "explicitly disable SFTP host-key verification for isolated development only"),
 			}, Order: 50},
 			{Name: "s3", Label: "S3", Service: ServiceStorageS3, ServiceLabel: "S3 for storage", Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("STORAGE_BUCKET", "", "S3 bucket"),

@@ -4,11 +4,36 @@ import (
 	"bytes"
 	"testing"
 
+	{{- if .ProjectComponents.Storage }}
+	"github.com/goforj/storage"
+	{{- end }}
 	"github.com/goforj/web"
 	"github.com/goforj/web/webtest"
 	"github.com/stretchr/testify/assert"
 	"{{ .GoModuleName }}/internal/runtime"
 )
+
+{{- if .ProjectComponents.Storage }}
+
+// TestStorageEntryDeletableFollowsBackendContract verifies Lighthouse suppresses unsupported Dropbox directory deletion without hiding valid deletes.
+func TestStorageEntryDeletableFollowsBackendContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		driver string
+		entry  storage.Entry
+		want   bool
+	}{
+		{name: "Dropbox directory", driver: "dropbox", entry: storage.Entry{IsDir: true}, want: false},
+		{name: "Dropbox file", driver: "dropbox", entry: storage.Entry{IsDir: false}, want: true},
+		{name: "S3 directory", driver: "s3", entry: storage.Entry{IsDir: true}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, storageEntryDeletable(test.driver, test.entry))
+		})
+	}
+}
+{{- end }}
 
 func TestResetPooledCaptureBufferRetainsSmallBuffers(t *testing.T) {
 	var buf bytes.Buffer
