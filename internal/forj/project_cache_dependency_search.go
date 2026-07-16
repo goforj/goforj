@@ -33,20 +33,18 @@ type cacheOwnerDependencySearch struct {
 	modulePath      string
 	excludedPaths   []cacheOwnerExcludedPath
 	frameworkPaths  map[string]bool
-	visitedPackages map[string]bool
+	packageStates   map[string]bool
 	pendingPackages []string
-	queuedPackages  map[string]bool
 }
 
 // cacheOwnerDependencySearch builds a project-local import search without invoking the Go toolchain.
 func (p *ProjectRenderer) cacheOwnerDependencySearch(excludedApps []project.App, frameworkPaths map[string]bool) *cacheOwnerDependencySearch {
 	return &cacheOwnerDependencySearch{
-		workspace:       p.workspace,
-		modulePath:      strings.TrimSuffix(strings.TrimSpace(p.config.GoModuleName), "/"),
-		excludedPaths:   cacheOwnerExcludedPaths(excludedApps),
-		frameworkPaths:  frameworkPaths,
-		visitedPackages: map[string]bool{},
-		queuedPackages:  map[string]bool{},
+		workspace:      p.workspace,
+		modulePath:     strings.TrimSuffix(strings.TrimSpace(p.config.GoModuleName), "/"),
+		excludedPaths:  cacheOwnerExcludedPaths(excludedApps),
+		frameworkPaths: frameworkPaths,
+		packageStates:  map[string]bool{},
 	}
 }
 
@@ -76,10 +74,10 @@ func (s *cacheOwnerDependencySearch) find(root string) (string, error) {
 	for len(s.pendingPackages) > 0 {
 		logicalDirectory := s.pendingPackages[0]
 		s.pendingPackages = s.pendingPackages[1:]
-		if s.visitedPackages[logicalDirectory] {
+		if visited, tracked := s.packageStates[logicalDirectory]; tracked && visited {
 			continue
 		}
-		s.visitedPackages[logicalDirectory] = true
+		s.packageStates[logicalDirectory] = true
 		dependency, err = s.scanPackage(logicalDirectory)
 		if err != nil || dependency != "" {
 			return dependency, err
@@ -109,7 +107,7 @@ func (s *cacheOwnerDependencySearch) scanTree(root string) (string, error) {
 			if s.directoryExcluded(logical) {
 				return filepath.SkipDir
 			}
-			s.visitedPackages[logical] = true
+			s.packageStates[logical] = true
 			return nil
 		}
 		if filepath.Ext(entry.Name()) != ".go" || s.ownerSourceExcluded(logical) {
@@ -213,10 +211,10 @@ func (s *cacheOwnerDependencySearch) localImportDirectory(importPath string) (st
 func (s *cacheOwnerDependencySearch) enqueuePackages(directories []string) {
 	for _, directory := range directories {
 		directory = filepath.Clean(directory)
-		if s.visitedPackages[directory] || s.queuedPackages[directory] {
+		if _, tracked := s.packageStates[directory]; tracked {
 			continue
 		}
-		s.queuedPackages[directory] = true
+		s.packageStates[directory] = false
 		s.pendingPackages = append(s.pendingPackages, directory)
 	}
 	sort.Strings(s.pendingPackages)
@@ -239,9 +237,6 @@ func (s *cacheOwnerDependencySearch) ownerSourceExcluded(path string) bool {
 		return true
 	}
 	for _, excluded := range s.excludedPaths {
-		if excluded.descendants && cacheTransitionPathContains(excluded.path, path) {
-			return true
-		}
 		if !excluded.descendants && filepath.Dir(path) == excluded.path {
 			return true
 		}
