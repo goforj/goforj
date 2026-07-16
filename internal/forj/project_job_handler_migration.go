@@ -82,7 +82,6 @@ func legacyJobRegistrationPlanFor(content string, moduleName string) (legacyJobR
 			imports[packageName] = importPath
 		}
 	}
-	known := knownLegacyJobConstructors(moduleName)
 	seenProviders := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		value, ok := node.(*ast.ValueSpec)
@@ -105,12 +104,9 @@ func legacyJobRegistrationPlanFor(content string, moduleName string) (legacyJobR
 					continue
 				}
 				importPath := imports[packageName.Name]
-				typeName, ok := known[importPath+"."+constructor]
+				typeName, ok := legacyGeneratedJobTypeName(importPath, moduleName, constructor)
 				if !ok {
-					typeName, ok = legacyGeneratedJobTypeName(importPath, moduleName, constructor)
-					if !ok {
-						continue
-					}
+					continue
 				}
 				providerKey := packageName.Name + "." + typeName
 				if seenProviders[providerKey] {
@@ -138,15 +134,6 @@ func legacyGeneratedJobTypeName(importPath string, moduleName string, constructo
 		return "", false
 	}
 	return typeName, true
-}
-
-// knownLegacyJobConstructors lists the handlers registered by the framework before registration moved into the App injector.
-func knownLegacyJobConstructors(moduleName string) map[string]string {
-	return map[string]string{
-		moduleName + "/internal/jobs.NewExampleHelloJob":       "ExampleHelloJob",
-		moduleName + "/internal/alerts.NewDispatchJob":         "DispatchJob",
-		moduleName + "/internal/monitoring.NewMonitorCheckJob": "MonitorCheckJob",
-	}
 }
 
 // valueSpecNames reports whether a declaration assigns the requested package-level name.
