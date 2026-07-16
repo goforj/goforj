@@ -20,9 +20,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/goforj/console"
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"

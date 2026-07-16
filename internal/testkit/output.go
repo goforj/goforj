@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 )
 
 func ConsoleLogf(silent bool) Logf {

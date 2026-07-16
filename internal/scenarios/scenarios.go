@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"

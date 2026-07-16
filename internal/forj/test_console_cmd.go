@@ -3,7 +3,7 @@ package forj
 import (
 	"fmt"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 )
 
 // TestConsoleCmd prints semantic console output samples.

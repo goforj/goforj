@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/goforj/console"
 	"github.com/goforj/execx"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 )
 

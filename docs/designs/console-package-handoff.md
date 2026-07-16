@@ -1,5 +1,13 @@
 # Console Package Handoff
 
+## Status
+
+Completed. GoForj's own CLI now imports `github.com/goforj/console`, its duplicated
+`internal/console` package has been removed, and its two interactive spinner paths
+use the extracted loader. The private `__FORJ_BUILD_PROGRESS__` protocol remains
+local because it is an integration contract with the dev TUI rather than public
+console presentation.
+
 ## Scope
 Extract the semantic console/ANSI output layer into a standalone package.
 
@@ -11,8 +19,8 @@ This package should own:
 
 It should not own app logging pipelines, domain log fields, or TUI layout state.
 
-## Current State (in goforj)
-Implemented in `internal/console`:
+## Previous State (in goforj)
+The extraction began from:
 - `internal/console/console.go`
 - `internal/console/console_runtime.go`
 - `internal/console/console_runtime_test.go`
@@ -25,7 +33,7 @@ Implemented in `internal/console`:
 - ANSI constants:
   - `ColorReset`, `ColorBoldWhite`, `ColorGray`, `ColorGreen`, `ColorYellow`, `ColorRed`, `ColorCyan`
 
-### New runtime type added
+### Runtime type extracted
 - `type Console`
 - `func New(Config) *Console`
 - `func SetDefault(*Console)` for package-level helper wiring
@@ -94,15 +102,21 @@ Optional but useful:
 - Unicode marks fallback strategy if needed for constrained terminals.
 
 ## Packaging notes
-- Module name suggestion: `github.com/goforj/console`
-- Keep dependency footprint minimal (`golang.org/x/term` only)
+- Module: `github.com/goforj/console`
+- Keep the dependency footprint focused: `golang.org/x/term` owns terminal integration and `github.com/rivo/uniseg` owns grapheme/cell handling.
+- GoForj consumes the hardened package through the published `v0.1.0` semantic release.
 - Add README examples for:
   - default usage
   - custom writers (tests/CLI embedding)
   - forced color/no color
 
 ## Migration back into goforj
-1. Replace imports from `internal/console` to external module.
-2. Keep function names identical to avoid mass churn.
-3. Remove internal package once all callers are migrated.
-4. Keep one smoke test in `internal/forj` validating expected semantic marks are still rendered.
+1. [x] Replace framework imports from `internal/console` with the external module.
+2. [x] Keep function names identical to avoid mass churn.
+3. [x] Remove the framework's internal package once all callers are migrated.
+4. [x] Keep one smoke test in `internal/forj` validating expected semantic marks are still rendered.
+5. [x] Replace the build and project-creation spinners with the extracted loader.
+
+Generated application templates deliberately retain their own `internal/console`
+source. They are standalone application assets, not callers of GoForj's removed
+framework package, and changing that dependency contract is outside this extraction.

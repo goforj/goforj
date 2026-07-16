@@ -11,7 +11,7 @@ import (
 	"sync"
 	"text/tabwriter"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/testkit"
 )
 
