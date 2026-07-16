@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/apiindex"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -54,86 +54,43 @@ func (buildProgressMarkerReporter) State(state string) {
 
 type buildProgressTTYReporter struct {
 	mu          sync.Mutex
-	label       string
-	running     bool
+	loader      *console.Loader
+	started     bool
 	clearOnDone bool
-	done        chan struct{}
 }
 
+// Step starts the shared console loader on its first update and changes its durable label thereafter.
 func (r *buildProgressTTYReporter) Step(index int, total int, step string) {
+	r.loader.Update(fmt.Sprintf("%d/%d %s", index, total, strings.TrimSpace(step)))
 	r.mu.Lock()
-	r.label = fmt.Sprintf("%d/%d %s", index, total, strings.TrimSpace(step))
-	started := r.running
-	if !r.running {
-		r.running = true
-		r.done = make(chan struct{})
-	}
-	label := r.label
-	done := r.done
-	r.mu.Unlock()
-
-	if !started {
-		go r.loop(done)
-	}
-	r.renderFrame(0, label)
-}
-
-func (r *buildProgressTTYReporter) State(state string) {
-	r.mu.Lock()
-	if !r.running {
+	if r.started {
 		r.mu.Unlock()
 		return
 	}
-	done := r.done
-	label := r.label
-	r.running = false
-	r.done = nil
+	r.started = true
 	r.mu.Unlock()
+	// The reporter owns a dedicated console, so no other transient display can contend with it.
+	_ = r.loader.Start()
+}
 
-	close(done)
+// State turns the live loader into the terminal outcome expected by the pipeline mode.
+func (r *buildProgressTTYReporter) State(state string) {
+	r.mu.Lock()
+	if !r.started {
+		r.mu.Unlock()
+		return
+	}
+	r.started = false
+	r.mu.Unlock()
 	if strings.EqualFold(strings.TrimSpace(state), "done") {
 		if r.clearOnDone {
-			fmt.Fprint(os.Stderr, "\r\x1b[2K")
+			r.loader.Stop()
 			return
 		}
-		fmt.Fprintf(os.Stderr, "\r\x1b[2K%s %s", console.SuccessMark(), label)
-	} else {
-		r.renderFrame(0, label)
+		r.loader.Success("")
+		return
 	}
-	fmt.Fprintln(os.Stderr)
-}
-
-func (r *buildProgressTTYReporter) loop(done <-chan struct{}) {
-	ticker := time.NewTicker(120 * time.Millisecond)
-	defer ticker.Stop()
-
-	frame := 0
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			r.mu.Lock()
-			label := r.label
-			running := r.running
-			r.mu.Unlock()
-			if !running {
-				return
-			}
-			frame++
-			r.renderFrame(frame, label)
-		}
-	}
-}
-
-func (r *buildProgressTTYReporter) renderFrame(frame int, label string) {
-	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	fmt.Fprintf(
-		os.Stderr,
-		"\r\x1b[2K%s %s",
-		console.Colorize(console.ColorGreen, frames[frame%len(frames)]),
-		label,
-	)
+	r.loader.Fail("")
 }
 
 // RunOptions controls diagnostics, source selection, and progress behavior for one pipeline invocation.
@@ -318,6 +275,7 @@ func buildProgressEnabled() bool {
 	return value != "" && value != "0" && !strings.EqualFold(value, "false")
 }
 
+// newBuildProgressReporter selects private marker output, durable output, or an interactive console loader.
 func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter {
 	if buildProgressEnabled() {
 		return buildProgressMarkerReporter{}
@@ -325,7 +283,15 @@ func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter
 	if debug || opts.Timings || !term.IsTerminal(int(os.Stderr.Fd())) {
 		return buildProgressNoop{}
 	}
-	return &buildProgressTTYReporter{clearOnDone: opts.TransientProgress}
+	progressConsole := console.New(console.Config{
+		Stdout:         os.Stderr,
+		Stderr:         os.Stderr,
+		LoaderInterval: 120 * time.Millisecond,
+	})
+	return &buildProgressTTYReporter{
+		loader:      progressConsole.Loader(""),
+		clearOnDone: opts.TransientProgress,
+	}
 }
 
 func printStepTiming(kind string, stepName string, duration time.Duration, status string) {
