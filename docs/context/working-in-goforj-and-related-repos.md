@@ -14,6 +14,7 @@ For most work, start with one of these:
 - [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
 - [Practical Workflows](practical-workflows.md)
 - [Releasing Sibling Repos](releasing-sibling-repos.md)
+- [Console Output](console.md)
 - [Observability](observability.md)
 - [Web Boundary](web-boundary.md)
 - [Queue Shutdown Behavior](queue-shutdown-behavior.md)
@@ -25,6 +26,7 @@ Keep these high-level rules in mind:
 - the rendered app is a smoke target, not the source of truth
 - `goforj` owns app policy, generation, templates, and developer workflow
 - sibling repos should own reusable primitives instead of pushing everything back into GoForj
+- `console` owns reusable line-oriented presentation while GoForj owns command semantics and interactive dev TUI state
 - for future observability work, keep `metrics` as the concrete primitive and treat `observability` as the broader subsystem concept
 - `internal/runtime` is the generated root runtime package
 - scheduler runtime/bootstrap, schedule registration, and Lighthouse/operator glue are separate concerns and should stay separate

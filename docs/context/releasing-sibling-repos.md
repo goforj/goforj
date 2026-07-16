@@ -1,6 +1,6 @@
 # Releasing Sibling Repos
 
-This document explains the practical workflow for repos like `web` and `queue` when GoForj depends on them.
+This document explains the practical workflow for repos like `console`, `web`, and `queue` when GoForj depends on them.
 
 ## Common Development Mode
 
@@ -27,6 +27,33 @@ render:
 5. remove local replaces if they are no longer needed
 
 If the sibling repo is multi-module, "tag/publish the sibling repo" means all affected module tags, not just the root tag.
+
+## For `console`
+
+The console README and API index are generated from source-comment examples, so
+package validation includes documentation regeneration:
+
+```bash
+cd /workspace/code/console
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go generate .
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go vet ./...
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go -C docs vet ./...
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go -C examples vet ./...
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test -race ./...
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go -C docs test -race ./...
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go -C examples test ./...
+git diff --exit-code -- README.md
+```
+
+Before bumping GoForj, verify that common operations still have both package and
+instance forms, README examples show their output, and loader/progress behavior
+remains useful for both terminals and redirected CI logs. Then tag and push the
+console release before updating `goforj/go.mod`.
+
+`render.module_replaces` does not replace the dependency used by the host
+`forj` CLI. It only affects rendered applications, which currently keep their
+generated `internal/console` package. Host integration therefore needs a tagged
+console version, a GoForj module bump, and focused GoForj tests.
 
 ## For `web`
 

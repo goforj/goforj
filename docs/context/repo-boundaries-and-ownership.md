@@ -18,7 +18,29 @@ It owns:
 - app-level lifecycle and bootstrap wiring
 - demo app templates and Lighthouse UI
 
-It should not absorb reusable web, queue, storage, or cache implementation details when those belong in sibling repos.
+It should not absorb reusable console, web, queue, storage, or cache implementation details when those belong in sibling repos.
+
+### `console`
+
+`console` is the reusable line-oriented console experience repo.
+
+It owns:
+
+- semantic messages, marks, and ANSI/Unicode presentation policy
+- coordinated stdout/stderr writers and terminal-aware text utilities
+- sections, boxes, tables, trees, prompts, loaders, and progress
+- global helpers and equivalent isolated `*console.Console` methods
+- redirect-safe behavior and reusable package documentation/examples
+
+`goforj` should own:
+
+- command semantics and framework-specific messages
+- build, render, and project-creation orchestration
+- the private build-progress protocol used by `forj dev`
+- Bubble Tea model/event state and the full interactive dev experience
+- generated application console policy until that separate template contract is intentionally migrated
+
+The sibling package is not a structured logger, command framework, subprocess runner, or full-screen TUI.
 
 ### `mail`
 
@@ -135,6 +157,14 @@ Examples:
 - `forj dev` watcher/TUI behavior
 - render-time local module replaces
 - Lighthouse UX/state handling
+
+### Put the change in `console` when:
+
+- it is reusable line-oriented console presentation
+- it is semantic output, terminal capability policy, or cell-aware text behavior
+- it is a common layout such as a box, table, tree, list, or key/value summary
+- it is a prompt, loader, or progress behavior that should work outside GoForj
+- package and isolated instance APIs should expose the same operation
 
 ### Put the change in `web` when:
 

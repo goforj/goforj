@@ -68,12 +68,23 @@ Read:
 - [Web Boundary](web-boundary.md)
 - [Repo Boundaries And Ownership](repo-boundaries-and-ownership.md)
 
-### Sibling repo work: `web`, `queue`, `storage`, `cache`, `scheduler`
+### Sibling repo work: `console`, `web`, `queue`, `storage`, `cache`, `scheduler`
 
 Read:
 
 - [Repo Boundaries And Ownership](repo-boundaries-and-ownership.md)
 - [Releasing Sibling Repos](releasing-sibling-repos.md)
+
+### CLI output, semantic messages, loaders, progress, prompts, or console layout
+
+Read:
+
+- [Console Output](console.md)
+- [Repo Boundaries And Ownership](repo-boundaries-and-ownership.md)
+
+Add if the task changes the interactive `forj dev` experience:
+
+- [../designs/completed/forj-dev-tui-design.md](../designs/completed/forj-dev-tui-design.md)
 
 ### Integration tests, rendered dependency boot, compose-driven testcontainers
 
@@ -168,6 +179,9 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
   - repo cleanliness and embedded asset pitfalls
 - [Releasing Sibling Repos](releasing-sibling-repos.md)
   - release and consume sibling repos cleanly
+- [Console Output](console.md)
+  - sibling package surface and global/instance API stance
+  - console, logging, generated-app, and Bubble Tea ownership boundaries
 - [Observability](observability.md)
   - log/metrics/boot-output model
   - per-surface metrics toggles
