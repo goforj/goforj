@@ -29,7 +29,7 @@ Add if the task touches runtime ownership, lifecycle, scheduler, jobs, or proces
 
 Add if the task is about the full design history or unresolved architecture tradeoffs:
 
-- [../designs/app-composition-layout-design.md](../designs/app-composition-layout-design.md)
+- [../designs/completed/app-composition-layout-design.md](../designs/completed/app-composition-layout-design.md)
 
 ### Rendering, templates, smoke apps, or `forj render`
 
@@ -88,7 +88,7 @@ Read:
 
 - [Observability](observability.md)
 - [Runtime Architecture](runtime-architecture.md)
-- [../designs/metrics-design.md](../designs/metrics-design.md)
+- [../designs/completed/metrics-design.md](../designs/completed/metrics-design.md)
 
 Add if the issue mentions:
 
@@ -112,11 +112,11 @@ Read:
 
 Add if the task is about React:
 
-- [../designs/react-starter-kit-design.md](../designs/react-starter-kit-design.md)
+- [../designs/completed/react-starter-kit-design.md](../designs/completed/react-starter-kit-design.md)
 
 Add if the task is about server-rendered templates, Blade-like rendering, htmx, or templ:
 
-- [../designs/templ-htmx-starter-kit-design.md](../designs/templ-htmx-starter-kit-design.md)
+- [../designs/completed/templ-htmx-starter-kit-design.md](../designs/completed/templ-htmx-starter-kit-design.md)
 
 ### Queue shutdown behavior or worker-stop semantics
 
@@ -174,7 +174,7 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
   - database fingerprinting/query-shape guidance
   - metrics target generation direction
   - polling HTTP warm-up behavior
-- [../designs/metrics-design.md](../designs/metrics-design.md)
+- [../designs/completed/metrics-design.md](../designs/completed/metrics-design.md)
   - metrics primitive design
   - observability boundary and instrumentation coverage
 - [../designs/completed/starter-kits-design.md](../designs/completed/starter-kits-design.md)

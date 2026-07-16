@@ -113,4 +113,4 @@ Treat that as a single-app structure migration. It is not a requirement to creat
 
 For full architectural history and implementation details, read:
 
-- [`../designs/app-composition-layout-design.md`](../designs/app-composition-layout-design.md)
+- [`../designs/completed/app-composition-layout-design.md`](../designs/completed/app-composition-layout-design.md)

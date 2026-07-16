@@ -2,7 +2,7 @@
 
 ## Status
 
-- Design status: accepted
+- Design status: completed for v1
 - Research date: 2026-07-13
 - Revised product model: 2026-07-14
 - Scope: `forj new`, generated resource-driver defaults, build manifests,
