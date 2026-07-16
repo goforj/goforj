@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
-	"os"
 	"path/filepath"
 	"sort"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -173,21 +171,26 @@ var eventDriverKeys = map[string]map[string]struct{}{
 
 // GenerateEventFiles writes event accessors whose runtime choices are bounded by the generated manifest.
 func GenerateEventFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
+	return generateEventFiles(ambientGenerationInput(projectDir))
+}
+
+// generateEventFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateEventFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "EVENTS",
 		DefaultDriver: "inproc",
 		RootKeys:      eventRootKeys,
 		CommonKeys:    eventCommonKeys,
 		DriverKeys:    eventDriverKeys,
-		ChildNames: func(scope env.Scope) []string {
-			return scope.ChildNames(eventRootKeys)
+		ChildNames: func(environment generationEnvironment) []string {
+			return exactScopedChildNames(environment, "EVENTS", eventRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderEventConfig(projectDir)
+	manager, err := renderEventConfig(input)
 	if err != nil {
 		return 0, err
 	}
@@ -195,7 +198,7 @@ func GenerateEventFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated events driver config: %w", err)
 	}
-	accessors, err := renderEventAccessors(projectDir)
+	accessors, err := renderEventAccessors(input)
 	if err != nil {
 		return 0, err
 	}
@@ -204,38 +207,36 @@ func GenerateEventFiles(projectDir string) (int, error) {
 		return 0, fmt.Errorf("failed to format generated events accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "events", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "events", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(projectDir, "internal", "events", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "events", "accessors_gen.go"), formattedAccessors)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "driver.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "driver_gen.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "factory.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "bus_redis.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "bus_inproc.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "helpers.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "driver_test.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "factory_test.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "bus_redis_test.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "bus_inproc_test.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "helpers_test.go"))
+	for _, name := range eventLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "events", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
 // renderEventConfig derives imports and compiled choices from the same validated event-driver snapshot.
-func renderEventConfig(projectDir string) ([]byte, error) {
-	names := discoverEventNames(projectDir)
-	selectedDrivers, err := uniqueEventDrivers(projectDir)
+func renderEventConfig(input generationInput) ([]byte, error) {
+	names := discoverEventNames(input)
+	selectedDrivers, err := uniqueEventDrivers(input)
 	if err != nil {
 		return nil, err
 	}
@@ -282,8 +283,8 @@ func renderEventConfig(projectDir string) ([]byte, error) {
 }
 
 // renderEventAccessors uses the project snapshot so App-only buses receive the same generated surface as root buses.
-func renderEventAccessors(projectDir string) ([]byte, error) {
-	names := discoverEventNames(projectDir)
+func renderEventAccessors(input generationInput) ([]byte, error) {
+	names := discoverEventNames(input)
 	data := eventAccessorTemplateData{
 		Names: make([]eventAccessorName, 0, len(names)),
 	}
@@ -307,28 +308,27 @@ func renderEventAccessors(projectDir string) ([]byte, error) {
 }
 
 // uniqueEventDrivers resolves the complete event build contract without allowing active App overlays to be omitted.
-func uniqueEventDrivers(projectDir string) ([]string, error) {
+func uniqueEventDrivers(input generationInput) ([]string, error) {
 	seen := map[string]struct{}{}
-	scope := env.WithPrefix("EVENTS")
-	driver := effectivePrimitiveDriver(scope.Get("DRIVER", "inproc"), "inproc")
+	driver := effectivePrimitiveDriver(input.environment.Get("EVENTS_DRIVER", "inproc"), "inproc")
 	seen[driver] = struct{}{}
-	for _, child := range scope.ChildNames(eventRootKeys) {
-		driver := effectivePrimitiveDriver(scope.Child(child).Get("DRIVER", ""), "inproc")
+	for _, child := range exactScopedChildNames(input.environment, "EVENTS", eventRootKeys) {
+		driver := effectivePrimitiveDriver(input.environment.Get("EVENTS_"+child+"_DRIVER", ""), "inproc")
 		seen[driver] = struct{}{}
 	}
-	for _, child := range discoverEventNames(projectDir) {
-		driver := effectivePrimitiveDriver(scope.Child(str.Of(child).Snake("_").ToUpper().String()).Get("DRIVER", ""), "inproc")
+	for _, child := range discoverEventNames(input) {
+		driver := effectivePrimitiveDriver(input.environment.Get("EVENTS_"+str.Of(child).Snake("_").ToUpper().String()+"_DRIVER", ""), "inproc")
 		seen[driver] = struct{}{}
 	}
-	for _, active := range appPrefixedActiveDrivers(projectDir, "EVENTS", "inproc", false) {
+	for _, active := range appPrefixedActiveDrivers(input, "EVENTS", "inproc", false) {
 		seen[active.driver] = struct{}{}
 	}
-	return supportedDrivers("EVENTS", eventDriverKeys, sortStrings(seen))
+	return supportedDrivers(input.environment, "EVENTS", eventDriverKeys, sortStrings(seen))
 }
 
 // discoverEventNames includes event buses declared only through a configured App overlay.
-func discoverEventNames(projectDir string) []string {
-	names := discoverPrimitiveChildNames(projectDir, "EVENTS", eventRootKeys)
+func discoverEventNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "EVENTS", eventRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -526,7 +526,7 @@ func NewBus(ctx context.Context) Bus {
 
 // WithObserver instruments every managed bus without replacing observers already attached to the manager.
 func (m *Manager) WithObserver(observer Observer) *Manager {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m
 	}
 	if m.observer == nil {
@@ -549,9 +549,6 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 
 // ReadinessChecks exposes an independently named health probe for every generated event bus.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "events_default",
@@ -561,14 +558,12 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 		},
 	}
 {{- range .Names }}
-	if m.{{ .Field }} != nil {
-		checks = append(checks, ReadinessCheck{
-			Name: "events_{{ .Bus }}",
-			Check: func(ctx context.Context) error {
-				return eventsReadinessCheck(ctx, m.{{ .Field }})
-			},
-		})
-	}
+	checks = append(checks, ReadinessCheck{
+		Name: "events_{{ .Bus }}",
+		Check: func(ctx context.Context) error {
+			return eventsReadinessCheck(ctx, m.{{ .Field }})
+		},
+	})
 {{- end }}
 	return checks
 }
@@ -773,9 +768,6 @@ func driverKind(value Driver) eventscore.Driver {
 
 // eventsReadinessCheck binds readiness work to the caller's context before probing the transport.
 func eventsReadinessCheck(ctx context.Context, bus Bus) error {
-	if bus == nil {
-		return nil
-	}
 	return bus.WithContext(normalizeEventsContext(ctx)).Ready()
 }
 
@@ -801,7 +793,7 @@ type observedSubscription struct {
 
 // wrapObservedBus adds instrumentation once while allowing an existing wrapper's observer chain to evolve.
 func wrapObservedBus(name string, bus Bus, observer Observer) Bus {
-	if bus == nil || observer == nil {
+	if observer == nil {
 		return bus
 	}
 	if wrapped, ok := bus.(*observedBus); ok {
@@ -886,7 +878,7 @@ func (b *observedBus) Subscribe(handler any) (Subscription, error) {
 
 // context guarantees that observer callbacks and delegated calls always receive a usable context.
 func (b *observedBus) context() context.Context {
-	if b == nil || b.ctx == nil {
+	if b.ctx == nil {
 		return context.Background()
 	}
 	return b.ctx
@@ -907,7 +899,7 @@ func (s *observedSubscription) Close() error {
 	var err error
 	s.once.Do(func() {
 		err = s.inner.Close()
-		if err == nil && s.observer != nil {
+		if err == nil {
 			s.observer.OnEventUnsubscribe(s.ctx, EventSubscriptionEvent{
 				Bus:     s.name,
 				Topic:   s.topic,
@@ -1099,9 +1091,7 @@ func (m *Manager) Instances() []Instance {
 		{Name: "default", Bus: m.defaultBus, IsDefault: true},
 	}
 {{- range .Names }}
-	if m.{{ .Field }} != nil {
-		instances = append(instances, Instance{Name: "{{ .Bus }}", Bus: m.{{ .Field }}})
-	}
+	instances = append(instances, Instance{Name: "{{ .Bus }}", Bus: m.{{ .Field }}})
 {{- end }}
 	return instances
 }

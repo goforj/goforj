@@ -1,4 +1,4 @@
-package forj
+package resourceenv
 
 import (
 	"crypto/sha256"
@@ -10,17 +10,40 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// effectiveResourceConsumersFromEnvironment resolves root, named, and App-prefixed resource scopes without mutating owner input.
-func effectiveResourceConsumersFromEnvironment(source []byte, plan project.ResourcePlan, components project.Components, appNames []string) ([]project.EffectiveResourceConsumer, error) {
-	appComponents := make(map[string]project.Components, len(appNames))
-	for _, name := range appNames {
-		appComponents[strings.ToLower(strings.TrimSpace(name))] = components
-	}
-	return effectiveResourceConsumersFromAppComponents(source, plan, components, components, appNames, appComponents)
+// resourceConsumerResolver keeps the project-wide inputs together because every App scope must use the same plan and service placement policy.
+type resourceConsumerResolver struct {
+	values                map[string]string
+	plan                  project.ResourcePlan
+	projectComponents     project.Components
+	projectDatabaseDriver string
 }
 
-// effectiveResourceConsumersFromProjectConfig applies each configured App's actual participation to resource discovery.
-func effectiveResourceConsumersFromProjectConfig(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
+// resourceConsumerScope describes the App-local component and environment overlay evaluated against the project-wide resource plan.
+type resourceConsumerScope struct {
+	app        resourceAppPrefix
+	components project.Components
+}
+
+// resourceConnection identifies one root or named connection without repeatedly passing its catalog metadata and name separately.
+type resourceConnection struct {
+	definition project.ResourceDefinition
+	name       string
+}
+
+// resourceConnectionSelection couples a connection with the driver selected for its current App scope.
+type resourceConnectionSelection struct {
+	connection resourceConnection
+	driverName string
+}
+
+// resourceEndpointResolution keeps endpoint identity and local ownership coupled so callers cannot accidentally discard one half of the placement decision.
+type resourceEndpointResolution struct {
+	affinity string
+	local    bool
+}
+
+// ResolveConsumers applies each configured App's actual participation to resource discovery.
+func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
 	defaultComponents := projectComponents
 	appNames := configuredResourceAppNames(config)
 	appComponents := make(map[string]project.Components, len(appNames))
@@ -34,56 +57,41 @@ func effectiveResourceConsumersFromProjectConfig(source []byte, plan project.Res
 			appComponents[name] = project.NormalizeConfiguredAppComponents(config, appConfig.Components)
 		}
 	}
-	return effectiveResourceConsumersFromAppComponents(source, plan, defaultComponents, projectComponents, appNames, appComponents)
+	resolver, err := newResourceConsumerResolver(source, plan, projectComponents)
+	if err != nil {
+		return nil, err
+	}
+	return resolver.resolve(defaultComponents, appNames, appComponents)
 }
 
-// effectiveResourceConsumersFromAppComponents keeps applicability App-local while retaining project-wide service placement.
-func effectiveResourceConsumersFromAppComponents(source []byte, plan project.ResourcePlan, defaultComponents project.Components, projectComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
+// newResourceConsumerResolver parses the owner environment once so every App scope observes the same resolved dotenv assignments.
+func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, projectComponents project.Components) (resourceConsumerResolver, error) {
 	values, err := resourceEnvironmentAssignments(source)
 	if err != nil {
-		return nil, fmt.Errorf("parse effective resource environment: %w", err)
+		return resourceConsumerResolver{}, fmt.Errorf("parse effective resource environment: %w", err)
 	}
-	appPrefixes := resourceAppPrefixes(values, appNames)
+	databaseSelection, _ := plan.Selection(project.ResourceDatabase)
+	return resourceConsumerResolver{
+		values:                values,
+		plan:                  plan,
+		projectComponents:     projectComponents,
+		projectDatabaseDriver: databaseSelection.Active,
+	}, nil
+}
+
+// resolve keeps applicability App-local while retaining project-wide service placement.
+func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
+	appPrefixes := resourceAppPrefixes(resolver.values, appNames)
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
 
-	addScope := func(appName string, appPrefix string, scopeComponents project.Components) error {
-		for _, definition := range project.ResourceCatalog() {
-			if !definition.AppliesTo(scopeComponents) {
-				continue
-			}
-			selection, ok := plan.Selection(definition.Key)
-			if !ok {
-				continue
-			}
-			rootDriver := effectiveResourceDriver(values, appPrefix, definition.Key, "", selection.Active)
-			rootConsumer := effectiveResourceConsumerName(appName, definition.Key, "")
-			consumer, err := effectiveResourceConsumer(values, appPrefix, definition.Key, "", rootConsumer, rootDriver, selection.Active, projectComponents)
-			if err != nil {
-				return err
-			}
-			consumers = appendEffectiveResourceConsumer(consumers, seen, consumer)
-
-			namedDrivers := effectiveNamedResourceDrivers(values, appPrefix, plan, scopeComponents, definition.Key, rootDriver)
-			names := make([]string, 0, len(namedDrivers))
-			for name := range namedDrivers {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				consumerName := effectiveResourceConsumerName(appName, definition.Key, name)
-				consumer, err := effectiveResourceConsumer(values, appPrefix, definition.Key, name, consumerName, namedDrivers[name], selection.Active, projectComponents)
-				if err != nil {
-					return err
-				}
-				consumers = appendEffectiveResourceConsumer(consumers, seen, consumer)
-			}
-		}
-		return nil
-	}
-
-	if err := addScope("", "", defaultComponents); err != nil {
+	defaultScope := resourceConsumerScope{components: defaultComponents}
+	resolved, err := resolver.resolveScope(defaultScope)
+	if err != nil {
 		return nil, err
+	}
+	for _, consumer := range resolved {
+		consumers = appendEffectiveResourceConsumer(consumers, seen, consumer)
 	}
 	for _, app := range appPrefixes {
 		scopeComponents, ok := appComponents[app.name]
@@ -91,13 +99,64 @@ func effectiveResourceConsumersFromAppComponents(source []byte, plan project.Res
 			// Environment-only prefixes follow the default App; using the project union would invent capabilities owned by a sibling.
 			scopeComponents = defaultComponents
 		}
-		if err := addScope(app.name, app.prefix, scopeComponents); err != nil {
+		resolved, err := resolver.resolveScope(resourceConsumerScope{app: app, components: scopeComponents})
+		if err != nil {
 			return nil, err
+		}
+		for _, consumer := range resolved {
+			consumers = appendEffectiveResourceConsumer(consumers, seen, consumer)
 		}
 	}
 	return consumers, nil
 }
 
+// resolveScope evaluates only resources enabled for one App while using the shared project plan to determine supported drivers.
+func (resolver resourceConsumerResolver) resolveScope(scope resourceConsumerScope) ([]project.EffectiveResourceConsumer, error) {
+	consumers := []project.EffectiveResourceConsumer{}
+	for _, definition := range project.ResourceCatalog() {
+		if !definition.AppliesTo(scope.components) {
+			continue
+		}
+		selection, ok := resolver.plan.Selection(definition.Key)
+		if !ok {
+			continue
+		}
+
+		rootConnection := resourceConnection{definition: definition}
+		rootDriver := resolver.effectiveDriver(scope, rootConnection, selection.Active)
+		consumer, err := resolver.resolveConsumer(scope, resourceConnectionSelection{
+			connection: rootConnection,
+			driverName: rootDriver,
+		})
+		if err != nil {
+			return nil, err
+		}
+		consumers = append(consumers, consumer)
+
+		namedDrivers := resolver.namedDrivers(scope, rootConnection, rootDriver)
+		names := make([]string, 0, len(namedDrivers))
+		for name := range namedDrivers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			consumer, err := resolver.resolveConsumer(scope, resourceConnectionSelection{
+				connection: resourceConnection{
+					definition: definition,
+					name:       name,
+				},
+				driverName: namedDrivers[name],
+			})
+			if err != nil {
+				return nil, err
+			}
+			consumers = append(consumers, consumer)
+		}
+	}
+	return consumers, nil
+}
+
+// resourceAppPrefix links a normalized App identity to the uppercase prefix used by generated environment overlays.
 type resourceAppPrefix struct {
 	name   string
 	prefix string
@@ -233,19 +292,17 @@ func resourceSuffixMatches(value string, suffixes ...string) bool {
 	return false
 }
 
-// effectiveNamedResourceDrivers resolves generated and arbitrary named driver scopes for one App overlay.
-func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, plan project.ResourcePlan, components project.Components, resource project.ResourceKey, rootDriver string) map[string]string {
-	definition, ok := project.ResourceDefinitionByKey(resource)
-	if !ok {
-		return nil
-	}
+// namedDrivers resolves generated and arbitrary named connections through one App overlay.
+func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScope, root resourceConnection, rootDriver string) map[string]string {
+	definition := root.definition
+	resource := definition.Key
 	drivers := map[string]string{}
-	for _, named := range plan.GeneratedNamedSelections(components) {
+	for _, named := range resolver.plan.GeneratedNamedSelections(scope.components) {
 		if named.Resource != resource {
 			continue
 		}
 		fallback := named.Active
-		if value, set := resourceOverlayValue(values, appPrefix, named.EnvironmentKey); set && strings.TrimSpace(value) != "" {
+		if value, set := resolver.overlayValue(scope, named.EnvironmentKey); set && strings.TrimSpace(value) != "" {
 			fallback = value
 		}
 		drivers[strings.ToLower(named.Name)] = strings.ToLower(strings.TrimSpace(fallback))
@@ -253,10 +310,10 @@ func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, p
 
 	prefix := definition.EnvironmentPrefix + "_"
 	appMarker := ""
-	if appPrefix != "" {
-		appMarker = appPrefix + "_"
+	if scope.app.prefix != "" {
+		appMarker = scope.app.prefix + "_"
 	}
-	for key := range values {
+	for key := range resolver.values {
 		baseKey := key
 		if appMarker != "" && strings.HasPrefix(baseKey, appMarker) {
 			baseKey = strings.TrimPrefix(baseKey, appMarker)
@@ -284,7 +341,7 @@ func effectiveNamedResourceDrivers(values map[string]string, appPrefix string, p
 			continue
 		}
 		driverKey := prefix + name + "_DRIVER"
-		driver, set := resourceOverlayValue(values, appPrefix, driverKey)
+		driver, set := resolver.overlayValue(scope, driverKey)
 		if !set || strings.TrimSpace(driver) == "" {
 			driver = definition.NamedDriverDefault(rootDriver)
 		}
@@ -344,18 +401,14 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 	return suffixes
 }
 
-// effectiveResourceDriver applies App overlay semantics before falling back to the generator's empty-driver default.
-func effectiveResourceDriver(values map[string]string, appPrefix string, resource project.ResourceKey, name string, fallback string) string {
-	definition, ok := project.ResourceDefinitionByKey(resource)
-	if !ok {
-		return ""
-	}
-	key := definition.EnvironmentPrefix
-	if name != "" {
-		key += "_" + strings.ToUpper(name)
+// effectiveDriver applies App overlay semantics before falling back to the generator's empty-driver default.
+func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerScope, connection resourceConnection, fallback string) string {
+	key := connection.definition.EnvironmentPrefix
+	if connection.name != "" {
+		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_DRIVER"
-	value, set := resourceOverlayValue(values, appPrefix, key)
+	value, set := resolver.overlayValue(scope, key)
 	if !set {
 		return strings.ToLower(strings.TrimSpace(fallback))
 	}
@@ -363,50 +416,50 @@ func effectiveResourceDriver(values map[string]string, appPrefix string, resourc
 	if value != "" {
 		return value
 	}
-	if appPrefix != "" && name == "" {
-		return definition.DefaultDriver
+	if scope.app.prefix != "" && connection.name == "" {
+		return connection.definition.DefaultDriver
 	}
-	return definition.NamedDriverDefault(fallback)
+	return connection.definition.NamedDriverDefault(fallback)
 }
 
-// effectiveResourceConsumer derives catalog service metadata and a credential-safe endpoint identity.
-func effectiveResourceConsumer(values map[string]string, appPrefix string, resource project.ResourceKey, name string, consumerName string, driverName string, localDatabaseDriver string, components project.Components) (project.EffectiveResourceConsumer, error) {
-	definition, ok := project.ResourceDefinitionByKey(resource)
+// resolveConsumer derives catalog service metadata and a credential-safe endpoint identity for one App-local connection.
+func (resolver resourceConsumerResolver) resolveConsumer(scope resourceConsumerScope, selection resourceConnectionSelection) (project.EffectiveResourceConsumer, error) {
+	connection := selection.connection
+	consumerName := connection.consumerName(scope)
+	driverName := project.CanonicalResourceDriver(connection.definition.Key, selection.driverName)
+	driver, ok := connection.definition.Driver(driverName)
 	if !ok {
-		return project.EffectiveResourceConsumer{}, fmt.Errorf("unknown resource %q", resource)
+		return project.EffectiveResourceConsumer{}, fmt.Errorf("effective consumer %s selects unknown %s driver %q", consumerName, connection.definition.Label, driverName)
 	}
-	driverName = project.CanonicalResourceDriver(resource, driverName)
-	driver, ok := definition.Driver(driverName)
-	if !ok {
-		return project.EffectiveResourceConsumer{}, fmt.Errorf("effective consumer %s selects unknown %s driver %q", consumerName, definition.Label, driverName)
-	}
-	affinity, local, err := resourceEndpointAffinity(values, appPrefix, definition, name, driver, localDatabaseDriver, components)
+	endpoint, err := resolver.resolveEndpoint(scope, connection, driver)
 	if err != nil {
 		return project.EffectiveResourceConsumer{}, fmt.Errorf("effective consumer %s: %w", consumerName, err)
 	}
 	return project.EffectiveResourceConsumer{
-		Resource:         resource,
+		Resource:         connection.definition.Key,
 		Consumer:         consumerName,
 		Driver:           driver.Name,
-		EndpointAffinity: affinity,
-		LocalService:     local,
+		EndpointAffinity: endpoint.affinity,
+		LocalService:     endpoint.local,
 	}, nil
 }
 
-// resourceEndpointAffinity mirrors endpoint fallback without exposing credentials in service plans.
-func resourceEndpointAffinity(values map[string]string, appPrefix string, definition project.ResourceDefinition, name string, driver project.DriverDefinition, localDatabaseDriver string, components project.Components) (string, bool, error) {
-	resource := definition.Key
+// resolveEndpoint mirrors endpoint fallback without exposing credentials in service plans.
+func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerScope, connection resourceConnection, driver project.DriverDefinition) (resourceEndpointResolution, error) {
+	resource := connection.definition.Key
 	if driver.Service == "" {
-		return "", false, nil
+		return resourceEndpointResolution{}, nil
 	}
 	if driver.Service == project.ServiceRedis {
-		addr := resourceScopedValue(values, appPrefix, resource, name, "ADDR")
-		if addr == "" && resource == project.ResourceQueue && name != "" {
-			addr = resourceScopedValue(values, appPrefix, resource, "", "ADDR")
+		addr := resolver.scopedValue(scope, connection, "ADDR")
+		if addr == "" && resource == project.ResourceQueue && connection.name != "" {
+			rootConnection := connection
+			rootConnection.name = ""
+			addr = resolver.scopedValue(scope, rootConnection, "ADDR")
 		}
 		if addr == "" {
-			host, _ := resourceOverlayValue(values, appPrefix, "REDIS_HOST")
-			port, _ := resourceOverlayValue(values, appPrefix, "REDIS_PORT")
+			host, _ := resolver.overlayValue(scope, "REDIS_HOST")
+			port, _ := resolver.overlayValue(scope, "REDIS_PORT")
 			if strings.TrimSpace(host) == "" {
 				host = "redis"
 			}
@@ -416,22 +469,22 @@ func resourceEndpointAffinity(values map[string]string, appPrefix string, defini
 			addr = strings.TrimSpace(host) + ":" + strings.TrimSpace(port)
 		}
 		addr = strings.ToLower(strings.TrimSpace(addr))
-		if components.Docker && addr == "redis:6379" {
-			return "", true, nil
+		if resolver.projectComponents.Docker && addr == "redis:6379" {
+			return resourceEndpointResolution{local: true}, nil
 		}
-		return opaqueEndpointAffinity(driver.Service, []string{"addr=" + addr}), false, nil
+		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"addr=" + addr})}, nil
 	}
 
 	if resource == project.ResourceDatabase {
-		return databaseEndpointAffinity(values, appPrefix, name, driver, localDatabaseDriver, components)
+		return resolver.resolveDatabaseEndpoint(scope, connection, driver)
 	}
 
 	if driver.Service == project.ServiceMailSMTP {
-		host := resourceScopedValue(values, appPrefix, resource, name, "SMTP_HOST")
-		port := resourceScopedValue(values, appPrefix, resource, name, "SMTP_PORT")
+		host := resolver.scopedValue(scope, connection, "SMTP_HOST")
+		port := resolver.scopedValue(scope, connection, "SMTP_PORT")
 		if host == "" {
 			host = "localhost"
-			if components.Docker {
+			if resolver.projectComponents.Docker {
 				host = "mailpit"
 			}
 		}
@@ -439,63 +492,63 @@ func resourceEndpointAffinity(values map[string]string, appPrefix string, defini
 			port = "1025"
 		}
 		endpoint := strings.ToLower(strings.TrimSpace(host)) + ":" + strings.TrimSpace(port)
-		if components.Docker && endpoint == "mailpit:1025" {
-			return "", true, nil
+		if resolver.projectComponents.Docker && endpoint == "mailpit:1025" {
+			return resourceEndpointResolution{local: true}, nil
 		}
-		return opaqueEndpointAffinity(driver.Service, []string{"addr=" + endpoint}), false, nil
+		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"addr=" + endpoint})}, nil
 	}
 
 	parts := []string{}
 	for _, placeholder := range driver.Environment {
-		rootPrefix := definition.EnvironmentPrefix + "_"
+		rootPrefix := connection.definition.EnvironmentPrefix + "_"
 		suffix := strings.TrimPrefix(strings.ToUpper(placeholder.Key), rootPrefix)
 		if suffix == "" || strings.Contains(suffix, "PASSWORD") || strings.Contains(suffix, "SECRET") || strings.Contains(suffix, "TOKEN") || strings.Contains(suffix, "KEY") {
 			continue
 		}
-		if value := resourceScopedValue(values, appPrefix, resource, name, suffix); value != "" {
+		if value := resolver.scopedValue(scope, connection, suffix); value != "" {
 			parts = append(parts, suffix+"="+value)
 		}
 	}
 	if len(parts) == 0 {
-		return "", false, nil
+		return resourceEndpointResolution{}, nil
 	}
 	sort.Strings(parts)
-	return opaqueEndpointAffinity(driver.Service, parts), false, nil
+	return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, parts)}, nil
 }
 
-// databaseEndpointAffinity keeps Compose ownership tied to the root selected database engine.
-func databaseEndpointAffinity(values map[string]string, appPrefix string, name string, driver project.DriverDefinition, localDatabaseDriver string, components project.Components) (string, bool, error) {
+// resolveDatabaseEndpoint keeps Compose ownership tied to the root selected database engine.
+func (resolver resourceConsumerResolver) resolveDatabaseEndpoint(scope resourceConsumerScope, connection resourceConnection, driver project.DriverDefinition) (resourceEndpointResolution, error) {
 	defaultPort := "3306"
 	if driver.Service == project.ServicePostgres {
 		defaultPort = "5432"
 	}
-	localService := databaseDriverService(localDatabaseDriver)
-	sameLocalEngine := components.Docker && driver.Service == localService
-	rootConsumer := appPrefix == "" && name == ""
+	localService := databaseDriverService(resolver.projectDatabaseDriver)
+	sameLocalEngine := resolver.projectComponents.Docker && driver.Service == localService
+	rootConsumer := scope.app.prefix == "" && connection.name == ""
 	if sameLocalEngine && rootConsumer {
-		return "", true, nil
+		return resourceEndpointResolution{local: true}, nil
 	}
 
-	dsn, dsnSet := concreteDatabaseEndpointValue(values, appPrefix, name, "DSN")
-	host, hostSet := concreteDatabaseEndpointValue(values, appPrefix, name, "HOST")
+	dsn, dsnSet := resolver.concreteDatabaseEndpointValue(scope, connection, "DSN")
+	host, hostSet := resolver.concreteDatabaseEndpointValue(scope, connection, "HOST")
 	if sameLocalEngine && !dsnSet && !hostSet {
-		return "", true, nil
+		return resourceEndpointResolution{local: true}, nil
 	}
-	if components.Docker && !rootConsumer && driver.Service != localService && !dsnSet && !hostSet {
-		return "", false, fmt.Errorf("database driver %s requires an explicit %s or %s because Compose provisions only the root %s database", driver.Name, databaseEndpointKey(appPrefix, name, "DSN"), databaseEndpointKey(appPrefix, name, "HOST"), localDatabaseDriver)
+	if resolver.projectComponents.Docker && !rootConsumer && driver.Service != localService && !dsnSet && !hostSet {
+		return resourceEndpointResolution{}, fmt.Errorf("database driver %s requires an explicit %s or %s because Compose provisions only the root %s database", driver.Name, connection.databaseEndpointKey(scope.app.prefix, "DSN"), connection.databaseEndpointKey(scope.app.prefix, "HOST"), resolver.projectDatabaseDriver)
 	}
 	if dsnSet {
-		return opaqueEndpointAffinity(driver.Service, []string{"dsn=" + dsn}), false, nil
+		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"dsn=" + dsn})}, nil
 	}
 	if !hostSet {
-		host = resourceScopedValue(values, appPrefix, project.ResourceDatabase, name, "HOST")
+		host = resolver.scopedValue(scope, connection, "HOST")
 	}
-	port, portSet := concreteDatabaseEndpointValue(values, appPrefix, name, "PORT")
+	port, portSet := resolver.concreteDatabaseEndpointValue(scope, connection, "PORT")
 	if !portSet && (!rootConsumer || hostSet) {
 		port = defaultPort
 	}
 	if port == "" {
-		port = resourceScopedValue(values, appPrefix, project.ResourceDatabase, name, "PORT")
+		port = resolver.scopedValue(scope, connection, "PORT")
 	}
 	if host == "" {
 		host = string(driver.Service)
@@ -505,9 +558,9 @@ func databaseEndpointAffinity(values map[string]string, appPrefix string, name s
 	}
 	endpoint := strings.ToLower(strings.TrimSpace(host)) + ":" + strings.TrimSpace(port)
 	if sameLocalEngine && endpoint == string(driver.Service)+":"+defaultPort {
-		return "", true, nil
+		return resourceEndpointResolution{local: true}, nil
 	}
-	return opaqueEndpointAffinity(driver.Service, []string{"addr=" + endpoint}), false, nil
+	return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"addr=" + endpoint})}, nil
 }
 
 // databaseDriverService returns the infrastructure identity for a built-in database driver.
@@ -524,70 +577,66 @@ func databaseDriverService(driverName string) project.ServiceKey {
 }
 
 // concreteDatabaseEndpointValue reads only endpoint keys owned by the App or named connection being evaluated.
-func concreteDatabaseEndpointValue(values map[string]string, appPrefix string, name string, suffix string) (string, bool) {
-	key := databaseEndpointKey("", name, suffix)
-	if appPrefix != "" {
-		if value := strings.TrimSpace(values[databaseEndpointKey(appPrefix, name, suffix)]); value != "" {
+func (resolver resourceConsumerResolver) concreteDatabaseEndpointValue(scope resourceConsumerScope, connection resourceConnection, suffix string) (string, bool) {
+	key := connection.databaseEndpointKey("", suffix)
+	if scope.app.prefix != "" {
+		if value := strings.TrimSpace(resolver.values[connection.databaseEndpointKey(scope.app.prefix, suffix)]); value != "" {
 			return value, true
 		}
-		if name == "" {
+		if connection.name == "" {
 			return "", false
 		}
 	}
-	value := strings.TrimSpace(values[key])
+	value := strings.TrimSpace(resolver.values[key])
 	return value, value != ""
 }
 
-// databaseEndpointKey formats a root, named, or App-prefixed database endpoint key.
-func databaseEndpointKey(appPrefix string, name string, suffix string) string {
+// databaseEndpointKey formats a root, named, or App-prefixed database endpoint key for this connection.
+func (connection resourceConnection) databaseEndpointKey(appPrefix string, suffix string) string {
 	parts := []string{}
 	if appPrefix != "" {
 		parts = append(parts, strings.ToUpper(appPrefix))
 	}
 	parts = append(parts, "DB")
-	if name != "" {
-		parts = append(parts, strings.ToUpper(name))
+	if connection.name != "" {
+		parts = append(parts, strings.ToUpper(connection.name))
 	}
 	parts = append(parts, strings.ToUpper(suffix))
 	return strings.Join(parts, "_")
 }
 
-// resourceScopedValue reads a root or named key through one App overlay.
-func resourceScopedValue(values map[string]string, appPrefix string, resource project.ResourceKey, name string, suffix string) string {
-	definition, ok := project.ResourceDefinitionByKey(resource)
-	if !ok {
-		return ""
-	}
-	key := definition.EnvironmentPrefix
-	if name != "" {
-		key += "_" + strings.ToUpper(name)
+// scopedValue reads a root or named key through one App overlay.
+func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope, connection resourceConnection, suffix string) string {
+	key := connection.definition.EnvironmentPrefix
+	if connection.name != "" {
+		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_" + strings.ToUpper(suffix)
-	value, _ := resourceOverlayValue(values, appPrefix, key)
+	value, _ := resolver.overlayValue(scope, key)
 	return strings.TrimSpace(value)
 }
 
-// resourceOverlayValue applies the generated runtime's App-prefixed override precedence.
-func resourceOverlayValue(values map[string]string, appPrefix string, key string) (string, bool) {
+// overlayValue applies the generated runtime's App-prefixed override precedence.
+func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = strings.ToUpper(strings.TrimSpace(key))
-	if appPrefix != "" {
-		if value, ok := values[appPrefix+"_"+key]; ok {
+	if scope.app.prefix != "" {
+		if value, ok := resolver.values[scope.app.prefix+"_"+key]; ok {
 			return value, true
 		}
 	}
-	value, ok := values[key]
+	value, ok := resolver.values[key]
 	return value, ok
 }
 
-// effectiveResourceConsumerName formats stable identities shared with the pure service planner.
-func effectiveResourceConsumerName(appName string, resource project.ResourceKey, name string) string {
+// consumerName formats the stable identity shared with the pure service planner.
+func (connection resourceConnection) consumerName(scope resourceConsumerScope) string {
 	parts := []string{}
-	if appName != "" && appName != project.DefaultAppName {
-		parts = append(parts, strings.ToLower(appName))
+	if scope.app.name != "" && scope.app.name != project.DefaultAppName {
+		parts = append(parts, strings.ToLower(scope.app.name))
 	}
-	parts = append(parts, string(resource))
-	if name != "" {
-		parts = append(parts, strings.ToLower(name))
+	parts = append(parts, string(connection.definition.Key))
+	if connection.name != "" {
+		parts = append(parts, strings.ToLower(connection.name))
 	}
 	return strings.Join(parts, ":")
 }

@@ -71,7 +71,7 @@ func TestSetAppDevRunMigratesNamedFrontendInstallTask(t *testing.T) {
 			custom,
 		}},
 	}
-	renderer := &ProjectRenderer{config: config}
+	renderer := projectRendererForTest(t, config)
 
 	renderer.setAppDevRun("portal", "run")
 
@@ -93,7 +93,7 @@ func TestSetAppDevRunDoesNotDuplicateCustomizedFrontendInstallTask(t *testing.T)
 		},
 		Dev: project.DevConfig{Pre: []project.DevTask{custom}},
 	}
-	renderer := &ProjectRenderer{config: config}
+	renderer := projectRendererForTest(t, config)
 
 	renderer.setAppDevRun("portal", "run")
 

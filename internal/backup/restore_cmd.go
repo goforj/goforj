@@ -27,12 +27,12 @@ func (*RestoreCmd) Signature() string {
 
 // Run restores the selected backup set after explicit confirmation.
 func (c *RestoreCmd) Run() error {
-	from, cleanup, err := resolveBackupSource(context.Background(), c.From)
+	source, err := resolveBackupSource(context.Background(), c.From)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-	c.From = from
+	defer source.cleanup()
+	c.From = source.path
 	if c.Portable {
 		if c.DryRun {
 			if _, err := ReadPortableArchive(c.From); err != nil {
@@ -51,16 +51,16 @@ func (c *RestoreCmd) Run() error {
 		if c.TargetDriver != "" {
 			connection.Driver = c.TargetDriver
 		}
-		db, dialect, err := OpenSQLConnection(context.Background(), connection)
+		sqlConnection, err := OpenSQLConnection(context.Background(), connection)
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer sqlConnection.DB.Close()
 		migrationFingerprint, err := ProjectMigrationFingerprint(".")
 		if err != nil {
 			return err
 		}
-		if err := NewPortableService().Restore(context.Background(), c.From, db, dialect, migrationFingerprint); err != nil {
+		if err := NewPortableService().Restore(context.Background(), c.From, sqlConnection.DB, sqlConnection.Dialect, migrationFingerprint); err != nil {
 			return err
 		}
 		fmt.Println("portable backup restored")
@@ -85,25 +85,33 @@ func (c *RestoreCmd) Run() error {
 	return nil
 }
 
+// backupSource keeps a resolved path and its matching lifecycle cleanup together.
+type backupSource struct {
+	path    string
+	cleanup func()
+}
+
 // resolveBackupSource downloads a named remote backup into a temporary directory when configured.
-func resolveBackupSource(ctx context.Context, from string) (string, func(), error) {
+func resolveBackupSource(ctx context.Context, from string) (backupSource, error) {
 	if _, err := os.Stat(from); err == nil {
-		return from, func() {}, nil
+		return backupSource{path: from, cleanup: func() {}}, nil
+	} else if !os.IsNotExist(err) {
+		return backupSource{}, fmt.Errorf("inspect backup source %q: %w", from, err)
 	}
 	repository, err := ConfiguredBackupRepository()
 	if err != nil {
-		return "", nil, err
+		return backupSource{}, err
 	}
 	if repository == nil || from != filepath.Base(from) {
-		return from, func() {}, nil
+		return backupSource{path: from, cleanup: func() {}}, nil
 	}
 	destination, err := os.MkdirTemp("", "goforj-restore-")
 	if err != nil {
-		return "", nil, err
+		return backupSource{}, err
 	}
 	if err := repository.Download(ctx, from, destination); err != nil {
 		_ = os.RemoveAll(destination)
-		return "", nil, err
+		return backupSource{}, err
 	}
-	return destination, func() { _ = os.RemoveAll(destination) }, nil
+	return backupSource{path: destination, cleanup: func() { _ = os.RemoveAll(destination) }}, nil
 }

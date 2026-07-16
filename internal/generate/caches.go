@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
-	"os"
 	"path/filepath"
 	"sort"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -196,21 +194,26 @@ var cacheDriverKeys = map[string]map[string]struct{}{
 
 // GenerateCacheFiles writes cache accessors whose imports and manifest reflect the project-owned build contract.
 func GenerateCacheFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
+	return generateCacheFiles(ambientGenerationInput(projectDir))
+}
+
+// generateCacheFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateCacheFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "CACHE",
 		DefaultDriver: "memory",
 		RootKeys:      cacheRootKeys,
 		CommonKeys:    cacheCommonKeys,
 		DriverKeys:    cacheDriverKeys,
-		ChildNames: func(scope env.Scope) []string {
-			return scope.ChildNames(cacheRootKeys)
+		ChildNames: func(environment generationEnvironment) []string {
+			return exactScopedChildNames(environment, "CACHE", cacheRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 		EagerNamedResources:   true,
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderCacheConfig(projectDir)
+	manager, err := renderCacheConfig(input)
 	if err != nil {
 		return 0, err
 	}
@@ -218,7 +221,7 @@ func GenerateCacheFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated cache manager: %w", err)
 	}
-	accessors, err := renderCacheAccessors(discoverCacheStoreNames(projectDir))
+	accessors, err := renderCacheAccessors(discoverCacheStoreNames(input))
 	if err != nil {
 		return 0, err
 	}
@@ -227,30 +230,35 @@ func GenerateCacheFiles(projectDir string) (int, error) {
 		return 0, fmt.Errorf("failed to format generated cache accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "caches", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "caches", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(projectDir, "internal", "caches", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "caches", "accessors_gen.go"), formattedAccessors)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(projectDir, "internal", "caches", "runtime.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "caches", "manager.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "caches", "stores_gen.go"))
-	_ = os.Remove(filepath.Join(projectDir, "internal", "caches", "config_gen.go"))
+	for _, name := range cacheLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "caches", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
 // discoverCacheStoreNames includes names declared only through a configured App overlay.
-func discoverCacheStoreNames(projectDir string) []string {
-	names := discoverPrimitiveChildNames(projectDir, "CACHE", cacheRootKeys)
+func discoverCacheStoreNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "CACHE", cacheRootKeys)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -290,19 +298,19 @@ func renderCacheAccessors(names []string) ([]byte, error) {
 }
 
 // renderCacheConfig snapshots cache driver choices once so imports and the compiled manifest cannot diverge.
-func renderCacheConfig(projectDir string) ([]byte, error) {
-	names := discoverCacheStoreNames(projectDir)
+func renderCacheConfig(input generationInput) ([]byte, error) {
+	names := discoverCacheStoreNames(input)
 	driverSet := map[string]struct{}{}
-	defaultDriver := effectivePrimitiveDriver(env.Get("CACHE_DRIVER", "memory"), "memory")
+	defaultDriver := effectivePrimitiveDriver(input.environment.Get("CACHE_DRIVER", "memory"), "memory")
 	driverSet[defaultDriver] = struct{}{}
 	for _, child := range names {
-		driver := effectivePrimitiveDriver(env.Get("CACHE_"+str.Of(child).Snake("_").ToUpper().String()+"_DRIVER", ""), "memory")
+		driver := effectivePrimitiveDriver(input.environment.Get("CACHE_"+str.Of(child).Snake("_").ToUpper().String()+"_DRIVER", ""), "memory")
 		driverSet[driver] = struct{}{}
 	}
-	for _, active := range appPrefixedActiveDrivers(projectDir, "CACHE", "memory", false) {
+	for _, active := range appPrefixedActiveDrivers(input, "CACHE", "memory", false) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers("CACHE", cacheDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "CACHE", cacheDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +564,7 @@ func NewManager() (*Manager, error) {
 
 // WithObserver adds observability without replacing observers already attached by framework wiring.
 func (m *Manager) WithObserver(observer Observer) *Manager {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m
 	}
 	if m.observer == nil {
@@ -570,24 +578,18 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 		}
 	}
 	combined := m.observer
-	if m.defaultStore != nil {
-		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
-			combined.OnCacheOp(ctx, CacheOpEvent{Name: "default", CacheOpEvent: event})
-		}))
-	}
+	m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+		combined.OnCacheOp(ctx, CacheOpEvent{Name: "default", CacheOpEvent: event})
+	}))
 {{- range .Names }}
 {{- if eq .Store "sessions" }}
-	if m.sessions != nil {
-		m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
-			combined.OnCacheOp(ctx, CacheOpEvent{Name: "sessions", CacheOpEvent: event})
-		}))
-	}
+	m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+		combined.OnCacheOp(ctx, CacheOpEvent{Name: "sessions", CacheOpEvent: event})
+	}))
 {{- else }}
-	if m.{{ .Store }} != nil {
-		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
-			combined.OnCacheOp(ctx, CacheOpEvent{Name: "{{ .Store }}", CacheOpEvent: event})
-		}))
-	}
+	m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+		combined.OnCacheOp(ctx, CacheOpEvent{Name: "{{ .Store }}", CacheOpEvent: event})
+	}))
 {{- end }}
 {{- end }}
 	return m
@@ -595,9 +597,6 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 
 // ReadinessChecks exposes one probe per generated cache so health reflects every configured store.
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
-	if m == nil {
-		return nil
-	}
 	checks := []ReadinessCheck{
 		{
 			Name: "cache_default",
@@ -835,16 +834,11 @@ func cacheEncryptionKey(scope env.Scope) []byte {
 
 // cacheReadinessCheck adapts both wrapper and driver readiness contracts to one generated probe.
 func cacheReadinessCheck(ctx context.Context, store *cache.Cache) error {
-	if store == nil {
-		return nil
-	}
 	if ready, ok := any(store).(interface{ Ready() error }); ok {
 		return ready.Ready()
 	}
-	if inner := store.Store(); inner != nil {
-		if ready, ok := any(inner).(interface{ Ready(context.Context) error }); ok {
-			return ready.Ready(ctx)
-		}
+	if ready, ok := any(store.Store()).(interface{ Ready(context.Context) error }); ok {
+		return ready.Ready(ctx)
 	}
 	return nil
 }

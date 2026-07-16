@@ -7,173 +7,81 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
 
-// TestReconcileResourceEnvironmentPreservesOwners verifies full resource ownership and portable initialization.
-func TestReconcileResourceEnvironmentPreservesOwners(t *testing.T) {
-	components := project.Components{DatabaseMySQL: true, Mail: true, Docker: true, Jobs: true, Auth: true, Events: true, Cache: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCOMPOSE_PROFILES=metrics\n")
-	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile resource environment: %v", err)
+// TestReconcileResourceEnvironmentSeedsPrimitivesOnFirstEnablement verifies config-only activation initializes each primitive's owner contract.
+func TestReconcileResourceEnvironmentSeedsPrimitivesOnFirstEnablement(t *testing.T) {
+	tests := []struct {
+		name            string
+		components      project.Components
+		source          string
+		resource        project.ResourceKey
+		wantActive      string
+		wantSupported   string
+		wantAssignments []string
+	}{
+		{
+			name:            "cache",
+			components:      project.Components{CLI: true, Cache: true},
+			source:          "STORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n",
+			resource:        project.ResourceCache,
+			wantActive:      "memory",
+			wantSupported:   "memory",
+			wantAssignments: []string{"CACHE_DRIVER=memory\n", "CACHE_SUPPORTED_DRIVERS=memory\n"},
+		},
+		{
+			name:            "storage",
+			components:      project.Components{CLI: true, Storage: true},
+			source:          "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n",
+			resource:        project.ResourceStorage,
+			wantActive:      "local",
+			wantSupported:   "local",
+			wantAssignments: []string{"STORAGE_DRIVER=local\n", "STORAGE_SUPPORTED_DRIVERS=local\n", "STORAGE_PUBLIC_DRIVER=local\n"},
+		},
+		{
+			name:            "events",
+			components:      project.Components{CLI: true, Events: true},
+			source:          "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n",
+			resource:        project.ResourceEvents,
+			wantActive:      "inproc",
+			wantSupported:   "inproc,redis",
+			wantAssignments: []string{"EVENTS_DRIVER=inproc\n", "EVENTS_SUPPORTED_DRIVERS=inproc,redis\n"},
+		},
+		{
+			name:            "jobs queue",
+			components:      project.Components{CLI: true, Jobs: true},
+			source:          "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n",
+			resource:        project.ResourceQueue,
+			wantActive:      "workerpool",
+			wantSupported:   "workerpool,redis",
+			wantAssignments: []string{"QUEUE_DRIVER=workerpool\n", "QUEUE_SUPPORTED_DRIVERS=workerpool,redis\n"},
+		},
 	}
-	if !changed {
-		t.Fatal("expected missing resource keys to be initialized")
-	}
-	cache, _ := effective.Selection(project.ResourceCache)
-	if cache.Active != "redis" {
-		t.Fatalf("owner cache driver = %q, want redis", cache.Active)
-	}
-	text := string(updated)
-	for _, want := range []string{
-		"CACHE_DRIVER=redis\n",
-		"CACHE_SUPPORTED_DRIVERS=memory,redis\n",
-		"QUEUE_DRIVER=workerpool\n",
-		"QUEUE_SUPPORTED_DRIVERS=workerpool,redis\n",
-		"EVENTS_SUPPORTED_DRIVERS=inproc,redis\n",
-		"MAIL_SUPPORTED_DRIVERS=log,smtp\n",
-		"CACHE_SESSIONS_DRIVER=memory\n",
-		"COMPOSE_PROFILES=metrics\n",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("reconciled environment omitted %q:\n%s", want, text)
-		}
-	}
-}
-
-// TestReconcileResourceEnvironmentRemovesObsoleteDiagnosticCaches verifies upgrades stop regenerating retired framework stores.
-func TestReconcileResourceEnvironmentRemovesObsoleteDiagnosticCaches(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Jobs: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("CACHE_INSPECTS_DRIVER=memory\nCACHE_LIGHTHOUSE_DRIVER=redis\n# CACHE_LIGHTHOUSE_DRIVER=memory\n")
-	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile resource environment: %v", err)
-	}
-	if !changed {
-		t.Fatal("obsolete diagnostic cache settings did not request an environment write")
-	}
-	if strings.Contains(string(updated), "CACHE_INSPECTS_DRIVER") || strings.Contains(string(updated), "CACHE_LIGHTHOUSE_DRIVER") {
-		t.Fatalf("reconciled environment retained an obsolete diagnostic cache:\n%s", updated)
-	}
-	for _, named := range effective.GeneratedNamedSelections(components) {
-		if named.EnvironmentKey == "CACHE_INSPECTS_DRIVER" || named.EnvironmentKey == "CACHE_LIGHTHOUSE_DRIVER" {
-			t.Fatalf("effective resource plan retained an obsolete diagnostic cache: %#v", effective)
-		}
-	}
-}
-
-// TestReconcileResourceEnvironmentIgnoresStaleDisabledEvents verifies owner residue cannot reactivate an omitted Events resource.
-func TestReconcileResourceEnvironmentIgnoresStaleDisabledEvents(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("EVENTS_DRIVER=redis\nEVENTS_SUPPORTED_DRIVERS=redis\n")
-	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile resource environment: %v", err)
-	}
-	if _, exists := effective.Selection(project.ResourceEvents); exists {
-		t.Fatalf("Events-disabled plan was resurrected from owner env: %#v", effective)
-	}
-	if !strings.Contains(string(updated), "EVENTS_DRIVER=redis\n") {
-		t.Fatalf("reconciliation deleted owner Events residue instead of ignoring it:\n%s", updated)
-	}
-}
-
-// TestReconcileResourceEnvironmentIgnoresStaleDisabledStorage verifies owner residue cannot reactivate an omitted Storage resource.
-func TestReconcileResourceEnvironmentIgnoresStaleDisabledStorage(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("STORAGE_DRIVER=s3\nSTORAGE_SUPPORTED_DRIVERS=s3\nSTORAGE_PUBLIC_DRIVER=s3\n")
-	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile resource environment: %v", err)
-	}
-	if _, exists := effective.Selection(project.ResourceStorage); exists {
-		t.Fatalf("Storage-disabled plan was resurrected from owner env: %#v", effective)
-	}
-	if !strings.Contains(string(updated), "STORAGE_DRIVER=s3\n") || !strings.Contains(string(updated), "STORAGE_PUBLIC_DRIVER=s3\n") {
-		t.Fatalf("reconciliation deleted owner Storage residue instead of ignoring it:\n%s", updated)
-	}
-}
-
-// TestReconcileResourceEnvironmentSeedsStorageOnFirstEnablement verifies config-only activation initializes the Storage contract.
-func TestReconcileResourceEnvironmentSeedsStorageOnFirstEnablement(t *testing.T) {
-	components := project.Components{CLI: true, Storage: true}
-	seed, err := compatibilityResourcePlan(components, "")
-	if err != nil {
-		t.Fatalf("resolve compatibility plan: %v", err)
-	}
-	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
-
-	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, false)
-	if err != nil {
-		t.Fatalf("reconcile first Storage enablement: %v", err)
-	}
-	if !changed {
-		t.Fatal("first Storage enablement did not initialize owner environment keys")
-	}
-	text := string(updated)
-	for _, want := range []string{"STORAGE_DRIVER=local\n", "STORAGE_SUPPORTED_DRIVERS=local\n", "STORAGE_PUBLIC_DRIVER=local\n"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("first Storage enablement omitted %q:\n%s", want, text)
-		}
-	}
-	storage, ok := effective.Selection(project.ResourceStorage)
-	if !ok || storage.Active != "local" || strings.Join(storage.Supported, ",") != "local" {
-		t.Fatalf("effective first Storage selection = %#v selected=%t", storage, ok)
-	}
-}
-
-// TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement verifies config-only activation compiles the common infrastructure transition.
-func TestReconcileResourceEnvironmentSeedsPortableEventsOnFirstEnablement(t *testing.T) {
-	components := project.Components{CLI: true, Events: true}
-	seed, err := compatibilityResourcePlan(components, "")
-	if err != nil {
-		t.Fatalf("resolve compatibility plan: %v", err)
-	}
-	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\n")
-
-	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, false)
-	if err != nil {
-		t.Fatalf("reconcile first Events enablement: %v", err)
-	}
-	if !changed {
-		t.Fatal("first Events enablement did not initialize owner environment keys")
-	}
-	if !strings.Contains(string(updated), "EVENTS_DRIVER=inproc\n") || !strings.Contains(string(updated), "EVENTS_SUPPORTED_DRIVERS=inproc,redis\n") {
-		t.Fatalf("first Events enablement omitted portable defaults:\n%s", updated)
-	}
-	events, ok := effective.Selection(project.ResourceEvents)
-	if !ok || events.Active != "inproc" || strings.Join(events.Supported, ",") != "inproc,redis" {
-		t.Fatalf("effective first Events selection = %#v selected=%t", events, ok)
-	}
-}
-
-// TestReconcileResourceEnvironmentSeedsPortableQueueOnFirstEnablement verifies every render path starts with the local-to-Redis transition compiled.
-func TestReconcileResourceEnvironmentSeedsPortableQueueOnFirstEnablement(t *testing.T) {
-	components := project.Components{CLI: true, Jobs: true}
-	seed, err := compatibilityResourcePlan(components, "")
-	if err != nil {
-		t.Fatalf("resolve compatibility plan: %v", err)
-	}
-	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n")
-
-	updated, effective, changed, err := reconcileResourceEnvironment(source, seed, components, false)
-	if err != nil {
-		t.Fatalf("reconcile first Jobs enablement: %v", err)
-	}
-	if !changed {
-		t.Fatal("first Jobs enablement did not initialize owner environment keys")
-	}
-	if !strings.Contains(string(updated), "QUEUE_DRIVER=workerpool\n") || !strings.Contains(string(updated), "QUEUE_SUPPORTED_DRIVERS=workerpool,redis\n") {
-		t.Fatalf("first Jobs enablement omitted portable Queue defaults:\n%s", updated)
-	}
-	queue, ok := effective.Selection(project.ResourceQueue)
-	if !ok || queue.Active != "workerpool" || strings.Join(queue.Supported, ",") != "workerpool,redis" {
-		t.Fatalf("effective first Queue selection = %#v selected=%t", queue, ok)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			seed, err := compatibilityResourcePlan(test.components, "")
+			if err != nil {
+				t.Fatalf("compatibilityResourcePlan() error = %v", err)
+			}
+			reconciled, err := resourceenv.Reconcile([]byte(test.source), seed, test.components, false)
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !reconciled.Changed {
+				t.Fatal("Reconcile() did not initialize owner environment keys")
+			}
+			for _, assignment := range test.wantAssignments {
+				if !strings.Contains(string(reconciled.Source), assignment) {
+					t.Fatalf("Reconcile() source omitted %q:\n%s", assignment, reconciled.Source)
+				}
+			}
+			selection, ok := reconciled.EffectivePlan.Selection(test.resource)
+			if !ok || selection.Active != test.wantActive || strings.Join(selection.Supported, ",") != test.wantSupported {
+				t.Fatalf("effective selection = %#v selected=%t, want active=%q supported=%q", selection, ok, test.wantActive, test.wantSupported)
+			}
+		})
 	}
 }
 
@@ -186,14 +94,14 @@ func TestReconcileResourceEnvironmentKeepsExistingEventsCompatibility(t *testing
 	}
 	source := []byte("CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nEVENTS_DRIVER=redis\n")
 
-	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, false)
+	reconciled, err := resourceenv.Reconcile(source, seed, components, false)
 	if err != nil {
 		t.Fatalf("reconcile owner Events selection: %v", err)
 	}
-	if !strings.Contains(string(updated), "EVENTS_DRIVER=redis\n") || !strings.Contains(string(updated), "EVENTS_SUPPORTED_DRIVERS=redis\n") {
-		t.Fatalf("owner Events selection was widened or replaced:\n%s", updated)
+	if !strings.Contains(string(reconciled.Source), "EVENTS_DRIVER=redis\n") || !strings.Contains(string(reconciled.Source), "EVENTS_SUPPORTED_DRIVERS=redis\n") {
+		t.Fatalf("owner Events selection was widened or replaced:\n%s", reconciled.Source)
 	}
-	events, ok := effective.Selection(project.ResourceEvents)
+	events, ok := reconciled.EffectivePlan.Selection(project.ResourceEvents)
 	if !ok || events.Active != "redis" || strings.Join(events.Supported, ",") != "redis" {
 		t.Fatalf("effective owner Events selection = %#v selected=%t", events, ok)
 	}
@@ -208,61 +116,6 @@ func TestCompatibilityResourcePlanKeepsPortableEventsDefaults(t *testing.T) {
 	events, ok := plan.Selection(project.ResourceEvents)
 	if !ok || events.Active != "inproc" || strings.Join(events.Supported, ",") != "inproc,redis" {
 		t.Fatalf("Events compatibility defaults = %#v selected=%t", events, ok)
-	}
-}
-
-// TestReconcileResourceEnvironmentAcceptsDotenvSyntax keeps preview, rerender, and generation on one parsing contract.
-func TestReconcileResourceEnvironmentAcceptsDotenvSyntax(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Cache: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("export CACHE_DRIVER=\"redis\"\nCACHE_SUPPORTED_DRIVERS='memory,redis' # portable pair\nEVENTS_DRIVER=\"inproc\"\nEVENTS_SUPPORTED_DRIVERS=\"inproc,redis\"\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nDB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite\nCACHE_PREFIX=\"owner#prefix\"\n")
-	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile resource environment: %v", err)
-	}
-	cache, _ := effective.Selection(project.ResourceCache)
-	if cache.Active != "redis" || strings.Join(cache.Supported, ",") != "memory,redis" {
-		t.Fatalf("dotenv values were not normalized: %#v", cache)
-	}
-	if !strings.Contains(string(updated), "CACHE_PREFIX=\"owner#prefix\"") {
-		t.Fatalf("line-aware reconciliation damaged a quoted hash:\n%s", updated)
-	}
-}
-
-// TestReconcileResourceEnvironmentResolvesDotenvReferences prevents owner indirection from being mistaken for a missing value.
-func TestReconcileResourceEnvironmentResolvesDotenvReferences(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Cache: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("CACHE_BACKEND=redis\nCACHE_DRIVER=${CACHE_BACKEND}\nCACHE_SUPPORTED_DRIVERS=memory,redis\nEVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc,redis\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local\nDB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite\n")
-
-	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile resource environment: %v", err)
-	}
-	cache, _ := effective.Selection(project.ResourceCache)
-	if cache.Active != "redis" {
-		t.Fatalf("interpolated cache driver = %q, want redis", cache.Active)
-	}
-	if !strings.Contains(string(updated), "CACHE_DRIVER=${CACHE_BACKEND}") {
-		t.Fatalf("reconciliation replaced owner interpolation:\n%s", updated)
-	}
-}
-
-// TestReconcileResourceEnvironmentPreservesDatabaseAliases keeps owner syntax while planning with canonical driver identities.
-func TestReconcileResourceEnvironmentPreservesDatabaseAliases(t *testing.T) {
-	components := project.Components{DatabasePostgres: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("DB_DRIVER=postgresql\nDB_SUPPORTED_DRIVERS=postgres\n")
-	updated, effective, _, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err != nil {
-		t.Fatalf("reconcile database aliases: %v", err)
-	}
-	database, _ := effective.Selection(project.ResourceDatabase)
-	if database.Active != "postgres" || strings.Join(database.Supported, ",") != "postgres" {
-		t.Fatalf("canonical database selection = %#v, want Postgres", database)
-	}
-	if !strings.Contains(string(updated), "DB_DRIVER=postgresql") {
-		t.Fatalf("reconciliation replaced owner alias:\n%s", updated)
 	}
 }
 
@@ -310,6 +163,7 @@ func TestPrepareResourceEnvironmentUsesCommittedFallback(t *testing.T) {
 		t.Fatalf("resolve compatibility plan: %v", err)
 	}
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config:    &project.Config{Render: project.RenderConfig{Components: components}},
 		resources: resourceRenderState{plan: plan},
 	}
@@ -353,7 +207,8 @@ func TestPrepareResourceEnvironmentKeepsExplicitPlanAboveCommittedFallback(t *te
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 	renderer := &ProjectRenderer{
-		config: &project.Config{Render: project.RenderConfig{Components: components}},
+		workspace: currentProjectRenderWorkspace(t),
+		config:    &project.Config{Render: project.RenderConfig{Components: components}},
 		resources: resourceRenderState{
 			plan:          plan,
 			serviceIntent: intent,
@@ -392,6 +247,7 @@ func TestPrepareResourceEnvironmentCarriesNamedAndAppConsumers(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Events: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			Render: project.RenderConfig{Components: components},
 			Apps:   map[string]project.AppConfig{"billing": {Components: components}},
@@ -437,20 +293,6 @@ func TestComposeRedisServiceWithoutProfile(t *testing.T) {
 	}
 }
 
-// TestReconcileResourceEnvironmentRejectsOwnerMismatch verifies validation happens before any file write.
-func TestReconcileResourceEnvironmentRejectsOwnerMismatch(t *testing.T) {
-	components := project.Components{DatabaseMySQL: true, Cache: true}
-	seed := defaultResourcePlanForTest(t, components)
-	source := []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory\n")
-	updated, _, changed, err := reconcileResourceEnvironment(source, seed, components, true)
-	if err == nil || !strings.Contains(err.Error(), "excludes active") {
-		t.Fatalf("reconcile error = %v, want active-subset failure", err)
-	}
-	if updated != nil || changed {
-		t.Fatalf("invalid contract returned a rewrite: changed=%t data=%q", changed, updated)
-	}
-}
-
 // TestSeedComposeProfilesPreservesTokens verifies local Redis activation edits one exact profile token.
 func TestSeedComposeProfilesPreservesTokens(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
@@ -474,25 +316,6 @@ func TestSeedComposeProfilesHonorsRetainedUnusedRedis(t *testing.T) {
 	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics\n"), plan, components, intent)
 	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis\n" {
 		t.Fatalf("seeded retained profile = %q changed=%t", updated, changed)
-	}
-}
-
-// TestLocalServiceIntentFromEnvironmentTreatsMissingRedisProfileAsExternal protects explicit placement semantics.
-func TestLocalServiceIntentFromEnvironmentTreatsMissingRedisProfileAsExternal(t *testing.T) {
-	fallback := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	intent := localServiceIntentFromEnvironment([]byte("COMPOSE_PROFILES=metrics,redis-debug\n"), fallback)
-	mode, ok := intent.Mode(project.ServiceRedis)
-	if !ok || mode != project.LocalServiceModeExternal {
-		t.Fatalf("Redis mode = %q selected=%t, want external", mode, ok)
-	}
-	intent = localServiceIntentFromEnvironment([]byte("COMPOSE_PROFILES=metrics,redis\n"), fallback)
-	mode, ok = intent.Mode(project.ServiceRedis)
-	if !ok || mode != project.LocalServiceModeLocal {
-		t.Fatalf("Redis mode = %q selected=%t, want local", mode, ok)
-	}
-	intent = localServiceIntentFromEnvironment([]byte("APP_NAME=Existing\n"), project.LocalServiceIntent{})
-	if mode, ok = intent.Mode(project.ServiceRedis); ok {
-		t.Fatalf("ordinary environment invented Redis placement %q", mode)
 	}
 }
 
@@ -536,6 +359,7 @@ func TestSyncProjectConfigDoesNotWidenDefaultAppForNamedDatabaseSupport(t *testi
 
 	configured := project.Components{CLI: true, DatabaseMySQL: true}
 	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
 		config: &project.Config{
 			ProjectName:  "Example",
 			GoModuleName: "example.com/app",

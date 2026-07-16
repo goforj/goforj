@@ -2,7 +2,7 @@ package migrations
 
 import (
 	"embed"
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"gorm.io/gorm"
 	"strings"
 )

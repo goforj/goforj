@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"text/template"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 )
 
@@ -176,14 +174,19 @@ var mailDriverKeys = map[string]map[string]struct{}{
 
 // GenerateMailFiles writes mail accessors whose selectable providers are fixed by the generation snapshot.
 func GenerateMailFiles(projectDir string) (int, error) {
-	if err := validatePrimitiveEnv(projectDir, primitiveEnvContract{
+	return generateMailFiles(ambientGenerationInput(projectDir))
+}
+
+// generateMailFiles uses one captured environment for validation, rendering, and named-resource discovery.
+func generateMailFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "MAIL",
 		DefaultDriver: "log",
 		RootKeys:      mailRootKeys,
 		CommonKeys:    mailCommonKeys,
 		DriverKeys:    mailDriverKeys,
-		ChildNames: func(scope env.Scope) []string {
-			return exactScopedChildNames("MAIL", mailRootKeys)
+		ChildNames: func(environment generationEnvironment) []string {
+			return exactScopedChildNames(environment, "MAIL", mailRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 		EagerNamedResources:   true,
@@ -191,7 +194,7 @@ func GenerateMailFiles(projectDir string) (int, error) {
 		return 0, err
 	}
 
-	manager, err := renderMailConfig(projectDir)
+	manager, err := renderMailConfig(input)
 	if err != nil {
 		return 0, err
 	}
@@ -199,7 +202,7 @@ func GenerateMailFiles(projectDir string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated mail manager: %w", err)
 	}
-	accessors, err := renderMailAccessors(projectDir)
+	accessors, err := renderMailAccessors(input)
 	if err != nil {
 		return 0, err
 	}
@@ -209,38 +212,46 @@ func GenerateMailFiles(projectDir string) (int, error) {
 	}
 
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "mail", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "mail", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(projectDir, "internal", "mail", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "mail", "accessors_gen.go"), formattedAccessors)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	_ = os.Remove(filepath.Join(projectDir, "internal", "mail", "manager.go"))
+	for _, name := range mailLegacyGeneratedFiles {
+		changed, err = removeGeneratedFileIfExists(filepath.Join(input.projectDir, "internal", "mail", name))
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
 	return written, nil
 }
 
 // renderMailConfig retains the native log implementation without silently adding it to the compiled manifest.
-func renderMailConfig(projectDir string) ([]byte, error) {
-	names := discoverMailNames(projectDir)
+func renderMailConfig(input generationInput) ([]byte, error) {
+	names := discoverMailNames(input)
 	driverSet := map[string]struct{}{}
-	defaultDriver := effectivePrimitiveDriver(env.Get("MAIL_DRIVER", "log"), "log")
+	defaultDriver := effectivePrimitiveDriver(input.environment.Get("MAIL_DRIVER", "log"), "log")
 	driverSet[defaultDriver] = struct{}{}
-	for _, child := range discoverMailChildren(projectDir) {
-		driver := effectivePrimitiveDriver(env.Get("MAIL_"+child+"_DRIVER", ""), "log")
+	for _, child := range discoverMailChildren(input) {
+		driver := effectivePrimitiveDriver(input.environment.Get("MAIL_"+child+"_DRIVER", ""), "log")
 		driverSet[driver] = struct{}{}
 	}
-	for _, active := range appPrefixedActiveDrivers(projectDir, "MAIL", "log", false) {
+	for _, active := range appPrefixedActiveDrivers(input, "MAIL", "log", false) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers("MAIL", mailDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "MAIL", mailDriverKeys, sortStrings(driverSet))
 	if err != nil {
 		return nil, err
 	}
@@ -276,8 +287,8 @@ func renderMailConfig(projectDir string) ([]byte, error) {
 }
 
 // renderMailAccessors uses the project snapshot so App-only mailers receive generated accessors.
-func renderMailAccessors(projectDir string) ([]byte, error) {
-	names := discoverMailNames(projectDir)
+func renderMailAccessors(input generationInput) ([]byte, error) {
+	names := discoverMailNames(input)
 	data := mailAccessorTemplateData{
 		Names: make([]mailAccessorName, 0, len(names)),
 	}
@@ -300,13 +311,13 @@ func renderMailAccessors(projectDir string) ([]byte, error) {
 }
 
 // discoverMailChildren includes mailers declared only through a configured App overlay.
-func discoverMailChildren(projectDir string) []string {
-	return discoverPrimitiveChildNames(projectDir, "MAIL", mailRootKeys)
+func discoverMailChildren(input generationInput) []string {
+	return discoverPrimitiveChildNames(input, "MAIL", mailRootKeys)
 }
 
 // discoverMailNames normalizes App and resource-first scopes into generated accessor names.
-func discoverMailNames(projectDir string) []string {
-	names := discoverMailChildren(projectDir)
+func discoverMailNames(input generationInput) []string {
+	names := discoverMailChildren(input)
 	for i := range names {
 		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
@@ -479,7 +490,7 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 
 // WithObserver rebuilds the manager because mail drivers capture their observer when they are constructed.
 func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
-	if m == nil || observer == nil {
+	if observer == nil {
 		return m, nil
 	}
 	combined := observer

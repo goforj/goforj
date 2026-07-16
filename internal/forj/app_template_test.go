@@ -23,8 +23,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 	files := map[string][]string{
 		filepath.Join("project", "config.go.tmpl"): {
 			`package project`,
-			`CurrentComponentContractVersion`,
-			`ComponentContractVersion int`,
+			`legacyComponentContractVersion`,
 			`Watch    any`,
 			`Root     string`,
 			`Roots    []string`,
@@ -38,7 +37,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Events`,
 			`Storage`,
 			`func (c *ProjectConfig) UnmarshalYAML(`,
-			`func migrateLegacyAppPrimitiveComponents(`,
+			`func normalizeAppComponents(`,
 			`func (c *DevConfig) SetApps(`,
 		},
 		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
@@ -54,7 +53,12 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Components   *project.Components`,
 			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
 			`func loadProjectConfig() (*project.Config, error)`,
-			`config.Render.ComponentContractVersion = project.CurrentComponentContractVersion`,
+		},
+	}
+	forbiddenSnippets := map[string][]string{
+		filepath.Join("project", "config.go.tmpl"): {
+			`CurrentComponentContractVersion`,
+			`ComponentContractVersion int`,
 		},
 	}
 	for name, snippets := range files {
@@ -65,6 +69,11 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 		for _, snippet := range snippets {
 			if !strings.Contains(string(content), snippet) {
 				t.Fatalf("expected Lighthouse template %s to contain %q", name, snippet)
+			}
+		}
+		for _, snippet := range forbiddenSnippets[name] {
+			if strings.Contains(string(content), snippet) {
+				t.Fatalf("expected Lighthouse template %s to omit retired API %q", name, snippet)
 			}
 		}
 	}
@@ -478,6 +487,8 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 			`"internal/makecmd/make_controller_cmd_test.go.tmpl"`,
 			`"internal/makecmd/make_migration_cmd_test.go.tmpl"`,
 			`"internal/makecmd/make_subscriber_cmd_test.go.tmpl"`,
+		},
+		filepath.Join(root, "internal", "forj", "project_renderer_environment_defaults.go"): {
 			`needsForjMakeOpen`,
 			`needsForjEditor`,
 		},
@@ -835,7 +846,10 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 // TestSwaggerTemplatesRenderPinnedAndAppScoped guards the generated UI and serving contract at the renderer boundary.
 func TestSwaggerTemplatesRenderPinnedAndAppScoped(t *testing.T) {
 	root := t.TempDir()
-	renderer := &ProjectRenderer{stats: &renderStats{}}
+	renderer := &ProjectRenderer{
+		stats:     &renderStats{},
+		workspace: currentProjectRenderWorkspace(t),
+	}
 	config := &project.Config{
 		GoModuleName: "example.com/swaggerfixture",
 		Render: project.RenderConfig{
@@ -937,7 +951,7 @@ func TestWorkerTemplatesSupportNamedQueueSelection(t *testing.T) {
 		filepath.Join(templateRoot, "worker.go.tmpl"): {
 			`func selectManagedQueues(manager *queues.Manager, queueNames ...string)`,
 			`unknown queue`,
-			`func managedQueueInstances(manager *queues.Manager) []queues.Instance`,
+			`instances := manager.Instances()`,
 		},
 	}
 

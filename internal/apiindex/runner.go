@@ -2,10 +2,10 @@ package apiindex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/web/webindex"
 )
@@ -34,6 +34,7 @@ const (
 
 // runOptions controls diagnostics policy without coupling command flags to web internals.
 type runOptions struct {
+	root      string
 	strict    bool
 	buildTags []string
 }
@@ -48,8 +49,16 @@ type runReport struct {
 	diagnostics int
 }
 
+// preparedRun keeps a staged candidate and its report on the same preparation boundary.
+type preparedRun struct {
+	candidate *preparedCandidate
+	report    runReport
+}
+
 // Options controls diagnostics policy and source selection for one indexing transaction.
 type Options struct {
+	// Root anchors default source discovery and artifacts without changing process working directory.
+	Root string
 	// Strict rejects candidates that contain analyzer warnings or errors.
 	Strict bool
 	// BuildTags keeps indexing on the same conditional source surface as compilation.
@@ -60,14 +69,22 @@ type Options struct {
 type Candidate interface {
 	// Publish atomically promotes the candidate or returns an App-scoped rejection error.
 	Publish() error
-	// Discard removes staged artifacts without changing the active generation.
-	Discard()
+	// Discard removes staged artifacts without changing the active generation and reports leaks callers may need to retry.
+	Discard() error
+}
+
+// Preparation keeps a staged candidate and its user-facing status together as one indexing outcome.
+type Preparation struct {
+	// Candidate remains unpublished until the caller's surrounding operation succeeds.
+	Candidate Candidate
+	// Status summarizes analysis even when no candidate is needed or preparation fails.
+	Status string
 }
 
 // Preparer isolates API-index candidates so build orchestration can share its success boundary.
 type Preparer interface {
 	// Prepare analyzes the active App without changing its published artifacts.
-	Prepare(options Options) (Candidate, string, error)
+	Prepare(options Options) (Preparation, error)
 }
 
 // AppResolver returns the active App when an indexing operation starts.
@@ -75,49 +92,32 @@ type AppResolver func() project.App
 
 // Runner generates API contract artifacts for a project App.
 type Runner struct {
-	logger     *logger.AppLogger
 	resolveApp AppResolver
 }
 
 // NewRunner creates an API index runner whose App selection remains late-bound to CLI dispatch.
-func NewRunner(appLogger *logger.AppLogger, resolveApp AppResolver) *Runner {
-	return &Runner{logger: appLogger, resolveApp: resolveApp}
-}
-
-// Run generates API artifacts immediately at caller-provided paths.
-func (r *Runner) Run(root string, out string, diagnostics string, openAPI string, emitLog bool) error {
-	paths, err := resolvePaths(root, out, diagnostics, openAPI, "", "")
-	if err != nil {
-		return err
-	}
-
-	manifest, err := r.runIndex(paths, runOptions{})
-	if err != nil {
-		return err
-	}
-
-	if emitLog {
-		r.logManifestSummary(manifest, paths)
-	}
-	return nil
+func NewRunner(resolveApp AppResolver) *Runner {
+	return &Runner{resolveApp: resolveApp}
 }
 
 // Prepare creates a validated candidate while leaving publication under the caller's control.
-func (r *Runner) Prepare(options Options) (Candidate, string, error) {
-	prepared, report, err := r.prepareDefault(runOptions{
+func (r *Runner) Prepare(options Options) (Preparation, error) {
+	prepared, err := r.prepareDefault(runOptions{
+		root:      options.Root,
 		strict:    options.Strict,
 		buildTags: append([]string(nil), options.BuildTags...),
 	})
-	status := report.status()
-	if prepared == nil {
-		return nil, status, err
+	preparation := Preparation{Status: prepared.report.status()}
+	if prepared.candidate != nil {
+		preparation.Candidate = prepared.candidate
 	}
-	return prepared, status, err
+	return preparation, err
 }
 
 // RunDefault generates and immediately publishes the active App's default artifacts.
 func (r *Runner) RunDefault(options Options) (string, error) {
 	report, err := r.runDefault(runOptions{
+		root:      options.Root,
 		strict:    options.Strict,
 		buildTags: append([]string(nil), options.BuildTags...),
 	})
@@ -126,38 +126,49 @@ func (r *Runner) RunDefault(options Options) (string, error) {
 
 // runDefault prepares and immediately publishes one active-app artifact transaction.
 func (r *Runner) runDefault(options runOptions) (runReport, error) {
-	prepared, report, err := r.prepareDefault(options)
+	prepared, err := r.prepareDefault(options)
 	if err != nil {
-		return report, err
+		return prepared.report, err
 	}
-	if prepared == nil {
-		return report, nil
+	if prepared.candidate == nil {
+		return prepared.report, nil
 	}
-	defer prepared.discard()
-	if err := prepared.publish(); err != nil {
-		report.outcome = outcomeRejected
-		return report, err
+	publishErr := prepared.candidate.publish()
+	discardErr := prepared.candidate.Discard()
+	if publishErr != nil {
+		prepared.report.outcome = outcomeRejected
+		return prepared.report, errors.Join(publishErr, discardErr)
 	}
-	return report, nil
+	return prepared.report, discardErr
 }
 
 // prepareDefault builds a complete candidate without changing the active artifacts used by a running app.
-func (r *Runner) prepareDefault(options runOptions) (prepared *preparedCandidate, report runReport, err error) {
+func (r *Runner) prepareDefault(options runOptions) (prepared preparedRun, err error) {
 	defer func() {
 		if err != nil {
-			report.outcome = outcomeRejected
+			prepared.report.outcome = outcomeRejected
 		}
 	}()
+	root := options.root
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	absRoot, err := resolveProjectRoot(root)
+	if err != nil {
+		return preparedRun{}, err
+	}
 	target := r.resolveApp()
 	paths := defaultPaths(target)
-	participation, err := resolveParticipation(target)
+	expectedRouteComposition := paths.routeComposition
+	paths = rootDefaultPaths(absRoot, paths)
+	participation, err := resolveParticipation(absRoot, target)
 	if err != nil {
-		return nil, runReport{appName: paths.appName}, err
+		return preparedRun{report: runReport{appName: paths.appName}}, err
 	}
 	if participation.known && !participation.webAPI {
 		active, err := readSnapshots(paths)
 		if err != nil {
-			return nil, runReport{appName: paths.appName}, err
+			return preparedRun{report: runReport{appName: paths.appName}}, err
 		}
 		outcome := outcomeSkipped
 		if active.anyExists() {
@@ -165,71 +176,77 @@ func (r *Runner) prepareDefault(options runOptions) (prepared *preparedCandidate
 		}
 		report := runReport{appName: paths.appName, outcome: outcome, reason: noWebAPIReason}
 		if !active.anyExists() {
-			return nil, report, nil
+			return preparedRun{report: report}, nil
 		}
-		return &preparedCandidate{paths: paths, active: active, report: report, remove: true}, report, nil
+		return preparedRun{
+			candidate: &preparedCandidate{
+				paths:  paths,
+				active: active,
+				report: report,
+				remove: true,
+				locks:  webindexArtifactLockCoordinator{},
+			},
+			report: report,
+		}, nil
 	}
-	expectedRouteComposition := paths.routeComposition
-	routeComposition, err := existingRouteCompositionPath(target, expectedRouteComposition)
+	routeComposition, err := existingRouteCompositionPath(target, paths.routeComposition)
 	if err != nil {
-		return nil, runReport{appName: paths.appName}, err
+		return preparedRun{report: runReport{appName: paths.appName}}, err
 	}
 	paths.routeComposition = routeComposition
 	if paths.routeComposition == "" {
 		if participation.known && participation.webAPI {
-			return nil, runReport{appName: paths.appName}, fmt.Errorf("API index for app %q requires route composition %q", paths.appName, expectedRouteComposition)
+			return preparedRun{report: runReport{appName: paths.appName}}, fmt.Errorf("API index for app %q requires route composition %q", paths.appName, expectedRouteComposition)
 		}
 		report := runReport{appName: paths.appName, outcome: outcomeSkipped, reason: noRouteCompositionReason}
-		return nil, report, nil
+		return preparedRun{report: report}, nil
 	}
-	paths.root = "."
+	paths.root = absRoot
 	return r.prepareDefaultPaths(paths, options)
 }
 
 // prepareDefaultPaths generates and validates all candidate artifacts in a directory on the active artifacts' filesystem.
-func (r *Runner) prepareDefaultPaths(paths paths, options runOptions) (prepared *preparedCandidate, report runReport, err error) {
+func (r *Runner) prepareDefaultPaths(paths paths, options runOptions) (prepared preparedRun, err error) {
 	defer func() {
 		if err != nil {
-			report.outcome = outcomeRejected
+			prepared.report.outcome = outcomeRejected
 		}
 	}()
 	appName := paths.appName
-	paths, err = resolvePaths(paths.root, paths.out, paths.diagnostics, paths.openAPI, paths.routeComposition, appName)
+	paths, err = resolvePaths(paths)
 	if err != nil {
-		return nil, runReport{appName: appName}, err
+		return preparedRun{report: runReport{appName: appName}}, err
 	}
 	before, err := readSnapshots(paths)
 	if err != nil {
-		return nil, runReport{appName: paths.appName}, err
+		return preparedRun{report: runReport{appName: paths.appName}}, err
 	}
 	stagingDir, err := createStagingDir(paths)
 	if err != nil {
-		return nil, runReport{appName: paths.appName}, err
+		return preparedRun{report: runReport{appName: paths.appName}}, err
 	}
-	prepared = &preparedCandidate{
+	candidate := &preparedCandidate{
 		paths:       paths,
 		stagedPaths: stagedPaths(paths, stagingDir),
 		stagingDir:  stagingDir,
 		active:      before,
+		locks:       webindexArtifactLockCoordinator{},
 	}
-	manifest, err := r.runIndex(prepared.stagedPaths, options)
-	report = reportFromManifest(paths.appName, outcomeChanged, manifest)
+	manifest, err := r.runIndex(candidate.stagedPaths, options)
+	prepared.report = reportFromManifest(paths.appName, outcomeChanged, manifest)
 	if err != nil {
-		report.outcome = outcomeRejected
-		prepared.discard()
-		return nil, report, err
+		return prepared, errors.Join(err, candidate.Discard())
 	}
-	prepared.candidates, err = readValidatedSnapshots(prepared.stagedPaths)
+	candidate.candidates, err = readValidatedSnapshots(candidate.stagedPaths)
 	if err != nil {
-		report.outcome = outcomeRejected
-		prepared.discard()
-		return nil, report, err
+		return prepared, errors.Join(err, candidate.Discard())
 	}
-	if before.equal(prepared.candidates) {
-		report.outcome = outcomeUnchanged
+	if before.equal(candidate.candidates) {
+		prepared.report.outcome = outcomeUnchanged
 	}
-	prepared.report = report
-	return prepared, report, nil
+	candidate.report = prepared.report
+	prepared.candidate = candidate
+	return prepared, nil
 }
 
 // runIndex applies GoForj's generated and runtime directory exclusions to web's analyzer.
@@ -303,17 +320,4 @@ func countLabel(count int, noun string) string {
 		noun += "s"
 	}
 	return fmt.Sprintf("%d %s", count, noun)
-}
-
-// logManifestSummary records artifact counts and destinations without printing the full contract.
-func (r *Runner) logManifestSummary(manifest webindex.Manifest, paths paths) {
-	r.logger.Info().
-		Str("app", paths.appName).
-		Any("operations", len(manifest.Operations)).
-		Any("schemas", len(manifest.Schemas)).
-		Any("diagnostics", len(manifest.Diagnostics)).
-		Any("out", paths.out).
-		Any("diagnostics_out", paths.diagnostics).
-		Any("openapi_out", paths.openAPI).
-		Msg("API index generated")
 }

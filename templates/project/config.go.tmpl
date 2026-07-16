@@ -109,23 +109,22 @@ func (c *DevConfig) SetApps(apps map[string]any) {
 // DefaultAppName is the implicit single-app name.
 const DefaultAppName = "app"
 
-// CurrentComponentContractVersion identifies configs where omitted primitive component keys mean disabled.
-const CurrentComponentContractVersion = 1
-
 const componentYAMLInlineLimit = 120
+
+// legacyComponentContractVersion is the only retired marker whose mapping semantics this project can migrate safely.
+const legacyComponentContractVersion = 1
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components               Components        `yaml:"components" json:"components"`
-	StarterKit               string            `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat               string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion            string            `yaml:"goforj_version" json:"goforj_version"`
-	ComponentContractVersion int               `yaml:"component_contract,omitempty" json:"component_contract,omitempty"`
-	ModuleReplaces           map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
-	Extra                    map[string]any    `yaml:",inline" json:"-"`
+	Components     Components        `yaml:"components" json:"components"`
+	StarterKit     string            `yaml:"starter_kit" json:"starter_kit"`
+	HelpFormat     string            `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion  string            `yaml:"goforj_version" json:"goforj_version"`
+	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
+	Extra          map[string]any    `yaml:",inline" json:"-"`
 }
 
-// UnmarshalYAML consumes the obsolete wizard choice so config rewrites cannot preserve it as an extension.
+// UnmarshalYAML consumes obsolete render fields so config rewrites cannot preserve them as extensions.
 func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 	type renderConfigFields RenderConfig
 	var fields renderConfigFields
@@ -133,6 +132,7 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*c = RenderConfig(fields)
+	delete(c.Extra, "component_contract")
 	delete(c.Extra, "queue_driver")
 	return nil
 }
@@ -157,7 +157,7 @@ type ProjectConfig struct {
 // Config is the preferred name for project configuration.
 type Config = ProjectConfig
 
-// UnmarshalYAML migrates the component contract while preserving extension-shaped project settings.
+// UnmarshalYAML uses the render component shape to distinguish legacy omission defaults from explicit modern selections.
 func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 	type projectConfigFields ProjectConfig
 	var fields projectConfigFields
@@ -165,17 +165,36 @@ func (c *ProjectConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode project config: %w", err)
 	}
 	*c = ProjectConfig(fields)
-	version := c.Render.ComponentContractVersion
-	if version < 0 || version > CurrentComponentContractVersion {
-		return fmt.Errorf("decode project config: unsupported component contract version %d; this project supports version %d", version, CurrentComponentContractVersion)
+	render := yamlMappingValue(value, "render")
+	version := 0
+	if marker := yamlMappingValue(render, "component_contract"); marker != nil {
+		if err := marker.Decode(&version); err != nil {
+			return fmt.Errorf("decode legacy component contract: %w", err)
+		}
 	}
-	if version == CurrentComponentContractVersion {
+	if version < 0 || version > legacyComponentContractVersion {
+		return fmt.Errorf("decode project config: unsupported component contract version %d; this project supports version %d", version, legacyComponentContractVersion)
+	}
+	renderComponents := yamlMappingValue(render, "components")
+	legacyDefaults := version < legacyComponentContractVersion && (renderComponents == nil || renderComponents.Kind == yaml.MappingNode)
+	if legacyDefaults {
+		c.Render.Components.enableLegacyPrimitiveDefaults()
+	}
+	if err := normalizeAppComponents(c.Apps, legacyDefaults); err != nil {
+		return err
+	}
+	return nil
+}
+
+// yamlMappingValue reads raw field shapes so compatibility decisions do not depend on decoded component values.
+func yamlMappingValue(value *yaml.Node, key string) *yaml.Node {
+	if value == nil || value.Kind != yaml.MappingNode {
 		return nil
 	}
-	c.Render.ComponentContractVersion = CurrentComponentContractVersion
-	c.Render.Components.enableLegacyPrimitiveDefaults()
-	if err := migrateLegacyAppPrimitiveComponents(c.Apps); err != nil {
-		return err
+	for index := 0; index+1 < len(value.Content); index += 2 {
+		if value.Content[index].Value == key {
+			return value.Content[index+1]
+		}
 	}
 	return nil
 }
@@ -417,24 +436,30 @@ func (c *Components) enableLegacyPrimitiveDefaults() {
 	c.Storage = true
 }
 
-// migrateLegacyAppPrimitiveComponents updates every named App without narrowing its extension-shaped settings.
-func migrateLegacyAppPrimitiveComponents(apps map[string]any) error {
+// normalizeAppComponents makes every declared selection canonical while applying defaults only to genuinely legacy configs.
+func normalizeAppComponents(apps map[string]any, legacyDefaults bool) error {
 	for name, raw := range apps {
 		settings, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		var components Components
-		if rawComponents, exists := settings["components"]; exists {
+		rawComponents, exists := settings["components"]
+		if !exists && !legacyDefaults {
+			continue
+		}
+		if exists {
 			var node yaml.Node
 			if err := node.Encode(rawComponents); err != nil {
-				return fmt.Errorf("encode App %s components for migration: %w", name, err)
+				return fmt.Errorf("encode App %s components: %w", name, err)
 			}
 			if err := node.Decode(&components); err != nil {
-				return fmt.Errorf("decode App %s components for migration: %w", name, err)
+				return fmt.Errorf("decode App %s components: %w", name, err)
 			}
 		}
-		components.enableLegacyPrimitiveDefaults()
+		if legacyDefaults {
+			components.enableLegacyPrimitiveDefaults()
+		}
 		settings["components"] = components
 		apps[name] = settings
 	}

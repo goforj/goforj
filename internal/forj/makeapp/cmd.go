@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"golang.org/x/term"
@@ -124,7 +124,7 @@ func (c *Cmd) Run() error {
 	if err != nil {
 		return err
 	}
-	components, starterKit, helpFormat, devRunCommand, err := c.appSelection(config)
+	renderOptions, err := c.appSelection(config)
 	if err != nil {
 		if errors.Is(err, errAppCreationCancelled) {
 			return nil
@@ -132,16 +132,9 @@ func (c *Cmd) Run() error {
 		return err
 	}
 
-	if c.logger != nil {
-		c.logger.Info().Str("app", app.Name).Msg("Creating app")
-	}
-	if err := c.renderer.RenderAppOnly(app, RenderOptions{
-		Components:    components,
-		StarterKit:    starterKit,
-		HelpFormat:    helpFormat,
-		DevRunCommand: devRunCommand,
-		SkipWire:      c.SkipWire,
-	}); err != nil {
+	c.logger.Info().Str("app", app.Name).Msg("Creating app")
+	renderOptions.SkipWire = c.SkipWire
+	if err := c.renderer.RenderAppOnly(app, renderOptions); err != nil {
 		return err
 	}
 
@@ -176,45 +169,35 @@ func (c *Cmd) removeApp(app project.App) error {
 	return nil
 }
 
-// appSelection resolves the per-app component and starter-kit choices.
-func (c *Cmd) appSelection(config *project.Config) (project.Components, project.StarterKit, project.HelpFormat, string, error) {
+// appSelection resolves one complete set of per-App render and development choices.
+func (c *Cmd) appSelection(config *project.Config) (RenderOptions, error) {
 	available := config.Render.Components
 	if c.shouldRunWizard() {
-		if !isInteractiveTerminal() {
-			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", fmt.Errorf("app wizard requires an interactive terminal")
-		}
-		components, starterKit, helpFormat, devRunCommand, cancelled, err := appWizardRunner(c.Name, config)
-		if err != nil {
-			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", err
-		}
-		if cancelled {
-			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", errAppCreationCancelled
-		}
-		return components, starterKit, helpFormat, devRunCommand, nil
+		return appWizardRunner(c.Name, config)
 	}
 	components := project.AppDefaultComponents(available)
 	if strings.TrimSpace(c.Components) != "" {
 		keys, err := project.ParseComponentKeys(c.Components)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", err
+			return RenderOptions{}, err
 		}
 		components, err = project.AppComponentsFromKeys(available, keys)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", err
+			return RenderOptions{}, err
 		}
 	}
 	if strings.TrimSpace(c.Without) != "" {
 		keys, err := project.ParseComponentKeys(c.Without)
 		if err != nil {
-			return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", err
+			return RenderOptions{}, err
 		}
 		for _, key := range keys {
 			if key == project.ComponentCLI {
-				return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", fmt.Errorf("CLI is always enabled for apps and cannot be removed per app")
+				return RenderOptions{}, fmt.Errorf("CLI is always enabled for apps and cannot be removed per app")
 			}
 			if !project.IsAppComponentKey(key) {
 				definition, _ := project.ComponentDefinitionByKey(key)
-				return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
+				return RenderOptions{}, fmt.Errorf("%s is project-level only and cannot be removed per app", definition.Label)
 			}
 			project.DeselectAppComponent(&components, key)
 		}
@@ -229,16 +212,21 @@ func (c *Cmd) appSelection(config *project.Config) (project.Components, project.
 		starterKit = project.StarterKitNone
 	}
 	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", err
+		return RenderOptions{}, err
 	}
 	if err := components.ValidateRenderContract(); err != nil {
-		return project.Components{}, project.StarterKitNone, project.DefaultHelpFormat(), "", err
+		return RenderOptions{}, err
 	}
 	helpFormat := project.NormalizeHelpFormat(project.HelpFormat(c.HelpFormat))
 	if strings.TrimSpace(c.HelpFormat) == "" {
 		helpFormat = project.NormalizeHelpFormat(config.Render.HelpFormat)
 	}
-	return components, starterKit, helpFormat, strings.TrimSpace(c.DevRun), nil
+	return RenderOptions{
+		Components:    components,
+		StarterKit:    starterKit,
+		HelpFormat:    helpFormat,
+		DevRunCommand: strings.TrimSpace(c.DevRun),
+	}, nil
 }
 
 // shouldRunWizard keeps the default flow interactive while allowing explicit flags to stay scriptable.

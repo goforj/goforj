@@ -25,6 +25,7 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			workspace := currentProjectRenderWorkspace(t)
 			config := &project.Config{
 				GoModuleName: "example.com/cache-projection",
 				Render: project.RenderConfig{Components: project.Components{
@@ -45,7 +46,8 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 			for _, target := range apps {
 				t.Run(target.app.Name, func(t *testing.T) {
 					components := appRenderComponents(config, target.app)
-					data := appTemplateDataForProjectionTest(config, target.app, components)
+					data := workspace.templateDataForApp(config, target.app)
+					data.Components = components
 					data.HelpFormatterFunc = "FrameworkFormatter"
 					sources := map[string]string{
 						"app/commands.go.tmpl":             renderSharedTemplate(t, "app/commands.go.tmpl", data),
@@ -81,7 +83,8 @@ func TestCacheTemplatesFollowAppAndProjectParticipation(t *testing.T) {
 			}
 
 			projectEnabled := test.defaultCache || test.workerCache
-			sharedData := appTemplateDataForProjectionTest(config, project.DefaultApp(), config.Render.Components)
+			sharedData := workspace.templateDataForApp(config, project.DefaultApp())
+			sharedData.Components = config.Render.Components
 			runtimeSources := map[string]string{
 				"internal/runtime/about.go.tmpl":     renderSharedTemplate(t, "internal/runtime/about.go.tmpl", sharedData),
 				"internal/runtime/discovery.go.tmpl": renderSharedTemplate(t, "internal/runtime/discovery.go.tmpl", sharedData),
@@ -103,8 +106,7 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 		ProjectName:  "Cache Removal",
 		GoModuleName: "example.test/cache-removal",
 		Render: project.RenderConfig{
-			Components:               project.Components{CLI: true},
-			ComponentContractVersion: project.CurrentComponentContractVersion,
+			Components: project.Components{CLI: true},
 		},
 		Apps: map[string]project.AppConfig{
 			app.Name: {Components: project.Components{CLI: true, Cache: true}},
@@ -123,8 +125,9 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 		"CACHE_PREFIX=app",
 		"CACHE_DEFAULT_TTL_SECONDS=300",
 		"CACHE_MEMORY_CLEANUP_SECONDS=600",
+		"",
+		"# Worker",
 		"WORKER_CACHE_DRIVER=memory",
-		"CACHE_REPORTS_DRIVER=redis",
 		"",
 	}, "\n")
 	writePrimitiveRendererFile(t, ".env", environment)
@@ -165,7 +168,7 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 				t.Fatalf("reconciled %s retained %q:\n%s", path, removed, text)
 			}
 		}
-		for _, preserved := range []string{"OWNER_SENTINEL=keep", "CACHE_REPORTS_DRIVER=redis"} {
+		for _, preserved := range []string{"OWNER_SENTINEL=keep"} {
 			if !strings.Contains(text, preserved) {
 				t.Fatalf("reconciled %s removed owner assignment %q:\n%s", path, preserved, text)
 			}

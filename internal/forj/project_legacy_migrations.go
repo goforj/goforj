@@ -1,7 +1,6 @@
 package forj
 
 import (
-	"errors"
 	"fmt"
 	"go/format"
 	"os"
@@ -9,13 +8,17 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
 // cleanupLegacyGeneratedFiles removes obsolete framework-owned artifacts while preserving App-owned source.
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
+	discovery, err := projectlayout.Discover(p.workspace.discoveryRoot())
+	if err != nil {
+		return fmt.Errorf("discover Apps for legacy cleanup: %w", p.workspace.logicalError(err))
+	}
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
 		filepath.Join("internal", "cmd", "generate_cmd.go"),
@@ -118,45 +121,49 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 	legacyPaths = append(legacyPaths, legacyJobsFrameworkPaths()...)
 	for _, path := range legacyPaths {
-		if err := removeIfExists(path); err != nil {
+		if _, err := p.workspace.removeFileIfExists(path); err != nil {
 			return err
 		}
 	}
-	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
+	if err := p.workspace.removeTree("internal", "devconsole"); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join("internal", "lifecycle")); err != nil {
+	if err := p.workspace.removeTree("internal", "lifecycle"); err != nil {
 		return err
 	}
-	if err := os.Remove(filepath.Join("wire")); err != nil && !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
+	if _, err := p.workspace.removeEmptyDir("wire"); err != nil {
 		return err
 	}
 	if err := p.syncLegacyGeneratedTemplates(); err != nil {
 		return err
 	}
 
-	for _, app := range renderApps() {
+	for _, app := range discovery.ConventionalApps() {
 		components := appRenderComponents(p.config, app)
 		for _, path := range appOwnedWirePathsForApp(app) {
-			if data, err := os.ReadFile(path); err == nil {
+			if data, err := p.workspace.readFile(path); err == nil {
 				updated := syncAppOwnedWireSetNames(string(data))
 				switch filepath.Base(path) {
 				case "inject_jobs_app.go":
 					updated = syncDemoAppJobInjector(updated, p.config.GoModuleName, components)
+					updated, err = syncLegacyJobHandlerRegistration(updated, p.config.GoModuleName, components)
+					if err != nil {
+						return fmt.Errorf("migrate %s: %w", path, err)
+					}
 				case "inject_repositories_app.go":
 					updated = syncDemoAppRepositoryInjector(updated, p.config.GoModuleName, components)
 				case "inject_services_app.go":
-					updated = syncLegacyAppServiceInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
+					updated = syncLegacyAppServiceInjector(updated, p.config.GoModuleName, filepath.ToSlash(projectlayout.AppDir(".", app)))
 					updated = syncDemoAppServiceInjector(updated, p.config.GoModuleName, components)
 				case "inject_schedules_app.go":
-					updated = syncLegacyScheduleInjector(updated, p.config.GoModuleName, filepath.ToSlash(app.AppDir))
+					updated = syncLegacyScheduleInjector(updated, p.config.GoModuleName, filepath.ToSlash(projectlayout.AppDir(".", app)))
 				}
 				if updated != string(data) {
 					formatted, err := format.Source([]byte(updated))
 					if err != nil {
 						return fmt.Errorf("gofmt %s: %w", path, err)
 					}
-					if err := os.WriteFile(path, formatted, 0o644); err != nil {
+					if err := p.workspace.writeFile(path, formatted, 0o644); err != nil {
 						return err
 					}
 				}
@@ -167,14 +174,14 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 
 	appServiceInjectorPath := filepath.Join("app", "wire", "inject_services_app.go")
-	if data, err := os.ReadFile(appServiceInjectorPath); err == nil {
+	if data, err := p.workspace.readFile(appServiceInjectorPath); err == nil {
 		updated := syncLegacyAppServiceInjector(string(data), p.config.GoModuleName, "app")
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
 				return fmt.Errorf("gofmt %s: %w", appServiceInjectorPath, err)
 			}
-			if err := os.WriteFile(appServiceInjectorPath, formatted, 0o644); err != nil {
+			if err := p.workspace.writeFile(appServiceInjectorPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -183,14 +190,14 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 
 	appLifecyclePath := filepath.Join("app", "lifecycle.go")
-	if data, err := os.ReadFile(appLifecyclePath); err == nil {
+	if data, err := p.workspace.readFile(appLifecyclePath); err == nil {
 		updated := syncLegacyAppLifecycleRegistry(string(data), p.config.GoModuleName)
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
 				return fmt.Errorf("gofmt %s: %w", appLifecyclePath, err)
 			}
-			if err := os.WriteFile(appLifecyclePath, formatted, 0o644); err != nil {
+			if err := p.workspace.writeFile(appLifecyclePath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -199,14 +206,14 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 
 	scheduleInjectorPath := filepath.Join("app", "wire", "inject_schedules_app.go")
-	if data, err := os.ReadFile(scheduleInjectorPath); err == nil {
+	if data, err := p.workspace.readFile(scheduleInjectorPath); err == nil {
 		updated := syncLegacyScheduleInjector(string(data), p.config.GoModuleName, "app")
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
 				return fmt.Errorf("gofmt %s: %w", scheduleInjectorPath, err)
 			}
-			if err := os.WriteFile(scheduleInjectorPath, formatted, 0o644); err != nil {
+			if err := p.workspace.writeFile(scheduleInjectorPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -216,7 +223,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 
 	// Migrate legacy scheduler command names in preserved app-owned schedules.
 	appSchedulesPath := filepath.Join("app", "schedules.go")
-	if data, err := os.ReadFile(appSchedulesPath); err == nil {
+	if data, err := p.workspace.readFile(appSchedulesPath); err == nil {
 		updated := syncLegacyScheduleInjectorPackage(string(data))
 		updated = strings.ReplaceAll(updated, "demo:push-monitor-trigger", "monitor:push-test-trigger")
 		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
@@ -225,7 +232,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 			if err != nil {
 				return fmt.Errorf("gofmt %s: %w", appSchedulesPath, err)
 			}
-			if err := os.WriteFile(appSchedulesPath, formatted, 0o644); err != nil {
+			if err := p.workspace.writeFile(appSchedulesPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -237,7 +244,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	projectComponents := project.ProjectComponents(p.config)
 	projectHealthEnabled := projectComponents.WebAPI || projectComponents.WebUI
 	appCommandsPath := filepath.Join("app", "commands.go")
-	if data, err := os.ReadFile(appCommandsPath); err == nil {
+	if data, err := p.workspace.readFile(appCommandsPath); err == nil {
 		updated := syncCommandsName(string(data))
 		updated = syncHealthCommands(updated, defaultHealthEnabled)
 		if updated != string(data) {
@@ -245,7 +252,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 			if err != nil {
 				return fmt.Errorf("gofmt %s: %w", appCommandsPath, err)
 			}
-			if err := os.WriteFile(appCommandsPath, formatted, 0o644); err != nil {
+			if err := p.workspace.writeFile(appCommandsPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
@@ -253,10 +260,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 	cmdWirePath := filepath.Join("app", "wire", "inject_cmd.go")
-	if data, err := os.ReadFile(cmdWirePath); err == nil {
+	if data, err := p.workspace.readFile(cmdWirePath); err == nil {
 		updated := syncHealthCommandWire(string(data), defaultHealthEnabled)
 		if updated != string(data) {
-			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
+			if err := p.workspace.writeFile(cmdWirePath, []byte(updated), 0o644); err != nil {
 				return err
 			}
 		}
@@ -264,10 +271,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 	prebootPath := filepath.Join("internal", "cmd", "preboot.go")
-	if data, err := os.ReadFile(prebootPath); err == nil {
+	if data, err := p.workspace.readFile(prebootPath); err == nil {
 		updated := syncHealthPreboot(string(data), projectHealthEnabled)
 		if updated != string(data) {
-			if err := os.WriteFile(prebootPath, []byte(updated), 0o644); err != nil {
+			if err := p.workspace.writeFile(prebootPath, []byte(updated), 0o644); err != nil {
 				return err
 			}
 		}
@@ -282,10 +289,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 			return err
 		}
 	} else {
-		if err := removeIfExists(filepath.Join("internal", "cmd", "health_cmd.go")); err != nil {
+		if _, err := p.workspace.removeFileIfExists("internal", "cmd", "health_cmd.go"); err != nil {
 			return err
 		}
-		if err := removeIfExists(filepath.Join("internal", "cmd", "health_cmd_test.go")); err != nil {
+		if _, err := p.workspace.removeFileIfExists("internal", "cmd", "health_cmd_test.go"); err != nil {
 			return err
 		}
 	}
@@ -301,7 +308,7 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		requires []string
 	}
 
-	if err := validateLegacyAppServiceInjectorOwnership(project.DefaultApp()); err != nil {
+	if err := p.workspace.validateLegacyAppServiceInjectorOwnership(project.DefaultApp()); err != nil {
 		return err
 	}
 
@@ -337,7 +344,7 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	}
 
 	for _, sync := range syncs {
-		data, err := os.ReadFile(sync.dest)
+		data, err := p.workspace.readFile(sync.dest)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -368,29 +375,21 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join("project", "config.go")); os.IsNotExist(err) {
-		if err := p.renderTemplateFile(
-			filepath.Join("project", "config.go"),
-			"project/config.go.tmpl",
-			p.config,
-		); err != nil {
-			return err
-		}
-	} else if err != nil {
+	if err := p.renderTemplateIfMissing(
+		filepath.Join("project", "config.go"),
+		"project/config.go.tmpl",
+		p.config,
+	); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config_patch.go")); os.IsNotExist(err) {
-		if err := p.renderTemplateFile(
-			filepath.Join("internal", "lighthouse", "project_config_patch.go"),
-			"internal/lighthouse/project_config_patch.go.tmpl",
-			p.config,
-		); err != nil {
-			return err
-		}
-	} else if err != nil {
+	if err := p.renderTemplateIfMissing(
+		filepath.Join("internal", "lighthouse", "project_config_patch.go"),
+		"internal/lighthouse/project_config_patch.go.tmpl",
+		p.config,
+	); err != nil {
 		return err
 	}
-	if err := removeIfExists(filepath.Join("internal", "lighthouse", "project_config.go")); err != nil {
+	if _, err := p.workspace.removeFileIfExists("internal", "lighthouse", "project_config.go"); err != nil {
 		return err
 	}
 
@@ -676,7 +675,7 @@ func replaceGoImportPath(content string, oldPath string, newPath string, alias s
 	return content
 }
 
-// ensureGoImport inserts a named import into the first import block when missing.
+// ensureGoImport preserves the existing declaration shape while adding one migration dependency.
 func ensureGoImport(content string, importPath string, alias string) string {
 	if strings.Contains(content, strconv.Quote(importPath)) {
 		if alias != "" {
@@ -684,15 +683,27 @@ func ensureGoImport(content string, importPath string, alias string) string {
 		}
 		return content
 	}
+	importSpec := strconv.Quote(importPath)
+	if alias != "" {
+		importSpec = alias + " " + importSpec
+	}
 	importStart := strings.Index(content, "import (\n")
 	if importStart == -1 {
-		return content
+		singleImport := regexp.MustCompile(`(?m)^import[ \t]+([^\r\n]+)$`)
+		if match := singleImport.FindStringSubmatchIndex(content); match != nil {
+			existingSpec := strings.TrimSpace(content[match[2]:match[3]])
+			block := "import (\n\t" + importSpec + "\n\t" + existingSpec + "\n)"
+			return content[:match[0]] + block + content[match[1]:]
+		}
+		packageDeclaration := regexp.MustCompile(`(?m)^package[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\r?\n`)
+		match := packageDeclaration.FindStringIndex(content)
+		if match == nil {
+			return content
+		}
+		return content[:match[1]] + "\nimport " + importSpec + "\n" + content[match[1]:]
 	}
 	insertAt := importStart + len("import (\n")
-	importLine := "\t" + strconv.Quote(importPath) + "\n"
-	if alias != "" {
-		importLine = "\t" + alias + " " + strconv.Quote(importPath) + "\n"
-	}
+	importLine := "\t" + importSpec + "\n"
 	return content[:insertAt] + importLine + content[insertAt:]
 }
 

@@ -1,34 +1,19 @@
 package build
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/goforj/goforj/internal/compileprofile"
 )
 
 const profileToolCommand = "__forj_build_profile_exec"
-
-type CompileProfileEntry struct {
-	Package     string   `json:"package"`
-	DurationMS  int64    `json:"duration_ms"`
-	Invocations int      `json:"invocations"`
-	ImportChain []string `json:"import_chain,omitempty"`
-}
-
-type CompileProfileReport struct {
-	BaselineTotalMS int64                 `json:"baseline_total_ms"`
-	ProfiledTotalMS int64                 `json:"profiled_total_ms"`
-	Entries         []CompileProfileEntry `json:"entries"`
-}
 
 type goBuildOptions struct {
 	extraEnv      []string
@@ -36,6 +21,7 @@ type goBuildOptions struct {
 	allowRecovery bool
 }
 
+// HandleProfileTool intercepts Go's toolexec callback before normal CLI initialization can alter compiler behavior.
 func HandleProfileTool(args []string) bool {
 	if len(args) == 0 || args[0] != profileToolCommand {
 		return false
@@ -44,6 +30,7 @@ func HandleProfileTool(args []string) bool {
 	return true
 }
 
+// runProfileTool delegates to the requested Go tool while recording compile durations without changing its exit semantics.
 func runProfileTool(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "missing tool executable")
@@ -63,7 +50,7 @@ func runProfileTool(args []string) int {
 	if filepath.Base(toolPath) == "compile" || filepath.Base(toolPath) == "compile.exe" {
 		pkg := compilePackageName(toolArgs)
 		if pkg != "" {
-			_ = appendCompileProfile(os.Getenv("FORJ_BUILD_PROFILE_LOG"), pkg, duration)
+			_ = compileprofile.Record(os.Getenv("FORJ_BUILD_PROFILE_LOG"), pkg, duration)
 		}
 	}
 
@@ -77,16 +64,19 @@ func runProfileTool(args []string) int {
 	return 1
 }
 
-func (c *Cmd) buildBinaryWithProfile(args []string) (string, error) {
-	return c.buildBinaryWithCompileProfile(args)
+// buildBinaryWithProfile compiles from the selected project while collecting package timing data.
+func (c *Cmd) buildBinaryWithProfile(root string, args []string) (string, error) {
+	return c.buildBinaryWithCompileProfile(root, args)
 }
 
+// printProfile keeps command-owned headings separate from the reusable compile report body.
 func (c *Cmd) printProfile() error {
 	fmt.Fprintln(os.Stdout, "forj build profile")
-	return printCompileProfile(os.Stdout, c.compileProfile, c.Top)
+	return c.compileProfile.Print(os.Stdout, c.Top)
 }
 
-func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
+// buildBinaryWithCompileProfile compares uncached baseline and instrumented builds from the same source root.
+func (c *Cmd) buildBinaryWithCompileProfile(root string, args []string) (string, error) {
 	logFile, err := os.CreateTemp("", "forj-build-compile-profile-*.log")
 	if err != nil {
 		return "", err
@@ -101,7 +91,7 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	}
 
 	baselineStartedAt := time.Now()
-	if _, err := c.runGoBuild(args, goBuildOptions{forceNoCache: true}); err != nil {
+	if err := c.runGoBuild(root, args, goBuildOptions{forceNoCache: true}); err != nil {
 		return "", err
 	}
 	baselineTotalMS := time.Since(baselineStartedAt).Milliseconds()
@@ -109,86 +99,103 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	buildArgs := []string{"build", "-toolexec", exePath + " " + profileToolCommand, "-a"}
 	buildArgs = append(buildArgs, args...)
 	profiledStartedAt := time.Now()
-	if _, err := c.runGoBuild(buildArgs[1:], goBuildOptions{
+	if err := c.runGoBuild(root, buildArgs[1:], goBuildOptions{
 		extraEnv: []string{"FORJ_BUILD_PROFILE_LOG=" + logPath},
 	}); err != nil {
 		return "", err
 	}
 	profiledTotalMS := time.Since(profiledStartedAt).Milliseconds()
 
-	report, err := loadCompileProfile(logPath)
+	report, err := compileprofile.Load(logPath)
 	if err != nil {
 		return "", err
 	}
-	c.compileProfile = normalizeCompileProfile(report, baselineTotalMS, profiledTotalMS)
-	root, err := filepath.Abs(c.Root)
-	if err == nil {
-		annotateCompileProfile(root, &c.compileProfile)
+	report.NormalizeTimings(baselineTotalMS, profiledTotalMS)
+	if err := report.AnnotateImportChains(root); err != nil {
+		return "", fmt.Errorf("annotate compile profile import chains: %w", err)
 	}
+	c.compileProfile = report
 	return "", nil
 }
 
-func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
+// runPlainGoBuild stages executable outputs so watchers only observe complete binaries.
+func (c *Cmd) runPlainGoBuild(root string, args []string) (string, error) {
 	c.lastBuildStatus = ""
-	if atomicArgs, output, cleanup, ok, err := atomicGoBuildArgs(args); ok || err != nil {
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if err != nil {
+	plan, err := planAtomicGoBuild(root, args)
+	if err != nil {
+		return "", err
+	}
+	if plan != nil {
+		defer plan.cleanup()
+		if err := c.runGoBuild(root, plan.args, goBuildOptions{allowRecovery: true}); err != nil {
 			return "", err
 		}
-		if _, err := c.runGoBuild(atomicArgs, goBuildOptions{allowRecovery: true}); err != nil {
-			return "", err
-		}
-		if err := os.Chmod(output.build, 0o755); err != nil {
+		if err := os.Chmod(plan.build, 0o755); err != nil {
 			return "", fmt.Errorf("prepare built binary permissions: %w", err)
 		}
-		if err := os.Rename(output.build, output.final); err != nil {
+		if err := os.Rename(plan.build, plan.final); err != nil {
 			return "", fmt.Errorf("publish built binary: %w", err)
 		}
-		if err := writeBuildReadyStamp(output.ready); err != nil {
+		if err := writeBuildReadyStamp(plan.ready); err != nil {
 			return "", fmt.Errorf("write build ready stamp: %w", err)
 		}
 		return c.lastBuildStatus, nil
 	}
-	if _, err := c.runGoBuild(args, goBuildOptions{allowRecovery: true}); err != nil {
+	if err := c.runGoBuild(root, args, goBuildOptions{allowRecovery: true}); err != nil {
 		return "", err
 	}
 	return c.lastBuildStatus, nil
 }
 
-type atomicBuildOutput struct {
-	final string
-	build string
-	ready string
+// atomicBuildPlan binds command arguments and publication paths for one safely staged binary build.
+type atomicBuildPlan struct {
+	args   []string
+	final  string
+	build  string
+	ready  string
+	legacy string
 }
 
-// atomicGoBuildArgs builds watched binaries in a hidden unique file so dev never executes a partial file.
-func atomicGoBuildArgs(args []string) ([]string, atomicBuildOutput, func(), bool, error) {
+// planAtomicGoBuild stages watched binaries in a hidden unique file so dev never executes a partial file.
+func planAtomicGoBuild(root string, args []string) (*atomicBuildPlan, error) {
 	outIndex := outputArgIndex(args)
 	if outIndex < 0 {
-		return args, atomicBuildOutput{}, nil, false, nil
+		return nil, nil
 	}
-	final := outputPath(args[outIndex])
-	if !atomicBuildOutputPath(final) {
-		return args, atomicBuildOutput{}, nil, false, nil
+	finalArg := outputPath(args[outIndex])
+	if !atomicBuildOutputPath(rootedBuildPath(root, finalArg)) {
+		return nil, nil
 	}
+	final := rootedBuildPath(root, finalArg)
 	dir := filepath.Dir(final)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, atomicBuildOutput{}, nil, true, err
+		return nil, err
 	}
 	cacheDir := filepath.Join(dir, ".forj-build-cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return nil, atomicBuildOutput{}, nil, true, err
+		return nil, err
 	}
-	build := filepath.Join(cacheDir, uniqueBuildOutputName(filepath.Base(final)))
-	atomicArgs := replaceBuildOutputArg(args, outIndex, build)
+	buildName := uniqueBuildOutputName(filepath.Base(final))
+	build := filepath.Join(cacheDir, buildName)
+	buildArg := build
+	if !filepath.IsAbs(finalArg) {
+		buildArg = filepath.Join(filepath.Dir(finalArg), ".forj-build-cache", buildName)
+	}
+	atomicArgs := replaceBuildOutputArg(args, outIndex, buildArg)
 	legacyBuild := filepath.Join(cacheDir, filepath.Base(final))
-	cleanup := func() {
-		_ = os.Remove(build)
-		_ = os.Remove(legacyBuild)
-	}
-	return atomicArgs, atomicBuildOutput{final: final, build: build, ready: buildReadyStampPath(final)}, cleanup, true, nil
+	return &atomicBuildPlan{
+		args:   atomicArgs,
+		final:  final,
+		build:  build,
+		ready:  buildReadyStampPath(final),
+		legacy: legacyBuild,
+	}, nil
+}
+
+// cleanup removes unpublished outputs without disturbing the last complete binary.
+func (p *atomicBuildPlan) cleanup() {
+	_ = os.Remove(p.build)
+	_ = os.Remove(p.legacy)
 }
 
 // uniqueBuildOutputName avoids shared temp paths when dev and manual builds overlap.
@@ -229,6 +236,7 @@ func atomicBuildOutputPath(path string) bool {
 	return true
 }
 
+// replaceBuildOutputArg preserves the caller's flag form while redirecting publication through the staging path.
 func replaceBuildOutputArg(args []string, outIndex int, output string) []string {
 	out := append([]string(nil), args...)
 	if strings.HasPrefix(out[outIndex], "-o=") {
@@ -239,12 +247,14 @@ func replaceBuildOutputArg(args []string, outIndex int, output string) []string 
 	return out
 }
 
-func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
+// runGoBuild executes Go from the selected project and optionally repairs missing module requirements once.
+func (c *Cmd) runGoBuild(root string, args []string, opts goBuildOptions) error {
 	buildArgs := append([]string{"build"}, args...)
 	if opts.forceNoCache {
 		buildArgs = append([]string{"build", "-a"}, args...)
 	}
 	cmd := exec.Command("go", buildArgs...)
+	cmd.Dir = root
 	if len(opts.extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), opts.extraEnv...)
 	}
@@ -252,9 +262,9 @@ func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return false, fmt.Errorf("go build: %w", err)
+			return fmt.Errorf("go build: %w", err)
 		}
-		return false, nil
+		return nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -266,22 +276,26 @@ func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if opts.allowRecovery {
-			recovered, recoverErr := c.attemptMissingModuleRecovery(detail)
-			if recoverErr == nil && recovered {
+			recovered, recoverErr := c.attemptMissingModuleRecovery(root, detail)
+			if recoverErr != nil {
+				return fmt.Errorf("recover missing build modules: %w", recoverErr)
+			}
+			if recovered {
 				opts.allowRecovery = false
-				return c.runGoBuild(args, opts)
+				return c.runGoBuild(root, args, opts)
 			}
 		}
 		if detail != "" {
-			return false, fmt.Errorf("go build: %w (%s)", err, detail)
+			return fmt.Errorf("go build: %w (%s)", err, detail)
 		}
-		return false, fmt.Errorf("go build: %w", err)
+		return fmt.Errorf("go build: %w", err)
 	}
-	return false, nil
+	return nil
 }
 
 var missingModulePattern = regexp.MustCompile(`no required module provides package (\S+?)(?:;|\s|$)`)
 
+// missingModulePackages extracts unique package paths so recovery installs only dependencies named by Go.
 func missingModulePackages(detail string) []string {
 	matches := missingModulePattern.FindAllStringSubmatch(detail, -1)
 	if len(matches) == 0 {
@@ -306,19 +320,21 @@ func missingModulePackages(detail string) []string {
 	return pkgs
 }
 
-func (c *Cmd) attemptMissingModuleRecovery(detail string) (bool, error) {
+// attemptMissingModuleRecovery installs only dependencies named by Go's missing-module diagnostics.
+func (c *Cmd) attemptMissingModuleRecovery(root string, detail string) (bool, error) {
 	missingPkgs := missingModulePackages(detail)
 	if len(missingPkgs) == 0 {
 		return false, nil
 	}
-	if err := c.runGoGet(missingPkgs); err != nil {
+	if err := c.runGoGet(root, missingPkgs); err != nil {
 		return false, err
 	}
 	c.lastBuildStatus = "synced deps, retried"
 	return true, nil
 }
 
-func (c *Cmd) runGoGet(packages []string) error {
+// runGoGet updates the selected project's module files without relying on process working directory.
+func (c *Cmd) runGoGet(root string, packages []string) error {
 	if len(packages) == 0 {
 		return nil
 	}
@@ -327,6 +343,7 @@ func (c *Cmd) runGoGet(packages []string) error {
 	}
 	args := append([]string{"get"}, packages...)
 	cmd := exec.Command("go", args...)
+	cmd.Dir = root
 	if debugEnabled() {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -352,6 +369,7 @@ func (c *Cmd) runGoGet(packages []string) error {
 	return nil
 }
 
+// compilePackageName reads the compiler's package identity without depending on the rest of its unstable tool arguments.
 func compilePackageName(args []string) string {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-p" {
@@ -359,287 +377,4 @@ func compilePackageName(args []string) string {
 		}
 	}
 	return ""
-}
-
-func appendCompileProfile(path, pkg string, duration time.Duration) error {
-	if strings.TrimSpace(path) == "" {
-		return nil
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "%s\t%d\n", pkg, duration.Milliseconds())
-	return err
-}
-
-func loadCompileProfile(path string) (CompileProfileReport, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return CompileProfileReport{}, err
-	}
-	defer f.Close()
-
-	totals := map[string]CompileProfileEntry{}
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, "\t")
-		if len(parts) != 2 {
-			continue
-		}
-		var ms int64
-		if _, err := fmt.Sscanf(parts[1], "%d", &ms); err != nil {
-			continue
-		}
-		entry := totals[parts[0]]
-		entry.Package = parts[0]
-		entry.DurationMS += ms
-		entry.Invocations++
-		totals[parts[0]] = entry
-	}
-	if err := scanner.Err(); err != nil {
-		return CompileProfileReport{}, err
-	}
-
-	report := CompileProfileReport{Entries: make([]CompileProfileEntry, 0, len(totals))}
-	for _, entry := range totals {
-		report.Entries = append(report.Entries, entry)
-	}
-	sort.Slice(report.Entries, func(i, j int) bool {
-		if report.Entries[i].DurationMS != report.Entries[j].DurationMS {
-			return report.Entries[i].DurationMS > report.Entries[j].DurationMS
-		}
-		return report.Entries[i].Package < report.Entries[j].Package
-	})
-	return report, nil
-}
-
-func printCompileProfile(w io.Writer, report CompileProfileReport, top int) error {
-	if len(report.Entries) == 0 {
-		_, err := fmt.Fprintln(w, "No packages were compiled in this build.")
-		return err
-	}
-	if report.BaselineTotalMS > 0 {
-		if _, err := fmt.Fprintf(w, "Baseline build total: %dms\n", report.BaselineTotalMS); err != nil {
-			return err
-		}
-	}
-	if report.ProfiledTotalMS > 0 {
-		if _, err := fmt.Fprintf(w, "Profiled build total: %dms\n", report.ProfiledTotalMS); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintln(w, "Compile time (packages compiled in this build):"); err != nil {
-		return err
-	}
-	limit := len(report.Entries)
-	if top > 0 && top < limit {
-		limit = top
-	}
-	for i := 0; i < limit; i++ {
-		entry := report.Entries[i]
-		if _, err := fmt.Fprintf(w, "  %2d. %-40s %4dms", i+1, entry.Package, entry.DurationMS); err != nil {
-			return err
-		}
-		if entry.Invocations > 1 {
-			if _, err := fmt.Fprintf(w, " (%dx)", entry.Invocations); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintln(w); err != nil {
-			return err
-		}
-		if len(entry.ImportChain) > 1 {
-			printImportChain(w, entry.ImportChain)
-		}
-	}
-	if limit < len(report.Entries) {
-		_, err := fmt.Fprintf(w, "      ... %d more packages omitted\n", len(report.Entries)-limit)
-		return err
-	}
-	return nil
-}
-
-func normalizeCompileProfile(report CompileProfileReport, baselineTotalMS, profiledTotalMS int64) CompileProfileReport {
-	report.BaselineTotalMS = baselineTotalMS
-	report.ProfiledTotalMS = profiledTotalMS
-	if baselineTotalMS <= 0 || profiledTotalMS <= 0 || len(report.Entries) == 0 {
-		return report
-	}
-	for i := range report.Entries {
-		report.Entries[i].DurationMS = report.Entries[i].DurationMS * baselineTotalMS / profiledTotalMS
-	}
-	return report
-}
-
-type goListPackage struct {
-	ImportPath string
-	Imports    []string
-}
-
-type importLoadResult struct {
-	packages map[string]goListPackage
-	roots    []string
-}
-
-func annotateCompileProfile(root string, report *CompileProfileReport) {
-	loaded, err := loadImportPackages(root, defaultAnalyzePatterns(root))
-	if err != nil {
-		return
-	}
-	for i := range report.Entries {
-		report.Entries[i].ImportChain = importChainToTarget(loaded, report.Entries[i].Package)
-	}
-}
-
-func loadImportPackages(root string, patterns []string) (importLoadResult, error) {
-	args := append([]string{"list", "-deps", "-json"}, patterns...)
-	cmd := exec.Command("go", args...)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOCACHE=/tmp/gocache", "GOMODCACHE=/tmp/gomodcache")
-
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return importLoadResult{}, fmt.Errorf("go list failed: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return importLoadResult{}, err
-	}
-
-	dec := json.NewDecoder(strings.NewReader(string(out)))
-	result := importLoadResult{
-		packages: map[string]goListPackage{},
-		roots:    make([]string, 0, len(patterns)),
-	}
-	for {
-		var pkg goListPackage
-		if err := dec.Decode(&pkg); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return importLoadResult{}, err
-		}
-		if pkg.ImportPath == "" {
-			continue
-		}
-		result.packages[pkg.ImportPath] = pkg
-	}
-	for _, pattern := range patterns {
-		rootPkgs, err := loadRootPackages(root, pattern)
-		if err != nil {
-			return importLoadResult{}, err
-		}
-		result.roots = append(result.roots, rootPkgs...)
-	}
-	return result, nil
-}
-
-func loadRootPackages(root string, pattern string) ([]string, error) {
-	cmd := exec.Command("go", "list", pattern)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOCACHE=/tmp/gocache", "GOMODCACHE=/tmp/gomodcache")
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("go list failed: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, err
-	}
-	lines := strings.Fields(string(out))
-	return lines, nil
-}
-
-func importChainToTarget(loaded importLoadResult, target string) []string {
-	if len(loaded.roots) == 0 {
-		return nil
-	}
-	if _, ok := loaded.packages[target]; !ok {
-		return nil
-	}
-
-	queue := append([]string(nil), loaded.roots...)
-	parents := map[string]string{}
-	seen := map[string]struct{}{}
-	for _, root := range loaded.roots {
-		seen[root] = struct{}{}
-	}
-
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		if current == target {
-			break
-		}
-		pkg, ok := loaded.packages[current]
-		if !ok {
-			continue
-		}
-		for _, next := range pkg.Imports {
-			if _, ok := loaded.packages[next]; !ok {
-				continue
-			}
-			if _, exists := seen[next]; exists {
-				continue
-			}
-			seen[next] = struct{}{}
-			parents[next] = current
-			queue = append(queue, next)
-		}
-	}
-
-	if _, ok := seen[target]; !ok {
-		return nil
-	}
-	var chain []string
-	current := target
-	chain = append(chain, current)
-	for {
-		parent, ok := parents[current]
-		if !ok {
-			break
-		}
-		chain = append(chain, parent)
-		current = parent
-	}
-	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
-		chain[i], chain[j] = chain[j], chain[i]
-	}
-	return chain
-}
-
-func defaultAnalyzePatterns(root string) []string {
-	var resolved []string
-	if dirExists(filepath.Join(root, "internal")) {
-		resolved = append(resolved, "./internal/...")
-	}
-	if dirExists(filepath.Join(root, "app")) {
-		resolved = append(resolved, "./app/...")
-	}
-	if dirExists(filepath.Join(root, "wire")) {
-		resolved = append(resolved, "./wire")
-	}
-	if len(resolved) == 0 {
-		return []string{"."}
-	}
-	return resolved
-}
-
-func printImportChain(w io.Writer, chain []string) {
-	for i, part := range chain {
-		indent := "      "
-		if i > 0 {
-			indent += strings.Repeat("   ", i-1)
-		}
-		fmt.Fprintf(w, "%s└─ %s\n", indent, part)
-	}
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }

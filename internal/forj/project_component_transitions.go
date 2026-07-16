@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -35,10 +36,10 @@ func cacheGeneratedCleanupArtifacts() []cacheGeneratedCleanupArtifact {
 	}
 }
 
-// validateCacheGeneratedCleanupArtifacts prevents Cache removal from deleting files whose framework ownership is no longer explicit.
-func validateCacheGeneratedCleanupArtifacts() error {
+// validateCacheGeneratedCleanupArtifacts prevents Cache removal from deleting files outside framework ownership in one project workspace.
+func (w projectRenderWorkspace) validateCacheGeneratedCleanupArtifacts() error {
 	for _, artifact := range cacheGeneratedCleanupArtifacts() {
-		contents, err := os.ReadFile(artifact.path)
+		contents, err := w.readFile(artifact.path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -52,15 +53,15 @@ func validateCacheGeneratedCleanupArtifacts() error {
 	return nil
 }
 
-// validateCacheRenderTransition allows generated Cache cleanup while rejecting files the App owns.
-func validateCacheRenderTransition(components project.Components) error {
+// validateCacheRenderTransition allows generated Cache cleanup while rejecting owner files in one project workspace.
+func (w projectRenderWorkspace) validateCacheRenderTransition(components project.Components) error {
 	if components.Cache {
 		return nil
 	}
-	if err := validateCacheGeneratedCleanupArtifacts(); err != nil {
+	if err := w.validateCacheGeneratedCleanupArtifacts(); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(filepath.Join("internal", "caches"))
+	entries, err := w.readDir("internal", "caches")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -81,17 +82,63 @@ func validateCacheRenderTransition(components project.Components) error {
 	return nil
 }
 
-// cleanupDisabledCacheGeneratedFiles removes only framework-owned Cache artifacts after transition validation succeeds.
-func cleanupDisabledCacheGeneratedFiles() error {
-	if err := validateCacheGeneratedCleanupArtifacts(); err != nil {
+// validateCacheRenderTransition proves Cache removal will not erase generated ownership boundaries or strand owner dependencies.
+func (p *ProjectRenderer) validateCacheRenderTransition(components project.Components, ignoredApps ...project.App) error {
+	if err := p.workspace.validateCacheRenderTransition(components); err != nil {
+		return err
+	}
+	disabledApps := p.cacheDisabledApps(ignoredApps)
+	if components.Cache && len(disabledApps) == 0 {
+		return nil
+	}
+	if path, err := p.cacheOwnerCodeDependency(components, disabledApps, ignoredApps); err != nil {
+		return err
+	} else if path != "" {
+		return fmt.Errorf("cannot disable Cache while owner source %s depends on the generated Cache API; reconcile that source before rendering", path)
+	}
+	if path, key, err := p.cacheOwnerEnvironmentDependency(components, disabledApps, ignoredApps); err != nil {
+		return err
+	} else if path != "" {
+		return fmt.Errorf("cannot disable Cache while %s defines owner Cache assignment %s; remove or move that assignment before rendering", path, key)
+	}
+	return nil
+}
+
+// cacheDisabledApps returns only Apps whose generated Cache API is being removed by the prospective component contract.
+func (p *ProjectRenderer) cacheDisabledApps(ignoredApps []project.App) []project.App {
+	ignored := cacheTransitionAppNames(ignoredApps)
+	apps := projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config)
+	disabled := make([]project.App, 0, len(apps))
+	for _, app := range apps {
+		if ignored[app.Name] || appRenderComponents(p.config, app).Cache {
+			continue
+		}
+		disabled = append(disabled, app)
+	}
+	return disabled
+}
+
+// cacheTransitionAppNames normalizes ignored App identities once for code and environment ownership checks.
+func cacheTransitionAppNames(apps []project.App) map[string]bool {
+	names := make(map[string]bool, len(apps))
+	for _, app := range apps {
+		app = projectlayout.NormalizeApp(app)
+		names[app.Name] = true
+	}
+	return names
+}
+
+// cleanupDisabledCacheGeneratedFiles removes only framework-owned Cache artifacts from one project workspace.
+func (w projectRenderWorkspace) cleanupDisabledCacheGeneratedFiles() error {
+	if err := w.validateCacheGeneratedCleanupArtifacts(); err != nil {
 		return err
 	}
 	for _, artifact := range cacheGeneratedCleanupArtifacts() {
-		if err := removeIfExists(artifact.path); err != nil {
+		if _, err := w.removeFileIfExists(artifact.path); err != nil {
 			return err
 		}
 	}
-	_, err := removeEmptyDirIfEmpty(filepath.Join("internal", "caches"))
+	_, err := w.removeEmptyDir("internal", "caches")
 	return err
 }
 
@@ -99,25 +146,25 @@ func cleanupDisabledCacheGeneratedFiles() error {
 func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents project.Components) error {
 	if !projectComponents.Events {
 		for _, path := range projectEventsResiduePaths() {
-			if exists, err := renderPathExists(path); err != nil {
+			if exists, err := p.workspace.renderPathExists(path); err != nil {
 				return err
 			} else if exists {
 				return fmt.Errorf("cannot disable Events while %s exists; automatic Events removal is not supported", path)
 			}
 		}
 	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
-		if err := validateLegacyEventOwnerSource(app); err != nil {
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		if err := p.workspace.validateLegacyEventOwnerSource(app); err != nil {
 			return err
 		}
 		if appRenderComponents(p.config, app).Events {
 			continue
 		}
 		for _, path := range []string{
-			filepath.Join(app.WireDir, "inject_subscribers_app.go"),
-			filepath.Join(app.AppDir, "event_commands.go"),
+			filepath.Join(projectlayout.WireDir(".", app), "inject_subscribers_app.go"),
+			filepath.Join(projectlayout.AppDir(".", app), "event_commands.go"),
 		} {
-			exists, err := renderPathExists(path)
+			exists, err := p.workspace.renderPathExists(path)
 			if err != nil {
 				return err
 			}
@@ -126,7 +173,7 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 			}
 		}
 		for _, path := range legacyEventSubscriberOwnerPaths(app) {
-			exists, err := renderPathExists(path)
+			exists, err := p.workspace.renderPathExists(path)
 			if err != nil {
 				return err
 			}
@@ -134,16 +181,16 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 				return fmt.Errorf("cannot disable Events for App %q while legacy subscriber owner %s exists; migrate or reconcile that App-owned file first", app.Name, path)
 			}
 		}
-		if legacyEventPipelineField(app) {
-			path := filepath.Join(app.AppDir, "commands.go")
+		if p.workspace.legacyEventPipelineField(app) {
+			path := filepath.Join(projectlayout.AppDir(".", app), "commands.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s registers TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
 		}
-		if legacyEventPipelineProvider(app) {
-			path := filepath.Join(app.WireDir, "inject_cmd_app.go")
+		if p.workspace.legacyEventPipelineProvider(app) {
+			path := filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s provides TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
 		}
-		if legacyEventMakeCommandProvider(app) {
-			path := filepath.Join(app.WireDir, "inject_services_app.go")
+		if p.workspace.legacyEventMakeCommandProvider(app) {
+			path := filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s provides Events make commands; automatic Events removal is not supported", app.Name, path)
 		}
 	}
@@ -154,19 +201,19 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 func (p *ProjectRenderer) validateStorageRenderTransition(projectComponents project.Components) error {
 	if !projectComponents.Storage {
 		for _, path := range projectStorageResiduePaths() {
-			if exists, err := renderPathExists(path); err != nil {
+			if exists, err := p.workspace.renderPathExists(path); err != nil {
 				return err
 			} else if exists {
 				return fmt.Errorf("cannot disable Storage while %s exists; automatic Storage removal is not supported", path)
 			}
 		}
 	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
 		if appRenderComponents(p.config, app).Storage {
 			continue
 		}
-		path := filepath.Join(app.WireDir, "app.go")
-		exists, err := appStorageSurfaceExists(path)
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		exists, err := p.workspace.appStorageSurfaceExists(path)
 		if err != nil {
 			return err
 		}
@@ -180,7 +227,7 @@ func (p *ProjectRenderer) validateStorageRenderTransition(projectComponents proj
 // validateJobsRenderTransition rejects unsupported removal states before rendering can strand Jobs source or App-owned providers.
 func (p *ProjectRenderer) validateJobsRenderTransition(projectComponents project.Components) error {
 	if !projectComponents.Jobs {
-		path, exists, err := projectJobsRemovalResiduePath()
+		path, exists, err := p.workspace.projectJobsRemovalResiduePath()
 		if err != nil {
 			return err
 		}
@@ -188,11 +235,11 @@ func (p *ProjectRenderer) validateJobsRenderTransition(projectComponents project
 			return fmt.Errorf("cannot disable Jobs while %s exists; automatic Jobs removal is not supported", path)
 		}
 	}
-	for _, app := range runtimeAppsForMetadata(p.config) {
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
 		if appRenderComponents(p.config, app).Jobs {
 			continue
 		}
-		path, exists, err := appJobsRemovalResiduePath(app)
+		path, exists, err := p.workspace.appJobsRemovalResiduePath(app)
 		if err != nil {
 			return err
 		}
@@ -211,10 +258,10 @@ func legacyJobsFrameworkPaths() []string {
 	}
 }
 
-// projectJobsRemovalResiduePath centralizes the ownership boundary so renders and App removal reject the same residue.
-func projectJobsRemovalResiduePath() (string, bool, error) {
+// projectJobsRemovalResiduePath centralizes Jobs ownership checks within one project workspace.
+func (w projectRenderWorkspace) projectJobsRemovalResiduePath() (string, bool, error) {
 	for _, path := range projectJobsResiduePaths() {
-		exists, residuePath, err := jobsRemovalResidueExists(path)
+		exists, residuePath, err := w.jobsRemovalResidueExists(path)
 		if err != nil {
 			return "", false, err
 		}
@@ -225,9 +272,10 @@ func projectJobsRemovalResiduePath() (string, bool, error) {
 	return "", false, nil
 }
 
-// jobsRemovalResidueExists treats empty shells as harmless because earlier renderers can leave component directories behind.
-func jobsRemovalResidueExists(path string) (bool, string, error) {
-	info, err := os.Stat(path)
+// jobsRemovalResidueExists inspects one logical Jobs path without exposing its physical workspace root.
+func (w projectRenderWorkspace) jobsRemovalResidueExists(path string) (bool, string, error) {
+	physicalPath := w.path(path)
+	info, err := w.stat(path)
 	if os.IsNotExist(err) {
 		return false, "", nil
 	}
@@ -243,21 +291,22 @@ func jobsRemovalResidueExists(path string) (bool, string, error) {
 		legacyFramework[filepath.Clean(frameworkPath)] = struct{}{}
 	}
 	residuePath := ""
-	err = filepath.WalkDir(path, func(candidate string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(physicalPath, func(candidate string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
 			return nil
 		}
-		if _, frameworkOwned := legacyFramework[filepath.Clean(candidate)]; frameworkOwned {
+		logicalCandidate := w.logicalLabel(candidate)
+		if _, frameworkOwned := legacyFramework[filepath.Clean(logicalCandidate)]; frameworkOwned {
 			return nil
 		}
-		residuePath = candidate
+		residuePath = logicalCandidate
 		return fs.SkipAll
 	})
 	if err != nil {
-		return false, "", fmt.Errorf("inspect Jobs transition directory %s: %w", path, err)
+		return false, "", fmt.Errorf("inspect Jobs transition directory %s: %w", path, w.logicalError(err))
 	}
 	return residuePath != "", residuePath, nil
 }
@@ -280,10 +329,10 @@ func projectJobsResiduePaths() []string {
 
 // appJobsResiduePaths lists generated and owner-controlled Jobs injectors for one App.
 func appJobsResiduePaths(app project.App) []string {
-	app = normalizeRenderApp(app)
+	app = projectlayout.NormalizeApp(app)
 	paths := []string{
-		filepath.Join(app.WireDir, "inject_jobs.go"),
-		filepath.Join(app.WireDir, "inject_jobs_app.go"),
+		filepath.Join(projectlayout.WireDir(".", app), "inject_jobs.go"),
+		filepath.Join(projectlayout.WireDir(".", app), "inject_jobs_app.go"),
 	}
 	if app.Name == project.DefaultAppName {
 		paths = append(paths, filepath.Join("wire", "inject_jobs_app.go"))
@@ -291,11 +340,10 @@ func appJobsResiduePaths(app project.App) []string {
 	return paths
 }
 
-// appJobsRemovalResiduePath finds the first App-owned Jobs accessor or injector that prevents safe component removal.
-func appJobsRemovalResiduePath(app project.App) (string, bool, error) {
-	app = normalizeRenderApp(app)
-	appPath := filepath.Join(app.WireDir, "app.go")
-	exists, err := appJobsSurfaceExists(appPath)
+// appJobsRemovalResiduePath finds App-owned Jobs residue inside one project workspace.
+func (w projectRenderWorkspace) appJobsRemovalResiduePath(app project.App) (string, bool, error) {
+	appPath := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+	exists, err := w.appJobsSurfaceExists(appPath)
 	if err != nil {
 		return "", false, err
 	}
@@ -303,7 +351,7 @@ func appJobsRemovalResiduePath(app project.App) (string, bool, error) {
 		return appPath, true, nil
 	}
 	for _, path := range appJobsResiduePaths(app) {
-		exists, err := renderPathExists(path)
+		exists, err := w.renderPathExists(path)
 		if err != nil {
 			return "", false, err
 		}
@@ -314,9 +362,9 @@ func appJobsRemovalResiduePath(app project.App) (string, bool, error) {
 	return "", false, nil
 }
 
-// appJobsSurfaceExists detects Queue accessors from receiver syntax without matching comments, strings, fields, or free functions.
-func appJobsSurfaceExists(path string) (bool, error) {
-	file, exists, err := parsedRenderGoFile(path)
+// appJobsSurfaceExists detects Queue accessors inside one project workspace.
+func (w projectRenderWorkspace) appJobsSurfaceExists(path string) (bool, error) {
+	file, exists, err := w.parsedRenderGoFile(path)
 	if err != nil {
 		return false, fmt.Errorf("parse Jobs transition path %s: %w", path, err)
 	}
@@ -369,9 +417,9 @@ func projectStorageResiduePaths() []string {
 	}
 }
 
-// appStorageSurfaceExists detects the generated App accessor without treating comments or unrelated owner files as removal proof.
-func appStorageSurfaceExists(path string) (bool, error) {
-	file, exists, err := parsedRenderGoFile(path)
+// appStorageSurfaceExists detects generated Storage accessors inside one project workspace.
+func (w projectRenderWorkspace) appStorageSurfaceExists(path string) (bool, error) {
+	file, exists, err := w.parsedRenderGoFile(path)
 	if err != nil {
 		return false, fmt.Errorf("parse Storage transition path %s: %w", path, err)
 	}
@@ -404,24 +452,23 @@ func projectEventsResiduePaths() []string {
 	}
 }
 
-// validateLegacyEventOwnerSource ensures compatibility flags cannot silently misclassify malformed owner code.
-func validateLegacyEventOwnerSource(app project.App) error {
-	app = normalizeRenderApp(app)
+// validateLegacyEventOwnerSource checks compatibility owners inside one project workspace.
+func (w projectRenderWorkspace) validateLegacyEventOwnerSource(app project.App) error {
 	for _, path := range []string{
-		filepath.Join(app.AppDir, "commands.go"),
-		filepath.Join(app.WireDir, "inject_cmd_app.go"),
+		filepath.Join(projectlayout.AppDir(".", app), "commands.go"),
+		filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go"),
 	} {
-		if _, _, err := parsedRenderGoFile(path); err != nil {
+		if _, _, err := w.parsedRenderGoFile(path); err != nil {
 			return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
 		}
 	}
-	return validateLegacyAppServiceInjectorOwnership(app)
+	return w.validateLegacyAppServiceInjectorOwnership(app)
 }
 
-// validateLegacyAppServiceInjectorOwnership rejects obsolete framework providers that cannot be removed without interpreting owner intent.
-func validateLegacyAppServiceInjectorOwnership(app project.App) error {
-	path := filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go")
-	file, exists, err := parsedRenderGoFile(path)
+// validateLegacyAppServiceInjectorOwnership inspects obsolete providers inside one project workspace.
+func (w projectRenderWorkspace) validateLegacyAppServiceInjectorOwnership(app project.App) error {
+	path := filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go")
+	file, exists, err := w.parsedRenderGoFile(path)
 	if err != nil {
 		return fmt.Errorf("parse Events compatibility owner %s: %w", path, err)
 	}
@@ -461,9 +508,9 @@ func legacyAppServiceInjectorRequiresManualMigration(file *ast.File) bool {
 	return found
 }
 
-// legacyEventMakeCommandProvider reports whether an owner service set still references Events-only make commands.
-func legacyEventMakeCommandProvider(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_services_app.go"))
+// legacyEventMakeCommandProvider inspects owner service sets inside one project workspace.
+func (w projectRenderWorkspace) legacyEventMakeCommandProvider(app project.App) bool {
+	file, exists, err := w.parsedRenderGoFile(filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go"))
 	if err != nil || !exists {
 		return false
 	}
@@ -496,21 +543,18 @@ func astFileContainsSelector(file *ast.File, packageName string, selectorNames .
 	return found
 }
 
-// renderPathExists reports whether a generated or App-owned transition path remains without masking filesystem errors.
-func renderPathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
+// renderPathExists inspects a logical path inside one project workspace.
+func (w projectRenderWorkspace) renderPathExists(path string) (bool, error) {
+	exists, err := w.exists(path)
+	if err != nil {
+		return false, fmt.Errorf("inspect component transition path %s: %w", path, err)
 	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("inspect component transition path %s: %w", path, err)
+	return exists, nil
 }
 
-// legacyEventPipelineField reports whether an owner Commands struct still carries the pre-component Events command field.
-func legacyEventPipelineField(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).AppDir, "commands.go"))
+// legacyEventPipelineField inspects preserved Commands owners inside one project workspace.
+func (w projectRenderWorkspace) legacyEventPipelineField(app project.App) bool {
+	file, exists, err := w.parsedRenderGoFile(filepath.Join(projectlayout.AppDir(".", app), "commands.go"))
 	if err != nil || !exists {
 		return false
 	}
@@ -538,9 +582,9 @@ func legacyEventPipelineField(app project.App) bool {
 	return false
 }
 
-// legacyEventPipelineProvider reports whether an owner command Wire set already supplies the pre-component Events command.
-func legacyEventPipelineProvider(app project.App) bool {
-	file, exists, err := parsedRenderGoFile(filepath.Join(normalizeRenderApp(app).WireDir, "inject_cmd_app.go"))
+// legacyEventPipelineProvider inspects preserved Wire owners inside one project workspace.
+func (w projectRenderWorkspace) legacyEventPipelineProvider(app project.App) bool {
+	file, exists, err := w.parsedRenderGoFile(filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go"))
 	if err != nil || !exists {
 		return false
 	}
@@ -572,9 +616,9 @@ func legacyEventPipelineProvider(app project.App) bool {
 	return false
 }
 
-// parsedRenderGoFile parses existing owner code so compatibility flags cannot be triggered by comments or unrelated text.
-func parsedRenderGoFile(path string) (*ast.File, bool, error) {
-	source, err := os.ReadFile(path)
+// parsedRenderGoFile parses a logical owner path inside one project workspace.
+func (w projectRenderWorkspace) parsedRenderGoFile(path string) (*ast.File, bool, error) {
+	source, err := w.readFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil

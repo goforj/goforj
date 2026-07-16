@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goforj/execx"
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -37,6 +37,7 @@ func NewTestRenderCmd(logger *logger.AppLogger) *TestRenderCmd {
 // Run executes the render, build, and test steps against a temp project.
 func (cmd *TestRenderCmd) Run() error {
 	modCache, buildCache := testkit.GoCachePaths()
+	caches := testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}
 
 	dir, err := os.MkdirTemp("", "forj_render_")
 	if err != nil {
@@ -97,7 +98,7 @@ func (cmd *TestRenderCmd) Run() error {
 	}
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
-	if err := WriteYAML(ymlPath, cfg); err != nil {
+	if err := testkit.WriteProjectConfig(ymlPath, cfg); err != nil {
 		return err
 	}
 	if err := writeConventionalAppMarker(dir, "customer-portal"); err != nil {
@@ -107,45 +108,47 @@ func (cmd *TestRenderCmd) Run() error {
 	if !cmd.Silent {
 		console.Actionf("Running test:render")
 	}
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	builtForj, err := testkit.BuildForjBinary(modCache, buildCache)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	defer builtForj.Cleanup()
+	forjExec := builtForj.Path
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
+	if err := workspace.Run("render", forjExec, "render"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "default API index", dir, modCache, buildCache, []string{forjExec, "build:api-index", "--strict"}); err != nil {
+	if err := workspace.Run("default API index", forjExec, "build:api-index", "--strict"); err != nil {
 		return err
 	}
 	if err := assertRenderedAPIIndexArtifacts(dir, project.DefaultAppName); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "customer-portal API index", dir, modCache, buildCache, []string{forjExec, "customer-portal", "build:api-index", "--strict"}); err != nil {
+	if err := workspace.Run("customer-portal API index", forjExec, "customer-portal", "build:api-index", "--strict"); err != nil {
 		return err
 	}
 	if err := assertRenderedAPIIndexArtifacts(dir, "customer-portal"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
+	if err := workspace.Run("build", "go", "build", "./..."); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "resources describe", dir, modCache, buildCache, []string{forjExec, "resources:describe", "--json"}); err != nil {
+	if err := workspace.Run("resources describe", forjExec, "resources:describe", "--json"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "customer-portal resources describe", dir, modCache, buildCache, []string{forjExec, "customer-portal", "resources:describe", "--json"}); err != nil {
+	if err := workspace.Run("customer-portal resources describe", forjExec, "customer-portal", "resources:describe", "--json"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "backup plan", dir, modCache, buildCache, []string{forjExec, "backup:plan", "--json"}); err != nil {
+	if err := workspace.Run("backup plan", forjExec, "backup:plan", "--json"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "build customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "build"}); err != nil {
+	if err := workspace.Run("build customer-portal", forjExec, "customer-portal", "build"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "route list customer-portal", dir, modCache, buildCache, []string{forjExec, "customer-portal", "route:list"}); err != nil {
+	if err := workspace.Run("route list customer-portal", forjExec, "customer-portal", "route:list"); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "make customer-portal migration", dir, modCache, buildCache, []string{forjExec, "customer-portal", "make:migration", "create_sessions", "--connection", "archive", "--no-open"}); err != nil {
+	if err := workspace.Run("make customer-portal migration", forjExec, "customer-portal", "make:migration", "create_sessions", "--connection", "archive", "--no-open"); err != nil {
 		return err
 	}
 	if err := assertGlobExists(filepath.Join(dir, "migrations", "customer-portal", "archive", "*create_sessions.up.sql")); err != nil {
@@ -154,10 +157,10 @@ func (cmd *TestRenderCmd) Run() error {
 	if err := assertGlobExists(filepath.Join(dir, "migrations", "customer-portal", "archive", "*create_sessions.down.sql")); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "test", dir, modCache, buildCache, []string{"go", "test", "./..."}); err != nil {
+	if err := workspace.Run("test", "go", "test", "./..."); err != nil {
 		return err
 	}
-	if err := cmd.runCLIOnlyAPIIndexRender(forjExec, modCache, buildCache, cfg.Render.ModuleReplaces); err != nil {
+	if err := cmd.runCLIOnlyAPIIndexRender(forjExec, caches, cfg.Render.ModuleReplaces); err != nil {
 		return err
 	}
 
@@ -171,7 +174,7 @@ func (cmd *TestRenderCmd) Run() error {
 }
 
 // runCLIOnlyAPIIndexRender proves non-WebAPI renders compile and remove artifacts left by an earlier component selection.
-func (cmd *TestRenderCmd) runCLIOnlyAPIIndexRender(forjExec string, modCache string, buildCache string, moduleReplaces map[string]string) error {
+func (cmd *TestRenderCmd) runCLIOnlyAPIIndexRender(forjExec string, caches testexec.GoCaches, moduleReplaces map[string]string) error {
 	dir, err := os.MkdirTemp("/tmp", "forj_render_cli_")
 	if err != nil {
 		return err
@@ -190,10 +193,11 @@ func (cmd *TestRenderCmd) runCLIOnlyAPIIndexRender(forjExec string, modCache str
 			ModuleReplaces: moduleReplaces,
 		},
 	}
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), config); err != nil {
+	if err := testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), config); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "render CLI-only App", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+	workspace := testexec.NewWorkspace(cmd.logger, cmd.Silent, dir, caches)
+	if err := workspace.Run("render CLI-only App", forjExec, "render"); err != nil {
 		return err
 	}
 	paths := renderedAPIIndexArtifactPaths(dir, project.DefaultAppName)
@@ -205,7 +209,7 @@ func (cmd *TestRenderCmd) runCLIOnlyAPIIndexRender(forjExec string, modCache str
 			return err
 		}
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "clean CLI-only API index", dir, modCache, buildCache, []string{forjExec, "build:api-index", "--strict"}); err != nil {
+	if err := workspace.Run("clean CLI-only API index", forjExec, "build:api-index", "--strict"); err != nil {
 		return err
 	}
 	for _, path := range paths {
@@ -213,10 +217,10 @@ func (cmd *TestRenderCmd) runCLIOnlyAPIIndexRender(forjExec string, modCache str
 			return fmt.Errorf("CLI-only API artifact %q was not removed: %v", path, err)
 		}
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "build CLI-only App", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {
+	if err := workspace.Run("build CLI-only App", "go", "build", "./..."); err != nil {
 		return err
 	}
-	return runStep(cmd.logger, cmd.Silent, "test CLI-only App", dir, modCache, buildCache, []string{"go", "test", "./..."})
+	return workspace.Run("test CLI-only App", "go", "test", "./...")
 }
 
 // assertRenderedAPIIndexArtifacts verifies a WebAPI App produced the complete active artifact set.
@@ -255,6 +259,7 @@ func writeConventionalAppMarker(root string, name string) error {
 	return os.WriteFile(mainPath, []byte("package main\n"), 0o644)
 }
 
+// assertGlobExists verifies a generated artifact was published under its timestamped name.
 func assertGlobExists(pattern string) error {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -262,55 +267,6 @@ func assertGlobExists(pattern string) error {
 	}
 	if len(matches) == 0 {
 		return fmt.Errorf("expected at least one file matching %s", pattern)
-	}
-	return nil
-}
-
-// runStep executes a command with cache isolation and logs failures.
-func runStep(log *logger.AppLogger, silent bool, name, dir, modCache, buildCache string, args []string) error {
-	cmd := execx.Command(args[0], args[1:]...).
-		Dir(dir).
-		EnvAppend(map[string]string{
-			"GOMODCACHE": modCache,
-			"GOCACHE":    buildCache,
-		})
-
-	if !silent {
-		cmd = cmd.ShadowPrint(
-			execx.WithFormatter(func(ev execx.ShadowEvent) string {
-				switch ev.Phase {
-				case execx.ShadowBefore:
-					return fmt.Sprintf("%s %s", console.ActionMark(), ev.Command)
-				case execx.ShadowAfter:
-					return fmt.Sprintf("%s %s (%s)", console.InfoMark(), ev.Command, ev.Duration)
-				default:
-					return fmt.Sprintf("%s %s", console.InfoMark(), ev.Command)
-				}
-			}),
-		)
-	}
-
-	res, err := cmd.Run()
-	if err != nil || !res.OK() {
-		if !silent {
-			console.Errorf("%s failed", name)
-		}
-		if err == nil {
-			err = fmt.Errorf("command failed with exit code %d", res.ExitCode)
-		}
-		errMsg := strings.TrimSpace(res.Stderr)
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
-		if errMsg == "" {
-			errMsg = "command failed"
-		}
-		log.Error().
-			Str("step", name).
-			Str("stdout", strings.TrimSpace(res.Stdout)).
-			Err(fmt.Errorf("%s", errMsg)).
-			Msg("Step failed")
-		return err
 	}
 	return nil
 }

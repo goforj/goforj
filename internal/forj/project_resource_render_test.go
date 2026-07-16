@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
@@ -238,7 +239,7 @@ func TestResourceTemplatesOmitDisabledCapabilities(t *testing.T) {
 func TestResourceTemplatesRetainLocalDatabaseForDockerProject(t *testing.T) {
 	components := project.Components{DatabaseMySQL: true, Docker: true}
 	plan := defaultResourcePlanForTest(t, components)
-	consumers, err := effectiveResourceConsumersFromEnvironment([]byte("DB_DRIVER=mysql\nDB_HOST=db.example.internal\nDB_PORT=3306\n"), plan, components, nil)
+	consumers, err := resourceenv.ResolveConsumers([]byte("DB_DRIVER=mysql\nDB_HOST=db.example.internal\nDB_PORT=3306\n"), plan, components, nil)
 	if err != nil {
 		t.Fatalf("discover effective consumers: %v", err)
 	}
@@ -253,6 +254,31 @@ func TestResourceTemplatesRetainLocalDatabaseForDockerProject(t *testing.T) {
 	_, compose := renderResourceTemplatesWithConsumers(t, components, plan, project.LocalServiceIntent{}, consumers)
 	if !strings.Contains(compose, "\n  mysql:\n") {
 		t.Fatalf("Docker-enabled MySQL project omitted its local development service:\n%s", compose)
+	}
+}
+
+// TestResourceTemplatesOmitUnownedAlternateAppDatabase keeps external App engines out of the root Compose contract.
+func TestResourceTemplatesOmitUnownedAlternateAppDatabase(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan := defaultResourcePlanForTest(t, components)
+	database, _ := plan.Selection(project.ResourceDatabase)
+	database.Supported = append(database.Supported, "mysql")
+	plan = plan.WithSelection(project.ResourceDatabase, database)
+	config := &project.Config{
+		Render: project.RenderConfig{Components: components},
+		Apps: map[string]project.AppConfig{
+			"billing": {Components: components},
+		},
+	}
+	source := []byte("DB_DRIVER=sqlite\nBILLING_DB_DRIVER=mysql\nBILLING_DB_HOST=mysql.billing.example\n")
+	consumers, err := resourceenv.ResolveConsumers(source, plan, components, config)
+	if err != nil {
+		t.Fatalf("discover effective consumers: %v", err)
+	}
+
+	_, compose := renderResourceTemplatesWithConsumers(t, components, plan, project.LocalServiceIntent{}, consumers)
+	if strings.Contains(compose, "\n  mysql:\n") {
+		t.Fatalf("SQLite root emitted an unowned MySQL Compose service:\n%s", compose)
 	}
 }
 
@@ -273,8 +299,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 		ProjectName:  "Shared Resource App",
 		GoModuleName: "example.com/shared-resource-app",
 		Render: project.RenderConfig{
-			ComponentContractVersion: project.CurrentComponentContractVersion,
-			Components:               components,
+			Components: components,
 		},
 	}
 	encoded, err := yaml.Marshal(config)

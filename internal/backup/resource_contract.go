@@ -76,7 +76,10 @@ func LoadResourceContract(ctx context.Context) (ResourceContract, error) {
 	if appName == "" {
 		appName = "app"
 	}
-	commands := resourceContractCommands(appName)
+	commands, err := resourceContractCommands(appName)
+	if err != nil {
+		return ResourceContract{}, err
+	}
 	for _, command := range commands {
 		data, err := executeResourceContract(ctx, command)
 		if errors.Is(err, ErrResourceContractUnavailable) {
@@ -113,17 +116,22 @@ func ConnectionForResource(ctx context.Context, name string) (Connection, error)
 	return Connection{}, fmt.Errorf("database resource %q is not present in the App resource contract", name)
 }
 
-// resourceContractCommands returns binary and source execution candidates in stable order.
-func resourceContractCommands(appName string) [][]string {
+// resourceContractCommands rejects unreadable conventional markers so layout failures cannot trigger legacy fallback.
+func resourceContractCommands(appName string) ([][]string, error) {
 	commands := [][]string{}
 	binary := filepath.Join("bin", appName)
 	if _, err := os.Stat(binary); err == nil {
 		commands = append(commands, []string{binary, "resources:describe", "--json"})
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect resource contract binary %s: %w", binary, err)
 	}
-	if _, err := os.Stat(filepath.Join("cmd", appName)); err == nil {
+	source := filepath.Join("cmd", appName)
+	if _, err := os.Stat(source); err == nil {
 		commands = append(commands, []string{"go", "run", "./" + filepath.Join("cmd", appName), "resources:describe", "--json"})
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect resource contract source %s: %w", source, err)
 	}
-	return commands
+	return commands, nil
 }
 
 // executeResourceContract runs one candidate and keeps diagnostics off the JSON stream.

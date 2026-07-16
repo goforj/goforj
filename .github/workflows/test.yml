@@ -14,6 +14,7 @@ env:
   GO_VERSION: "1.25"
   GENERATOR_DOCKER_CACHE_VERSION: "v1"
   GOPRIVATE: "github.com/goforj/*"
+  WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.2.0"
 
 jobs:
   test:
@@ -54,7 +55,7 @@ jobs:
       # Install wire once (local runner cache)
       # ------------------------------------------------------------------
       - name: Install wire
-        run: go install github.com/goforj/wire/cmd/wire@latest
+        run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Run Go tests and multi-App smoke
         run: |
@@ -163,7 +164,7 @@ jobs:
         run: go mod download
 
       - name: Install wire
-        run: go install github.com/goforj/wire/cmd/wire@latest
+        run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Build GoForj binary
         run: go install ./cmd/forj
@@ -197,7 +198,7 @@ jobs:
         run: |
           bash scripts/generate-renderwarm.sh
           go mod download
-          go install github.com/goforj/wire/cmd/wire@latest
+          go install "$WIRE_INSTALL_TARGET"
           go install ./cmd/forj
           cd tools/renderwarm
           GOWORK=off go mod tidy
@@ -276,7 +277,7 @@ jobs:
         run: go mod download
 
       - name: Install wire
-        run: go install github.com/goforj/wire/cmd/wire@latest
+        run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Build GoForj binary
         run: go install ./cmd/forj
@@ -345,7 +346,7 @@ jobs:
         run: go mod download
 
       - name: Install wire
-        run: go install github.com/goforj/wire/cmd/wire@latest
+        run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Build GoForj binary
         run: go install ./cmd/forj
@@ -385,7 +386,7 @@ jobs:
           sudo apt-get install -y default-mysql-client postgresql-client
 
       - name: Install wire
-        run: go install github.com/goforj/wire/cmd/wire@latest
+        run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Download integration modules
         working-directory: integration
@@ -442,7 +443,7 @@ jobs:
         run: go mod download
 
       - name: Install wire
-        run: go install github.com/goforj/wire/cmd/wire@latest
+        run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Build GoForj binary
         run: go install ./cmd/forj
@@ -520,7 +521,7 @@ jobs:
           path: |
             ${{ env.GOCACHE }}
             ${{ env.GOMODCACHE }}
-          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'go.mod', 'integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/cache.go', 'internal/generate/storage.go', 'internal/forj/internal/cache/manager.go', 'internal/forj/internal/storage/manager.go') }}
+          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'go.mod', 'integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/caches.go', 'internal/generate/storages.go', 'internal/forj/internal/caches/manager_gen.go', 'internal/forj/internal/storages/manager_gen.go') }}
           restore-keys: |
             generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-
 

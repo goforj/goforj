@@ -1,6 +1,7 @@
 package build
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,18 +10,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/apiindex"
-	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"golang.org/x/term"
 )
 
-// Step names one observable pipeline action and returns its compact status.
+// Step names one observable pipeline action whose runner receives the validated project root.
 type Step struct {
 	Name string
-	Run  func() (string, error)
+	Run  func(root string) (string, error)
 }
 
 // Pipeline coordinates source generation, indexing, and the caller's final build or launch step.
@@ -53,86 +54,43 @@ func (buildProgressMarkerReporter) State(state string) {
 
 type buildProgressTTYReporter struct {
 	mu          sync.Mutex
-	label       string
-	running     bool
+	loader      *console.Loader
+	started     bool
 	clearOnDone bool
-	done        chan struct{}
 }
 
+// Step starts the shared console loader on its first update and changes its durable label thereafter.
 func (r *buildProgressTTYReporter) Step(index int, total int, step string) {
+	r.loader.Update(fmt.Sprintf("%d/%d %s", index, total, strings.TrimSpace(step)))
 	r.mu.Lock()
-	r.label = fmt.Sprintf("%d/%d %s", index, total, strings.TrimSpace(step))
-	started := r.running
-	if !r.running {
-		r.running = true
-		r.done = make(chan struct{})
-	}
-	label := r.label
-	done := r.done
-	r.mu.Unlock()
-
-	if !started {
-		go r.loop(done)
-	}
-	r.renderFrame(0, label)
-}
-
-func (r *buildProgressTTYReporter) State(state string) {
-	r.mu.Lock()
-	if !r.running {
+	if r.started {
 		r.mu.Unlock()
 		return
 	}
-	done := r.done
-	label := r.label
-	r.running = false
-	r.done = nil
+	r.started = true
 	r.mu.Unlock()
+	// The reporter owns a dedicated console, so no other transient display can contend with it.
+	_ = r.loader.Start()
+}
 
-	close(done)
+// State turns the live loader into the terminal outcome expected by the pipeline mode.
+func (r *buildProgressTTYReporter) State(state string) {
+	r.mu.Lock()
+	if !r.started {
+		r.mu.Unlock()
+		return
+	}
+	r.started = false
+	r.mu.Unlock()
 	if strings.EqualFold(strings.TrimSpace(state), "done") {
 		if r.clearOnDone {
-			fmt.Fprint(os.Stderr, "\r\x1b[2K")
+			r.loader.Stop()
 			return
 		}
-		fmt.Fprintf(os.Stderr, "\r\x1b[2K%s %s", console.SuccessMark(), label)
-	} else {
-		r.renderFrame(0, label)
+		r.loader.Success("")
+		return
 	}
-	fmt.Fprintln(os.Stderr)
-}
-
-func (r *buildProgressTTYReporter) loop(done <-chan struct{}) {
-	ticker := time.NewTicker(120 * time.Millisecond)
-	defer ticker.Stop()
-
-	frame := 0
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			r.mu.Lock()
-			label := r.label
-			running := r.running
-			r.mu.Unlock()
-			if !running {
-				return
-			}
-			frame++
-			r.renderFrame(frame, label)
-		}
-	}
-}
-
-func (r *buildProgressTTYReporter) renderFrame(frame int, label string) {
-	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	fmt.Fprintf(
-		os.Stderr,
-		"\r\x1b[2K%s %s",
-		console.Colorize(console.ColorGreen, frames[frame%len(frames)]),
-		label,
-	)
+	r.loader.Fail("")
 }
 
 // RunOptions controls diagnostics, source selection, and progress behavior for one pipeline invocation.
@@ -156,60 +114,54 @@ func NewPipeline(appLogger *logger.AppLogger, apiIndex apiindex.Preparer) Pipeli
 }
 
 // Run executes the configured steps from the project root and publishes API artifacts after the final step succeeds.
-func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) error {
+func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) (err error) {
 	if err := apiindex.ValidateGOFLAGS(os.Getenv("GOFLAGS")); err != nil {
 		return err
 	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := resolveProjectRoot(root)
 	if err != nil {
 		return err
 	}
-	originalWD, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	if err := os.Chdir(absRoot); err != nil {
-		return err
-	}
-	defer func() { _ = os.Chdir(originalWD) }()
 
 	debug := debugEnabled()
 	progress := newBuildProgressReporter(debug, opts)
+	progressState := "done"
+	defer func() {
+		progress.State(progressState)
+	}()
 	var pendingAPIIndex apiindex.Candidate
 	defer func() {
 		if pendingAPIIndex != nil {
-			pendingAPIIndex.Discard()
+			if discardErr := pendingAPIIndex.Discard(); discardErr != nil {
+				progressState = "failed"
+				err = errors.Join(err, discardErr)
+			}
 		}
 	}()
 	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
 	steps := make([]Step, 0, 4)
 	steps = append(steps, generateStep)
-	if buildUsesTemplHTMX() {
+	if buildUsesTemplHTMX(absRoot) {
 		steps = append(steps, Step{Name: "templ", Run: p.runTemplGenerate})
 	}
 	if !opts.SkipWire {
 		steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
 	}
-	steps = append(steps, Step{Name: "build:api-index", Run: func() (string, error) {
-		candidate, status, err := p.prepareAPIIndex(opts.APIIndexStrict, opts.BuildTags...)
+	steps = append(steps, Step{Name: "build:api-index", Run: func(root string) (string, error) {
+		preparation, err := p.prepareAPIIndex(root, opts.APIIndexStrict, opts.BuildTags...)
 		if err != nil {
 			return "", err
 		}
-		pendingAPIIndex = candidate
-		return status, nil
+		pendingAPIIndex = preparation.Candidate
+		return preparation.Status, nil
 	}})
 	steps = append(steps, final)
-	progressState := "done"
-	defer func() {
-		progress.State(progressState)
-	}()
-
 	if debug {
 		p.logger.Info().Str("kind", kind).Str("step", generateStep.Name).Msg("Running pipeline step")
 	}
 	progress.Step(1, len(steps), generateStep.Name)
 	generateStartedAt := time.Now()
-	generateStatus, err := generateStep.Run()
+	generateStatus, err := generateStep.Run(absRoot)
 	if err != nil {
 		progressState = "failed"
 		return err
@@ -230,7 +182,7 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		}
 		progress.Step(idx+2, len(steps), step.Name)
 		startedAt := time.Now()
-		status, err := step.Run()
+		status, err := step.Run(absRoot)
 		if err != nil {
 			progressState = "failed"
 			return err
@@ -258,7 +210,7 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		progress.State("done")
 	}
 	finalStartedAt := time.Now()
-	finalStatus, err := runFinalAndPublishAPIIndex(final, pendingAPIIndex)
+	finalStatus, err := runFinalAndPublishAPIIndex(absRoot, final, pendingAPIIndex)
 	if err != nil {
 		progressState = "failed"
 		return err
@@ -276,9 +228,28 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	return nil
 }
 
+// resolveProjectRoot validates the explicit command root once so every pipeline step shares one stable absolute path.
+func resolveProjectRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root %q: %w", root, err)
+	}
+	info, err := os.Stat(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("open project root %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("open project root %q: not a directory", root)
+	}
+	return absRoot, nil
+}
+
 // runFinalAndPublishAPIIndex keeps the previous active contract until compilation or process startup succeeds.
-func runFinalAndPublishAPIIndex(final Step, pending apiindex.Candidate) (string, error) {
-	status, err := final.Run()
+func runFinalAndPublishAPIIndex(root string, final Step, pending apiindex.Candidate) (string, error) {
+	status, err := final.Run(root)
 	if err != nil {
 		return "", err
 	}
@@ -291,12 +262,12 @@ func runFinalAndPublishAPIIndex(final Step, pending apiindex.Candidate) (string,
 }
 
 // prepareAPIIndex applies the command's diagnostics policy while keeping pipeline status formatting centralized.
-func (p Pipeline) prepareAPIIndex(strict bool, buildTags ...string) (apiindex.Candidate, string, error) {
-	prepared, status, err := p.apiIndex.Prepare(apiindex.Options{Strict: strict, BuildTags: append([]string(nil), buildTags...)})
+func (p Pipeline) prepareAPIIndex(root string, strict bool, buildTags ...string) (apiindex.Preparation, error) {
+	preparation, err := p.apiIndex.Prepare(apiindex.Options{Root: root, Strict: strict, BuildTags: append([]string(nil), buildTags...)})
 	if err != nil {
-		return nil, status, fmt.Errorf("%s: %w", status, err)
+		return preparation, fmt.Errorf("%s: %w", preparation.Status, err)
 	}
-	return prepared, status, nil
+	return preparation, nil
 }
 
 func buildProgressEnabled() bool {
@@ -304,6 +275,7 @@ func buildProgressEnabled() bool {
 	return value != "" && value != "0" && !strings.EqualFold(value, "false")
 }
 
+// newBuildProgressReporter selects private marker output, durable output, or an interactive console loader.
 func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter {
 	if buildProgressEnabled() {
 		return buildProgressMarkerReporter{}
@@ -311,7 +283,15 @@ func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter
 	if debug || opts.Timings || !term.IsTerminal(int(os.Stderr.Fd())) {
 		return buildProgressNoop{}
 	}
-	return &buildProgressTTYReporter{clearOnDone: opts.TransientProgress}
+	progressConsole := console.New(console.Config{
+		Stdout:         os.Stderr,
+		Stderr:         os.Stderr,
+		LoaderInterval: 120 * time.Millisecond,
+	})
+	return &buildProgressTTYReporter{
+		loader:      progressConsole.Loader(""),
+		clearOnDone: opts.TransientProgress,
+	}
 }
 
 func printStepTiming(kind string, stepName string, duration time.Duration, status string) {
@@ -324,8 +304,8 @@ func printStepTiming(kind string, stepName string, duration time.Duration, statu
 }
 
 // buildUsesTemplHTMX limits template generation to the selected App's configured starter kit so unrelated Apps do not add build work.
-func buildUsesTemplHTMX() bool {
-	cfg, err := project.LoadProjectConfig()
+func buildUsesTemplHTMX(root string) bool {
+	cfg, err := project.LoadProjectConfigAt(root)
 	if err != nil {
 		return false
 	}
@@ -339,8 +319,10 @@ func buildUsesTemplHTMX() bool {
 	return project.NormalizeStarterKit(starterKit) == project.StarterKitTemplHTMX
 }
 
-func (p Pipeline) runTemplGenerate() (string, error) {
+// runTemplGenerate keeps template discovery inside the selected project without changing process state.
+func (p Pipeline) runTemplGenerate(root string) (string, error) {
 	cmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+	cmd.Dir = root
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -353,9 +335,10 @@ func (p Pipeline) runTemplGenerate() (string, error) {
 	return "generated", nil
 }
 
-func (p Pipeline) runWireGenerate() (string, error) {
+// runWireGenerate evaluates every configured dependency-injection root beneath the selected project.
+func (p Pipeline) runWireGenerate(root string) (string, error) {
 	ran := false
-	for _, wirePath := range loadWirePaths() {
+	for _, wirePath := range loadWirePaths(root) {
 		info, err := os.Stat(wirePath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -382,32 +365,40 @@ func (p Pipeline) runWireGenerate() (string, error) {
 	return "", nil
 }
 
+// wireCommandResult separates user-facing success status from failure diagnostics captured from the same process.
+type wireCommandResult struct {
+	status string
+	detail string
+}
+
+// runWireCommand retries the one known transient Wire import failure while preserving useful diagnostics.
 func (p Pipeline) runWireCommand(wirePath string, debug bool) (string, error) {
-	status, detail, err := runWireCommandQuiet(wirePath)
+	result, err := runWireCommandQuiet(wirePath)
 	if err == nil {
-		if debug && strings.TrimSpace(status) != "" {
-			fmt.Fprintln(os.Stderr, strings.TrimSpace(status))
+		if debug && strings.TrimSpace(result.status) != "" {
+			fmt.Fprintln(os.Stderr, strings.TrimSpace(result.status))
 		}
-		return status, nil
+		return result.status, nil
 	}
-	if shouldRetryWire(detail) {
-		retryStatus, retryDetail, retryErr := runWireCommandQuiet(wirePath)
+	if shouldRetryWire(result.detail) {
+		retryResult, retryErr := runWireCommandQuiet(wirePath)
 		if retryErr == nil {
-			if retryStatus == "" {
+			if retryResult.status == "" {
 				return "retried", nil
 			}
-			return retryStatus + ", retried", nil
+			return retryResult.status + ", retried", nil
 		}
-		detail = retryDetail
+		result = retryResult
 		err = retryErr
 	}
-	if detail != "" {
-		printBuildFailureDetail(detail)
+	if result.detail != "" {
+		printBuildFailureDetail(result.detail)
 		return "", fmt.Errorf("wire (%s): %w", wirePath, err)
 	}
 	return "", fmt.Errorf("wire (%s): %w", wirePath, err)
 }
 
+// printBuildFailureDetail keeps subprocess diagnostics separate from the pipeline's concise error line.
 func printBuildFailureDetail(detail string) {
 	trimmed := strings.TrimSpace(detail)
 	if trimmed == "" {
@@ -417,7 +408,8 @@ func printBuildFailureDetail(detail string) {
 	fmt.Fprintln(os.Stderr, trimmed)
 }
 
-func runWireCommandQuiet(wirePath string) (string, string, error) {
+// runWireCommandQuiet captures Wire output so the pipeline can decide whether to retry or print it.
+func runWireCommandQuiet(wirePath string) (wireCommandResult, error) {
 	cmd := exec.Command("wire")
 	cmd.Dir = wirePath
 	cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
@@ -434,9 +426,10 @@ func runWireCommandQuiet(wirePath string) (string, string, error) {
 	if err == nil {
 		status = strings.TrimSpace(stdout.String())
 	}
-	return status, detail, err
+	return wireCommandResult{status: status, detail: detail}, err
 }
 
+// shouldRetryWire recognizes the transient import failure that a second incremental Wire pass can resolve.
 func shouldRetryWire(detail string) bool {
 	detail = strings.ToLower(strings.TrimSpace(detail))
 	if detail == "" {
@@ -447,63 +440,72 @@ func shouldRetryWire(detail string) bool {
 }
 
 // generateProjectFiles uses durable component intent when available so stale generated directories cannot reactivate optional primitives.
-func (p Pipeline) generateProjectFiles() (string, error) {
+func (p Pipeline) generateProjectFiles(root string) (string, error) {
 	selection := generate.GenerationSelection{
-		Storage:       hasDir(filepath.Join(".", "internal", "storages")),
-		Cache:         hasDir(filepath.Join(".", "internal", "caches")),
-		Mail:          hasDir(filepath.Join(".", "internal", "mail")),
-		Queue:         hasDir(filepath.Join(".", "internal", "jobs")) || hasDir(filepath.Join(".", "internal", "queues")),
-		Events:        hasDir(filepath.Join(".", "internal", "events")),
-		Database:      hasDir(filepath.Join(".", "internal", "database")),
-		Observability: hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
+		Storage:       hasDir(filepath.Join(root, "internal", "storages")),
+		Cache:         hasDir(filepath.Join(root, "internal", "caches")),
+		Mail:          hasDir(filepath.Join(root, "internal", "mail")),
+		Queue:         hasDir(filepath.Join(root, "internal", "jobs")) || hasDir(filepath.Join(root, "internal", "queues")),
+		Events:        hasDir(filepath.Join(root, "internal", "events")),
+		Database:      hasDir(filepath.Join(root, "internal", "database")),
+		Observability: hasDir(filepath.Join(root, "containers", "observability", "vmagent")),
 	}
-	config, err := project.LoadProjectConfig()
+	config, err := project.LoadProjectConfigAt(root)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load project generation config: %w", err)
 	}
 	if config != nil {
 		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
 	}
-	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(".", selection)
+	result, err := generate.GenerateProjectFiles(root, selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
 	}
 	if debugEnabled() {
-		p.logger.Info().Int("files", generatedFiles).Msg("Generated project files")
+		p.logger.Info().Int("files", result.TotalFiles).Msg("Generated project files")
 	}
-	if changedFiles == 0 {
+	if result.ChangedFiles == 0 {
 		return "no changes", nil
 	}
-	return fmt.Sprintf("%d files", changedFiles), nil
+	return fmt.Sprintf("%d files", result.ChangedFiles), nil
 }
 
 // loadWirePaths reads project-configured Wire roots and falls back to the generated app layout.
-func loadWirePaths() []string {
+func loadWirePaths(root string) []string {
 	if targetName := requestedAppName(); targetName != "" {
 		if !project.IsSafeAppName(targetName) {
-			return defaultWirePaths()
+			return defaultWirePaths(root)
 		}
 		target := project.DefaultNamedApp(targetName)
-		if hasDir(target.WireDir) {
-			return []string{target.WireDir}
+		wireDir := filepath.Join(root, target.WireDir)
+		if hasDir(wireDir) {
+			return []string{wireDir}
 		}
 	}
-	config, err := project.LoadProjectConfig()
+	config, err := project.LoadProjectConfigAt(root)
 	if err != nil {
-		return defaultWirePaths()
+		return defaultWirePaths(root)
 	}
 	if len(config.Dev.WirePaths) == 0 {
-		return defaultWirePaths()
+		return defaultWirePaths(root)
 	}
-	return config.Dev.WirePaths
+	paths := make([]string, 0, len(config.Dev.WirePaths))
+	for _, wirePath := range config.Dev.WirePaths {
+		if !filepath.IsAbs(wirePath) {
+			wirePath = filepath.Join(root, wirePath)
+		}
+		paths = append(paths, wirePath)
+	}
+	return paths
 }
 
 // defaultWirePaths prefers app/wire so rendered projects do not depend on the legacy root wire directory.
-func defaultWirePaths() []string {
-	if hasDir(filepath.Join("app", "wire")) {
-		return []string{filepath.Join("app", "wire")}
+func defaultWirePaths(root string) []string {
+	appWireDir := filepath.Join(root, "app", "wire")
+	if hasDir(appWireDir) {
+		return []string{appWireDir}
 	}
-	return []string{"wire"}
+	return []string{filepath.Join(root, "wire")}
 }
 
 // hasDir treats missing paths as a normal layout probe instead of an error.

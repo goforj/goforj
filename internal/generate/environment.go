@@ -6,12 +6,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/joho/godotenv"
 )
-
-var generationEnvironmentMu sync.Mutex
 
 var generationEnvironmentPrefixes = []string{
 	"CACHE_",
@@ -48,70 +45,113 @@ var generationEnvironmentAppSuffixes = []string{
 	"_WORKER_METRICS_PORT",
 }
 
-// loadGenerationEnvironment installs one project-owned environment snapshot for the duration of generation.
-func loadGenerationEnvironment(projectDir string) (func(), error) {
-	// Generators still read process environment, so serialize the temporary snapshot until their inputs can be passed explicitly.
-	generationEnvironmentMu.Lock()
+// generationEnvironment is an immutable view of the values that may influence one generation run.
+type generationEnvironment struct {
+	values map[string]string
+}
 
+// generationEnvironmentEntry exposes one immutable key/value pair without re-parsing process-style assignments.
+type generationEnvironmentEntry struct {
+	key   string
+	value string
+}
+
+// generationEnvironmentFilter retains project inputs and rejects unrelated variables that merely contain resource words.
+type generationEnvironmentFilter struct {
+	appPrefixes map[string]struct{}
+}
+
+// generationInput keeps project ownership and its environment snapshot together across generator tasks.
+type generationInput struct {
+	projectDir  string
+	environment generationEnvironment
+	appPrefixes []string
+}
+
+// loadProjectGenerationInput reads one project-owned environment snapshot without changing process state.
+func loadProjectGenerationInput(projectDir string) (generationInput, error) {
 	example, err := readOptionalGenerationEnvironment(filepath.Join(projectDir, ".env.example"))
 	if err != nil {
-		generationEnvironmentMu.Unlock()
-		return nil, fmt.Errorf("read generation environment fallback: %w", err)
+		return generationInput{}, fmt.Errorf("read generation environment fallback: %w", err)
 	}
 	owner, err := readOptionalGenerationEnvironment(filepath.Join(projectDir, ".env"))
 	if err != nil {
-		generationEnvironmentMu.Unlock()
-		return nil, fmt.Errorf("read generation environment: %w", err)
+		return generationInput{}, fmt.Errorf("read generation environment: %w", err)
 	}
 
-	effective := make(map[string]string, len(example)+len(owner))
+	merged := make(map[string]string, len(example)+len(owner))
 	for key, value := range example {
-		if isGenerationEnvironmentKey(key) {
-			effective[key] = value
-		}
+		merged[key] = value
 	}
 	for key, value := range owner {
-		if isGenerationEnvironmentKey(key) {
-			effective[key] = value
-		}
+		merged[key] = value
 	}
 
-	previousValues := map[string]string{}
-	previouslySet := map[string]bool{}
-	for _, assignment := range os.Environ() {
-		key, _, _ := strings.Cut(assignment, "=")
-		if !isGenerationEnvironmentKey(key) {
-			if _, selected := effective[key]; !selected {
-				continue
-			}
-		}
-		previousValues[key], previouslySet[key] = os.LookupEnv(key)
-		if err := os.Unsetenv(key); err != nil {
-			restoreGenerationEnvironment(previousValues, previouslySet)
-			generationEnvironmentMu.Unlock()
-			return nil, fmt.Errorf("clear generation environment %s: %w", key, err)
+	source := generationEnvironment{values: merged}
+	filter := newGenerationEnvironmentFilter(projectDir, source)
+	values := make(map[string]string, len(merged))
+	for key, value := range merged {
+		if filter.keeps(key) {
+			values[key] = value
 		}
 	}
-
-	keys := sortedGenerationEnvironmentKeys(effective)
-	for _, key := range keys {
-		if _, recorded := previouslySet[key]; !recorded {
-			previousValues[key], previouslySet[key] = os.LookupEnv(key)
-		}
-		if err := os.Setenv(key, effective[key]); err != nil {
-			restoreGenerationEnvironment(previousValues, previouslySet)
-			generationEnvironmentMu.Unlock()
-			return nil, fmt.Errorf("set generation environment %s: %w", key, err)
-		}
-	}
-
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			restoreGenerationEnvironment(previousValues, previouslySet)
-			generationEnvironmentMu.Unlock()
-		})
+	return generationInput{
+		projectDir:  projectDir,
+		environment: generationEnvironment{values: values},
+		appPrefixes: filter.sortedAppPrefixes(),
 	}, nil
+}
+
+// ambientGenerationInput preserves direct generator APIs while isolating production orchestration from ambient state.
+func ambientGenerationInput(projectDir string) generationInput {
+	environment := generationEnvironmentFromAssignments(os.Environ())
+	filter := newGenerationEnvironmentFilter(projectDir, environment)
+	return generationInput{
+		projectDir:  projectDir,
+		environment: environment,
+		appPrefixes: filter.sortedAppPrefixes(),
+	}
+}
+
+// generationEnvironmentFromAssignments copies process-style assignments so later mutations cannot affect a run.
+func generationEnvironmentFromAssignments(assignments []string) generationEnvironment {
+	values := make(map[string]string, len(assignments))
+	for _, assignment := range assignments {
+		key, value, ok := strings.Cut(assignment, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return generationEnvironment{values: values}
+}
+
+// Lookup returns the captured value without consulting the current process environment.
+func (e generationEnvironment) Lookup(key string) (string, bool) {
+	value, ok := e.values[key]
+	return value, ok
+}
+
+// Get returns a captured non-empty value or fallback using the runtime env package's semantics.
+func (e generationEnvironment) Get(key string, fallback string) string {
+	value := e.values[key]
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// Entries returns a stable typed copy for validation and discovery without exposing the backing map.
+func (e generationEnvironment) Entries() []generationEnvironmentEntry {
+	keys := make([]string, 0, len(e.values))
+	for key := range e.values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	entries := make([]generationEnvironmentEntry, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, generationEnvironmentEntry{key: key, value: e.values[key]})
+	}
+	return entries
 }
 
 // readOptionalGenerationEnvironment reads one project contract without treating an absent file as an error.
@@ -126,13 +166,36 @@ func readOptionalGenerationEnvironment(path string) (map[string]string, error) {
 	return nil, err
 }
 
-// isGenerationEnvironmentKey identifies ambient resource values that must not influence a project snapshot.
-func isGenerationEnvironmentKey(key string) bool {
+// newGenerationEnvironmentFilter recognizes Apps before deciding which resource-shaped keys belong to the project.
+func newGenerationEnvironmentFilter(projectDir string, environment generationEnvironment) generationEnvironmentFilter {
+	return generationEnvironmentFilter{appPrefixes: generationAppEnvPrefixSet(projectDir, environment)}
+}
+
+// keeps retains direct generator inputs plus every resource key beneath a recognized App prefix so validation can reject typos.
+func (f generationEnvironmentFilter) keeps(key string) bool {
+	if isDirectGenerationEnvironmentKey(key) {
+		return true
+	}
+	for appPrefix := range f.appPrefixes {
+		if isGenerationAppResourceKey(key, appPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// sortedAppPrefixes returns a stable copy for repeated resource-specific filtering.
+func (f generationEnvironmentFilter) sortedAppPrefixes() []string {
+	return sortStrings(f.appPrefixes)
+}
+
+// isDirectGenerationEnvironmentKey recognizes root resources and metrics inputs without interpreting embedded cache-like words.
+func isDirectGenerationEnvironmentKey(key string) bool {
 	if generationEnvironmentExactKeys[key] {
 		return true
 	}
 	for _, prefix := range generationEnvironmentPrefixes {
-		if strings.HasPrefix(key, prefix) || strings.Contains(key, "_"+prefix) {
+		if strings.HasPrefix(key, prefix) {
 			return true
 		}
 	}
@@ -142,25 +205,4 @@ func isGenerationEnvironmentKey(key string) bool {
 		}
 	}
 	return false
-}
-
-// sortedGenerationEnvironmentKeys makes snapshot installation deterministic and error reporting reproducible.
-func sortedGenerationEnvironmentKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// restoreGenerationEnvironment returns every temporarily touched key to its exact process-level state.
-func restoreGenerationEnvironment(values map[string]string, set map[string]bool) {
-	for _, key := range sortedGenerationEnvironmentKeys(values) {
-		if set[key] {
-			_ = os.Setenv(key, values[key])
-			continue
-		}
-		_ = os.Unsetenv(key)
-	}
 }

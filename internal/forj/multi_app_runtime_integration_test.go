@@ -121,7 +121,7 @@ func renderMultiAppRuntimeTestApp(t *testing.T, dir string) {
 			},
 		},
 	}
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := testkit.WriteProjectConfig(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
 	}
 	for _, app := range []string{"billing", "customer-portal"} {

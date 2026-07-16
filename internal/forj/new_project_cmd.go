@@ -6,18 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -60,15 +59,11 @@ var (
 	mutedText             = lipgloss.Color("#8b93a1") // gray
 	accentColor           = lipgloss.Color("#8C97E6") // soft blue-violet
 	errorColor            = lipgloss.Color("#c97b7b") // muted red
-	ruleColor             = lipgloss.Color("#1f2937")
 	normalStyle           = lipgloss.NewStyle().Foreground(primaryText)
 	successStyle          = lipgloss.NewStyle().Foreground(primaryText)
 	titleStyle            = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
 	subtitleStyle         = lipgloss.NewStyle().Foreground(mutedText).Italic(true)
 	helpStyle             = lipgloss.NewStyle().Foreground(mutedText)
-	ruleStyle             = lipgloss.NewStyle().Foreground(ruleColor)
-	sectionLabelStyle     = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
-	headerLabelStyle      = lipgloss.NewStyle().Foreground(primaryText)
 	progressDoneMark      = lipgloss.NewStyle().Foreground(accentColor)
 	progressDoneLabel     = lipgloss.NewStyle().Foreground(mutedText)
 	progressCurrentStyle  = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
@@ -266,11 +261,18 @@ func makeAtlasModeItems() []list.Item {
 	}
 }
 
-// makeAtlasAgentItems converts Atlas agent detection into wizard rows.
-func makeAtlasAgentItems() []list.Item {
+// atlasAgentChoices keeps the wizard's detected recommendations stable through final installation.
+type atlasAgentChoices struct {
+	items       []list.Item
+	recommended []string
+}
+
+// makeAtlasAgentChoices captures wizard rows and recommendations before project creation changes filesystem context.
+func makeAtlasAgentChoices() atlasAgentChoices {
 	options := atlas.AgentOptions(context.Background(), ".")
+	recommendedNames := atlas.RecommendedAgents(context.Background(), ".")
 	recommended := map[string]bool{}
-	for _, name := range atlas.RecommendedAgents(context.Background(), ".") {
+	for _, name := range recommendedNames {
 		recommended[name] = true
 	}
 	items := make([]list.Item, 0, len(options))
@@ -282,7 +284,7 @@ func makeAtlasAgentItems() []list.Item {
 			Selected:    recommended[option.Name],
 		})
 	}
-	return items
+	return atlasAgentChoices{items: items, recommended: recommendedNames}
 }
 
 // makeAtlasSurfaceItems returns install surfaces with the recommended defaults selected.
@@ -317,6 +319,7 @@ type model struct {
 	starterKitApplicable bool
 	resourcePreparation  *newProjectResourcePreparation
 	atlasMode            atlasMode
+	atlasRecommendations []string
 }
 
 const wizardWidth = 90
@@ -369,10 +372,10 @@ func (m *model) finalizeConfig() error {
 		}
 	}
 
-	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev() {
+	if components.WebUI && !project.StarterKitUsesNPM(m.config.Render.StarterKit) && packageJSONHasNpmDev(m.targetPath) {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
-			Watch: frontendNPMWatch(defaultFrontendDir()),
+			Watch: frontendNPMWatch(projectlayout.FrontendDir(".", project.DefaultApp())),
 			Exec:  "npm run dev",
 		})
 	}
@@ -383,11 +386,6 @@ func (m *model) finalizeConfig() error {
 // build lifecycle is not owned by a known GoForj starter kit.
 func frontendNPMWatch(frontendDir string) string {
 	return "-cd ./" + filepath.ToSlash(frontendDir) + " -xdir _data -xdir node_modules -xdir dist"
-}
-
-// initialModel builds the default wizard state used by tests and the plain interactive command.
-func initialModel() model {
-	return initialModelWithOptions(newProjectModelOptions{})
 }
 
 // initialModelWithOptions builds wizard state for command-line flags that need to affect validation.
@@ -453,7 +451,8 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 	atlasModeList.SetShowStatusBar(false)
 	atlasModeList.SetShowPagination(false)
 
-	atlasAgentList := list.New(makeAtlasAgentItems(), delegate, 42, 4)
+	atlasAgents := makeAtlasAgentChoices()
+	atlasAgentList := list.New(atlasAgents.items, delegate, 42, 4)
 	atlasAgentList.Title = "Atlas Agents"
 	atlasAgentList.SetShowFilter(false)
 	atlasAgentList.SetShowHelp(false)
@@ -489,14 +488,14 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		atlasAgentList:       atlasAgentList,
 		atlasSurfaceList:     atlasSurfaceList,
 		atlasMode:            atlasModeRecommended,
+		atlasRecommendations: append([]string(nil), atlasAgents.recommended...),
 		allowNonEmpty:        options.allowNonEmpty,
 		config: project.Config{
 			Render: project.RenderConfig{
-				GoForjVersion:            version.Semver(),
-				Components:               components,
-				StarterKit:               project.DefaultStarterKit(),
-				HelpFormat:               project.DefaultHelpFormat(),
-				ComponentContractVersion: project.CurrentComponentContractVersion,
+				GoForjVersion: version.Semver(),
+				Components:    components,
+				StarterKit:    project.DefaultStarterKit(),
+				HelpFormat:    project.DefaultHelpFormat(),
 			},
 		},
 	}
@@ -630,7 +629,7 @@ func (m model) selectedAtlasAgents() []string {
 		return nil
 	}
 	if m.atlasMode != atlasModeCustom {
-		return atlas.RecommendedAgents(context.Background(), ".")
+		return append([]string(nil), m.atlasRecommendations...)
 	}
 	return m.selectedCustomAtlasAgents()
 }
@@ -1737,7 +1736,7 @@ func (m model) previewAtlasAgents() []string {
 		return nil
 	}
 	if mode != atlasModeCustom {
-		return atlas.RecommendedAgents(context.Background(), ".")
+		return append([]string(nil), m.atlasRecommendations...)
 	}
 	return m.selectedCustomAtlasAgents()
 }
@@ -1770,30 +1769,6 @@ func (m model) selectedAtlasSurfaceNames() []string {
 	return names
 }
 
-func (m model) renderSummary() string {
-	project := m.config.ProjectName
-	if project == "" {
-		project = "<not set>"
-	}
-
-	module := m.config.GoModuleName
-	if module == "" {
-		module = "<not set>"
-	}
-
-	components := m.selectedComponentNames()
-	if len(components) == 0 {
-		components = []string{"CLI"}
-	}
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Project"), normalStyle.Render(project)),
-		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Module"), normalStyle.Render(module)),
-		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Components"), normalStyle.Render(strings.Join(components, ", "))),
-	)
-}
-
 // selectedComponentNames reports effective render choices so temporary Demo constraints are described truthfully.
 func (m model) selectedComponentNames() []string {
 	components := m.config.Render.Components
@@ -1820,35 +1795,6 @@ func renderInputLine(input textinput.Model) string {
 	return view + padding
 }
 
-func wrapText(text string, width int) []string {
-	if width <= 0 {
-		return []string{text}
-	}
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return nil
-	}
-
-	var lines []string
-	var current string
-	for _, word := range words {
-		if current == "" {
-			current = word
-			continue
-		}
-		if lipgloss.Width(current)+1+lipgloss.Width(word) <= width {
-			current += " " + word
-			continue
-		}
-		lines = append(lines, current)
-		current = word
-	}
-	if current != "" {
-		lines = append(lines, current)
-	}
-	return lines
-}
-
 func indentBlock(content string, padLeft int) string {
 	if padLeft <= 0 {
 		return content
@@ -1859,30 +1805,6 @@ func indentBlock(content string, padLeft int) string {
 		lines[i] = pad + line
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderSectionHeader(title string, termWidth int) string {
-	label := headerLabelStyle.Render(title)
-	prefix := ruleStyle.Render("─") + " " + label
-	width := lipgloss.Width(prefix)
-	if width < wizardWidth {
-		width = wizardWidth
-	}
-	if termWidth <= 0 {
-		termWidth = wizardWidth
-	}
-	if termWidth < width {
-		width = termWidth
-	}
-	header := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		ruleStyle.Render("─"),
-		" ",
-		label,
-		" ",
-		ruleStyle.Render(strings.Repeat("─", width-lipgloss.Width(prefix)-1)),
-	)
-	return header
 }
 
 type keyValue struct {
@@ -2037,19 +1959,6 @@ func (m model) selectedDatabaseComponentKey() project.ComponentKey {
 	return project.ComponentDatabaseMySQL
 }
 
-// deselectComponent clears a component selection by name.
-func (m *model) deselectComponent(name string) {
-	for idx, listItem := range m.componentList.Items() {
-		item := listItem.(ListItem)
-		if item.Name != name {
-			continue
-		}
-		item.Selected = false
-		m.componentList.SetItem(idx, item)
-		return
-	}
-}
-
 // setComponentSelected updates one concrete wizard component row.
 func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
 	for idx, listItem := range m.componentList.Items() {
@@ -2058,18 +1967,6 @@ func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
 			continue
 		}
 		item.Selected = selected
-		m.componentList.SetItem(idx, item)
-		return
-	}
-}
-
-func (m *model) selectComponent(name string) {
-	for idx, listItem := range m.componentList.Items() {
-		item := listItem.(ListItem)
-		if item.Name != name {
-			continue
-		}
-		item.Selected = true
 		m.componentList.SetItem(idx, item)
 		return
 	}
@@ -2409,9 +2306,12 @@ func renderAtlasPanelBanner() string {
 }
 
 // packageJSONHasNpmDev checks whether the target-local frontend defines an npm dev script.
-func packageJSONHasNpmDev() bool {
-	path := filepath.Join(defaultFrontendDir(), "package.json")
-	data, err := ioutil.ReadFile(path)
+func packageJSONHasNpmDev(root string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	path := filepath.Join(root, projectlayout.FrontendDir(".", project.DefaultApp()), "package.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
@@ -2456,13 +2356,11 @@ func (*NewProjectCmd) Signature() string {
 func (c *NewProjectCmd) Run() error {
 	printNewProjectBanner()
 
-	// Run the wizard
 	resultModel, err := tea.NewProgram(initialModelWithOptions(newProjectModelOptions{
 		allowNonEmpty: c.AllowNonEmpty,
 	})).Run()
 	if err != nil {
-		fmt.Print("Error running GoForj wizard:", err)
-		os.Exit(1)
+		return fmt.Errorf("run project wizard: %w", err)
 	}
 
 	m, ok := resultModel.(model)
@@ -2473,7 +2371,14 @@ func (c *NewProjectCmd) Run() error {
 	if m.cancelled {
 		return nil
 	}
+	return c.createProject(m)
+}
 
+// createProject publishes one completed wizard model without changing process-wide working-directory state.
+func (c *NewProjectCmd) createProject(m model) error {
+	if m.stage != StageDone {
+		return fmt.Errorf("project wizard must be completed before creation")
+	}
 	var targetPath string
 	targetPath = m.targetPath
 	if targetPath == "" {
@@ -2482,18 +2387,16 @@ func (c *NewProjectCmd) Run() error {
 	if targetPath == "" {
 		return fmt.Errorf("target path could not be determined")
 	}
+	targetPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		return fmt.Errorf("resolve target path: %w", err)
+	}
 
 	if err := os.MkdirAll(targetPath, 0755); err != nil {
 		return fmt.Errorf("failed to create target path: %w", err)
 	}
-	if err := os.Chdir(targetPath); err != nil {
-		return fmt.Errorf("failed to change to target path: %w", err)
-	}
 
-	// write .goforj.yml in target path using the model config
-	if err := m.finalizeConfig(); err != nil {
-		return err
-	}
+	// StageConfirm finalized the model before the wizard returned it for publication.
 	m.targetPath = targetPath
 
 	var buf bytes.Buffer
@@ -2517,6 +2420,7 @@ func (c *NewProjectCmd) Run() error {
 	}
 	i := ComponentRenderInput{
 		renderAll:          true,
+		root:               targetPath,
 		resourcePlan:       preparation.plan,
 		localServiceIntent: preparation.serviceIntent,
 		serviceConsumers:   preparation.serviceConsumers,
@@ -2542,35 +2446,12 @@ func (c *NewProjectCmd) Run() error {
 	return nil
 }
 
+// runWithLoader keeps project work synchronous while the shared console loader owns animation cleanup.
 func runWithLoader(message string, fn func() error) error {
-	done := make(chan struct{})
-	var fnErr atomic.Value
-
-	go func() {
-		defer close(done)
-		if err := fn(); err != nil {
-			fnErr.Store(err)
-		}
-	}()
-
-	frames := []string{"|", "/", "-", "\\"}
-	ticker := time.NewTicker(120 * time.Millisecond)
-	defer ticker.Stop()
-
-	index := 0
-	fmt.Printf("%s %s %s\r", console.ActionMark(), message, frames[index])
-
-	for {
-		select {
-		case <-done:
-			fmt.Print("\r")
-			if err, ok := fnErr.Load().(error); ok && err != nil {
-				return err
-			}
-			return nil
-		case <-ticker.C:
-			index = (index + 1) % len(frames)
-			fmt.Printf("%s %s %s\r", console.ActionMark(), message, frames[index])
-		}
+	loader := console.NewLoader(message)
+	if err := loader.Start(); err != nil {
+		return err
 	}
+	defer loader.Stop()
+	return fn()
 }

@@ -18,12 +18,12 @@ func (*VerifyCmd) Signature() string { return `name:"backup:verify" help:"Verify
 
 // Run verifies the selected backup set.
 func (c *VerifyCmd) Run() error {
-	from, cleanup, err := resolveBackupSource(context.Background(), c.From)
+	source, err := resolveBackupSource(context.Background(), c.From)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-	if _, err := NewService().Verify(from); err != nil {
+	defer source.cleanup()
+	if _, err := NewService().Verify(source.path); err != nil {
 		return err
 	}
 	fmt.Println("backup verified")
