@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/forj/makeapp"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -161,7 +160,7 @@ func TestNamedAppCacheDeselectionRemovesOnlyGeneratedDefaults(t *testing.T) {
 		writePrimitiveRendererFile(t, path, environment)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.RenderAppOnly(app, makeapp.RenderOptions{Components: project.Components{CLI: true}, SkipWire: true}); err != nil {
 		t.Fatalf("disable Cache for named App: %v", err)
 	}
@@ -240,7 +239,7 @@ func TestNamedAppCacheDeselectionRejectsOwnerDependencies(t *testing.T) {
 			configBefore := readPrimitiveRendererFile(t, ".goforj.yml")
 			environmentBefore := readPrimitiveRendererFile(t, ".env")
 
-			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			renderer := unitProjectRenderer(t)
 			err := renderer.RenderAppOnly(app, makeapp.RenderOptions{Components: project.Components{CLI: true}, SkipWire: true})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Cache owner preflight error = %v, want %q", err, test.want)
@@ -316,7 +315,7 @@ func TestLastCacheRemovalRejectsProjectOwnerDependencies(t *testing.T) {
 			}
 			configBefore := readPrimitiveRendererFile(t, ".goforj.yml")
 
-			result, err := NewProjectRenderer(logger.NewSilentLogger()).RemoveApp(app)
+			result, err := unitProjectRenderer(t).RemoveApp(app)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("final Cache owner preflight error = %v, want %q", err, test.want)
 			}

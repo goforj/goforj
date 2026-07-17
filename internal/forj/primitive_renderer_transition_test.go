@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/forj/makeapp"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -78,7 +77,7 @@ func testPrimitiveAdditiveEnablement(t *testing.T) {
 			}
 			writePrimitiveRendererFile(t, ".env", primitiveAdditiveEnvironment(contract.key))
 
-			initialRenderer := NewProjectRenderer(logger.NewSilentLogger())
+			initialRenderer := unitProjectRenderer(t)
 			initialRenderer.config = config
 			initialRenderer.resources.plan = defaultResourcePlanForTest(t, project.ProjectComponents(config))
 			if err := initialRenderer.renderApp(app); err != nil {
@@ -94,7 +93,7 @@ func testPrimitiveAdditiveEnablement(t *testing.T) {
 
 			enabledComponents := primitiveRendererBaseComponents()
 			enabledComponents.SetEnabled(contract.key, true)
-			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			renderer := unitProjectRenderer(t)
 			projectedComponents := project.ProjectComponents(config)
 			projectedComponents.SetEnabled(contract.key, true)
 			renderer.resources.plan = defaultResourcePlanForTest(t, projectedComponents)
@@ -168,7 +167,7 @@ func (a *App) Queues() any { return nil }
 			writePrimitiveRendererFile(t, appPath, appContents)
 			renderer := projectRendererForTest(t, config)
 			if test.removeApp {
-				renderer = NewProjectRenderer(logger.NewSilentLogger())
+				renderer = unitProjectRenderer(t)
 				result, err := renderer.RemoveApp(app)
 				if result.Changed() {
 					t.Fatalf("failed accessor-only Jobs removal reported changes: %#v", result)
@@ -215,7 +214,7 @@ func testPrimitiveLastAppRemoval(t *testing.T) {
 			residuePath, residueSource := primitiveLastOwnerResidue(contract.key)
 			writePrimitiveRendererFile(t, residuePath, residueSource)
 
-			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			renderer := unitProjectRenderer(t)
 			result, err := renderer.RemoveApp(app)
 			if err == nil || !strings.Contains(err.Error(), "last App using "+contract.name) || !strings.Contains(err.Error(), filepath.Dir(residuePath)) {
 				t.Fatalf("remove last %s App error = %v", contract.name, err)

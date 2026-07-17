@@ -12,6 +12,13 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestMain releases suite-scoped integration tools after the Atlas smoke test.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	testkit.CleanupIntegrationHarness()
+	os.Exit(code)
+}
+
 func TestAtlasMCPServerUsesRenderedProjectInventory(t *testing.T) {
 	root, err := os.MkdirTemp("", "atlas-mcp-smoke-*")
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/forj/makeapp"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -179,7 +178,7 @@ func testJobsFullRenderBeforeWrites(t *testing.T) {
 	legacyOwnerContents := "package wire\n\nvar ownerSentinel = true\n"
 	writePrimitiveRendererFile(t, legacyOwnerPath, legacyOwnerContents)
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	err := renderer.Render(ComponentRenderInput{renderAll: true})
 	if err == nil || !strings.Contains(err.Error(), filepath.Join("internal", "jobs")) {
 		t.Fatalf("full Jobs removal error = %v, want internal/jobs residue", err)
@@ -228,7 +227,7 @@ func testPrimitiveAppOnlyRemovalBeforeWrites(t *testing.T) {
 			legacyContents := "package wire\n\nvar ownerSentinel = true\n"
 			writePrimitiveRendererFile(t, legacyPath, legacyContents)
 
-			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			renderer := unitProjectRenderer(t)
 			err := renderer.RenderAppOnly(app, makeapp.RenderOptions{Components: components, SkipWire: true})
 			if err == nil || !strings.Contains(err.Error(), surfacePath) {
 				t.Fatalf("%s removal error = %v, want %s", contract.name, err, surfacePath)

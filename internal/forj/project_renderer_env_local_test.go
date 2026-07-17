@@ -9,7 +9,6 @@ import (
 
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
@@ -41,7 +40,7 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{
 		renderAll:    true,
 		resourcePlan: queueDriverResourcePlanForTest(t, config.Render.Components, "nats"),
@@ -132,7 +131,7 @@ func TestRenderAppOnlyPublishesResourceEnvironmentBeforeAppDefaults(t *testing.T
 		t.Fatalf("write owner environment: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.RenderAppOnly(project.DefaultNamedApp("worker"), makeapp.RenderOptions{
 		Components: components,
 		SkipWire:   true,
@@ -182,7 +181,7 @@ func TestProjectRendererRejectsQueueContractBeforeLegacyCleanup(t *testing.T) {
 		t.Fatalf("write environment: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	err = renderer.Render(ComponentRenderInput{renderAll: true})
 	if err == nil || !strings.Contains(err.Error(), "excludes active QUEUE_DRIVER \"workerpool\"") {
 		t.Fatalf("render error = %v, want supported-driver conflict", err)
@@ -232,7 +231,7 @@ func TestProjectRendererRetainsLegacyQueueDriverWhenEnvWriteFails(t *testing.T) 
 		t.Fatalf("write environment: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.writeEnvironmentFile = func(string, []byte, os.FileMode) error {
 		return errors.New("simulated environment replacement failure")
 	}
@@ -284,7 +283,7 @@ func TestProjectRendererMigratesLegacyQueueDriverIntoExistingEnv(t *testing.T) {
 		t.Fatalf("write environment: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
 		t.Fatalf("render legacy project: %v", err)
 	}
@@ -338,7 +337,7 @@ func TestProjectRendererDropsInapplicableLegacyQueueDriver(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
 		t.Fatalf("render Jobs-disabled project: %v", err)
 	}
@@ -393,7 +392,7 @@ func TestProjectRendererAlwaysRendersEnvLocalWithInspectDefaults(t *testing.T) {
 		t.Fatalf("write .goforj.yml: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
 		t.Fatalf("initial render: %v", err)
 	}

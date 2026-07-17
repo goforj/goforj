@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/coredeps"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
@@ -41,7 +40,7 @@ func TestProjectRendererExplicitRootScopesDiscoveryAndPublication(t *testing.T) 
 		}
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	err := renderer.Render(ComponentRenderInput{
 		components: project.Components{Cache: true},
 		root:       projectRoot,
@@ -140,7 +139,7 @@ func TestSyncCoreLibrariesUsesGoModEditWithoutResolvingGraph(t *testing.T) {
 		t.Fatalf("write go.mod: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = &project.Config{Render: project.RenderConfig{Components: project.Components{Cache: true}}}
 	if err := renderer.syncCoreLibrariesInDir(root); err != nil {
 		t.Fatalf("syncCoreLibraries returned error: %v", err)
@@ -177,7 +176,7 @@ func TestSyncCoreLibrariesAddsTemplDependencyForTemplStarter(t *testing.T) {
 		t.Fatalf("write go.mod: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = &project.Config{}
 	renderer.config.Render.StarterKit = project.StarterKitTemplHTMX
 	if err := renderer.syncCoreLibrariesInDir(root); err != nil {
@@ -523,7 +522,7 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	}
 	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.beginRenderInvocation(root); err != nil {
 		t.Fatalf("begin render invocation: %v", err)
 	}
@@ -678,7 +677,7 @@ func TestRenderExpandsDefaultMigrationsWhenNamedAppExists(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join("migrations", "analytics", "2026_01_02_000001_create_reports.down.sql"), "-- down\n")
 	writeProjectRendererTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -2193,7 +2192,7 @@ func TestWriteAppEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 		t.Fatalf("write .env.host: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = &project.Config{
 		Render: project.RenderConfig{
 			Components: project.Components{DatabaseMySQL: true},

@@ -46,6 +46,7 @@ func TestDevProcessUnixHelper(t *testing.T) {
 
 // TestDevProcessSupervisorEscalatesAcrossUnixProcessGroup verifies TERM-to-KILL reaches descendants.
 func TestDevProcessSupervisorEscalatesAcrossUnixProcessGroup(t *testing.T) {
+	t.Parallel()
 	supervisor := NewSupervisor(SupervisorOptions{StopTimeout: 75 * time.Millisecond})
 	registerDevProcessSupervisorCleanup(t, supervisor)
 	directory := t.TempDir()
@@ -84,6 +85,7 @@ func TestDevProcessSupervisorEscalatesAcrossUnixProcessGroup(t *testing.T) {
 
 // TestDevProcessSupervisorCleansDescendantsAfterLeaderExit verifies an unexpected leader cannot orphan its process group.
 func TestDevProcessSupervisorCleansDescendantsAfterLeaderExit(t *testing.T) {
+	t.Parallel()
 	supervisor := NewSupervisor(SupervisorOptions{})
 	registerDevProcessSupervisorCleanup(t, supervisor)
 	directory := t.TempDir()

@@ -47,10 +47,10 @@ For integration-heavy regressions, also remember:
 
 ```bash
 PATH="/tmp:$PATH" GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
-go test -tags=integration ./internal/forj -count=1
+go run ./cmd/forj --dev test:integration framework -v
 ```
 
-`wire` must be on `PATH` for those tests because they render and build temp apps.
+The framework command discovers tests contributed by integration-tagged files across `internal/forj/...`. It does not rerun ordinary unit tests. `wire` must be on `PATH` because those tests render and build temp apps.
 
 Current default behavior matters:
 
@@ -64,7 +64,7 @@ Current default behavior matters:
 
 ## CI Parity And Service Ownership
 
-The consolidated integration job owns its test services. Do not start a host Redis instance in that job: the framework integration harness starts and tears down its own Redis container, and a process-level `REDIS_PORT` can override the rendered `.env` value used by Docker Compose. That can make the observability Compose test try to bind `6379` even after it selected a free port.
+Each integration shard owns its test services. Do not start a host Redis instance in those jobs: framework tests that need Redis start and tear down a shared package-level container, and a process-level `REDIS_PORT` can override the rendered `.env` value used by Docker Compose. That can make the observability Compose test try to bind `6379` even after it selected a free port.
 
 When a rendered Compose test allocates host ports, pass the same values through both the project `.env` and `t.Setenv`. Docker Compose interpolation gives process environment variables precedence over `.env`, which is important when the test runs under CI with inherited service variables.
 

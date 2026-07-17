@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/testkit"
+	"github.com/goforj/goforj/project"
 )
 
 // Suite owns the render combinations selected by one coverage profile.
@@ -143,7 +145,7 @@ func listRenderCombos(writer io.Writer, profile string, combos []renderCombo, sh
 	return w.Flush()
 }
 
-// shardRenderCombos partitions by stable matrix order so CI shards remain deterministic.
+// shardRenderCombos validates shard settings and returns a deterministic cost-balanced partition.
 func shardRenderCombos(combos []renderCombo) ([]renderCombo, string, error) {
 	count := 1
 	if v := strings.TrimSpace(os.Getenv("FORJ_TEST_RENDERS_SHARD_COUNT")); v != "" {
@@ -172,14 +174,75 @@ func shardRenderCombos(combos []renderCombo) ([]renderCombo, string, error) {
 		return combos, "", nil
 	}
 
-	filtered := make([]renderCombo, 0, len(combos)/count+1)
-	for i, combo := range combos {
-		if i%count == index {
-			filtered = append(filtered, combo)
-		}
-	}
+	filtered := partitionRenderCombos(combos, count)[index]
 	label := fmt.Sprintf(" (shard %d/%d · total %d)", index+1, count, len(combos))
 	return filtered, label, nil
+}
+
+// weightedRenderCombo retains stable ordering while allowing expensive sentinels to be spread across CI shards.
+type weightedRenderCombo struct {
+	combo  renderCombo
+	order  int
+	weight int
+}
+
+// weightedRenderShard tracks estimated work so each new combination goes to the currently lightest shard.
+type weightedRenderShard struct {
+	combos []renderCombo
+	weight int
+}
+
+// partitionRenderCombos balances generated Apps, idempotence rerenders, and starter-kit tooling instead of only item counts.
+func partitionRenderCombos(combos []renderCombo, count int) [][]renderCombo {
+	weighted := make([]weightedRenderCombo, 0, len(combos))
+	for order, combo := range combos {
+		weighted = append(weighted, weightedRenderCombo{
+			combo:  combo,
+			order:  order,
+			weight: estimatedRenderComboCost(combo),
+		})
+	}
+	sort.SliceStable(weighted, func(left, right int) bool {
+		if weighted[left].weight == weighted[right].weight {
+			return weighted[left].order < weighted[right].order
+		}
+		return weighted[left].weight > weighted[right].weight
+	})
+
+	shards := make([]weightedRenderShard, count)
+	for _, item := range weighted {
+		selected := 0
+		for candidate := 1; candidate < len(shards); candidate++ {
+			if shards[candidate].weight < shards[selected].weight ||
+				(shards[candidate].weight == shards[selected].weight && len(shards[candidate].combos) < len(shards[selected].combos)) {
+				selected = candidate
+			}
+		}
+		shards[selected].combos = append(shards[selected].combos, item.combo)
+		shards[selected].weight += item.weight
+	}
+
+	partitioned := make([][]renderCombo, count)
+	for index, shard := range shards {
+		partitioned[index] = shard.combos
+	}
+	return partitioned
+}
+
+// estimatedRenderComboCost models the subprocess work that makes multi-App and migration sentinels slower than ordinary renders.
+func estimatedRenderComboCost(combo renderCombo) int {
+	cost := 10 + len(combo.enabled)
+	cost += len(combo.apps) * 5
+	if combo.validateIdempotence {
+		cost += 10
+	}
+	if combo.starterKit == project.StarterKitTemplHTMX {
+		cost += 4
+	}
+	if combo.components.DemoApp {
+		cost += 4
+	}
+	return cost
 }
 
 // testRenderWorkspaceRoot keeps generated projects outside the source repository by default.

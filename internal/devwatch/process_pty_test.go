@@ -14,6 +14,7 @@ import (
 
 // TestDevProcessSupervisorPTYPreservesTerminalOutput verifies watcher children retain their historical TTY contract.
 func TestDevProcessSupervisorPTYPreservesTerminalOutput(t *testing.T) {
+	t.Parallel()
 	var output bytes.Buffer
 	var observed bytes.Buffer
 	supervisor := NewSupervisor(SupervisorOptions{})
@@ -40,6 +41,7 @@ func TestDevProcessSupervisorPTYPreservesTerminalOutput(t *testing.T) {
 
 // TestDevProcessSupervisorPTYBoundsBlockedSink verifies output consumers cannot prevent process completion publication.
 func TestDevProcessSupervisorPTYBoundsBlockedSink(t *testing.T) {
+	t.Parallel()
 	writer := &blockingDevProcessWriter{started: make(chan struct{}), release: make(chan struct{})}
 	supervisor := NewSupervisor(SupervisorOptions{})
 	registerDevProcessSupervisorCleanup(t, supervisor, writer.releaseOutput)

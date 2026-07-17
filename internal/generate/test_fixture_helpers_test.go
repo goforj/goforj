@@ -13,6 +13,8 @@ import (
 
 const fixtureGoVersion = "1.24"
 
+var fixtureGoCommands = make(chan struct{}, 3)
+
 type fixtureReplace struct {
 	module string
 	path   string
@@ -23,6 +25,21 @@ type fixtureGoModSpec struct {
 	required []string
 	pinned   []string
 	replaces []fixtureReplace
+}
+
+// fixtureGenerationInput isolates generator fixtures from process-wide environment mutation so expensive compile checks can run concurrently.
+func fixtureGenerationInput(projectDir string, values map[string]string) generationInput {
+	environmentValues := make(map[string]string, len(values))
+	for key, value := range values {
+		environmentValues[key] = value
+	}
+	environment := generationEnvironment{values: environmentValues}
+	filter := newGenerationEnvironmentFilter(projectDir, environment)
+	return generationInput{
+		projectDir:  projectDir,
+		environment: environment,
+		appPrefixes: filter.sortedAppPrefixes(),
+	}
 }
 
 func writeFixtureGoMod(t *testing.T, root string, spec fixtureGoModSpec) {
@@ -143,6 +160,8 @@ func TestFixtureGoEnvPreservesCallerCaches(t *testing.T) {
 
 func runFixtureGoModTidy(t *testing.T, root string, extra map[string]string) {
 	t.Helper()
+	release := acquireFixtureGoCommand()
+	defer release()
 
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = root
@@ -155,6 +174,8 @@ func runFixtureGoModTidy(t *testing.T, root string, extra map[string]string) {
 
 func runFixtureGoTest(t *testing.T, root, pkg, run string, extra map[string]string) string {
 	t.Helper()
+	release := acquireFixtureGoCommand()
+	defer release()
 
 	args := []string{"test", pkg, "-count=1"}
 	if strings.TrimSpace(run) != "" {
@@ -170,6 +191,12 @@ func runFixtureGoTest(t *testing.T, root, pkg, run string, extra map[string]stri
 	return string(output)
 }
 
+// acquireFixtureGoCommand caps nested toolchains so parallel fixture tests reduce wall time without exhausting CI memory.
+func acquireFixtureGoCommand() func() {
+	fixtureGoCommands <- struct{}{}
+	return func() { <-fixtureGoCommands }
+}
+
 func assertFixtureGoModContains(t *testing.T, root string, modules ...string) {
 	t.Helper()
 
@@ -181,6 +208,23 @@ func assertFixtureGoModContains(t *testing.T, root string, modules ...string) {
 	for _, module := range modules {
 		if !strings.Contains(source, module) {
 			t.Fatalf("expected go.mod to contain %s after tidy", module)
+		}
+	}
+}
+
+// assertFixtureGoModPins verifies tidy retained the repository-approved version for each requested fixture module.
+func assertFixtureGoModPins(t *testing.T, root string, modules ...string) {
+	t.Helper()
+
+	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod after tidy: %v", err)
+	}
+	source := string(goModAfter)
+	for _, module := range modules {
+		want := module + " " + fixtureModuleVersion(t, module)
+		if !strings.Contains(source, want) {
+			t.Fatalf("expected go.mod to retain %s after tidy", want)
 		}
 	}
 }

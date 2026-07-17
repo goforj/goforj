@@ -274,6 +274,38 @@ func TestShardRenderCombosRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+// TestPartitionRenderCombosBalancesCostWithoutDroppingCoverage verifies every combination lands on exactly one shard.
+func TestPartitionRenderCombosBalancesCostWithoutDroppingCoverage(t *testing.T) {
+	combos := []renderCombo{
+		{id: "idempotent", enabled: []string{"CLI"}, validateIdempotence: true},
+		{id: "multi-app", enabled: []string{"CLI"}, apps: map[string]project.AppConfig{"worker": {}}},
+		{id: "ordinary-a", enabled: []string{"CLI"}},
+		{id: "ordinary-b", enabled: []string{"CLI"}},
+		{id: "ordinary-c", enabled: []string{"CLI"}},
+	}
+	shards := partitionRenderCombos(combos, 2)
+	seen := make(map[string]int, len(combos))
+	weights := make([]int, len(shards))
+	for shardIndex, shard := range shards {
+		for _, combo := range shard {
+			seen[combo.id]++
+			weights[shardIndex] += estimatedRenderComboCost(combo)
+		}
+	}
+	for _, combo := range combos {
+		if seen[combo.id] != 1 {
+			t.Fatalf("combination %q assigned %d times, want exactly once: %#v", combo.id, seen[combo.id], shards)
+		}
+	}
+	difference := weights[0] - weights[1]
+	if difference < 0 {
+		difference = -difference
+	}
+	if difference > estimatedRenderComboCost(combos[0]) {
+		t.Fatalf("shard weights = %v, difference exceeds largest indivisible combination", weights)
+	}
+}
+
 // TestSuiteListReturnsFlushErrors verifies buffered table output cannot fail silently at the public listing boundary.
 func TestSuiteListReturnsFlushErrors(t *testing.T) {
 	suite, err := NewSuite(renderProfileSmoke, false)
@@ -508,6 +540,28 @@ func TestRenderCombosHaveUniqueIDs(t *testing.T) {
 			}
 			seen[combo.id] = struct{}{}
 		}
+	}
+}
+
+// TestDeduplicateComponentRenderCombosKeepsOneEffectiveContract verifies dependency-equivalent selections do not repeat full renders.
+func TestDeduplicateComponentRenderCombosKeepsOneEffectiveContract(t *testing.T) {
+	authSelection := project.Components{CLI: true, Auth: true, DatabaseSQLite: true}
+	authSelection.ResolveDependencies()
+	explicitWebAPISelection := project.Components{CLI: true, Auth: true, WebAPI: true, DatabaseSQLite: true}
+	explicitWebAPISelection.ResolveDependencies()
+	if authSelection != explicitWebAPISelection {
+		t.Fatalf("dependency-equivalent selections differ: auth=%#v explicit_webapi=%#v", authSelection, explicitWebAPISelection)
+	}
+	got := deduplicateComponentRenderCombos([]renderCombo{
+		{id: "first", components: authSelection},
+		{id: "duplicate", components: explicitWebAPISelection},
+		{id: "distinct", components: project.Components{CLI: true, WebUI: true}},
+	})
+	if len(got) != 2 {
+		t.Fatalf("deduplicated combinations = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].id != "first" || got[1].id != "distinct" {
+		t.Fatalf("deduplicated combination order = [%s %s], want [first distinct]", got[0].id, got[1].id)
 	}
 }
 

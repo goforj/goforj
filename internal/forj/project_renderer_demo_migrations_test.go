@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -25,7 +24,7 @@ func TestDemoMigrationsRenderToTopLevelMigrations(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = &project.Config{
 		ProjectName:  "DemoApp",
 		GoModuleName: "example.com/demoapp",

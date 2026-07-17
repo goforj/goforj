@@ -35,7 +35,7 @@ func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
@@ -101,7 +101,7 @@ func TestMakeAppCmdUsesNextAvailableEnvPortForSequentialApps(t *testing.T) {
 	}
 
 	for _, name := range []string{"workshop", "backstage"} {
-		cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+		cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 		cmd.Name = name
 		cmd.SkipWire = true
 		if err := cmd.Run(); err != nil {
@@ -147,7 +147,7 @@ func TestMakeAppCmdOmitsCLIOnlyAppFromDevByDefault(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "ship"
 	cmd.Components = "cli"
 	cmd.SkipWire = true
@@ -203,7 +203,7 @@ func TestMakeAppCmdMigratesLegacyLifecycleBeforeOmittingCLIApp(t *testing.T) {
 		t.Fatalf("write legacy config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "ship"
 	cmd.Components = "cli"
 	cmd.SkipWire = true
@@ -257,7 +257,7 @@ func TestMakeAppCmdRejectsCustomizedLegacyLifecycleBeforeWriting(t *testing.T) {
 		t.Fatalf("write customized legacy config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "ship"
 	cmd.Components = "cli"
 	cmd.SkipWire = true
@@ -299,7 +299,7 @@ func TestMakeAppCmdPersistsDevRunCommand(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "ship"
 	cmd.Components = "cli"
 	cmd.DevRun = "sync --once"
@@ -339,7 +339,7 @@ func TestMakeAppCmdPreservesExplicitRunForCLIOnlyApp(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "ship"
 	cmd.Components = "cli"
 	cmd.DevRun = "run"
@@ -390,7 +390,7 @@ func TestMakeAppCmdCreatesAPIOnlyAppInWebUIProject(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.Components = "web-api"
 	cmd.SkipWire = true
@@ -443,7 +443,7 @@ func TestMakeAppCmdWiresMetricsRunCommandDependency(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
@@ -488,7 +488,7 @@ func TestMakeAppCmdProjectsDisabledMetricsIntoCLIOnlyApp(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "ship"
 	cmd.Components = "cli"
 	cmd.SkipWire = true
@@ -543,7 +543,7 @@ func TestMakeAppCmdDoesNotCreateDemoJobProvidersForNamedApp(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
@@ -630,7 +630,7 @@ func NewWorker(
 		t.Fatalf("write stale worker: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
@@ -676,7 +676,7 @@ func TestMakeAppCmdCreatesAppVueStarterKit(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "portal"
 	cmd.Components = "web-api,web-ui"
 	cmd.StarterKit = "vue"
@@ -735,7 +735,7 @@ func TestMakeAppCmdTreatsExistingAppFilesAsNoOp(t *testing.T) {
 		t.Fatalf("mkdir app: %v", err)
 	}
 	writeMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"), "package main\n")
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.SkipWire = true
 	if err := cmd.Run(); err != nil {
@@ -775,7 +775,7 @@ func TestMakeAppCmdAllowsEmptyConventionalAppDirs(t *testing.T) {
 		}
 	}
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.Components = "cli"
 	cmd.SkipWire = true
@@ -856,7 +856,7 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 		"",
 	}, "\n"))
 
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "billing"
 	cmd.Remove = true
 	if err := cmd.Run(); err != nil {
@@ -932,7 +932,7 @@ func TestMakeAppCmdRemovesNamedApp(t *testing.T) {
 }
 
 func TestMakeAppCmdRejectsNativeCommandName(t *testing.T) {
-	cmd := makeapp.NewCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+	cmd := makeapp.NewCmd(logger.NewSilentLogger(), unitProjectRenderer(t))
 	cmd.Name = "render"
 	if err := cmd.Run(); err == nil {
 		t.Fatal("expected native command app name error")

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -137,7 +136,7 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 		writePrimitiveRendererFile(t, artifact.path, artifact.marker+"\n")
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	result, err := renderer.RemoveApp(app)
 	if err != nil {
 		t.Fatalf("remove final Cache App: %v", err)

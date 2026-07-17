@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/envfile"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -251,7 +250,7 @@ func renderResourceHostEnvironment(t *testing.T, components project.Components, 
 		GoModuleName: "example.com/resource-plan",
 		Render:       project.RenderConfig{Components: components},
 	}
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = config
 	renderer.resources = resourceRenderState{plan: plan, serviceIntent: intent}
 	renderer.stats = &renderStats{}
