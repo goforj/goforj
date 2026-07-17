@@ -566,7 +566,7 @@ func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
 			"github.com/goforj/storage/driver/redisstorage",
 			"github.com/goforj/storage/driver/s3storage",
 			"github.com/goforj/storage/driver/sftpstorage",
-			"github.com/goforj/str",
+			"github.com/goforj/str/v2",
 		},
 		nil,
 		nil,
@@ -612,7 +612,7 @@ func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
 		[]string{
 			"github.com/goforj/env/v2",
 			"github.com/goforj/storage",
-			"github.com/goforj/str",
+			"github.com/goforj/str/v2",
 		},
 		[]string{
 			"github.com/goforj/storage/driver/localstorage",
@@ -699,7 +699,7 @@ func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 		[]string{
 			"github.com/goforj/env/v2",
 			"github.com/goforj/storage",
-			"github.com/goforj/str",
+			"github.com/goforj/str/v2",
 		},
 		nil,
 		nil,

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // generationActiveDriver records the original environment key so contract errors remain actionable.
@@ -52,14 +52,14 @@ func generationEnvironmentResources() []generationEnvironmentResource {
 
 // discoverPrimitiveChildNames unions resource-first names with names declared only inside configured App overlays.
 func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, rootKeys []string) []string {
-	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	resourcePrefix = str.Of(resourcePrefix).ToUpper().Trim().String()
 	if resourcePrefix == "" {
 		return nil
 	}
 	names := map[string]struct{}{}
 	add := func(prefix string) {
 		for _, name := range exactScopedChildNames(input.environment, prefix, rootKeys) {
-			name = strings.TrimSpace(strings.ToUpper(name))
+			name = str.Of(name).ToUpper().Trim().String()
 			if name != "" {
 				names[name] = struct{}{}
 			}
@@ -238,7 +238,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 		}
 		knownChildren := map[string]struct{}{}
 		for _, child := range v.baseChildren {
-			child = strings.TrimSpace(strings.ToUpper(child))
+			child = str.Of(child).ToUpper().Trim().String()
 			if child != "" {
 				knownChildren[child] = struct{}{}
 			}
@@ -326,7 +326,7 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 
 // appPrefixedActiveDrivers resolves root and named App overlays with the same blank-driver fallbacks used at runtime.
 func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defaultDriver string, inheritRootDriver bool) []generationActiveDriver {
-	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	resourcePrefix = str.Of(resourcePrefix).ToUpper().Trim().String()
 	if resourcePrefix == "" {
 		return nil
 	}
@@ -474,7 +474,7 @@ func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix s
 	if err != nil {
 		return prefixes
 	}
-	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	resourcePrefix = str.Of(resourcePrefix).ToUpper().Trim().String()
 	enabled := map[string]struct{}{}
 	configured := map[string]struct{}{}
 	for name, appConfig := range config.Apps {
@@ -558,9 +558,9 @@ func generationResourceFirstPrefix(prefix string) bool {
 
 // effectivePrimitiveDriver preserves runtime fallback semantics when a declared driver is blank.
 func effectivePrimitiveDriver(value, fallback string) string {
-	driver := str.Of(value).TrimSpace().ToLower().String()
+	driver := str.Of(value).Trim().ToLower().String()
 	if driver == "" {
-		driver = str.Of(fallback).TrimSpace().ToLower().String()
+		driver = str.Of(fallback).Trim().ToLower().String()
 	}
 	return driver
 }
@@ -598,8 +598,7 @@ func splitScopedEnvKey(value string, rootKeys []string) (scopedEnvironmentKey, b
 		if !strings.HasSuffix(value, suffix) {
 			continue
 		}
-		child := strings.TrimSuffix(value, suffix)
-		child = str.Of(child).TrimSpace().ToUpper().String()
+		child := str.Of(value).TrimSuffix(suffix).Trim().ToUpper().String()
 		if child == "" {
 			return scopedEnvironmentKey{}, false
 		}
@@ -619,13 +618,13 @@ func makeSet(values ...string) map[string]struct{} {
 
 // parseSupportedDrivers distinguishes an omitted build manifest from an explicit, validated driver set.
 func parseSupportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}) (map[string]struct{}, error) {
-	raw := str.Of(environment.Get(prefix+"_SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
+	raw := str.Of(environment.Get(prefix+"_SUPPORTED_DRIVERS", "")).Trim().ToLower().String()
 	if raw == "" {
 		return nil, nil
 	}
 	set := map[string]struct{}{}
 	for _, part := range strings.Split(raw, ",") {
-		driver := str.Of(part).TrimSpace().ToLower().String()
+		driver := str.Of(part).Trim().ToLower().String()
 		if driver == "" {
 			continue
 		}
@@ -652,7 +651,7 @@ func supportedDrivers(environment generationEnvironment, prefix string, knownDri
 
 	out := map[string]struct{}{}
 	for _, driver := range fallback {
-		driver = str.Of(driver).TrimSpace().ToLower().String()
+		driver = str.Of(driver).Trim().ToLower().String()
 		if driver == "" {
 			continue
 		}

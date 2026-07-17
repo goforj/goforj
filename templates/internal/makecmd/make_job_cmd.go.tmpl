@@ -4,7 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"go/format"
 	"os"
 	"path/filepath"
@@ -75,14 +75,14 @@ type jobTarget struct {
 
 // target resolves one conventional identity so creation and removal address the same job files.
 func (c *JobCmd) target() jobTarget {
-	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
+	if str.Of(c.OutputDir).Trim().IsBlank() {
 		c.OutputDir = defaultJobOutputDir
 	}
-	rawName := str.Of(c.Name).TrimSpace().String()
+	rawName := str.Of(c.Name).Trim().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
 	if len(parts) > 1 {
-		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		action := str.Of(parts[len(parts)-1]).Trim().String()
 		if action != "" && isDefaultJobOutputDir(c.OutputDir) {
 			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
@@ -92,7 +92,7 @@ func (c *JobCmd) target() jobTarget {
 	}
 
 	structName := ensureJobSuffix(str.Of(structBase).Pascal().String())
-	fileName := str.Of(structName).Snake("_").String() + ".go"
+	fileName := str.Of(structName).Snake().String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
 	return jobTarget{outputPath: outputPath, structName: structName}
@@ -127,7 +127,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 	err = tmpl.Execute(&buf, map[string]string{
 		"PackageName": generatedPackageName(c.OutputDir, "jobs"),
 		"StructName":  structName,
-		"TaskName":    str.Of(structName).ChopEnd("Job").ToLower().String(),
+		"TaskName":    str.Of(structName).TrimSuffix("Job").ToLower().String(),
 		"ModulePath":  moduleName,
 		"QueueName":   c.queueName(),
 	})
@@ -262,11 +262,11 @@ func insertJobHandlerRegistration(lines []string, handlerLine string) ([]string,
 
 // ensureJobSuffix appends Job when name does not already use that suffix.
 func ensureJobSuffix(name string) string {
-	clean := str.Of(name).TrimSpace()
+	clean := str.Of(name).Trim()
 	if clean.IsBlank() {
 		return "ExampleJob"
 	}
-	if clean.EndsWith("Job") {
+	if clean.HasSuffix("Job") {
 		return clean.String()
 	}
 	return clean.String() + "Job"
@@ -279,7 +279,7 @@ func isDefaultJobOutputDir(outputDir string) bool {
 
 // queueName returns the queue name stamped into generated dispatch helpers.
 func (c *JobCmd) queueName() string {
-	queueName := str.Of(c.Queue).TrimSpace()
+	queueName := str.Of(c.Queue).Trim()
 	if queueName.IsBlank() {
 		return "default"
 	}

@@ -8,9 +8,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
-{{- if .ProjectComponents.Events }}
-	"github.com/goforj/str"
-{{- end }}
+	"github.com/goforj/str/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1154,7 +1152,7 @@ func aboutStorageDetails(name string) []AboutField {
 // aboutEventDetails describes an Events bus without returning secret values.
 func aboutEventDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("EVENTS", name)
-	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", "inproc")).Trim().ToLower().String()
 	if driver == "" {
 		driver = "inproc"
 	}
@@ -1255,7 +1253,7 @@ func aboutMaskDSN(dsn string) string {
 }
 
 func aboutMailDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
+	driver := str.Of(v).ToLower().Trim().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -1317,7 +1315,7 @@ func aboutAppendIfTrue(details []AboutField, key string, value string) []AboutFi
 }
 
 func aboutTruthyField(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
+	value = str.Of(value).ToLower().Trim().String()
 	switch value {
 	case "", "0", "false", "no", "off":
 		return ""

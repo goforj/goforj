@@ -8,7 +8,7 @@ import (
 	"sort"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // cacheAccessorTemplateData keeps named cache methods and special session handling in one render snapshot.
@@ -61,7 +61,7 @@ var cacheDriverSpecs = map[string]cacheDriverSpec{
 		ImportPath:  "github.com/goforj/cache/driver/rediscache",
 		ConfigType:  "rediscache.Config",
 		Setup: []string{
-			`addr := str.Of(scope.Get("ADDR", "")).TrimSpace().String()`,
+			`addr := str.Of(scope.Get("ADDR", "")).Trim().String()`,
 			`if addr == "" {`,
 			`	addr = fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379"))`,
 			`}`,
@@ -260,7 +260,7 @@ func generateCacheFiles(input generationInput) (int, error) {
 func discoverCacheStoreNames(input generationInput) []string {
 	names := discoverPrimitiveChildNames(input, "CACHE", cacheRootKeys)
 	for i := range names {
-		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
+		names[i] = str.Of(names[i]).Trim().ToLower().String()
 	}
 	sort.Strings(names)
 	return names
@@ -304,7 +304,7 @@ func renderCacheConfig(input generationInput) ([]byte, error) {
 	defaultDriver := effectivePrimitiveDriver(input.environment.Get("CACHE_DRIVER", "memory"), "memory")
 	driverSet[defaultDriver] = struct{}{}
 	for _, child := range names {
-		driver := effectivePrimitiveDriver(input.environment.Get("CACHE_"+str.Of(child).Snake("_").ToUpper().String()+"_DRIVER", ""), "memory")
+		driver := effectivePrimitiveDriver(input.environment.Get("CACHE_"+str.Of(child).Snake().ToUpper().String()+"_DRIVER", ""), "memory")
 		driverSet[driver] = struct{}{}
 	}
 	for _, active := range appPrefixedActiveDrivers(input, "CACHE", "memory", false) {
@@ -363,7 +363,7 @@ package caches
 
 import (
 	"github.com/goforj/cache"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // Default returns the default cache instance derived from CACHE_* configuration.
@@ -405,7 +405,7 @@ func (m *Manager) Instances() []Instance {
 
 // Named returns the generated cache instance for a configured cache name.
 func (m *Manager) Named(name string) *cache.Cache {
-	switch str.Of(name).TrimSpace().ToLower().String() {
+	switch str.Of(name).Trim().ToLower().String() {
 	case "", "default":
 		return m.defaultStore
 {{- range .Names }}
@@ -441,7 +441,7 @@ import (
 	"github.com/goforj/cache/driver/natscache"
 	"github.com/nats-io/nats.go"
 {{- end }}
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 const defaultCacheName = "default"
@@ -631,7 +631,7 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 	}
 
 {{- range .Names }}
-	store{{ .Method }}, err := buildStore("{{ .Store }}", cacheScope.Child(str.Of("{{ .Store }}").Snake("_").ToUpper().String()))
+	store{{ .Method }}, err := buildStore("{{ .Store }}", cacheScope.Child(str.Of("{{ .Store }}").Snake().ToUpper().String()))
 	if err != nil {
 		return nil, err
 	}
@@ -649,7 +649,7 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 // The supported driver cases and imports in this file are derived from
 // CACHE_SUPPORTED_DRIVERS, or from active CACHE_* and CACHE_<NAME>_* values when unset.
 func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
-	driver := str.Of(scope.Get("DRIVER", driverMemory)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverMemory)).Trim().ToLower().String()
 	if driver == "" {
 		driver = driverMemory
 	}
@@ -814,7 +814,7 @@ func cacheRedisTLSConfig(scope env.Scope) *tls.Config {
 
 // cacheCompression preserves invalid values so manager construction can report configuration mistakes.
 func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
-	value := strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none")))
+	value := str.Of(scope.Get("COMPRESSION", "none")).Trim().ToLower().String()
 	switch value {
 	case "", "none":
 		return cachecore.CompressionNone
@@ -880,7 +880,7 @@ func buildNATSStore(name string, scope env.Scope, baseConfig cachecore.BaseConfi
 		if maxValueSize := scope.GetInt("MAX_VALUE_SIZE", "0"); maxValueSize > 0 {
 			kvConfig.MaxValueSize = int32(maxValueSize)
 		}
-		switch strings.ToLower(strings.TrimSpace(scope.Get("STORAGE", ""))) {
+		switch str.Of(scope.Get("STORAGE", "")).Trim().ToLower().String() {
 		case "file":
 			kvConfig.Storage = nats.FileStorage
 		case "memory":
@@ -903,7 +903,7 @@ func cacheNATSBucket(name string) string {
 	if name == "" || name == string(defaultCacheName) {
 		return "CACHE"
 	}
-	value := strings.TrimSpace(str.Of(name).Snake("_").ToUpper().String())
+	value := strings.TrimSpace(str.Of(name).Snake().ToUpper().String())
 	if value == "" {
 		return "CACHE"
 	}

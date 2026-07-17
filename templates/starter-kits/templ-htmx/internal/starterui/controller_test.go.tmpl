@@ -19,6 +19,7 @@ import (
 
 {{- if and .Components.Auth .Components.HasDatabase }}
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str/v2"
 {{- end }}
 	"github.com/goforj/web/webtest"
 {{- if and .Components.Auth .Components.HasDatabase }}
@@ -160,7 +161,7 @@ func newStarterUITestAuthFixture(t *testing.T) starterUITestAuthFixture {
 		appLogger,
 	)
 
-	login := strings.NewReplacer("/", "-", " ", "-").Replace(strings.ToLower(t.Name())) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	login := str.Of(t.Name()).ToLower().ReplaceAll("/", "-").ReplaceAll(" ", "-").String() + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	password := "Admin!123"
 	if _, err := service.Register(t.Context(), auth.RegisterInput{
 		Username:    login,

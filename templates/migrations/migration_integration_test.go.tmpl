@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -30,7 +30,7 @@ func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
 		t.Fatalf("load env: %v", err)
 	}
 
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver == "" {
 		t.Skip("db driver not configured")
 	}
@@ -65,7 +65,7 @@ func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
 	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver == "" {
 		t.Skip("db driver not configured")
 	}
@@ -98,7 +98,7 @@ func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default connection failed: %v", err)
 	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if err := assertTableExists(dbConn, driver, "default_rollback"); err != nil {
 		t.Fatalf("default migration table missing after rollback: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestDriverSpecificMigrationIntegration(t *testing.T) {
 	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver == "" {
 		t.Skip("db driver not configured")
 	}
@@ -227,11 +227,11 @@ func TestMakeMigrationSupportedDriversIntegration(t *testing.T) {
 func configureAnalyticsConnection(t *testing.T, driver string) error {
 	t.Helper()
 
-	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
-	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	host := str.Of(env.Get("DB_HOST", "")).Trim().String()
+	port := str.Of(env.Get("DB_PORT", "")).Trim().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).Trim().String()
 	password := env.Get("DB_PASSWORD", "")
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	if host == "" || port == "" || user == "" || database == "" {
 		t.Skip("db env not configured")
 		return nil
@@ -292,7 +292,7 @@ func ensureMySQLDatabase(host, port, name string) error {
 }
 
 func ensurePostgresDatabase(host, port, user, pass, name string) error {
-	dbName := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	dbName := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	if dbName == "" {
 		dbName = "postgres"
 	}
@@ -489,7 +489,7 @@ func makeMigrationWithEnv(t *testing.T, name, connection string, envOverrides ma
 	if name == "" {
 		t.Fatalf("migration name cannot be empty")
 	}
-	connName := str.Of(connection).TrimSpace().ToLower().String()
+	connName := str.Of(connection).Trim().ToLower().String()
 	if connName == "" {
 		connName = "default"
 	}
@@ -509,7 +509,7 @@ func makeMigrationWithEnv(t *testing.T, name, connection string, envOverrides ma
 	if connName != "default" {
 		migrationsDir = filepath.Join(migrationsDir, connName)
 	}
-	snake := str.Of(name).Snake("_").String()
+	snake := str.Of(name).Snake().String()
 	matches, err := filepath.Glob(filepath.Join(migrationsDir, "*_"+snake+".*.up.sql"))
 	if err != nil {
 		t.Fatalf("glob migration: %v", err)

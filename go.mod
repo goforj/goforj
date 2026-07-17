@@ -26,7 +26,7 @@ require (
 	github.com/goforj/storage v0.5.0
 	github.com/goforj/storage/driver/localstorage v0.5.0
 	github.com/goforj/storage/driver/s3storage v0.5.0
-	github.com/goforj/str v1.2.0
+	github.com/goforj/str/v2 v2.0.1
 	github.com/goforj/web v0.6.0
 	github.com/goforj/wire v1.2.0
 	github.com/gorilla/websocket v1.5.3
@@ -100,6 +100,7 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/goforj/godump v1.9.0 // indirect
 	github.com/goforj/storage/storagecore v0.5.0 // indirect
+	github.com/goforj/str v1.2.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect

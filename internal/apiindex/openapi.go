@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/web/webindex"
 )
@@ -167,7 +169,7 @@ func projectSourcePath(root string, sourcePath string) (string, error) {
 
 // generatedAuthImportPath resolves the one project-owned package whose Service middleware GoForj is authorized to document as generated cookie auth.
 func generatedAuthImportPath(root string, configuredModule string) (string, error) {
-	configuredModule = strings.TrimSuffix(strings.TrimSpace(configuredModule), "/")
+	configuredModule = str.Of(configuredModule).Trim().TrimSuffix("/").String()
 	activeModule := ""
 	content, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -181,7 +183,7 @@ func generatedAuthImportPath(root string, configuredModule string) (string, erro
 				break
 			}
 		}
-		activeModule = strings.TrimSuffix(strings.TrimSpace(activeModule), "/")
+		activeModule = str.Of(activeModule).Trim().TrimSuffix("/").String()
 	}
 	if configuredModule != "" && activeModule != "" && configuredModule != activeModule {
 		return "", fmt.Errorf("project module_name %q does not match active go.mod module %q", configuredModule, activeModule)

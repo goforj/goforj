@@ -4,7 +4,8 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"strings"
+
+	"github.com/goforj/str/v2"
 )
 
 // Source identifies the current app-owned execution surface.
@@ -26,7 +27,7 @@ func (s Source) String() string {
 
 // NormalizeSource coerces a source string into its normalized form.
 func NormalizeSource(value string) Source {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	switch str.Of(value).Trim().ToLower().String() {
 	case string(SourceHTTP):
 		return SourceHTTP
 	case string(SourceJobs):
@@ -42,7 +43,7 @@ func NormalizeSource(value string) Source {
 	case string(SourceApp):
 		return SourceApp
 	default:
-		return Source(strings.ToLower(strings.TrimSpace(value)))
+		return Source(str.Of(value).Trim().ToLower().String())
 	}
 }
 

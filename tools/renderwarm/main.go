@@ -22,7 +22,7 @@ import (
 	_ "github.com/goforj/queue"
 	_ "github.com/goforj/scheduler/v2"
 	_ "github.com/goforj/storage"
-	_ "github.com/goforj/str"
+	_ "github.com/goforj/str/v2"
 	_ "github.com/goforj/web"
 	_ "github.com/goforj/web/adapter/echoweb"
 	_ "github.com/goforj/web/webmiddleware"

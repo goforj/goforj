@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
@@ -224,9 +226,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	// Migrate legacy scheduler command names in preserved app-owned schedules.
 	appSchedulesPath := filepath.Join("app", "schedules.go")
 	if data, err := p.workspace.readFile(appSchedulesPath); err == nil {
-		updated := syncLegacyScheduleInjectorPackage(string(data))
-		updated = strings.ReplaceAll(updated, "demo:push-monitor-trigger", "monitor:push-test-trigger")
-		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
+		updated := str.Of(syncLegacyScheduleInjectorPackage(string(data))).
+			ReplaceAll("demo:push-monitor-trigger", "monitor:push-test-trigger").
+			ReplaceAll("push-monitor-trigger", "monitor:push-test-trigger").
+			String()
 		if updated != string(data) {
 			formatted, err := format.Source([]byte(updated))
 			if err != nil {
@@ -398,13 +401,14 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 
 // syncAppOwnedWireSetNames updates preserved app-owned injectors to the current set naming contract.
 func syncAppOwnedWireSetNames(content string) string {
-	updated := strings.ReplaceAll(content, "cmdAppSet", "appCommandSet")
-	updated = strings.ReplaceAll(updated, "httpAppControllerSet", "appHttpControllerSet")
-	updated = strings.ReplaceAll(updated, "appControllerSet", "appHttpControllerSet")
-	updated = strings.ReplaceAll(updated, "httpControllerSet provides all HTTP route controllers.", "appHttpControllerSet provides all HTTP route controllers.")
-	updated = strings.ReplaceAll(updated, "jobAppSet", "appJobSet")
-	updated = strings.ReplaceAll(updated, "schedulerScheduleSet", "appScheduleSet")
-	return updated
+	return str.Of(content).
+		ReplaceAll("cmdAppSet", "appCommandSet").
+		ReplaceAll("httpAppControllerSet", "appHttpControllerSet").
+		ReplaceAll("appControllerSet", "appHttpControllerSet").
+		ReplaceAll("httpControllerSet provides all HTTP route controllers.", "appHttpControllerSet provides all HTTP route controllers.").
+		ReplaceAll("jobAppSet", "appJobSet").
+		ReplaceAll("schedulerScheduleSet", "appScheduleSet").
+		String()
 }
 
 // syncDemoAppJobInjector repairs early app job injectors that omitted demo job providers.
@@ -518,13 +522,14 @@ func preseedDemoDefaults(
 
 // syncLegacyScheduleInjectorPackage updates preserved schedule wiring after the scheduler package rename.
 func syncLegacyScheduleInjectorPackage(content string) string {
-	updated := strings.ReplaceAll(content, "/internal/scheduler", "/internal/schedules")
-	updated = strings.ReplaceAll(updated, "scheduler.AppSchedules", "schedules.AppSchedules")
-	updated = strings.ReplaceAll(updated, "scheduler.NewAppSchedules", "schedules.NewAppSchedules")
-	updated = strings.ReplaceAll(updated, "scheduler.ScheduleRegistry", "schedules.ScheduleRegistry")
-	updated = strings.ReplaceAll(updated, "scheduler.RegisterRecurring", "schedules.RegisterRecurring")
-	updated = strings.ReplaceAll(updated, "*scheduler.Scheduler", "*schedules.Scheduler")
-	return updated
+	return str.Of(content).
+		ReplaceAll("/internal/scheduler", "/internal/schedules").
+		ReplaceAll("scheduler.AppSchedules", "schedules.AppSchedules").
+		ReplaceAll("scheduler.NewAppSchedules", "schedules.NewAppSchedules").
+		ReplaceAll("scheduler.ScheduleRegistry", "schedules.ScheduleRegistry").
+		ReplaceAll("scheduler.RegisterRecurring", "schedules.RegisterRecurring").
+		ReplaceAll("*scheduler.Scheduler", "*schedules.Scheduler").
+		String()
 }
 
 // syncLegacyScheduleInjector updates preserved app schedule wiring after schedule registration moved to app/.
@@ -614,9 +619,10 @@ func syncLegacyAppServiceInjector(content string, moduleName string, appImportPa
 
 // removeFrameworkMetricsProviderFromAppServiceInjector moves metrics manager ownership back to framework-managed wiring.
 func removeFrameworkMetricsProviderFromAppServiceInjector(content string, moduleName string) string {
-	updated := strings.Replace(content, "\tmetrics.NewManager,\n", "", 1)
-	updated = strings.Replace(updated, "\t"+strconv.Quote(moduleName+"/internal/metrics")+"\n", "", 1)
-	return updated
+	return str.Of(content).
+		ReplaceFirst("\tmetrics.NewManager,\n", "").
+		ReplaceFirst("\t"+strconv.Quote(moduleName+"/internal/metrics")+"\n", "").
+		String()
 }
 
 // syncLegacyAppLifecycleRegistry updates preserved app lifecycle registration imports after the runtime package rename.
@@ -757,13 +763,14 @@ func dedupeWireSetProviders(content string, setName string) string {
 
 // syncCommandsName migrates preserved app command registration away from the legacy AppCommands name.
 func syncCommandsName(content string) string {
-	updated := strings.ReplaceAll(content, "// AppCommands wires application-specific commands into the CLI.", "// Commands wires application-specific commands into the CLI.")
-	updated = strings.ReplaceAll(updated, "type AppCommands struct {", "type Commands struct {")
-	updated = strings.ReplaceAll(updated, "// NewAppCommands creates a new AppCommands instance with the given commands.", "// NewCommands creates a new Commands instance with the given commands.")
-	updated = strings.ReplaceAll(updated, "func NewAppCommands(", "func NewCommands(")
-	updated = strings.ReplaceAll(updated, ") *AppCommands {", ") *Commands {")
-	updated = strings.ReplaceAll(updated, "return &AppCommands{", "return &Commands{")
-	return updated
+	return str.Of(content).
+		ReplaceAll("// AppCommands wires application-specific commands into the CLI.", "// Commands wires application-specific commands into the CLI.").
+		ReplaceAll("type AppCommands struct {", "type Commands struct {").
+		ReplaceAll("// NewAppCommands creates a new AppCommands instance with the given commands.", "// NewCommands creates a new Commands instance with the given commands.").
+		ReplaceAll("func NewAppCommands(", "func NewCommands(").
+		ReplaceAll(") *AppCommands {", ") *Commands {").
+		ReplaceAll("return &AppCommands{", "return &Commands{").
+		String()
 }
 
 // syncHealthCommandWire keeps preserved command providers aligned with HTTP component availability.

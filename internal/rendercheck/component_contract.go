@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/goforj/project"
 )
 
@@ -366,7 +368,7 @@ func renderedDirectModuleRequirements(path string) (map[string]bool, error) {
 			inRequireBlock = false
 			continue
 		case strings.HasPrefix(line, "require "):
-			line = strings.TrimSpace(strings.TrimPrefix(line, "require "))
+			line = str.Of(line).TrimPrefix("require ").Trim().String()
 		case !inRequireBlock:
 			continue
 		}

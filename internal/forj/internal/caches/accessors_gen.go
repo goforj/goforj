@@ -8,7 +8,7 @@ package caches
 
 import (
 	"github.com/goforj/cache"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // Default returns the default cache instance derived from CACHE_* configuration.
@@ -28,7 +28,7 @@ func (m *Manager) Names() []string {
 
 // Named returns the generated cache instance for a configured cache name.
 func (m *Manager) Named(name string) *cache.Cache {
-	switch str.Of(name).TrimSpace().ToLower().String() {
+	switch str.Of(name).Trim().ToLower().String() {
 	case "", "default":
 		return m.defaultStore
 	default:

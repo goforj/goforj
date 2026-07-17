@@ -3,7 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
+
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/runtime"
 )
@@ -85,5 +86,10 @@ func storageConfigKeys(name string) []string {
 
 // resourceEnvName converts a resource name to the generated environment convention.
 func resourceEnvName(name string) string {
-	return strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+	return str.Of(name).
+		ReplaceAll("-", "_").
+		ReplaceAll(" ", "_").
+		ReplaceAll(".", "_").
+		ToUpper().
+		String()
 }

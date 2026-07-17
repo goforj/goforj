@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -77,7 +77,7 @@ func (j *MonitorCheckJob) QueueWithDelay(ctx context.Context, monitorID string, 
 
 // QueueWithDelayUnique enqueues a monitor check with delay and uniqueness controls.
 func (j *MonitorCheckJob) QueueWithDelayUnique(ctx context.Context, monitorID string, delay time.Duration, uniqueTTL time.Duration) error {
-	trimmed := str.Of(monitorID).TrimSpace().String()
+	trimmed := str.Of(monitorID).Trim().String()
 	if trimmed == "" {
 		return nil
 	}
@@ -117,7 +117,7 @@ func (j *MonitorCheckJob) QueueDue(ctx context.Context) error {
 	monitorIDs := make([]string, 0, len(monitors))
 	for _, monitor := range monitors {
 		monitorID := monitorIDString(&monitor)
-		monitorType := str.Of(monitor.MonitorType).TrimSpace().ToLower().String()
+		monitorType := str.Of(monitor.MonitorType).Trim().ToLower().String()
 		if monitorID == "" || monitorType == "push" {
 			continue
 		}
@@ -162,7 +162,7 @@ func (j *MonitorCheckJob) QueueNow(ctx context.Context, monitorID string) (int, 
 	enqueued := 0
 	monitorIDs := make([]string, 0, len(monitors))
 	for _, monitor := range monitors {
-		monitorType := str.Of(monitor.MonitorType).TrimSpace().ToLower().String()
+		monitorType := str.Of(monitor.MonitorType).Trim().ToLower().String()
 		monitorID := monitorIDString(&monitor)
 		if monitorID == "" || monitorType == "push" {
 			continue
@@ -226,7 +226,7 @@ func (j *MonitorCheckJob) RunScheduledPushTrigger(ctx context.Context) error {
 }
 
 func (j *MonitorCheckJob) pollTargets(ctx context.Context, monitorID string) ([]models.Monitor, error) {
-	trimmed := str.Of(monitorID).TrimSpace().String()
+	trimmed := str.Of(monitorID).Trim().String()
 	if trimmed == "" {
 		monitors, err := j.monitorRepo.WithContext(ctx).EnabledOrderedByName()
 		if err != nil {
@@ -234,7 +234,7 @@ func (j *MonitorCheckJob) pollTargets(ctx context.Context, monitorID string) ([]
 		}
 		filtered := make([]models.Monitor, 0, len(monitors))
 		for i := range monitors {
-			monitorType := str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String()
+			monitorType := str.Of(monitors[i].MonitorType).Trim().ToLower().String()
 			if monitorType == "push" {
 				continue
 			}
@@ -252,7 +252,7 @@ func (j *MonitorCheckJob) pollTargets(ctx context.Context, monitorID string) ([]
 	if model == nil || !model.Enabled {
 		return nil, fmt.Errorf("monitor %s not found or not enabled", trimmed)
 	}
-	monitorType := str.Of(model.MonitorType).TrimSpace().ToLower().String()
+	monitorType := str.Of(model.MonitorType).Trim().ToLower().String()
 	if monitorType == "push" {
 		return nil, fmt.Errorf("monitor %s is push and not pollable", trimmed)
 	}
@@ -270,8 +270,8 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 		return fmt.Errorf("invalid payload: %w", err)
 	}
 	monitorIDs := request.MonitorIDs
-	if len(monitorIDs) == 0 && str.Of(request.MonitorID).TrimSpace().String() != "" {
-		monitorIDs = []string{str.Of(request.MonitorID).TrimSpace().String()}
+	if len(monitorIDs) == 0 && str.Of(request.MonitorID).Trim().String() != "" {
+		monitorIDs = []string{str.Of(request.MonitorID).Trim().String()}
 	}
 	if len(monitorIDs) == 0 {
 		return fmt.Errorf("missing monitor id")
@@ -288,7 +288,7 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 
 // LookupMonitorByID returns a monitor for logging/task diagnostics.
 func (j *MonitorCheckJob) LookupMonitorByID(ctx context.Context, monitorID string) (*models.Monitor, error) {
-	if str.Of(monitorID).TrimSpace().String() == "" {
+	if str.Of(monitorID).Trim().String() == "" {
 		return nil, nil
 	}
 	return j.monitorRepo.WithContext(ctx).ByID(monitorID)
@@ -317,7 +317,7 @@ func (j *MonitorCheckJob) pollBatchSize(ctx context.Context) int {
 	size := defaultMonitorPollBatchSize
 	if j.appSettingRepo != nil {
 		if raw, err := j.appSettingRepo.GetValue(ctx, appsettings.SettingMonitoringPollBatchSize, "100"); err == nil {
-			if parsed, parseErr := strconv.Atoi(str.Of(raw).TrimSpace().String()); parseErr == nil && parsed > 0 {
+			if parsed, parseErr := strconv.Atoi(str.Of(raw).Trim().String()); parseErr == nil && parsed > 0 {
 				size = parsed
 			}
 		}
@@ -338,7 +338,7 @@ func uniqueMonitorIDStrings(input []string) []string {
 	seen := make(map[string]struct{}, len(input))
 	out := make([]string, 0, len(input))
 	for _, raw := range input {
-		id := str.Of(raw).TrimSpace().String()
+		id := str.Of(raw).Trim().String()
 		if id == "" {
 			continue
 		}

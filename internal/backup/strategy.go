@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	_ "github.com/glebarez/go-sqlite"
 )
 
@@ -35,7 +37,7 @@ type Strategy interface {
 
 // NativeStrategy returns the native strategy for a supported database driver.
 func NativeStrategy(driver string) (Strategy, error) {
-	switch strings.ToLower(strings.TrimSpace(driver)) {
+	switch str.Of(driver).Trim().ToLower().String() {
 	case "sqlite", "sqlite3":
 		return sqliteStrategy{}, nil
 	case "mysql", "mariadb":

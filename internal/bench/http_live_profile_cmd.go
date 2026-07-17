@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testexec"
@@ -543,7 +545,7 @@ func main() {
 
 // rawHTTPHealthHandler keeps standard-library response semantics aligned with the selected health mode.
 func (cmd *HTTPLiveProfileCmd) rawHTTPHealthHandler() string {
-	switch strings.ToLower(strings.TrimSpace(cmd.HealthMode)) {
+	switch str.Of(cmd.HealthMode).Trim().ToLower().String() {
 	case "text":
 		return "\t\tw.Header().Set(\"Content-Type\", \"text/plain; charset=utf-8\")\n\t\tw.WriteHeader(http.StatusOK)\n\t\t_, _ = w.Write([]byte(\"ok\"))"
 	case "nocontent":
@@ -555,7 +557,7 @@ func (cmd *HTTPLiveProfileCmd) rawHTTPHealthHandler() string {
 
 // echoHTTPHealthHandler keeps Echo response semantics aligned with the selected health mode.
 func (cmd *HTTPLiveProfileCmd) echoHTTPHealthHandler() string {
-	switch strings.ToLower(strings.TrimSpace(cmd.HealthMode)) {
+	switch str.Of(cmd.HealthMode).Trim().ToLower().String() {
 	case "text":
 		return "\t\treturn c.String(http.StatusOK, \"ok\")"
 	case "nocontent":
@@ -598,7 +600,7 @@ func (cmd *HTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
 
 // customizeRenderedHealth rewrites only non-default response shapes while retaining the generated JSON fast path.
 func (cmd *HTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
-	mode := strings.ToLower(strings.TrimSpace(cmd.HealthMode))
+	mode := str.Of(cmd.HealthMode).Trim().ToLower().String()
 	if mode == "json" {
 		return nil
 	}

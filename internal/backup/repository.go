@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/storage"
 )
 
@@ -76,8 +78,7 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 		if entry.IsDir {
 			return nil
 		}
-		relative := strings.TrimPrefix(entry.Path, binding.prefix)
-		relative = strings.TrimPrefix(relative, "/")
+		relative := str.Of(entry.Path).TrimPrefix(binding.prefix).TrimPrefix("/").String()
 		path, err := safeRepositoryExtractPath(destination, relative)
 		if err != nil {
 			return err
@@ -111,9 +112,11 @@ func (r StorageRepository) List(ctx context.Context, prefix string) ([]string, e
 		if entry.IsDir || !strings.HasSuffix(entry.Path, "/manifest.json") {
 			return nil
 		}
-		name := strings.TrimPrefix(entry.Path, root)
-		name = strings.TrimPrefix(name, "/")
-		name = strings.TrimSuffix(name, "/manifest.json")
+		name := str.Of(entry.Path).
+			TrimPrefix(root).
+			TrimPrefix("/").
+			TrimSuffix("/manifest.json").
+			String()
 		if name != "" {
 			names[name] = struct{}{}
 		}
@@ -151,7 +154,7 @@ func (r StorageRepository) bound(ctx context.Context, name string) (repositoryBi
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	prefix := strings.Trim(strings.TrimSpace(r.Prefix), "/")
+	prefix := str.Of(r.Prefix).Trim().TrimChars("/").String()
 	if name != "" {
 		prefix = filepath.ToSlash(filepath.Join(prefix, name))
 	}

@@ -16,7 +16,7 @@ import (
 	"{{.GoModuleName}}/internal/runtime"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // CacheShellCmd opens a shell client for a configured cache store.
@@ -626,7 +626,7 @@ func cacheShellInteractive() bool {
 func cacheShellEnv(name, suffix string) string {
 	scope := env.WithPrefix("CACHE")
 	if name != "" && name != "default" {
-		child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		child := scope.Child(str.Of(name).Snake().ToUpper().String())
 		if value := strings.TrimSpace(child.Get(suffix, "")); value != "" {
 			return value
 		}
@@ -649,7 +649,7 @@ func cacheShellEnv(name, suffix string) string {
 }
 
 func cacheShellBoolEnv(name, suffix string) bool {
-	value := strings.TrimSpace(strings.ToLower(cacheShellEnv(name, suffix)))
+	value := str.Of(cacheShellEnv(name, suffix)).ToLower().Trim().String()
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
@@ -657,11 +657,11 @@ func cacheShellEnvKey(name, suffix string) string {
 	if name == "" || name == "default" {
 		return "CACHE_" + suffix
 	}
-	return "CACHE_" + str.Of(name).Snake("_").ToUpper().String() + "_" + suffix
+	return "CACHE_" + str.Of(name).Snake().ToUpper().String() + "_" + suffix
 }
 
 func normalizeCacheShellStoreName(name string) string {
-	value := strings.TrimSpace(strings.ToLower(name))
+	value := str.Of(name).ToLower().Trim().String()
 	if value == "" {
 		return "default"
 	}

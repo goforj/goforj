@@ -96,7 +96,7 @@ func TestGenerateMailFilesSupportsDefaultAndNamedMailers(t *testing.T) {
 	source = string(managerGen)
 	for _, snippet := range []string{
 		`transactional *goforjmail.Mailer`,
-		`scopeTransactional := env.WithPrefix("MAIL").Child(str.Of("transactional").Snake("_").ToUpper().String())`,
+		`scopeTransactional := env.WithPrefix("MAIL").Child(str.Of("transactional").Snake().ToUpper().String())`,
 		`manager.transactional = goforjmail.New(`,
 	} {
 		if !strings.Contains(source, snippet) {
@@ -119,7 +119,7 @@ func TestGenerateMailFilesSupportsObserverWrapping(t *testing.T) {
 		[]string{
 			"github.com/goforj/env/v2",
 			"github.com/goforj/mail",
-			"github.com/goforj/str",
+			"github.com/goforj/str/v2",
 		},
 		nil,
 		mailLocalReplaces(t),
@@ -232,7 +232,7 @@ func TestGenerateMailFilesChainsMultipleObservers(t *testing.T) {
 		[]string{
 			"github.com/goforj/env/v2",
 			"github.com/goforj/mail",
-			"github.com/goforj/str",
+			"github.com/goforj/str/v2",
 		},
 		nil,
 		mailLocalReplaces(t),

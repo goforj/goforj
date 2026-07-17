@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/goforj/cache"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/database"
 )
@@ -215,7 +216,7 @@ func (r *UserRepo) ByLogin(login string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	normalized := strings.ToLower(strings.TrimSpace(login))
+	normalized := str.Of(login).Trim().ToLower().String()
 	if normalized == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -235,7 +236,7 @@ func (r *UserRepo) ByEmail(email string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	normalized := str.Of(email).Trim().ToLower().String()
 	if normalized == "" {
 		return nil, gorm.ErrRecordNotFound
 	}

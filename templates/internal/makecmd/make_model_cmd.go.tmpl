@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/goforj/null/v6"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -176,7 +176,7 @@ func (c *ModelCmd) remove() error {
 		return fmt.Errorf("model table cannot be empty")
 	}
 
-	outputPath := filepath.Join(c.outputDir(), str.Of(modelName).Snake("_").String()+".go")
+	outputPath := filepath.Join(c.outputDir(), str.Of(modelName).Snake().String()+".go")
 	if err := removeGeneratedFile(outputPath, c.DryRun); err != nil {
 		return err
 	}
@@ -184,7 +184,7 @@ func (c *ModelCmd) remove() error {
 }
 
 func (c *ModelCmd) modelName() string {
-	table := str.Of(c.Table).TrimSpace().String()
+	table := str.Of(c.Table).Trim().String()
 	if table == "" {
 		return ""
 	}
@@ -240,7 +240,7 @@ func (c *ModelCmd) run() (bool, string, error) {
 		return false, "", err
 	}
 
-	filename := filepath.Join(outputDir, str.Of(def.ModelName).Snake("_").String()+".go")
+	filename := filepath.Join(outputDir, str.Of(def.ModelName).Snake().String()+".go")
 	_, statErr := os.Stat(filename)
 	isUpdate := statErr == nil
 	if isUpdate {
@@ -291,15 +291,15 @@ func (c *ModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) 
 			if len(parts) != 2 {
 				return nil, fmt.Errorf("invalid relationship line %q", line)
 			}
-			relType := str.Of(parts[0]).TrimSpace().String()
-			segments := strings.SplitN(str.Of(parts[1]).TrimSpace().String(), relationshipViaSeparator, 2)
-			arrow := str.Of(segments[0]).TrimSpace().String()
+			relType := str.Of(parts[0]).Trim().String()
+			segments := strings.SplitN(str.Of(parts[1]).Trim().String(), relationshipViaSeparator, 2)
+			arrow := str.Of(segments[0]).Trim().String()
 			arrowParts := strings.SplitN(arrow, relationshipArrowSeparator, 2)
 			if len(arrowParts) != 2 {
 				return nil, fmt.Errorf("invalid relationship arrow %q", line)
 			}
-			localKey := str.Of(arrowParts[0]).TrimSpace().String()
-			rightTokens := strings.Fields(str.Of(arrowParts[1]).TrimSpace().String())
+			localKey := str.Of(arrowParts[0]).Trim().String()
+			rightTokens := strings.Fields(str.Of(arrowParts[1]).Trim().String())
 			if len(rightTokens) == 0 {
 				return nil, fmt.Errorf("invalid relationship target %q", line)
 			}
@@ -310,17 +310,17 @@ func (c *ModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) 
 			rel := Relationship{
 				Type:        relType,
 				LocalKey:    localKey,
-				RemoteTable: str.Of(targetParts[0]).TrimSpace().String(),
-				RemoteKey:   str.Of(targetParts[1]).TrimSpace().String(),
+				RemoteTable: str.Of(targetParts[0]).Trim().String(),
+				RemoteKey:   str.Of(targetParts[1]).Trim().String(),
 			}
 			if relType == relationshipTypePoly {
 				idTypeParts := strings.Split(localKey, ",")
 				if len(idTypeParts) != 2 {
 					return nil, fmt.Errorf("invalid polymorphic keys %q", line)
 				}
-				rel.PolyIDKey = str.Of(idTypeParts[0]).TrimSpace().String()
-				rel.PolyTypeKey = str.Of(idTypeParts[1]).TrimSpace().String()
-				rel.PolyValue = str.Of(rel.RemoteTable).TrimSpace().String()
+				rel.PolyIDKey = str.Of(idTypeParts[0]).Trim().String()
+				rel.PolyTypeKey = str.Of(idTypeParts[1]).Trim().String()
+				rel.PolyValue = str.Of(rel.RemoteTable).Trim().String()
 				if len(rightTokens) > 1 {
 					for i := 1; i < len(rightTokens); i++ {
 						if rightTokens[i] == "as" && i+1 < len(rightTokens) {
@@ -329,7 +329,7 @@ func (c *ModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) 
 							continue
 						}
 						if strings.HasPrefix(rightTokens[i], "value=") {
-							rel.PolyValue = str.Of(rightTokens[i]).ChopStart("value=").TrimSpace().String()
+							rel.PolyValue = str.Of(rightTokens[i]).TrimPrefix("value=").Trim().String()
 						}
 					}
 				}
@@ -338,15 +338,15 @@ func (c *ModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) 
 				return nil, fmt.Errorf("missing join table in relationship %q", line)
 			}
 			if len(segments) == 2 {
-				viaParts := strings.Split(str.Of(segments[1]).TrimSpace().String(), relationshipKeySeparator)
+				viaParts := strings.Split(str.Of(segments[1]).Trim().String(), relationshipKeySeparator)
 				if len(viaParts) < 2 {
 					return nil, fmt.Errorf("invalid join clause %q", line)
 				}
 				if len(viaParts) >= 2 {
-					rel.JoinTable = str.Of(viaParts[0]).TrimSpace().String()
-					rel.JoinLocalKey = str.Of(viaParts[1]).TrimSpace().String()
+					rel.JoinTable = str.Of(viaParts[0]).Trim().String()
+					rel.JoinLocalKey = str.Of(viaParts[1]).Trim().String()
 					if len(viaParts) >= 3 {
-						rel.JoinRemoteKey = str.Of(viaParts[2]).TrimSpace().String()
+						rel.JoinRemoteKey = str.Of(viaParts[2]).Trim().String()
 					}
 				}
 			}
@@ -522,11 +522,11 @@ func sqliteTableColumnNames(db *sql.DB, table string) ([]string, error) {
 
 // sqliteDataType normalizes the SQLite column type to a base name.
 func sqliteDataType(typeName string) string {
-	base := str.Of(typeName).Before("(").TrimSpace().String()
+	base := str.Of(typeName).Before("(").Trim().String()
 	if base == "" {
 		base = typeName
 	}
-	return str.Of(base).TrimSpace().ToLower().String()
+	return str.Of(base).Trim().ToLower().String()
 }
 
 // buildModelDefinition constructs fields, tags, and relationships for a model.
@@ -626,7 +626,7 @@ func (c *ModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relM
 			tag := ""
 			if rel.Type == relationshipTypeManyToMany {
 				tag = fmt.Sprintf("gorm:\"many2many:%s;joinForeignKey:%s;joinReferences:%s;foreignKey:%s;references:%s\" json:\"%s\"",
-					joinTable, joinLocalField, joinRemoteField, foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String())
+					joinTable, joinLocalField, joinRemoteField, foreignKeyField, referenceField, str.Of(fieldName).Snake().String())
 			} else if rel.Type == relationshipTypePoly {
 				polyName := rel.PolyName
 				if polyName == "" {
@@ -636,14 +636,14 @@ func (c *ModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relM
 				polyIDField := str.Of(rel.PolyIDKey).Pascal().String()
 				if rel.PolyValue != "" {
 					tag = fmt.Sprintf("gorm:\"polymorphic:%s;polymorphicValue:%s;polymorphicType:%s;polymorphicId:%s\" json:\"%s\"",
-						polyName, rel.PolyValue, polyTypeField, polyIDField, str.Of(fieldName).Snake("_").String())
+						polyName, rel.PolyValue, polyTypeField, polyIDField, str.Of(fieldName).Snake().String())
 				} else {
 					tag = fmt.Sprintf("gorm:\"polymorphic:%s;polymorphicType:%s;polymorphicId:%s\" json:\"%s\"",
-						polyName, polyTypeField, polyIDField, str.Of(fieldName).Snake("_").String())
+						polyName, polyTypeField, polyIDField, str.Of(fieldName).Snake().String())
 				}
 			} else {
 				tag = fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
-					foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String())
+					foreignKeyField, referenceField, str.Of(fieldName).Snake().String())
 			}
 			fields = append(fields, FieldDefinition{
 				Name: fieldName,
@@ -734,11 +734,11 @@ func parseFieldSelectors(values []string) map[string]bool {
 
 // normalizeSelector converts a field selector to a canonical form.
 func normalizeSelector(value string) string {
-	trimmed := str.Of(value).TrimSpace().String()
+	trimmed := str.Of(value).Trim().String()
 	if trimmed == "" {
 		return ""
 	}
-	return str.Of(trimmed).Snake("_").ToLower().String()
+	return str.Of(trimmed).Snake().ToLower().String()
 }
 
 // buildForjTag renders the forj tag for directives.
@@ -1191,9 +1191,9 @@ func extractColumnTagFromString(tag string) string {
 	}
 	parts := strings.Split(gormTag, ";")
 	for _, part := range parts {
-		part = str.Of(part).TrimSpace().String()
-		if str.Of(part).StartsWith("column:") {
-			return str.Of(part).ChopStart("column:").TrimSpace().String()
+		part = str.Of(part).Trim().String()
+		if str.Of(part).HasPrefix("column:") {
+			return str.Of(part).TrimPrefix("column:").Trim().String()
 		}
 	}
 	return ""
@@ -1211,7 +1211,7 @@ func updateForjTag(existingLiteral, forjValue string) (string, bool) {
 		return "", false
 	}
 	clean := removeTagKey(raw, "forj")
-	if str.Of(clean).TrimSpace().IsBlank() {
+	if str.Of(clean).Trim().IsBlank() {
 		return fmt.Sprintf("forj:%q", forjValue), true
 	}
 	return clean + " " + fmt.Sprintf("forj:%q", forjValue), true
@@ -1351,13 +1351,13 @@ func disambiguateRelationshipFieldName(rel Relationship, fallback string) string
 		return fallback
 	}
 	if rel.Type == relationshipTypeOneToMany {
-		remoteKey := str.Of(rel.RemoteKey).ChopEnd("_id").Pascal().String()
+		remoteKey := str.Of(rel.RemoteKey).TrimSuffix("_id").Pascal().String()
 		if remoteKey != "" {
 			return remoteKey
 		}
 		return fallback
 	}
-	localKey := str.Of(rel.LocalKey).ChopEnd("_id").Pascal().String()
+	localKey := str.Of(rel.LocalKey).TrimSuffix("_id").Pascal().String()
 	if localKey != "" {
 		return localKey
 	}
@@ -1726,23 +1726,23 @@ func renderRepositorySetFile(imports map[string]string, providers []string, incl
 
 // outputDir resolves the output directory for the generated model.
 func (c *ModelCmd) outputDir() string {
-	pkg := str.Of(c.Package).TrimSpace().String()
+	pkg := str.Of(c.Package).Trim().String()
 	if str.Of(pkg).IsEmpty() {
 		return c.Output
 	}
 
-	pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
+	pkg = str.Of(pkg).TrimChars("/").TrimPrefix(internalPackagePrefix + "/").String()
 	return filepath.Join(append([]string{internalPackagePrefix}, generatedPackagePathPartsFromPath(pkg)...)...)
 }
 
 // packageName resolves the package name for the generated model.
 func (c *ModelCmd) packageName() string {
-	pkg := str.Of(c.Package).TrimSpace().String()
+	pkg := str.Of(c.Package).Trim().String()
 	if str.Of(pkg).IsEmpty() {
 		return defaultModelPackage
 	}
 
-	pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
+	pkg = str.Of(pkg).TrimChars("/").TrimPrefix(internalPackagePrefix + "/").String()
 	parts := generatedPackagePathPartsFromPath(pkg)
 	if len(parts) == 0 {
 		return defaultModelPackage
@@ -1757,11 +1757,11 @@ func (c *ModelCmd) repositoryImportPath() (string, error) {
 		return "", err
 	}
 
-	pkg := str.Of(c.Package).TrimSpace().String()
+	pkg := str.Of(c.Package).Trim().String()
 	if str.Of(pkg).IsEmpty() {
 		pkg = defaultModelPackage
 	} else {
-		pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
+		pkg = str.Of(pkg).TrimChars("/").TrimPrefix(internalPackagePrefix + "/").String()
 		parts := generatedPackagePathPartsFromPath(pkg)
 		if len(parts) == 0 {
 			pkg = defaultModelPackage
@@ -1789,8 +1789,8 @@ func (c *ModelCmd) moduleName() (string, error) {
 	}
 
 	for _, line := range strings.Split(string(data), "\n") {
-		if str.Of(line).StartsWith(moduleLinePrefix) {
-			return str.Of(line).ChopStart(moduleLinePrefix).TrimSpace().String(), nil
+		if str.Of(line).HasPrefix(moduleLinePrefix) {
+			return str.Of(line).TrimPrefix(moduleLinePrefix).Trim().String(), nil
 		}
 	}
 
@@ -1939,7 +1939,7 @@ func inferJoinRemoteKey(joinCols map[string]bool, joinLocalKey, remoteTable stri
 	if len(joinCols) == 0 {
 		return "", fmt.Errorf("join table has no columns")
 	}
-	singular := str.Of(remoteTable).Singular().Snake("_").String()
+	singular := str.Of(remoteTable).Singular().Snake().String()
 	preferred := singular + "_id"
 	if preferred != joinLocalKey && joinCols[preferred] {
 		return preferred, nil
@@ -1948,7 +1948,7 @@ func inferJoinRemoteKey(joinCols map[string]bool, joinLocalKey, remoteTable stri
 		if col == joinLocalKey {
 			continue
 		}
-		if str.Of(col).EndsWith("_id") {
+		if str.Of(col).HasSuffix("_id") {
 			return col, nil
 		}
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/goforj/str/v2"
 )
 
 // SQLDialect contains only the SQL syntax needed by portable row transfer.
@@ -295,7 +297,7 @@ func compatibleSQLTypes(source string, target string) bool {
 
 // canonicalSQLType maps database type names into the portable type families.
 func canonicalSQLType(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
+	value = str.Of(value).Trim().ToLower().String()
 	switch {
 	case strings.Contains(value, "bool"):
 		return "boolean"

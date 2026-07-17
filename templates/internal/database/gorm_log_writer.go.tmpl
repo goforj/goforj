@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -47,7 +47,7 @@ func (w *gormSingleLineWriter) Write(p []byte) (n int, err error) {
 }
 
 func (w *gormSingleLineWriter) writeLogLine(raw string) {
-	raw = str.Of(raw).TrimSpace().String()
+	raw = str.Of(raw).Trim().String()
 	if raw == "" {
 		return
 	}
@@ -55,7 +55,7 @@ func (w *gormSingleLineWriter) writeLogLine(raw string) {
 	parts := strings.Split(raw, "\n")
 	lines := make([]string, 0, len(parts))
 	for _, part := range parts {
-		line := str.Of(part).TrimSpace().String()
+		line := str.Of(part).Trim().String()
 		if line == "" {
 			continue
 		}
@@ -72,7 +72,7 @@ func (w *gormSingleLineWriter) writeLogLine(raw string) {
 	// [xxms] [rows:n] SELECT ... #/path/file.go:line
 	if len(lines) >= 2 {
 		location := compactLocation(stripANSI(lines[0]))
-		sqlRaw := str.Of(strings.Join(lines[1:], " ")).TrimSpace().String()
+		sqlRaw := str.Of(strings.Join(lines[1:], " ")).Trim().String()
 		sqlPlain := stripANSI(sqlRaw)
 		meta, statement := splitGORMMeta(sqlPlain)
 		if statement != "" && strings.Contains(location, ".go:") {
@@ -108,11 +108,11 @@ func stripANSI(value string) string {
 	if value == "" {
 		return ""
 	}
-	return str.Of(gormANSIPattern.ReplaceAllString(value, "")).TrimSpace().String()
+	return str.Of(gormANSIPattern.ReplaceAllString(value, "")).Trim().String()
 }
 
 func compactLocation(value string) string {
-	value = str.Of(value).TrimSpace().String()
+	value = str.Of(value).Trim().String()
 	if value == "" {
 		return ""
 	}
@@ -121,7 +121,7 @@ func compactLocation(value string) string {
 		return value
 	}
 	pathPart := filepath.ToSlash(value[:idx])
-	line := str.Of(value[idx+1:]).TrimSpace().String()
+	line := str.Of(value[idx+1:]).Trim().String()
 	if line == "" {
 		return value
 	}
@@ -143,7 +143,7 @@ func compactLocation(value string) string {
 }
 
 func splitGORMMeta(value string) (meta string, statement string) {
-	trimmed := str.Of(value).TrimSpace().String()
+	trimmed := str.Of(value).Trim().String()
 	if trimmed == "" {
 		return "", ""
 	}
@@ -151,8 +151,8 @@ func splitGORMMeta(value string) (meta string, statement string) {
 	if match == "" {
 		return "", trimmed
 	}
-	meta = str.Of(match).TrimSpace().String()
-	statement = str.Of(strings.TrimPrefix(trimmed, match)).TrimSpace().String()
+	meta = str.Of(match).Trim().String()
+	statement = str.Of(strings.TrimPrefix(trimmed, match)).Trim().String()
 	if statement == "" {
 		return "", trimmed
 	}
@@ -161,9 +161,9 @@ func splitGORMMeta(value string) (meta string, statement string) {
 
 func sqlProcessMeta() string {
 	sqlProcessMetaOnce.Do(func() {
-		if prefix := str.Of(os.Getenv("APP_LOG_PREFIX")).TrimSpace().String(); prefix != "" {
+		if prefix := str.Of(os.Getenv("APP_LOG_PREFIX")).Trim().String(); prefix != "" {
 			pieces := strings.Split(prefix, "›")
-			sqlProcessMetaName = str.Of(pieces[len(pieces)-1]).TrimSpace().String()
+			sqlProcessMetaName = str.Of(pieces[len(pieces)-1]).Trim().String()
 		}
 	})
 	return sqlProcessMetaName

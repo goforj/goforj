@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // queueAccessorTemplateData carries the named queue methods emitted for one project snapshot.
@@ -272,7 +272,7 @@ func generateQueueFiles(input generationInput) (int, error) {
 func discoverQueueNames(input generationInput) []string {
 	names := discoverPrimitiveChildNames(input, "QUEUE", queueRootKeys)
 	for i := range names {
-		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
+		names[i] = str.Of(names[i]).Trim().ToLower().String()
 	}
 	sort.Strings(names)
 	return names
@@ -314,7 +314,7 @@ func readModuleName(projectDir string) (string, error) {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+			return str.Of(line).TrimPrefix("module ").Trim().String(), nil
 		}
 	}
 	return "", fmt.Errorf("module name not found in go.mod")
@@ -335,7 +335,7 @@ func renderQueueConfig(input generationInput) ([]byte, error) {
 	defaultDriver := effectivePrimitiveDriver(input.environment.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
 	driverSet[defaultDriver] = struct{}{}
 	for _, child := range exactScopedChildNames(input.environment, "QUEUE", queueRootKeys) {
-		driver := str.Of(input.environment.Get("QUEUE_"+child+"_DRIVER", "")).TrimSpace().ToLower().String()
+		driver := str.Of(input.environment.Get("QUEUE_"+child+"_DRIVER", "")).Trim().ToLower().String()
 		if driver != "" {
 			driverSet[driver] = struct{}{}
 		}
@@ -458,7 +458,7 @@ import (
 {{- if .HasOptional }}
 	"github.com/goforj/queue/queueconfig"
 	{{- end }}
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{ .GoModuleName }}/internal/inspects"
 )
 
@@ -713,13 +713,13 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 	}
 
 {{- range .Names }}
-	queue{{ .Method }}, err := buildQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope, observer, logger)
+	queue{{ .Method }}, err := buildQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake().ToUpper().String()), queueScope, observer, logger)
 	if err != nil {
 		return nil, err
 	}
 	manager.{{ .Queue }} = queue{{ .Method }}
-	manager.{{ .Queue }}QueueName = queueDefaultQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
-	manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(str.Of("{{ .Queue }}").Snake("_").ToUpper().String()), queueScope)
+	manager.{{ .Queue }}QueueName = queueDefaultQueue("{{ .Queue }}", queueScope.Child(str.Of("{{ .Queue }}").Snake().ToUpper().String()), queueScope)
+	manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(str.Of("{{ .Queue }}").Snake().ToUpper().String()), queueScope)
 {{- end }}
 
 	return manager, nil
@@ -727,7 +727,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 
 // buildQueue rejects transports outside the artifact manifest before workers or infrastructure are initialized.
 func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queue.Observer, logger queue.Logger) (*queue.Queue, error) {
-	driver := str.Of(queueString(scope, rootScope, "DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
+	driver := str.Of(queueString(scope, rootScope, "DRIVER", driverWorkerpool)).Trim().ToLower().String()
 	if driver == "" {
 		driver = driverWorkerpool
 	}

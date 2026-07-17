@@ -9,7 +9,7 @@ import (
 
 	"{{.GoModuleName}}/internal/console"
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 )
 
@@ -204,7 +204,7 @@ func stripLeadingSQLComments(stmt string) string {
 // parseMigrationPath returns app, connection, migration name, path base, and driver.
 func parseMigrationPath(path string) (string, string, string, string, string) {
 	basePath := strings.TrimSuffix(path, ".up.sql")
-	safe := str.Of(filepath.ToSlash(basePath)).ChopStart("./").String()
+	safe := str.Of(filepath.ToSlash(basePath)).TrimPrefix("./").String()
 	parts := str.Of(safe).Split("/")
 	driver := ""
 	namePart := parts[len(parts)-1]
@@ -227,7 +227,7 @@ func parseMigrationPath(path string) (string, string, string, string, string) {
 
 // normalizeAppName returns the app name used for migration ownership.
 func normalizeAppName(value string) string {
-	name := str.Of(value).TrimSpace().ToLower()
+	name := str.Of(value).Trim().ToLower()
 	if name.IsEmpty() {
 		return "app"
 	}
@@ -236,7 +236,7 @@ func normalizeAppName(value string) string {
 
 // normalizeConnectionName returns a trimmed, lowercase connection name.
 func normalizeConnectionName(value string) string {
-	name := str.Of(value).TrimSpace().ToLower()
+	name := str.Of(value).Trim().ToLower()
 	if name.IsEmpty() {
 		return "default"
 	}
@@ -251,14 +251,14 @@ func databaseConnectionName(app, connection string) string {
 		return connection
 	}
 	if connection == "default" {
-		return str.Of(app).Snake("_").String()
+		return str.Of(app).Snake().String()
 	}
-	return str.Of(app + "_" + connection).Snake("_").String()
+	return str.Of(app + "_" + connection).Snake().String()
 }
 
 // activeMigrationApp resolves the app selected for this command.
 func activeMigrationApp() string {
-	app := str.Of(env.Get("FORJ_APP", "")).TrimSpace()
+	app := str.Of(env.Get("FORJ_APP", "")).Trim()
 	if !app.IsBlank() {
 		return normalizeAppName(app.String())
 	}
@@ -267,7 +267,7 @@ func activeMigrationApp() string {
 
 // unqualifiedForjCommand reports whether the framework delegated an unqualified generated App command.
 func unqualifiedForjCommand() bool {
-	return str.Of(env.Get("FORJ_COMMAND_PREFIX", "")).TrimSpace().String() == "forj"
+	return str.Of(env.Get("FORJ_COMMAND_PREFIX", "")).Trim().String() == "forj"
 }
 
 // activeDriverName resolves the active DB driver from runtime env.
@@ -277,7 +277,7 @@ func activeDriverName() string {
 
 // normalizeDriverName normalizes DB driver aliases to canonical names.
 func normalizeDriverName(value string) string {
-	switch str.Of(value).TrimSpace().ToLower().String() {
+	switch str.Of(value).Trim().ToLower().String() {
 	case "mysql", "mariadb":
 		return "mysql"
 	case "postgres", "postgresql":
@@ -406,7 +406,7 @@ func migrationStreamsForApp(app string) []migrationStream {
 // migrationPlan chooses the streams a migrate command should run for the active invocation.
 func migrationPlan(activeApp, connection string) []migrationStream {
 	activeApp = normalizeAppName(activeApp)
-	connection = str.Of(connection).TrimSpace().ToLower().String()
+	connection = str.Of(connection).Trim().ToLower().String()
 	if connection != "" {
 		return []migrationStream{
 			{

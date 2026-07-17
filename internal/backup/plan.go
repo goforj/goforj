@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str/v2"
 )
 
 // Plan describes the native strategy selected for each configured connection.
@@ -77,7 +78,7 @@ func buildPlanFromEnvironment() (Plan, error) {
 	names := []string{"default"}
 	for _, key := range []string{"DB_CONNECTIONS", "DB_SUPPORTED_CONNECTIONS"} {
 		for _, name := range env.GetSlice(key, "") {
-			name = strings.TrimSpace(strings.ToLower(name))
+			name = str.Of(name).ToLower().Trim().String()
 			if name != "" && name != "default" {
 				names = append(names, name)
 			}
@@ -115,7 +116,12 @@ func storageEnvValue(name string, field string) string {
 	if name == "default" {
 		return storageScope.Get(field, "")
 	}
-	child := strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+	child := str.Of(name).
+		ReplaceAll("-", "_").
+		ReplaceAll(" ", "_").
+		ReplaceAll(".", "_").
+		ToUpper().
+		String()
 	return storageScope.Child(child).Get(field, storageScope.Get(field, ""))
 }
 
@@ -132,7 +138,7 @@ func storageRootValue(name string) string {
 
 // storageStatus classifies storage drivers without claiming unsupported external data is restorable.
 func storageStatus(driver string) string {
-	if strings.ToLower(strings.TrimSpace(driver)) == "local" || strings.ToLower(strings.TrimSpace(driver)) == "s3" {
+	if str.Of(driver).Trim().ToLower().String() == "local" || str.Of(driver).Trim().ToLower().String() == "s3" {
 		return "backupable"
 	}
 	return "external-managed"
@@ -185,13 +191,13 @@ func ConnectionFromEnv(name string) Connection {
 	rootScope := env.WithPrefix("DB")
 	scope := rootScope
 	if name != "" && name != "default" {
-		child := strings.ToUpper(strings.NewReplacer("-", "_", " ", "_").Replace(name))
+		child := str.Of(name).ReplaceAll("-", "_").ReplaceAll(" ", "_").ToUpper().String()
 		scope = rootScope.Child(child)
 	}
 	value := func(suffix string) string {
 		return scope.Get(suffix, rootScope.Get(suffix, ""))
 	}
-	driver := strings.ToLower(strings.TrimSpace(value("DRIVER")))
+	driver := str.Of(value("DRIVER")).Trim().ToLower().String()
 	if driver == "" {
 		driver = "sqlite"
 	}

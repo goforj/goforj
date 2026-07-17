@@ -7,6 +7,21 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestSyncCoreLibrariesIncludesStr verifies every rendered project receives the fluent helper used by shared templates.
+func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
+	want := "github.com/goforj/str/v2@v2.0.1"
+	for _, components := range []project.Components{
+		{},
+		{CLI: true},
+		{WebAPI: true},
+		{Jobs: true},
+	} {
+		if got := SyncCoreLibraries(components); !slices.Contains(got, want) {
+			t.Fatalf("SyncCoreLibraries(%#v) = %#v, want %q", components, got, want)
+		}
+	}
+}
+
 // TestSyncCoreLibrariesGatesCacheModules verifies every Cache module is synchronized only for Cache projects.
 func TestSyncCoreLibrariesGatesCacheModules(t *testing.T) {
 	assertModulesGated(t, project.Components{}, project.Components{Cache: true}, cacheRendererSyncModules)
@@ -69,6 +84,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/events/eventsfake", version: "v0.2.0"},
 		{module: "github.com/goforj/events/eventstest", version: "v0.2.0"},
 		{module: "github.com/goforj/env/v2", version: "v2.5.0"},
+		{module: "github.com/goforj/str/v2", version: "v2.0.1"},
 		{module: "github.com/goforj/storage", version: "v0.5.0"},
 		{module: "github.com/goforj/storage/storagecore", version: "v0.5.0"},
 		{module: "github.com/goforj/storage/storagetest", version: "v0.5.0"},
