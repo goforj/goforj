@@ -3,9 +3,10 @@ package backup
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/goforj/env/v2"
 )
 
 // CreateCmd creates a native database backup set.
@@ -85,8 +86,5 @@ func uploadCompletedBackup(ctx context.Context, dir string) error {
 
 // DefaultPath returns the configured backup path or the framework default.
 func DefaultPath() string {
-	if path := os.Getenv("BACKUP_PATH"); path != "" {
-		return path
-	}
-	return ".goforj/backups"
+	return env.Get("BACKUP_PATH", ".goforj/backups")
 }

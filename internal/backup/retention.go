@@ -2,9 +2,10 @@ package backup
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"time"
+
+	"github.com/goforj/env/v2"
 )
 
 // RetentionPolicy defines completed backup counts by calendar age.
@@ -46,9 +47,10 @@ func (p RetentionPolicy) KeepFor(created, now time.Time, seen map[string]int) bo
 	return true
 }
 
+// retentionValue keeps negative counts invalid while allowing zero to disable a retention bucket.
 func retentionValue(key string, fallback int) int {
-	value, err := strconv.Atoi(os.Getenv(key))
-	if err != nil || value < 0 {
+	value := env.GetInt(key, strconv.Itoa(fallback))
+	if value < 0 {
 		return fallback
 	}
 	return value

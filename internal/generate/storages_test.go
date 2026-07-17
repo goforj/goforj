@@ -100,6 +100,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	defaultRoot := t.TempDir()
 	publicRoot := t.TempDir()
 	avatarsRoot := t.TempDir()
+	archiveLogsRoot := t.TempDir()
 
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", defaultRoot)
@@ -107,6 +108,16 @@ func TestGeneratedAccessors(t *testing.T) {
 	t.Setenv("STORAGE_PUBLIC_ROOT", publicRoot)
 	t.Setenv("STORAGE_AVATARS_DRIVER", "local")
 	t.Setenv("STORAGE_AVATARS_ROOT", avatarsRoot)
+	t.Setenv("STORAGE_ARCHIVE_LOGS_DRIVER", "local")
+	t.Setenv("STORAGE_ARCHIVE_LOGS_ROOT", archiveLogsRoot)
+
+	config, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv returned error: %v", err)
+	}
+	if _, ok := config.Disks["archive_logs"]; !ok {
+		t.Fatalf("LoadConfigFromEnv disks = %#v, want multiword archive_logs disk", config.Disks)
+	}
 
 	mgr, err := NewManager()
 	if err != nil {
