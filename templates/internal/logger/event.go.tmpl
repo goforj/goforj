@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/str"
 	"github.com/rs/zerolog"
 )
 
@@ -366,11 +367,11 @@ func buildEventSignature(level string, msg string, fields []eventField, unordere
 		return ""
 	}
 	parts := make([]string, 0, len(fields)+1)
-	if level = strings.ToLower(strings.TrimSpace(level)); level != "" {
+	if level = str.Of(level).TrimSpace().ToLower().String(); level != "" {
 		parts = append(parts, "level="+level)
 	}
 	for _, field := range fields {
-		key := strings.ToLower(strings.TrimSpace(field.key))
+		key := str.Of(field.key).TrimSpace().ToLower().String()
 		if key == "" {
 			continue
 		}
@@ -526,7 +527,7 @@ func compactLogFields(fields []eventField) string {
 	for _, field := range fields {
 		value := strings.TrimSpace(fmt.Sprint(field.value))
 		if value != "" {
-			key := strings.ToLower(strings.TrimSpace(field.key))
+			key := str.Of(field.key).TrimSpace().ToLower().String()
 			values = append(values, fmt.Sprintf("%s%s%s", colorForCompactField(key, value), value, Reset))
 		}
 	}
@@ -543,7 +544,7 @@ func buildHTTPAccessSignature(uri string, status int, method string, contextFiel
 	buf.WriteString("|method=")
 	buf.WriteString(strings.TrimSpace(method))
 	for _, field := range contextFields {
-		key := strings.ToLower(strings.TrimSpace(field.key))
+		key := str.Of(field.key).TrimSpace().ToLower().String()
 		if key == "" {
 			continue
 		}

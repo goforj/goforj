@@ -68,6 +68,7 @@ var rendererSyncModules = []string{
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
 	"github.com/goforj/web",
+	"github.com/goforj/str",
 	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
 }

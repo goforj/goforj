@@ -3,13 +3,15 @@ package logger
 import (
 	"bytes"
 	"fmt"
-	"github.com/rs/zerolog"
 	"io"
 	"os"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/goforj/str"
+	"github.com/rs/zerolog"
 )
 
 // AppLogger represents a debug logger.
@@ -80,7 +82,7 @@ func loadLogConfig() logConfig {
 	return logConfig{
 		appEnv:     strings.TrimSpace(os.Getenv("APP_ENV")),
 		appMode:    strings.TrimSpace(os.Getenv("APP_MODE")),
-		format:     strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
+		format:     str.Of(os.Getenv(logFormatEnv)).TrimSpace().ToLower().String(),
 		prefix:     strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
 		showCaller: os.Getenv("APP_LOG_CALLER") != "",
 	}
@@ -232,10 +234,7 @@ func getCallerMeta() string {
 			// to QuestHotReloadWatcher
 			split := strings.Split(pkg, "(*")
 			if len(split) > 1 {
-				callerType = split[1]
-				callerType = strings.TrimSuffix(callerType, ")")
-				callerType = strings.TrimSpace(callerType)
-				callerType = strings.ReplaceAll(callerType, ")", "")
+				callerType = str.Of(split[1]).ChopEnd(")").TrimSpace().ReplaceAll(")", "").String()
 
 				// get package
 				callerSplit := strings.Split(split[0], "/")

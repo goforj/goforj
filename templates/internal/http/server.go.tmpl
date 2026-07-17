@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/goforj/web/webmiddleware"
@@ -162,7 +163,7 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 }
 
 func resolveHTTPAccessLogsEnabled() bool {
-	raw := strings.ToLower(strings.TrimSpace(env.Get("HTTP_ACCESS_LOG_ENABLED", "true")))
+	raw := str.Of(env.Get("HTTP_ACCESS_LOG_ENABLED", "true")).TrimSpace().ToLower().String()
 	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
 }
 
@@ -680,7 +681,7 @@ func formatInspectBodyString(body []byte, maxBodyBytes int) string {
 }
 
 func redactHTTPBodyForInspect(contentType string, body []byte) []byte {
-	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	contentType = str.Of(contentType).TrimSpace().ToLower().String()
 	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json") {
 		if !mayContainSensitiveJSONInspectField(body) {
 			return body
@@ -746,7 +747,7 @@ func redactFormBodyForInspect(body []byte) []byte {
 }
 
 func isSensitiveInspectField(key string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized := str.Of(key).TrimSpace().ToLower().String()
 	if normalized == "" {
 		return false
 	}
@@ -861,7 +862,7 @@ func asciiToLower(b byte) byte {
 }
 
 func isInspectableHTTPBody(contentType string, body []byte) bool {
-	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	contentType = str.Of(contentType).TrimSpace().ToLower().String()
 	if contentType == "" {
 		return isLikelyText(body)
 	}

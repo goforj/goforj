@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/testkit"
+	"github.com/goforj/str"
 	"github.com/gorilla/websocket"
 )
 
@@ -286,7 +287,7 @@ func renderedEnvValue(t *testing.T, root, key string) string {
 	for _, line := range strings.Split(readRenderedFile(t, root, ".env"), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			return str.Of(line).ChopStart(prefix).TrimSpace().String()
 		}
 	}
 	return ""

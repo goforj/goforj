@@ -984,8 +984,7 @@ func buildMonitorName(target string, position int) string {
 	if canonicalName, ok := monitorSeedCanonicalNames[target]; ok {
 		return canonicalName
 	}
-	host := strings.TrimPrefix(target, "https://")
-	host = strings.TrimPrefix(host, "http://")
+	host := str.Of(target).ChopStart("https://").ChopStart("http://").String()
 	if host == "" {
 		return fmt.Sprintf("Seed Monitor %d", position)
 	}

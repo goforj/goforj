@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
 	"github.com/goforj/web"
 	"golang.org/x/oauth2"
 )
@@ -64,7 +65,7 @@ func NewOAuthProviders() *OAuthProviders {
 
 // ByName resolves one provider by its stable provider name.
 func (p *OAuthProviders) ByName(name string) (OAuthProvider, bool) {
-	provider, ok := p.providers[strings.TrimSpace(strings.ToLower(name))]
+	provider, ok := p.providers[str.Of(name).ToLower().TrimSpace().String()]
 	return provider, ok
 }
 
@@ -230,7 +231,7 @@ func oauthCallbackURL(r web.Context, provider string) string {
 }
 
 func parseBoolString(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	switch str.Of(value).TrimSpace().ToLower().String() {
 	case "1", "true", "yes", "on":
 		return true
 	default:

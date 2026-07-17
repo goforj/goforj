@@ -649,7 +649,7 @@ func cacheShellEnv(name, suffix string) string {
 }
 
 func cacheShellBoolEnv(name, suffix string) bool {
-	value := strings.TrimSpace(strings.ToLower(cacheShellEnv(name, suffix)))
+	value := str.Of(cacheShellEnv(name, suffix)).ToLower().TrimSpace().String()
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
@@ -661,7 +661,7 @@ func cacheShellEnvKey(name, suffix string) string {
 }
 
 func normalizeCacheShellStoreName(name string) string {
-	value := strings.TrimSpace(strings.ToLower(name))
+	value := str.Of(name).ToLower().TrimSpace().String()
 	if value == "" {
 		return "default"
 	}

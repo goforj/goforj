@@ -185,7 +185,7 @@ func cacheFileDir(name string, scope env.Scope) string {
 
 // cacheCompression preserves invalid values so manager construction can report configuration mistakes.
 func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
-	value := strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none")))
+	value := str.Of(scope.Get("COMPRESSION", "none")).TrimSpace().ToLower().String()
 	switch value {
 	case "", "none":
 		return cachecore.CompressionNone

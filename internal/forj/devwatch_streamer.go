@@ -891,10 +891,10 @@ func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
 		return false
 	}
 	line = line[markerIndex:]
-	payload := strings.TrimSpace(strings.TrimPrefix(line, buildProgressMarker))
+	payload := str.Of(line).ChopStart(buildProgressMarker).TrimSpace().String()
 	switch {
 	case strings.HasPrefix(payload, "step "):
-		parts := strings.Fields(strings.TrimSpace(strings.TrimPrefix(payload, "step ")))
+		parts := strings.Fields(str.Of(payload).ChopStart("step ").TrimSpace().String())
 		if len(parts) < 2 {
 			return true
 		}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/str"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/database"
 )
@@ -97,7 +98,7 @@ func (r *AuthIdentityRepo) ByProviderSubject(provider, subject string) (*AuthIde
 	}
 	var identity AuthIdentity
 	if err := conn.
-		Where("provider = ? AND provider_subject = ?", strings.TrimSpace(strings.ToLower(provider)), strings.TrimSpace(subject)).
+		Where("provider = ? AND provider_subject = ?", str.Of(provider).ToLower().TrimSpace().String(), strings.TrimSpace(subject)).
 		Limit(1).
 		First(&identity).Error; err != nil {
 		return nil, err
@@ -141,9 +142,9 @@ func (r *AuthIdentityRepo) Save(identity *AuthIdentity) error {
 		return err
 	}
 	now := time.Now().UTC()
-	identity.Provider = strings.TrimSpace(strings.ToLower(identity.Provider))
+	identity.Provider = str.Of(identity.Provider).ToLower().TrimSpace().String()
 	identity.ProviderSubject = strings.TrimSpace(identity.ProviderSubject)
-	identity.ProviderEmail = strings.TrimSpace(strings.ToLower(identity.ProviderEmail))
+	identity.ProviderEmail = str.Of(identity.ProviderEmail).ToLower().TrimSpace().String()
 	identity.ProviderUsername = strings.TrimSpace(identity.ProviderUsername)
 	identity.ProviderDisplayName = strings.TrimSpace(identity.ProviderDisplayName)
 	identity.ProviderAvatarURL = strings.TrimSpace(identity.ProviderAvatarURL)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
 	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/runtime"
 )
@@ -131,7 +132,7 @@ func readinessPayload(statusCode int, includeChecks bool, checks []readinessChec
 
 // readinessCheckDriver resolves the configured driver for one readiness-check resource.
 func readinessCheckDriver(checkType string, checkName string) string {
-	switch strings.ToLower(strings.TrimSpace(checkType)) {
+	switch str.Of(checkType).TrimSpace().ToLower().String() {
 	case "cache":
 		return cacheDriver(checkName)
 	case "db":
@@ -153,7 +154,7 @@ func readinessCheckDriver(checkType string, checkName string) string {
 func cacheDriver(name string) string {
 	key := "CACHE_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
-		key = "CACHE_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+		key = "CACHE_" + str.Of(name).TrimSpace().ToUpper().String() + "_DRIVER"
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("CACHE_DRIVER", "memory")))
 }
@@ -162,7 +163,7 @@ func cacheDriver(name string) string {
 func dbDriver(name string) string {
 	key := "DB_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
-		key = "DB_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+		key = "DB_" + str.Of(name).TrimSpace().ToUpper().String() + "_DRIVER"
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("DB_DRIVER", "")))
 }
@@ -171,7 +172,7 @@ func dbDriver(name string) string {
 func storageDriver(name string) string {
 	key := "STORAGE_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
-		key = "STORAGE_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+		key = "STORAGE_" + str.Of(name).TrimSpace().ToUpper().String() + "_DRIVER"
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("STORAGE_DRIVER", "local")))
 }
@@ -180,7 +181,7 @@ func storageDriver(name string) string {
 func eventDriver(name string) string {
 	key := "EVENTS_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
-		key = "EVENTS_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+		key = "EVENTS_" + str.Of(name).TrimSpace().ToUpper().String() + "_DRIVER"
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("EVENTS_DRIVER", "inproc")))
 }
@@ -190,7 +191,7 @@ func eventDriver(name string) string {
 func queueDriver(name string) string {
 	key := "QUEUE_DRIVER"
 	if !strings.EqualFold(strings.TrimSpace(name), "default") {
-		key = "QUEUE_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+		key = "QUEUE_" + str.Of(name).TrimSpace().ToUpper().String() + "_DRIVER"
 	}
 	return strings.TrimSpace(env.Get(key, env.Get("QUEUE_DRIVER", "workerpool")))
 }

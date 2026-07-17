@@ -2,7 +2,8 @@ package project
 
 import (
 	"fmt"
-	"strings"
+
+	"github.com/goforj/str"
 )
 
 // ResourceKey identifies an App resource whose implementation is selected by environment configuration.
@@ -393,7 +394,7 @@ func (d ResourceDefinition) DefaultSelection(components Components) (DriverSelec
 
 // EnvironmentKey keeps the database's DB prefix and the other resource prefixes out of consumer-specific switches.
 func (d ResourceDefinition) EnvironmentKey(suffix string) string {
-	suffix = strings.ToUpper(strings.TrimSpace(suffix))
+	suffix = str.Of(suffix).TrimSpace().ToUpper().String()
 	if suffix == "" {
 		return d.EnvironmentPrefix
 	}

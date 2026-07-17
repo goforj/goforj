@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
+	"github.com/goforj/str"
 	"{{.GoModuleName}}/internal/console"
 )
 
@@ -47,7 +48,7 @@ func selectedNode(ctx *kong.Context) *kong.Node {
 
 // maintainerHelpEnabled exposes hidden diagnostic commands only in explicit framework-development contexts.
 func maintainerHelpEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("FORJ_DEV")))
+	v := str.Of(os.Getenv("FORJ_DEV")).TrimSpace().ToLower().String()
 	if v == "1" || v == "true" || v == "yes" || v == "on" {
 		return true
 	}
