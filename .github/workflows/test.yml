@@ -25,13 +25,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: set up go
+        id: setup-go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            internal/coredeps/modules.go
+          cache: false
+
+      # The full suite owns this key so faster jobs cannot publish a partial immutable cache first.
+      - name: cache go test dependencies and builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: test-go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ env.WIRE_INSTALL_TARGET }}-${{ hashFiles('go.mod', 'go.sum', 'internal/coredeps/modules.go') }}
+          restore-keys: |
+            test-go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ env.WIRE_INSTALL_TARGET }}-
+            test-go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-
+            test-go-${{ runner.os }}-
 
       - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
