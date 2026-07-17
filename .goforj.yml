@@ -3,9 +3,9 @@ module_name: forj
 updated_at: 2025-04-27 18:54:57 CDT
 pre_dev:
   - name: Run Wire generate
-    cmd: go install github.com/google/wire/cmd/wire@latest && cd wire && wire
+    cmd: go install github.com/goforj/wire/cmd/wire@v1.2.0 && cd wire && wire
   - name: Watcher Go Install
-    cmd: go install github.com/goforj/wgo@latest
+    cmd: go install github.com/goforj/wgo@v0.7.1
 dev_watches:
   - name: App
     watch: -file .env -file .go -file .tmpl

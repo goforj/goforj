@@ -17,7 +17,7 @@ require (
 	github.com/goforj/atlas v0.3.0
 	github.com/goforj/cache v0.4.0
 	github.com/goforj/cache/cachecore v0.4.0
-	github.com/goforj/console v0.1.0
+	github.com/goforj/console v0.1.1
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.5.0
 	github.com/goforj/execx v1.1.3
@@ -98,9 +98,9 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/goforj/godump v1.9.0 // indirect
+	github.com/goforj/godump v1.9.1 // indirect
 	github.com/goforj/storage/storagecore v0.5.0 // indirect
-	github.com/goforj/str v1.2.0 // indirect
+	github.com/goforj/str v1.3.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
