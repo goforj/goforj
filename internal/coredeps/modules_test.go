@@ -22,9 +22,51 @@ func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
 	}
 }
 
+// TestSyncCoreLibrariesIncludesBaseModules verifies generated Apps pin every always-rendered GoForj dependency explicitly.
+func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
+	modules := []string{
+		"github.com/goforj/metrics",
+		"github.com/goforj/httpx",
+		"github.com/goforj/godump",
+		"github.com/goforj/web",
+		"github.com/goforj/str/v2",
+		"github.com/goforj/scheduler/v2",
+		"github.com/goforj/env/v2",
+		"github.com/goforj/str",
+		"github.com/goforj/null/v6",
+		"github.com/goforj/wire",
+	}
+	want := make([]string, 0, len(modules))
+	for _, module := range modules {
+		want = append(want, module+"@"+MustVersionFor(module))
+	}
+	if got := SyncCoreLibraries(project.Components{}); !slices.Equal(got, want) {
+		t.Fatalf("SyncCoreLibraries(base) = %#v, want %#v", got, want)
+	}
+}
+
 // TestSyncCoreLibrariesGatesCacheModules verifies every Cache module is synchronized only for Cache projects.
 func TestSyncCoreLibrariesGatesCacheModules(t *testing.T) {
 	assertModulesGated(t, project.Components{}, project.Components{Cache: true}, cacheRendererSyncModules)
+}
+
+// TestSyncCoreLibrariesGatesSchedulerModules verifies Scheduler projects pin the Cache API used for distributed locks.
+func TestSyncCoreLibrariesGatesSchedulerModules(t *testing.T) {
+	assertModulesGated(t, project.Components{}, project.Components{Scheduler: true}, schedulerRendererSyncModules)
+}
+
+// TestSyncCoreLibrariesDeduplicatesSharedModules verifies capabilities sharing a module produce one go.mod selection.
+func TestSyncCoreLibrariesDeduplicatesSharedModules(t *testing.T) {
+	selection := "github.com/goforj/cache@" + MustVersionFor("github.com/goforj/cache")
+	count := 0
+	for _, module := range SyncCoreLibraries(project.Components{Cache: true, Scheduler: true}) {
+		if module == selection {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("SyncCoreLibraries(Cache+Scheduler) contains %d copies of %q, want 1", count, selection)
+	}
 }
 
 // TestSyncCoreLibrariesGatesEventsModules verifies every Events runtime module is synchronized only for Events projects.
@@ -72,7 +114,13 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/cache/driver/sqlitecache", version: "v0.4.0"},
 		{module: "github.com/goforj/mail", version: "v0.3.1"},
 		{module: "github.com/goforj/mail/mailses", version: "v0.3.1"},
-		{module: "github.com/goforj/execx", version: "v1.1.2"},
+		{module: "github.com/goforj/execx", version: "v1.1.3"},
+		{module: "github.com/goforj/godump", version: "v1.9.1"},
+		{module: "github.com/goforj/httpx", version: "v1.1.0"},
+		{module: "github.com/goforj/web", version: "v0.6.0"},
+		{module: "github.com/goforj/scheduler/v2", version: "v2.1.4"},
+		{module: "github.com/goforj/null/v6", version: "v6.0.2"},
+		{module: "github.com/goforj/wire", version: "v1.2.0"},
 		{module: "github.com/goforj/events", version: "v0.2.0"},
 		{module: "github.com/goforj/events/eventscore", version: "v0.2.0"},
 		{module: "github.com/goforj/events/driver/gcppubsubevents", version: "v0.2.0"},
@@ -84,7 +132,17 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/events/eventsfake", version: "v0.2.0"},
 		{module: "github.com/goforj/events/eventstest", version: "v0.2.0"},
 		{module: "github.com/goforj/env/v2", version: "v2.5.0"},
+		{module: "github.com/goforj/str", version: "v1.3.0"},
 		{module: "github.com/goforj/str/v2", version: "v2.0.1"},
+		{module: "github.com/goforj/queue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/mysqlqueue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/natsqueue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/postgresqueue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/rabbitmqqueue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/redisqueue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/sqlitequeue", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/sqlqueuecore", version: "v0.2.1"},
+		{module: "github.com/goforj/queue/driver/sqsqueue", version: "v0.2.1"},
 		{module: "github.com/goforj/storage", version: "v0.5.0"},
 		{module: "github.com/goforj/storage/storagecore", version: "v0.5.0"},
 		{module: "github.com/goforj/storage/storagetest", version: "v0.5.0"},

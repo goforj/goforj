@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestRenderwarmExcludesLegacyScheduler verifies string literals in test templates do not warm legacy modules.
-func TestRenderwarmExcludesLegacyScheduler(t *testing.T) {
+// TestRenderwarmUsesCurrentTemplateDependencies verifies warm builds exclude legacy modules and pin current sibling releases.
+func TestRenderwarmUsesCurrentTemplateDependencies(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to resolve current file path")
@@ -25,11 +25,26 @@ func TestRenderwarmExcludesLegacyScheduler(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		`github.com/goforj/cache/driver/rediscache`,
 		`github.com/goforj/scheduler/v2`,
 		`github.com/klauspost/compress/zstd`,
 	} {
 		if !strings.Contains(mainSource, want) {
 			t.Fatalf("expected renderwarm main to contain %s", want)
+		}
+	}
+	if !strings.Contains(goMod, "github.com/goforj/godump v1.9.1") {
+		t.Fatalf("renderwarm should pin the host-validated godump release:\n%s", goMod)
+	}
+	if !strings.Contains(goMod, "github.com/goforj/cache/driver/rediscache v0.4.0") {
+		t.Fatalf("renderwarm should pin the current Redis cache driver release:\n%s", goMod)
+	}
+	for _, want := range []string{
+		"github.com/goforj/str v1.3.0",
+		"github.com/goforj/str/v2 v2.0.1",
+	} {
+		if !strings.Contains(goMod, want) {
+			t.Fatalf("renderwarm should pin %q:\n%s", want, goMod)
 		}
 	}
 }

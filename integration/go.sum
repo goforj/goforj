@@ -156,8 +156,8 @@ github.com/go-sql-driver/mysql v1.9.3 h1:U/N249h2WzJ3Ukj8SowVFjdtZKfu9vlLZxjPXV1
 github.com/go-sql-driver/mysql v1.9.3/go.mod h1:qn46aNg1333BRMNU69Lq93t8du/dwxI64Gl8i5p1WMU=
 github.com/goforj/env/v2 v2.5.0 h1:VJ+8FY39BI04v4VwpnW4266dvmoKeHCRCw189zXNIno=
 github.com/goforj/env/v2 v2.5.0/go.mod h1:LN5Liwdi68q5vAT3CChYJ7JXniXKSYrCyV6yJvkbRWo=
-github.com/goforj/godump v1.9.0 h1:Y/APfWKQKnJetXgVJxDqD7vEpTGSgAwbKJGmj0UAteI=
-github.com/goforj/godump v1.9.0/go.mod h1:/Vy+p50JtOkwsFN5dA1HQ7LS5gtPk3f61DaP4UR2o4s=
+github.com/goforj/godump v1.9.1 h1:9OGpb978Ytz3B59d5Yi2PzRYYLid6UkmhYDIDNiF15Y=
+github.com/goforj/godump v1.9.1/go.mod h1:JsuL6AEZfKIU+iR5ewL6iQ2fIuhvLtPmJDH47M9Ptrc=
 github.com/goforj/storage v0.5.0 h1:bXeUaDYsiibnGn+9FuMcq5U9WBRLE2TrIQ9PoSWYgMk=
 github.com/goforj/storage v0.5.0/go.mod h1:LRIclkYlI8Pp2kjmkzawMSF44Ka94XkN7/NjMPEP/hs=
 github.com/goforj/storage/driver/localstorage v0.5.0 h1:Lb2uulnDlQDHLaH3y+sdqipCZfRixyeAUCrsZhrLgt4=

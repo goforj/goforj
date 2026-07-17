@@ -74,7 +74,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/goforj/env/v2 v2.5.0 // indirect
-	github.com/goforj/godump v1.9.0 // indirect
+	github.com/goforj/godump v1.9.1 // indirect
 	github.com/goforj/storage v0.5.0 // indirect
 	github.com/goforj/storage/driver/s3storage v0.5.0 // indirect
 	github.com/goforj/storage/storagecore v0.5.0 // indirect
