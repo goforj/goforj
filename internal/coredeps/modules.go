@@ -32,11 +32,13 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/events/eventscore":                 "v0.2.0",
 	"github.com/goforj/events/eventsfake":                 "v0.2.0",
 	"github.com/goforj/events/eventstest":                 "v0.2.0",
-	"github.com/goforj/execx":                             "v1.1.2",
+	"github.com/goforj/execx":                             "v1.1.3",
+	"github.com/goforj/godump":                            "v1.9.1",
 	"github.com/goforj/httpx":                             "v1.1.0",
 	"github.com/goforj/mail":                              "v0.3.1",
 	"github.com/goforj/mail/mailses":                      "v0.3.1",
 	"github.com/goforj/metrics":                           "v0.2.0",
+	"github.com/goforj/null/v6":                           "v6.0.2",
 	"github.com/goforj/queue":                             "v0.2.1",
 	"github.com/goforj/queue/driver/mysqlqueue":           "v0.2.1",
 	"github.com/goforj/queue/driver/natsqueue":            "v0.2.1",
@@ -60,17 +62,23 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/storage/storagecore":               "v0.5.0",
 	"github.com/goforj/storage/storagetest":               "v0.5.0",
 	"github.com/goforj/web":                               "v0.6.0",
+	"github.com/goforj/str":                               "v1.3.0",
 	"github.com/goforj/str/v2":                            "v2.0.1",
+	"github.com/goforj/wire":                              "v1.2.0",
 	"github.com/nats-io/nats.go":                          "v1.50.0",
 }
 
 var rendererSyncModules = []string{
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
+	"github.com/goforj/godump",
 	"github.com/goforj/web",
 	"github.com/goforj/str/v2",
 	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
+	"github.com/goforj/str",
+	"github.com/goforj/null/v6",
+	"github.com/goforj/wire",
 }
 
 var cacheRendererSyncModules = []string{
@@ -84,6 +92,11 @@ var cacheRendererSyncModules = []string{
 	"github.com/goforj/cache/driver/rediscache",
 	"github.com/goforj/cache/driver/sqlcore",
 	"github.com/goforj/cache/driver/sqlitecache",
+}
+
+var schedulerRendererSyncModules = []string{
+	"github.com/goforj/cache",
+	"github.com/goforj/cache/cachecore",
 }
 
 var eventsRendererSyncModules = []string{
@@ -153,6 +166,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	if components.Cache {
 		modules = append(modules, cacheRendererSyncModules...)
 	}
+	if components.Scheduler {
+		modules = append(modules, schedulerRendererSyncModules...)
+	}
 	if components.Events {
 		modules = append(modules, eventsRendererSyncModules...)
 	}
@@ -169,7 +185,12 @@ func SyncCoreLibraries(components project.Components) []string {
 		modules = append(modules, jobsRendererSyncModules...)
 	}
 	out := make([]string, 0, len(modules))
+	seen := make(map[string]struct{}, len(modules))
 	for _, module := range modules {
+		if _, ok := seen[module]; ok {
+			continue
+		}
+		seen[module] = struct{}{}
 		out = append(out, module+"@"+MustVersionFor(module))
 	}
 	return out
