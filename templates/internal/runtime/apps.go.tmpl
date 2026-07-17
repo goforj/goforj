@@ -4,8 +4,9 @@ package runtime
 
 import (
 	"fmt"
-	"os"
 	"strings"
+
+	"github.com/goforj/env/v2"
 )
 
 const defaultAppName = "app"
@@ -88,14 +89,14 @@ var Apps = []AppInfo{
 
 // CurrentApp returns the app identity selected for this process.
 func CurrentApp() AppInfo {
-	return App(os.Getenv("FORJ_APP"))
+	return App(env.Get("FORJ_APP", ""))
 }
 
 // App returns compiled metadata for name or falls back to the default app.
 func App(name string) AppInfo {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		name = strings.TrimSpace(os.Getenv("FORJ_APP"))
+		name = strings.TrimSpace(env.Get("FORJ_APP", ""))
 	}
 	if name == "" {
 		name = defaultAppName
@@ -186,9 +187,10 @@ func appEnvKeys(info AppInfo, suffixes ...string) []string {
 	return keys
 }
 
+// firstEnv preserves ordered App fallbacks while treating whitespace-only overrides as absent.
 func firstEnv(keys []string, fallback string) string {
 	for _, key := range keys {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if value := strings.TrimSpace(env.Get(key, "")); value != "" {
 			return value
 		}
 	}

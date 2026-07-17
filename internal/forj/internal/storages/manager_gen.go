@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -237,7 +235,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	}
 	disks[defaultDiskName] = defaultCfg
 
-	for _, child := range storageChildNamesFromEnv() {
+	for _, child := range storageScope.ChildNames(storageRootKeys) {
 		name := storage.DiskName(str.Of(child).TrimSpace().ToLower().String())
 		cfg, err := buildDiskConfig(name, storageScope.Child(child))
 		if err != nil {
@@ -247,46 +245,6 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	}
 
 	return disks, nil
-}
-
-// storageChildNamesFromEnv matches complete root keys so names containing underscores are not truncated.
-func storageChildNamesFromEnv() []string {
-	rootKeyParts := make(map[string][]string, len(storageRootKeys))
-	for _, key := range storageRootKeys {
-		rootKeyParts[key] = strings.Split(key, "_")
-	}
-
-	seen := map[string]struct{}{}
-	names := make([]string, 0)
-	for _, kv := range os.Environ() {
-		key, _, ok := strings.Cut(kv, "=")
-		if !ok || !strings.HasPrefix(key, "STORAGE_") {
-			continue
-		}
-		suffix := strings.TrimPrefix(key, "STORAGE_")
-		if suffix == "" {
-			continue
-		}
-		parts := strings.Split(strings.ToUpper(suffix), "_")
-		for _, rootKey := range storageRootKeys {
-			rootParts := rootKeyParts[rootKey]
-			if len(parts) <= len(rootParts) || !slices.Equal(parts[len(parts)-len(rootParts):], rootParts) {
-				continue
-			}
-			child := strings.Join(parts[:len(parts)-len(rootParts)], "_")
-			if child == "" {
-				continue
-			}
-			if _, exists := seen[child]; exists {
-				continue
-			}
-			seen[child] = struct{}{}
-			names = append(names, child)
-			break
-		}
-	}
-	sort.Strings(names)
-	return names
 }
 
 // newManagerFromEnv eagerly initializes the default disk while allowing generated optional disks to degrade visibly.

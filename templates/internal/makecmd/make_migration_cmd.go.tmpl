@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 
 	"{{.GoModuleName}}/internal/console"
@@ -167,21 +168,18 @@ func (c *MigrationCmd) remove() error {
 // resolveSupportedMigrationDrivers returns the migration drivers requested by environment.
 func resolveSupportedMigrationDrivers() []string {
 	var drivers []string
-	supported := str.Of(os.Getenv("DB_SUPPORTED_DRIVERS")).TrimSpace().String()
-	if supported != "" {
-		for _, part := range strings.Split(supported, ",") {
-			driver := normalizeMigrationDriver(part)
-			if driver == "" || slices.Contains(drivers, driver) {
-				continue
-			}
-			drivers = append(drivers, driver)
+	for _, part := range env.GetSlice("DB_SUPPORTED_DRIVERS", "") {
+		driver := normalizeMigrationDriver(part)
+		if driver == "" || slices.Contains(drivers, driver) {
+			continue
 		}
+		drivers = append(drivers, driver)
 	}
 	if len(drivers) > 0 {
 		return drivers
 	}
 
-	defaultDriver := normalizeMigrationDriver(os.Getenv("DB_DRIVER"))
+	defaultDriver := normalizeMigrationDriver(env.Get("DB_DRIVER", ""))
 	if defaultDriver != "" {
 		return []string{defaultDriver}
 	}

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -1438,7 +1437,7 @@ func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
 	defer flow.Done()
 {{- end }}
 	username := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_USERNAME", ""))
-	password := os.Getenv("AUTH_BOOTSTRAP_PASSWORD")
+	password := env.Get("AUTH_BOOTSTRAP_PASSWORD", "")
 	email := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_EMAIL", ""))
 	if username == "" || password == "" {
 {{- if .Components.Metrics }}
@@ -2109,6 +2108,7 @@ func resolveCookieSecure(r web.Context) bool {
 	}
 }
 
+// parseDurationEnv keeps whitespace-tolerant positive-duration policy consistent across Auth settings.
 func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(env.Get(key, ""))
 	if raw == "" {
@@ -2121,6 +2121,7 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	return value
 }
 
+// parseIntEnv keeps whitespace-tolerant positive-integer policy consistent across Auth settings.
 func parseIntEnv(key string, fallback int) int {
 	raw := strings.TrimSpace(env.Get(key, ""))
 	if raw == "" {
@@ -2133,20 +2134,9 @@ func parseIntEnv(key string, fallback int) int {
 	return value
 }
 
+// parseBoolEnv preserves the documented yes/on aliases that strconv-backed environment getters do not accept.
 func parseBoolEnv(key string, fallback bool) bool {
 	raw := strings.ToLower(strings.TrimSpace(env.Get(key, "")))
-	switch raw {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
-}
-
-func resolveBool(key string, fallback bool) bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	switch raw {
 	case "1", "true", "yes", "on":
 		return true
@@ -2241,11 +2231,11 @@ func normalizeIPAddress(value string) string {
 }
 
 func exposePasswordResetToken() bool {
-	return env.IsAppEnvLocal() || resolveBool("AUTH_PASSWORD_RESET_RETURN_TOKEN", false)
+	return env.IsAppEnvLocal() || parseBoolEnv("AUTH_PASSWORD_RESET_RETURN_TOKEN", false)
 }
 
 func exposeEmailVerificationToken() bool {
-	return env.IsAppEnvLocal() || resolveBool("AUTH_EMAIL_VERIFICATION_RETURN_TOKEN", false)
+	return env.IsAppEnvLocal() || parseBoolEnv("AUTH_EMAIL_VERIFICATION_RETURN_TOKEN", false)
 }
 
 func (s *Service) loginAttemptBlocked(identifier, ipAddress string, now time.Time) (bool, error) {
