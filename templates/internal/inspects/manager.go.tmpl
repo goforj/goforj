@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
 	"{{.GoModuleName}}/internal/runtime"
 )
 
@@ -681,7 +682,7 @@ func (m *Manager) RecordLog(ctx context.Context, event LogInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	inspectEvent := InspectEvent{
 		Kind:       EventKindLog,
-		Level:      strings.ToLower(strings.TrimSpace(event.Level)),
+		Level:      str.Of(event.Level).TrimSpace().ToLower().String(),
 		Message:    strings.TrimSpace(event.Message),
 		Attributes: event.Fields,
 	}
@@ -1284,7 +1285,7 @@ func normalizeStatus(status string, err error) string {
 	case err != nil:
 		return statusError
 	}
-	status = strings.ToLower(strings.TrimSpace(status))
+	status = str.Of(status).TrimSpace().ToLower().String()
 	switch status {
 	case statusOK, statusError, statusCanceled, statusRunning:
 		return status

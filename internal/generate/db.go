@@ -132,7 +132,7 @@ func validateAppPrefixedDBEnv(input generationInput) error {
 
 // dbHelperConnectionName skips driver-specific helper keys such as DB_SQLITE_DATABASE.
 func dbHelperConnectionName(name string) bool {
-	switch strings.TrimSpace(strings.ToLower(name)) {
+	switch str.Of(name).ToLower().TrimSpace().String() {
 	case "mysql", "postgres", "postgresql", "sqlite", "sqlite3":
 		return true
 	default:
@@ -235,7 +235,7 @@ func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, err
 
 // canonicalDBDriver normalizes accepted compatibility aliases to the generated manifest name.
 func canonicalDBDriver(driver string) string {
-	switch strings.TrimSpace(strings.ToLower(driver)) {
+	switch str.Of(driver).ToLower().TrimSpace().String() {
 	case "mariadb":
 		return "mysql"
 	case "postgresql":
@@ -243,7 +243,7 @@ func canonicalDBDriver(driver string) string {
 	case "sqlite3":
 		return "sqlite"
 	default:
-		return strings.TrimSpace(strings.ToLower(driver))
+		return str.Of(driver).ToLower().TrimSpace().String()
 	}
 }
 
@@ -292,6 +292,7 @@ import (
 	"fmt"
 	"strings"
 	{{- if .Drivers }}
+	"github.com/goforj/str"
 	{{- range .Drivers }}
 	"{{ .ImportPath }}"
 	{{- end }}
@@ -349,7 +350,7 @@ func (c *Connections) readinessCheck(ctx context.Context, name string) error {
 
 // openDialector rejects drivers outside the generated manifest before GORM initializes a connection.
 func openDialector(driver, dsn string) (gorm.Dialector, error) {
-	driver = strings.TrimSpace(strings.ToLower(driver))
+	driver = str.Of(driver).ToLower().TrimSpace().String()
 	if !databaseDriverCompiled(driver) {
 		return nil, fmt.Errorf("database: active driver %q is not built in; compiled choices: %s; run forj generate --db after updating DB_SUPPORTED_DRIVERS", driver, strings.Join(compiledDatabaseDrivers, ", "))
 	}

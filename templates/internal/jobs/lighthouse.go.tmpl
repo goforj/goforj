@@ -28,6 +28,7 @@ import (
 {{- end }}
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+	"github.com/goforj/str"
 {{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
 {{- end }}
@@ -231,7 +232,7 @@ func (c *LighthouseRuntime) registerBenchmarkCommands(ctx context.Context) {
 }
 
 func normalizedBenchmarkName(name string) string {
-	value := strings.ToLower(strings.TrimSpace(name))
+	value := str.Of(name).TrimSpace().ToLower().String()
 	if value == "" {
 		return "default"
 	}
@@ -239,7 +240,7 @@ func normalizedBenchmarkName(name string) string {
 }
 
 func optionalBenchmarkName(name string) string {
-	value := strings.ToLower(strings.TrimSpace(name))
+	value := str.Of(name).TrimSpace().ToLower().String()
 	if value == "" {
 		return ""
 	}
@@ -467,7 +468,7 @@ func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
 	if normalizedBenchmarkName(cacheName) != "default" {
 		key = "CACHE_" + strings.ToUpper(cacheName) + "_DRIVER"
 	}
-	configured := strings.ToLower(strings.TrimSpace(env.GetEnum(key, env.Get("CACHE_DRIVER", string(cachecore.DriverMemory)), allowed)))
+	configured := str.Of(env.GetEnum(key, env.Get("CACHE_DRIVER", string(cachecore.DriverMemory)), allowed)).TrimSpace().ToLower().String()
 	candidates := []string{
 		string(cacheInstance.Driver()),
 		configured,
@@ -2186,9 +2187,9 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 	bThreshold := 5000.0
 	cThreshold := 500.0
 
-	switch strings.ToLower(strings.TrimSpace(report.Suite)) {
+	switch str.Of(report.Suite).TrimSpace().ToLower().String() {
 	case "queue":
-		driver := strings.ToLower(strings.TrimSpace(report.Driver))
+		driver := str.Of(report.Driver).TrimSpace().ToLower().String()
 		if driver == "redis" || driver == "asynq" {
 			aThreshold = 6000
 			bThreshold = 2500
@@ -2213,7 +2214,7 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 		bThreshold = 6000
 		cThreshold = 1500
 	case "cache":
-		driver := strings.ToLower(strings.TrimSpace(report.Driver))
+		driver := str.Of(report.Driver).TrimSpace().ToLower().String()
 		switch driver {
 		case "memory":
 			aThreshold = 500000
@@ -2305,7 +2306,7 @@ func classifyHTTPError(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	msg := str.Of(err.Error()).TrimSpace().ToLower().String()
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "timeout"):
 		return "timeout"

@@ -19,6 +19,7 @@ import (
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/str"
 )
 
 const (
@@ -614,7 +615,7 @@ func devWatcherBoundaryArtifactVersion(source string) (string, error) {
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		version, err := strconv.Unquote(strings.TrimSpace(strings.TrimPrefix(line, prefix)))
+		version, err := strconv.Unquote(str.Of(line).ChopStart(prefix).TrimSpace().String())
 		if err != nil {
 			return "", err
 		}

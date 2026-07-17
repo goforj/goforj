@@ -1372,7 +1372,7 @@ func extractIconLinks(pageURL, htmlDoc string) []string {
 		matches := attrPairRegex.FindAllStringSubmatch(tag, -1)
 		attrs := map[string]string{}
 		for _, match := range matches {
-			key := strings.ToLower(strings.TrimSpace(match[1]))
+			key := str.Of(match[1]).TrimSpace().ToLower().String()
 			value := strings.TrimSpace(match[3])
 			if value == "" {
 				value = strings.TrimSpace(match[4])
@@ -1383,7 +1383,7 @@ func extractIconLinks(pageURL, htmlDoc string) []string {
 			attrs[key] = html.UnescapeString(value)
 		}
 
-		rel := strings.ToLower(strings.TrimSpace(attrs["rel"]))
+		rel := str.Of(attrs["rel"]).TrimSpace().ToLower().String()
 		href := strings.TrimSpace(attrs["href"])
 		if href == "" || !strings.Contains(rel, "icon") {
 			continue
@@ -1429,10 +1429,10 @@ func fetchURL(client *http.Client, targetURL, accept string) (int, string, []byt
 }
 
 func normalizeImageContentType(contentType string, body []byte) string {
-	normalized := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	normalized := str.Of(strings.Split(contentType, ";")[0]).TrimSpace().ToLower().String()
 	if normalized == "" || strings.HasPrefix(normalized, "text/") || normalized == "application/xml" || normalized == "text/xml" {
 		sniffed := http.DetectContentType(body)
-		normalized = strings.ToLower(strings.TrimSpace(strings.Split(sniffed, ";")[0]))
+		normalized = str.Of(strings.Split(sniffed, ";")[0]).TrimSpace().ToLower().String()
 	}
 	if normalized == "text/plain" && bytes.Contains(bytes.ToLower(body), []byte("<svg")) {
 		normalized = "image/svg+xml"
@@ -2346,7 +2346,7 @@ func parseDNSMonitorTarget(target string) (string, string, error) {
 	}
 	recordType := "A"
 	if len(parts) == 2 {
-		recordType = strings.ToUpper(strings.TrimSpace(parts[1]))
+		recordType = str.Of(parts[1]).TrimSpace().ToUpper().String()
 	}
 	return host, recordType, nil
 }
@@ -2833,7 +2833,7 @@ func (c *Controller) consecutiveStatusCount(ctx stdcontext.Context, monitorID, t
 	}
 	count := 0
 	for _, row := range rows {
-		state := strings.ToLower(strings.TrimSpace(row.Status))
+		state := str.Of(row.Status).TrimSpace().ToLower().String()
 		if state == "paused" || state == "unknown" || state == "" || state == "pending" {
 			continue
 		}

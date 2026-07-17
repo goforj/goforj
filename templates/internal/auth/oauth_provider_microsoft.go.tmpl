@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
 	"golang.org/x/oauth2"
 )
 
@@ -46,9 +47,9 @@ func (p *MicrosoftProvider) ResolveIdentity(ctx context.Context, callback OAuthC
 	if err := oauthGetJSON(ctx, p.userInfoURL, token.AccessToken, &user); err != nil {
 		return ProviderIdentity{}, err
 	}
-	email := strings.TrimSpace(strings.ToLower(user.Email))
+	email := str.Of(user.Email).ToLower().TrimSpace().String()
 	if email == "" {
-		email = strings.TrimSpace(strings.ToLower(user.PreferredUsername))
+		email = str.Of(user.PreferredUsername).ToLower().TrimSpace().String()
 	}
 	return ProviderIdentity{
 		Provider:      p.Name(),

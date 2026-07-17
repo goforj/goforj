@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goforj/str"
+
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testexec"
@@ -156,7 +158,7 @@ func parseHTTPRuntimeProfileModes(raw string) ([]string, error) {
 	out := make([]string, 0, len(items))
 	seen := map[string]struct{}{}
 	for _, item := range items {
-		mode := strings.ToLower(strings.TrimSpace(item))
+		mode := str.Of(item).TrimSpace().ToLower().String()
 		if mode == "" {
 			continue
 		}

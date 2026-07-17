@@ -217,7 +217,7 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 	if s.logger != nil {
 		s.logger.Debug().
 			Str("monitor_id", monitorID).
-			Str("monitor_type", strings.TrimSpace(strings.ToLower(m.MonitorType))).
+			Str("monitor_type", str.Of(m.MonitorType).ToLower().TrimSpace().String()).
 			Int("timeout_ms", int(timeout/time.Millisecond)).
 			Int("attempts_planned", attemptsPlanned).
 			Msg("monitor check started")
@@ -343,7 +343,7 @@ func (s *CheckService) logCheckCompletion(
 			if m == nil {
 				return ""
 			}
-			return strings.TrimSpace(strings.ToLower(m.MonitorType))
+			return str.Of(m.MonitorType).ToLower().TrimSpace().String()
 		}()).
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("timeout_ms", int(timeout/time.Millisecond)).
@@ -958,7 +958,7 @@ func (s *CheckService) runDockerCheck(ctx context.Context, target string, timeou
 	}
 
 	if inspect.State.Health != nil {
-		switch strings.ToLower(strings.TrimSpace(inspect.State.Health.Status)) {
+		switch str.Of(inspect.State.Health.Status).TrimSpace().ToLower().String() {
 		case "healthy":
 			return checkResult{status: "up", statusCode: res.StatusCode, durationMs: duration}
 		case "unhealthy":
@@ -1499,7 +1499,7 @@ func classifyCheckError(kind string, msg string) string {
 }
 
 func humanizePingError(msg string) string {
-	lower := strings.ToLower(strings.TrimSpace(msg))
+	lower := str.Of(msg).TrimSpace().ToLower().String()
 	switch {
 	case lower == "":
 		return "ping check failed"
@@ -1696,7 +1696,7 @@ func (s *CheckService) buildPolicyBatchContext(execCtx context.Context, executio
 			state := monitorPolicyState{}
 			policyCtx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
 			for _, row := range rows {
-				status := strings.ToLower(strings.TrimSpace(row.Status))
+				status := str.Of(row.Status).TrimSpace().ToLower().String()
 				if status == "paused" || status == "unknown" || status == "" || status == "pending" {
 					continue
 				}
@@ -1749,7 +1749,7 @@ func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
 	latestTerminal := models.MonitorCheck{}
 	hasTerminal := false
 	for _, row := range rows {
-		status := strings.ToLower(strings.TrimSpace(row.Status))
+		status := str.Of(row.Status).TrimSpace().ToLower().String()
 		if status == "pending" || status == "unknown" || status == "" {
 			continue
 		}
@@ -1757,14 +1757,14 @@ func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
 		hasTerminal = true
 		break
 	}
-	status := strings.ToLower(strings.TrimSpace(latest.Status))
+	status := str.Of(latest.Status).TrimSpace().ToLower().String()
 	if status != "pending" {
 		return status
 	}
 	if !hasTerminal {
 		return status
 	}
-	terminalStatus := strings.ToLower(strings.TrimSpace(latestTerminal.Status))
+	terminalStatus := str.Of(latestTerminal.Status).TrimSpace().ToLower().String()
 	if terminalStatus == "down" {
 		return terminalStatus
 	}
@@ -1802,9 +1802,9 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 	}
 	prevDisplayStatus := ""
 	if batchCtx != nil && batchCtx.displayStatus != nil {
-		prevDisplayStatus = strings.ToLower(strings.TrimSpace(batchCtx.displayStatus[monitorID]))
+		prevDisplayStatus = str.Of(batchCtx.displayStatus[monitorID]).TrimSpace().ToLower().String()
 	}
-	currentStatus := strings.ToLower(strings.TrimSpace(result.status))
+	currentStatus := str.Of(result.status).TrimSpace().ToLower().String()
 	shouldPublishStatusChanged := false
 	switch currentStatus {
 	case "down":
@@ -2031,7 +2031,7 @@ func (s *CheckService) consecutiveStatusCountFromBatch(batchCtx *policyBatchCont
 	if !ok {
 		return 0
 	}
-	switch strings.ToLower(strings.TrimSpace(target)) {
+	switch str.Of(target).TrimSpace().ToLower().String() {
 	case "down":
 		return state.downStreak
 	case "up":
@@ -2119,7 +2119,7 @@ func (s *CheckService) consecutiveStatusCount(ctx context.Context, monitorID, ta
 	}
 	count := 0
 	for _, row := range rows {
-		state := strings.ToLower(strings.TrimSpace(row.Status))
+		state := str.Of(row.Status).TrimSpace().ToLower().String()
 		if state == "paused" || state == "unknown" || state == "" || state == "pending" {
 			continue
 		}

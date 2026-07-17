@@ -7,6 +7,7 @@ import (
 	"fmt"
 	appruntime "{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
+	"github.com/goforj/str"
 	"github.com/rs/zerolog"
 	"io"
 	"os"
@@ -171,7 +172,7 @@ func loadLogConfig() logConfig {
 	return logConfig{
 		appEnv:        strings.TrimSpace(os.Getenv("APP_ENV")),
 		appMode:       strings.TrimSpace(os.Getenv("APP_MODE")),
-		format:        strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
+		format:        str.Of(os.Getenv(logFormatEnv)).TrimSpace().ToLower().String(),
 		prefix:        strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
 		commandOrigin: strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")),
 		showTime:      envFlagEnabled("APP_LOG_TIME"),
@@ -180,7 +181,7 @@ func loadLogConfig() logConfig {
 }
 
 func envFlagEnabled(key string) bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	raw := str.Of(os.Getenv(key)).TrimSpace().ToLower().String()
 	switch raw {
 	case "", "0", "false", "off", "no":
 		return false
@@ -365,7 +366,7 @@ func consoleComponentName(config logConfig, fallback interface{}) string {
 			return app
 		}
 	}
-	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(fallback))) {
+	switch str.Of(fmt.Sprint(fallback)).TrimSpace().ToLower().String() {
 	case "warn", "error":
 		return "Error"
 	default:
@@ -400,7 +401,7 @@ func formatConsoleComponent(component string) string {
 }
 
 func colorForComponent(component string) string {
-	switch strings.ToLower(strings.TrimSpace(component)) {
+	switch str.Of(component).TrimSpace().ToLower().String() {
 	case "http":
 		return Blue
 	case "jobs":
@@ -445,14 +446,14 @@ func colorizeKV(key string, value interface{}) string {
 	if key == consoleCompactKey {
 		return raw
 	}
-	if lowerKey := strings.ToLower(strings.TrimSpace(key)); lowerKey == "error" || lowerKey == "err" {
+	if lowerKey := str.Of(key).TrimSpace().ToLower().String(); lowerKey == "error" || lowerKey == "err" {
 		raw = formatConsoleErrorValue(value)
 	}
 	return fmt.Sprintf("%s%s=%s%s%s", HighIntensityBlack, key, colorForFieldValue(strings.ToLower(key), raw), raw, Reset)
 }
 
 func colorForFieldValue(key string, value string) string {
-	lowerValue := strings.ToLower(strings.TrimSpace(value))
+	lowerValue := str.Of(value).TrimSpace().ToLower().String()
 	switch {
 	case key == "status":
 		code, err := strconv.Atoi(lowerValue)
@@ -531,10 +532,7 @@ func getCallerMeta() string {
 			// to QuestHotReloadWatcher
 			split := strings.Split(pkg, "(*")
 			if len(split) > 1 {
-				callerType = split[1]
-				callerType = strings.TrimSuffix(callerType, ")")
-				callerType = strings.TrimSpace(callerType)
-				callerType = strings.ReplaceAll(callerType, ")", "")
+				callerType = str.Of(split[1]).ChopEnd(")").TrimSpace().ReplaceAll(")", "").String()
 
 				// get package
 				callerSplit := strings.Split(split[0], "/")
@@ -806,7 +804,7 @@ func parseLogEntryPayload(level zerolog.Level, p []byte) (LogEntry, bool) {
 }
 
 func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
-	level := strings.TrimSpace(strings.ToLower(entry.Level))
+	level := str.Of(entry.Level).ToLower().TrimSpace().String()
 	if level == "" || level == "disabled" {
 		level = fallbackLevel.String()
 	}

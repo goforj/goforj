@@ -314,7 +314,7 @@ func readModuleName(projectDir string) (string, error) {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+			return str.Of(line).ChopStart("module ").TrimSpace().String(), nil
 		}
 	}
 	return "", fmt.Errorf("module name not found in go.mod")

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/goforj/str"
 )
 
 func openURL(raw string) error {
@@ -66,10 +68,10 @@ func readEnvKey(content, key string) string {
 		}
 		working := trimmed
 		if strings.HasPrefix(working, "export ") {
-			working = strings.TrimSpace(strings.TrimPrefix(working, "export "))
+			working = str.Of(working).ChopStart("export ").TrimSpace().String()
 		}
 		if strings.HasPrefix(working, key+"=") {
-			return strings.TrimSpace(strings.TrimPrefix(working, key+"="))
+			return str.Of(working).ChopStart(key + "=").TrimSpace().String()
 		}
 	}
 	return ""
@@ -87,7 +89,7 @@ func updateEnvKey(content, key, value string) string {
 		working := trimmed
 		if strings.HasPrefix(working, "export ") {
 			exportPrefix = "export "
-			working = strings.TrimSpace(strings.TrimPrefix(working, "export "))
+			working = str.Of(working).ChopStart("export ").TrimSpace().String()
 		}
 		if !strings.HasPrefix(working, key+"=") {
 			continue

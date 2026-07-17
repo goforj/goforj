@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goforj/str"
+
 	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	testcontainers "github.com/testcontainers/testcontainers-go"
@@ -205,7 +207,7 @@ func (s *RenderedComposeStack) EnvOverrides() map[string]string {
 }
 
 func normalizeIntegrationHost(host string) string {
-	switch strings.TrimSpace(strings.ToLower(host)) {
+	switch str.Of(host).ToLower().TrimSpace().String() {
 	case "":
 		return "127.0.0.1"
 	default:
@@ -340,7 +342,7 @@ func composeServiceContainerPort(service composeService) (composeResolvedPort, e
 	if len(service.Ports) == 0 {
 		return composeResolvedPort{}, fmt.Errorf("service does not expose any ports")
 	}
-	raw := strings.Trim(strings.TrimSpace(service.Ports[0]), "\"'")
+	raw := str.Of(service.Ports[0]).TrimSpace().Trim("\"'").String()
 	mappings, err := nat.ParsePortSpec(raw)
 	if err != nil {
 		return composeResolvedPort{}, fmt.Errorf("invalid container port %q: %w", raw, err)

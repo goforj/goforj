@@ -15,6 +15,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/scheduler/v2"
+	"github.com/goforj/str"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -158,7 +159,7 @@ func schedulerCommandEnv(base []string) []string {
 	for _, entry := range base {
 		switch {
 		case strings.HasPrefix(entry, "APP_LOG_PREFIX="):
-			logPrefix = strings.TrimSpace(strings.TrimPrefix(entry, "APP_LOG_PREFIX="))
+			logPrefix = str.Of(entry).ChopStart("APP_LOG_PREFIX=").TrimSpace().String()
 		case strings.HasPrefix(entry, "FORJ_SUBPROCESS="):
 		case strings.HasPrefix(entry, "FORJ_COMMAND_ORIGIN="):
 		default:

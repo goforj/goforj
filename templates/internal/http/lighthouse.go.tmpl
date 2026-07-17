@@ -10,6 +10,7 @@ import (
 	"github.com/goforj/cache/cachecore"
 {{- end }}
 {{- if .ProjectComponents.Storage }}
+	"github.com/goforj/str"
 	"github.com/goforj/storage"
 {{- end }}
 	"github.com/goforj/web"
@@ -851,7 +852,7 @@ func resolveStorageDisk(manager *storages.Manager, name string) (string, storage
 	if manager == nil {
 		return "", nil, fmt.Errorf("storage: manager unavailable")
 	}
-	requested := strings.ToLower(strings.TrimSpace(name))
+	requested := str.Of(name).TrimSpace().ToLower().String()
 	instances := manager.Instances()
 	if requested == "" {
 		for _, instance := range instances {
@@ -864,7 +865,7 @@ func resolveStorageDisk(manager *storages.Manager, name string) (string, storage
 		if instance.Disk == nil {
 			continue
 		}
-		candidate := strings.ToLower(strings.TrimSpace(instance.Name))
+		candidate := str.Of(instance.Name).TrimSpace().ToLower().String()
 		if candidate == requested {
 			return strings.TrimSpace(instance.Name), instance.Disk, nil
 		}
@@ -877,9 +878,9 @@ func driverNameForDisk(manager *storages.Manager, name string) string {
 	if manager == nil {
 		return ""
 	}
-	requested := strings.ToLower(strings.TrimSpace(name))
+	requested := str.Of(name).TrimSpace().ToLower().String()
 	for _, instance := range manager.Instances() {
-		if strings.ToLower(strings.TrimSpace(instance.Name)) == requested {
+		if str.Of(instance.Name).TrimSpace().ToLower().String() == requested {
 			return strings.TrimSpace(instance.Driver)
 		}
 	}
@@ -895,7 +896,7 @@ func driverNameForDisk(manager *storages.Manager, name string) string {
 
 // storageDriverSupportsPublicURL limits URL actions to drivers with generated public URL support.
 func storageDriverSupportsPublicURL(driver string) bool {
-	switch strings.ToLower(strings.TrimSpace(driver)) {
+	switch str.Of(driver).TrimSpace().ToLower().String() {
 	case "dropbox", "gcs", "rclone", "s3":
 		return true
 	default:

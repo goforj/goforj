@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/str"
+
 	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/compileprofile"
 	"github.com/goforj/goforj/internal/logger"
@@ -319,7 +321,7 @@ func (c *Cmd) modulePath(root string) string {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			return str.Of(line).ChopStart("module ").TrimSpace().String()
 		}
 	}
 	return ""

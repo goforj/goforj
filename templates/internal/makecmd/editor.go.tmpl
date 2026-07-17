@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goforj/str"
 	"golang.org/x/term"
 	"{{.GoModuleName}}/internal/console"
 )
@@ -110,7 +111,7 @@ func generatedFileOpenDecisionFor(open, noOpen bool, mode string, interactive, c
 		return generatedFileOpenDecision{open: true, explicit: true}, ""
 	}
 
-	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	normalizedMode := str.Of(mode).TrimSpace().ToLower().String()
 	if normalizedMode == "" {
 		normalizedMode = generatedFileOpenAuto
 	}
@@ -216,8 +217,8 @@ func resolveGeneratedFileEditorCandidate(candidate generatedFileEditorCandidate,
 }
 
 func generatedFileTerminalEditorCandidates(env func(string) string) []generatedFileEditorCandidate {
-	termProgram := strings.ToLower(strings.TrimSpace(env("TERM_PROGRAM")))
-	terminalEmulator := strings.ToLower(strings.TrimSpace(env("TERMINAL_EMULATOR")))
+	termProgram := str.Of(env("TERM_PROGRAM")).TrimSpace().ToLower().String()
+	terminalEmulator := str.Of(env("TERMINAL_EMULATOR")).TrimSpace().ToLower().String()
 
 	switch {
 	case strings.Contains(terminalEmulator, "jetbrains"):
@@ -300,10 +301,12 @@ func generatedFileEditorTemplateArgs(args []string, path string, line int, proje
 	handledPath := false
 	location := fmt.Sprintf("%s:%d", path, line)
 	for _, arg := range args {
-		next := strings.ReplaceAll(arg, "{file}", path)
-		next = strings.ReplaceAll(next, "{line}", strconv.Itoa(line))
-		next = strings.ReplaceAll(next, "{location}", location)
-		next = strings.ReplaceAll(next, "{project}", projectRoot)
+		next := str.Of(arg).
+			ReplaceAll("{file}", path).
+			ReplaceAll("{line}", strconv.Itoa(line)).
+			ReplaceAll("{location}", location).
+			ReplaceAll("{project}", projectRoot).
+			String()
 		if next != arg {
 			handledPath = handledPath ||
 				strings.Contains(arg, "{file}") ||
@@ -319,7 +322,7 @@ func generatedFileEditorTemplateArgs(args []string, path string, line int, proje
 func generatedFileEditorName(command string) string {
 	name := strings.ToLower(filepath.Base(command))
 	if runtime.GOOS == "windows" {
-		name = strings.TrimSuffix(strings.TrimSuffix(name, ".exe"), ".cmd")
+		name = str.Of(name).ChopEnd(".exe").ChopEnd(".cmd").String()
 	}
 
 	return name

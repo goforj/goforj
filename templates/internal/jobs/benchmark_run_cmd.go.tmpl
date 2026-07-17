@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goforj/str"
+
 {{- if .ProjectComponents.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -263,7 +265,7 @@ func parseSuites(raw string, cacheEnabled bool, storageEnabled bool, databaseEna
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		key := strings.ToLower(strings.TrimSpace(item))
+		key := str.Of(item).TrimSpace().ToLower().String()
 		switch key {
 		case "", "all":
 			for _, suite := range available {
