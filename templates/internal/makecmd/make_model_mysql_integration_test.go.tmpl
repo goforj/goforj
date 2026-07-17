@@ -1481,7 +1481,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 		t.Skip("db env not configured")
 	}
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC&time_zone=%%27%%2B00%%3A00%%27",
 		user, pass, host, port, database,
 	)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})

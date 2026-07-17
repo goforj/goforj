@@ -91,11 +91,33 @@ func TestBuildDSNMySQL(t *testing.T) {
 	t.Setenv("DB_ANALYTICS_PASSWORD", "pass")
 	t.Setenv("DB_ANALYTICS_DATABASE", "analytics")
 
-	got, err := buildDSN("analytics", "mysql")
+	want := "user:pass@tcp(db:3306)/analytics?charset=utf8mb4&parseTime=True&loc=UTC&time_zone=%27%2B00%3A00%27"
+	for _, driver := range []string{"mysql", "mariadb"} {
+		t.Run(driver, func(t *testing.T) {
+			got, err := buildDSN("analytics", driver)
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if got != want {
+				t.Fatalf("expected %q, got %q", want, got)
+			}
+		})
+	}
+}
+
+// TestBuildDSNPostgres verifies generated connections establish UTC sessions.
+func TestBuildDSNPostgres(t *testing.T) {
+	t.Setenv("DB_ANALYTICS_HOST", "db")
+	t.Setenv("DB_ANALYTICS_PORT", "5432")
+	t.Setenv("DB_ANALYTICS_USERNAME", "user")
+	t.Setenv("DB_ANALYTICS_PASSWORD", "pass")
+	t.Setenv("DB_ANALYTICS_DATABASE", "analytics")
+
+	got, err := buildDSN("analytics", "postgres")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	want := "user:pass@tcp(db:3306)/analytics?charset=utf8mb4&parseTime=True&loc=Local"
+	want := "host=db user=user password=pass dbname=analytics port=5432 sslmode=disable TimeZone=UTC"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -160,6 +182,17 @@ func TestDBScopeGetDuration(t *testing.T) {
 	t.Setenv("DB_SLOW_QUERY_THRESHOLD", "not-a-duration")
 	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", "")); got != 0 {
 		t.Fatalf("expected invalid fallback to be 0, got %s", got)
+	}
+}
+
+// TestGORMConfigUsesUTCClock verifies automatic model timestamps do not inherit the runtime location.
+func TestGORMConfigUsesUTCClock(t *testing.T) {
+	config := newGORMConfig(nil)
+	if config.NowFunc == nil {
+		t.Fatal("expected GORM clock to be configured")
+	}
+	if got := config.NowFunc(); got.Location() != time.UTC {
+		t.Fatalf("expected GORM clock to return UTC, got %s", got.Location())
 	}
 }
 
