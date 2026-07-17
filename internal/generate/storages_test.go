@@ -546,59 +546,20 @@ func TestNewManagerCreatesMissingLocalRoots(t *testing.T) {
 	}
 }
 
-func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
-	t.Parallel()
-	environment := map[string]string{
-		"STORAGE_DRIVER":       "local",
-		"STORAGE_ROOT":         "storage/app/private",
-		"STORAGE_CACHE_DRIVER": "memory",
-	}
-
-	root := mustTempGeneratedModuleRoot(t, ".tmp-storage-driver-pins-*", filepath.Join("internal", "storages"))
-	writeFixtureGoMod(t, root, fixtureModuleSpec(
-		"example.com/storagepinnedtest",
-		[]string{
-			"github.com/goforj/env/v2",
-			"github.com/goforj/storage",
-			"github.com/goforj/str/v2",
-		},
-		[]string{
-			"github.com/goforj/storage/driver/localstorage",
-			"github.com/goforj/storage/driver/memorystorage",
-		},
-		nil,
-	))
-	written, err := generateStorageFiles(fixtureGenerationInput(root, environment))
-	if err != nil {
-		t.Fatalf("GenerateStorageFiles returned error: %v", err)
-	}
-	if written == 0 {
-		t.Fatal("expected generated storage files to be written")
-	}
-
-	configGenPath := filepath.Join(root, "internal", "storages", "manager_gen.go")
-	configGen, err := os.ReadFile(configGenPath)
-	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
-	}
-	for _, importPath := range []string{
-		`"github.com/goforj/storage/driver/localstorage"`,
-		`"github.com/goforj/storage/driver/memorystorage"`,
-	} {
-		if !strings.Contains(string(configGen), importPath) {
-			t.Fatalf("expected manager_gen.go to import %s", importPath)
-		}
-	}
-
-	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root,
-		"github.com/goforj/storage/driver/localstorage",
-		"github.com/goforj/storage/driver/memorystorage",
-	)
-}
-
+// TestGenerateStorageFilesDriverMatrixCompiles keeps every generated Storage driver compatible with the versions shipped together by GoForj.
 func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 	t.Parallel()
+	driverModules := []string{
+		"github.com/goforj/storage/driver/dropboxstorage",
+		"github.com/goforj/storage/driver/ftpstorage",
+		"github.com/goforj/storage/driver/gcsstorage",
+		"github.com/goforj/storage/driver/localstorage",
+		"github.com/goforj/storage/driver/memorystorage",
+		"github.com/goforj/storage/driver/rclonestorage",
+		"github.com/goforj/storage/driver/redisstorage",
+		"github.com/goforj/storage/driver/s3storage",
+		"github.com/goforj/storage/driver/sftpstorage",
+	}
 	environment := map[string]string{
 		"STORAGE_DRIVER":                        "local",
 		"STORAGE_ROOT":                          "storage/app/private",
@@ -651,7 +612,7 @@ func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 			"github.com/goforj/storage",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		driverModules,
 		nil,
 	))
 	written, err := generateStorageFiles(fixtureGenerationInput(root, environment))
@@ -684,17 +645,7 @@ func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 	}
 
 	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root,
-		"github.com/goforj/storage/driver/localstorage",
-		"github.com/goforj/storage/driver/memorystorage",
-		"github.com/goforj/storage/driver/redisstorage",
-		"github.com/goforj/storage/driver/ftpstorage",
-		"github.com/goforj/storage/driver/sftpstorage",
-		"github.com/goforj/storage/driver/s3storage",
-		"github.com/goforj/storage/driver/gcsstorage",
-		"github.com/goforj/storage/driver/dropboxstorage",
-		"github.com/goforj/storage/driver/rclonestorage",
-	)
+	assertFixtureGoModPins(t, root, driverModules...)
 	runFixtureGoTest(t, root, "./internal/storages", "TestDoesNotExist", nil)
 }
 

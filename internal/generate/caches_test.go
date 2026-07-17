@@ -594,50 +594,19 @@ func TestGenerateCacheFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	}
 }
 
-func TestGenerateCacheFilesWithPinnedDriverModules(t *testing.T) {
-	t.Parallel()
-	environment := map[string]string{
-		"CACHE_DRIVER":          "memory",
-		"CACHE_SESSIONS_DRIVER": "sqlite",
-	}
-
-	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-pins-*", filepath.Join("internal", "caches"))
-	writeFixtureGoMod(t, root, fixtureModuleSpec(
-		"example.com/cachepinnedtest",
-		[]string{
-			"github.com/goforj/cache",
-			"github.com/goforj/cache/cachecore",
-			"github.com/goforj/cache/cachetest",
-			"github.com/goforj/cache/driver/sqlcore",
-			"github.com/goforj/env/v2",
-			"github.com/goforj/str/v2",
-		},
-		[]string{"github.com/goforj/cache/driver/sqlitecache"},
-		cacheLocalReplaces(t),
-	))
-	written, err := generateCacheFiles(fixtureGenerationInput(root, environment))
-	if err != nil {
-		t.Fatalf("GenerateCacheFiles returned error: %v", err)
-	}
-	if written == 0 {
-		t.Fatal("expected generated cache files to be written")
-	}
-
-	configGenPath := filepath.Join(root, "internal", "caches", "manager_gen.go")
-	configGen, err := os.ReadFile(configGenPath)
-	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
-	}
-	if !strings.Contains(string(configGen), `"github.com/goforj/cache/driver/sqlitecache"`) {
-		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
-	}
-
-	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
-}
-
+// TestGenerateCacheFilesDriverMatrixCompiles keeps every generated Cache driver compatible with the versions shipped together by GoForj.
 func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 	t.Parallel()
+	driverModules := []string{
+		"github.com/goforj/cache/driver/dynamocache",
+		"github.com/goforj/cache/driver/memcachedcache",
+		"github.com/goforj/cache/driver/mysqlcache",
+		"github.com/goforj/cache/driver/natscache",
+		"github.com/goforj/cache/driver/postgrescache",
+		"github.com/goforj/cache/driver/rediscache",
+		"github.com/goforj/cache/driver/sqlitecache",
+		"github.com/nats-io/nats.go",
+	}
 	environment := map[string]string{
 		"CACHE_DRIVER":                     "memory",
 		"CACHE_REDIS_DRIVER":               "redis",
@@ -684,7 +653,7 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 			"github.com/goforj/env/v2",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		driverModules,
 		cacheLocalReplaces(t),
 	))
 	written, err := generateCacheFiles(fixtureGenerationInput(root, environment))
@@ -716,14 +685,6 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 	}
 
 	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root,
-		"github.com/goforj/cache/driver/rediscache",
-		"github.com/goforj/cache/driver/memcachedcache",
-		"github.com/goforj/cache/driver/dynamocache",
-		"github.com/goforj/cache/driver/sqlitecache",
-		"github.com/goforj/cache/driver/postgrescache",
-		"github.com/goforj/cache/driver/mysqlcache",
-		"github.com/goforj/cache/driver/natscache",
-	)
+	assertFixtureGoModPins(t, root, driverModules...)
 	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }

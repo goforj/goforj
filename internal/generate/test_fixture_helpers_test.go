@@ -212,6 +212,23 @@ func assertFixtureGoModContains(t *testing.T, root string, modules ...string) {
 	}
 }
 
+// assertFixtureGoModPins verifies tidy retained the repository-approved version for each requested fixture module.
+func assertFixtureGoModPins(t *testing.T, root string, modules ...string) {
+	t.Helper()
+
+	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod after tidy: %v", err)
+	}
+	source := string(goModAfter)
+	for _, module := range modules {
+		want := module + " " + fixtureModuleVersion(t, module)
+		if !strings.Contains(source, want) {
+			t.Fatalf("expected go.mod to retain %s after tidy", want)
+		}
+	}
+}
+
 func queueLocalReplaces(t *testing.T) []fixtureReplace {
 	t.Helper()
 
