@@ -9,7 +9,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 const defaultQueueName = "default"
@@ -102,7 +102,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 	manager := &Manager{defaultQueue: defaultQueue}
 
 	for _, child := range queueScope.ChildNames(queueRootKeys) {
-		name := str.Of(child).TrimSpace().ToLower().String()
+		name := str.Of(child).Trim().ToLower().String()
 		if name == "" {
 			continue
 		}
@@ -121,7 +121,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 
 // buildQueue applies the generated transport contract before queue infrastructure is initialized.
 func buildQueue(_ string, scope env.Scope, observer queue.Observer, logger queue.Logger) (*queue.Queue, error) {
-	driver := str.Of(scope.Get("DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverWorkerpool)).Trim().ToLower().String()
 	if driver == "" {
 		driver = driverWorkerpool
 	}

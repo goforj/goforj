@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // storageAccessorTemplateData carries the named disk methods emitted for one project snapshot.
@@ -121,7 +121,7 @@ var storageDriverSpecs = map[string]storageDriverSpec{
 		ImportPath: "github.com/goforj/storage/driver/redisstorage",
 		ConfigType: "redisstorage.Config",
 		Setup: []string{
-			`addr := str.Of(scope.Get("ADDR", "")).TrimSpace().String()`,
+			`addr := str.Of(scope.Get("ADDR", "")).Trim().String()`,
 			`if addr == "" {`,
 			`	addr = fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379"))`,
 			`}`,
@@ -281,7 +281,7 @@ func generateStorageFiles(input generationInput) (int, error) {
 func discoverStorageDiskNames(input generationInput) []string {
 	names := discoverStorageChildren(input)
 	for i := range names {
-		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
+		names[i] = str.Of(names[i]).Trim().ToLower().String()
 	}
 	return names
 }
@@ -293,7 +293,7 @@ func discoverStorageChildren(input generationInput) []string {
 
 // exactScopedChildNames finds names only when their trailing key matches a complete resource key.
 func exactScopedChildNames(environment generationEnvironment, prefix string, rootKeys []string) []string {
-	prefix = strings.TrimSpace(strings.ToUpper(prefix))
+	prefix = str.Of(prefix).ToUpper().Trim().String()
 	if prefix == "" {
 		return nil
 	}
@@ -301,7 +301,7 @@ func exactScopedChildNames(environment generationEnvironment, prefix string, roo
 	rootKeyParts := make(map[string][]string, len(rootKeys))
 	orderedRootKeys := make([]string, 0, len(rootKeys))
 	for _, key := range rootKeys {
-		normalized := strings.TrimSpace(strings.ToUpper(key))
+		normalized := str.Of(key).ToUpper().Trim().String()
 		if normalized == "" {
 			continue
 		}
@@ -504,7 +504,7 @@ import (
 {{- range .Drivers }}
 	"{{ .ImportPath }}"
 {{- end }}
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 const defaultDiskName storage.DiskName = "default"
@@ -745,7 +745,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	disks[defaultDiskName] = defaultCfg
 
 	for _, child := range storageScope.ChildNames(storageRootKeys) {
-		name := storage.DiskName(str.Of(child).TrimSpace().ToLower().String())
+		name := storage.DiskName(str.Of(child).Trim().ToLower().String())
 		cfg, err := buildDiskConfig(name, storageScope.Child(child))
 		if err != nil {
 			return nil, err
@@ -785,7 +785,7 @@ func newManagerFromEnvWithBuilder(build func(storage.DriverConfig) (storage.Stor
 	}
 	manager.{{ .Disk }} = disk{{ .Method }}
 	if disk{{ .Method }} != nil {
-		manager.{{ .Disk }}Driver = storageDriverNameFromScope(storageScope.Child(str.Of("{{ .Disk }}").Snake("_").ToUpper().String()))
+		manager.{{ .Disk }}Driver = storageDriverNameFromScope(storageScope.Child(str.Of("{{ .Disk }}").Snake().ToUpper().String()))
 		manager.ownedDisks = append(manager.ownedDisks, ownedStorageDisk{name: "{{ .Disk }}", disk: disk{{ .Method }}})
 	} else if warning{{ .Method }} != nil {
 		manager.warnings = append(manager.warnings, *warning{{ .Method }})
@@ -796,7 +796,7 @@ func newManagerFromEnvWithBuilder(build func(storage.DriverConfig) (storage.Stor
 
 // optionalDiskFromScope keeps expected infrastructure outages nonfatal for non-default disks while retaining diagnostics.
 func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName, build func(storage.DriverConfig) (storage.Storage, error)) (storage.Storage, *OptionalDiskWarning, error) {
-	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
+	childScope := storageScope.Child(str.Of(string(name)).Snake().ToUpper().String())
 	cfg, err := buildDiskConfig(name, childScope)
 	if err != nil {
 		return nil, nil, err
@@ -871,7 +871,7 @@ func isOptionalStorageDiskError(err error) bool {
 
 // storageDriverNameFromScope normalizes driver labels shared by diagnostics and operation observers.
 func storageDriverNameFromScope(scope env.Scope) string {
-	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).Trim().ToLower().String()
 	if driver == "" {
 		return driverLocal
 	}
@@ -881,7 +881,7 @@ func storageDriverNameFromScope(scope env.Scope) string {
 // buildDiskConfig rejects backends outside the generated manifest before endpoint configuration is constructed.
 // The manifest comes from STORAGE_SUPPORTED_DRIVERS, falling back to active root and named Storage scopes when that list is unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
-	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).Trim().ToLower().String()
 	if driver == "" {
 		driver = driverLocal
 	}

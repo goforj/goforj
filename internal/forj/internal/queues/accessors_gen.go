@@ -8,7 +8,7 @@ package queues
 
 import (
 	"github.com/goforj/queue"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // Default returns the default queue instance derived from QUEUE_* configuration.
@@ -32,7 +32,7 @@ func (m *Manager) Names() []string {
 
 // Named returns the generated queue instance for a configured queue name.
 func (m *Manager) Named(name string) *queue.Queue {
-	switch str.Of(name).TrimSpace().ToLower().String() {
+	switch str.Of(name).Trim().ToLower().String() {
 	case "", "default":
 		return m.defaultQueue
 	case "critical":

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // renderFrameworkFormatter preserves the app-operation grouping expected by framework CLIs.
@@ -65,7 +65,7 @@ func commandNamespace(child *kong.Node) string {
 		return "app"
 	}
 	if child.Tag != nil {
-		if group := str.Of(child.Tag.Group).TrimSpace().String(); group != "" {
+		if group := str.Of(child.Tag.Group).Trim().String(); group != "" {
 			return group
 		}
 	}

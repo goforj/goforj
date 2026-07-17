@@ -60,7 +60,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/storage/storagecore":               "v0.5.0",
 	"github.com/goforj/storage/storagetest":               "v0.5.0",
 	"github.com/goforj/web":                               "v0.6.0",
-	"github.com/goforj/str":                               "v1.2.0",
+	"github.com/goforj/str/v2":                            "v2.0.1",
 	"github.com/nats-io/nats.go":                          "v1.50.0",
 }
 
@@ -68,6 +68,7 @@ var rendererSyncModules = []string{
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
 	"github.com/goforj/web",
+	"github.com/goforj/str/v2",
 	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
 }

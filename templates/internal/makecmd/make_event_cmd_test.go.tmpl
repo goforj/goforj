@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 func TestEnsureEventSuffix(t *testing.T) {
@@ -20,7 +20,7 @@ func TestEnsureEventSuffix(t *testing.T) {
 }
 
 func TestSnakeCase(t *testing.T) {
-	if got := str.Of("UserRegisteredEvent").Snake("_").String(); got != "user_registered_event" {
+	if got := str.Of("UserRegisteredEvent").Snake().String(); got != "user_registered_event" {
 		t.Fatalf("unexpected snake_case value: %q", got)
 	}
 }

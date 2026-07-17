@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/str/v2"
+
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -331,7 +333,7 @@ func aggregateMonitorChecks(rows []models.MonitorCheck, resolution string) []mod
 			acc[key] = item
 		}
 		item.sampleCount++
-		status := strings.ToLower(strings.TrimSpace(rows[i].Status))
+		status := str.Of(rows[i].Status).Trim().ToLower().String()
 		if status == "up" {
 			item.upCount++
 		} else if status == "down" {
@@ -380,7 +382,7 @@ func aggregateMonitorChecks(rows []models.MonitorCheck, resolution string) []mod
 }
 
 func truncateRetentionBucket(ts time.Time, resolution string) time.Time {
-	switch strings.ToLower(strings.TrimSpace(resolution)) {
+	switch str.Of(resolution).Trim().ToLower().String() {
 	case "hour":
 		return ts.Truncate(time.Hour)
 	case "day":

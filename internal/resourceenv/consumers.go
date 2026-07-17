@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/goforj/project"
 	"github.com/joho/godotenv"
 )
@@ -50,7 +52,7 @@ func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponent
 	if config != nil {
 		defaultComponents = config.Render.Components.WithResolvedDependencies()
 		for configuredName, appConfig := range config.Apps {
-			name := strings.ToLower(strings.TrimSpace(configuredName))
+			name := str.Of(configuredName).Trim().ToLower().String()
 			if name == "" || name == project.DefaultAppName {
 				continue
 			}
@@ -169,7 +171,7 @@ func configuredResourceAppNames(config *project.Config) []string {
 	}
 	names := make([]string, 0, len(config.Apps))
 	for name := range config.Apps {
-		name = strings.ToLower(strings.TrimSpace(name))
+		name = str.Of(name).Trim().ToLower().String()
 		if name == "" || name == project.DefaultAppName {
 			continue
 		}
@@ -187,7 +189,7 @@ func resourceEnvironmentAssignments(source []byte) (map[string]string, error) {
 	}
 	values := map[string]string{}
 	for key, value := range parsed {
-		values[strings.ToUpper(strings.TrimSpace(key))] = strings.TrimSpace(value)
+		values[str.Of(key).Trim().ToUpper().String()] = strings.TrimSpace(value)
 	}
 	return values, nil
 }
@@ -196,7 +198,7 @@ func resourceEnvironmentAssignments(source []byte) (map[string]string, error) {
 func resourceAppPrefixes(values map[string]string, appNames []string) []resourceAppPrefix {
 	prefixNames := map[string]string{}
 	for _, appName := range appNames {
-		appName = strings.ToLower(strings.TrimSpace(appName))
+		appName = str.Of(appName).Trim().ToLower().String()
 		if appName == "" || appName == project.DefaultAppName {
 			continue
 		}
@@ -225,7 +227,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 		if resourceFirstAppPrefix(prefix) {
 			continue
 		}
-		prefixNames[prefix] = strings.ToLower(strings.ReplaceAll(prefix, "_", "-"))
+		prefixNames[prefix] = str.Of(prefix).ReplaceAll("_", "-").ToLower().String()
 	}
 	prefixes := make([]resourceAppPrefix, 0, len(prefixNames))
 	for prefix, name := range prefixNames {
@@ -257,7 +259,7 @@ func resourceAppPrefixEvidence(key string, definition project.ResourceDefinition
 		return true
 	}
 	for _, endpoint := range definitionEndpointEnvironment(definition) {
-		endpointSuffix := strings.TrimPrefix(strings.ToUpper(endpoint.Key), resourcePrefix)
+		endpointSuffix := str.Of(endpoint.Key).ToUpper().TrimPrefix(resourcePrefix).String()
 		if endpointSuffix != "" && (suffix == endpointSuffix || strings.HasSuffix(suffix, "_"+endpointSuffix)) {
 			return true
 		}
@@ -305,7 +307,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if value, set := resolver.overlayValue(scope, named.EnvironmentKey); set && strings.TrimSpace(value) != "" {
 			fallback = value
 		}
-		drivers[strings.ToLower(named.Name)] = strings.ToLower(strings.TrimSpace(fallback))
+		drivers[strings.ToLower(named.Name)] = str.Of(fallback).Trim().ToLower().String()
 	}
 
 	prefix := definition.EnvironmentPrefix + "_"
@@ -345,7 +347,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if !set || strings.TrimSpace(driver) == "" {
 			driver = definition.NamedDriverDefault(rootDriver)
 		}
-		drivers[strings.ToLower(name)] = strings.ToLower(strings.TrimSpace(driver))
+		drivers[strings.ToLower(name)] = str.Of(driver).Trim().ToLower().String()
 	}
 	return drivers
 }
@@ -376,7 +378,7 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 	suffixes := []string{}
 	seen := map[string]bool{}
 	add := func(suffix string) {
-		suffix = strings.ToUpper(strings.TrimSpace(suffix))
+		suffix = str.Of(suffix).Trim().ToUpper().String()
 		if suffix == "" || seen[suffix] {
 			return
 		}
@@ -385,7 +387,7 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 	}
 	resourcePrefix := definition.EnvironmentPrefix + "_"
 	for _, endpoint := range definitionEndpointEnvironment(definition) {
-		add(strings.TrimPrefix(strings.ToUpper(endpoint.Key), resourcePrefix))
+		add(str.Of(endpoint.Key).ToUpper().TrimPrefix(resourcePrefix).String())
 	}
 	switch definition.Key {
 	case project.ResourceDatabase:
@@ -410,9 +412,9 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 	key += "_DRIVER"
 	value, set := resolver.overlayValue(scope, key)
 	if !set {
-		return strings.ToLower(strings.TrimSpace(fallback))
+		return str.Of(fallback).Trim().ToLower().String()
 	}
-	value = strings.ToLower(strings.TrimSpace(value))
+	value = str.Of(value).Trim().ToLower().String()
 	if value != "" {
 		return value
 	}
@@ -468,7 +470,7 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 			}
 			addr = strings.TrimSpace(host) + ":" + strings.TrimSpace(port)
 		}
-		addr = strings.ToLower(strings.TrimSpace(addr))
+		addr = str.Of(addr).Trim().ToLower().String()
 		if resolver.projectComponents.Docker && addr == "redis:6379" {
 			return resourceEndpointResolution{local: true}, nil
 		}
@@ -491,7 +493,7 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 		if port == "" {
 			port = "1025"
 		}
-		endpoint := strings.ToLower(strings.TrimSpace(host)) + ":" + strings.TrimSpace(port)
+		endpoint := str.Of(host).Trim().ToLower().String() + ":" + strings.TrimSpace(port)
 		if resolver.projectComponents.Docker && endpoint == "mailpit:1025" {
 			return resourceEndpointResolution{local: true}, nil
 		}
@@ -501,7 +503,7 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 	parts := []string{}
 	for _, placeholder := range driver.Environment {
 		rootPrefix := connection.definition.EnvironmentPrefix + "_"
-		suffix := strings.TrimPrefix(strings.ToUpper(placeholder.Key), rootPrefix)
+		suffix := str.Of(placeholder.Key).ToUpper().TrimPrefix(rootPrefix).String()
 		if suffix == "" || strings.Contains(suffix, "PASSWORD") || strings.Contains(suffix, "SECRET") || strings.Contains(suffix, "TOKEN") || strings.Contains(suffix, "KEY") {
 			continue
 		}
@@ -556,7 +558,7 @@ func (resolver resourceConsumerResolver) resolveDatabaseEndpoint(scope resourceC
 	if port == "" {
 		port = defaultPort
 	}
-	endpoint := strings.ToLower(strings.TrimSpace(host)) + ":" + strings.TrimSpace(port)
+	endpoint := str.Of(host).Trim().ToLower().String() + ":" + strings.TrimSpace(port)
 	if sameLocalEngine && endpoint == string(driver.Service)+":"+defaultPort {
 		return resourceEndpointResolution{local: true}, nil
 	}
@@ -618,7 +620,7 @@ func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope
 
 // overlayValue applies the generated runtime's App-prefixed override precedence.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
-	key = strings.ToUpper(strings.TrimSpace(key))
+	key = str.Of(key).Trim().ToUpper().String()
 	if scope.app.prefix != "" {
 		if value, ok := resolver.values[scope.app.prefix+"_"+key]; ok {
 			return value, true

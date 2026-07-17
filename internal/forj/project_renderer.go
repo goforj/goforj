@@ -17,6 +17,8 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/console"
 	"github.com/goforj/crypt"
@@ -410,7 +412,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				localEnvTemplate := ".env.local.tmpl"
 				missingEnvTemplates := make([]string, 0, len(envTemplates))
 				for _, tmpl := range envTemplates {
-					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, ""), ".tmpl")
+					name := str.Of(tmpl).TrimSuffix(".tmpl").String()
 					if exists, err := p.workspace.exists(name); err != nil {
 						return err
 					} else if exists {
@@ -1860,7 +1862,7 @@ func appDatabaseHost(service string, host bool) string {
 
 // prefixDatabaseName keeps generated app database names compact and deterministic.
 func prefixDatabaseName(prefix string, fallback string) string {
-	name := strings.ToLower(strings.ReplaceAll(prefix, "_", ""))
+	name := str.Of(prefix).ReplaceAll("_", "").ToLower().String()
 	if name == "" {
 		return fallback
 	}
@@ -1990,7 +1992,7 @@ func isEnvSectionHeader(line string, appName string) bool {
 	if !strings.HasPrefix(trimmed, "#") {
 		return false
 	}
-	title := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+	title := str.Of(trimmed).TrimPrefix("#").Trim().String()
 	return strings.EqualFold(title, envSectionTitle(appName)) || strings.EqualFold(title, appName)
 }
 
@@ -2091,14 +2093,14 @@ func appendDriver(value string, driver string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, part := range strings.Split(value, ",") {
-		normalized := strings.ToLower(strings.TrimSpace(part))
+		normalized := str.Of(part).Trim().ToLower().String()
 		if normalized == "" || seen[normalized] {
 			continue
 		}
 		seen[normalized] = true
 		out = append(out, normalized)
 	}
-	driver = strings.ToLower(strings.TrimSpace(driver))
+	driver = str.Of(driver).Trim().ToLower().String()
 	if driver != "" && !seen[driver] {
 		out = append(out, driver)
 	}
@@ -2968,9 +2970,9 @@ func readGoModModuleState(path string) (goModModuleState, error) {
 		case trimmed == "replace (":
 			mode = "replace"
 		case strings.HasPrefix(trimmed, "require "):
-			recordGoModDirective(&state, "require", strings.TrimSpace(strings.TrimPrefix(trimmed, "require ")))
+			recordGoModDirective(&state, "require", str.Of(trimmed).TrimPrefix("require ").Trim().String())
 		case strings.HasPrefix(trimmed, "replace "):
-			recordGoModDirective(&state, "replace", strings.TrimSpace(strings.TrimPrefix(trimmed, "replace ")))
+			recordGoModDirective(&state, "replace", str.Of(trimmed).TrimPrefix("replace ").Trim().String())
 		}
 	}
 	return state, nil

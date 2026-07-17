@@ -13,7 +13,7 @@ import (
 	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 const defaultCacheName = "default"
@@ -104,7 +104,7 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 
 // buildStore keeps driver defaults and shared cache behavior consistent across generated stores.
 func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
-	driver := str.Of(scope.Get("DRIVER", driverMemory)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverMemory)).Trim().ToLower().String()
 	if driver == "" {
 		driver = driverMemory
 	}
@@ -185,7 +185,7 @@ func cacheFileDir(name string, scope env.Scope) string {
 
 // cacheCompression preserves invalid values so manager construction can report configuration mistakes.
 func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
-	value := strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none")))
+	value := str.Of(scope.Get("COMPRESSION", "none")).Trim().ToLower().String()
 	switch value {
 	case "", "none":
 		return cachecore.CompressionNone

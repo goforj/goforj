@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 	appdb "{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/inspects"
@@ -66,7 +66,7 @@ func modelNameFromTable(table string) string {
 // modelPathFromTable returns the model file path for a table in a temp module.
 func modelPathFromTable(tempDir, table string) string {
 	modelName := modelNameFromTable(table)
-	filename := str.Of(modelName).Snake("_").String() + ".go"
+	filename := str.Of(modelName).Snake().String() + ".go"
 	return filepath.Join(tempDir, "internal", "models", filename)
 }
 
@@ -817,7 +817,7 @@ func TestMakeModelSQLitePackageOutput(t *testing.T) {
 	runModelGen(t, cmd, table)
 
 	modelName := modelNameFromTable(table)
-	modelPath := filepath.Join(tempDir, "internal", "domain", "accounts", str.Of(modelName).Snake("_").String()+".go")
+	modelPath := filepath.Join(tempDir, "internal", "domain", "accounts", str.Of(modelName).Snake().String()+".go")
 	if _, err := os.Stat(modelPath); err != nil {
 		t.Fatalf("expected model file at %s", modelPath)
 	}
@@ -840,12 +840,12 @@ func TestMakeModelSQLitePackageOutput(t *testing.T) {
 }
 
 func isSQLiteDriver() bool {
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	return driver == "sqlite" || driver == "sqlite3"
 }
 
 func hasSQLiteConfig() bool {
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	return database != ""
 }
 
@@ -872,7 +872,7 @@ func setupSQLite(t *testing.T) *gorm.DB {
 		t.Fatalf("load env: %v", err)
 	}
 	applyIntegrationEnvOverrides()
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	if database != "" && !filepath.IsAbs(database) {
 		_ = os.Setenv("DB_DATABASE", filepath.Join(root, database))
 	}
@@ -899,7 +899,7 @@ func applyIntegrationEnvOverrides() {
 
 // ensureSQLiteDir creates the sqlite database parent directory when needed.
 func ensureSQLiteDir() error {
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	if database == "" {
 		return nil
 	}
@@ -911,7 +911,7 @@ func ensureSQLiteDir() error {
 }
 
 func overrideIfSet(targetKey, overrideKey string) {
-	value := str.Of(env.Get(overrideKey, "")).TrimSpace().String()
+	value := str.Of(env.Get(overrideKey, "")).Trim().String()
 	if value == "" {
 		return
 	}
@@ -1253,7 +1253,7 @@ func loadModuleVersions(t *testing.T, root string) map[string]string {
 			continue
 		}
 		if strings.HasPrefix(line, "require ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "require "))
+			line = str.Of(line).TrimPrefix("require ").Trim().String()
 		} else if !inRequire {
 			continue
 		}

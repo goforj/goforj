@@ -99,7 +99,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-generation-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
 		"example.com/queuegenerationtest",
-		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str/v2"},
 		nil,
 		queueLocalReplaces(t),
 	))
@@ -306,7 +306,7 @@ func TestGenerateQueueFilesAcceptsDefaultQueueCompatibilityAlias(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-legacy-name-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
 		"example.com/queuelegacytest",
-		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str/v2"},
 		nil,
 		queueLocalReplaces(t),
 	))
@@ -349,7 +349,7 @@ func TestGenerateQueueFilesNamedQueuesInheritRootConfig(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-inheritance-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
 		"example.com/queueinheritancetest",
-		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str/v2"},
 		nil,
 		queueLocalReplaces(t),
 	))
@@ -405,7 +405,7 @@ func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
 	root := t.TempDir()
 	writeQueueFixtureModule(t, root,
 		"example.com/queuesupportedtest",
-		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"},
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str/v2"},
 		queueLocalReplaces(t),
 	)
 
@@ -437,7 +437,7 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-accessor-names-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
 		"example.com/queueaccessornametest",
-		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str/v2"},
 		nil,
 		nil,
 	))
@@ -499,7 +499,7 @@ func TestGenerateQueueFilesAllowsShutdownTimeoutEnvVar(t *testing.T) {
 	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "90s")
 
 	root := t.TempDir()
-	writeQueueFixtureModule(t, root, "example.com/queueshutdowntest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"}, nil)
+	writeQueueFixtureModule(t, root, "example.com/queueshutdowntest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str/v2"}, nil)
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("expected GenerateQueueFiles to allow QUEUE_SHUTDOWN_TIMEOUT, got %v", err)
 	}
@@ -511,7 +511,7 @@ func TestGenerateQueueFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	t.Setenv("QUEUE_QUEUES", "critical=6,default=3,low=1")
 
 	root := t.TempDir()
-	writeQueueFixtureModule(t, root, "example.com/queueinactiveroottest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"}, nil)
+	writeQueueFixtureModule(t, root, "example.com/queueinactiveroottest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str/v2"}, nil)
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("expected GenerateQueueFiles to allow documented inactive root queue env vars, got %v", err)
 	}
@@ -523,7 +523,7 @@ func TestGenerateQueueFilesRedisIncludesShutdownTimeout(t *testing.T) {
 	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "7s")
 
 	root := t.TempDir()
-	writeQueueFixtureModule(t, root, "example.com/queueredistimeouttest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"}, queueLocalReplaces(t))
+	writeQueueFixtureModule(t, root, "example.com/queueredistimeouttest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str/v2"}, queueLocalReplaces(t))
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-native-drivers-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
 		"example.com/queuenativedriverstest",
-		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"},
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str/v2"},
 		nil,
 		nil,
 	))
@@ -612,7 +612,7 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 			"github.com/goforj/queue/driver/sqlitequeue",
 			"github.com/goforj/queue/driver/sqlqueuecore",
 			"github.com/goforj/queue/driver/sqsqueue",
-			"github.com/goforj/str",
+			"github.com/goforj/str/v2",
 		},
 		nil,
 		queueLocalReplaces(t),

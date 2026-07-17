@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str/v2"
 	"golang.org/x/oauth2"
 )
 
@@ -47,7 +48,7 @@ func (p *GoogleProvider) ResolveIdentity(ctx context.Context, callback OAuthCall
 	return ProviderIdentity{
 		Provider:      p.Name(),
 		Subject:       strings.TrimSpace(user.Sub),
-		Email:         strings.TrimSpace(strings.ToLower(user.Email)),
+		Email:         str.Of(user.Email).ToLower().Trim().String(),
 		EmailVerified: user.EmailVerified,
 		Username:      strings.TrimSpace(user.PreferredUsername),
 		DisplayName:   coalesceOAuthName(user.Name, user.PreferredUsername),

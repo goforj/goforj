@@ -1,6 +1,6 @@
 package notification
 
-import "strings"
+import "github.com/goforj/str/v2"
 
 var webhookCompatProviders = map[string]struct{}{
 	"alerta":               {},
@@ -92,7 +92,7 @@ var webhookCompatProviders = map[string]struct{}{
 }
 
 func NormalizeProviderID(provider string) string {
-	return strings.ToLower(strings.TrimSpace(provider))
+	return str.Of(provider).Trim().ToLower().String()
 }
 
 func IsSupportedNotificationProvider(provider string) bool {

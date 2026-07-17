@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goforj/str/v2"
+
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
@@ -41,7 +43,7 @@ type cacheOwnerDependencySearch struct {
 func (p *ProjectRenderer) cacheOwnerDependencySearch(excludedApps []project.App, frameworkPaths map[string]bool) *cacheOwnerDependencySearch {
 	return &cacheOwnerDependencySearch{
 		workspace:      p.workspace,
-		modulePath:     strings.TrimSuffix(strings.TrimSpace(p.config.GoModuleName), "/"),
+		modulePath:     str.Of(p.config.GoModuleName).Trim().TrimSuffix("/").String(),
 		excludedPaths:  cacheOwnerExcludedPaths(excludedApps),
 		frameworkPaths: frameworkPaths,
 		packageStates:  map[string]bool{},

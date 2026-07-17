@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -189,11 +190,11 @@ func deliveryGreeting(user *User) string {
 }
 
 func passwordResetURL(rawToken string) string {
-	baseURL := strings.TrimRight(strings.TrimSpace(env.Get("APP_URL", "http://localhost:3000")), "/")
+	baseURL := strings.TrimRight(str.Of(env.Get("APP_URL", "http://localhost:3000")).Trim().String(), "/")
 	return baseURL + "/reset-password?token=" + url.QueryEscape(strings.TrimSpace(rawToken))
 }
 
 func emailVerificationURL(rawToken string) string {
-	baseURL := strings.TrimRight(strings.TrimSpace(env.Get("APP_URL", "http://localhost:3000")), "/")
+	baseURL := strings.TrimRight(str.Of(env.Get("APP_URL", "http://localhost:3000")).Trim().String(), "/")
 	return baseURL + "/verify-email?token=" + url.QueryEscape(strings.TrimSpace(rawToken))
 }

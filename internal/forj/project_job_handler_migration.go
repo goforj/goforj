@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // legacyJobProvider describes one constructor whose generated job convention exposes a matching handler and type name.

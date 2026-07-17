@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // dbTemplateData keeps manifest, import, and accessor decisions together so emitted database source stays internally consistent.
@@ -97,7 +97,7 @@ func discoverDBConnectionNames(input generationInput) []string {
 	names := discoverPrimitiveChildNames(input, "DB", dbRootKeys)
 	out := make([]string, 0, len(names))
 	for _, name := range names {
-		normalized := str.Of(name).TrimSpace().ToLower().String()
+		normalized := str.Of(name).Trim().ToLower().String()
 		if normalized == "" || normalized == "root" || dbHelperConnectionName(normalized) {
 			continue
 		}
@@ -132,7 +132,7 @@ func validateAppPrefixedDBEnv(input generationInput) error {
 
 // dbHelperConnectionName skips driver-specific helper keys such as DB_SQLITE_DATABASE.
 func dbHelperConnectionName(name string) bool {
-	switch strings.TrimSpace(strings.ToLower(name)) {
+	switch str.Of(name).ToLower().Trim().String() {
 	case "mysql", "postgres", "postgresql", "sqlite", "sqlite3":
 		return true
 	default:
@@ -175,7 +175,7 @@ func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, err
 	drivers := map[string]dbDriverSpec{}
 	compiled := map[string]struct{}{}
 	recordDBDriver(drivers, "sqlite")
-	rootDriver := str.Of(input.environment.Get("DB_DRIVER", "sqlite")).TrimSpace().ToLower().String()
+	rootDriver := str.Of(input.environment.Get("DB_DRIVER", "sqlite")).Trim().ToLower().String()
 	if rootDriver == "" {
 		rootDriver = "sqlite"
 	}
@@ -186,21 +186,21 @@ func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, err
 		},
 	}
 	for _, name := range names {
-		prefix := "DB_" + str.Of(name).Snake("_").ToUpper().String()
-		driver := str.Of(input.environment.Get(prefix+"_DRIVER", "")).TrimSpace().ToLower().String()
+		prefix := "DB_" + str.Of(name).Snake().ToUpper().String()
+		driver := str.Of(input.environment.Get(prefix+"_DRIVER", "")).Trim().ToLower().String()
 		if driver == "" {
 			continue
 		}
 		activeDrivers = append(activeDrivers, generationActiveDriver{
-			key:    "DB_" + str.Of(name).Snake("_").ToUpper().String() + "_DRIVER",
+			key:    "DB_" + str.Of(name).Snake().ToUpper().String() + "_DRIVER",
 			driver: driver,
 		})
 	}
 	activeDrivers = append(activeDrivers, appPrefixedActiveDrivers(input, "DB", "sqlite", true)...)
-	rawSupported := str.Of(input.environment.Get("DB_SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
+	rawSupported := str.Of(input.environment.Get("DB_SUPPORTED_DRIVERS", "")).Trim().ToLower().String()
 	if rawSupported != "" {
 		for _, part := range strings.Split(rawSupported, ",") {
-			driver := str.Of(part).TrimSpace().ToLower().String()
+			driver := str.Of(part).Trim().ToLower().String()
 			if driver == "" {
 				continue
 			}
@@ -235,7 +235,7 @@ func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, err
 
 // canonicalDBDriver normalizes accepted compatibility aliases to the generated manifest name.
 func canonicalDBDriver(driver string) string {
-	switch strings.TrimSpace(strings.ToLower(driver)) {
+	switch str.Of(driver).ToLower().Trim().String() {
 	case "mariadb":
 		return "mysql"
 	case "postgresql":
@@ -243,7 +243,7 @@ func canonicalDBDriver(driver string) string {
 	case "sqlite3":
 		return "sqlite"
 	default:
-		return strings.TrimSpace(strings.ToLower(driver))
+		return str.Of(driver).ToLower().Trim().String()
 	}
 }
 
@@ -292,6 +292,7 @@ import (
 	"fmt"
 	"strings"
 	{{- if .Drivers }}
+	"github.com/goforj/str/v2"
 	{{- range .Drivers }}
 	"{{ .ImportPath }}"
 	{{- end }}
@@ -349,7 +350,7 @@ func (c *Connections) readinessCheck(ctx context.Context, name string) error {
 
 // openDialector rejects drivers outside the generated manifest before GORM initializes a connection.
 func openDialector(driver, dsn string) (gorm.Dialector, error) {
-	driver = strings.TrimSpace(strings.ToLower(driver))
+	driver = str.Of(driver).ToLower().Trim().String()
 	if !databaseDriverCompiled(driver) {
 		return nil, fmt.Errorf("database: active driver %q is not built in; compiled choices: %s; run forj generate --db after updating DB_SUPPORTED_DRIVERS", driver, strings.Join(compiledDatabaseDrivers, ", "))
 	}

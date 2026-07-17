@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -95,15 +95,15 @@ type subscriberTarget struct {
 
 // target resolves grouped subscriber names into colocated package output.
 func (c *SubscriberCmd) target() subscriberTarget {
-	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
+	if str.Of(c.OutputDir).Trim().IsBlank() {
 		c.OutputDir = defaultSubscriberOutputDir
 	}
 
-	rawName := str.Of(c.Name).TrimSpace().String()
+	rawName := str.Of(c.Name).Trim().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
 	if len(parts) > 1 {
-		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		action := str.Of(parts[len(parts)-1]).Trim().String()
 		if action != "" && isDefaultSubscriberOutputDir(c.OutputDir) {
 			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
@@ -113,10 +113,10 @@ func (c *SubscriberCmd) target() subscriberTarget {
 	}
 
 	baseName := str.Of(structBase).Pascal().String()
-	baseName = str.Of(baseName).ChopEnd("Subscriber").String()
+	baseName = str.Of(baseName).TrimSuffix("Subscriber").String()
 	eventName := ensureEventSuffix(baseName)
-	subscriberName := ensureSubscriberSuffix(str.Of(baseName).ChopEnd("Event").String())
-	fileName := str.Of(subscriberName).Snake("_").String() + ".go"
+	subscriberName := ensureSubscriberSuffix(str.Of(baseName).TrimSuffix("Event").String())
+	fileName := str.Of(subscriberName).Snake().String() + ".go"
 
 	return subscriberTarget{
 		outputDir:  c.OutputDir,
@@ -261,11 +261,11 @@ func (c *SubscriberCmd) removeFromWireFile(target subscriberTarget, busName stri
 
 // ensureSubscriberSuffix appends Subscriber when name does not already use that suffix.
 func ensureSubscriberSuffix(name string) string {
-	clean := str.Of(name).TrimSpace()
+	clean := str.Of(name).Trim()
 	if clean.IsBlank() {
 		return "ExampleSubscriber"
 	}
-	if clean.EndsWith("Subscriber") {
+	if clean.HasSuffix("Subscriber") {
 		return clean.String()
 	}
 	return clean.String() + "Subscriber"
@@ -278,7 +278,7 @@ func isDefaultSubscriberOutputDir(outputDir string) bool {
 
 // subscriberBusName returns the event bus selected for subscriber registration.
 func subscriberBusName(busName string) string {
-	if clean := str.Of(busName).TrimSpace().ToLower(); !clean.IsBlank() {
+	if clean := str.Of(busName).Trim().ToLower(); !clean.IsBlank() {
 		return clean.String()
 	}
 	return "default"

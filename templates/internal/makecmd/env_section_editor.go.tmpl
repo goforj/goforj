@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/goforj/str/v2"
 )
 
 // EnvWrite describes one env key/value pair to upsert.
@@ -251,7 +253,7 @@ func commentedEnvKey(line string) string {
 	if !strings.HasPrefix(clean, "#") {
 		return ""
 	}
-	clean = strings.TrimSpace(strings.TrimPrefix(clean, "#"))
+	clean = str.Of(clean).TrimPrefix("#").Trim().String()
 	key, _, ok := strings.Cut(clean, "=")
 	if !ok {
 		return ""

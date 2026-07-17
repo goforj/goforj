@@ -60,7 +60,7 @@ require (
 	github.com/goforj/cache/driver/sqlcore v0.4.0
 	github.com/goforj/cache/driver/sqlitecache v0.4.0
 	github.com/goforj/env/v2 v2.5.0
-	github.com/goforj/str v1.2.0
+	github.com/goforj/str/v2 v2.0.1
 )
 `
 
@@ -78,7 +78,7 @@ require (
 	github.com/goforj/storage/driver/redisstorage v0.5.0
 	github.com/goforj/storage/driver/s3storage v0.5.0
 	github.com/goforj/storage/driver/sftpstorage v0.5.0
-	github.com/goforj/str v1.2.0
+	github.com/goforj/str/v2 v2.0.1
 )
 `
 

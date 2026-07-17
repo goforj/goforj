@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -109,11 +109,11 @@ func (c *CommandCmd) resolveCommandTarget() commandTarget {
 }
 
 func (c *CommandCmd) resolveCommandTargetFromName(name string) commandTarget {
-	rawName := str.Of(name).TrimSpace().String()
+	rawName := str.Of(name).Trim().String()
 	structBase, outputDir := c.resolveCommandLocation(rawName)
 	structName := ensureCmdSuffix(str.Of(structBase).Pascal().String())
 	commandName := c.resolveCommandName(rawName, structName)
-	fileName := str.Of(structName).Snake("_").String() + ".go"
+	fileName := str.Of(structName).Snake().String() + ".go"
 
 	return commandTarget{
 		rawName:     rawName,
@@ -121,7 +121,7 @@ func (c *CommandCmd) resolveCommandTargetFromName(name string) commandTarget {
 		outputDir:   outputDir,
 		outputPath:  filepath.Join(outputDir, fileName),
 		commandName: commandName,
-		helpText:    str.Of(structName).ChopEnd("Cmd").String() + " command",
+		helpText:    str.Of(structName).TrimSuffix("Cmd").String() + " command",
 	}
 }
 
@@ -133,7 +133,7 @@ func (c *CommandCmd) resolveCommandLocation(rawName string) (string, string) {
 		return structBase, outputDir
 	}
 
-	action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+	action := str.Of(parts[len(parts)-1]).Trim().String()
 	if action == "" {
 		return structBase, outputDir
 	}
@@ -149,14 +149,14 @@ func (c *CommandCmd) resolveCommandLocation(rawName string) (string, string) {
 }
 
 func (c *CommandCmd) resolveCommandName(rawName string, structName string) string {
-	commandName := str.Of(c.CmdName).TrimSpace().String()
+	commandName := str.Of(c.CmdName).Trim().String()
 	if commandName != "" {
 		return generatedCommandSignatureName(commandName)
 	}
 	if rawName != "" {
 		return generatedCommandSignatureName(rawName)
 	}
-	base := str.Of(structName).ChopEnd("Cmd").String()
+	base := str.Of(structName).TrimSuffix("Cmd").String()
 	return generatedCommandSignatureName(base + ":cmd")
 }
 
@@ -495,10 +495,10 @@ func isDefaultCommandOutputDir(outputDir string) bool {
 
 // generatedCommandSignatureName normalizes inferred command names to the lowercase CLI shape Kong should expose.
 func generatedCommandSignatureName(name string) string {
-	parts := str.Of(name).TrimSpace().Split(":")
+	parts := str.Of(name).Trim().Split(":")
 	clean := make([]string, 0, len(parts))
 	for _, part := range parts {
-		segment := str.Of(part).TrimSpace().Snake("-").ToLower().String()
+		segment := str.Of(part).Trim().Kebab().ToLower().String()
 		if segment == "" {
 			continue
 		}

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -51,7 +51,7 @@ func firstExistingGeneratedPath(paths ...string) string {
 
 // activeAppName lets delegated app commands scope app-owned registration without adding generator flags.
 func activeAppName() string {
-	app := str.Of(os.Getenv("FORJ_APP")).TrimSpace()
+	app := str.Of(os.Getenv("FORJ_APP")).Trim()
 	if !app.IsBlank() && appNameIsSafe(app.String()) {
 		return app.String()
 	}
@@ -83,7 +83,7 @@ func activeAppWireFile(file string, legacyPaths ...string) string {
 
 // appMigrationDir resolves where migration files belong for the active app.
 func appMigrationDir(connection string) string {
-	connection = str.Of(connection).TrimSpace().ToLower().String()
+	connection = str.Of(connection).Trim().ToLower().String()
 	if connection == "" {
 		connection = "default"
 	}
@@ -294,20 +294,20 @@ func getGoModuleName() (string, error) {
 		return "", err
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		line := str.Of(line).TrimSpace()
-		if line.StartsWith("module ") {
-			return line.ChopStart("module ").TrimSpace().String(), nil
+		line := str.Of(line).Trim()
+		if line.HasPrefix("module ") {
+			return line.TrimPrefix("module ").Trim().String(), nil
 		}
 	}
 	return "", fmt.Errorf("module name not found")
 }
 
 func ensureCmdSuffix(name string) string {
-	clean := str.Of(name).TrimSpace()
+	clean := str.Of(name).Trim()
 	if clean.IsBlank() {
 		return "ExampleCmd"
 	}
-	if clean.EndsWith("Cmd") {
+	if clean.HasSuffix("Cmd") {
 		return clean.String()
 	}
 	return clean.String() + "Cmd"
@@ -383,7 +383,7 @@ func generatedPackagePathPartsFromPath(pkg string) []string {
 // generatedPackageSegment converts one user-provided name segment into a compact lowercase Go package segment.
 // For example, BillingPortal and billing_portal both become billingportal.
 func generatedPackageSegment(part string) string {
-	return str.Of(part).TrimSpace().Snake("_").ReplaceAll("_", "").String()
+	return str.Of(part).Trim().Snake().ReplaceAll("_", "").String()
 }
 
 func insertImportIfMissing(lines []string, importPath string, aliases ...string) []string {
@@ -452,7 +452,7 @@ func insertImportIfMissing(lines []string, importPath string, aliases ...string)
 
 	for i, line := range lines {
 		if strings.HasPrefix(line, "package ") {
-			insert := []string{"", strings.TrimSpace("import " + strings.TrimSpace(renderGoImportSpec(spec))), ""}
+			insert := []string{"", str.Of(renderGoImportSpec(spec)).Trim().Prepend("import ").Trim().String(), ""}
 			lines = append(lines[:i+1], append(insert, lines[i+1:]...)...)
 			return normalizeImports(lines)
 		}
@@ -466,7 +466,7 @@ func parseGoImportSpec(line string) (goImportSpec, bool) {
 		return goImportSpec{}, false
 	}
 	if strings.HasPrefix(trimmed, "import ") {
-		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "import "))
+		trimmed = str.Of(trimmed).TrimPrefix("import ").Trim().String()
 	}
 	if trimmed == "(" || trimmed == ")" {
 		return goImportSpec{}, false

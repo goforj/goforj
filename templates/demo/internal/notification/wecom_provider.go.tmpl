@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 type WeComProvider struct {
@@ -26,7 +26,7 @@ func NewWeComProvider(channel RuntimeChannel, timeoutSeconds int) *WeComProvider
 	rawMobiles := cfg(channel, "wecom_mentioned_mobile_list", "mentioned_mobile_list")
 	mention := []string{}
 	for _, part := range strings.Split(rawMobiles, ",") {
-		value := str.Of(part).TrimSpace().String()
+		value := str.Of(part).Trim().String()
 		if value != "" {
 			mention = append(mention, value)
 		}

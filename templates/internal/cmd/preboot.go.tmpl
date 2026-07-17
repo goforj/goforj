@@ -6,6 +6,7 @@ import (
 	"{{.GoModuleName}}/internal/konghelp"
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/alecthomas/kong"
+	"github.com/goforj/str/v2"
 	"os"
 	"reflect"
 	"strings"
@@ -63,7 +64,7 @@ func rootHelpRequested(args []string) bool {
 
 // AppHelpName qualifies generated app help only when the project has multiple app binaries.
 func AppHelpName() string {
-	name := strings.ToLower(strings.TrimSpace(os.Getenv("APP_NAME")))
+	name := str.Of(os.Getenv("APP_NAME")).Trim().ToLower().String()
 	if name == "" {
 		name = "app"
 	}

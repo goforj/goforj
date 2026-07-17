@@ -3,7 +3,8 @@ package project
 import (
 	"fmt"
 	"sort"
-	"strings"
+
+	"github.com/goforj/str/v2"
 )
 
 // DriverSelection records the active implementation and the implementations compiled into an App.
@@ -251,7 +252,7 @@ func cloneDriverSelection(selection DriverSelection) DriverSelection {
 
 // normalizeDriverName applies the environment representation used by every generator.
 func normalizeDriverName(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
+	return str.Of(name).Trim().ToLower().String()
 }
 
 // normalizeSupportedDrivers validates names before returning catalog-stable ordering.

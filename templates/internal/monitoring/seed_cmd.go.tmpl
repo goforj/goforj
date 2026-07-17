@@ -20,7 +20,7 @@ import (
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"github.com/goforj/null/v6"
 {{- end }}
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/console"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/models"
@@ -103,10 +103,10 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 		c.ValidateWorkers = 100
 	}
 
-	sourceToUse := str.Of(c.Source).TrimSpace().String()
+	sourceToUse := str.Of(c.Source).Trim().String()
 	countToUse := c.Count
 	hostLimitToUse := c.resolveHostLimit(countToUse)
-	profileApplied := str.Of(c.Profile).TrimSpace().String()
+	profileApplied := str.Of(c.Profile).Trim().String()
 	if profileApplied != "" {
 		nextSource, nextCount, err := resolveSeedProfile(profileApplied, c.Count)
 		if err != nil {
@@ -340,7 +340,7 @@ func blockedSeedMonitors(rows []models.Monitor) []blockedSeedMonitor {
 	blocked := make([]blockedSeedMonitor, 0)
 	for i := range rows {
 		row := rows[i]
-		if str.Of(row.MonitorType).TrimSpace().ToLower().String() != "http" {
+		if str.Of(row.MonitorType).Trim().ToLower().String() != "http" {
 			continue
 		}
 		if row.Id == 0 {
@@ -349,8 +349,8 @@ func blockedSeedMonitors(rows []models.Monitor) []blockedSeedMonitor {
 		if blockedTarget, reason := blockedSeedTarget(row.Target); blockedTarget {
 			blocked = append(blocked, blockedSeedMonitor{
 				ID:     row.Id,
-				Name:   str.Of(row.Name).TrimSpace().String(),
-				Target: str.Of(row.Target).TrimSpace().String(),
+				Name:   str.Of(row.Name).Trim().String(),
+				Target: str.Of(row.Target).Trim().String(),
 				Reason: reason,
 			})
 		}
@@ -478,7 +478,7 @@ func checkTargetReachable(target string, timeout time.Duration) bool {
 }
 
 func resolveSeedProfile(profile string, requestedCount int) (string, int, error) {
-	p := str.Of(profile).TrimSpace().ToLower().String()
+	p := str.Of(profile).Trim().ToLower().String()
 	switch p {
 	case "popular", "brands":
 		// Popular profile is a curated fixed-size set by default.
@@ -637,7 +637,7 @@ var monitorSeedBlockedLabelContains = map[string]string{
 }
 
 func (c *SeedCmd) resolveDomains(ctx context.Context, source string, count int) ([]string, string, error) {
-	raw := str.Of(source).TrimSpace().String()
+	raw := str.Of(source).Trim().String()
 	if strings.EqualFold(raw, "popular") || strings.EqualFold(raw, "brands") {
 		out := make([]string, 0, count)
 		for len(out) < count {
@@ -672,7 +672,7 @@ func (c *SeedCmd) resolveDomains(ctx context.Context, source string, count int) 
 		parts := strings.Split(raw, ",")
 		out := make([]string, 0, len(parts))
 		for _, part := range parts {
-			item := str.Of(part).TrimSpace().String()
+			item := str.Of(part).Trim().String()
 			if item != "" {
 				out = append(out, item)
 			}
@@ -736,7 +736,7 @@ func fetchCSVSource(ctx context.Context, sourceURL string, limit int) ([]string,
 }
 
 func parseCSVOrZip(content []byte, sourceURL string, limit int) ([]string, error) {
-	lowerURL := str.Of(sourceURL).TrimSpace().ToLower().String()
+	lowerURL := str.Of(sourceURL).Trim().ToLower().String()
 	if strings.HasSuffix(lowerURL, ".zip") || looksLikeZip(content) {
 		return parseCSVFromZip(content, limit)
 	}
@@ -757,7 +757,7 @@ func parseCSVFromZip(content []byte, limit int) ([]string, error) {
 		return nil, err
 	}
 	for _, file := range zr.File {
-		name := str.Of(file.Name).TrimSpace().ToLower().String()
+		name := str.Of(file.Name).Trim().ToLower().String()
 		if !strings.HasSuffix(name, ".csv") {
 			continue
 		}
@@ -831,13 +831,13 @@ func parseDomainFromRecord(record []string) string {
 		return ""
 	}
 	for _, item := range record {
-		part := str.Of(item).TrimSpace().ToLower().String()
+		part := str.Of(item).Trim().ToLower().String()
 		if isLikelyDomain(part) {
 			return part
 		}
 	}
 	for _, item := range record {
-		part := str.Of(item).TrimSpace().String()
+		part := str.Of(item).Trim().String()
 		if part == "" {
 			continue
 		}
@@ -912,7 +912,7 @@ func blockedSeedTarget(raw string) (bool, string) {
 }
 
 func seedTargetHostname(raw string) string {
-	trimmed := str.Of(raw).TrimSpace().ToLower().String()
+	trimmed := str.Of(raw).Trim().ToLower().String()
 	if trimmed == "" {
 		return ""
 	}
@@ -923,11 +923,11 @@ func seedTargetHostname(raw string) string {
 	if err != nil {
 		return ""
 	}
-	return str.Of(parsed.Hostname()).TrimSpace().ToLower().String()
+	return str.Of(parsed.Hostname()).Trim().ToLower().String()
 }
 
 func seedNormalizedLabel(raw string) string {
-	raw = str.Of(raw).TrimSpace().ToLower().String()
+	raw = str.Of(raw).Trim().ToLower().String()
 	if raw == "" {
 		return ""
 	}
@@ -959,7 +959,7 @@ func fallbackDomains(count int) []string {
 }
 
 func normalizeTarget(raw string) string {
-	trimmed := str.Of(raw).TrimSpace().String()
+	trimmed := str.Of(raw).Trim().String()
 	if trimmed == "" {
 		return ""
 	}
@@ -970,7 +970,7 @@ func normalizeTarget(raw string) string {
 	if err != nil {
 		return ""
 	}
-	host := str.Of(parsed.Hostname()).TrimSpace().ToLower().String()
+	host := str.Of(parsed.Hostname()).Trim().ToLower().String()
 	if host == "" {
 		return ""
 	}
@@ -984,21 +984,20 @@ func buildMonitorName(target string, position int) string {
 	if canonicalName, ok := monitorSeedCanonicalNames[target]; ok {
 		return canonicalName
 	}
-	host := strings.TrimPrefix(target, "https://")
-	host = strings.TrimPrefix(host, "http://")
+	host := str.Of(target).TrimPrefix("https://").TrimPrefix("http://").String()
 	if host == "" {
 		return fmt.Sprintf("Seed Monitor %d", position)
 	}
 	parts := strings.Split(host, ".")
-	if len(parts) > 0 && str.Of(parts[0]).TrimSpace().String() != "" {
-		head := str.Of(parts[0]).TrimSpace().String()
+	if len(parts) > 0 && str.Of(parts[0]).Trim().String() != "" {
+		head := str.Of(parts[0]).Trim().String()
 		return formatSeedMonitorHead(head)
 	}
 	return fmt.Sprintf("Seed Monitor %d", position)
 }
 
 func formatSeedMonitorHead(head string) string {
-	clean := str.Of(head).TrimSpace().ToLower().String()
+	clean := str.Of(head).Trim().ToLower().String()
 	if clean == "" {
 		return head
 	}

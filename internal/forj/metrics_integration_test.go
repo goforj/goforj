@@ -353,7 +353,8 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered jobs app")
 
 	runCommandSuccess(t, projectDir, binPath, queueEnv, "migrate")
-	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed", "--count=1")
+	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:reset", "--confirm")
+	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed", "--count=1", "--timeout=10", "--validate=false")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

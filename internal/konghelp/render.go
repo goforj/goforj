@@ -9,7 +9,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/console"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // sectionHeader centralizes section styling so all formatter variants stay visually consistent.
@@ -48,7 +48,7 @@ func selectedNode(ctx *kong.Context) *kong.Node {
 
 // maintainerHelpEnabled exposes hidden diagnostic commands only in explicit framework-development contexts.
 func maintainerHelpEnabled() bool {
-	v := str.Of(os.Getenv("FORJ_DEV")).TrimSpace().ToLower().String()
+	v := str.Of(os.Getenv("FORJ_DEV")).Trim().ToLower().String()
 	if v == "1" || v == "true" || v == "yes" || v == "on" {
 		return true
 	}

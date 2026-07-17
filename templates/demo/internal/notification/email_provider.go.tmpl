@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -38,12 +38,12 @@ type EmailProvider struct {
 }
 
 func NewEmailProvider(logger *logger.AppLogger, cfg EmailProviderConfig) *EmailProvider {
-	host := str.Of(cfg.SMTPHost).TrimSpace().String()
-	from := str.Of(cfg.FromEmail).TrimSpace().String()
+	host := str.Of(cfg.SMTPHost).Trim().String()
+	from := str.Of(cfg.FromEmail).Trim().String()
 	if host == "" || from == "" {
 		return nil
 	}
-	port := str.Of(cfg.SMTPPort).TrimSpace().String()
+	port := str.Of(cfg.SMTPPort).Trim().String()
 	if port == "" {
 		port = "587"
 	}
@@ -64,9 +64,9 @@ func NewEmailProvider(logger *logger.AppLogger, cfg EmailProviderConfig) *EmailP
 		smtpPort:      port,
 		fromEmail:     from,
 		toEmails:      recipients,
-		subjectPrefix: str.Of(cfg.SubjectPrefix).TrimSpace().String(),
+		subjectPrefix: str.Of(cfg.SubjectPrefix).Trim().String(),
 		timeout:       timeout,
-		username:      str.Of(cfg.Username).TrimSpace().String(),
+		username:      str.Of(cfg.Username).Trim().String(),
 		password:      cfg.Password,
 	}
 }
@@ -136,7 +136,7 @@ func splitEmails(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
-		email := str.Of(part).TrimSpace().String()
+		email := str.Of(part).Trim().String()
 		if email == "" {
 			continue
 		}

@@ -441,7 +441,7 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 			`func generatedPackageRef(`,
 			`func removeGeneratedFile(`,
 			`func removeGoImportIfUnused(`,
-			`Snake("_").ReplaceAll("_", "")`,
+			`Snake().ReplaceAll("_", "")`,
 		},
 		filepath.Join(root, "templates", "internal", "makecmd", "generator_helpers_test.go.tmpl"): {
 			`func TestGeneratedPackageHelpersUseCompactLowercaseSegments(`,

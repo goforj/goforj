@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -27,16 +27,16 @@ func TestDSNOverridesHost(t *testing.T) {
 	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver == "" {
 		t.Skip("db driver not configured")
 	}
 
-	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
-	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	host := str.Of(env.Get("DB_HOST", "")).Trim().String()
+	port := str.Of(env.Get("DB_PORT", "")).Trim().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).Trim().String()
 	pass := env.Get("DB_PASSWORD", "")
-	dbName := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	dbName := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	if host == "" || port == "" || user == "" || dbName == "" {
 		t.Skip("db env not configured")
 	}
@@ -84,7 +84,7 @@ func TestDSNOverridesHost(t *testing.T) {
 }
 
 func TestSQLitePathCreationIntegration(t *testing.T) {
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver != "sqlite" && driver != "sqlite3" {
 		t.Skip("sqlite only")
 	}
@@ -118,7 +118,7 @@ func TestGormLoggerToggleIntegration(t *testing.T) {
 	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver == "" {
 		t.Skip("db driver not configured")
 	}
@@ -155,7 +155,7 @@ func TestGenerateAccessorsEndToEnd(t *testing.T) {
 	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	if driver == "" {
 		t.Skip("db driver not configured")
 	}
@@ -207,11 +207,11 @@ func extractLogLevel(db *gorm.DB) gormLogger.LogLevel {
 func configureAnalyticsEnv(t *testing.T, driver string) error {
 	t.Helper()
 
-	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
-	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	host := str.Of(env.Get("DB_HOST", "")).Trim().String()
+	port := str.Of(env.Get("DB_PORT", "")).Trim().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).Trim().String()
 	password := env.Get("DB_PASSWORD", "")
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	analyticsDB := database + "_analytics"
 	analyticsDatabase := analyticsDB
 
@@ -279,7 +279,7 @@ func ensureMySQLDatabase(host, port, name string) error {
 }
 
 func ensurePostgresDatabase(host, port, user, pass, name string) error {
-	dbName := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	dbName := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	if dbName == "" {
 		dbName = "postgres"
 	}

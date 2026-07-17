@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -53,16 +53,16 @@ func (c *MigrationCmd) Run() error {
 		return err
 	}
 
-	name := str.Of(c.Name).TrimSpace().String()
+	name := str.Of(c.Name).Trim().String()
 	if name == "" {
 		return fmt.Errorf("migration name cannot be empty")
 	}
 
 	timestamp := time.Now().Format("2006_01_02_150405")
-	snake := str.Of(name).Snake("_").String()
+	snake := str.Of(name).Snake().String()
 	baseName := fmt.Sprintf("%s_%s", timestamp, snake)
 
-	connName := str.Of(c.Connection).TrimSpace().ToLower().String()
+	connName := str.Of(c.Connection).Trim().ToLower().String()
 	if connName == "" {
 		connName = "default"
 	}
@@ -114,13 +114,13 @@ func (c *MigrationCmd) Run() error {
 }
 
 func (c *MigrationCmd) remove() error {
-	name := str.Of(c.Name).TrimSpace().String()
+	name := str.Of(c.Name).Trim().String()
 	if name == "" {
 		return fmt.Errorf("migration name cannot be empty")
 	}
-	snake := str.Of(name).Snake("_").String()
+	snake := str.Of(name).Snake().String()
 
-	connName := str.Of(c.Connection).TrimSpace().ToLower().String()
+	connName := str.Of(c.Connection).Trim().ToLower().String()
 	if connName == "" {
 		connName = "default"
 	}
@@ -189,7 +189,7 @@ func resolveSupportedMigrationDrivers() []string {
 
 // normalizeMigrationDriver converts database driver aliases to migration suffixes.
 func normalizeMigrationDriver(driver string) string {
-	switch str.Of(driver).TrimSpace().ToLower().String() {
+	switch str.Of(driver).Trim().ToLower().String() {
 	case "mysql", "mariadb":
 		return "mysql"
 	case "postgres", "postgresql":

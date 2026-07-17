@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 type priorityHTTPClient struct {
@@ -37,7 +37,7 @@ func (c *priorityHTTPClient) postJSON(ctx context.Context, rawURL string, header
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range headers {
-		if str.Of(key).TrimSpace().String() == "" || str.Of(value).TrimSpace().String() == "" {
+		if str.Of(key).Trim().String() == "" || str.Of(value).Trim().String() == "" {
 			continue
 		}
 		req.Header.Set(key, value)
@@ -59,7 +59,7 @@ func (c *priorityHTTPClient) getJSON(ctx context.Context, rawURL string, headers
 		return err
 	}
 	for key, value := range headers {
-		if str.Of(key).TrimSpace().String() == "" || str.Of(value).TrimSpace().String() == "" {
+		if str.Of(key).Trim().String() == "" || str.Of(value).Trim().String() == "" {
 			continue
 		}
 		req.Header.Set(key, value)
@@ -82,7 +82,7 @@ func (c *priorityHTTPClient) postForm(ctx context.Context, rawURL string, header
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
 	for key, value := range headers {
-		if str.Of(key).TrimSpace().String() == "" || str.Of(value).TrimSpace().String() == "" {
+		if str.Of(key).Trim().String() == "" || str.Of(value).Trim().String() == "" {
 			continue
 		}
 		req.Header.Set(key, value)
@@ -100,14 +100,14 @@ func (c *priorityHTTPClient) postForm(ctx context.Context, rawURL string, header
 
 func cfg(channel RuntimeChannel, keys ...string) string {
 	for _, key := range keys {
-		k := str.Of(key).TrimSpace().String()
+		k := str.Of(key).Trim().String()
 		if k == "" {
 			continue
 		}
-		if value := str.Of(channel.Config[k]).TrimSpace().String(); value != "" {
+		if value := str.Of(channel.Config[k]).Trim().String(); value != "" {
 			return value
 		}
-		if value := str.Of(channel.Config[strings.ToLower(k)]).TrimSpace().String(); value != "" {
+		if value := str.Of(channel.Config[strings.ToLower(k)]).Trim().String(); value != "" {
 			return value
 		}
 	}
@@ -116,14 +116,14 @@ func cfg(channel RuntimeChannel, keys ...string) string {
 
 func secret(channel RuntimeChannel, keys ...string) string {
 	for _, key := range keys {
-		k := str.Of(key).TrimSpace().String()
+		k := str.Of(key).Trim().String()
 		if k == "" {
 			continue
 		}
-		if value := str.Of(channel.Secrets[k]).TrimSpace().String(); value != "" {
+		if value := str.Of(channel.Secrets[k]).Trim().String(); value != "" {
 			return value
 		}
-		if value := str.Of(channel.Secrets[strings.ToLower(k)]).TrimSpace().String(); value != "" {
+		if value := str.Of(channel.Secrets[strings.ToLower(k)]).Trim().String(); value != "" {
 			return value
 		}
 	}
@@ -146,9 +146,9 @@ func statusDown(msg AlertMessage) bool { return strings.EqualFold(msg.Status, "d
 func statusUp(msg AlertMessage) bool   { return strings.EqualFold(msg.Status, "up") }
 
 func dedupKey(msg AlertMessage) string {
-	id := str.Of(msg.MonitorID).TrimSpace().String()
+	id := str.Of(msg.MonitorID).Trim().String()
 	if id == "" {
-		id = str.Of(msg.MonitorName).TrimSpace().String()
+		id = str.Of(msg.MonitorName).Trim().String()
 	}
 	if id == "" {
 		id = "global"
@@ -158,7 +158,7 @@ func dedupKey(msg AlertMessage) string {
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
-		normalized := str.Of(value).TrimSpace().String()
+		normalized := str.Of(value).Trim().String()
 		if normalized != "" {
 			return normalized
 		}

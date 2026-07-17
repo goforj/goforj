@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -207,12 +207,12 @@ func queueEnvWrites(values ResourceValues) []EnvWrite {
 
 // queueResourceEnvKey normalizes a queue resource name for env key construction.
 func queueResourceEnvKey(name string) string {
-	return str.Of(name).TrimSpace().Snake("_").ToUpper().String()
+	return str.Of(name).Trim().Snake().ToUpper().String()
 }
 
 // validateQueueResourceName validates the App-facing queue resource name.
 func validateQueueResourceName(value string) error {
-	if str.Of(value).TrimSpace().IsBlank() {
+	if str.Of(value).Trim().IsBlank() {
 		return fmt.Errorf("queue name is required")
 	}
 	if queueResourceEnvKey(value) == "" {
@@ -223,7 +223,7 @@ func validateQueueResourceName(value string) error {
 
 // validateQueueBackendName validates the backend queue name.
 func validateQueueBackendName(value string) error {
-	if str.Of(value).TrimSpace().IsBlank() {
+	if str.Of(value).Trim().IsBlank() {
 		return fmt.Errorf("backend queue name is required")
 	}
 	return nil

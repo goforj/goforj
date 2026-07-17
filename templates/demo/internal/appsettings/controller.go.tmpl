@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/goforj/storage"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
@@ -55,7 +55,7 @@ func (c *Controller) GetSettings(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	faviconTTL, convErr := strconv.Atoi(str.Of(faviconTTLRaw).TrimSpace().String())
+	faviconTTL, convErr := strconv.Atoi(str.Of(faviconTTLRaw).Trim().String())
 	if convErr != nil || faviconTTL <= 0 {
 		faviconTTL = 604800
 	}
@@ -130,10 +130,10 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 		start := ""
 		end := ""
 		if startRaw != nil {
-			start = str.Of(*startRaw).TrimSpace().String()
+			start = str.Of(*startRaw).Trim().String()
 		}
 		if endRaw != nil {
-			end = str.Of(*endRaw).TrimSpace().String()
+			end = str.Of(*endRaw).Trim().String()
 		}
 		if start == "" && end == "" {
 			if err := c.repo.Upsert(r.Context(), SettingMonitoringMaintenanceStartsAt, ""); err != nil {
@@ -232,7 +232,7 @@ func (c *Controller) getPositiveSetting(ctx context.Context, key string, fallbac
 	if err != nil {
 		return fallback, err
 	}
-	value, convErr := strconv.Atoi(str.Of(raw).TrimSpace().String())
+	value, convErr := strconv.Atoi(str.Of(raw).Trim().String())
 	if convErr != nil || value <= 0 {
 		return fallback, nil
 	}

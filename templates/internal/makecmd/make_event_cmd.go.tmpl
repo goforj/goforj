@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -58,7 +58,7 @@ func (c *EventCmd) Run() error {
 	if err := tmpl.Execute(&buf, map[string]string{
 		"PackageName": generatedPackageName(c.OutputDir, "events"),
 		"StructName":  target.structName,
-		"TopicName":   str.Of(target.structName).ChopEnd("Event").ToLower().String(),
+		"TopicName":   str.Of(target.structName).TrimSuffix("Event").ToLower().String(),
 	}); err != nil {
 		return err
 	}
@@ -88,11 +88,11 @@ type eventTarget struct {
 }
 
 func (c *EventCmd) target() eventTarget {
-	rawName := str.Of(c.Name).TrimSpace().String()
+	rawName := str.Of(c.Name).Trim().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
 	if len(parts) > 1 {
-		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		action := str.Of(parts[len(parts)-1]).Trim().String()
 		if action != "" && isDefaultEventOutputDir(c.OutputDir) {
 			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
@@ -102,7 +102,7 @@ func (c *EventCmd) target() eventTarget {
 	}
 
 	structName := ensureEventSuffix(str.Of(structBase).Pascal().String())
-	fileName := str.Of(structName).Snake("_").String() + ".go"
+	fileName := str.Of(structName).Snake().String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
 	return eventTarget{outputPath: outputPath, structName: structName}
@@ -110,11 +110,11 @@ func (c *EventCmd) target() eventTarget {
 
 // ensureEventSuffix appends Event when name does not already use that suffix.
 func ensureEventSuffix(name string) string {
-	clean := str.Of(name).TrimSpace()
+	clean := str.Of(name).Trim()
 	if clean.IsBlank() {
 		return "ExampleEvent"
 	}
-	if clean.EndsWith("Event") {
+	if clean.HasSuffix("Event") {
 		return clean.String()
 	}
 	return clean.String() + "Event"

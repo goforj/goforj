@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/goforj/str/v2"
 )
 
 var (
@@ -76,11 +78,11 @@ func normalizeDBInspectQuery(sql string) string {
 }
 
 func normalizeDBSQL(sql string) string {
-	sql = strings.TrimSpace(sql)
+	sql = strings.Join(strings.Fields(sql), " ")
 	if sql == "" {
 		return ""
 	}
-	return strings.Join(strings.Fields(sql), " ")
+	return sql
 }
 
 func normalizeDBSQLTokens(sql string, inspectMode bool) string {
@@ -260,7 +262,7 @@ func consumeDBBacktickIdentifier(sql string, start int) (string, int) {
 		i++
 	}
 	if i >= len(sql) {
-		return strings.ToLower(strings.TrimSpace(sql[start:])), len(sql)
+		return str.Of(sql[start:]).Trim().ToLower().String(), len(sql)
 	}
 	return strings.ToLower(sql[start : i+1]), i + 1
 }
