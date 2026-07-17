@@ -452,7 +452,7 @@ func insertImportIfMissing(lines []string, importPath string, aliases ...string)
 
 	for i, line := range lines {
 		if strings.HasPrefix(line, "package ") {
-			insert := []string{"", strings.TrimSpace("import " + strings.TrimSpace(renderGoImportSpec(spec))), ""}
+			insert := []string{"", str.Of(renderGoImportSpec(spec)).TrimSpace().Prepend("import ").TrimSpace().String(), ""}
 			lines = append(lines[:i+1], append(insert, lines[i+1:]...)...)
 			return normalizeImports(lines)
 		}
@@ -466,7 +466,7 @@ func parseGoImportSpec(line string) (goImportSpec, bool) {
 		return goImportSpec{}, false
 	}
 	if strings.HasPrefix(trimmed, "import ") {
-		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "import "))
+		trimmed = str.Of(trimmed).ChopStart("import ").TrimSpace().String()
 	}
 	if trimmed == "(" || trimmed == ")" {
 		return goImportSpec{}, false

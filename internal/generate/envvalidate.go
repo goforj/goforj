@@ -52,14 +52,14 @@ func generationEnvironmentResources() []generationEnvironmentResource {
 
 // discoverPrimitiveChildNames unions resource-first names with names declared only inside configured App overlays.
 func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, rootKeys []string) []string {
-	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	resourcePrefix = str.Of(resourcePrefix).ToUpper().TrimSpace().String()
 	if resourcePrefix == "" {
 		return nil
 	}
 	names := map[string]struct{}{}
 	add := func(prefix string) {
 		for _, name := range exactScopedChildNames(input.environment, prefix, rootKeys) {
-			name = strings.TrimSpace(strings.ToUpper(name))
+			name = str.Of(name).ToUpper().TrimSpace().String()
 			if name != "" {
 				names[name] = struct{}{}
 			}
@@ -238,7 +238,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 		}
 		knownChildren := map[string]struct{}{}
 		for _, child := range v.baseChildren {
-			child = strings.TrimSpace(strings.ToUpper(child))
+			child = str.Of(child).ToUpper().TrimSpace().String()
 			if child != "" {
 				knownChildren[child] = struct{}{}
 			}
@@ -326,7 +326,7 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 
 // appPrefixedActiveDrivers resolves root and named App overlays with the same blank-driver fallbacks used at runtime.
 func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defaultDriver string, inheritRootDriver bool) []generationActiveDriver {
-	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	resourcePrefix = str.Of(resourcePrefix).ToUpper().TrimSpace().String()
 	if resourcePrefix == "" {
 		return nil
 	}
@@ -474,7 +474,7 @@ func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix s
 	if err != nil {
 		return prefixes
 	}
-	resourcePrefix = strings.TrimSpace(strings.ToUpper(resourcePrefix))
+	resourcePrefix = str.Of(resourcePrefix).ToUpper().TrimSpace().String()
 	enabled := map[string]struct{}{}
 	configured := map[string]struct{}{}
 	for name, appConfig := range config.Apps {
@@ -598,8 +598,7 @@ func splitScopedEnvKey(value string, rootKeys []string) (scopedEnvironmentKey, b
 		if !strings.HasSuffix(value, suffix) {
 			continue
 		}
-		child := strings.TrimSuffix(value, suffix)
-		child = str.Of(child).TrimSpace().ToUpper().String()
+		child := str.Of(value).ChopEnd(suffix).TrimSpace().ToUpper().String()
 		if child == "" {
 			return scopedEnvironmentKey{}, false
 		}

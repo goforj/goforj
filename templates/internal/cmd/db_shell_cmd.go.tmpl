@@ -628,7 +628,7 @@ func dbShellEnvKey(name, suffix string) string {
 }
 
 func normalizeDBShellConnectionName(name string) string {
-	value := strings.TrimSpace(strings.ToLower(name))
+	value := str.Of(name).ToLower().TrimSpace().String()
 	if value == "" {
 		return "default"
 	}

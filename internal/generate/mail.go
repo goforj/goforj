@@ -458,7 +458,7 @@ func NewManager() (*Manager, error) {
 
 // NewManagerWithObserver creates the configured application mailer manager with an optional send observer.
 func NewManagerWithObserver(observer Observer) (*Manager, error) {
-	driverName := strings.ToLower(strings.TrimSpace(env.Get("MAIL_DRIVER", driverLog)))
+	driverName := str.Of(env.Get("MAIL_DRIVER", driverLog)).TrimSpace().ToLower().String()
 	driver, err := newDriver("default", env.WithPrefix("MAIL"), observer)
 	if err != nil {
 		return nil, err
@@ -616,7 +616,7 @@ func (d *observedDriver) Send(ctx context.Context, message goforjmail.Message) e
 
 // mailerNameLabel gives the root mailer a stable telemetry label when no explicit name is available.
 func mailerNameLabel(name string) string {
-	name = strings.TrimSpace(strings.ToLower(name))
+	name = str.Of(name).ToLower().TrimSpace().String()
 	if name == "" {
 		return "default"
 	}
@@ -625,7 +625,7 @@ func mailerNameLabel(name string) string {
 
 // mailerDriverLabel avoids emitting a blank telemetry dimension when driver configuration is unavailable.
 func mailerDriverLabel(driver string) string {
-	driver = strings.TrimSpace(strings.ToLower(driver))
+	driver = str.Of(driver).ToLower().TrimSpace().String()
 	if driver == "" {
 		return "unknown"
 	}

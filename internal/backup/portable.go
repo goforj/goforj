@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/goforj/str"
 )
 
 // CanonicalValue is a database-neutral representation of one SQL value.
@@ -68,7 +70,7 @@ func EncodeCanonical(value any, databaseType string) (CanonicalValue, error) {
 	if value == nil {
 		return CanonicalValue{Type: "null"}, nil
 	}
-	typeName := strings.ToLower(strings.TrimSpace(databaseType))
+	typeName := str.Of(databaseType).TrimSpace().ToLower().String()
 	canonicalType := canonicalSQLType(typeName)
 	switch typed := value.(type) {
 	case []byte:

@@ -293,7 +293,7 @@ func discoverStorageChildren(input generationInput) []string {
 
 // exactScopedChildNames finds names only when their trailing key matches a complete resource key.
 func exactScopedChildNames(environment generationEnvironment, prefix string, rootKeys []string) []string {
-	prefix = strings.TrimSpace(strings.ToUpper(prefix))
+	prefix = str.Of(prefix).ToUpper().TrimSpace().String()
 	if prefix == "" {
 		return nil
 	}
@@ -301,7 +301,7 @@ func exactScopedChildNames(environment generationEnvironment, prefix string, roo
 	rootKeyParts := make(map[string][]string, len(rootKeys))
 	orderedRootKeys := make([]string, 0, len(rootKeys))
 	for _, key := range rootKeys {
-		normalized := strings.TrimSpace(strings.ToUpper(key))
+		normalized := str.Of(key).ToUpper().TrimSpace().String()
 		if normalized == "" {
 			continue
 		}

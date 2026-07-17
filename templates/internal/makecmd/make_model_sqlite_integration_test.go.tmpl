@@ -1253,7 +1253,7 @@ func loadModuleVersions(t *testing.T, root string) map[string]string {
 			continue
 		}
 		if strings.HasPrefix(line, "require ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "require "))
+			line = str.Of(line).ChopStart("require ").TrimSpace().String()
 		} else if !inRequire {
 			continue
 		}

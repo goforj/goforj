@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/goforj/str"
 )
 
 const nativeCommandNamesEnv = "FORJ_NATIVE_COMMAND_NAMES"
@@ -116,5 +118,5 @@ func splitCommandNames(value string) []string {
 }
 
 func normalizeCommandName(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
+	return str.Of(name).TrimSpace().ToLower().String()
 }

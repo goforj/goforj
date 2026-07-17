@@ -814,7 +814,7 @@ func cacheRedisTLSConfig(scope env.Scope) *tls.Config {
 
 // cacheCompression preserves invalid values so manager construction can report configuration mistakes.
 func cacheCompression(scope env.Scope) cachecore.CompressionCodec {
-	value := strings.ToLower(strings.TrimSpace(scope.Get("COMPRESSION", "none")))
+	value := str.Of(scope.Get("COMPRESSION", "none")).TrimSpace().ToLower().String()
 	switch value {
 	case "", "none":
 		return cachecore.CompressionNone
@@ -880,7 +880,7 @@ func buildNATSStore(name string, scope env.Scope, baseConfig cachecore.BaseConfi
 		if maxValueSize := scope.GetInt("MAX_VALUE_SIZE", "0"); maxValueSize > 0 {
 			kvConfig.MaxValueSize = int32(maxValueSize)
 		}
-		switch strings.ToLower(strings.TrimSpace(scope.Get("STORAGE", ""))) {
+		switch str.Of(scope.Get("STORAGE", "")).TrimSpace().ToLower().String() {
 		case "file":
 			kvConfig.Storage = nats.FileStorage
 		case "memory":

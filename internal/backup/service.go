@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/goforj/str"
 )
 
 // Service orchestrates native backup creation and verification.
@@ -251,7 +253,7 @@ func normalizeResourceName(name string) string {
 
 // normalizeDriver maps driver aliases to stable manifest names.
 func normalizeDriver(driver string) string {
-	switch strings.ToLower(strings.TrimSpace(driver)) {
+	switch str.Of(driver).TrimSpace().ToLower().String() {
 	case "sqlite3":
 		return "sqlite"
 	case "mariadb":
@@ -259,6 +261,6 @@ func normalizeDriver(driver string) string {
 	case "postgresql", "pgx":
 		return "postgres"
 	default:
-		return strings.ToLower(strings.TrimSpace(driver))
+		return str.Of(driver).TrimSpace().ToLower().String()
 	}
 }

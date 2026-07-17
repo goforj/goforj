@@ -164,7 +164,7 @@ func QueuePhysicalName(name string) string {
 
 // normalizedAppInstanceName keeps Queue instance lookup consistent with environment key normalization.
 func normalizedAppInstanceName(name string) string {
-	value := strings.ToLower(strings.TrimSpace(name))
+	value := str.Of(name).TrimSpace().ToLower().String()
 	if value == "" {
 		return "default"
 	}
@@ -175,7 +175,7 @@ func normalizedAppInstanceName(name string) string {
 {{ if .ProjectComponents.Cache }}
 // NormalizeCacheDriver reduces Cache driver aliases to their generated canonical names.
 func NormalizeCacheDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
+	driver := str.Of(v).ToLower().TrimSpace().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -210,7 +210,7 @@ func NormalizeCacheDriver(v string) string {
 {{ if .ProjectComponents.Jobs }}
 // NormalizeQueueDriver reduces Queue driver aliases to their generated canonical names.
 func NormalizeQueueDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
+	driver := str.Of(v).ToLower().TrimSpace().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -243,7 +243,7 @@ func NormalizeQueueDriver(v string) string {
 {{ if .ProjectComponents.Storage }}
 // NormalizeStorageDriver reduces Storage driver aliases to their generated canonical names.
 func NormalizeStorageDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
+	driver := str.Of(v).ToLower().TrimSpace().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -272,7 +272,7 @@ func NormalizeStorageDriver(v string) string {
 {{- end }}
 
 func NormalizeDBDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
+	driver := str.Of(v).ToLower().TrimSpace().String()
 	switch {
 	case driver == "", driver == "-", driver == "db", driver == "nil", driver == "<nil>":
 		return ""
@@ -290,7 +290,7 @@ func NormalizeDBDriver(v string) string {
 {{ if .ProjectComponents.Events }}
 // NormalizeEventDriver reduces Events driver aliases to their generated canonical names.
 func NormalizeEventDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
+	driver := str.Of(v).ToLower().TrimSpace().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -336,6 +336,7 @@ func aboutScopedNames(prefix string, rootKeys []string) []string {
 	sort.Strings(normalized)
 	return append(names, normalized...)
 }
+
 // aboutDatabaseNames excludes driver helper namespaces that resemble configured database children.
 func aboutDatabaseNames() []string {
 	scope := env.WithPrefix("DB")
@@ -358,7 +359,7 @@ func aboutDatabaseNames() []string {
 }
 
 func aboutDatabaseHelperName(name string) bool {
-	switch strings.TrimSpace(strings.ToLower(name)) {
+	switch str.Of(name).ToLower().TrimSpace().String() {
 	case "mysql", "postgres", "postgresql", "sqlite", "sqlite3":
 		return true
 	default:

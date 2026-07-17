@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
 	"github.com/goforj/storage/driver/s3storage"
+	"github.com/goforj/str"
 )
 
 // StorageObjectLister adapts a GoForj storage disk to the backup inventory contract.
@@ -31,7 +32,7 @@ func (l StorageObjectLister) ListObjects(ctx context.Context, prefix string) ([]
 		ctx = context.Background()
 	}
 	objects := []ObjectInfo{}
-	err := l.Disk.WithContext(ctx).Walk(strings.Trim(strings.TrimSpace(prefix), "/"), func(entry storage.Entry) error {
+	err := l.Disk.WithContext(ctx).Walk(str.Of(prefix).TrimSpace().Trim("/").String(), func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
 		}
@@ -70,7 +71,7 @@ func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
 // ConfiguredBackupRepository opens the configured S3 backup repository when one is enabled.
 func ConfiguredBackupRepository() (BackupRepository, error) {
 	backupScope := env.WithPrefix("APP_BACKUP")
-	driver := strings.ToLower(strings.TrimSpace(backupScope.Get("DRIVER", "")))
+	driver := str.Of(backupScope.Get("DRIVER", "")).TrimSpace().ToLower().String()
 	if driver == "" || driver == "local" {
 		return nil, nil
 	}
@@ -104,7 +105,12 @@ func storageEnvScope(name string) env.Scope {
 	if name == "" || name == "default" {
 		return env.WithPrefix("STORAGE")
 	}
-	child := strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+	child := str.Of(name).
+		ReplaceAll("-", "_").
+		ReplaceAll(" ", "_").
+		ReplaceAll(".", "_").
+		ToUpper().
+		String()
 	return env.WithPrefix("STORAGE").Child(child)
 }
 

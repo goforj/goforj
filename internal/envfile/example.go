@@ -3,6 +3,8 @@ package envfile
 import (
 	"bytes"
 	"strings"
+
+	"github.com/goforj/str"
 )
 
 // RedactExample derives a commit-safe environment contract without discarding runtime-shaping values or comments.
@@ -133,7 +135,7 @@ func splitLineEnding(line []byte) ([]byte, []byte) {
 
 // isSensitiveKey identifies values that must never be copied from an owner-controlled environment into a committed example.
 func isSensitiveKey(key string) bool {
-	normalized := strings.ToUpper(strings.TrimSpace(key))
+	normalized := str.Of(key).TrimSpace().ToUpper().String()
 	if normalized == "APP_KEY" {
 		return true
 	}
