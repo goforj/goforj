@@ -25,6 +25,7 @@ module_for_import() {
     github.com/goforj/events/driver/snsevents) echo "github.com/goforj/events/driver/snsevents" ;;
     github.com/goforj/events/driver/*) echo "$1" ;;
     github.com/goforj/events/*) echo "github.com/goforj/events" ;;
+    github.com/goforj/cache/driver/rediscache) echo "github.com/goforj/cache/driver/rediscache" ;;
     github.com/goforj/queue/*) echo "github.com/goforj/queue" ;;
     github.com/klauspost/compress/*) echo "github.com/klauspost/compress" ;;
     github.com/labstack/echo/v4/*) echo "github.com/labstack/echo/v4" ;;
@@ -112,13 +113,14 @@ override_version_for_module() {
     github.com/goforj/events/driver/natsjetstreamevents) echo "v0.2.0" ;;
     github.com/goforj/events/driver/redisevents) echo "v0.2.0" ;;
     github.com/goforj/events/driver/snsevents) echo "v0.2.0" ;;
+    github.com/goforj/godump) echo "v1.9.1" ;;
     github.com/goforj/httpx) echo "v1.1.0" ;;
     github.com/goforj/mail) echo "v0.3.1" ;;
     github.com/goforj/mail/mailses) echo "v0.3.1" ;;
     github.com/goforj/metrics) echo "v0.2.0" ;;
     github.com/goforj/null/v6) echo "v6.0.2" ;;
-    github.com/goforj/queue) echo "v0.1.16" ;;
-    github.com/goforj/scheduler/v2) echo "v2.1.3" ;;
+    github.com/goforj/queue) echo "v0.2.1" ;;
+    github.com/goforj/scheduler/v2) echo "v2.1.4" ;;
     github.com/goforj/web) echo "v0.6.0" ;;
     github.com/klauspost/compress) echo "v1.18.4" ;;
     github.com/labstack/echo/v4) echo "v4.15.1" ;;
@@ -189,22 +191,30 @@ while IFS= read -r path; do
   grep -hEo '"(github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' "$path" >> "$raw_imports_file" || true
 done < "$go_files_file"
 
-sed 's/^"//' "$raw_imports_file" \
-  | sed 's/"$//' \
-  | grep -Ev '^$' \
-  | grep -E '^(github\.com|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
-  | grep -Ev '^github\.com/goforj/goforj(/|$)' \
-  | sort -u \
-  > "$imports_file"
+{
+  sed 's/^"//' "$raw_imports_file" \
+    | sed 's/"$//' \
+    | grep -Ev '^$' \
+    | grep -E '^(github\.com|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
+    | grep -Ev '^github\.com/goforj/goforj(/|$)'
+  # Scheduler's module graph otherwise seeds the older driver used only by its examples.
+  echo "github.com/goforj/cache/driver/rediscache"
+  # Web's index package remains on str v1 while rendered templates use str/v2.
+  echo "github.com/goforj/str"
+} | sort -u > "$imports_file"
 
 if [[ ! -s "$imports_file" ]]; then
   echo "no external Go imports found" >&2
   exit 1
 fi
 
-while IFS= read -r pkg; do
-  module_for_import "$pkg"
-done < "$imports_file" | sort -u > "$modules_file"
+{
+  while IFS= read -r pkg; do
+    module_for_import "$pkg"
+  done < "$imports_file"
+  # httpx v1 selects an older godump, so warm builds pin the release validated by the host module.
+  echo "github.com/goforj/godump"
+} | sort -u > "$modules_file"
 
 mkdir -p "$out_dir"
 

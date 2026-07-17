@@ -247,9 +247,9 @@ func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	dynamo := services["dynamo"]
 	dynamo.endpoint = "http://" + dynamo.addr
 	postgres := services["postgres"]
-	postgres.dsn = fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", postgres.addr)
+	postgres.dsn = fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable&timezone=UTC", postgres.addr)
 	mysql := services["mysql"]
-	mysql.dsn = fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", mysql.addr)
+	mysql.dsn = fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27", mysql.addr)
 	waitForMySQLReady(t, mysql.dsn)
 	nats := services["nats"]
 	nats.url = "nats://" + nats.addr
@@ -341,6 +341,7 @@ func cacheContainerStartSpecs() []containerStartSpec {
 					"POSTGRES_DB":       "app",
 					"POSTGRES_USER":     "app",
 					"POSTGRES_PASSWORD": "secret",
+					"TZ":                "America/Los_Angeles",
 				},
 				WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
 			},
@@ -356,6 +357,7 @@ func cacheContainerStartSpecs() []containerStartSpec {
 					"MYSQL_USER":          "app",
 					"MYSQL_PASSWORD":      "secret",
 					"MYSQL_ROOT_PASSWORD": "rootsecret",
+					"TZ":                  "America/Los_Angeles",
 				},
 				WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
 			},

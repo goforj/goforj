@@ -22,6 +22,9 @@ func main() {
 	if err := cmd.LoadEnv(); err != nil {
 		console.Fatalf("loading env: %v", err)
 	}
+	if err := cmd.ConfigureTimezone(); err != nil {
+		console.Fatalf("configuring timezone: %v", err)
+	}
 
 	handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})
 	if err != nil {

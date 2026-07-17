@@ -161,7 +161,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 	}
 
 	wantKeys := []string{
-		"APP_NAME", "APP_KEY", "APP_DIAG_TOKEN", "APP_ENV", "APP_DEBUG", "APP_URL",
+		"APP_NAME", "APP_KEY", "APP_DIAG_TOKEN", "APP_ENV", "TZ", "APP_DEBUG", "APP_URL",
 		"APP_LOG_FORMAT", "APP_LOG_TIME",
 		"LIGHTHOUSE_ENABLED", "LIGHTHOUSE_URL", "LIGHTHOUSE_SECRET",
 		"API_JWT_SECRET_KEY", "API_SWAGGER_ENABLED", "API_HTTP_HOST", "API_HTTP_PORT",
@@ -205,6 +205,56 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 	}
 	if !strings.Contains(environment, "IP_ADDRESS=0.0.0.0\n") {
 		t.Fatalf("default environment omitted the Docker bind-address default:\n%s", environment)
+	}
+	if !strings.Contains(environment, "APP_ENV=local\nTZ=UTC\nAPP_DEBUG=0\n") {
+		t.Fatalf("default environment omitted the UTC application default:\n%s", environment)
+	}
+}
+
+// TestResourceTemplatesDefaultComposeServicesToUTC verifies every generated service inherits the project timezone contract.
+func TestResourceTemplatesDefaultComposeServicesToUTC(t *testing.T) {
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
+	if strings.Count(environment, "TZ=UTC\n") != 1 {
+		t.Fatalf("default environment must define TZ=UTC exactly once:\n%s", environment)
+	}
+
+	var document struct {
+		Services map[string]struct {
+			Environment []string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &document); err != nil {
+		t.Fatalf("decode rendered Compose: %v\n%s", err, compose)
+	}
+	for _, serviceName := range []string{"victoriametrics", "vmagent", "grafana", "grafana-seed", "mailpit", "mysql", "redis"} {
+		service, ok := document.Services[serviceName]
+		if !ok {
+			t.Fatalf("rendered Compose omitted expected service %q:\n%s", serviceName, compose)
+		}
+		found := false
+		for _, value := range service.Environment {
+			if value == "TZ=${TZ:-UTC}" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("rendered Compose service %q omitted the UTC timezone default: %#v", serviceName, service.Environment)
+		}
+	}
+
+	postgresComponents := project.Components{Docker: true, DatabasePostgres: true}
+	postgresPlan := defaultResourcePlanForTest(t, postgresComponents)
+	_, postgresCompose := renderResourceTemplates(t, postgresComponents, postgresPlan, project.LocalServiceIntent{})
+	document.Services = nil
+	if err := yaml.Unmarshal([]byte(postgresCompose), &document); err != nil {
+		t.Fatalf("decode rendered Postgres Compose: %v\n%s", err, postgresCompose)
+	}
+	postgres, ok := document.Services["postgres"]
+	if !ok || len(postgres.Environment) == 0 || postgres.Environment[len(postgres.Environment)-1] != "TZ=${TZ:-UTC}" {
+		t.Fatalf("rendered Postgres service omitted the UTC timezone default: %#v", postgres.Environment)
 	}
 }
 

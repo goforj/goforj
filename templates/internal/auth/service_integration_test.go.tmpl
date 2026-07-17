@@ -4256,7 +4256,7 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 			t.Setenv(
 				"DB_DSN",
 				fmt.Sprintf(
-					"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+					"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC&time_zone=%%27%%2B00%%3A00%%27",
 					explicitDBUsername,
 					explicitDBPassword,
 					explicitDBHost,
@@ -4287,7 +4287,7 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 			t.Setenv(
 				"DB_DSN",
 				fmt.Sprintf(
-					"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+					"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
 					explicitDBHost,
 					explicitDBUsername,
 					explicitDBPassword,

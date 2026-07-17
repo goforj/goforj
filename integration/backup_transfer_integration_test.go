@@ -584,8 +584,8 @@ func startBackupDatabasePair(t *testing.T, ctx context.Context) (string, string,
 
 	mysqlHost := containerHost(t, ctx, byDriver["mysql"], "3306/tcp")
 	postgresHost := containerHost(t, ctx, byDriver["postgres"], "5432/tcp")
-	mysqlDSN := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", mysqlHost)
-	postgresDSN := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", postgresHost)
+	mysqlDSN := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27", mysqlHost)
+	postgresDSN := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable&timezone=UTC", postgresHost)
 	waitForBackupDatabase(t, mysqlDSN, "mysql")
 	waitForBackupDatabase(t, postgresDSN, "postgres")
 	stop := func() {
@@ -602,7 +602,7 @@ func backupMySQLContainerRequest() testcontainers.GenericContainerRequest {
 	return testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
 		Image:        "mysql:8.4",
 		ExposedPorts: []string{"3306/tcp"},
-		Env:          map[string]string{"MYSQL_DATABASE": "app", "MYSQL_USER": "app", "MYSQL_PASSWORD": "secret", "MYSQL_ROOT_PASSWORD": "root"},
+		Env:          map[string]string{"MYSQL_DATABASE": "app", "MYSQL_USER": "app", "MYSQL_PASSWORD": "secret", "MYSQL_ROOT_PASSWORD": "root", "TZ": "America/Los_Angeles"},
 		Labels:       map[string]string{backupDatabaseDriverLabel: "mysql"},
 		WaitingFor:   wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
 	}, Started: true}
@@ -613,7 +613,7 @@ func backupPostgresContainerRequest() testcontainers.GenericContainerRequest {
 	return testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
 		Image:        "postgres:16-alpine",
 		ExposedPorts: []string{"5432/tcp"},
-		Env:          map[string]string{"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret"},
+		Env:          map[string]string{"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret", "TZ": "America/Los_Angeles"},
 		Labels:       map[string]string{backupDatabaseDriverLabel: "postgres"},
 		WaitingFor:   wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
 	}, Started: true}
@@ -650,7 +650,7 @@ func startBackupMySQL(t *testing.T, ctx context.Context) (string, backup.Connect
 		t.Fatal(err)
 	}
 	host := containerHost(t, ctx, container, "3306/tcp")
-	dsn := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", host)
+	dsn := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27", host)
 	waitForBackupDatabase(t, dsn, "mysql")
 	hostname, port, err := net.SplitHostPort(host)
 	if err != nil {
@@ -667,7 +667,7 @@ func startBackupPostgres(t *testing.T, ctx context.Context) (string, testcontain
 		t.Fatal(err)
 	}
 	host := containerHost(t, ctx, container, "5432/tcp")
-	dsn := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", host)
+	dsn := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable&timezone=UTC", host)
 	waitForBackupDatabase(t, dsn, "postgres")
 	return dsn, container, func() { _ = container.Terminate(context.Background()) }
 }
