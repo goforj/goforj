@@ -48,7 +48,7 @@ jobs:
         run: go install "$WIRE_INSTALL_TARGET"
 
       - name: run go tests
-        run: go test ./... -v
+        run: go test ./... -count=1 -v
 
       - name: build goforj binary
         run: go install ./cmd/forj
