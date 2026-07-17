@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -37,7 +36,7 @@ func TestSyncLegacyGeneratedTemplatesRestoresProjectConfigOwnership(t *testing.T
 		t.Fatalf("write legacy Lighthouse server: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = &project.Config{
 		GoModuleName: "example.com/testapp",
 		Render: project.RenderConfig{

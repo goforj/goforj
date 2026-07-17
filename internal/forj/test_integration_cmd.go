@@ -1,11 +1,16 @@
 package forj
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/goforj/str/v2"
 
@@ -30,6 +35,12 @@ type TestIntegrationCmd struct {
 	// Variant selects the DB variant. Defaults to all rendered variants so no-arg runs exercise the full matrix.
 	Variant string `help:"Database variant selection" default:"all" enum:"sqlite,mysql,postgres,all"`
 
+	// Shard selects one one-based framework shard as N/M.
+	Shard string `help:"Run one framework shard in N/M form (for example 1/6)"`
+
+	// FrameworkProfile chooses the integration-only build-tag layer to discover and run.
+	FrameworkProfile string `help:"Framework integration profile" default:"integration" enum:"integration,lighthouse,multiapp"`
+
 	// Silent suppresses shadow-printed commands.
 	Silent bool `help:"Suppress command output" short:"s"`
 
@@ -45,10 +56,36 @@ type integrationStep struct {
 
 // integrationExecutor owns the output policy and Go caches shared by every command in one integration run.
 type integrationExecutor struct {
-	logger  *logger.AppLogger
-	silent  bool
-	verbose bool
-	caches  testexec.GoCaches
+	logger   *logger.AppLogger
+	silent   bool
+	verbose  bool
+	caches   testexec.GoCaches
+	forjExec string
+}
+
+// frameworkShard identifies one one-based partition of the discovered integration tests.
+type frameworkShard struct {
+	number int
+	total  int
+}
+
+// goTestListEvent contains the fields emitted by go test -json while listing runnable tests.
+type goTestListEvent struct {
+	Action  string
+	Package string
+	Output  string
+}
+
+// integrationTestName identifies one top-level test without conflating equal names from separate packages.
+type integrationTestName struct {
+	packagePath string
+	name        string
+}
+
+// integrationTestTarget groups one shard's selected tests into a package-specific command.
+type integrationTestTarget struct {
+	packagePath string
+	testNames   []string
 }
 
 // dbIntegrationVariantSpec defines the component selection and runtime environment for one rendered database target.
@@ -132,6 +169,20 @@ func (cmd *TestIntegrationCmd) Run() error {
 	suite := str.Of(cmd.Suite).ToLower().Trim().String()
 	target := str.Of(cmd.Target).ToLower().Trim().String()
 	variant := str.Of(cmd.Variant).ToLower().Trim().String()
+	frameworkProfile := str.Of(cmd.FrameworkProfile).ToLower().Trim().String()
+	shard, err := parseFrameworkShard(cmd.Shard)
+	if err != nil {
+		return err
+	}
+	if err := validateShardSuite(suite, cmd.Shard); err != nil {
+		return err
+	}
+	forjExec, cleanup, err := integrationForjBinary(executor.caches)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	executor.forjExec = forjExec
 
 	if !cmd.Silent {
 		testkit.PrintSection(fmt.Sprintf("Integration Suite: %s", suite))
@@ -139,11 +190,11 @@ func (cmd *TestIntegrationCmd) Run() error {
 
 	switch suite {
 	case "framework":
-		return cmd.runFrameworkSuite(executor, target)
+		return cmd.runFrameworkSuite(executor, target, frameworkProfile, shard)
 	case "rendered":
 		return cmd.runRenderedSuite(executor, target, variant)
 	case "all":
-		if err := cmd.runFrameworkSuite(executor, target); err != nil {
+		if err := cmd.runFrameworkSuite(executor, target, frameworkProfile, shard); err != nil {
 			return err
 		}
 		return cmd.runRenderedSuite(executor, target, variant)
@@ -152,75 +203,282 @@ func (cmd *TestIntegrationCmd) Run() error {
 	}
 }
 
-// runFrameworkSuite runs integration-tagged tests against this repository.
-func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, target string) error {
-	if target != "" && target != "all" {
-		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
+// frameworkProfileTags defines each profile as the test files added beyond a narrower build-tag baseline.
+func frameworkProfileTags(profile string) (string, string, error) {
+	switch profile {
+	case "", "integration":
+		return "", "integration", nil
+	case "lighthouse":
+		return "integration", "integration,lighthouse", nil
+	case "multiapp":
+		return "integration", "integration,multiapp", nil
+	default:
+		return "", "", fmt.Errorf("unknown framework integration profile %q", profile)
 	}
-	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath, executor.caches.BuildPath)
-	if err != nil {
-		return err
+}
+
+// parseFrameworkShard converts the one-based N/M command value into a validated shard.
+func parseFrameworkShard(value string) (frameworkShard, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "1/1"
 	}
-	defer builtForj.Cleanup()
-	forjExec := builtForj.Path
-	frameworkEnv := map[string]string{
-		"FORJ_INTEGRATION_FORJ_PATH": forjExec,
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: expected N/M, for example 1/6", value)
 	}
-	redisTeardown, err := cmd.configureFrameworkRedis(frameworkEnv)
-	if err != nil {
-		return err
+	if parts[0] == "" || parts[1] == "" || strings.Trim(parts[0], "0123456789") != "" || strings.Trim(parts[1], "0123456789") != "" {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: N and M must be positive integers", value)
 	}
-	if redisTeardown != nil {
-		defer redisTeardown()
+	number, numberErr := strconv.Atoi(parts[0])
+	total, totalErr := strconv.Atoi(parts[1])
+	if numberErr != nil || totalErr != nil {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: N and M must be integers", value)
 	}
-	if !executor.silent {
-		testkit.PrintSubsection("Framework integration preflight")
+	if total < 1 {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: total must be at least 1", value)
 	}
-	preflight := integrationStep{
-		name: "framework preflight",
-		args: []string{"go", "test", "-run", "^$", "-tags=integration", "./internal/forj", "-count=1"},
+	if number < 1 || number > total {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: shard number must be between 1 and %d", value, total)
 	}
-	if err := executor.runStep(".", preflight, frameworkEnvironment(frameworkEnv)); err != nil {
-		if !executor.silent {
-			console.Warnf("framework preflight failed, attempting integration-tagged tidy")
-		}
-		tidyEnv := map[string]string{
-			"GOFLAGS":                    "-tags=integration",
-			"FORJ_INTEGRATION_FORJ_PATH": forjExec,
-		}
-		tidy := integrationStep{name: "framework tidy", args: []string{"go", "mod", "tidy"}}
-		if err := executor.runStep(".", tidy, frameworkEnvironment(tidyEnv)); err != nil {
-			return err
-		}
-		if err := executor.runStep(".", preflight, frameworkEnvironment(frameworkEnv)); err != nil {
-			return err
-		}
-	}
-	args := []string{"go", "test", "-tags=integration", "./internal/forj", "-count=1"}
-	if executor.verbose {
-		args = append(args, "-v")
-	}
-	if !executor.silent {
-		testkit.PrintSubsection("Framework integration tests")
-	}
-	if err := executor.runStep(".", integrationStep{name: "framework", args: args}, frameworkEnvironment(frameworkEnv)); err != nil {
-		return err
+	return frameworkShard{number: number, total: total}, nil
+}
+
+// validateShardSuite prevents an explicitly requested framework partition from being ignored by another suite.
+func validateShardSuite(suite, shardValue string) error {
+	if suite != "framework" && strings.TrimSpace(shardValue) != "" {
+		return fmt.Errorf("--shard is only supported by the framework integration suite")
 	}
 	return nil
 }
 
-// configureFrameworkRedis reuses a caller-provided Redis endpoint before falling back to a testcontainer.
-func (cmd *TestIntegrationCmd) configureFrameworkRedis(frameworkEnv map[string]string) (func(), error) {
-	redisHost := strings.TrimSpace(os.Getenv("REDIS_HOST"))
-	redisPort := strings.TrimSpace(os.Getenv("REDIS_PORT"))
-	if redisHost != "" && redisPort != "" {
-		if err := testkit.WaitForTCPReadyAddress(redisHost, redisPort, 2*time.Second); err == nil {
-			frameworkEnv["REDIS_HOST"] = redisHost
-			frameworkEnv["REDIS_PORT"] = redisPort
-			return nil, nil
+// integrationForjBinary reuses an explicitly validated binary or builds one snapshot for the entire command run.
+func integrationForjBinary(caches testexec.GoCaches) (string, func(), error) {
+	if provided := strings.TrimSpace(os.Getenv("FORJ_INTEGRATION_FORJ_PATH")); provided != "" {
+		absolutePath, err := filepath.Abs(provided)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve FORJ_INTEGRATION_FORJ_PATH: %w", err)
+		}
+		info, err := os.Stat(absolutePath)
+		if err != nil {
+			return "", nil, fmt.Errorf("validate FORJ_INTEGRATION_FORJ_PATH: %w", err)
+		}
+		if info.IsDir() {
+			return "", nil, fmt.Errorf("validate FORJ_INTEGRATION_FORJ_PATH: %s is a directory", absolutePath)
+		}
+		return absolutePath, func() {}, nil
+	}
+	builtForj, err := testkit.BuildForjBinary(caches.ModulePath, caches.BuildPath)
+	if err != nil {
+		return "", nil, err
+	}
+	return builtForj.Path, builtForj.Cleanup, nil
+}
+
+// runFrameworkSuite runs integration-tagged tests against this repository.
+func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, target, profile string, shard frameworkShard) error {
+	if target != "" && target != "all" {
+		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
+	}
+	baselineTags, integrationTags, err := frameworkProfileTags(profile)
+	if err != nil {
+		return err
+	}
+	frameworkEnv := map[string]string{
+		"FORJ_INTEGRATION_FORJ_PATH": executor.forjExec,
+	}
+	targets, selectedTests, err := executor.frameworkIntegrationTestTargets(baselineTags, integrationTags, shard)
+	if err != nil {
+		return err
+	}
+	if !executor.silent {
+		console.Infof("framework %s shard %d/%d: %d integration tests", profile, shard.number, shard.total, selectedTests)
+	}
+	if !executor.silent {
+		testkit.PrintSubsection("Framework integration tests")
+	}
+	for _, testTarget := range targets {
+		args := []string{
+			"go", "test", "-tags=" + integrationTags, testTarget.packagePath,
+			"-run", makeIntegrationTestPattern(testTarget.testNames), "-count=1",
+		}
+		if executor.verbose {
+			args = append(args, "-v")
+		}
+		stepName := "framework " + testTarget.packagePath
+		if err := executor.runStep(".", integrationStep{name: stepName, args: args}, frameworkEnvironment(frameworkEnv)); err != nil {
+			return err
 		}
 	}
-	return testkit.StartRedisTestcontainer(testkit.ConsoleLogf(cmd.Silent), frameworkEnv)
+	return nil
+}
+
+// frameworkIntegrationTestTargets discovers tests added by one tag layer and selects one deterministic shard.
+func (executor integrationExecutor) frameworkIntegrationTestTargets(baselineTags, integrationTags string, shard frameworkShard) ([]integrationTestTarget, int, error) {
+	baseline, err := executor.listFrameworkTests(baselineTags)
+	if err != nil {
+		return nil, 0, err
+	}
+	integration, err := executor.listFrameworkTests(integrationTags)
+	if err != nil {
+		return nil, 0, err
+	}
+	testNames, err := integrationOnlyTestNames(baseline, integration)
+	if err != nil {
+		return nil, 0, err
+	}
+	return selectIntegrationTestTargets(testNames, shard)
+}
+
+// selectIntegrationTestTargets partitions package-qualified test names without duplicating equal names across packages.
+func selectIntegrationTestTargets(testNames []integrationTestName, shard frameworkShard) ([]integrationTestTarget, int, error) {
+	if shard.total > len(testNames) {
+		return nil, 0, fmt.Errorf("framework shard count %d exceeds %d integration tests", shard.total, len(testNames))
+	}
+	selected := make(map[string][]string)
+	selectedCount := 0
+	for index, testName := range testNames {
+		if index%shard.total == shard.number-1 {
+			selected[testName.packagePath] = append(selected[testName.packagePath], testName.name)
+			selectedCount++
+		}
+	}
+	packagePaths := make([]string, 0, len(selected))
+	for packagePath := range selected {
+		packagePaths = append(packagePaths, packagePath)
+	}
+	sort.Strings(packagePaths)
+	targets := make([]integrationTestTarget, 0, len(packagePaths))
+	for _, packagePath := range packagePaths {
+		targets = append(targets, integrationTestTarget{packagePath: packagePath, testNames: selected[packagePath]})
+	}
+	return targets, selectedCount, nil
+}
+
+// makeIntegrationTestPattern produces an exact Go test filter for one package's selected top-level tests.
+func makeIntegrationTestPattern(testNames []string) string {
+	quoted := make([]string, 0, len(testNames))
+	for _, testName := range testNames {
+		quoted = append(quoted, regexp.QuoteMeta(testName))
+	}
+	return "^(" + strings.Join(quoted, "|") + ")$"
+}
+
+// listFrameworkTests asks the Go tool which runnable tests belong to one framework build-tag selection.
+func (executor integrationExecutor) listFrameworkTests(tags string) ([]integrationTestName, error) {
+	repoRoot, err := testkit.RepoRoot()
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository root for framework tests: %w", err)
+	}
+	return executor.listGoTests(repoRoot, "./internal/forj/...", tags)
+}
+
+// listGoTests returns the package-qualified names that go test itself considers runnable.
+// Packages in scope must keep init and TestMain output free of test-shaped standalone lines because Go reports names as output events.
+func (executor integrationExecutor) listGoTests(dir, packagePattern, tags string) ([]integrationTestName, error) {
+	args := []string{"test", "-json", "-vet=off", "-list=^(Test|Fuzz|Example)"}
+	if tags != "" {
+		args = append(args, "-tags="+tags)
+	}
+	args = append(args, packagePattern)
+	command := exec.Command("go", args...)
+	command.Dir = dir
+	command.Env = testkit.WithEnvOverrides(os.Environ(), map[string]string{
+		"GOMODCACHE": executor.caches.ModulePath,
+		"GOCACHE":    executor.caches.BuildPath,
+		"GOFLAGS":    "",
+		"GOWORK":     "off",
+	})
+	output, err := runFrameworkTestListCommand(command)
+	if err != nil {
+		return nil, fmt.Errorf("list Go tests for %s with tags %q: %w", packagePattern, tags, err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(output)))
+	tests := make([]integrationTestName, 0)
+	for {
+		var event goTestListEvent
+		if err := decoder.Decode(&event); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("decode Go test list for %s with tags %q: %w", packagePattern, tags, err)
+		}
+		if event.Action != "output" || event.Package == "" {
+			continue
+		}
+		if name, ok := listedGoTestName(event.Output); ok {
+			tests = append(tests, integrationTestName{packagePath: event.Package, name: name})
+		}
+	}
+	sort.Slice(tests, func(left, right int) bool {
+		if tests[left].packagePath == tests[right].packagePath {
+			return tests[left].name < tests[right].name
+		}
+		return tests[left].packagePath < tests[right].packagePath
+	})
+	return tests, nil
+}
+
+// runFrameworkTestListCommand keeps Go diagnostics on stderr from corrupting the JSON stdout stream.
+func runFrameworkTestListCommand(command *exec.Cmd) ([]byte, error) {
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err == nil {
+		return output, nil
+	}
+	details := make([]string, 0, 2)
+	if stdout := strings.TrimSpace(string(output)); stdout != "" {
+		details = append(details, stdout)
+	}
+	if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
+		details = append(details, diagnostic)
+	}
+	if len(details) == 0 {
+		return nil, err
+	}
+	return nil, fmt.Errorf("%w (%s)", err, strings.Join(details, "\n"))
+}
+
+// listedGoTestName recognizes the runnable-name lines emitted by go test -list.
+func listedGoTestName(output string) (string, bool) {
+	name := strings.TrimSpace(output)
+	if name == "" || name == "TestMain" || strings.ContainsAny(name, " \t\r\n") {
+		return "", false
+	}
+	for _, prefix := range []string{"Test", "Fuzz", "Example"} {
+		if strings.HasPrefix(name, prefix) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// integrationOnlyTestNames subtracts the runnable baseline while preserving tagged duplicate-name additions.
+func integrationOnlyTestNames(baseline, integration []integrationTestName) ([]integrationTestName, error) {
+	baselineCounts := make(map[integrationTestName]int, len(baseline))
+	for _, name := range baseline {
+		baselineCounts[name]++
+	}
+	integrationCounts := make(map[integrationTestName]int, len(integration))
+	for _, name := range integration {
+		integrationCounts[name]++
+	}
+	names := make([]integrationTestName, 0, len(integrationCounts))
+	for name, count := range integrationCounts {
+		if count > baselineCounts[name] {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("integration build tags did not add framework tests")
+	}
+	sort.Slice(names, func(left, right int) bool {
+		if names[left].packagePath == names[right].packagePath {
+			return names[left].name < names[right].name
+		}
+		return names[left].packagePath < names[right].packagePath
+	})
+	return names, nil
 }
 
 // runRenderedSuite runs generated application tests across the selected database variants.
@@ -353,13 +611,7 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 	if err := cmd.writeRenderedIntegrationConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
-	builtForj, err := testkit.BuildForjBinary(executor.caches.ModulePath, executor.caches.BuildPath)
-	if err != nil {
-		return err
-	}
-	defer builtForj.Cleanup()
-	forjExec := builtForj.Path
-	if err := executor.workspace(tempDir).Run("render", forjExec, "render"); err != nil {
+	if err := executor.workspace(tempDir).Run("render", executor.forjExec, "render"); err != nil {
 		return err
 	}
 

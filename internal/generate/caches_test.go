@@ -8,10 +8,13 @@ import (
 )
 
 func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SESSIONS_DRIVER", "file")
-	t.Setenv("CACHE_SESSIONS_FILE_DIR", filepath.Join(t.TempDir(), "sessions"))
-	t.Setenv("CACHE_PAGES_DRIVER", "null")
+	t.Parallel()
+	environment := map[string]string{
+		"CACHE_DRIVER":            "memory",
+		"CACHE_SESSIONS_DRIVER":   "file",
+		"CACHE_SESSIONS_FILE_DIR": filepath.Join(t.TempDir(), "sessions"),
+		"CACHE_PAGES_DRIVER":      "null",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-generation-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -27,7 +30,7 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		cacheLocalReplaces(t),
 	))
 
-	written, err := GenerateCacheFiles(root)
+	written, err := generateCacheFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
@@ -182,8 +185,11 @@ func TestGeneratedAccessorsFallbackWithoutRuntimeEnv(t *testing.T) {
 }
 
 func TestGenerateCacheFilesChainsMultipleObservers(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SESSIONS_DRIVER", "memory")
+	t.Parallel()
+	environment := map[string]string{
+		"CACHE_DRIVER":          "memory",
+		"CACHE_SESSIONS_DRIVER": "memory",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-observer-chain-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -199,7 +205,7 @@ func TestGenerateCacheFilesChainsMultipleObservers(t *testing.T) {
 		cacheLocalReplaces(t),
 	))
 
-	if _, err := GenerateCacheFiles(root); err != nil {
+	if _, err := generateCacheFiles(fixtureGenerationInput(root, environment)); err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
 
@@ -262,7 +268,8 @@ func TestObserverChain(t *testing.T) {
 
 // TestGenerateCacheFilesRejectsInvalidShapingConfiguration proves invalid shaping cannot hide behind fail-closed stores.
 func TestGenerateCacheFilesRejectsInvalidShapingConfiguration(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
+	t.Parallel()
+	environment := map[string]string{"CACHE_DRIVER": "memory"}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-shaping-validation-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -278,7 +285,7 @@ func TestGenerateCacheFilesRejectsInvalidShapingConfiguration(t *testing.T) {
 		cacheLocalReplaces(t),
 	))
 
-	if _, err := GenerateCacheFiles(root); err != nil {
+	if _, err := generateCacheFiles(fixtureGenerationInput(root, environment)); err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
 
@@ -361,8 +368,11 @@ func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
 
 // TestGeneratedCacheManifestRejectsOmittedNativeFallback proves runtime environment changes cannot expand one generated artifact.
 func TestGeneratedCacheManifestRejectsOmittedNativeFallback(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "redis")
-	t.Setenv("CACHE_SUPPORTED_DRIVERS", "redis")
+	t.Parallel()
+	environment := map[string]string{
+		"CACHE_DRIVER":            "redis",
+		"CACHE_SUPPORTED_DRIVERS": "redis",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-manifest-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -378,7 +388,7 @@ func TestGeneratedCacheManifestRejectsOmittedNativeFallback(t *testing.T) {
 		nil,
 		cacheLocalReplaces(t),
 	))
-	if _, err := GenerateCacheFiles(root); err != nil {
+	if _, err := generateCacheFiles(fixtureGenerationInput(root, environment)); err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
 
@@ -417,7 +427,8 @@ func TestRuntimeManifestAuthority(t *testing.T) {
 }
 
 func TestGenerateCacheFilesAlwaysExposesSessionsAccessor(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
+	t.Parallel()
+	environment := map[string]string{"CACHE_DRIVER": "memory"}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-sessions-accessor-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -433,7 +444,7 @@ func TestGenerateCacheFilesAlwaysExposesSessionsAccessor(t *testing.T) {
 		cacheLocalReplaces(t),
 	))
 
-	written, err := GenerateCacheFiles(root)
+	written, err := generateCacheFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
@@ -472,11 +483,14 @@ func TestSessionsAccessorExistsWithoutNamedStore(t *testing.T) {
 }
 
 func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SESSIONS_DRIVER", "redis")
-	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "memcached")
-	t.Setenv("CACHE_USER_SESSIONS_DRIVER", "sqlite")
-	t.Setenv("CACHE_USER_SESSIONS_DSN", "file::memory:?cache=shared")
+	t.Parallel()
+	environment := map[string]string{
+		"CACHE_DRIVER":               "memory",
+		"CACHE_SESSIONS_DRIVER":      "redis",
+		"CACHE_PAGE_CACHE_DRIVER":    "memcached",
+		"CACHE_USER_SESSIONS_DRIVER": "sqlite",
+		"CACHE_USER_SESSIONS_DSN":    "file::memory:?cache=shared",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-accessor-names-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -500,7 +514,7 @@ func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
 		nil,
 		cacheLocalReplaces(t),
 	))
-	written, err := GenerateCacheFiles(root)
+	written, err := generateCacheFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
@@ -580,119 +594,53 @@ func TestGenerateCacheFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	}
 }
 
-func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")
-
-	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-imports-*", filepath.Join("internal", "caches"))
-	writeFixtureGoMod(t, root, fixtureModuleSpec(
-		"example.com/cacheimporttest",
-		[]string{
-			"github.com/goforj/cache",
-			"github.com/goforj/cache/cachecore",
-			"github.com/goforj/cache/cachetest",
-			"github.com/goforj/cache/driver/sqlcore",
-			"github.com/goforj/env/v2",
-			"github.com/goforj/str/v2",
-		},
-		nil,
-		cacheLocalReplaces(t),
-	))
-	written, err := GenerateCacheFiles(root)
-	if err != nil {
-		t.Fatalf("GenerateCacheFiles returned error: %v", err)
-	}
-	if written == 0 {
-		t.Fatal("expected generated cache files to be written")
-	}
-
-	configGenPath := filepath.Join(root, "internal", "caches", "manager_gen.go")
-	configGen, err := os.ReadFile(configGenPath)
-	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
-	}
-	if !strings.Contains(string(configGen), `"github.com/goforj/cache/driver/sqlitecache"`) {
-		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
-	}
-
-	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
-	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
-}
-
-func TestGenerateCacheFilesWithPinnedDriverModules(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")
-
-	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-pins-*", filepath.Join("internal", "caches"))
-	writeFixtureGoMod(t, root, fixtureModuleSpec(
-		"example.com/cachepinnedtest",
-		[]string{
-			"github.com/goforj/cache",
-			"github.com/goforj/cache/cachecore",
-			"github.com/goforj/cache/cachetest",
-			"github.com/goforj/cache/driver/sqlcore",
-			"github.com/goforj/env/v2",
-			"github.com/goforj/str/v2",
-		},
-		[]string{"github.com/goforj/cache/driver/sqlitecache"},
-		cacheLocalReplaces(t),
-	))
-	written, err := GenerateCacheFiles(root)
-	if err != nil {
-		t.Fatalf("GenerateCacheFiles returned error: %v", err)
-	}
-	if written == 0 {
-		t.Fatal("expected generated cache files to be written")
-	}
-
-	configGenPath := filepath.Join(root, "internal", "caches", "manager_gen.go")
-	configGen, err := os.ReadFile(configGenPath)
-	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
-	}
-	if !strings.Contains(string(configGen), `"github.com/goforj/cache/driver/sqlitecache"`) {
-		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
-	}
-
-	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
-	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
-}
-
+// TestGenerateCacheFilesDriverMatrixCompiles keeps every generated Cache driver compatible with the versions shipped together by GoForj.
 func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_REDIS_DRIVER", "redis")
-	t.Setenv("CACHE_REDIS_ADDR", "127.0.0.1:6379")
-	t.Setenv("CACHE_REDIS_TLS", "true")
-	t.Setenv("CACHE_REDIS_INSECURE_SKIP_VERIFY", "true")
-	t.Setenv("CACHE_MEMCACHED_DRIVER", "memcached")
-	t.Setenv("CACHE_MEMCACHED_ADDRESSES", "127.0.0.1:11211,127.0.0.1:11212")
-	t.Setenv("CACHE_DYNAMO_DRIVER", "dynamodb")
-	t.Setenv("CACHE_DYNAMO_REGION", "us-east-1")
-	t.Setenv("CACHE_DYNAMO_ENDPOINT", "http://127.0.0.1:8000")
-	t.Setenv("CACHE_DYNAMO_TABLE", "cache_entries")
-	t.Setenv("CACHE_SQLITE_DRIVER", "sqlite")
-	t.Setenv("CACHE_SQLITE_DSN", "file::memory:?cache=shared")
-	t.Setenv("CACHE_SQLITE_TABLE", "cache_entries")
-	t.Setenv("CACHE_POSTGRES_DRIVER", "postgres")
-	t.Setenv("CACHE_POSTGRES_DSN", "postgres://user:pass@127.0.0.1:5432/app?sslmode=disable")
-	t.Setenv("CACHE_POSTGRES_TABLE", "cache_entries")
-	t.Setenv("CACHE_MYSQL_DRIVER", "mysql")
-	t.Setenv("CACHE_MYSQL_DSN", "user:pass@tcp(127.0.0.1:3306)/app?parseTime=true")
-	t.Setenv("CACHE_MYSQL_TABLE", "cache_entries")
-	t.Setenv("CACHE_NATS_DRIVER", "nats")
-	t.Setenv("CACHE_NATS_URL", "nats://127.0.0.1:4222")
-	t.Setenv("CACHE_NATS_BUCKET", "CACHE_TEST")
-	t.Setenv("CACHE_NATS_BUCKET_TTL", "true")
-	t.Setenv("CACHE_NATS_BUCKET_TTL_SECONDS", "60")
-	t.Setenv("CACHE_NATS_DESCRIPTION", "cache test bucket")
-	t.Setenv("CACHE_NATS_HISTORY", "5")
-	t.Setenv("CACHE_NATS_MAX_BYTES", "4096")
-	t.Setenv("CACHE_NATS_MAX_VALUE_SIZE", "1024")
-	t.Setenv("CACHE_NATS_REPLICAS", "1")
-	t.Setenv("CACHE_NATS_STORAGE", "file")
-	t.Setenv("CACHE_NATS_COMPRESSED", "true")
+	t.Parallel()
+	driverModules := []string{
+		"github.com/goforj/cache/driver/dynamocache",
+		"github.com/goforj/cache/driver/memcachedcache",
+		"github.com/goforj/cache/driver/mysqlcache",
+		"github.com/goforj/cache/driver/natscache",
+		"github.com/goforj/cache/driver/postgrescache",
+		"github.com/goforj/cache/driver/rediscache",
+		"github.com/goforj/cache/driver/sqlitecache",
+		"github.com/nats-io/nats.go",
+	}
+	environment := map[string]string{
+		"CACHE_DRIVER":                     "memory",
+		"CACHE_REDIS_DRIVER":               "redis",
+		"CACHE_REDIS_ADDR":                 "127.0.0.1:6379",
+		"CACHE_REDIS_TLS":                  "true",
+		"CACHE_REDIS_INSECURE_SKIP_VERIFY": "true",
+		"CACHE_MEMCACHED_DRIVER":           "memcached",
+		"CACHE_MEMCACHED_ADDRESSES":        "127.0.0.1:11211,127.0.0.1:11212",
+		"CACHE_DYNAMO_DRIVER":              "dynamodb",
+		"CACHE_DYNAMO_REGION":              "us-east-1",
+		"CACHE_DYNAMO_ENDPOINT":            "http://127.0.0.1:8000",
+		"CACHE_DYNAMO_TABLE":               "cache_entries",
+		"CACHE_SQLITE_DRIVER":              "sqlite",
+		"CACHE_SQLITE_DSN":                 "file::memory:?cache=shared",
+		"CACHE_SQLITE_TABLE":               "cache_entries",
+		"CACHE_POSTGRES_DRIVER":            "postgres",
+		"CACHE_POSTGRES_DSN":               "postgres://user:pass@127.0.0.1:5432/app?sslmode=disable",
+		"CACHE_POSTGRES_TABLE":             "cache_entries",
+		"CACHE_MYSQL_DRIVER":               "mysql",
+		"CACHE_MYSQL_DSN":                  "user:pass@tcp(127.0.0.1:3306)/app?parseTime=true",
+		"CACHE_MYSQL_TABLE":                "cache_entries",
+		"CACHE_NATS_DRIVER":                "nats",
+		"CACHE_NATS_URL":                   "nats://127.0.0.1:4222",
+		"CACHE_NATS_BUCKET":                "CACHE_TEST",
+		"CACHE_NATS_BUCKET_TTL":            "true",
+		"CACHE_NATS_BUCKET_TTL_SECONDS":    "60",
+		"CACHE_NATS_DESCRIPTION":           "cache test bucket",
+		"CACHE_NATS_HISTORY":               "5",
+		"CACHE_NATS_MAX_BYTES":             "4096",
+		"CACHE_NATS_MAX_VALUE_SIZE":        "1024",
+		"CACHE_NATS_REPLICAS":              "1",
+		"CACHE_NATS_STORAGE":               "file",
+		"CACHE_NATS_COMPRESSED":            "true",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-matrix-*", filepath.Join("internal", "caches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -705,10 +653,10 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 			"github.com/goforj/env/v2",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		driverModules,
 		cacheLocalReplaces(t),
 	))
-	written, err := GenerateCacheFiles(root)
+	written, err := generateCacheFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
@@ -737,14 +685,6 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 	}
 
 	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root,
-		"github.com/goforj/cache/driver/rediscache",
-		"github.com/goforj/cache/driver/memcachedcache",
-		"github.com/goforj/cache/driver/dynamocache",
-		"github.com/goforj/cache/driver/sqlitecache",
-		"github.com/goforj/cache/driver/postgrescache",
-		"github.com/goforj/cache/driver/mysqlcache",
-		"github.com/goforj/cache/driver/natscache",
-	)
+	assertFixtureGoModPins(t, root, driverModules...)
 	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }

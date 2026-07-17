@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -38,7 +37,7 @@ render:
 		t.Fatalf("write legacy config: %v", err)
 	}
 
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
 		t.Fatalf("render legacy config: %v", err)
 	}

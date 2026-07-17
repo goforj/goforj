@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/internal/envfile"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
@@ -316,7 +315,7 @@ func TestEventsEnvironmentUsesProjectEnvelopeAndAppParticipation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			components := project.ProjectComponents(test.config)
 			plan := defaultResourcePlanForTest(t, components)
-			renderer := NewProjectRenderer(logger.NewSilentLogger())
+			renderer := unitProjectRenderer(t)
 			renderer.config = test.config
 			renderer.resources.plan = plan
 			renderer.stats = &renderStats{}
@@ -506,7 +505,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 	}
 	plan := redisResourcePlanForTest(t, components)
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	if err := renderer.Render(ComponentRenderInput{renderAll: true, resourcePlan: plan, localServiceIntent: intent}); err != nil {
 		t.Fatalf("render explicit resource plan: %v", err)
 	}
@@ -554,7 +553,7 @@ func TestProjectRendererConsumesExplicitResourcePlan(t *testing.T) {
 	if err := os.Remove(".env"); err != nil {
 		t.Fatalf("remove owner environment for clean-checkout rerender: %v", err)
 	}
-	cleanCheckoutRenderer := NewProjectRenderer(logger.NewSilentLogger())
+	cleanCheckoutRenderer := unitProjectRenderer(t)
 	if err := cleanCheckoutRenderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
 		t.Fatalf("rerender clean checkout from environment example: %v", err)
 	}
@@ -588,7 +587,7 @@ func renderResourceTemplatesWithConsumers(t *testing.T, components project.Compo
 		GoModuleName: "example.com/resource-plan",
 		Render:       project.RenderConfig{Components: components},
 	}
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer := unitProjectRenderer(t)
 	renderer.config = config
 	renderer.resources = resourceRenderState{
 		plan:             plan,

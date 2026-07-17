@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
 
@@ -58,4 +59,13 @@ func projectRendererForTest(t *testing.T, config *project.Config) *ProjectRender
 		config:    config,
 		workspace: currentProjectRenderWorkspace(t),
 	}
+}
+
+// unitProjectRenderer keeps file-generation tests focused while the dedicated toolchain tests cover external Go and Wire commands.
+func unitProjectRenderer(t *testing.T) *ProjectRenderer {
+	t.Helper()
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	renderer.tidyModule = func(*ProjectRenderer) error { return nil }
+	renderer.generateWire = func(*ProjectRenderer) error { return nil }
+	return renderer
 }

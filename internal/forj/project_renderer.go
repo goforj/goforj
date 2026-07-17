@@ -135,6 +135,8 @@ type ProjectRenderer struct {
 	wire                    wireTool
 	removeLegacyQueueDriver bool
 	writeEnvironmentFile    func(string, []byte, fs.FileMode) error
+	tidyModule              func(*ProjectRenderer) error
+	generateWire            func(*ProjectRenderer) error
 }
 
 type renderStats struct {
@@ -298,12 +300,15 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 	if err != nil {
 		panic(err)
 	}
-	return &ProjectRenderer{
+	renderer := &ProjectRenderer{
 		logger:               logger,
 		workspace:            workspace,
 		stats:                &renderStats{},
 		writeEnvironmentFile: writeFileAtomically,
 	}
+	renderer.tidyModule = (*ProjectRenderer).goModTidy
+	renderer.generateWire = (*ProjectRenderer).runWireGenerate
+	return renderer
 }
 
 // beginRenderInvocation resets invocation-local state and resolves the project workspace before any renderer boundary runs.
@@ -1133,12 +1138,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
-	if err := p.timeRenderStage("goModTidy", p.goModTidy); err != nil {
+	if err := p.timeRenderStage("goModTidy", func() error { return p.tidyModule(p) }); err != nil {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
 	// Run wire install + generate to make main runnable immediately.
-	if err := p.timeRenderStage("runWireGenerate", p.runWireGenerate); err != nil {
+	if err := p.timeRenderStage("runWireGenerate", func() error { return p.generateWire(p) }); err != nil {
 		return fmt.Errorf("wire generate: %w", err)
 	}
 
