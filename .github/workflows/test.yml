@@ -181,17 +181,17 @@ jobs:
       matrix:
         include:
           - name: framework 1/6
-            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=0
+            args: framework --shard=1/6
           - name: framework 2/6
-            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=1
+            args: framework --shard=2/6
           - name: framework 3/6
-            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=2
+            args: framework --shard=3/6
           - name: framework 4/6
-            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=3
+            args: framework --shard=4/6
           - name: framework 5/6
-            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=4
+            args: framework --shard=5/6
           - name: framework 6/6
-            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=5
+            args: framework --shard=6/6
           - name: multi-App
             args: framework --framework-profile=multiapp
           - name: rendered sqlite

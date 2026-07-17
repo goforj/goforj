@@ -11,42 +11,42 @@ import (
 	"github.com/goforj/goforj/internal/testkit"
 )
 
-// TestRunFrameworkPackageListCommandSeparatesDiagnostics protects structured discovery from Go download messages.
-func TestRunFrameworkPackageListCommandSeparatesDiagnostics(t *testing.T) {
-	t.Setenv("GOFORJ_FRAMEWORK_PACKAGE_LIST_HELPER", "success")
-	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkPackageListCommandHelper$")
-	output, err := runFrameworkPackageListCommand(command)
+// TestRunFrameworkTestListCommandSeparatesDiagnostics protects structured discovery from Go download messages.
+func TestRunFrameworkTestListCommandSeparatesDiagnostics(t *testing.T) {
+	t.Setenv("GOFORJ_FRAMEWORK_TEST_LIST_HELPER", "success")
+	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkTestListCommandHelper$")
+	output, err := runFrameworkTestListCommand(command)
 	if err != nil {
-		t.Fatalf("run framework package list command: %v", err)
+		t.Fatalf("run framework test list command: %v", err)
 	}
-	const want = `{"ImportPath":"example.com/app"}`
+	const want = `{"Action":"output","Package":"example.com/app","Output":"TestIntegration\n"}`
 	if got := strings.TrimSpace(string(output)); got != want {
-		t.Fatalf("framework package metadata = %q, want %q", got, want)
+		t.Fatalf("framework test list = %q, want %q", got, want)
 	}
 }
 
-// TestRunFrameworkPackageListCommandPreservesFailureDetails verifies separated streams remain actionable on failure.
-func TestRunFrameworkPackageListCommandPreservesFailureDetails(t *testing.T) {
-	t.Setenv("GOFORJ_FRAMEWORK_PACKAGE_LIST_HELPER", "failure")
-	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkPackageListCommandHelper$")
-	_, err := runFrameworkPackageListCommand(command)
+// TestRunFrameworkTestListCommandPreservesFailureDetails verifies separated streams remain actionable on failure.
+func TestRunFrameworkTestListCommandPreservesFailureDetails(t *testing.T) {
+	t.Setenv("GOFORJ_FRAMEWORK_TEST_LIST_HELPER", "failure")
+	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkTestListCommandHelper$")
+	_, err := runFrameworkTestListCommand(command)
 	if err == nil {
-		t.Fatal("expected framework package list failure")
+		t.Fatal("expected framework test list failure")
 	}
 	for _, detail := range []string{"example.com/app", "go: helper failed"} {
 		if !strings.Contains(err.Error(), detail) {
-			t.Fatalf("framework package list failure = %q, want %q", err, detail)
+			t.Fatalf("framework test list failure = %q, want %q", err, detail)
 		}
 	}
 }
 
-// TestFrameworkPackageListCommandHelper emits JSON and diagnostics on separate streams for subprocess tests.
-func TestFrameworkPackageListCommandHelper(t *testing.T) {
-	mode := os.Getenv("GOFORJ_FRAMEWORK_PACKAGE_LIST_HELPER")
+// TestFrameworkTestListCommandHelper emits JSON and diagnostics on separate streams for subprocess tests.
+func TestFrameworkTestListCommandHelper(t *testing.T) {
+	mode := os.Getenv("GOFORJ_FRAMEWORK_TEST_LIST_HELPER")
 	if mode == "" {
 		return
 	}
-	_, _ = os.Stdout.WriteString("{\"ImportPath\":\"example.com/app\"}\n")
+	_, _ = os.Stdout.WriteString("{\"Action\":\"output\",\"Package\":\"example.com/app\",\"Output\":\"TestIntegration\\n\"}\n")
 	_, _ = os.Stderr.WriteString("go: downloading example.com/dependency v1.0.0\n")
 	if mode == "failure" {
 		_, _ = os.Stderr.WriteString("go: helper failed\n")
@@ -55,32 +55,67 @@ func TestFrameworkPackageListCommandHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-// TestValidateFrameworkShardRejectsInvalidBounds covers every shard validation failure before CI starts expensive work.
-func TestValidateFrameworkShardRejectsInvalidBounds(t *testing.T) {
+// TestParseFrameworkShard covers the human-facing one-based shard contract.
+func TestParseFrameworkShard(t *testing.T) {
 	tests := []struct {
-		name  string
-		count int
-		index int
-		want  string
+		value string
+		want  frameworkShard
+		err   string
 	}{
-		{name: "zero count", count: 0, index: 0, want: "count must be at least 1"},
-		{name: "negative count", count: -1, index: 0, want: "count must be at least 1"},
-		{name: "negative index", count: 2, index: -1, want: "index must be between 0 and 1"},
-		{name: "index equals count", count: 2, index: 2, want: "index must be between 0 and 1"},
+		{value: "", want: frameworkShard{number: 1, total: 1}},
+		{value: "1/1", want: frameworkShard{number: 1, total: 1}},
+		{value: "1/6", want: frameworkShard{number: 1, total: 6}},
+		{value: "6/6", want: frameworkShard{number: 6, total: 6}},
+		{value: "0/1", err: "shard number must be between"},
+		{value: "1/0", err: "total must be at least 1"},
+		{value: "2/1", err: "shard number must be between"},
+		{value: "-1/2", err: "positive integers"},
+		{value: "1/-2", err: "positive integers"},
+		{value: "1", err: "expected N/M"},
+		{value: "1/2/3", err: "expected N/M"},
+		{value: "a/2", err: "positive integers"},
+		{value: "1/b", err: "positive integers"},
+		{value: "/2", err: "positive integers"},
+		{value: "1/", err: "positive integers"},
+		{value: "1 /2", err: "positive integers"},
+		{value: "+1/2", err: "positive integers"},
 	}
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateFrameworkShard(test.count, test.index)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("validateFrameworkShard(%d, %d) = %v, want %q", test.count, test.index, err, test.want)
+		t.Run(test.value, func(t *testing.T) {
+			got, err := parseFrameworkShard(test.value)
+			if test.err != "" {
+				if err == nil || !strings.Contains(err.Error(), test.err) {
+					t.Fatalf("parseFrameworkShard(%q) error = %v, want %q", test.value, err, test.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseFrameworkShard(%q): %v", test.value, err)
+			}
+			if got != test.want {
+				t.Fatalf("parseFrameworkShard(%q) = %#v, want %#v", test.value, got, test.want)
 			}
 		})
 	}
-	if err := validateFrameworkShard(4, 3); err != nil {
-		t.Fatalf("valid framework shard: %v", err)
-	}
-	if _, _, err := selectIntegrationTestTargets([]integrationTestName{{packagePath: "example.com/app", name: "TestOne"}}, 2, 0); err == nil {
+	if _, _, err := selectIntegrationTestTargets([]integrationTestName{{packagePath: "example.com/app", name: "TestOne"}}, frameworkShard{number: 1, total: 2}); err == nil {
 		t.Fatal("framework shard count larger than the integration test set should fail")
+	}
+}
+
+// TestValidateShardSuiteRejectsIgnoredPartitions keeps non-framework commands from silently duplicating work.
+func TestValidateShardSuiteRejectsIgnoredPartitions(t *testing.T) {
+	if err := validateShardSuite("framework", "1/2"); err != nil {
+		t.Fatalf("framework shard: %v", err)
+	}
+	for _, suite := range []string{"all", "rendered"} {
+		for _, shardValue := range []string{"1/1", "1/2"} {
+			if err := validateShardSuite(suite, shardValue); err == nil {
+				t.Fatalf("%s accepted framework shard %s", suite, shardValue)
+			}
+		}
+		if err := validateShardSuite(suite, ""); err != nil {
+			t.Fatalf("%s default shard: %v", suite, err)
+		}
 	}
 }
 
@@ -118,74 +153,155 @@ func TestIntegrationForjBinaryValidatesExplicitPath(t *testing.T) {
 	})
 }
 
-// TestIntegrationOnlyTestNamesFiltersFilesAndSignatures proves discovery excludes ordinary files and invalid Test-prefixed helpers.
-func TestIntegrationOnlyTestNamesFiltersFilesAndSignatures(t *testing.T) {
+// TestGoDrivenIntegrationDiscoveryAndSharding proves Go owns the inventory and every shard owns an exact partition.
+func TestGoDrivenIntegrationDiscoveryAndSharding(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
 	rootDir := t.TempDir()
-	nestedDir := t.TempDir()
-	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "ordinary_test.go"), `package root
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "go.mod"), "module example.com/discovery\n\ngo 1.25.0\n")
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "root.go"), `package discovery
+
+func Empty() {}
+func NoOutput() {}
+`)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "ordinary_test.go"), `package discovery
+
 import "testing"
+
 func TestOrdinary(t *testing.T) {}
 `)
-	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "integration_test.go"), `package root
-import "testing"
-func TestIncluded(t *testing.T) {}
-func Testlowercase(t *testing.T) {}
-func TestMain(m *testing.M) {}
-func TestHelperWithoutParameter() {}
-func FuzzIncluded(f *testing.F) {}
-func ExampleIncluded() {}
-`)
-	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "external_integration_test.go"), `package root_test
-import "testing"
-func TestExternal(t *testing.T) {}
-`)
-	writeIntegrationDiscoveryFixture(t, filepath.Join(nestedDir, "nested_integration_test.go"), `package nested
-import "testing"
-func TestNested(t *testing.T) {}
-func TestIncluded(t *testing.T) {}
-`)
-	baseline := []integrationPackageMetadata{
-		{ImportPath: "example.com/root", Dir: rootDir, TestGoFiles: []string{"ordinary_test.go"}},
-		{ImportPath: "example.com/root/nested", Dir: nestedDir},
-	}
-	integration := []integrationPackageMetadata{
-		{
-			ImportPath:   "example.com/root",
-			Dir:          rootDir,
-			TestGoFiles:  []string{"ordinary_test.go", "integration_test.go"},
-			XTestGoFiles: []string{"external_integration_test.go"},
-		},
-		{ImportPath: "example.com/root/nested", Dir: nestedDir, TestGoFiles: []string{"nested_integration_test.go"}},
-	}
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "integration_test.go"), `//go:build integration
 
-	tests, err := integrationOnlyTestNames(baseline, integration)
-	if err != nil {
-		t.Fatalf("integrationOnlyTestNames: %v", err)
-	}
-	want := []integrationTestName{
-		{packagePath: "example.com/root", name: "ExampleIncluded"},
-		{packagePath: "example.com/root", name: "FuzzIncluded"},
-		{packagePath: "example.com/root", name: "TestExternal"},
-		{packagePath: "example.com/root", name: "TestIncluded"},
-		{packagePath: "example.com/root/nested", name: "TestIncluded"},
-		{packagePath: "example.com/root/nested", name: "TestNested"},
-	}
-	if len(tests) != len(want) {
-		t.Fatalf("discovered tests = %#v, want %#v", tests, want)
-	}
-	for index := range want {
-		if tests[index] != want[index] {
-			t.Fatalf("discovered tests = %#v, want %#v", tests, want)
-		}
-	}
-	assertIntegrationShardsCoverTestsOnce(t, tests, 2)
+package discovery
+
+import (
+	"fmt"
+	"os"
+	. "testing"
+)
+
+func TestMain(m *M) { os.Exit(m.Run()) }
+func TestRootIntegration(t *T) {}
+func Testlowercase(t *T) {}
+func FuzzRootIntegration(f *F) {}
+func BenchmarkIgnored(b *B) {}
+func Example() {
+	fmt.Println("integration")
+	// Output: integration
+}
+func ExampleEmpty() {
+	// Output:
+}
+func ExampleNoOutput() {}
+`)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "external_integration_test.go"), `//go:build integration
+
+package discovery_test
+
+import . "testing"
+
+func TestExternalIntegration(t *T) {}
+func TestDuplicate(t *T) {}
+`)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "nested", "ordinary_test.go"), `package nested
+
+import "testing"
+
+func TestNestedOrdinary(t *testing.T) {}
+`)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "nested", "integration_test.go"), `//go:build integration
+
+package nested
+
+import "testing"
+
+func TestNestedIntegration(t *testing.T) {}
+func TestDuplicate(t *testing.T) {}
+`)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "lighthouse_integration_test.go"), `//go:build integration && lighthouse
+
+package discovery
+
+import "testing"
+
+func TestLighthouseOnly(t *testing.T) {}
+`)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "multiapp_integration_test.go"), `//go:build integration && multiapp
+
+package discovery
+
+import "testing"
+
+func TestMultiAppOnly(t *testing.T) {}
+`)
+
+	modCache, buildCache := testkit.GoCachePaths()
+	executor := integrationExecutor{caches: testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}}
+	baseline := listGoTestsForTest(t, executor, rootDir, "")
+	integration := listGoTestsForTest(t, executor, rootDir, "integration")
+	lighthouse := listGoTestsForTest(t, executor, rootDir, "integration,lighthouse")
+	multiApp := listGoTestsForTest(t, executor, rootDir, "integration,multiapp")
+
+	integrationOnly := integrationTestsForTest(t, baseline, integration)
+	assertIntegrationTestsEqual(t, integrationOnly, []integrationTestName{
+		{packagePath: "example.com/discovery", name: "Example"},
+		{packagePath: "example.com/discovery", name: "ExampleEmpty"},
+		{packagePath: "example.com/discovery", name: "FuzzRootIntegration"},
+		{packagePath: "example.com/discovery", name: "TestDuplicate"},
+		{packagePath: "example.com/discovery", name: "TestExternalIntegration"},
+		{packagePath: "example.com/discovery", name: "TestRootIntegration"},
+		{packagePath: "example.com/discovery/nested", name: "TestDuplicate"},
+		{packagePath: "example.com/discovery/nested", name: "TestNestedIntegration"},
+	})
+	assertIntegrationTestsEqual(t, integrationTestsForTest(t, integration, lighthouse), []integrationTestName{
+		{packagePath: "example.com/discovery", name: "TestLighthouseOnly"},
+	})
+	assertIntegrationTestsEqual(t, integrationTestsForTest(t, integration, multiApp), []integrationTestName{
+		{packagePath: "example.com/discovery", name: "TestMultiAppOnly"},
+	})
+	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 3)
 }
 
-// writeIntegrationDiscoveryFixture writes one parser fixture inside a test-owned temporary directory.
+// writeIntegrationDiscoveryFixture writes one Go discovery fixture inside a test-owned temporary module.
 func writeIntegrationDiscoveryFixture(t *testing.T, path, source string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create integration discovery fixture directory %s: %v", path, err)
+	}
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatalf("write integration discovery fixture %s: %v", path, err)
+	}
+}
+
+// listGoTestsForTest loads one tagged inventory from a test-owned temporary module.
+func listGoTestsForTest(t *testing.T, executor integrationExecutor, rootDir, tags string) []integrationTestName {
+	t.Helper()
+	tests, err := executor.listGoTests(rootDir, "./...", tags)
+	if err != nil {
+		t.Fatalf("list Go tests for tags %q: %v", tags, err)
+	}
+	return tests
+}
+
+// integrationTestsForTest returns the runnable tests added beyond one baseline inventory.
+func integrationTestsForTest(t *testing.T, baseline, integration []integrationTestName) []integrationTestName {
+	t.Helper()
+	tests, err := integrationOnlyTestNames(baseline, integration)
+	if err != nil {
+		t.Fatalf("integration-only tests: %v", err)
+	}
+	return tests
+}
+
+// assertIntegrationTestsEqual compares the complete deterministic package-qualified inventory.
+func assertIntegrationTestsEqual(t *testing.T, got, want []integrationTestName) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("integration tests = %#v, want %#v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("integration tests = %#v, want %#v", got, want)
+		}
 	}
 }
 
@@ -216,38 +332,69 @@ func TestFrameworkProfileTagsKeepsSpecializedTestsOutOfTheDefaultProfile(t *test
 	}
 }
 
-// TestFrameworkIntegrationDiscoveryIncludesEveryTaggedPackage protects nested and specialized suites from silent CI omissions.
-func TestFrameworkIntegrationDiscoveryIncludesEveryTaggedPackage(t *testing.T) {
+// TestFrameworkIntegrationDiscoveryPartitionsCurrentProfiles protects nested and specialized suites without tracking test names.
+func TestFrameworkIntegrationDiscoveryPartitionsCurrentProfiles(t *testing.T) {
 	modCache, buildCache := testkit.GoCachePaths()
 	executor := integrationExecutor{caches: testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}}
 
-	integrationTests := discoverIntegrationTestsForTest(t, executor, "", "integration")
-	assertDiscoveredIntegrationTest(t, integrationTests, "github.com/goforj/goforj/internal/forj", "TestRunnableScenarioPathIntegration")
-	assertDiscoveredIntegrationTest(t, integrationTests, "github.com/goforj/goforj/internal/forj/atlas", "TestAtlasMCPServerUsesRenderedProjectInventory")
-	assertMissingIntegrationTest(t, integrationTests, "TestAboutCommandTemplateIsWired")
+	baseline := listFrameworkTestsForTest(t, executor, "")
+	integrationInventory := listFrameworkTestsForTest(t, executor, "integration")
+	lighthouseInventory := listFrameworkTestsForTest(t, executor, "integration,lighthouse")
+	multiAppInventory := listFrameworkTestsForTest(t, executor, "integration,multiapp")
+	integrationTests := integrationTestsForTest(t, baseline, integrationInventory)
+	lighthouseTests := integrationTestsForTest(t, integrationInventory, lighthouseInventory)
+	multiAppTests := integrationTestsForTest(t, integrationInventory, multiAppInventory)
+
+	assertIntegrationPackagePresent(t, integrationTests, "github.com/goforj/goforj/internal/forj")
+	assertIntegrationPackagePresent(t, integrationTests, "github.com/goforj/goforj/internal/forj/atlas")
 	assertIntegrationShardsCoverTestsOnce(t, integrationTests, 6)
+	assertIntegrationProfilesDisjoint(t, integrationTests, lighthouseTests, multiAppTests)
+}
 
-	lighthouseTests := discoverIntegrationTestsForTest(t, executor, "integration", "integration,lighthouse")
-	assertDiscoveredIntegrationTest(t, lighthouseTests, "github.com/goforj/goforj/internal/forj", "TestDevwatchStreamIntegration")
-	assertDiscoveredIntegrationTest(t, lighthouseTests, "github.com/goforj/goforj/internal/forj", "TestLighthouseAuthBootIntegration")
-	assertMissingIntegrationTest(t, lighthouseTests, "TestRunnableScenarioPathIntegration")
-
-	multiAppTests := discoverIntegrationTestsForTest(t, executor, "integration", "integration,multiapp")
-	if len(multiAppTests) != 2 {
-		t.Fatalf("multi-App discovery returned %d tests, want 2: %#v", len(multiAppTests), multiAppTests)
+// listFrameworkTestsForTest loads one live repository inventory through the production package pattern.
+func listFrameworkTestsForTest(t *testing.T, executor integrationExecutor, tags string) []integrationTestName {
+	t.Helper()
+	tests, err := executor.listFrameworkTests(tags)
+	if err != nil {
+		t.Fatalf("list framework tests for tags %q: %v", tags, err)
 	}
-	assertDiscoveredIntegrationTest(t, multiAppTests, "github.com/goforj/goforj/internal/forj", "TestMakeAppMultiAppRuntimeSmoke")
-	assertDiscoveredIntegrationTest(t, multiAppTests, "github.com/goforj/goforj/internal/forj", "TestMakeAppMultiAppSQLiteMigrationsSmoke")
+	return tests
+}
+
+// assertIntegrationPackagePresent verifies recursive discovery retains a package without naming one of its tests.
+func assertIntegrationPackagePresent(t *testing.T, tests []integrationTestName, packagePath string) {
+	t.Helper()
+	for _, testName := range tests {
+		if testName.packagePath == packagePath {
+			return
+		}
+	}
+	t.Fatalf("integration inventory does not include package %s: %#v", packagePath, tests)
+}
+
+// assertIntegrationProfilesDisjoint verifies specialized tag layers never rerun another profile's top-level test.
+func assertIntegrationProfilesDisjoint(t *testing.T, profiles ...[]integrationTestName) {
+	t.Helper()
+	seen := make(map[integrationTestName]int)
+	for profileIndex, profile := range profiles {
+		for _, testName := range profile {
+			if previous, exists := seen[testName]; exists {
+				t.Fatalf("integration test %#v appears in profiles %d and %d", testName, previous, profileIndex)
+			}
+			seen[testName] = profileIndex
+		}
+	}
 }
 
 // assertIntegrationShardsCoverTestsOnce verifies the CI partition neither loses nor duplicates package-qualified tests.
 func assertIntegrationShardsCoverTestsOnce(t *testing.T, tests []integrationTestName, shardCount int) {
 	t.Helper()
 	seen := make(map[integrationTestName]int, len(tests))
-	for shardIndex := 0; shardIndex < shardCount; shardIndex++ {
-		targets, selectedCount, err := selectIntegrationTestTargets(tests, shardCount, shardIndex)
+	for shardNumber := 1; shardNumber <= shardCount; shardNumber++ {
+		shard := frameworkShard{number: shardNumber, total: shardCount}
+		targets, selectedCount, err := selectIntegrationTestTargets(tests, shard)
 		if err != nil {
-			t.Fatalf("select integration shard %d/%d: %v", shardIndex, shardCount, err)
+			t.Fatalf("select integration shard %d/%d: %v", shardNumber, shardCount, err)
 		}
 		counted := 0
 		for _, target := range targets {
@@ -257,7 +404,7 @@ func assertIntegrationShardsCoverTestsOnce(t *testing.T, tests []integrationTest
 			}
 		}
 		if counted != selectedCount {
-			t.Fatalf("integration shard %d selected count = %d, grouped %d", shardIndex, selectedCount, counted)
+			t.Fatalf("integration shard %d selected count = %d, grouped %d", shardNumber, selectedCount, counted)
 		}
 	}
 	if len(seen) != len(tests) {
@@ -266,45 +413,6 @@ func assertIntegrationShardsCoverTestsOnce(t *testing.T, tests []integrationTest
 	for _, testName := range tests {
 		if seen[testName] != 1 {
 			t.Fatalf("integration test %#v ran in %d shards, want exactly one", testName, seen[testName])
-		}
-	}
-}
-
-// discoverIntegrationTestsForTest loads both build selections and returns their integration-only difference.
-func discoverIntegrationTestsForTest(t *testing.T, executor integrationExecutor, baselineTags, integrationTags string) []integrationTestName {
-	t.Helper()
-	baseline, err := executor.listFrameworkPackageTests(baselineTags)
-	if err != nil {
-		t.Fatalf("list baseline framework tests for %q: %v", baselineTags, err)
-	}
-	integration, err := executor.listFrameworkPackageTests(integrationTags)
-	if err != nil {
-		t.Fatalf("list integration framework tests for %q: %v", integrationTags, err)
-	}
-	tests, err := integrationOnlyTestNames(baseline, integration)
-	if err != nil {
-		t.Fatalf("discover integration tests for %q: %v", integrationTags, err)
-	}
-	return tests
-}
-
-// assertDiscoveredIntegrationTest verifies one package-qualified test remains owned by the expected profile.
-func assertDiscoveredIntegrationTest(t *testing.T, tests []integrationTestName, packagePath, testName string) {
-	t.Helper()
-	for _, discovered := range tests {
-		if discovered.packagePath == packagePath && discovered.name == testName {
-			return
-		}
-	}
-	t.Fatalf("missing integration test %s/%s from %#v", packagePath, testName, tests)
-}
-
-// assertMissingIntegrationTest verifies ordinary or baseline tests do not leak into a specialized profile.
-func assertMissingIntegrationTest(t *testing.T, tests []integrationTestName, testName string) {
-	t.Helper()
-	for _, discovered := range tests {
-		if discovered.name == testName {
-			t.Fatalf("unexpected integration test %s/%s in %#v", discovered.packagePath, testName, tests)
 		}
 	}
 }

@@ -3,18 +3,14 @@ package forj
 import (
 	"encoding/json"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/goforj/str/v2"
 
@@ -39,11 +35,8 @@ type TestIntegrationCmd struct {
 	// Variant selects the DB variant. Defaults to all rendered variants so no-arg runs exercise the full matrix.
 	Variant string `help:"Database variant selection" default:"all" enum:"sqlite,mysql,postgres,all"`
 
-	// FrameworkShardCount divides integration-tagged framework tests across independent runners.
-	FrameworkShardCount int `help:"Framework integration shard count" default:"1"`
-
-	// FrameworkShardIndex selects the zero-based framework integration shard to run.
-	FrameworkShardIndex int `help:"Framework integration shard index" default:"0"`
+	// Shard selects one one-based framework shard as N/M.
+	Shard string `help:"Run one framework shard in N/M form (for example 1/6)"`
 
 	// FrameworkProfile chooses the integration-only build-tag layer to discover and run.
 	FrameworkProfile string `help:"Framework integration profile" default:"integration" enum:"integration,lighthouse,multiapp"`
@@ -70,12 +63,17 @@ type integrationExecutor struct {
 	forjExec string
 }
 
-// integrationPackageMetadata contains the package test files selected by one Go build configuration.
-type integrationPackageMetadata struct {
-	ImportPath   string
-	Dir          string
-	TestGoFiles  []string
-	XTestGoFiles []string
+// frameworkShard identifies one one-based partition of the discovered integration tests.
+type frameworkShard struct {
+	number int
+	total  int
+}
+
+// goTestListEvent contains the fields emitted by go test -json while listing runnable tests.
+type goTestListEvent struct {
+	Action  string
+	Package string
+	Output  string
 }
 
 // integrationTestName identifies one top-level test without conflating equal names from separate packages.
@@ -172,7 +170,11 @@ func (cmd *TestIntegrationCmd) Run() error {
 	target := str.Of(cmd.Target).ToLower().Trim().String()
 	variant := str.Of(cmd.Variant).ToLower().Trim().String()
 	frameworkProfile := str.Of(cmd.FrameworkProfile).ToLower().Trim().String()
-	if err := validateFrameworkShard(cmd.FrameworkShardCount, cmd.FrameworkShardIndex); err != nil {
+	shard, err := parseFrameworkShard(cmd.Shard)
+	if err != nil {
+		return err
+	}
+	if err := validateShardSuite(suite, cmd.Shard); err != nil {
 		return err
 	}
 	forjExec, cleanup, err := integrationForjBinary(executor.caches)
@@ -188,11 +190,11 @@ func (cmd *TestIntegrationCmd) Run() error {
 
 	switch suite {
 	case "framework":
-		return cmd.runFrameworkSuite(executor, target, frameworkProfile, cmd.FrameworkShardCount, cmd.FrameworkShardIndex)
+		return cmd.runFrameworkSuite(executor, target, frameworkProfile, shard)
 	case "rendered":
 		return cmd.runRenderedSuite(executor, target, variant)
 	case "all":
-		if err := cmd.runFrameworkSuite(executor, target, frameworkProfile, cmd.FrameworkShardCount, cmd.FrameworkShardIndex); err != nil {
+		if err := cmd.runFrameworkSuite(executor, target, frameworkProfile, shard); err != nil {
 			return err
 		}
 		return cmd.runRenderedSuite(executor, target, variant)
@@ -215,13 +217,37 @@ func frameworkProfileTags(profile string) (string, string, error) {
 	}
 }
 
-// validateFrameworkShard rejects empty and out-of-range shards before expensive integration setup begins.
-func validateFrameworkShard(count, index int) error {
-	if count < 1 {
-		return fmt.Errorf("framework shard count must be at least 1, got %d", count)
+// parseFrameworkShard converts the one-based N/M command value into a validated shard.
+func parseFrameworkShard(value string) (frameworkShard, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "1/1"
 	}
-	if index < 0 || index >= count {
-		return fmt.Errorf("framework shard index must be between 0 and %d, got %d", count-1, index)
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: expected N/M, for example 1/6", value)
+	}
+	if parts[0] == "" || parts[1] == "" || strings.Trim(parts[0], "0123456789") != "" || strings.Trim(parts[1], "0123456789") != "" {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: N and M must be positive integers", value)
+	}
+	number, numberErr := strconv.Atoi(parts[0])
+	total, totalErr := strconv.Atoi(parts[1])
+	if numberErr != nil || totalErr != nil {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: N and M must be integers", value)
+	}
+	if total < 1 {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: total must be at least 1", value)
+	}
+	if number < 1 || number > total {
+		return frameworkShard{}, fmt.Errorf("invalid framework shard %q: shard number must be between 1 and %d", value, total)
+	}
+	return frameworkShard{number: number, total: total}, nil
+}
+
+// validateShardSuite prevents an explicitly requested framework partition from being ignored by another suite.
+func validateShardSuite(suite, shardValue string) error {
+	if suite != "framework" && strings.TrimSpace(shardValue) != "" {
+		return fmt.Errorf("--shard is only supported by the framework integration suite")
 	}
 	return nil
 }
@@ -250,7 +276,7 @@ func integrationForjBinary(caches testexec.GoCaches) (string, func(), error) {
 }
 
 // runFrameworkSuite runs integration-tagged tests against this repository.
-func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, target, profile string, shardCount, shardIndex int) error {
+func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, target, profile string, shard frameworkShard) error {
 	if target != "" && target != "all" {
 		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
 	}
@@ -261,12 +287,12 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 	frameworkEnv := map[string]string{
 		"FORJ_INTEGRATION_FORJ_PATH": executor.forjExec,
 	}
-	targets, selectedTests, err := executor.frameworkIntegrationTestTargets(baselineTags, integrationTags, shardCount, shardIndex)
+	targets, selectedTests, err := executor.frameworkIntegrationTestTargets(baselineTags, integrationTags, shard)
 	if err != nil {
 		return err
 	}
 	if !executor.silent {
-		console.Infof("framework %s shard %d/%d: %d integration tests", profile, shardIndex+1, shardCount, selectedTests)
+		console.Infof("framework %s shard %d/%d: %d integration tests", profile, shard.number, shard.total, selectedTests)
 	}
 	if !executor.silent {
 		testkit.PrintSubsection("Framework integration tests")
@@ -288,12 +314,12 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(executor integrationExecutor, t
 }
 
 // frameworkIntegrationTestTargets discovers tests added by one tag layer and selects one deterministic shard.
-func (executor integrationExecutor) frameworkIntegrationTestTargets(baselineTags, integrationTags string, shardCount, shardIndex int) ([]integrationTestTarget, int, error) {
-	baseline, err := executor.listFrameworkPackageTests(baselineTags)
+func (executor integrationExecutor) frameworkIntegrationTestTargets(baselineTags, integrationTags string, shard frameworkShard) ([]integrationTestTarget, int, error) {
+	baseline, err := executor.listFrameworkTests(baselineTags)
 	if err != nil {
 		return nil, 0, err
 	}
-	integration, err := executor.listFrameworkPackageTests(integrationTags)
+	integration, err := executor.listFrameworkTests(integrationTags)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -301,21 +327,18 @@ func (executor integrationExecutor) frameworkIntegrationTestTargets(baselineTags
 	if err != nil {
 		return nil, 0, err
 	}
-	return selectIntegrationTestTargets(testNames, shardCount, shardIndex)
+	return selectIntegrationTestTargets(testNames, shard)
 }
 
 // selectIntegrationTestTargets partitions package-qualified test names without duplicating equal names across packages.
-func selectIntegrationTestTargets(testNames []integrationTestName, shardCount, shardIndex int) ([]integrationTestTarget, int, error) {
-	if err := validateFrameworkShard(shardCount, shardIndex); err != nil {
-		return nil, 0, err
-	}
-	if shardCount > len(testNames) {
-		return nil, 0, fmt.Errorf("framework shard count %d exceeds %d integration tests", shardCount, len(testNames))
+func selectIntegrationTestTargets(testNames []integrationTestName, shard frameworkShard) ([]integrationTestTarget, int, error) {
+	if shard.total > len(testNames) {
+		return nil, 0, fmt.Errorf("framework shard count %d exceeds %d integration tests", shard.total, len(testNames))
 	}
 	selected := make(map[string][]string)
 	selectedCount := 0
 	for index, testName := range testNames {
-		if index%shardCount == shardIndex {
+		if index%shard.total == shard.number-1 {
 			selected[testName.packagePath] = append(selected[testName.packagePath], testName.name)
 			selectedCount++
 		}
@@ -341,45 +364,62 @@ func makeIntegrationTestPattern(testNames []string) string {
 	return "^(" + strings.Join(quoted, "|") + ")$"
 }
 
-// listFrameworkPackageTests asks the Go tool which nested package test files belong to one build-tag selection.
-func (executor integrationExecutor) listFrameworkPackageTests(tags string) ([]integrationPackageMetadata, error) {
+// listFrameworkTests asks the Go tool which runnable tests belong to one framework build-tag selection.
+func (executor integrationExecutor) listFrameworkTests(tags string) ([]integrationTestName, error) {
 	repoRoot, err := testkit.RepoRoot()
 	if err != nil {
 		return nil, fmt.Errorf("resolve repository root for framework tests: %w", err)
 	}
-	args := []string{"list", "-json"}
+	return executor.listGoTests(repoRoot, "./internal/forj/...", tags)
+}
+
+// listGoTests returns the package-qualified names that go test itself considers runnable.
+// Packages in scope must keep init and TestMain output free of test-shaped standalone lines because Go reports names as output events.
+func (executor integrationExecutor) listGoTests(dir, packagePattern, tags string) ([]integrationTestName, error) {
+	args := []string{"test", "-json", "-vet=off", "-list=^(Test|Fuzz|Example)"}
 	if tags != "" {
 		args = append(args, "-tags="+tags)
 	}
-	args = append(args, "./internal/forj/...")
+	args = append(args, packagePattern)
 	command := exec.Command("go", args...)
-	command.Dir = repoRoot
+	command.Dir = dir
 	command.Env = testkit.WithEnvOverrides(os.Environ(), map[string]string{
 		"GOMODCACHE": executor.caches.ModulePath,
 		"GOCACHE":    executor.caches.BuildPath,
 		"GOFLAGS":    "",
 		"GOWORK":     "off",
 	})
-	output, err := runFrameworkPackageListCommand(command)
+	output, err := runFrameworkTestListCommand(command)
 	if err != nil {
-		return nil, fmt.Errorf("list framework tests for tags %q: %w", tags, err)
+		return nil, fmt.Errorf("list Go tests for %s with tags %q: %w", packagePattern, tags, err)
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(output)))
-	metadata := make([]integrationPackageMetadata, 0)
+	tests := make([]integrationTestName, 0)
 	for {
-		var packageMetadata integrationPackageMetadata
-		if err := decoder.Decode(&packageMetadata); err == io.EOF {
+		var event goTestListEvent
+		if err := decoder.Decode(&event); err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, fmt.Errorf("decode framework package metadata for tags %q: %w", tags, err)
+			return nil, fmt.Errorf("decode Go test list for %s with tags %q: %w", packagePattern, tags, err)
 		}
-		metadata = append(metadata, packageMetadata)
+		if event.Action != "output" || event.Package == "" {
+			continue
+		}
+		if name, ok := listedGoTestName(event.Output); ok {
+			tests = append(tests, integrationTestName{packagePath: event.Package, name: name})
+		}
 	}
-	return metadata, nil
+	sort.Slice(tests, func(left, right int) bool {
+		if tests[left].packagePath == tests[right].packagePath {
+			return tests[left].name < tests[right].name
+		}
+		return tests[left].packagePath < tests[right].packagePath
+	})
+	return tests, nil
 }
 
-// runFrameworkPackageListCommand keeps Go diagnostics on stderr from corrupting the JSON stdout stream.
-func runFrameworkPackageListCommand(command *exec.Cmd) ([]byte, error) {
+// runFrameworkTestListCommand keeps Go diagnostics on stderr from corrupting the JSON stdout stream.
+func runFrameworkTestListCommand(command *exec.Cmd) ([]byte, error) {
 	var stderr strings.Builder
 	command.Stderr = &stderr
 	output, err := command.Output()
@@ -399,52 +439,38 @@ func runFrameworkPackageListCommand(command *exec.Cmd) ([]byte, error) {
 	return nil, fmt.Errorf("%w (%s)", err, strings.Join(details, "\n"))
 }
 
-// integrationOnlyTestNames parses test declarations from files introduced by the integration build tag.
-func integrationOnlyTestNames(baseline, integration []integrationPackageMetadata) ([]integrationTestName, error) {
-	baselinePackages := make(map[string]integrationPackageMetadata, len(baseline))
-	for _, metadata := range baseline {
-		baselinePackages[metadata.ImportPath] = metadata
+// listedGoTestName recognizes the runnable-name lines emitted by go test -list.
+func listedGoTestName(output string) (string, bool) {
+	name := strings.TrimSpace(output)
+	if name == "" || name == "TestMain" || strings.ContainsAny(name, " \t\r\n") {
+		return "", false
 	}
-	testNames := make(map[integrationTestName]struct{})
-	files := token.NewFileSet()
-	selectedFileCount := 0
-	for _, metadata := range integration {
-		baselineMetadata := baselinePackages[metadata.ImportPath]
-		baselineFiles := make(map[string]struct{}, len(baselineMetadata.TestGoFiles)+len(baselineMetadata.XTestGoFiles))
-		for _, name := range append(append([]string{}, baselineMetadata.TestGoFiles...), baselineMetadata.XTestGoFiles...) {
-			baselineFiles[name] = struct{}{}
-		}
-		for _, name := range append(append([]string{}, metadata.TestGoFiles...), metadata.XTestGoFiles...) {
-			if _, exists := baselineFiles[name]; exists {
-				continue
-			}
-			selectedFileCount++
-			path := filepath.Join(metadata.Dir, name)
-			parsed, err := parser.ParseFile(files, path, nil, 0)
-			if err != nil {
-				return nil, fmt.Errorf("parse integration test file %s: %w", path, err)
-			}
-			for _, declaration := range parsed.Decls {
-				function, ok := declaration.(*ast.FuncDecl)
-				if !ok {
-					continue
-				}
-				functionName, runnable := integrationTestFunctionName(function)
-				if runnable {
-					testNames[integrationTestName{packagePath: metadata.ImportPath, name: functionName}] = struct{}{}
-				}
-			}
+	for _, prefix := range []string{"Test", "Fuzz", "Example"} {
+		if strings.HasPrefix(name, prefix) {
+			return name, true
 		}
 	}
-	if selectedFileCount == 0 {
-		return nil, fmt.Errorf("integration build tags did not add framework test files")
+	return "", false
+}
+
+// integrationOnlyTestNames subtracts the runnable baseline while preserving tagged duplicate-name additions.
+func integrationOnlyTestNames(baseline, integration []integrationTestName) ([]integrationTestName, error) {
+	baselineCounts := make(map[integrationTestName]int, len(baseline))
+	for _, name := range baseline {
+		baselineCounts[name]++
 	}
-	if len(testNames) == 0 {
+	integrationCounts := make(map[integrationTestName]int, len(integration))
+	for _, name := range integration {
+		integrationCounts[name]++
+	}
+	names := make([]integrationTestName, 0, len(integrationCounts))
+	for name, count := range integrationCounts {
+		if count > baselineCounts[name] {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
 		return nil, fmt.Errorf("integration build tags did not add framework tests")
-	}
-	names := make([]integrationTestName, 0, len(testNames))
-	for name := range testNames {
-		names = append(names, name)
 	}
 	sort.Slice(names, func(left, right int) bool {
 		if names[left].packagePath == names[right].packagePath {
@@ -453,55 +479,6 @@ func integrationOnlyTestNames(baseline, integration []integrationPackageMetadata
 		return names[left].packagePath < names[right].packagePath
 	})
 	return names, nil
-}
-
-// integrationTestFunctionName recognizes the test, fuzz, and example signatures that ordinary go test executes.
-func integrationTestFunctionName(function *ast.FuncDecl) (string, bool) {
-	if function.Recv != nil || function.Type.Results != nil && function.Type.Results.NumFields() > 0 {
-		return "", false
-	}
-	name := function.Name.Name
-	switch {
-	case name == "TestMain":
-		return "", false
-	case isGoTestName(name, "Test") && hasTestingParameter(function, "T"):
-		return name, true
-	case isGoTestName(name, "Fuzz") && hasTestingParameter(function, "F"):
-		return name, true
-	case isGoTestName(name, "Example") && function.Type.Params.NumFields() == 0:
-		return name, true
-	default:
-		return "", false
-	}
-}
-
-// isGoTestName follows cmd/go's rule that the rune after a test prefix cannot be lowercase.
-func isGoTestName(name, prefix string) bool {
-	if !strings.HasPrefix(name, prefix) {
-		return false
-	}
-	if len(name) == len(prefix) {
-		return true
-	}
-	r, _ := utf8.DecodeRuneInString(name[len(prefix):])
-	return !unicode.IsLower(r)
-}
-
-// hasTestingParameter verifies a runnable function accepts exactly one pointer to the requested testing type.
-func hasTestingParameter(function *ast.FuncDecl, typeName string) bool {
-	if function.Type.Params.NumFields() != 1 || len(function.Type.Params.List) != 1 {
-		return false
-	}
-	parameter := function.Type.Params.List[0]
-	if len(parameter.Names) > 1 {
-		return false
-	}
-	pointer, ok := parameter.Type.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	selector, ok := pointer.X.(*ast.SelectorExpr)
-	return ok && selector.Sel.Name == typeName
 }
 
 // runRenderedSuite runs generated application tests across the selected database variants.
