@@ -85,6 +85,24 @@ That generates support for both MySQL and SQLite, uses MySQL for the default con
 
 When `DSN` is provided, it is used directly; otherwise DSN is built from host/database credentials.
 
+## Time zones
+
+Generated app runtimes and Compose services default to `TZ=UTC`. Override `TZ` explicitly when application calendar behavior or log presentation should use another location. Use a loadable IANA location, with the optional Unix `:` prefix, or a readable absolute TZif file; invalid values fail startup. Database sessions and automatic persistence remain UTC so stored timestamps do not depend on that runtime choice.
+
+Apply a user's profile time zone when presenting stored timestamps or when a business rule explicitly depends on local calendar time.
+
+Generated database DSNs include the driver's UTC parse location and session time zone settings. A custom `DB_DSN` or `DB_<NAME>_DSN` is used verbatim, so it must provide equivalent UTC settings itself.
+
+### Existing apps
+
+Adopting the UTC runtime, database, and session defaults is an operational migration for existing deployments. Audit scheduled or calendar-based behavior and log timestamp expectations; set `TZ` explicitly to the previous application location if those concerns need a staged transition.
+
+A MySQL or MariaDB session time zone change affects how `TIMESTAMP` values are presented, while historical `DATETIME` values carry no time zone information and may reflect a previous local-time convention.
+
+PostgreSQL does not rewrite stored `TIMESTAMPTZ` instants, but UTC sessions can change their display, casts, `CURRENT_DATE`, `date_trunc`, and conversions involving timestamps without time zones.
+
+Audit those columns and application assumptions before rerendering or redeploying, then choose an app-specific conversion where needed.
+
 ### Switching Drivers
 
 `DB_SUPPORTED_DRIVERS` is the set of drivers built into the app; `DB_DRIVER` and the named `DB_<NAME>_DRIVER` values select which of them are active. To switch an existing connection to a driver already built in, provision the destination, migrate its schema and data, configure the connection, then restart or redeploy the App. No source regeneration or rebuild is needed, although changing a locally managed MySQL or Postgres service may require rerendering the Compose setup.

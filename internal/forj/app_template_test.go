@@ -642,6 +642,8 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
 		`"{{.GoModuleName}}/internal/console"`,
 		`if err := cmd.LoadEnv(); err != nil {`,
+		`if err := cmd.ConfigureTimezone(); err != nil {`,
+		`console.Fatalf("configuring timezone: %v", err)`,
 		`console.Fatalf("%v", err)`,
 		`handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})`,
 		`application, err := wire.InitializeApplication()`,
@@ -650,6 +652,12 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected main template to contain %q", snippet)
 		}
+	}
+
+	loadEnvIndex := strings.Index(source, `if err := cmd.LoadEnv(); err != nil {`)
+	configureTimezoneIndex := strings.Index(source, `if err := cmd.ConfigureTimezone(); err != nil {`)
+	if configureTimezoneIndex < loadEnvIndex {
+		t.Fatal("expected timezone configuration to be applied after environment loading")
 	}
 }
 

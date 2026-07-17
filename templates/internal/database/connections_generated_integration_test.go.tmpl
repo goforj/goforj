@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str/v2"
@@ -41,12 +42,39 @@ func TestGeneratedAccessorsConnect(t *testing.T) {
 	case "mysql", "mariadb":
 		assertMySQLDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).Trim().String())
 		assertMySQLDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).Trim().String())
+		assertMySQLUTCContract(t, defaultDB)
+		assertMySQLUTCContract(t, analyticsDB)
 	case "postgres", "postgresql":
 		assertPostgresDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).Trim().String())
 		assertPostgresDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).Trim().String())
+		assertPostgresUTCContract(t, defaultDB)
+		assertPostgresUTCContract(t, analyticsDB)
 	case "sqlite", "sqlite3":
 		assertSQLitePath(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).Trim().String())
 		assertSQLitePath(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).Trim().String())
+	}
+}
+
+// assertMySQLUTCContract proves each pooled session and parsed database timestamp use UTC.
+func assertMySQLUTCContract(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get mysql sql handle: %v", err)
+	}
+	var sessionTimezone string
+	var generatedAt time.Time
+	if err := sqlDB.QueryRow("SELECT @@session.time_zone, CURRENT_TIMESTAMP(6)").Scan(&sessionTimezone, &generatedAt); err != nil {
+		t.Fatalf("read mysql UTC state: %v", err)
+	}
+	if sessionTimezone != "+00:00" {
+		t.Fatalf("expected mysql session timezone +00:00, got %q", sessionTimezone)
+	}
+	if generatedAt.Location() != time.UTC {
+		t.Fatalf("expected database timestamp in UTC, got %s", generatedAt.Location())
+	}
+	if delta := time.Since(generatedAt); delta < -5*time.Second || delta > 5*time.Second {
+		t.Fatalf("database timestamp differs from UTC clock by %s", delta)
 	}
 }
 
@@ -58,6 +86,18 @@ func assertMySQLDatabaseName(t *testing.T, db *gorm.DB, expected string) {
 	}
 	if name != expected {
 		t.Fatalf("expected mysql db %s, got %s", expected, name)
+	}
+}
+
+// assertPostgresUTCContract proves generated connections establish UTC sessions.
+func assertPostgresUTCContract(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var sessionTimezone string
+	if err := db.Raw("SHOW TIME ZONE").Scan(&sessionTimezone).Error; err != nil {
+		t.Fatalf("read postgres session timezone: %v", err)
+	}
+	if sessionTimezone != "UTC" {
+		t.Fatalf("expected postgres session timezone UTC, got %q", sessionTimezone)
 	}
 }
 

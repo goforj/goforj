@@ -162,6 +162,8 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 		driver = "sqlite"
 	}
 
+	// Custom DSNs remain verbatim as the driver-specific escape hatch, so their
+	// parse location and session timezone are the caller's responsibility.
 	dsn := str.Of(envOr(name, "DSN")).Trim().String()
 	if dsn == "" {
 		var err error
@@ -197,13 +199,7 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	}
 {{- end }}
 
-	db, err := gorm.Open(dialector, &gorm.Config{
-		SkipDefaultTransaction:                   true,
-		DisableForeignKeyConstraintWhenMigrating: true,
-		DisableAutomaticPing:                     false,
-		FullSaveAssociations:                     false,
-		Logger:                                   queryLogger,
-	})
+	db, err := gorm.Open(dialector, newGORMConfig(queryLogger))
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +237,20 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	return db, nil
 }
 
+// newGORMConfig keeps persisted timestamps independent of the host machine's timezone.
+func newGORMConfig(queryLogger gormLogger.Interface) *gorm.Config {
+	return &gorm.Config{
+		SkipDefaultTransaction:                   true,
+		DisableForeignKeyConstraintWhenMigrating: true,
+		DisableAutomaticPing:                     false,
+		FullSaveAssociations:                     false,
+		Logger:                                   queryLogger,
+		NowFunc: func() time.Time {
+			return time.Now().UTC()
+		},
+	}
+}
+
 func newGORMQueryLogger(level gormLogger.LogLevel, slowThreshold time.Duration) gormLogger.Interface {
 	return gormLogger.New(
 		log.New(newGORMSingleLineWriter(os.Stderr), "", 0),
@@ -267,7 +277,7 @@ func buildDSN(name, driver string) (string, error) {
 		if host == "" || port == "" || user == "" || database == "" {
 			return "", fmt.Errorf("missing connection info for %s", name)
 		}
-		return fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",
+		return fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=UTC&time_zone=%%27%%2B00%%3A00%%27",
 			user,
 			pass,
 			host,
@@ -278,7 +288,7 @@ func buildDSN(name, driver string) (string, error) {
 		if host == "" || port == "" || user == "" || database == "" {
 			return "", fmt.Errorf("missing connection info for %s", name)
 		}
-		return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+		return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
 			host,
 			user,
 			pass,

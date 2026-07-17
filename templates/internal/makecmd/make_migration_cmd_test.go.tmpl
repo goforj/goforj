@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 // TestResolveSupportedMigrationDriversUsesTypedEnvironmentSlice verifies trimming, alias normalization, and de-duplication remain stable.
@@ -70,4 +71,12 @@ func TestMigrationCmdExpandedLayoutUsesAppDefault(t *testing.T) {
 
 	assertMakeCmdTestGlob(t, filepath.Join("migrations", "app", "default", "*create_widgets.up.sql"))
 	assertMakeCmdTestGlob(t, filepath.Join("migrations", "app", "default", "*create_widgets.down.sql"))
+}
+
+// TestMigrationTimestampUsesUTC verifies migration filenames sort consistently across developer locations.
+func TestMigrationTimestampUsesUTC(t *testing.T) {
+	local := time.Date(2026, time.January, 2, 0, 30, 45, 0, time.FixedZone("UTC+2", 2*60*60))
+	if got := migrationTimestamp(local); got != "2026_01_01_223045" {
+		t.Fatalf("migrationTimestamp() = %q, want UTC timestamp", got)
+	}
 }

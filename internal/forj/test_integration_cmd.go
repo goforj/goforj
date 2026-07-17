@@ -74,6 +74,7 @@ var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 			"DB_DATABASE_INTEGRATION": "db",
 			"DB_USERNAME_INTEGRATION": "user",
 			"DB_PASSWORD_INTEGRATION": "password",
+			"TZ":                      "America/Los_Angeles",
 		},
 	},
 	"postgres": {
@@ -92,6 +93,7 @@ var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 			"DB_DATABASE_INTEGRATION": "app",
 			"DB_USERNAME_INTEGRATION": "postgres",
 			"DB_PASSWORD_INTEGRATION": "postgres",
+			"TZ":                      "America/Los_Angeles",
 		},
 	},
 	"sqlite": {
@@ -362,6 +364,9 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 	}
 
 	testEnv := cloneStringMap(spec.testEnv)
+	if err := applyRenderedIntegrationEnvironment(tempDir, testEnv); err != nil {
+		return err
+	}
 	stack, err := testkit.StartRenderedComposeServices(tempDir, testkit.ConsoleLogf(executor.silent))
 	if err != nil {
 		return err
@@ -382,6 +387,20 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(executor integrationExecutor, 
 		console.Successf("DB integration tests completed (%s)", variant)
 	}
 	return nil
+}
+
+// applyRenderedIntegrationEnvironment publishes service-level test overrides before containers start.
+func applyRenderedIntegrationEnvironment(projectDir string, testEnv map[string]string) error {
+	timezone := testEnv["TZ"]
+	if timezone == "" {
+		return nil
+	}
+	// A non-UTC container environment keeps host assumptions visible while the
+	// database assertions verify the generated session contract directly.
+	return testkit.ReplaceOrAppendEnvValues(
+		[]string{filepath.Join(projectDir, ".env")},
+		map[string]string{"TZ": timezone},
+	)
 }
 
 // runStep delegates streaming integration commands to the shared workspace execution policy.

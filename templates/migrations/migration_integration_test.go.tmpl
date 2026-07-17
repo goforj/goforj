@@ -283,7 +283,7 @@ func ensureMySQLDatabase(host, port, name string) error {
 		user = env.Get("DB_USERNAME", "")
 		pass = env.Get("DB_PASSWORD", "")
 	}
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?parseTime=true&multiStatements=true", user, pass, host, port)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27&multiStatements=true", user, pass, host, port)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return err
@@ -296,7 +296,7 @@ func ensurePostgresDatabase(host, port, user, pass, name string) error {
 	if dbName == "" {
 		dbName = "postgres"
 	}
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, pass, dbName)
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable TimeZone=UTC", host, port, user, pass, dbName)
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return err
