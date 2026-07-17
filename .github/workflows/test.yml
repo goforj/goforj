@@ -1,4 +1,4 @@
-name: Go Test
+name: go test
 
 on:
   push:
@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -33,27 +33,27 @@ jobs:
             go.sum
             internal/coredeps/modules.go
 
-      - name: Install wire
+      - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Run Go tests
+      - name: run go tests
         run: go test ./... -v
 
-      - name: Build GoForj binary
+      - name: build goforj binary
         run: go install ./cmd/forj
 
   watcher-stress:
-    name: Watcher churn (race)
+    name: watcher churn (race)
     runs-on: ubuntu-latest
     env:
       GOCACHE: /tmp/gocache
       GOMODCACHE: /tmp/gomodcache
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -62,7 +62,7 @@ jobs:
             go.sum
             internal/coredeps/modules.go
 
-      - name: Run watcher concurrency stress tests
+      - name: run watcher concurrency stress tests
         run: |
           set -euo pipefail
           devwatch_tests="$(go test ./internal/devwatch -list '^TestDevWatchEngineSustainedEditorStormCoalesces$')"
@@ -73,7 +73,7 @@ jobs:
             -run '^Test(DevWatchEngineSustainedEditorStormCoalesces|ConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary)$' \
             -count=3 -timeout=15m -v
 
-      - name: Run forj dev churn integration test
+      - name: run forj dev churn integration test
         run: |
           set -euo pipefail
           test_pattern='^TestDevWatcher(ChurnIntegration|PollingStress|Boundary(RejectedReplacementKeepsHealthyRuntime|PostPreparationStartFailureRetries|RelativeCommandDirectoryLaunchesPreparedSnapshot|ShutdownCancelsBlockedBuild|ChangeDuringRuntimeReplacementConverges)|MultiAppChurnIsolation|OutputBackpressureReapsProcesses|InitialInvalidProjectRecovers)$'
@@ -112,16 +112,16 @@ jobs:
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Restore Go cache (renders)
+      - name: restore go cache (renders)
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -131,28 +131,28 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
-      - name: Install wire
+      - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Build GoForj binary
+      - name: build goforj binary
         run: go install ./cmd/forj
 
-      - name: Run forj test-renders shard
+      - name: run forj test-renders shard
         run: forj test:renders --profile=pr --run-tests
 
   renders-cache:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Cache Go modules/build (renders seed)
+      - name: cache go modules/build (renders seed)
         uses: actions/cache@v4
         with:
           path: |
@@ -162,7 +162,7 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
-      - name: Seed Go caches
+      - name: seed go caches
         run: |
           bash scripts/generate-renderwarm.sh
           go mod download
@@ -173,7 +173,7 @@ jobs:
           GOWORK=off go build .
 
   integration-shards:
-    name: Integration (${{ matrix.name }})
+    name: integration (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -192,7 +192,7 @@ jobs:
             args: framework --shard=5/6
           - name: framework 6/6
             args: framework --shard=6/6
-          - name: multi-App
+          - name: multi-app
             args: framework --framework-profile=multiapp
           - name: rendered sqlite
             args: rendered --variant=sqlite
@@ -204,10 +204,10 @@ jobs:
       CLICOLOR_FORCE: "1"
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -216,18 +216,18 @@ jobs:
             go.sum
             internal/coredeps/modules.go
 
-      - name: Verify Docker runtime
+      - name: verify docker runtime
         run: |
           docker info >/dev/null
           docker compose version >/dev/null
 
-      - name: Install wire
+      - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Build GoForj binary
+      - name: build goforj binary
         run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
 
-      - name: Run integration shard
+      - name: run integration shard
         env:
           FORJ_INTEGRATION_FORJ_PATH: ${{ runner.temp }}/forj
         run: '"$FORJ_INTEGRATION_FORJ_PATH" test:integration ${{ matrix.args }} -v'
@@ -238,7 +238,7 @@ jobs:
     needs: integration-shards
     runs-on: ubuntu-latest
     steps:
-      - name: Require every integration shard
+      - name: require every integration shard
         env:
           SHARD_RESULT: ${{ needs.integration-shards.result }}
         run: |
@@ -253,10 +253,10 @@ jobs:
     env:
       CLICOLOR_FORCE: "1"
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -265,24 +265,24 @@ jobs:
             go.sum
             internal/coredeps/modules.go
 
-      - name: Verify Docker runtime
+      - name: verify docker runtime
         run: |
           docker info >/dev/null
           docker compose version >/dev/null
 
-      - name: Install wire
+      - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Build GoForj binary
+      - name: build goforj binary
         run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
 
-      - name: Run lighthouse integration tests
+      - name: run lighthouse integration tests
         env:
           FORJ_INTEGRATION_FORJ_PATH: ${{ runner.temp }}/forj
         run: '"$FORJ_INTEGRATION_FORJ_PATH" test:integration framework --framework-profile=lighthouse -v'
 
   backup-integration:
-    name: Backup and Restore Integration
+    name: backup and restore integration
     runs-on: ubuntu-latest
     env:
       GOCACHE: /tmp/gocache
@@ -290,10 +290,10 @@ jobs:
       GOFORJ_BACKUP_INTEGRATION: "1"
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -303,28 +303,28 @@ jobs:
             integration/go.sum
             internal/coredeps/modules.go
 
-      - name: Verify Docker runtime
+      - name: verify docker runtime
         run: docker info
 
-      - name: Verify native database clients
+      - name: verify native database clients
         run: |
           for client in mysql mysqldump psql pg_dump; do
             command -v "$client" >/dev/null
           done
 
-      - name: Install wire
+      - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Download integration modules
+      - name: download integration modules
         working-directory: integration
         run: GOWORK=off go mod download
 
-      - name: Validate generated App resource contract
+      - name: validate generated app resource contract
         run: |
           GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
             go run ./cmd/forj --dev test:render --silent
 
-      - name: Run portable matrix and native SQLite/MySQL recovery
+      - name: run portable matrix and native sqlite/mysql recovery
         working-directory: integration
         run: |
           GOWORK=off go test -tags=integration_backup ./... \
@@ -333,7 +333,7 @@ jobs:
 
       # Postgres native recovery runs separately because its container lifecycle
       # must not overlap with the broader transfer matrix in this test suite.
-      - name: Run native Postgres recovery
+      - name: run native postgres recovery
         working-directory: integration
         env:
           GOFORJ_BACKUP_NATIVE_POSTGRES: "1"
@@ -343,17 +343,17 @@ jobs:
             -count=1 -v
 
   uptime-gopher-demo:
-    name: Uptime Gopher (Demo)
+    name: uptime gopher (demo)
     runs-on: ubuntu-latest
     env:
       CLICOLOR_FORCE: "1"
       UPTIME_GOPHER_DEMO_DIR: /tmp/goforj_monitoring_verify
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -362,20 +362,20 @@ jobs:
             go.sum
             internal/coredeps/modules.go
 
-      - name: Set up Node
+      - name: set up node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: templates/demo/frontend/package-lock.json
 
-      - name: Install wire
+      - name: install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Build GoForj binary
+      - name: build goforj binary
         run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
 
-      - name: Render demo app
+      - name: render demo app
         run: |
           set -euo pipefail
           rm -rf "${UPTIME_GOPHER_DEMO_DIR}"
@@ -411,13 +411,13 @@ jobs:
           cd "${UPTIME_GOPHER_DEMO_DIR}"
           "$RUNNER_TEMP/forj" render
 
-      - name: Run demo backend monitoring tests
+      - name: run demo backend monitoring tests
         run: |
           set -euo pipefail
           cd "${UPTIME_GOPHER_DEMO_DIR}"
           go test ./internal/monitoring -count=1 -v
 
-      - name: Run demo frontend monitoring tests
+      - name: run demo frontend monitoring tests
         run: |
           set -euo pipefail
           cd "${UPTIME_GOPHER_DEMO_DIR}/cmd/app/frontend"
@@ -432,16 +432,16 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.cache/generator-go-mod
 
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: set up go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Restore generator integration Go caches
+      - name: restore generator integration go caches
         uses: actions/cache@v4
         with:
           path: |
@@ -451,10 +451,10 @@ jobs:
           restore-keys: |
             generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
-      - name: Verify Docker runtime
+      - name: verify docker runtime
         run: docker info >/dev/null
 
-      - name: Restore Docker image cache
+      - name: restore docker image cache
         id: generator-docker-cache
         uses: actions/cache@v4
         with:
@@ -464,7 +464,7 @@ jobs:
             generator-docker-${{ runner.os }}-${{ env.GENERATOR_DOCKER_CACHE_VERSION }}-
             generator-docker-${{ runner.os }}-
 
-      - name: Load cached Docker images
+      - name: load cached docker images
         run: |
           set -euo pipefail
           cache_dir="$HOME/.cache/generator-docker-images"
@@ -476,7 +476,7 @@ jobs:
             docker load -i "$archive"
           done
 
-      - name: Prime Docker images for generator integration
+      - name: prime docker images for generator integration
         run: |
           set -euo pipefail
           cache_dir="$HOME/.cache/generator-docker-images"
@@ -490,13 +490,13 @@ jobs:
             fi
           done
 
-      - name: Validate and download Go modules
+      - name: validate and download go modules
         run: |
           cd integration
           GOWORK=off go mod tidy -diff
           GOWORK=off go mod download
 
-      - name: Run generator integration smoke tests
+      - name: run generator integration smoke tests
         run: |
           set -euo pipefail
           cd integration
