@@ -2,6 +2,7 @@ package forj
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,50 @@ import (
 	"github.com/goforj/goforj/internal/testexec"
 	"github.com/goforj/goforj/internal/testkit"
 )
+
+// TestRunFrameworkPackageListCommandSeparatesDiagnostics protects structured discovery from Go download messages.
+func TestRunFrameworkPackageListCommandSeparatesDiagnostics(t *testing.T) {
+	t.Setenv("GOFORJ_FRAMEWORK_PACKAGE_LIST_HELPER", "success")
+	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkPackageListCommandHelper$")
+	output, err := runFrameworkPackageListCommand(command)
+	if err != nil {
+		t.Fatalf("run framework package list command: %v", err)
+	}
+	const want = `{"ImportPath":"example.com/app"}`
+	if got := strings.TrimSpace(string(output)); got != want {
+		t.Fatalf("framework package metadata = %q, want %q", got, want)
+	}
+}
+
+// TestRunFrameworkPackageListCommandPreservesFailureDetails verifies separated streams remain actionable on failure.
+func TestRunFrameworkPackageListCommandPreservesFailureDetails(t *testing.T) {
+	t.Setenv("GOFORJ_FRAMEWORK_PACKAGE_LIST_HELPER", "failure")
+	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkPackageListCommandHelper$")
+	_, err := runFrameworkPackageListCommand(command)
+	if err == nil {
+		t.Fatal("expected framework package list failure")
+	}
+	for _, detail := range []string{"example.com/app", "go: helper failed"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Fatalf("framework package list failure = %q, want %q", err, detail)
+		}
+	}
+}
+
+// TestFrameworkPackageListCommandHelper emits JSON and diagnostics on separate streams for subprocess tests.
+func TestFrameworkPackageListCommandHelper(t *testing.T) {
+	mode := os.Getenv("GOFORJ_FRAMEWORK_PACKAGE_LIST_HELPER")
+	if mode == "" {
+		return
+	}
+	_, _ = os.Stdout.WriteString("{\"ImportPath\":\"example.com/app\"}\n")
+	_, _ = os.Stderr.WriteString("go: downloading example.com/dependency v1.0.0\n")
+	if mode == "failure" {
+		_, _ = os.Stderr.WriteString("go: helper failed\n")
+		os.Exit(7)
+	}
+	os.Exit(0)
+}
 
 // TestValidateFrameworkShardRejectsInvalidBounds covers every shard validation failure before CI starts expensive work.
 func TestValidateFrameworkShardRejectsInvalidBounds(t *testing.T) {

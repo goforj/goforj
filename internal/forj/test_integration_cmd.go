@@ -360,9 +360,9 @@ func (executor integrationExecutor) listFrameworkPackageTests(tags string) ([]in
 		"GOFLAGS":    "",
 		"GOWORK":     "off",
 	})
-	output, err := command.CombinedOutput()
+	output, err := runFrameworkPackageListCommand(command)
 	if err != nil {
-		return nil, fmt.Errorf("list framework tests for tags %q: %w (%s)", tags, err, strings.TrimSpace(string(output)))
+		return nil, fmt.Errorf("list framework tests for tags %q: %w", tags, err)
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(output)))
 	metadata := make([]integrationPackageMetadata, 0)
@@ -376,6 +376,27 @@ func (executor integrationExecutor) listFrameworkPackageTests(tags string) ([]in
 		metadata = append(metadata, packageMetadata)
 	}
 	return metadata, nil
+}
+
+// runFrameworkPackageListCommand keeps Go diagnostics on stderr from corrupting the JSON stdout stream.
+func runFrameworkPackageListCommand(command *exec.Cmd) ([]byte, error) {
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err == nil {
+		return output, nil
+	}
+	details := make([]string, 0, 2)
+	if stdout := strings.TrimSpace(string(output)); stdout != "" {
+		details = append(details, stdout)
+	}
+	if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
+		details = append(details, diagnostic)
+	}
+	if len(details) == 0 {
+		return nil, err
+	}
+	return nil, fmt.Errorf("%w (%s)", err, strings.Join(details, "\n"))
 }
 
 // integrationOnlyTestNames parses test declarations from files introduced by the integration build tag.
