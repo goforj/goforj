@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/goforj/env/v2"
 )
 
 // Plan describes the native strategy selected for each configured connection.
@@ -74,23 +76,15 @@ func buildPlanFromContract(contract ResourceContract) (Plan, error) {
 func buildPlanFromEnvironment() (Plan, error) {
 	names := []string{"default"}
 	for _, key := range []string{"DB_CONNECTIONS", "DB_SUPPORTED_CONNECTIONS"} {
-		for _, name := range strings.Split(os.Getenv(key), ",") {
+		for _, name := range env.GetSlice(key, "") {
 			name = strings.TrimSpace(strings.ToLower(name))
 			if name != "" && name != "default" {
 				names = append(names, name)
 			}
 		}
 	}
-	for _, entry := range os.Environ() {
-		parts := strings.SplitN(entry, "=", 2)
-		key := parts[0]
-		if !strings.HasPrefix(key, "DB_") || !strings.HasSuffix(key, "_DRIVER") || key == "DB_DRIVER" {
-			continue
-		}
-		name := strings.TrimSuffix(strings.TrimPrefix(key, "DB_"), "_DRIVER")
-		if name != "" {
-			names = append(names, strings.ToLower(name))
-		}
+	for _, name := range env.WithPrefix("DB").ChildNames([]string{"DRIVER"}) {
+		names = append(names, strings.ToLower(name))
 	}
 	sort.Strings(names[1:])
 	plan := Plan{Resources: make([]PlanResource, 0, len(names))}
@@ -117,15 +111,12 @@ func buildPlanFromEnvironment() (Plan, error) {
 
 // storageEnvValue returns a named storage configuration value using the generated environment contract.
 func storageEnvValue(name string, field string) string {
-	prefix := "STORAGE"
-	if name != "default" {
-		prefix += "_" + strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+	storageScope := env.WithPrefix("STORAGE")
+	if name == "default" {
+		return storageScope.Get(field, "")
 	}
-	value := os.Getenv(prefix + "_" + field)
-	if value == "" && name != "default" {
-		value = os.Getenv("STORAGE_" + field)
-	}
-	return value
+	child := strings.ToUpper(strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(name))
+	return storageScope.Child(child).Get(field, storageScope.Get(field, ""))
 }
 
 // storageRootValue resolves an App storage root while preserving generated App defaults.
@@ -150,21 +141,15 @@ func storageStatus(driver string) string {
 // discoverStorageResources resolves local disks from the generated storage environment contract.
 func discoverStorageResources() []StoragePlanResource {
 	names := []string{"default"}
-	defaultConfigured := os.Getenv("STORAGE_DRIVER") != "" || os.Getenv("STORAGE_ROOT") != ""
+	storageScope := env.WithPrefix("STORAGE")
+	defaultConfigured := storageScope.Get("DRIVER", "") != "" || storageScope.Get("ROOT", "") != ""
 	if !defaultConfigured {
 		if _, err := os.Stat(filepath.Join("storage", "app", "private")); err != nil {
 			names = nil
 		}
 	}
-	for _, entry := range os.Environ() {
-		key := strings.SplitN(entry, "=", 2)[0]
-		if !strings.HasPrefix(key, "STORAGE_") || !strings.HasSuffix(key, "_DRIVER") || key == "STORAGE_DRIVER" {
-			continue
-		}
-		name := strings.TrimSuffix(strings.TrimPrefix(key, "STORAGE_"), "_DRIVER")
-		if name != "" {
-			names = append(names, strings.ToLower(name))
-		}
+	for _, name := range storageScope.ChildNames([]string{"DRIVER"}) {
+		names = append(names, strings.ToLower(name))
 	}
 	if len(names) > 1 {
 		sort.Strings(names[1:])
@@ -176,44 +161,35 @@ func discoverStorageResources() []StoragePlanResource {
 			continue
 		}
 		seen[name] = true
-		prefix := "STORAGE"
+		scope := storageScope
 		if name != "default" {
-			prefix += "_" + strings.ToUpper(name)
+			scope = storageScope.Child(strings.ToUpper(name))
 		}
-		driver := os.Getenv(prefix + "_DRIVER")
-		if driver == "" {
-			driver = os.Getenv("STORAGE_DRIVER")
+		driver := scope.Get("DRIVER", storageScope.Get("DRIVER", "local"))
+		rootFallback := filepath.Join("storage", "app", name)
+		if name == "default" {
+			rootFallback = filepath.Join("storage", "app", "private")
 		}
-		if driver == "" {
-			driver = "local"
-		}
-		root := os.Getenv(prefix + "_ROOT")
-		if root == "" && name == "default" {
-			root = "storage/app/private"
-		}
-		if root == "" {
-			root = filepath.Join("storage", "app", name)
-		}
+		root := scope.Get("ROOT", rootFallback)
 		status := "external-managed"
 		if strings.EqualFold(driver, "local") {
 			status = "backupable"
 		}
-		resources = append(resources, StoragePlanResource{Name: name, Driver: strings.ToLower(driver), Root: root, Prefix: os.Getenv(prefix + "_PREFIX"), Status: status})
+		resources = append(resources, StoragePlanResource{Name: name, Driver: strings.ToLower(driver), Root: root, Prefix: scope.Get("PREFIX", ""), Status: status})
 	}
 	return resources
 }
 
 // ConnectionFromEnv resolves one connection using the generated database naming convention.
 func ConnectionFromEnv(name string) Connection {
-	prefix := "DB"
+	rootScope := env.WithPrefix("DB")
+	scope := rootScope
 	if name != "" && name != "default" {
-		prefix += "_" + strings.ToUpper(strings.NewReplacer("-", "_", " ", "_").Replace(name))
+		child := strings.ToUpper(strings.NewReplacer("-", "_", " ", "_").Replace(name))
+		scope = rootScope.Child(child)
 	}
 	value := func(suffix string) string {
-		if value := os.Getenv(prefix + "_" + suffix); value != "" {
-			return value
-		}
-		return os.Getenv("DB_" + suffix)
+		return scope.Get(suffix, rootScope.Get(suffix, ""))
 	}
 	driver := strings.ToLower(strings.TrimSpace(value("DRIVER")))
 	if driver == "" {

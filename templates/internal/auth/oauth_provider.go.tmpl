@@ -102,7 +102,7 @@ func (p oauthProviderBase) Enabled() bool {
 	if p.name == "apple" {
 		return strings.TrimSpace(env.Get("AUTH_OAUTH_APPLE_TEAM_ID", "")) != "" &&
 			strings.TrimSpace(env.Get("AUTH_OAUTH_APPLE_KEY_ID", "")) != "" &&
-			strings.TrimSpace(osEnvOrEnv("AUTH_OAUTH_APPLE_PRIVATE_KEY", "")) != ""
+			strings.TrimSpace(env.Get("AUTH_OAUTH_APPLE_PRIVATE_KEY", "")) != ""
 	}
 	return strings.TrimSpace(p.clientSecret) != ""
 }
@@ -238,15 +238,9 @@ func parseBoolString(value string) bool {
 	}
 }
 
-func osEnvOrEnv(key, fallback string) string {
-	if value := strings.TrimSpace(env.Get(key, "")); value != "" {
-		return value
-	}
-	return strings.TrimSpace(fallback)
-}
-
+// pemPrivateKeyFromEnv accepts encoded or literal PEM because deployment secret stores commonly support only one shape.
 func pemPrivateKeyFromEnv(key string) (any, error) {
-	raw := osEnvOrEnv(key, "")
+	raw := strings.TrimSpace(env.Get(key, ""))
 	if raw == "" {
 		return nil, fmt.Errorf("%s is required", key)
 	}

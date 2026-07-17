@@ -126,6 +126,19 @@ func TestDatabaseDiscoveryIgnoresDriverHelperDatabaseKeys(t *testing.T) {
 	}
 }
 
+// TestDatabaseDiscoveryKeepsMultiwordNamedConnections verifies scoped discovery preserves complete child names.
+func TestDatabaseDiscoveryKeepsMultiwordNamedConnections(t *testing.T) {
+	t.Setenv("DB_DRIVER", "sqlite")
+	t.Setenv("DB_REPORTING_ARCHIVE_DRIVER", "postgres")
+
+	for _, instance := range DiscoverDatabaseInstances() {
+		if instance.Name == "reporting_archive" && instance.Driver == "postgres" {
+			return
+		}
+	}
+	t.Fatalf("database instances = %#v, want reporting_archive postgres instance", DiscoverDatabaseInstances())
+}
+
 {{- if gt (len .RuntimeApps) 1 }}
 func TestNamedAppIgnoresDefaultAppPortOverrides(t *testing.T) {
 	t.Setenv("PORT", "3100")
