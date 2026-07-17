@@ -64,6 +64,33 @@ QUEUE_DRIVER=redis
 	})
 }
 
+// TestQueueCmdPreservesSectionSpacingWithoutAnchor verifies compact env files keep their next section separated.
+func TestQueueCmdPreservesSectionSpacingWithoutAnchor(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `# Queue
+# Available drivers: null,sync,workerpool,redis,nats,sqs,rabbitmq,sqlite,postgres,mysql
+QUEUE_DRIVER=workerpool
+QUEUE_SUPPORTED_DRIVERS=workerpool,redis
+QUEUE_WORKERS=30
+QUEUE_SHUTDOWN_TIMEOUT=10s
+
+# Runtime
+SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT=90s
+`)
+
+	cmd := &QueueCmd{Name: "reports", Workers: 2}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	content := readQueueEnv(t, `.env`)
+	want := "QUEUE_SHUTDOWN_TIMEOUT=10s\nQUEUE_REPORTS_NAME=reports\nQUEUE_REPORTS_WORKERS=2\n\n# Runtime"
+	if !strings.Contains(content, want) {
+		t.Fatalf("expected named queue before the section separator:\n%s", content)
+	}
+}
+
 // TestQueueCmdInsertsAfterNamedQueueExamples verifies new queues do not split the anchor from examples.
 func TestQueueCmdInsertsAfterNamedQueueExamples(t *testing.T) {
 	dir := t.TempDir()

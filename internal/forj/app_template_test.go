@@ -418,11 +418,10 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 	root := filepath.Join(filepath.Dir(currentFile), "..", "..")
 
 	files := map[string][]string{
-		filepath.Join(root, "templates", ".env.tmpl"): {
-			`# Forj`,
+		filepath.Join(root, "templates", "internal", "makecmd", "README.md.tmpl"): {
+			`## Opening Generated Files`,
 			`FORJ_MAKE_OPEN=auto # options: auto, always, never`,
-			`# Optional editor command for make commands; falls back to common GUI editors.`,
-			`FORJ_EDITOR=`,
+			`FORJ_EDITOR=code`,
 		},
 		filepath.Join(root, "templates", "internal", "makecmd", "editor.go.tmpl"): {
 			`Mode          string`,
@@ -487,10 +486,6 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 			`"internal/makecmd/make_controller_cmd_test.go.tmpl"`,
 			`"internal/makecmd/make_migration_cmd_test.go.tmpl"`,
 			`"internal/makecmd/make_subscriber_cmd_test.go.tmpl"`,
-		},
-		filepath.Join(root, "internal", "forj", "project_renderer_environment_defaults.go"): {
-			`needsForjMakeOpen`,
-			`needsForjEditor`,
 		},
 	}
 

@@ -106,11 +106,12 @@ This keeps browser auth smooth while still preserving explicit server-side revoc
 
 ## Configuration
 
-Use these environment variables:
+The renderer generates `API_JWT_SECRET_KEY` in the local `.env`. Keep that value
+secret and provide a deployment-specific value outside local development. Auth
+policy has built-in defaults, so add these overrides only when the application
+needs different behavior:
 
 ```env
-API_JWT_SECRET_KEY=
-
 AUTH_ACCESS_TOKEN_TTL=15m
 AUTH_SESSION_IDLE_TTL=2h
 AUTH_SESSION_TTL=24h
@@ -119,23 +120,31 @@ AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION=false
 AUTH_PASSWORD_RESET_TTL=1h
 AUTH_EMAIL_VERIFICATION_TTL=24h
 
-AUTH_COOKIE_DOMAIN=
 AUTH_COOKIE_SECURE=auto
 AUTH_LOGIN_LOCKOUT_ATTEMPTS=5
 AUTH_LOGIN_LOCKOUT_DURATION=15m
 AUTH_LOGIN_RATE_LIMIT_ATTEMPTS=10
 AUTH_LOGIN_RATE_LIMIT_DURATION=15m
+```
 
+For a usable first local login, the renderer writes these values to `.env`:
+
+```env
 AUTH_BOOTSTRAP_USERNAME=admin
 AUTH_BOOTSTRAP_EMAIL=admin@example.com
 AUTH_BOOTSTRAP_PASSWORD=admin
 ```
 
+Those bootstrap values are rendered local defaults, not service defaults. The
+service leaves username and password empty and skips bootstrap when either is
+missing. When username and password are set but email is empty, it derives
+`<username>@local.invalid`.
+
 Common auth env vars:
 
 | Env var | Value type | Default |
 | --- | --- | --- |
-| `API_JWT_SECRET_KEY` | string | empty, required outside generated local defaults |
+| `API_JWT_SECRET_KEY` | string | empty; the renderer supplies a generated local value |
 | `AUTH_ACCESS_TOKEN_TTL` | duration string | `15m` |
 | `AUTH_SESSION_IDLE_TTL` | duration string | `2h` |
 | `AUTH_SESSION_TTL` | duration string | `24h` |
@@ -148,20 +157,46 @@ Common auth env vars:
 | `AUTH_PASSWORD_REQUIRE_LOWER` | boolean string | `false` |
 | `AUTH_PASSWORD_REQUIRE_NUMBER` | boolean string | `false` |
 | `AUTH_PASSWORD_REQUIRE_SYMBOL` | boolean string | `true` |
-| `AUTH_COOKIE_DOMAIN` | string | empty |
 | `AUTH_COOKIE_SECURE` | string | `auto` |
 | `AUTH_LOGIN_LOCKOUT_ATTEMPTS` | integer | `5` |
 | `AUTH_LOGIN_LOCKOUT_DURATION` | duration string | `15m` |
 | `AUTH_LOGIN_RATE_LIMIT_ATTEMPTS` | integer | `10` |
 | `AUTH_LOGIN_RATE_LIMIT_DURATION` | duration string | `15m` |
-| `AUTH_BOOTSTRAP_USERNAME` | string | admin |
-| `AUTH_BOOTSTRAP_EMAIL` | string | admin@example.com |
-| `AUTH_BOOTSTRAP_PASSWORD` | string | admin |
+| `AUTH_BOOTSTRAP_USERNAME` | string | empty; rendered local `.env` uses `admin` |
+| `AUTH_BOOTSTRAP_EMAIL` | string | empty; rendered local `.env` uses `admin@example.com` |
+| `AUTH_BOOTSTRAP_PASSWORD` | string | empty; rendered local `.env` uses `admin` |
+{{ if .Components.OAuth }}
+### OAuth Providers
 
-{{- if .Components.OAuth }}
-OAuth env vars are included only when the `OAuth` component is enabled. Provider credentials are commented out by default in `.env`.
-{{- end }}
+Generated `.env` files intentionally omit OAuth credential stubs. Add only the
+variables for providers the application will enable:
 
+| Provider | Required variables |
+| --- | --- |
+| GitHub | `AUTH_OAUTH_GITHUB_CLIENT_ID`, `AUTH_OAUTH_GITHUB_CLIENT_SECRET` |
+| Google | `AUTH_OAUTH_GOOGLE_CLIENT_ID`, `AUTH_OAUTH_GOOGLE_CLIENT_SECRET` |
+| Microsoft | `AUTH_OAUTH_MICROSOFT_CLIENT_ID`, `AUTH_OAUTH_MICROSOFT_CLIENT_SECRET` |
+| Apple | `AUTH_OAUTH_APPLE_CLIENT_ID`, `AUTH_OAUTH_APPLE_TEAM_ID`, `AUTH_OAUTH_APPLE_KEY_ID`, `AUTH_OAUTH_APPLE_PRIVATE_KEY` |
+
+A provider remains disabled until all of its required values are present.
+`AUTH_OAUTH_MICROSOFT_TENANT` defaults to `common`, and
+`AUTH_OAUTH_STATE_TTL` defaults to `10m`.
+{{ end }}{{ if eq .StarterKit "vue" }}
+### Vue Password Policy
+
+The Vue starter is the only generated frontend that reads browser-side password
+policy values. When overriding an `AUTH_PASSWORD_*` backend setting, set its
+matching browser-visible value so Vue presents the same requirements:
+
+- `FRONTEND_AUTH_PASSWORD_MIN_LENGTH`
+- `FRONTEND_AUTH_PASSWORD_REQUIRE_UPPER`
+- `FRONTEND_AUTH_PASSWORD_REQUIRE_LOWER`
+- `FRONTEND_AUTH_PASSWORD_REQUIRE_NUMBER`
+- `FRONTEND_AUTH_PASSWORD_REQUIRE_SYMBOL`
+
+These frontend values affect validation guidance only. The backend
+`AUTH_PASSWORD_*` policy remains authoritative.
+{{ end }}
 Session behavior:
 
 - the access token is short-lived and is refreshed automatically while the session is valid

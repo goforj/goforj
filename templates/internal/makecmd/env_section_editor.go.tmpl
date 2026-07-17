@@ -106,6 +106,9 @@ func isEnvSectionHeader(lines []string, index int) bool {
 	if !strings.HasPrefix(line, "# ") {
 		return false
 	}
+	if strings.HasPrefix(strings.ToLower(line), "# available drivers:") {
+		return false
+	}
 	if commentedEnvKey(line) != "" {
 		return false
 	}
@@ -147,6 +150,14 @@ func envSectionInsertPoint(lines []string, sectionStart, sectionEnd int, insertA
 				return envInsertPointAfterAnchorBlock(lines, i+1, sectionEnd, writes)
 			}
 		}
+	}
+	return envSectionContentEnd(lines, sectionStart, sectionEnd)
+}
+
+// envSectionContentEnd keeps inserted values above the blank separator owned by the next section.
+func envSectionContentEnd(lines []string, sectionStart, sectionEnd int) int {
+	for sectionEnd > sectionStart+1 && strings.TrimSpace(lines[sectionEnd-1]) == "" {
+		sectionEnd--
 	}
 	return sectionEnd
 }

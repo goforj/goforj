@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
@@ -43,13 +44,14 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 				"CACHE_SESSIONS_DRIVER=memory",
 				"MAIL_SUPPORTED_DRIVERS=log,smtp",
 			},
-			forbidEnv: []string{"COMPOSE_PROFILES=redis", "CACHE_LIGHTHOUSE_DRIVER="},
+			forbidEnv: []string{"COMPOSE_PROFILES=redis", "REDIS_PASSWORD=", "REDIS_DB=", "CACHE_LIGHTHOUSE_DRIVER="},
 		},
 		{
 			name:        "Redis active",
 			redisActive: true,
 			redisLocal:  true,
 			wantEnv: []string{
+				"# Redis\n",
 				"CACHE_DRIVER=redis",
 				"CACHE_SUPPORTED_DRIVERS=memory,redis",
 				"QUEUE_DRIVER=redis",
@@ -58,6 +60,8 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 				"EVENTS_SUPPORTED_DRIVERS=inproc,redis",
 				"CACHE_SESSIONS_DRIVER=redis",
 				"COMPOSE_PROFILES=redis",
+				"REDIS_PASSWORD=\n",
+				"REDIS_DB=0\n",
 			},
 			forbidEnv: []string{"CACHE_LIGHTHOUSE_DRIVER="},
 		},
@@ -86,6 +90,144 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 			}
 			if !strings.Contains(compose, "  redis:\n    profiles: [redis]") {
 				t.Fatalf("portable Compose bridge omitted profiled Redis:\n%s", compose)
+			}
+		})
+	}
+}
+
+// TestDefaultEnvironmentIsCompactAndIntentional keeps a new project's primary configuration focused on active choices.
+func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
+	const environmentReference = "# Environment reference: https://goforj.dev/reference/env-vars"
+
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
+
+	if !strings.HasPrefix(environment, environmentReference+"\n\n# App\n") {
+		t.Fatalf("default environment omitted its configuration reference:\n%s", environment)
+	}
+	if strings.Contains(environment, "\n\n\n") {
+		t.Fatalf("default environment contains consecutive blank lines:\n%s", environment)
+	}
+	if !strings.HasSuffix(environment, "\n") {
+		t.Fatal("default environment is missing its terminal newline")
+	}
+	lines := strings.Split(environment, "\n")
+	sections := make([]string, 0)
+	keys := make([]string, 0)
+	for lineIndex, line := range lines {
+		if len(line) > 100 {
+			t.Fatalf("default environment line %d exceeds 100 characters: %s", lineIndex+1, line)
+		}
+		if strings.HasPrefix(line, "# ") && line != environmentReference && !strings.HasPrefix(line, "# Available drivers:") {
+			sections = append(sections, line)
+		}
+		if key, _, ok := envfile.ParseAssignment(line); ok {
+			keys = append(keys, key)
+		}
+	}
+
+	wantSections := []string{
+		"# App",
+		"# Logging",
+		"# Lighthouse",
+		"# API",
+		"# Metrics",
+		"# Auth",
+		"# Mail",
+		"# Mailpit",
+		"# Observability",
+		"# Database",
+		"# Cache",
+		"# File Storage",
+		"# Events",
+		"# Queue",
+		"# Runtime",
+		"# Docker",
+	}
+	if strings.Join(sections, "\n") != strings.Join(wantSections, "\n") {
+		t.Fatalf("default environment sections:\nwant: %q\ngot:  %q\n%s", wantSections, sections, environment)
+	}
+
+	previous := -1
+	for _, section := range wantSections {
+		index := strings.Index(environment, section+"\n")
+		if index <= previous {
+			t.Fatalf("default environment section %q is out of order:\n%s", section, environment)
+		}
+		if index > 0 && environment[index-2:index] != "\n\n" {
+			t.Fatalf("default environment section %q is not separated by one blank line:\n%s", section, environment)
+		}
+		previous = index
+	}
+
+	wantKeys := []string{
+		"APP_NAME", "APP_KEY", "APP_DIAG_TOKEN", "APP_ENV", "APP_DEBUG", "APP_URL",
+		"APP_LOG_FORMAT", "APP_LOG_TIME",
+		"LIGHTHOUSE_ENABLED", "LIGHTHOUSE_URL", "LIGHTHOUSE_SECRET",
+		"API_JWT_SECRET_KEY", "API_SWAGGER_ENABLED", "API_HTTP_HOST", "API_HTTP_PORT",
+		"METRICS_PORT", "METRICS_SCHEDULER_PORT", "METRICS_JOBS_PORT",
+		"AUTH_BOOTSTRAP_USERNAME", "AUTH_BOOTSTRAP_EMAIL", "AUTH_BOOTSTRAP_PASSWORD",
+		"MAIL_DRIVER", "MAIL_SUPPORTED_DRIVERS", "MAIL_SMTP_HOST", "MAIL_SMTP_PORT",
+		"MAIL_FROM_ADDRESS", "MAIL_FROM_NAME", "MAILPIT_SMTP_PORT", "MAILPIT_HTTP_PORT",
+		"OBSERVABILITY_VM_PORT", "GRAFANA_ADMIN_USER", "GRAFANA_ADMIN_PASSWORD", "GRAFANA_PORT",
+		"DB_DRIVER", "DB_SUPPORTED_DRIVERS", "DB_HOST", "DB_PORT", "DB_DATABASE",
+		"DB_USERNAME", "DB_PASSWORD", "DB_ROOT_PASSWORD",
+		"CACHE_DRIVER", "CACHE_SUPPORTED_DRIVERS", "CACHE_SESSIONS_DRIVER",
+		"STORAGE_DRIVER", "STORAGE_SUPPORTED_DRIVERS", "STORAGE_ROOT",
+		"STORAGE_PUBLIC_DRIVER", "STORAGE_PUBLIC_ROOT",
+		"EVENTS_DRIVER", "EVENTS_SUPPORTED_DRIVERS",
+		"QUEUE_DRIVER", "QUEUE_SUPPORTED_DRIVERS", "QUEUE_WORKERS", "QUEUE_SHUTDOWN_TIMEOUT",
+		"SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT",
+		"IP_ADDRESS",
+	}
+	if strings.Join(keys, "\n") != strings.Join(wantKeys, "\n") {
+		t.Fatalf("default environment assignments:\nwant: %q\ngot:  %q\n%s", wantKeys, keys, environment)
+	}
+	for _, want := range []string{
+		"# Available drivers: log,smtp,resend,postmark,mailgun,sendgrid,ses\nMAIL_DRIVER=smtp\nMAIL_SUPPORTED_DRIVERS=log,smtp",
+		"# Available drivers: sqlite,mysql,postgres\nDB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql",
+		"# Available drivers: memory,file,null,redis,memcached,dynamodb,sqlite,postgres,mysql,nats\nCACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis",
+		"# Available drivers: local,memory,redis,ftp,sftp,s3,gcs,dropbox,rclone\nSTORAGE_DRIVER=local\nSTORAGE_SUPPORTED_DRIVERS=local",
+		"# Available drivers: inproc,null,redis,nats,natsjetstream,kafka,gcppubsub,sns\nEVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc,redis",
+		"# Available drivers: null,sync,workerpool,redis,nats,sqs,rabbitmq,sqlite,postgres,mysql\nQUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool,redis",
+	} {
+		if !strings.Contains(environment, want+"\n") {
+			t.Fatalf("default environment omitted available-driver choices %q:\n%s", want, environment)
+		}
+	}
+	if !strings.Contains(environment, "STORAGE_PUBLIC_DRIVER=local\n") {
+		t.Fatalf("default environment omitted the public storage driver:\n%s", environment)
+	}
+	for _, want := range []string{"QUEUE_WORKERS=30", "QUEUE_SHUTDOWN_TIMEOUT=10s"} {
+		if !strings.Contains(environment, want+"\n") {
+			t.Fatalf("default environment omitted queue operating default %q:\n%s", want, environment)
+		}
+	}
+	if !strings.Contains(environment, "IP_ADDRESS=0.0.0.0\n") {
+		t.Fatalf("default environment omitted the Docker bind-address default:\n%s", environment)
+	}
+}
+
+// TestMailpitEnvironmentSectionRequiresMailAndDocker verifies development ports follow the service's actual render gate.
+func TestMailpitEnvironmentSectionRequiresMailAndDocker(t *testing.T) {
+	tests := []struct {
+		name       string
+		components project.Components
+		want       bool
+	}{
+		{name: "Mail and Docker", components: project.Components{Mail: true, Docker: true}, want: true},
+		{name: "Mail only", components: project.Components{Mail: true}},
+		{name: "Docker only", components: project.Components{Docker: true}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := defaultResourcePlanForTest(t, test.components)
+			environment, _ := renderResourceTemplates(t, test.components, plan, project.LocalServiceIntent{})
+			got := strings.Contains(environment, "\n# Mailpit\n")
+			if got != test.want {
+				t.Fatalf("Mailpit section presence = %t, want %t:\n%s", got, test.want, environment)
 			}
 		})
 	}
@@ -223,7 +365,10 @@ func TestResourceTemplatesOmitDisabledCapabilities(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true}
 	plan := redisResourcePlanForTest(t, components)
 	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeExternal))
-	for _, forbidden := range []string{"QUEUE_DRIVER=", "MAIL_DRIVER=", "MAILPIT_"} {
+	for _, forbidden := range []string{
+		"QUEUE_DRIVER=", "MAIL_DRIVER=", "MAILPIT_", "SCHEDULER_", "IP_ADDRESS=",
+		"# API\n", "# Lighthouse\n", "# Mailpit\n", "# Runtime\n", "# Docker\n",
+	} {
 		if strings.Contains(environment, forbidden) {
 			t.Fatalf("disabled capability emitted %q:\n%s", forbidden, environment)
 		}

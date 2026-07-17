@@ -48,6 +48,7 @@ func TestRenderedMailpitDefaultsWithDocker(t *testing.T) {
 		"MAIL_SUPPORTED_DRIVERS=smtp",
 		"MAIL_SMTP_HOST=mailpit",
 		"MAIL_SMTP_PORT=1025",
+		"# Mailpit",
 		"MAILPIT_SMTP_PORT=1025",
 		"MAILPIT_HTTP_PORT=8025",
 	} {
@@ -56,4 +57,3 @@ func TestRenderedMailpitDefaultsWithDocker(t *testing.T) {
 		}
 	}
 }
-
