@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/apiindex"
@@ -433,7 +433,7 @@ func runWireCommandQuiet(wirePath string) (wireCommandResult, error) {
 
 // shouldRetryWire recognizes the transient import failure that a second incremental Wire pass can resolve.
 func shouldRetryWire(detail string) bool {
-	detail = str.Of(detail).TrimSpace().ToLower().String()
+	detail = str.Of(detail).Trim().ToLower().String()
 	if detail == "" {
 		return false
 	}

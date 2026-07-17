@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -88,7 +88,7 @@ type controllerTarget struct {
 }
 
 func (c *ControllerCmd) target() controllerTarget {
-	rawName := str.Of(c.Name).TrimSpace().ChopEnd("Controller").String()
+	rawName := str.Of(c.Name).Trim().TrimSuffix("Controller").String()
 	nameParts := generatedPackagePathParts(str.Of(rawName).Split(":"))
 	if len(nameParts) == 0 {
 		nameParts = []string{"controller"}
@@ -143,7 +143,7 @@ func writeControllerFile(name, path, routePath string) error {
 		"ModulePath": mod,
 		"StructName": "Controller",
 		"RoutePath":  routePath,
-		"LogText":    fmt.Sprintf("Hello from %s controller", str.Of(name).Snake(" ").String()),
+		"LogText":    fmt.Sprintf("Hello from %s controller", str.Of(name).Snake().ReplaceAll("_", " ").String()),
 	}
 	if err := tmpl.Execute(f, data); err != nil {
 		return err

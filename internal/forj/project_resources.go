@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/projectlayout"
@@ -16,7 +16,7 @@ import (
 
 // normalizeQueueDriver validates legacy queue values against the generator's canonical inventory.
 func normalizeQueueDriver(value string) string {
-	normalized := str.Of(value).TrimSpace().ToLower().String()
+	normalized := str.Of(value).Trim().ToLower().String()
 	definition, ok := project.ResourceDefinitionByKey(project.ResourceQueue)
 	if !ok {
 		return ""
@@ -435,10 +435,10 @@ func renderDriverEnvironmentPlaceholders(selections map[project.ResourceKey]proj
 
 // orderedSelectedDriverDefinitions lets the active driver's examples own shared keys before catalog-ordered transition drivers.
 func orderedSelectedDriverDefinitions(definition project.ResourceDefinition, selection project.DriverSelection) []project.DriverDefinition {
-	activeName := str.Of(selection.Active).TrimSpace().ToLower().String()
+	activeName := str.Of(selection.Active).Trim().ToLower().String()
 	selected := make(map[string]bool, len(selection.Supported))
 	for _, name := range selection.Supported {
-		name = str.Of(name).TrimSpace().ToLower().String()
+		name = str.Of(name).Trim().ToLower().String()
 		if name != "" && name != activeName {
 			selected[name] = true
 		}
@@ -523,7 +523,7 @@ func splitDriverList(value string) []string {
 	drivers := []string{}
 	seen := map[string]bool{}
 	for _, part := range strings.Split(value, ",") {
-		driver := str.Of(part).TrimSpace().ToLower().String()
+		driver := str.Of(part).Trim().ToLower().String()
 		if driver == "" || seen[driver] {
 			continue
 		}

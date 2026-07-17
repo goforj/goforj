@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/rs/zerolog"
 )
 
@@ -82,7 +82,7 @@ func loadLogConfig() logConfig {
 	return logConfig{
 		appEnv:     strings.TrimSpace(os.Getenv("APP_ENV")),
 		appMode:    strings.TrimSpace(os.Getenv("APP_MODE")),
-		format:     str.Of(os.Getenv(logFormatEnv)).TrimSpace().ToLower().String(),
+		format:     str.Of(os.Getenv(logFormatEnv)).Trim().ToLower().String(),
 		prefix:     strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
 		showCaller: os.Getenv("APP_LOG_CALLER") != "",
 	}
@@ -234,7 +234,7 @@ func getCallerMeta() string {
 			// to QuestHotReloadWatcher
 			split := strings.Split(pkg, "(*")
 			if len(split) > 1 {
-				callerType = str.Of(split[1]).ChopEnd(")").TrimSpace().ReplaceAll(")", "").String()
+				callerType = str.Of(split[1]).TrimSuffix(")").Trim().ReplaceAll(")", "").String()
 
 				// get package
 				callerSplit := strings.Split(split[0], "/")

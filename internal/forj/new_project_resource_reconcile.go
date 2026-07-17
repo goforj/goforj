@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
@@ -164,7 +164,7 @@ func readNewProjectLegacyQueueDriver(targetPath string) (string, bool, error) {
 	if !config.Render.HasLegacyQueueDriver() {
 		return "", false, nil
 	}
-	return str.Of(config.Render.LegacyQueueDriver()).TrimSpace().ToLower().String(), true, nil
+	return str.Of(config.Render.LegacyQueueDriver()).Trim().ToLower().String(), true, nil
 }
 
 // completeNewProjectTargetResourceSeed uses legacy Queue state only when the explicit proposal omitted that resource.

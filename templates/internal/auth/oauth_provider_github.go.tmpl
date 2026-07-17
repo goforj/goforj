@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"golang.org/x/oauth2"
 )
 
@@ -46,7 +46,7 @@ func (p *GitHubProvider) ResolveIdentity(ctx context.Context, callback OAuthCall
 	if err := oauthGetJSON(ctx, p.userInfoURL, token.AccessToken, &user); err != nil {
 		return ProviderIdentity{}, err
 	}
-	email := str.Of(user.Email).ToLower().TrimSpace().String()
+	email := str.Of(user.Email).ToLower().Trim().String()
 	emailVerified := false
 	if email == "" {
 		var emails []struct {
@@ -59,12 +59,12 @@ func (p *GitHubProvider) ResolveIdentity(ctx context.Context, callback OAuthCall
 		}
 		for _, candidate := range emails {
 			if candidate.Primary {
-				email = str.Of(candidate.Email).ToLower().TrimSpace().String()
+				email = str.Of(candidate.Email).ToLower().Trim().String()
 				emailVerified = candidate.Verified
 				break
 			}
 			if email == "" {
-				email = str.Of(candidate.Email).ToLower().TrimSpace().String()
+				email = str.Of(candidate.Email).ToLower().Trim().String()
 				emailVerified = candidate.Verified
 			}
 		}

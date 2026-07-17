@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -62,7 +62,7 @@ func (p *AppleProvider) ResolveIdentity(ctx context.Context, callback OAuthCallb
 	return ProviderIdentity{
 		Provider:      p.Name(),
 		Subject:       strings.TrimSpace(claims.Subject),
-		Email:         str.Of(claims.Email).ToLower().TrimSpace().String(),
+		Email:         str.Of(claims.Email).ToLower().Trim().String(),
 		EmailVerified: emailVerified,
 		AccessToken:   response.AccessToken,
 	}, nil

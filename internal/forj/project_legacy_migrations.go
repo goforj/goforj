@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"

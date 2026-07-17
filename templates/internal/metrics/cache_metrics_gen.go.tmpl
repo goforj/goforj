@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/goforj/cache"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/caches"
 )
 
@@ -64,7 +64,7 @@ func cacheNameLabel(name string) string {
 
 // cacheDriverLabel normalizes absent Cache drivers without introducing an empty label.
 func cacheDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}
@@ -73,7 +73,7 @@ func cacheDriverLabel(driver string) string {
 
 // cacheOperationLabel normalizes absent Cache operation names into a bounded fallback.
 func cacheOperationLabel(operation string) string {
-	operation = str.Of(operation).ToLower().TrimSpace().String()
+	operation = str.Of(operation).ToLower().Trim().String()
 	if operation == "" {
 		return "other"
 	}

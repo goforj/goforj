@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/goforj/null/v6"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 	"strconv"
 	"strings"
@@ -446,7 +446,7 @@ func (r *MonitorCheckRepo) LatestDisplayStatusByMonitor(limit int) (map[string]M
 		if _, exists := latest[monitorID]; !exists {
 			latest[monitorID] = row
 		}
-		status := str.Of(row.Status).TrimSpace().ToLower().String()
+		status := str.Of(row.Status).Trim().ToLower().String()
 		if status == "pending" || status == "unknown" || status == "" {
 			continue
 		}
@@ -457,7 +457,7 @@ func (r *MonitorCheckRepo) LatestDisplayStatusByMonitor(limit int) (map[string]M
 	}
 	out := make(map[string]MonitorCheck, len(latest))
 	for monitorID, row := range latest {
-		status := str.Of(row.Status).TrimSpace().ToLower().String()
+		status := str.Of(row.Status).Trim().ToLower().String()
 		if status != "pending" {
 			out[monitorID] = row
 			continue
@@ -467,7 +467,7 @@ func (r *MonitorCheckRepo) LatestDisplayStatusByMonitor(limit int) (map[string]M
 			out[monitorID] = row
 			continue
 		}
-		terminalStatus := str.Of(terminal.Status).TrimSpace().ToLower().String()
+		terminalStatus := str.Of(terminal.Status).Trim().ToLower().String()
 		if terminalStatus == "down" {
 			out[monitorID] = terminal
 			continue
@@ -490,7 +490,7 @@ func (r *MonitorCheckRepo) LatestDisplayStatusByMonitorIDs(monitorIDs []string) 
 			continue
 		}
 		row := rows[0]
-		status := str.Of(row.Status).TrimSpace().ToLower().String()
+		status := str.Of(row.Status).Trim().ToLower().String()
 		if status != "pending" {
 			out[monitorID] = row
 			continue
@@ -510,7 +510,7 @@ func (r *MonitorCheckRepo) LatestDisplayStatusByMonitorIDs(monitorIDs []string) 
 		if !hasTerminal {
 			continue
 		}
-		terminalStatus := str.Of(terminal.Status).TrimSpace().ToLower().String()
+		terminalStatus := str.Of(terminal.Status).Trim().ToLower().String()
 		if terminalStatus == "down" {
 			out[monitorID] = terminal
 			continue
@@ -527,7 +527,7 @@ func (r *MonitorCheckRepo) UptimeByMonitorSince(since time.Time, limit int) (map
 	}
 	out := map[string]UptimeStat{}
 	for _, row := range rows {
-		status := str.Of(row.Status).TrimSpace().ToLower().String()
+		status := str.Of(row.Status).Trim().ToLower().String()
 		if status != "up" && status != "down" {
 			continue
 		}

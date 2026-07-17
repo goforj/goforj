@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
@@ -127,9 +127,9 @@ func (cmd *TestIntegrationCmd) Run() error {
 			BuildPath:  buildCache,
 		},
 	}
-	suite := str.Of(cmd.Suite).ToLower().TrimSpace().String()
-	target := str.Of(cmd.Target).ToLower().TrimSpace().String()
-	variant := str.Of(cmd.Variant).ToLower().TrimSpace().String()
+	suite := str.Of(cmd.Suite).ToLower().Trim().String()
+	target := str.Of(cmd.Target).ToLower().Trim().String()
+	variant := str.Of(cmd.Variant).ToLower().Trim().String()
 
 	if !cmd.Silent {
 		testkit.PrintSection(fmt.Sprintf("Integration Suite: %s", suite))
@@ -290,7 +290,7 @@ func renderedIntegrationSteps(tag, target string) ([]integrationStep, error) {
 		{name: "migrations", args: []string{"go", "test", "./migrations", "-tags=integration," + tag}},
 		{name: "database", args: []string{"go", "test", "./internal/database", "-tags=integration," + tag}},
 	}
-	target = str.Of(target).ToLower().TrimSpace().String()
+	target = str.Of(target).ToLower().Trim().String()
 	if target == "modelgen" {
 		target = "makecmd"
 	}

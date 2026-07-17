@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // Plan describes the native strategy selected for each configured connection.
@@ -78,7 +78,7 @@ func buildPlanFromEnvironment() (Plan, error) {
 	names := []string{"default"}
 	for _, key := range []string{"DB_CONNECTIONS", "DB_SUPPORTED_CONNECTIONS"} {
 		for _, name := range env.GetSlice(key, "") {
-			name = str.Of(name).ToLower().TrimSpace().String()
+			name = str.Of(name).ToLower().Trim().String()
 			if name != "" && name != "default" {
 				names = append(names, name)
 			}
@@ -138,7 +138,7 @@ func storageRootValue(name string) string {
 
 // storageStatus classifies storage drivers without claiming unsupported external data is restorable.
 func storageStatus(driver string) string {
-	if str.Of(driver).TrimSpace().ToLower().String() == "local" || str.Of(driver).TrimSpace().ToLower().String() == "s3" {
+	if str.Of(driver).Trim().ToLower().String() == "local" || str.Of(driver).Trim().ToLower().String() == "s3" {
 		return "backupable"
 	}
 	return "external-managed"
@@ -197,7 +197,7 @@ func ConnectionFromEnv(name string) Connection {
 	value := func(suffix string) string {
 		return scope.Get(suffix, rootScope.Get(suffix, ""))
 	}
-	driver := str.Of(value("DRIVER")).TrimSpace().ToLower().String()
+	driver := str.Of(value("DRIVER")).Trim().ToLower().String()
 	if driver == "" {
 		driver = "sqlite"
 	}

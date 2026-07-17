@@ -9,7 +9,7 @@ import (
 
 // TestSyncCoreLibrariesIncludesStr verifies every rendered project receives the fluent helper used by shared templates.
 func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
-	want := "github.com/goforj/str@v1.2.0"
+	want := "github.com/goforj/str/v2@v2.0.1"
 	for _, components := range []project.Components{
 		{},
 		{CLI: true},
@@ -84,7 +84,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/events/eventsfake", version: "v0.2.0"},
 		{module: "github.com/goforj/events/eventstest", version: "v0.2.0"},
 		{module: "github.com/goforj/env/v2", version: "v2.5.0"},
-		{module: "github.com/goforj/str", version: "v1.2.0"},
+		{module: "github.com/goforj/str/v2", version: "v2.0.1"},
 		{module: "github.com/goforj/storage", version: "v0.5.0"},
 		{module: "github.com/goforj/storage/storagecore", version: "v0.5.0"},
 		{module: "github.com/goforj/storage/storagetest", version: "v0.5.0"},

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 const (
@@ -235,11 +235,11 @@ func normalizeLogEntrySignature(entry LogEntry) string {
 		return ""
 	}
 	parts := make([]string, 0, len(entry.Fields)+1)
-	if level := str.Of(entry.Level).TrimSpace().ToLower().String(); level != "" {
+	if level := str.Of(entry.Level).Trim().ToLower().String(); level != "" {
 		parts = append(parts, "level="+level)
 	}
 	for key, value := range entry.Fields {
-		k := str.Of(key).TrimSpace().ToLower().String()
+		k := str.Of(key).Trim().ToLower().String()
 		if k == "" {
 			continue
 		}
@@ -380,7 +380,7 @@ func normalizeLogSignature(line string) string {
 	if len(parts) == 0 {
 		return strings.TrimSpace(plain)
 	}
-	base := str.Of(parts[0]).TrimSpace().ReplaceAll("  ", " ").String()
+	base := str.Of(parts[0]).Trim().ReplaceAll("  ", " ").String()
 	if idx := strings.Index(base, "→"); idx >= 0 {
 		base = strings.TrimSpace(base[:idx])
 	}
@@ -397,7 +397,7 @@ func normalizeLogSignature(line string) string {
 		if len(matches) != 3 {
 			continue
 		}
-		key := str.Of(matches[1]).TrimSpace().ToLower().String()
+		key := str.Of(matches[1]).Trim().ToLower().String()
 		value := strings.TrimSpace(matches[2])
 		if _, skip := ignoreKeys[key]; skip {
 			continue
@@ -415,7 +415,7 @@ func normalizeLogSignature(line string) string {
 }
 
 func getEnvBool(key string, defaultValue bool) bool {
-	raw := str.Of(os.Getenv(key)).TrimSpace().ToLower().String()
+	raw := str.Of(os.Getenv(key)).Trim().ToLower().String()
 	if raw == "" {
 		return defaultValue
 	}

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -149,7 +149,7 @@ func (s *editorService) launch(payload editorRequest) error {
 		path = filepath.Join(s.projectRoot, path)
 	}
 	path = filepath.Clean(path)
-	target := str.Of(payload.Target).TrimSpace().ToLower().String()
+	target := str.Of(payload.Target).Trim().ToLower().String()
 	var cmd *exec.Cmd
 	fmt.Printf(
 		"[Lighthouse] launching editor (target=%s) projectRoot=%s path=%s line=%d symbol=%s\n",
@@ -202,7 +202,7 @@ func (s *editorService) validateSymbols(symbols []string) []editorSymbolStatus {
 	results := make([]editorSymbolStatus, 0, len(symbols))
 	seen := make(map[string]struct{}, len(symbols))
 	for _, raw := range symbols {
-		symbol := str.Of(raw).ChopStart("#").TrimSpace().String()
+		symbol := str.Of(raw).TrimPrefix("#").Trim().String()
 		if symbol == "" {
 			continue
 		}

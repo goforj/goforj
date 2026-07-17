@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -210,7 +210,7 @@ func notificationHeaders(channel RuntimeChannel) map[string]string {
 }
 
 func parseTimeoutSeconds(raw string, fallback int) int {
-	value := str.Of(raw).TrimSpace().String()
+	value := str.Of(raw).Trim().String()
 	if value == "" {
 		return fallback
 	}

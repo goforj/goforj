@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // AgentInfo represents a connected agent.
@@ -559,7 +559,7 @@ func agentInstanceKey(info AgentInfo) string {
 }
 
 func agentKeyPart(value string) string {
-	value = str.Of(value).TrimSpace().ReplaceAll("/", "_").String()
+	value = str.Of(value).Trim().ReplaceAll("/", "_").String()
 	value = strings.Join(strings.Fields(value), "_")
 	return value
 }

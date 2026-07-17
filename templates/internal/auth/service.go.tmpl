@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
@@ -619,7 +619,7 @@ func (s *Service) SetPassword(ctx context.Context, login, password string) (*Use
 // BeginOAuthLogin builds the provider authorization URL for one OAuth login flow.
 func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, error) {
 {{- if .Components.Metrics }}
-	provider := str.Of(providerName).ToLower().TrimSpace().String()
+	provider := str.Of(providerName).ToLower().Trim().String()
 	flow := s.beginAuthFlow("oauth_login_start", provider)
 	defer flow.Done()
 {{- end }}
@@ -641,7 +641,7 @@ func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, e
 // BeginOAuthLink builds the provider authorization URL for linking an OAuth identity.
 func (s *Service) BeginOAuthLink(r web.Context, providerName string) (string, error) {
 {{- if .Components.Metrics }}
-	provider := str.Of(providerName).ToLower().TrimSpace().String()
+	provider := str.Of(providerName).ToLower().Trim().String()
 	flow := s.beginAuthFlow("oauth_link_start", provider)
 	defer flow.Done()
 {{- end }}
@@ -685,7 +685,7 @@ func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int
 		return "", err
 	}
 	state := &OAuthStateToken{
-		Provider:     str.Of(provider.Name()).ToLower().TrimSpace().String(),
+		Provider:     str.Of(provider.Name()).ToLower().Trim().String(),
 		State:        stateValue,
 		CodeVerifier: codeVerifier,
 		Nonce:        nonce,
@@ -702,7 +702,7 @@ func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int
 // CompleteOAuthCallback exchanges one OAuth callback and issues or links auth state.
 func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue, code string) (*OAuthCompletionResult, error) {
 {{- if .Components.Metrics }}
-	providerLabel := str.Of(providerName).ToLower().TrimSpace().String()
+	providerLabel := str.Of(providerName).ToLower().Trim().String()
 	flow := s.beginAuthFlow("oauth_callback", providerLabel)
 	defer flow.Done()
 {{- end }}
@@ -714,7 +714,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 		return nil, ErrProviderDisabled
 	}
 	now := time.Now().UTC()
-	state, err := s.oauthStates.WithContext(r.Context()).ActiveByProviderState(str.Of(provider.Name()).ToLower().TrimSpace().String(), strings.TrimSpace(stateValue), now)
+	state, err := s.oauthStates.WithContext(r.Context()).ActiveByProviderState(str.Of(provider.Name()).ToLower().Trim().String(), strings.TrimSpace(stateValue), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 {{- if .Components.Metrics }}
@@ -2098,7 +2098,7 @@ func (s *Service) buildCookie(r web.Context, name, value string, expiresAt time.
 }
 
 func resolveCookieSecure(r web.Context) bool {
-	switch str.Of(env.Get("AUTH_COOKIE_SECURE", "auto")).TrimSpace().ToLower().String() {
+	switch str.Of(env.Get("AUTH_COOKIE_SECURE", "auto")).Trim().ToLower().String() {
 	case "true", "1", "yes", "on":
 		return true
 	case "false", "0", "no", "off":
@@ -2136,7 +2136,7 @@ func parseIntEnv(key string, fallback int) int {
 
 // parseBoolEnv preserves the documented yes/on aliases that strconv-backed environment getters do not accept.
 func parseBoolEnv(key string, fallback bool) bool {
-	raw := str.Of(env.Get(key, "")).TrimSpace().ToLower().String()
+	raw := str.Of(env.Get(key, "")).Trim().ToLower().String()
 	switch raw {
 	case "1", "true", "yes", "on":
 		return true
@@ -2203,7 +2203,7 @@ func hashRefreshSecret(secret string) string {
 }
 
 func buildRefreshToken(sessionID, secret string) string {
-	return str.Of(sessionID).TrimSpace().String() + "." + str.Of(secret).TrimSpace().String()
+	return str.Of(sessionID).Trim().String() + "." + str.Of(secret).Trim().String()
 }
 
 func parseRefreshToken(value string) (string, string, error) {
@@ -2215,7 +2215,7 @@ func parseRefreshToken(value string) (string, string, error) {
 }
 
 func normalizeLoginIdentifier(value string) string {
-	return str.Of(value).TrimSpace().ToLower().String()
+	return str.Of(value).Trim().ToLower().String()
 }
 
 func normalizeIPAddress(value string) string {
@@ -2313,9 +2313,9 @@ func (s *Service) clearFailedLoginState(ctx context.Context, identifier, ipAddre
 
 {{- if .Components.OAuth }}
 func normalizeProviderIdentity(identity ProviderIdentity) ProviderIdentity {
-	identity.Provider = str.Of(identity.Provider).ToLower().TrimSpace().String()
+	identity.Provider = str.Of(identity.Provider).ToLower().Trim().String()
 	identity.Subject = strings.TrimSpace(identity.Subject)
-	identity.Email = str.Of(identity.Email).ToLower().TrimSpace().String()
+	identity.Email = str.Of(identity.Email).ToLower().Trim().String()
 	identity.Username = strings.TrimSpace(identity.Username)
 	identity.DisplayName = strings.TrimSpace(identity.DisplayName)
 	identity.AvatarURL = strings.TrimSpace(identity.AvatarURL)
@@ -2398,7 +2398,7 @@ func (s *Service) identityDisplayName(identity ProviderIdentity) string {
 }
 
 func normalizeUsernameCandidate(value string) string {
-	value = str.Of(value).ToLower().TrimSpace().String()
+	value = str.Of(value).ToLower().Trim().String()
 	if value == "" {
 		return ""
 	}

@@ -16,7 +16,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
 	"github.com/goforj/storage/driver/localstorage"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 const defaultDiskName storage.DiskName = "default"
@@ -236,7 +236,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	disks[defaultDiskName] = defaultCfg
 
 	for _, child := range storageScope.ChildNames(storageRootKeys) {
-		name := storage.DiskName(str.Of(child).TrimSpace().ToLower().String())
+		name := storage.DiskName(str.Of(child).Trim().ToLower().String())
 		cfg, err := buildDiskConfig(name, storageScope.Child(child))
 		if err != nil {
 			return nil, err
@@ -275,7 +275,7 @@ func newManagerFromEnvWithBuilder(build func(storage.DriverConfig) (storage.Stor
 
 // optionalDiskFromScope keeps expected infrastructure outages nonfatal for non-default disks while retaining diagnostics.
 func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName, build func(storage.DriverConfig) (storage.Storage, error)) (storage.Storage, *OptionalDiskWarning, error) {
-	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
+	childScope := storageScope.Child(str.Of(string(name)).Snake().ToUpper().String())
 	cfg, err := buildDiskConfig(name, childScope)
 	if err != nil {
 		return nil, nil, err
@@ -350,7 +350,7 @@ func isOptionalStorageDiskError(err error) bool {
 
 // storageDriverNameFromScope normalizes driver labels shared by diagnostics and operation observers.
 func storageDriverNameFromScope(scope env.Scope) string {
-	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).Trim().ToLower().String()
 	if driver == "" {
 		return driverLocal
 	}
@@ -360,7 +360,7 @@ func storageDriverNameFromScope(scope env.Scope) string {
 // buildDiskConfig rejects backends outside the generated manifest before endpoint configuration is constructed.
 // The manifest comes from STORAGE_SUPPORTED_DRIVERS, falling back to active root and named Storage scopes when that list is unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
-	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).Trim().ToLower().String()
 	if driver == "" {
 		driver = driverLocal
 	}

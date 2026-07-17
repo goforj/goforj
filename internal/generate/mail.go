@@ -9,7 +9,7 @@ import (
 	"sort"
 	"text/template"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // mailAccessorTemplateData carries the normalized mailer names shared by generated accessor methods.
@@ -319,7 +319,7 @@ func discoverMailChildren(input generationInput) []string {
 func discoverMailNames(input generationInput) []string {
 	names := discoverMailChildren(input)
 	for i := range names {
-		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
+		names[i] = str.Of(names[i]).Trim().ToLower().String()
 	}
 	sort.Strings(names)
 	return names
@@ -327,7 +327,7 @@ func discoverMailNames(input generationInput) []string {
 
 // appendMissingString adds value to values when it is not already present.
 func appendMissingString(values []string, value string) []string {
-	value = str.Of(value).TrimSpace().ToLower().String()
+	value = str.Of(value).Trim().ToLower().String()
 	if value == "" {
 		return values
 	}
@@ -354,7 +354,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	goforjmail "github.com/goforj/mail"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 {{- range .Drivers }}
 	"{{ .ImportPath }}"
 {{- end }}
@@ -458,7 +458,7 @@ func NewManager() (*Manager, error) {
 
 // NewManagerWithObserver creates the configured application mailer manager with an optional send observer.
 func NewManagerWithObserver(observer Observer) (*Manager, error) {
-	driverName := str.Of(env.Get("MAIL_DRIVER", driverLog)).TrimSpace().ToLower().String()
+	driverName := str.Of(env.Get("MAIL_DRIVER", driverLog)).Trim().ToLower().String()
 	driver, err := newDriver("default", env.WithPrefix("MAIL"), observer)
 	if err != nil {
 		return nil, err
@@ -474,7 +474,7 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 	}
 
 {{- range .Names }}
-	scope{{ .Method }} := env.WithPrefix("MAIL").Child(str.Of("{{ .Mailer }}").Snake("_").ToUpper().String())
+	scope{{ .Method }} := env.WithPrefix("MAIL").Child(str.Of("{{ .Mailer }}").Snake().ToUpper().String())
 	driver{{ .Method }}, err := newDriver("{{ .Mailer }}", scope{{ .Method }}, observer)
 	if err != nil {
 		return nil, err
@@ -507,7 +507,7 @@ func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
 
 // newDriver rejects providers outside the generated manifest before credentials or transports are initialized.
 func newDriver(name string, scope env.Scope, observer Observer) (goforjmail.Driver, error) {
-	driverName := str.Of(scope.Get("DRIVER", driverLog)).TrimSpace().ToLower().String()
+	driverName := str.Of(scope.Get("DRIVER", driverLog)).Trim().ToLower().String()
 	if driverName == "" {
 		driverName = driverLog
 	}
@@ -616,7 +616,7 @@ func (d *observedDriver) Send(ctx context.Context, message goforjmail.Message) e
 
 // mailerNameLabel gives the root mailer a stable telemetry label when no explicit name is available.
 func mailerNameLabel(name string) string {
-	name = str.Of(name).ToLower().TrimSpace().String()
+	name = str.Of(name).ToLower().Trim().String()
 	if name == "" {
 		return "default"
 	}
@@ -625,7 +625,7 @@ func mailerNameLabel(name string) string {
 
 // mailerDriverLabel avoids emitting a blank telemetry dimension when driver configuration is unavailable.
 func mailerDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}
@@ -643,7 +643,7 @@ package mail
 
 import (
 	goforjmail "github.com/goforj/mail"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // Default returns the default mailer instance derived from MAIL_* configuration.
@@ -685,7 +685,7 @@ func (m *Manager) Instances() []Instance {
 
 // Named returns the generated mailer instance for a configured mailer name.
 func (m *Manager) Named(name string) *goforjmail.Mailer {
-	switch str.Of(name).TrimSpace().ToLower().String() {
+	switch str.Of(name).Trim().ToLower().String() {
 	case "", "default":
 		return m.defaulter
 {{- range .Names }}

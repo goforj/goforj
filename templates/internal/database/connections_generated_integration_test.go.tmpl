@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestGeneratedAccessorsConnect(t *testing.T) {
-	if str.Of(env.Get("DB_DRIVER", "")).TrimSpace().String() == "" {
+	if str.Of(env.Get("DB_DRIVER", "")).Trim().String() == "" {
 		t.Skip("db driver not configured")
 	}
 	if _, err := os.Stat(filepath.Join("internal", "database", "connections_gen.go")); err != nil {
@@ -36,17 +36,17 @@ func TestGeneratedAccessorsConnect(t *testing.T) {
 		t.Fatalf("expected distinct db handles for default and analytics")
 	}
 
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	switch driver {
 	case "mysql", "mariadb":
-		assertMySQLDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String())
-		assertMySQLDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).TrimSpace().String())
+		assertMySQLDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).Trim().String())
+		assertMySQLDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).Trim().String())
 	case "postgres", "postgresql":
-		assertPostgresDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String())
-		assertPostgresDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).TrimSpace().String())
+		assertPostgresDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).Trim().String())
+		assertPostgresDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).Trim().String())
 	case "sqlite", "sqlite3":
-		assertSQLitePath(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String())
-		assertSQLitePath(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).TrimSpace().String())
+		assertSQLitePath(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).Trim().String())
+		assertSQLitePath(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).Trim().String())
 	}
 }
 

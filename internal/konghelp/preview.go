@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/alecthomas/kong"
 )
 
 // Preview renders one of the real help formatters against an example Kong command tree.
 func Preview(format string) string {
-	format = str.Of(format).TrimSpace().ToLower().String()
+	format = str.Of(format).Trim().ToLower().String()
 	parser, err := kong.New(
 		previewCommandSurface(format),
 		previewName(format),

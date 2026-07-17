@@ -14,7 +14,7 @@ import (
 
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/gorilla/websocket"
 )
 
@@ -59,12 +59,12 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		console.Debugf("devwatch disabled: LIGHTHOUSE_ENABLED is false")
 		return nil
 	}
-	token := str.Of(resolveLighthouseSecret(nil)).TrimSpace().String()
+	token := str.Of(resolveLighthouseSecret(nil)).Trim().String()
 	if token == "" {
 		console.Debugf("devwatch disabled: LIGHTHOUSE_SECRET is empty")
 		return nil
 	}
-	rawURL := str.Of(getEnv("LIGHTHOUSE_URL")).TrimSpace().String()
+	rawURL := str.Of(getEnv("LIGHTHOUSE_URL")).Trim().String()
 	if rawURL == "" {
 		rawURL = "ws://localhost:3000/lighthouse/ws/devwatch"
 	}
@@ -81,7 +81,7 @@ func resolveLighthouseSecret(env map[string]string) string {
 }
 
 func newDevwatchStreamer(rawURL string, token string) *devwatchStreamer {
-	token = str.Of(token).TrimSpace().String()
+	token = str.Of(token).Trim().String()
 	if token == "" {
 		console.Debugf("devwatch disabled: token is empty")
 		return nil
@@ -572,7 +572,7 @@ type devwatchLifecycleState struct {
 func newDevwatchLifecycleState(startupExpected int, restartWatches []string) *devwatchLifecycleState {
 	restartExpected := make(map[string]struct{}, len(restartWatches))
 	for _, watch := range restartWatches {
-		if watch = str.Of(watch).TrimSpace().String(); watch != "" {
+		if watch = str.Of(watch).Trim().String(); watch != "" {
 			restartExpected[watch] = struct{}{}
 		}
 	}
@@ -655,7 +655,7 @@ func (s *devwatchLifecycleState) noteRestartTrigger(watcher string) string {
 func legacyRestartExpected(watches []string) map[string]struct{} {
 	expected := make(map[string]struct{}, len(watches))
 	for _, watch := range watches {
-		if watch = str.Of(watch).TrimSpace().String(); watch != "" {
+		if watch = str.Of(watch).Trim().String(); watch != "" {
 			expected[watch] = struct{}{}
 		}
 	}
@@ -802,7 +802,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 
 // decorateDevAppLogAppColumn adds a dev-only app column to timestamped runtime log lines.
 func decorateDevAppLogAppColumn(line string, appName string, width int, enabled bool) string {
-	appName = str.Of(appName).TrimSpace().String()
+	appName = str.Of(appName).Trim().String()
 	if !enabled || appName == "" || width <= 0 {
 		return line
 	}
@@ -858,7 +858,7 @@ func decorateWatcherLine(line, watcher string, command string) string {
 		return line
 	}
 	if isWatcherTriggerLine(line) {
-		cmd := str.Of(command).TrimSpace().String()
+		cmd := str.Of(command).Trim().String()
 		if cmd == "" {
 			cmd = "(unknown command)"
 		}
@@ -891,10 +891,10 @@ func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
 		return false
 	}
 	line = line[markerIndex:]
-	payload := str.Of(line).ChopStart(buildProgressMarker).TrimSpace().String()
+	payload := str.Of(line).TrimPrefix(buildProgressMarker).Trim().String()
 	switch {
 	case strings.HasPrefix(payload, "step "):
-		parts := strings.Fields(str.Of(payload).ChopStart("step ").TrimSpace().String())
+		parts := strings.Fields(str.Of(payload).TrimPrefix("step ").Trim().String())
 		if len(parts) < 2 {
 			return true
 		}
@@ -916,7 +916,7 @@ func normalizeDevwatchProtocolLine(line string) string {
 	if index := strings.LastIndex(line, "\r"); index >= 0 {
 		line = line[index+1:]
 	}
-	return str.Of(line).TrimSpace().String()
+	return str.Of(line).Trim().String()
 }
 
 func formatBuildProgressStatus(stepNumber string, stepName string) string {
@@ -926,7 +926,7 @@ func formatBuildProgressStatus(stepNumber string, stepName string) string {
 }
 
 func isRuntimeShutdownLine(line string) bool {
-	line = str.Of(strings.ReplaceAll(line, "\r", "")).TrimSpace().String()
+	line = str.Of(strings.ReplaceAll(line, "\r", "")).Trim().String()
 	if line == "" {
 		return false
 	}
@@ -985,7 +985,7 @@ func readDotEnvValue(key string) (string, bool) {
 		return "", false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := str.Of(line).TrimSpace().String()
+		trimmed := str.Of(line).Trim().String()
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
@@ -993,10 +993,10 @@ func readDotEnvValue(key string) (string, bool) {
 		if !ok {
 			continue
 		}
-		if str.Of(name).TrimSpace().String() != key {
+		if str.Of(name).Trim().String() != key {
 			continue
 		}
-		return str.Of(value).TrimSpace().Trim(`"`).String(), true
+		return str.Of(value).Trim().TrimChars(`"`).String(), true
 	}
 	return "", false
 }

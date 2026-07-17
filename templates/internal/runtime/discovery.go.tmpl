@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // PrimitiveInstance describes a configured primitive instance for app metadata and tooling.
@@ -164,7 +164,7 @@ func QueuePhysicalName(name string) string {
 
 // normalizedAppInstanceName keeps Queue instance lookup consistent with environment key normalization.
 func normalizedAppInstanceName(name string) string {
-	value := str.Of(name).TrimSpace().ToLower().String()
+	value := str.Of(name).Trim().ToLower().String()
 	if value == "" {
 		return "default"
 	}
@@ -175,7 +175,7 @@ func normalizedAppInstanceName(name string) string {
 {{ if .ProjectComponents.Cache }}
 // NormalizeCacheDriver reduces Cache driver aliases to their generated canonical names.
 func NormalizeCacheDriver(v string) string {
-	driver := str.Of(v).ToLower().TrimSpace().String()
+	driver := str.Of(v).ToLower().Trim().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -210,7 +210,7 @@ func NormalizeCacheDriver(v string) string {
 {{ if .ProjectComponents.Jobs }}
 // NormalizeQueueDriver reduces Queue driver aliases to their generated canonical names.
 func NormalizeQueueDriver(v string) string {
-	driver := str.Of(v).ToLower().TrimSpace().String()
+	driver := str.Of(v).ToLower().Trim().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -243,7 +243,7 @@ func NormalizeQueueDriver(v string) string {
 {{ if .ProjectComponents.Storage }}
 // NormalizeStorageDriver reduces Storage driver aliases to their generated canonical names.
 func NormalizeStorageDriver(v string) string {
-	driver := str.Of(v).ToLower().TrimSpace().String()
+	driver := str.Of(v).ToLower().Trim().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -272,7 +272,7 @@ func NormalizeStorageDriver(v string) string {
 {{- end }}
 
 func NormalizeDBDriver(v string) string {
-	driver := str.Of(v).ToLower().TrimSpace().String()
+	driver := str.Of(v).ToLower().Trim().String()
 	switch {
 	case driver == "", driver == "-", driver == "db", driver == "nil", driver == "<nil>":
 		return ""
@@ -290,7 +290,7 @@ func NormalizeDBDriver(v string) string {
 {{ if .ProjectComponents.Events }}
 // NormalizeEventDriver reduces Events driver aliases to their generated canonical names.
 func NormalizeEventDriver(v string) string {
-	driver := str.Of(v).ToLower().TrimSpace().String()
+	driver := str.Of(v).ToLower().Trim().String()
 	switch {
 	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
@@ -323,11 +323,11 @@ func aboutScopedNames(prefix string, rootKeys []string) []string {
 	children := scope.ChildNames(rootKeys)
 	normalized := make([]string, 0, len(children))
 	for _, child := range children {
-		name := str.Of(child).TrimSpace().ToLower().String()
+		name := str.Of(child).Trim().ToLower().String()
 		if name == "" {
 			continue
 		}
-		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		childScope := scope.Child(str.Of(name).Snake().ToUpper().String())
 		if !aboutPrimitiveChildDefined(prefix, childScope) {
 			continue
 		}
@@ -344,11 +344,11 @@ func aboutDatabaseNames() []string {
 	names := []string{"default"}
 	normalized := make([]string, 0, len(children))
 	for _, child := range children {
-		name := str.Of(child).TrimSpace().ToLower().String()
+		name := str.Of(child).Trim().ToLower().String()
 		if name == "" || aboutDatabaseHelperName(name) {
 			continue
 		}
-		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		childScope := scope.Child(str.Of(name).Snake().ToUpper().String())
 		if !aboutDatabaseChildDefined(childScope) {
 			continue
 		}
@@ -359,7 +359,7 @@ func aboutDatabaseNames() []string {
 }
 
 func aboutDatabaseHelperName(name string) bool {
-	switch str.Of(name).ToLower().TrimSpace().String() {
+	switch str.Of(name).ToLower().Trim().String() {
 	case "mysql", "postgres", "postgresql", "sqlite", "sqlite3":
 		return true
 	default:
@@ -368,7 +368,7 @@ func aboutDatabaseHelperName(name string) bool {
 }
 
 func aboutDatabaseDefaultName() string {
-	if value := str.Of(env.Get("DB_DEFAULT", "")).TrimSpace().ToLower().String(); value != "" {
+	if value := str.Of(env.Get("DB_DEFAULT", "")).Trim().ToLower().String(); value != "" {
 		return value
 	}
 	return "default"
@@ -379,7 +379,7 @@ func aboutDatabaseEnv(name, suffix string) string {
 	if name == "" || name == "default" {
 		return scope.Get(suffix, "")
 	}
-	child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	child := scope.Child(str.Of(name).Snake().ToUpper().String())
 	if value := child.Get(suffix, ""); value != "" {
 		return value
 	}
@@ -391,5 +391,5 @@ func aboutPrimitiveScope(prefix, name string) env.Scope {
 	if name == "" || name == "default" {
 		return scope
 	}
-	return scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	return scope.Child(str.Of(name).Snake().ToUpper().String())
 }

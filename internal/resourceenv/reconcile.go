@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/project"
@@ -177,7 +177,7 @@ func splitDriverList(value string) []string {
 	drivers := []string{}
 	seen := map[string]bool{}
 	for _, part := range strings.Split(value, ",") {
-		driver := str.Of(part).TrimSpace().ToLower().String()
+		driver := str.Of(part).Trim().ToLower().String()
 		if driver == "" || seen[driver] {
 			continue
 		}

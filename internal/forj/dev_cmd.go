@@ -26,7 +26,7 @@ import (
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"golang.org/x/term"
 )
 
@@ -338,7 +338,7 @@ func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatab
 
 // normalizeDevDatabaseDriver maps common aliases to the compose service driver names.
 func normalizeDevDatabaseDriver(driver string) string {
-	switch str.Of(driver).TrimSpace().ToLower().String() {
+	switch str.Of(driver).Trim().ToLower().String() {
 	case "mysql", "mariadb":
 		return "mysql"
 	case "postgres", "postgresql":
@@ -346,7 +346,7 @@ func normalizeDevDatabaseDriver(driver string) string {
 	case "sqlite", "sqlite3":
 		return "sqlite"
 	default:
-		return str.Of(driver).TrimSpace().ToLower().String()
+		return str.Of(driver).Trim().ToLower().String()
 	}
 }
 
@@ -1712,9 +1712,9 @@ func resolveAPIURL(env map[string]string) string {
 }
 
 func resolveSwaggerUIURL(env map[string]string) string {
-	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).TrimSpace().ToLower().String()
+	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
 	if enabled == "" {
-		enabled = str.Of(envValue(env, "SWAGGER_ENABLED")).TrimSpace().ToLower().String()
+		enabled = str.Of(envValue(env, "SWAGGER_ENABLED")).Trim().ToLower().String()
 	}
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
 		return ""
@@ -1728,7 +1728,7 @@ func resolveSwaggerUIURL(env map[string]string) string {
 }
 
 func resolveLighthouseUIURL(env map[string]string) string {
-	enabled := str.Of(envValue(env, "LIGHTHOUSE_ENABLED")).TrimSpace().ToLower().String()
+	enabled := str.Of(envValue(env, "LIGHTHOUSE_ENABLED")).Trim().ToLower().String()
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
 		return ""
 	}
@@ -1803,12 +1803,12 @@ func devRuntimeWatcherApps(watches []project.DevWatch) []string {
 
 // devRuntimeWatcherApp derives the app from generated runtime watcher names.
 func devRuntimeWatcherApp(watcher string) string {
-	watcher = str.Of(watcher).TrimSpace().String()
+	watcher = str.Of(watcher).Trim().String()
 	switch {
 	case watcher == "Run App":
 		return project.DefaultAppName
 	case strings.HasPrefix(watcher, "Run "):
-		return str.Of(watcher).ChopStart("Run ").TrimSpace().String()
+		return str.Of(watcher).TrimPrefix("Run ").Trim().String()
 	default:
 		return ""
 	}
@@ -1827,7 +1827,7 @@ func devAppColumnWidth(apps []string) int {
 	const maxWidth = 18
 	width := len(project.DefaultAppName)
 	for _, app := range apps {
-		app = str.Of(app).TrimSpace().String()
+		app = str.Of(app).Trim().String()
 		if len(app) > width {
 			width = len(app)
 		}
@@ -1915,7 +1915,7 @@ func devBinaryMagicFunctionScript() string {
 
 // devExecutableArgSuffix returns the original command arguments after the executable path.
 func devExecutableArgSuffix(execCmd string, target string) string {
-	suffix := str.Of(execCmd).TrimSpace().ChopStart(target).String()
+	suffix := str.Of(execCmd).Trim().TrimPrefix(target).String()
 	if suffix == "" {
 		return ""
 	}
@@ -2389,7 +2389,7 @@ func emitWatcherLifecycleSummary(out io.Writer, streamer *devwatchStreamer, watc
 }
 
 func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) string {
-	watcher = str.Of(watcher).TrimSpace().String()
+	watcher = str.Of(watcher).Trim().String()
 	if watcher == "" {
 		return ""
 	}
@@ -2419,7 +2419,7 @@ func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) str
 func formatWatcherLifecycleSummary(watchers []string, state watcherLifecycleState) string {
 	names := make([]string, 0, len(watchers))
 	for _, watcher := range watchers {
-		watcher = str.Of(watcher).TrimSpace().String()
+		watcher = str.Of(watcher).Trim().String()
 		if watcher == "" {
 			continue
 		}

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/goforj/goforj/project"
 )
@@ -86,9 +86,9 @@ func resolveAPIURL(env map[string]string) string {
 }
 
 func resolveSwaggerURL(env map[string]string) string {
-	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).TrimSpace().ToLower().String()
+	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
 	if enabled == "" {
-		enabled = str.Of(envValue(env, "SWAGGER_ENABLED")).TrimSpace().ToLower().String()
+		enabled = str.Of(envValue(env, "SWAGGER_ENABLED")).Trim().ToLower().String()
 	}
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
 		return ""
@@ -102,7 +102,7 @@ func resolveSwaggerURL(env map[string]string) string {
 }
 
 func resolveLighthouseURL(env map[string]string) string {
-	enabled := str.Of(envValue(env, "LIGHTHOUSE_ENABLED")).TrimSpace().ToLower().String()
+	enabled := str.Of(envValue(env, "LIGHTHOUSE_ENABLED")).Trim().ToLower().String()
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
 		return ""
 	}
@@ -168,7 +168,7 @@ func namedResources(env map[string]string, prefix string, excludedKeyPrefixes ..
 		if excluded {
 			continue
 		}
-		name := str.Of(key).ChopStart(prefix + "_").ChopEnd("_DRIVER").String()
+		name := str.Of(key).TrimPrefix(prefix + "_").TrimSuffix("_DRIVER").String()
 		if name != "" {
 			names = append(names, strings.ToLower(name))
 		}

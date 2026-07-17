@@ -9,7 +9,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
 	"github.com/goforj/storage/driver/s3storage"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // StorageObjectLister adapts a GoForj storage disk to the backup inventory contract.
@@ -32,7 +32,7 @@ func (l StorageObjectLister) ListObjects(ctx context.Context, prefix string) ([]
 		ctx = context.Background()
 	}
 	objects := []ObjectInfo{}
-	err := l.Disk.WithContext(ctx).Walk(str.Of(prefix).TrimSpace().Trim("/").String(), func(entry storage.Entry) error {
+	err := l.Disk.WithContext(ctx).Walk(str.Of(prefix).Trim().TrimChars("/").String(), func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
 		}
@@ -71,7 +71,7 @@ func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
 // ConfiguredBackupRepository opens the configured S3 backup repository when one is enabled.
 func ConfiguredBackupRepository() (BackupRepository, error) {
 	backupScope := env.WithPrefix("APP_BACKUP")
-	driver := str.Of(backupScope.Get("DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(backupScope.Get("DRIVER", "")).Trim().ToLower().String()
 	if driver == "" || driver == "local" {
 		return nil, nil
 	}

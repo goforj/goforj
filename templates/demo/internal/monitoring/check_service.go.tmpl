@@ -17,7 +17,7 @@ import (
 
 	"github.com/goforj/httpx"
 	"github.com/goforj/null/v6"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -116,7 +116,7 @@ func (s *CheckService) TriggerPushMonitor(ctx context.Context) error {
 	}
 	var m *models.Monitor
 	for i := range monitors {
-		if str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String() == "push" {
+		if str.Of(monitors[i].MonitorType).Trim().ToLower().String() == "push" {
 			m = &monitors[i]
 			break
 		}
@@ -125,7 +125,7 @@ func (s *CheckService) TriggerPushMonitor(ctx context.Context) error {
 	if m == nil || monitorID == "" || !m.Enabled {
 		return nil
 	}
-	if str.Of(m.MonitorType).TrimSpace().ToLower().String() != "push" {
+	if str.Of(m.MonitorType).Trim().ToLower().String() != "push" {
 		return nil
 	}
 	return s.writeCheckWithPolicy(ctx, monitorID, m, checkResult{
@@ -217,7 +217,7 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 	if s.logger != nil {
 		s.logger.Debug().
 			Str("monitor_id", monitorID).
-			Str("monitor_type", str.Of(m.MonitorType).ToLower().TrimSpace().String()).
+			Str("monitor_type", str.Of(m.MonitorType).ToLower().Trim().String()).
 			Int("timeout_ms", int(timeout/time.Millisecond)).
 			Int("attempts_planned", attemptsPlanned).
 			Msg("monitor check started")
@@ -343,7 +343,7 @@ func (s *CheckService) logCheckCompletion(
 			if m == nil {
 				return ""
 			}
-			return str.Of(m.MonitorType).ToLower().TrimSpace().String()
+			return str.Of(m.MonitorType).ToLower().Trim().String()
 		}()).
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("timeout_ms", int(timeout/time.Millisecond)).
@@ -958,7 +958,7 @@ func (s *CheckService) runDockerCheck(ctx context.Context, target string, timeou
 	}
 
 	if inspect.State.Health != nil {
-		switch str.Of(inspect.State.Health.Status).TrimSpace().ToLower().String() {
+		switch str.Of(inspect.State.Health.Status).Trim().ToLower().String() {
 		case "healthy":
 			return checkResult{status: "up", statusCode: res.StatusCode, durationMs: duration}
 		case "unhealthy":
@@ -986,18 +986,18 @@ func (s *CheckService) runDockerCheck(ctx context.Context, target string, timeou
 }
 
 func statusFromError(errText string) string {
-	if str.Of(errText).TrimSpace().String() == "" {
+	if str.Of(errText).Trim().String() == "" {
 		return "up"
 	}
 	return "down"
 }
 
 func monitorURLTarget(m *models.Monitor) string {
-	targetURL := str.Of(m.TargetURL.ValueOrZero()).TrimSpace().String()
+	targetURL := str.Of(m.TargetURL.ValueOrZero()).Trim().String()
 	if targetURL != "" {
 		return targetURL
 	}
-	return str.Of(m.Target).TrimSpace().String()
+	return str.Of(m.Target).Trim().String()
 }
 
 func monitorTCPAddress(m *models.Monitor) string {
@@ -1499,7 +1499,7 @@ func classifyCheckError(kind string, msg string) string {
 }
 
 func humanizePingError(msg string) string {
-	lower := str.Of(msg).TrimSpace().ToLower().String()
+	lower := str.Of(msg).Trim().ToLower().String()
 	switch {
 	case lower == "":
 		return "ping check failed"
@@ -1696,7 +1696,7 @@ func (s *CheckService) buildPolicyBatchContext(execCtx context.Context, executio
 			state := monitorPolicyState{}
 			policyCtx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
 			for _, row := range rows {
-				status := str.Of(row.Status).TrimSpace().ToLower().String()
+				status := str.Of(row.Status).Trim().ToLower().String()
 				if status == "paused" || status == "unknown" || status == "" || status == "pending" {
 					continue
 				}
@@ -1749,7 +1749,7 @@ func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
 	latestTerminal := models.MonitorCheck{}
 	hasTerminal := false
 	for _, row := range rows {
-		status := str.Of(row.Status).TrimSpace().ToLower().String()
+		status := str.Of(row.Status).Trim().ToLower().String()
 		if status == "pending" || status == "unknown" || status == "" {
 			continue
 		}
@@ -1757,14 +1757,14 @@ func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
 		hasTerminal = true
 		break
 	}
-	status := str.Of(latest.Status).TrimSpace().ToLower().String()
+	status := str.Of(latest.Status).Trim().ToLower().String()
 	if status != "pending" {
 		return status
 	}
 	if !hasTerminal {
 		return status
 	}
-	terminalStatus := str.Of(latestTerminal.Status).TrimSpace().ToLower().String()
+	terminalStatus := str.Of(latestTerminal.Status).Trim().ToLower().String()
 	if terminalStatus == "down" {
 		return terminalStatus
 	}
@@ -1802,9 +1802,9 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 	}
 	prevDisplayStatus := ""
 	if batchCtx != nil && batchCtx.displayStatus != nil {
-		prevDisplayStatus = str.Of(batchCtx.displayStatus[monitorID]).TrimSpace().ToLower().String()
+		prevDisplayStatus = str.Of(batchCtx.displayStatus[monitorID]).Trim().ToLower().String()
 	}
-	currentStatus := str.Of(result.status).TrimSpace().ToLower().String()
+	currentStatus := str.Of(result.status).Trim().ToLower().String()
 	shouldPublishStatusChanged := false
 	switch currentStatus {
 	case "down":
@@ -2031,7 +2031,7 @@ func (s *CheckService) consecutiveStatusCountFromBatch(batchCtx *policyBatchCont
 	if !ok {
 		return 0
 	}
-	switch str.Of(target).TrimSpace().ToLower().String() {
+	switch str.Of(target).Trim().ToLower().String() {
 	case "down":
 		return state.downStreak
 	case "up":
@@ -2119,7 +2119,7 @@ func (s *CheckService) consecutiveStatusCount(ctx context.Context, monitorID, ta
 	}
 	count := 0
 	for _, row := range rows {
-		state := str.Of(row.Status).TrimSpace().ToLower().String()
+		state := str.Of(row.Status).Trim().ToLower().String()
 		if state == "paused" || state == "unknown" || state == "" || state == "pending" {
 			continue
 		}

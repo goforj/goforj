@@ -14,7 +14,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/queues"
 	"github.com/goforj/queue"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // Worker owns the generated Queue instances for one Jobs runtime.
@@ -228,5 +228,5 @@ func managedQueueWorkerAllocations(instances []queues.Instance) []string {
 
 // normalizeQueueResourceName applies the same case-insensitive lookup convention as generated accessors.
 func normalizeQueueResourceName(name string) string {
-	return str.Of(name).TrimSpace().ToLower().String()
+	return str.Of(name).Trim().ToLower().String()
 }

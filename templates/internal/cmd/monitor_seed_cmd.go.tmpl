@@ -20,7 +20,7 @@ import (
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
 		"github.com/goforj/null/v6"
 		{{- end }}
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/models"
@@ -92,10 +92,10 @@ func (c *MonitorSeedCmd) Run() error {
 		c.ValidateWorkers = 100
 	}
 
-	sourceToUse := str.Of(c.Source).TrimSpace().String()
+	sourceToUse := str.Of(c.Source).Trim().String()
 	countToUse := c.Count
 	hostLimitToUse := c.resolveHostLimit(countToUse)
-	profileApplied := str.Of(c.Profile).TrimSpace().String()
+	profileApplied := str.Of(c.Profile).Trim().String()
 	if profileApplied != "" {
 		nextSource, nextCount, err := resolveSeedProfile(profileApplied, c.Count)
 		if err != nil {
@@ -356,7 +356,7 @@ func checkTargetReachable(target string, timeout time.Duration) bool {
 }
 
 func resolveSeedProfile(profile string, requestedCount int) (string, int, error) {
-	p := str.Of(profile).TrimSpace().ToLower().String()
+	p := str.Of(profile).Trim().ToLower().String()
 	switch p {
 	case "popular", "brands":
 		// Popular profile is a curated fixed-size set by default.
@@ -454,7 +454,7 @@ var monitorSeedPublicCSVSources = []string{
 }
 
 func (c *MonitorSeedCmd) resolveDomains(source string, count int) ([]string, string, error) {
-	raw := str.Of(source).TrimSpace().String()
+	raw := str.Of(source).Trim().String()
 	if strings.EqualFold(raw, "popular") || strings.EqualFold(raw, "brands") {
 		out := make([]string, 0, count)
 		for len(out) < count {
@@ -489,7 +489,7 @@ func (c *MonitorSeedCmd) resolveDomains(source string, count int) ([]string, str
 		parts := strings.Split(raw, ",")
 		out := make([]string, 0, len(parts))
 		for _, part := range parts {
-			item := str.Of(part).TrimSpace().String()
+			item := str.Of(part).Trim().String()
 			if item != "" {
 				out = append(out, item)
 			}
@@ -553,7 +553,7 @@ func fetchCSVSource(sourceURL string, limit int) ([]string, error) {
 }
 
 func parseCSVOrZip(content []byte, sourceURL string, limit int) ([]string, error) {
-	lowerURL := str.Of(sourceURL).TrimSpace().ToLower().String()
+	lowerURL := str.Of(sourceURL).Trim().ToLower().String()
 	if strings.HasSuffix(lowerURL, ".zip") || looksLikeZip(content) {
 		return parseCSVFromZip(content, limit)
 	}
@@ -574,7 +574,7 @@ func parseCSVFromZip(content []byte, limit int) ([]string, error) {
 		return nil, err
 	}
 	for _, file := range zr.File {
-		name := str.Of(file.Name).TrimSpace().ToLower().String()
+		name := str.Of(file.Name).Trim().ToLower().String()
 		if !strings.HasSuffix(name, ".csv") {
 			continue
 		}
@@ -648,13 +648,13 @@ func parseDomainFromRecord(record []string) string {
 		return ""
 	}
 	for _, item := range record {
-		part := str.Of(item).TrimSpace().ToLower().String()
+		part := str.Of(item).Trim().ToLower().String()
 		if isLikelyDomain(part) {
 			return part
 		}
 	}
 	for _, item := range record {
-		part := str.Of(item).TrimSpace().String()
+		part := str.Of(item).Trim().String()
 		if part == "" {
 			continue
 		}
@@ -713,7 +713,7 @@ func expandFallback(count int) []string {
 }
 
 func normalizeTarget(raw string) string {
-	trimmed := str.Of(raw).TrimSpace().String()
+	trimmed := str.Of(raw).Trim().String()
 	if trimmed == "" {
 		return ""
 	}
@@ -724,7 +724,7 @@ func normalizeTarget(raw string) string {
 	if err != nil {
 		return ""
 	}
-	host := str.Of(parsed.Hostname()).TrimSpace().ToLower().String()
+	host := str.Of(parsed.Hostname()).Trim().ToLower().String()
 	if host == "" {
 		return ""
 	}
@@ -738,20 +738,20 @@ func buildMonitorName(target string, position int) string {
 	if canonicalName, ok := monitorSeedCanonicalNames[target]; ok {
 		return canonicalName
 	}
-	host := str.Of(target).ChopStart("https://").ChopStart("http://").String()
+	host := str.Of(target).TrimPrefix("https://").TrimPrefix("http://").String()
 	if host == "" {
 		return fmt.Sprintf("Seed Monitor %d", position)
 	}
 	parts := strings.Split(host, ".")
-	if len(parts) > 0 && str.Of(parts[0]).TrimSpace().String() != "" {
-		head := str.Of(parts[0]).TrimSpace().String()
+	if len(parts) > 0 && str.Of(parts[0]).Trim().String() != "" {
+		head := str.Of(parts[0]).Trim().String()
 		return formatSeedMonitorHead(head)
 	}
 	return fmt.Sprintf("Seed Monitor %d", position)
 }
 
 func formatSeedMonitorHead(head string) string {
-	clean := str.Of(head).TrimSpace().ToLower().String()
+	clean := str.Of(head).Trim().ToLower().String()
 	if clean == "" {
 		return head
 	}

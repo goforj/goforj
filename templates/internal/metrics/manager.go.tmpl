@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	gmetrics "github.com/goforj/metrics"
 {{- if .ProjectComponents.Jobs }}
 	"github.com/goforj/queue"
@@ -1493,7 +1493,7 @@ func shouldTrackHTTPRequest(r web.Context) bool {
 }
 
 func metricSourceLabel(source string) string {
-	source = str.Of(source).ToLower().TrimSpace().String()
+	source = str.Of(source).ToLower().Trim().String()
 	switch source {
 	case "http", "scheduler", "jobs", "cli", "lighthouse", "startup", "app":
 		return source
@@ -1503,7 +1503,7 @@ func metricSourceLabel(source string) string {
 }
 
 func metricAppLabel(target string) string {
-	target = str.Of(target).ToLower().TrimSpace().String()
+	target = str.Of(target).ToLower().Trim().String()
 	if target == "" {
 		return "app"
 	}
@@ -1528,7 +1528,7 @@ func httpMethodLabel(r web.Context) string {
 	if r == nil {
 		return "UNKNOWN"
 	}
-	method := str.Of(r.Method()).TrimSpace().ToUpper().String()
+	method := str.Of(r.Method()).Trim().ToUpper().String()
 	if method == "" {
 		return "UNKNOWN"
 	}
@@ -1555,7 +1555,7 @@ func httpRouteLabel(r web.Context) string {
 
 {{- if .ProjectComponents.Auth }}
 func authFlowLabel(flow string) string {
-	flow = str.Of(flow).ToLower().TrimSpace().String()
+	flow = str.Of(flow).ToLower().Trim().String()
 	if flow == "" {
 		return "unknown"
 	}
@@ -1563,16 +1563,16 @@ func authFlowLabel(flow string) string {
 }
 
 func authStatusLabel(status string) string {
-	switch str.Of(status).ToLower().TrimSpace().String() {
+	switch str.Of(status).ToLower().Trim().String() {
 	case "succeeded", "unauthorized", "invalid", "rate_limited", "locked", "conflict", "not_found", "noop", "failed":
-		return str.Of(status).ToLower().TrimSpace().String()
+		return str.Of(status).ToLower().Trim().String()
 	default:
 		return "failed"
 	}
 }
 
 func authReasonLabel(reason string) string {
-	reason = str.Of(reason).ToLower().TrimSpace().String()
+	reason = str.Of(reason).ToLower().Trim().String()
 	if reason == "" {
 		return "na"
 	}
@@ -1580,7 +1580,7 @@ func authReasonLabel(reason string) string {
 }
 
 func authProviderLabel(provider string) string {
-	provider = str.Of(provider).ToLower().TrimSpace().String()
+	provider = str.Of(provider).ToLower().Trim().String()
 	if provider == "" {
 		return "na"
 	}
@@ -1632,7 +1632,7 @@ func queueJobLabel(name string) string {
 
 // queueDriverLabel normalizes absent Queue drivers without introducing an empty label.
 func queueDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}
@@ -1671,7 +1671,7 @@ func schedulerJobLabel(name string) string {
 }
 
 func schedulerTargetKindLabel(kind string) string {
-	kind = str.Of(kind).ToLower().TrimSpace().String()
+	kind = str.Of(kind).ToLower().Trim().String()
 	if kind == "" {
 		return "unknown"
 	}
@@ -1679,7 +1679,7 @@ func schedulerTargetKindLabel(kind string) string {
 }
 
 func schedulerReasonLabel(reason string) string {
-	reason = str.Of(reason).ToLower().TrimSpace().String()
+	reason = str.Of(reason).ToLower().Trim().String()
 	if reason == "" {
 		return "na"
 	}
@@ -1723,7 +1723,7 @@ func databaseConnectionLabel(name string) string {
 }
 
 func databaseDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}
@@ -1731,7 +1731,7 @@ func databaseDriverLabel(driver string) string {
 }
 
 func databaseOperationLabel(operation string) string {
-	operation = str.Of(operation).ToLower().TrimSpace().String()
+	operation = str.Of(operation).ToLower().Trim().String()
 	switch operation {
 	case "query", "create", "update", "delete", "other":
 		return operation
@@ -1741,7 +1741,7 @@ func databaseOperationLabel(operation string) string {
 }
 
 func databaseTargetLabel(target string) string {
-	target = str.Of(target).ToLower().TrimSpace().String()
+	target = str.Of(target).ToLower().Trim().String()
 	if target == "" {
 		return "unknown"
 	}
@@ -1749,7 +1749,7 @@ func databaseTargetLabel(target string) string {
 }
 
 func databaseStatusLabel(status string) string {
-	status = str.Of(status).ToLower().TrimSpace().String()
+	status = str.Of(status).ToLower().Trim().String()
 	switch status {
 	case "ok", "error", "not_found":
 		return status
@@ -1759,7 +1759,7 @@ func databaseStatusLabel(status string) string {
 }
 
 func databaseFingerprintLabel(fingerprint string) string {
-	fingerprint = str.Of(fingerprint).TrimSpace().ToLower().String()
+	fingerprint = str.Of(fingerprint).Trim().ToLower().String()
 	if fingerprint == "" {
 		return "unknown"
 	}
@@ -1822,7 +1822,7 @@ func storageDiskLabel(name string) string {
 
 // storageDriverLabel normalizes absent Storage drivers without introducing an empty label.
 func storageDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}
@@ -1831,7 +1831,7 @@ func storageDriverLabel(driver string) string {
 
 // storageOperationLabel normalizes absent Storage operations into a bounded fallback.
 func storageOperationLabel(operation string) string {
-	operation = str.Of(operation).ToLower().TrimSpace().String()
+	operation = str.Of(operation).ToLower().Trim().String()
 	if operation == "" {
 		return "other"
 	}
@@ -1882,7 +1882,7 @@ func storageStatusLabel(err error) string {
 {{- end }}
 
 func lighthouseInspectReasonLabel(value string) string {
-	normalized := str.Of(value).ToLower().TrimSpace().String()
+	normalized := str.Of(value).ToLower().Trim().String()
 	switch normalized {
 	case "", "ok":
 		return "ok"
@@ -1940,7 +1940,7 @@ func eventBusLabel(name string) string {
 
 // eventDriverLabel normalizes absent Events drivers without introducing an empty label.
 func eventDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}
@@ -2080,7 +2080,7 @@ func eventDurationBounds() []time.Duration {
 {{- if .ProjectComponents.Mail }}
 // mailerNameLabel supplies a stable label for the default Mail sender.
 func mailerNameLabel(name string) string {
-	name = str.Of(name).ToLower().TrimSpace().String()
+	name = str.Of(name).ToLower().Trim().String()
 	if name == "" {
 		return "default"
 	}
@@ -2089,7 +2089,7 @@ func mailerNameLabel(name string) string {
 
 // mailDriverLabel normalizes absent Mail drivers without introducing an empty label.
 func mailDriverLabel(driver string) string {
-	driver = str.Of(driver).ToLower().TrimSpace().String()
+	driver = str.Of(driver).ToLower().Trim().String()
 	if driver == "" {
 		return "unknown"
 	}

@@ -9,7 +9,7 @@ import (
 
 	"github.com/goforj/cache"
 	"github.com/goforj/crypt"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
@@ -163,7 +163,7 @@ func (r *ChannelRepo) ListSummaries() ([]ChannelSummary, error) {
 	for i := range rows {
 		cfg, _ := decodeStringMap(rows[i].ConfigJSON)
 		secretsPresent := []string{}
-		hasSecrets := str.Of(rows[i].SecretEnc).TrimSpace().String() != ""
+		hasSecrets := str.Of(rows[i].SecretEnc).Trim().String() != ""
 		if hasSecrets {
 			secrets, _ := decryptSecretMap(rows[i].SecretEnc)
 			for key := range secrets {
@@ -189,7 +189,7 @@ func (r *ChannelRepo) Upsert(ctx context.Context, input UpsertChannelInput) (Cha
 	if err != nil {
 		return ChannelSummary{}, err
 	}
-	name := str.Of(input.Name).TrimSpace().String()
+	name := str.Of(input.Name).Trim().String()
 	provider := NormalizeProviderID(input.Provider)
 	if name == "" {
 		return ChannelSummary{}, errors.New("name is required")
@@ -208,7 +208,7 @@ func (r *ChannelRepo) Upsert(ctx context.Context, input UpsertChannelInput) (Cha
 
 	secretEnc := existing.SecretEnc
 	mergedSecrets := map[string]string{}
-	if str.Of(existing.SecretEnc).TrimSpace().String() != "" {
+	if str.Of(existing.SecretEnc).Trim().String() != "" {
 		existingSecrets, decErr := decryptSecretMap(existing.SecretEnc)
 		if decErr != nil {
 			return ChannelSummary{}, decErr
@@ -217,11 +217,11 @@ func (r *ChannelRepo) Upsert(ctx context.Context, input UpsertChannelInput) (Cha
 	}
 	if input.Secrets != nil {
 		for key, value := range input.Secrets {
-			k := str.Of(key).TrimSpace().String()
+			k := str.Of(key).Trim().String()
 			if k == "" {
 				continue
 			}
-			v := str.Of(value).TrimSpace().String()
+			v := str.Of(value).Trim().String()
 			if v == "" {
 				delete(mergedSecrets, k)
 				continue
@@ -348,7 +348,7 @@ func runtimeChannelsFromRows(rows []Channel) []RuntimeChannel {
 			cfg = map[string]string{}
 		}
 		secrets := map[string]string{}
-		if str.Of(rows[i].SecretEnc).TrimSpace().String() != "" {
+		if str.Of(rows[i].SecretEnc).Trim().String() != "" {
 			dec, decErr := decryptSecretMap(rows[i].SecretEnc)
 			if decErr == nil {
 				secrets = dec
@@ -386,7 +386,7 @@ func encodeStringMap(values map[string]string) (string, error) {
 }
 
 func decodeStringMap(raw string) (map[string]string, error) {
-	trimmed := str.Of(raw).TrimSpace().String()
+	trimmed := str.Of(raw).Trim().String()
 	if trimmed == "" {
 		return map[string]string{}, nil
 	}
@@ -413,7 +413,7 @@ func encryptSecretMap(values map[string]string) (string, error) {
 }
 
 func decryptSecretMap(raw string) (map[string]string, error) {
-	trimmed := str.Of(raw).TrimSpace().String()
+	trimmed := str.Of(raw).Trim().String()
 	if trimmed == "" {
 		return map[string]string{}, nil
 	}

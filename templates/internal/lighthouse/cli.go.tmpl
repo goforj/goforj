@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // CLIResult captures the output from a CLI invocation.
@@ -79,7 +79,7 @@ func ListCLICommands(ctx context.Context) ([]CommandInfo, error) {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "› ") {
-			group = str.Of(trimmed).ChopStart("› ").TrimSpace().String()
+			group = str.Of(trimmed).TrimPrefix("› ").Trim().String()
 			continue
 		}
 		if strings.HasPrefix(trimmed, "Usage:") || strings.HasPrefix(trimmed, "Options:") {

@@ -1,6 +1,6 @@
 package project
 
-import "github.com/goforj/str"
+import "github.com/goforj/str/v2"
 
 // HelpFormat identifies the generated Kong help formatter used by an app.
 type HelpFormat string
@@ -37,7 +37,7 @@ func DefaultHelpFormat() HelpFormat {
 
 // NormalizeHelpFormat maps empty or unknown values to the framework formatter.
 func NormalizeHelpFormat(value HelpFormat) HelpFormat {
-	switch HelpFormat(str.Of(string(value)).TrimSpace().ToLower().String()) {
+	switch HelpFormat(str.Of(string(value)).Trim().ToLower().String()) {
 	case HelpFormatExternalCLI:
 		return HelpFormatExternalCLI
 	case HelpFormatGuided:

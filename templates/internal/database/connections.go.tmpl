@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -116,7 +116,7 @@ func (c *Connections) get(name string) (*gorm.DB, error) {
 
 // defaultConnectionName returns the default connection name from the environment.
 func defaultConnectionName() string {
-	if name := str.Of(env.WithPrefix("DB").Get("DEFAULT", "")).TrimSpace().ToLower().String(); name != "" {
+	if name := str.Of(env.WithPrefix("DB").Get("DEFAULT", "")).Trim().ToLower().String(); name != "" {
 		return name
 	}
 	return "default"
@@ -127,7 +127,7 @@ func dbScope(name string) env.Scope {
 	if name == "default" {
 		return scope
 	}
-	return scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	return scope.Child(str.Of(name).Snake().ToUpper().String())
 }
 
 // envKey returns the environment key for the given connection name and suffix.
@@ -157,12 +157,12 @@ func databaseEnvOr(name, driver string) string {
 
 // openConnection opens a new database connection for the name.
 func (c *Connections) openConnection(name string) (*gorm.DB, error) {
-	driver := str.Of(envOr(name, "DRIVER")).TrimSpace().ToLower().String()
+	driver := str.Of(envOr(name, "DRIVER")).Trim().ToLower().String()
 	if driver == "" {
 		driver = "sqlite"
 	}
 
-	dsn := str.Of(envOr(name, "DSN")).TrimSpace().String()
+	dsn := str.Of(envOr(name, "DSN")).Trim().String()
 	if dsn == "" {
 		var err error
 		dsn, err = buildDSN(name, driver)
@@ -172,7 +172,7 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	}
 
 	logMode := gormLogger.Silent
-	if str.Of(envOr(name, "QUERY_LOGGING")).TrimSpace().ToLower().String() == "true" {
+	if str.Of(envOr(name, "QUERY_LOGGING")).Trim().ToLower().String() == "true" {
 		logMode = gormLogger.Info
 	}
 
@@ -300,7 +300,7 @@ func buildDSN(name, driver string) (string, error) {
 
 // defaultSQLiteDatabase returns the local SQLite path used when DB env is absent.
 func defaultSQLiteDatabase(name string) string {
-	name = str.Of(name).TrimSpace().ToLower().String()
+	name = str.Of(name).Trim().ToLower().String()
 	if name == "" || name == "default" {
 		return filepath.Join("_data", "sqlite", "app.db")
 	}

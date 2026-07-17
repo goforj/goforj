@@ -4,7 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"go/format"
 	"os"
 	"path/filepath"
@@ -87,10 +87,10 @@ type scheduleTarget struct {
 }
 
 func (c *ScheduleCmd) target() (scheduleTarget, error) {
-	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
+	if str.Of(c.OutputDir).Trim().IsBlank() {
 		c.OutputDir = defaultScheduleOutputDir
 	}
-	interval := str.Of(c.Every).TrimSpace().String()
+	interval := str.Of(c.Every).Trim().String()
 	if interval == "" {
 		interval = "1h"
 	}
@@ -98,11 +98,11 @@ func (c *ScheduleCmd) target() (scheduleTarget, error) {
 		return scheduleTarget{}, fmt.Errorf("invalid --every duration %q: %w", interval, err)
 	}
 
-	rawName := str.Of(c.Name).TrimSpace().String()
+	rawName := str.Of(c.Name).Trim().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
 	if len(parts) > 1 {
-		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		action := str.Of(parts[len(parts)-1]).Trim().String()
 		if action != "" && isDefaultScheduleOutputDir(c.OutputDir) {
 			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
@@ -112,7 +112,7 @@ func (c *ScheduleCmd) target() (scheduleTarget, error) {
 	}
 
 	structName := ensureScheduleSuffix(str.Of(structBase).Pascal().String())
-	fileName := str.Of(structName).Snake("_").String() + ".go"
+	fileName := str.Of(structName).Snake().String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 	scheduleName := scheduleNameFromParts(parts, structName)
 
@@ -181,7 +181,7 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
-	paramName := str.Of(structName).ChopEnd("Schedule").Camel().String() + "Schedule"
+	paramName := str.Of(structName).TrimSuffix("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
 	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
@@ -263,7 +263,7 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
-	paramName := str.Of(structName).ChopEnd("Schedule").Camel().String() + "Schedule"
+	paramName := str.Of(structName).TrimSuffix("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
 	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
@@ -317,11 +317,11 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 
 // ensureScheduleSuffix appends Schedule when name does not already use that suffix.
 func ensureScheduleSuffix(name string) string {
-	clean := str.Of(name).TrimSpace()
+	clean := str.Of(name).Trim()
 	if clean.IsBlank() {
 		return "ExampleSchedule"
 	}
-	if clean.EndsWith("Schedule") {
+	if clean.HasSuffix("Schedule") {
 		return clean.String()
 	}
 	return clean.String() + "Schedule"
@@ -335,18 +335,18 @@ func isDefaultScheduleOutputDir(outputDir string) bool {
 // scheduleNameFromParts converts a grouped generator name into the operational schedule name.
 func scheduleNameFromParts(parts []string, structName string) string {
 	if len(parts) == 0 {
-		return str.Of(structName).ChopEnd("Schedule").ToLower().String()
+		return str.Of(structName).TrimSuffix("Schedule").ToLower().String()
 	}
 	names := make([]string, 0, len(parts))
 	for _, part := range parts {
-		clean := str.Of(part).TrimSpace().Kebab().String()
+		clean := str.Of(part).Trim().Kebab().String()
 		if clean == "" {
 			continue
 		}
 		names = append(names, clean)
 	}
 	if len(names) == 0 {
-		return str.Of(structName).ChopEnd("Schedule").ToLower().String()
+		return str.Of(structName).TrimSuffix("Schedule").ToLower().String()
 	}
 	return strings.Join(names, ":")
 }
@@ -359,7 +359,7 @@ func getScheduleGoModuleName() (string, error) {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "module ") {
-			return str.Of(line).ChopStart("module ").TrimSpace().String(), nil
+			return str.Of(line).TrimPrefix("module ").Trim().String(), nil
 		}
 	}
 	return "", fmt.Errorf("module name not found in go.mod")

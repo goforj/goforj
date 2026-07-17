@@ -13,7 +13,7 @@ import (
 	"github.com/goforj/cache"
 {{- end }}
 	"github.com/goforj/queue"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 {{- if .ProjectComponents.Storage }}
 	"github.com/goforj/storage"
 {{- end }}
@@ -336,7 +336,7 @@ func runBenchmark(
 }
 
 func (r *benchmarkRunner) suiteName(suite string) string {
-	value := str.Of(suite).ToLower().TrimSpace().String()
+	value := str.Of(suite).ToLower().Trim().String()
 	if value == "" {
 {{- if .ProjectComponents.Cache }}
 		if r.caches != nil {

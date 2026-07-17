@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 var (
@@ -51,7 +51,8 @@ func normalizeDBQueryFingerprint(sql string) string {
 		}
 		return "VALUES (?)"
 	})
-	sql = str.Of(sql).ToLower().Squish().String()
+	sql = strings.ToLower(sql)
+	sql = strings.Join(strings.Fields(sql), " ")
 	return sql
 }
 
@@ -71,7 +72,8 @@ func normalizeDBInspectQuery(sql string) string {
 		}
 		return "VALUES (?)"
 	})
-	sql = str.Of(sql).ToLower().Squish().String()
+	sql = strings.ToLower(sql)
+	sql = strings.Join(strings.Fields(sql), " ")
 	return sql
 }
 
@@ -260,7 +262,7 @@ func consumeDBBacktickIdentifier(sql string, start int) (string, int) {
 		i++
 	}
 	if i >= len(sql) {
-		return str.Of(sql[start:]).TrimSpace().ToLower().String(), len(sql)
+		return str.Of(sql[start:]).Trim().ToLower().String(), len(sql)
 	}
 	return strings.ToLower(sql[start : i+1]), i + 1
 }

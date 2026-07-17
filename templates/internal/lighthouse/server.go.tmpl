@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"github.com/goforj/web"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -47,7 +47,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		return
 	}
 	group := router.Group(lighthouseRouteBase)
-	baseURL := str.Of(os.Getenv("APP_URL")).TrimSpace().TrimRight("/").String()
+	baseURL := strings.TrimRight(str.Of(os.Getenv("APP_URL")).Trim().String(), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
@@ -338,7 +338,7 @@ func authorizeWebRequest(r web.Context, token string) bool {
 	}
 	auth := r.Header("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
-		return str.Of(auth).ChopStart("Bearer ").TrimSpace().String() == token
+		return str.Of(auth).TrimPrefix("Bearer ").Trim().String() == token
 	}
 	return false
 }
@@ -351,7 +351,7 @@ func authorizeWebBearerToken(r web.Context, token string) bool {
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return false
 	}
-	return str.Of(auth).ChopStart("Bearer ").TrimSpace().String() == token
+	return str.Of(auth).TrimPrefix("Bearer ").Trim().String() == token
 }
 
 func storeLighthouseDevSession(code string, expiresAt time.Time) {
@@ -389,7 +389,7 @@ func logLighthouseWebAuthFailure(r web.Context, expectedToken string) {
 		return
 	}
 	remote := strings.TrimSpace(r.RealIP())
-	bearer := str.Of(r.Header("Authorization")).ChopStart("Bearer ").TrimSpace().String()
+	bearer := str.Of(r.Header("Authorization")).TrimPrefix("Bearer ").Trim().String()
 	hasCookie := false
 	if cookie, err := r.Cookie(lighthouseAuthCookie); err == nil && cookie != nil && strings.TrimSpace(cookie.Value) != "" {
 		hasCookie = true

@@ -10,7 +10,7 @@ import (
 
 	"{{.GoModuleName}}/internal/metrics"
 	"{{.GoModuleName}}/internal/inspects"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -254,11 +254,11 @@ func firstDBIdentifierAfterKeyword(sql, keyword string) string {
 
 func sanitizeDBIdentifier(raw string) string {
 	raw = str.Of(raw).
-		TrimSpace().
-		Trim("`\"'()").
-		ChopEnd(";").
-		ChopEnd(",").
-		ChopStart(".").
+		Trim().
+		TrimChars("`\"'()").
+		TrimSuffix(";").
+		TrimSuffix(",").
+		TrimPrefix(".").
 		String()
 	if raw == "" {
 		return ""
@@ -272,7 +272,7 @@ func sanitizeDBIdentifier(raw string) string {
 	if idx := strings.Index(raw, "."); idx >= 0 {
 		raw = raw[idx+1:]
 	}
-	raw = str.Of(raw).Trim("`\"'()").TrimSpace().ToLower().String()
+	raw = str.Of(raw).TrimChars("`\"'()").Trim().ToLower().String()
 	if raw == "" {
 		return ""
 	}

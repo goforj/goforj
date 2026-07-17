@@ -12,7 +12,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/httpx"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/runtime"
 )
@@ -188,7 +188,7 @@ func (c *HealthCmd) renderCheckStatus(status string) string {
 }
 
 func (c *HealthCmd) statusSymbol(status string, statusCode int) string {
-	switch str.Of(status).TrimSpace().ToLower().String() {
+	switch str.Of(status).Trim().ToLower().String() {
 	case "ok", "ready":
 		return "✓"
 	case "failed", "not_ready":
@@ -204,7 +204,7 @@ func (c *HealthCmd) statusSymbol(status string, statusCode int) string {
 }
 
 func (c *HealthCmd) statusColor(status string, statusCode int) string {
-	switch str.Of(status).TrimSpace().ToLower().String() {
+	switch str.Of(status).Trim().ToLower().String() {
 	case "ok", "ready":
 		return console.ColorGreen
 	case "failed", "not_ready":
@@ -316,7 +316,7 @@ func computeHealthReportColumnWidths(rows []healthReportRow) healthReportColumnW
 }
 
 func healthSectionTitle(value string) string {
-	switch str.Of(value).TrimSpace().ToLower().String() {
+	switch str.Of(value).Trim().ToLower().String() {
 	case "cache", "caches":
 		return "Caches"
 	case "db", "database", "databases":

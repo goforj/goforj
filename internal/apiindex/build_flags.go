@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // BuildTagsFromArgs extracts the final tag selection and rejects source modes indexing cannot mirror safely.
@@ -76,7 +76,7 @@ func ValidateGOFLAGS(goFlags string) error {
 // parseBuildTags normalizes the comma- and whitespace-separated syntax accepted by the Go command.
 func parseBuildTags(value string) []string {
 	seen := map[string]struct{}{}
-	for _, tag := range strings.FieldsFunc(str.Of(value).TrimSpace().Trim("'\"").String(), func(character rune) bool {
+	for _, tag := range strings.FieldsFunc(str.Of(value).Trim().TrimChars("'\"").String(), func(character rune) bool {
 		return character == ',' || character == ' ' || character == '\t'
 	}) {
 		if tag = strings.TrimSpace(tag); tag != "" {

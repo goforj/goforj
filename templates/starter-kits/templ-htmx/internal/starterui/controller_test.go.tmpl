@@ -19,7 +19,7 @@ import (
 
 {{- if and .Components.Auth .Components.HasDatabase }}
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 {{- end }}
 	"github.com/goforj/web/webtest"
 {{- if and .Components.Auth .Components.HasDatabase }}

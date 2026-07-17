@@ -17,7 +17,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/console"
@@ -412,7 +412,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				localEnvTemplate := ".env.local.tmpl"
 				missingEnvTemplates := make([]string, 0, len(envTemplates))
 				for _, tmpl := range envTemplates {
-					name := str.Of(tmpl).ChopEnd(".tmpl").String()
+					name := str.Of(tmpl).TrimSuffix(".tmpl").String()
 					if exists, err := p.workspace.exists(name); err != nil {
 						return err
 					} else if exists {
@@ -1992,7 +1992,7 @@ func isEnvSectionHeader(line string, appName string) bool {
 	if !strings.HasPrefix(trimmed, "#") {
 		return false
 	}
-	title := str.Of(trimmed).ChopStart("#").TrimSpace().String()
+	title := str.Of(trimmed).TrimPrefix("#").Trim().String()
 	return strings.EqualFold(title, envSectionTitle(appName)) || strings.EqualFold(title, appName)
 }
 
@@ -2093,14 +2093,14 @@ func appendDriver(value string, driver string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, part := range strings.Split(value, ",") {
-		normalized := str.Of(part).TrimSpace().ToLower().String()
+		normalized := str.Of(part).Trim().ToLower().String()
 		if normalized == "" || seen[normalized] {
 			continue
 		}
 		seen[normalized] = true
 		out = append(out, normalized)
 	}
-	driver = str.Of(driver).TrimSpace().ToLower().String()
+	driver = str.Of(driver).Trim().ToLower().String()
 	if driver != "" && !seen[driver] {
 		out = append(out, driver)
 	}
@@ -2970,9 +2970,9 @@ func readGoModModuleState(path string) (goModModuleState, error) {
 		case trimmed == "replace (":
 			mode = "replace"
 		case strings.HasPrefix(trimmed, "require "):
-			recordGoModDirective(&state, "require", str.Of(trimmed).ChopStart("require ").TrimSpace().String())
+			recordGoModDirective(&state, "require", str.Of(trimmed).TrimPrefix("require ").Trim().String())
 		case strings.HasPrefix(trimmed, "replace "):
-			recordGoModDirective(&state, "replace", str.Of(trimmed).ChopStart("replace ").TrimSpace().String())
+			recordGoModDirective(&state, "replace", str.Of(trimmed).TrimPrefix("replace ").Trim().String())
 		}
 	}
 	return state, nil

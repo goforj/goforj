@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 	appdb "{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/inspects"
@@ -66,7 +66,7 @@ func modelNameFromTable(table string) string {
 // modelPathFromTable returns the model file path for a table in a temp module.
 func modelPathFromTable(tempDir, table string) string {
 	modelName := modelNameFromTable(table)
-	filename := str.Of(modelName).Snake("_").String() + ".go"
+	filename := str.Of(modelName).Snake().String() + ".go"
 	return filepath.Join(tempDir, "internal", "models", filename)
 }
 
@@ -814,7 +814,7 @@ func TestMakeModelPostgresPackageOutput(t *testing.T) {
 	runModelGen(t, cmd, table)
 
 	modelName := modelNameFromTable(table)
-	modelPath := filepath.Join(tempDir, "internal", "domain", "accounts", str.Of(modelName).Snake("_").String()+".go")
+	modelPath := filepath.Join(tempDir, "internal", "domain", "accounts", str.Of(modelName).Snake().String()+".go")
 	if _, err := os.Stat(modelPath); err != nil {
 		t.Fatalf("expected model file at %s", modelPath)
 	}
@@ -837,15 +837,15 @@ func TestMakeModelPostgresPackageOutput(t *testing.T) {
 }
 
 func isPostgresDriver() bool {
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	driver := str.Of(env.Get("DB_DRIVER", "")).Trim().ToLower().String()
 	return driver == "postgres" || driver == "postgresql"
 }
 
 func hasPostgresConfig() bool {
-	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
-	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	host := str.Of(env.Get("DB_HOST", "")).Trim().String()
+	port := str.Of(env.Get("DB_PORT", "")).Trim().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).Trim().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).Trim().String()
 	return host != "" && port != "" && user != "" && database != ""
 }
 
@@ -893,14 +893,14 @@ func applyIntegrationEnvOverrides() {
 	overrideIfSet("DB_PASSWORD", "DB_PASSWORD_INTEGRATION")
 	overrideIfSet("DB_DATABASE", "DB_DATABASE_INTEGRATION")
 
-	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	if host == "postgres" && str.Of(env.Get("DB_HOST_IN_DOCKER", "")).TrimSpace().ToLower().String() != "true" {
+	host := str.Of(env.Get("DB_HOST", "")).Trim().String()
+	if host == "postgres" && str.Of(env.Get("DB_HOST_IN_DOCKER", "")).Trim().ToLower().String() != "true" {
 		_ = os.Setenv("DB_HOST", "localhost")
 	}
 }
 
 func overrideIfSet(targetKey, overrideKey string) {
-	value := str.Of(env.Get(overrideKey, "")).TrimSpace().String()
+	value := str.Of(env.Get(overrideKey, "")).Trim().String()
 	if value == "" {
 		return
 	}
@@ -1232,7 +1232,7 @@ func loadModuleVersions(t *testing.T, root string) map[string]string {
 			continue
 		}
 		if strings.HasPrefix(line, "require ") {
-			line = str.Of(line).ChopStart("require ").TrimSpace().String()
+			line = str.Of(line).TrimPrefix("require ").Trim().String()
 		} else if !inRequire {
 			continue
 		}

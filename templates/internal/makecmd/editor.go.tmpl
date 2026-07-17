@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"golang.org/x/term"
 	"{{.GoModuleName}}/internal/console"
 )
@@ -111,7 +111,7 @@ func generatedFileOpenDecisionFor(open, noOpen bool, mode string, interactive, c
 		return generatedFileOpenDecision{open: true, explicit: true}, ""
 	}
 
-	normalizedMode := str.Of(mode).TrimSpace().ToLower().String()
+	normalizedMode := str.Of(mode).Trim().ToLower().String()
 	if normalizedMode == "" {
 		normalizedMode = generatedFileOpenAuto
 	}
@@ -217,8 +217,8 @@ func resolveGeneratedFileEditorCandidate(candidate generatedFileEditorCandidate,
 }
 
 func generatedFileTerminalEditorCandidates(env func(string) string) []generatedFileEditorCandidate {
-	termProgram := str.Of(env("TERM_PROGRAM")).TrimSpace().ToLower().String()
-	terminalEmulator := str.Of(env("TERMINAL_EMULATOR")).TrimSpace().ToLower().String()
+	termProgram := str.Of(env("TERM_PROGRAM")).Trim().ToLower().String()
+	terminalEmulator := str.Of(env("TERMINAL_EMULATOR")).Trim().ToLower().String()
 
 	switch {
 	case strings.Contains(terminalEmulator, "jetbrains"):
@@ -322,7 +322,7 @@ func generatedFileEditorTemplateArgs(args []string, path string, line int, proje
 func generatedFileEditorName(command string) string {
 	name := strings.ToLower(filepath.Base(command))
 	if runtime.GOOS == "windows" {
-		name = str.Of(name).ChopEnd(".exe").ChopEnd(".cmd").String()
+		name = str.Of(name).TrimSuffix(".exe").TrimSuffix(".cmd").String()
 	}
 
 	return name

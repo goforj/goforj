@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/goforj/cache"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/caches"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/database"
@@ -111,7 +111,7 @@ func (r *AppSettingRepo) connection() (*gorm.DB, error) {
 }
 
 func (r *AppSettingRepo) Get(ctx context.Context, key string) (*AppSetting, error) {
-	normKey := str.Of(key).TrimSpace().String()
+	normKey := str.Of(key).Trim().String()
 	if normKey == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -141,7 +141,7 @@ func (r *AppSettingRepo) settingsMap(ctx context.Context) (map[string]AppSetting
 		}
 		settings := make(map[string]AppSetting, len(rows))
 		for i := range rows {
-			itemKey := str.Of(rows[i].KeyName).TrimSpace().String()
+			itemKey := str.Of(rows[i].KeyName).Trim().String()
 			if itemKey == "" {
 				continue
 			}
@@ -159,7 +159,7 @@ func (r *AppSettingRepo) GetValue(ctx context.Context, key string, fallback stri
 		}
 		return fallback, err
 	}
-	value := str.Of(row.Value).TrimSpace().String()
+	value := str.Of(row.Value).Trim().String()
 	if value == "" {
 		return fallback, nil
 	}
@@ -177,7 +177,7 @@ func (r *AppSettingRepo) MonitoringMaintenanceWindow(ctx context.Context, now ti
 		if !ok {
 			return nil
 		}
-		value := str.Of(row.Value).TrimSpace().String()
+		value := str.Of(row.Value).Trim().String()
 		if value == "" {
 			return nil
 		}
@@ -214,8 +214,8 @@ func (r *AppSettingRepo) Upsert(ctx context.Context, key, value string) error {
 	}
 	now := time.Now().UTC()
 	row := AppSetting{
-		KeyName:   str.Of(key).TrimSpace().String(),
-		Value:     str.Of(value).TrimSpace().String(),
+		KeyName:   str.Of(key).Trim().String(),
+		Value:     str.Of(value).Trim().String(),
 		UpdatedAt: now,
 	}
 	if row.KeyName == "" {
@@ -251,8 +251,8 @@ func (r *AppSettingRepo) PreseedDefaults(ctx context.Context) (int, error) {
 	keys := make([]string, 0, len(defaultSettings))
 	normalizedDefaults := make([]DefaultSetting, 0, len(defaultSettings))
 	for _, def := range defaultSettings {
-		key := str.Of(def.KeyName).TrimSpace().String()
-		val := str.Of(def.Value).TrimSpace().String()
+		key := str.Of(def.KeyName).Trim().String()
+		val := str.Of(def.Value).Trim().String()
 		if key == "" || val == "" {
 			continue
 		}
@@ -278,7 +278,7 @@ func (r *AppSettingRepo) PreseedDefaults(ctx context.Context) (int, error) {
 	}
 	existing := make(map[string]struct{}, len(existingKeys))
 	for _, key := range existingKeys {
-		existing[str.Of(key).TrimSpace().String()] = struct{}{}
+		existing[str.Of(key).Trim().String()] = struct{}{}
 	}
 
 	inserted := 0
@@ -299,7 +299,7 @@ func (r *AppSettingRepo) ensureCacheLoaded() error {
 }
 
 func (r *AppSettingRepo) cacheKey(key string) string {
-	return "app_setting:" + str.Of(key).TrimSpace().String()
+	return "app_setting:" + str.Of(key).Trim().String()
 }
 
 func (r *AppSettingRepo) cacheKeyAll() string {
@@ -314,7 +314,7 @@ func (r *AppSettingRepo) writeCache(ctx context.Context, row AppSetting) {
 	if err != nil || !ok {
 		return
 	}
-	settings[str.Of(row.KeyName).TrimSpace().String()] = row
+	settings[str.Of(row.KeyName).Trim().String()] = row
 	_ = cache.Set(r.caches.Settings().WithContext(ctx), r.cacheKeyAll(), settings, 0)
 }
 

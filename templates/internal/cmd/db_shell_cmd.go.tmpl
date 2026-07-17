@@ -14,7 +14,7 @@ import (
 	"{{.GoModuleName}}/internal/runtime"
 
 	"github.com/goforj/env/v2"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 // DBShellCmd opens a shell client for a configured database connection.
@@ -613,7 +613,7 @@ func dbShellEnv(name, suffix string) string {
 	if name == "" || name == "default" {
 		return strings.TrimSpace(scope.Get(suffix, ""))
 	}
-	child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	child := scope.Child(str.Of(name).Snake().ToUpper().String())
 	if value := strings.TrimSpace(child.Get(suffix, "")); value != "" {
 		return value
 	}
@@ -624,11 +624,11 @@ func dbShellEnvKey(name, suffix string) string {
 	if name == "" || name == "default" {
 		return "DB_" + suffix
 	}
-	return "DB_" + str.Of(name).Snake("_").ToUpper().String() + "_" + suffix
+	return "DB_" + str.Of(name).Snake().ToUpper().String() + "_" + suffix
 }
 
 func normalizeDBShellConnectionName(name string) string {
-	value := str.Of(name).ToLower().TrimSpace().String()
+	value := str.Of(name).ToLower().Trim().String()
 	if value == "" {
 		return "default"
 	}

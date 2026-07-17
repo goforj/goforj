@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 )
 
 var appComponentKeys = []ComponentKey{
@@ -226,7 +226,7 @@ func ParseComponentKeys(raw string) ([]ComponentKey, error) {
 
 // ParseComponentKey accepts common CLI spelling while resolving to canonical component keys.
 func ParseComponentKey(raw string) (ComponentKey, error) {
-	token := str.Of(raw).TrimSpace().ToLower().ReplaceAll("-", "_").ReplaceAll(" ", "_").String()
+	token := str.Of(raw).Trim().ToLower().ReplaceAll("-", "_").ReplaceAll(" ", "_").String()
 	for _, definition := range ComponentCatalog() {
 		key := string(definition.Key)
 		label := str.Of(definition.Label).

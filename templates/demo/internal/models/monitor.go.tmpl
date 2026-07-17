@@ -3,7 +3,7 @@ package models
 import (
 	"context"
 	"github.com/goforj/null/v6"
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 	"gorm.io/gorm"
 	"net/url"
 	"sort"
@@ -527,7 +527,7 @@ func (r *MonitorRepo) DeleteByTypeAndTargets(monitorType string, targets []strin
 	normalized := make([]string, 0, len(targets))
 	seen := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
-		key := str.Of(target).TrimSpace().ToLower().String()
+		key := str.Of(target).Trim().ToLower().String()
 		if key == "" {
 			continue
 		}
@@ -570,7 +570,7 @@ func (r *MonitorRepo) TargetSetByType(monitorType string) (map[string]struct{}, 
 	}
 	out := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		key := str.Of(row).TrimSpace().ToLower().String()
+		key := str.Of(row).Trim().ToLower().String()
 		if key == "" {
 			continue
 		}
@@ -627,15 +627,15 @@ func (r *MonitorRepo) BackfillNormalizedTargets(limit int) (int, error) {
 }
 
 func applyNormalizedTargetFields(m *Monitor) bool {
-	monitorType := str.Of(m.MonitorType).TrimSpace().ToLower().String()
-	target := str.Of(m.Target).TrimSpace().String()
+	monitorType := str.Of(m.MonitorType).Trim().ToLower().String()
+	target := str.Of(m.Target).Trim().String()
 	if target == "" {
 		return false
 	}
 	changed := false
 
 	setNullString := func(field *null.String, raw string) {
-		value := str.Of(raw).TrimSpace().String()
+		value := str.Of(raw).Trim().String()
 		next := null.NewString(value, value != "")
 		if field.String != next.String || field.Valid != next.Valid {
 			*field = next
@@ -644,8 +644,8 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 	}
 
 	setURL := func(raw string) bool {
-		u, err := url.Parse(str.Of(raw).TrimSpace().String())
-		hostName := str.Of(u.Hostname()).TrimSpace().String()
+		u, err := url.Parse(str.Of(raw).Trim().String())
+		hostName := str.Of(u.Hostname()).Trim().String()
 		if err != nil || hostName == "" {
 			return false
 		}
@@ -666,8 +666,8 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		if !ok {
 			return false
 		}
-		host = str.Of(host).TrimSpace().ToLower().String()
-		recordType = str.Of(recordType).TrimSpace().ToUpper().String()
+		host = str.Of(host).Trim().ToLower().String()
+		recordType = str.Of(recordType).Trim().ToUpper().String()
 		if host == "" {
 			return false
 		}
@@ -678,7 +678,7 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		if !ok || !setURL(urlPart) {
 			return false
 		}
-		keyword = str.Of(keyword).TrimSpace().String()
+		keyword = str.Of(keyword).Trim().String()
 		setNullString(&m.TargetKeyword, keyword)
 		return changed
 	case "http_json_query":
@@ -687,8 +687,8 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 			return false
 		}
 		pathExpr, expected, _ := strings.Cut(rest, "|")
-		pathExpr = str.Of(pathExpr).TrimSpace().String()
-		expected = str.Of(expected).TrimSpace().String()
+		pathExpr = str.Of(pathExpr).Trim().String()
+		expected = str.Of(expected).Trim().String()
 		setNullString(&m.TargetKeyword, pathExpr)
 		setNullString(&m.TargetExpected, expected)
 		return changed
@@ -697,13 +697,13 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		if !ok {
 			return false
 		}
-		container = str.Of(container).TrimSpace().String()
-		dockerHost = str.Of(dockerHost).TrimSpace().String()
+		container = str.Of(container).Trim().String()
+		dockerHost = str.Of(dockerHost).Trim().String()
 		setNullString(&m.TargetContainer, container)
 		setNullString(&m.TargetDockerHost, dockerHost)
 		return changed
 	case "push":
-		token := str.Of(target).TrimSpace().String()
+		token := str.Of(target).Trim().String()
 		setNullString(&m.TargetPushToken, token)
 		return changed
 	default:
@@ -713,8 +713,8 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 
 // MonitorDisplayTarget renders a compact target label for list/sidebar views.
 func MonitorDisplayTarget(monitorType, target string) string {
-	monitorType = str.Of(monitorType).TrimSpace().ToLower().String()
-	target = str.Of(target).TrimSpace().String()
+	monitorType = str.Of(monitorType).Trim().ToLower().String()
+	target = str.Of(target).Trim().String()
 	if target == "" {
 		return ""
 	}
@@ -722,7 +722,7 @@ func MonitorDisplayTarget(monitorType, target string) string {
 	switch monitorType {
 	case "http", "websocket", "http_keyword", "http_json_query":
 		urlPart, _, _ := strings.Cut(target, "|")
-		return str.Of(urlPart).TrimSpace().String()
+		return str.Of(urlPart).Trim().String()
 	case "tcp", "steam", "ping":
 		return target
 	case "tls":
@@ -732,8 +732,8 @@ func MonitorDisplayTarget(monitorType, target string) string {
 		if !ok {
 			return target
 		}
-		host = str.Of(host).TrimSpace().String()
-		recordType = str.Of(recordType).TrimSpace().ToUpper().String()
+		host = str.Of(host).Trim().String()
+		recordType = str.Of(recordType).Trim().ToUpper().String()
 		if host == "" {
 			return target
 		}
@@ -743,8 +743,8 @@ func MonitorDisplayTarget(monitorType, target string) string {
 		return host + " (" + recordType + ")"
 	case "docker":
 		container, dockerHost, ok := strings.Cut(target, "|")
-		container = str.Of(container).TrimSpace().String()
-		dockerHost = str.Of(dockerHost).TrimSpace().String()
+		container = str.Of(container).Trim().String()
+		dockerHost = str.Of(dockerHost).Trim().String()
 		if !ok {
 			return target
 		}
@@ -812,14 +812,14 @@ func SerializeNotificationChannelIDs(input []int64) string {
 
 // ParseNotificationChannelIDs converts stored monitor channel selections back to IDs.
 func ParseNotificationChannelIDs(raw string) []int64 {
-	value := str.Of(raw).TrimSpace().String()
+	value := str.Of(raw).Trim().String()
 	if value == "" {
 		return nil
 	}
 	parts := strings.Split(value, ",")
 	ids := make([]int64, 0, len(parts))
 	for _, part := range parts {
-		next, err := strconv.ParseInt(str.Of(part).TrimSpace().String(), 10, 64)
+		next, err := strconv.ParseInt(str.Of(part).Trim().String(), 10, 64)
 		if err != nil || next <= 0 {
 			continue
 		}

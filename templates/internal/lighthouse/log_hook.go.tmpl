@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -155,11 +155,11 @@ func wireLogSignature(entry logger.LogEntry) string {
 		"ts":         {},
 	}
 	parts := make([]string, 0, len(entry.Fields)+1)
-	if level := str.Of(entry.Level).TrimSpace().ToLower().String(); level != "" {
+	if level := str.Of(entry.Level).Trim().ToLower().String(); level != "" {
 		parts = append(parts, "level="+level)
 	}
 	for key, value := range entry.Fields {
-		k := str.Of(key).TrimSpace().ToLower().String()
+		k := str.Of(key).Trim().ToLower().String()
 		if k == "" {
 			continue
 		}
@@ -176,7 +176,7 @@ func wireLogSignature(entry logger.LogEntry) string {
 }
 
 func getEnvBool(key string, defaultValue bool) bool {
-	raw := str.Of(os.Getenv(key)).TrimSpace().ToLower().String()
+	raw := str.Of(os.Getenv(key)).Trim().ToLower().String()
 	if raw == "" {
 		return defaultValue
 	}

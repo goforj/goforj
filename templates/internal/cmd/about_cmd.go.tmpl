@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goforj/str"
+	"github.com/goforj/str/v2"
 
 	"{{.GoModuleName}}/internal/runtime"
 )
@@ -412,7 +412,7 @@ func aboutInlineDetail(key string, value string) string {
 }
 
 func aboutInlineKey(key string) string {
-	return str.Of(key).ToLower().TrimSpace().ReplaceAll(" ", "_").ReplaceAll("-", "_").String()
+	return str.Of(key).ToLower().Trim().ReplaceAll(" ", "_").ReplaceAll("-", "_").String()
 }
 
 func aboutDisplayValue(value string) string {
@@ -557,8 +557,8 @@ func aboutValueColor(value string) string {
 }
 
 func aboutStatusColor(value string) string {
-	value = str.Of(value).TrimSpace().ChopStart(aboutHealthyStatusMarker + " ").String()
-	switch str.Of(value).TrimSpace().ToLower().String() {
+	value = str.Of(value).Trim().TrimPrefix(aboutHealthyStatusMarker + " ").String()
+	switch str.Of(value).Trim().ToLower().String() {
 	case "present", "healthy", "ready", "ok", "up", "available":
 		return aboutFGGreen
 	case "missing", "error", "failed", "down", "unavailable":
