@@ -434,10 +434,11 @@ func startPostgresContainer(t *testing.T, ctx context.Context) startedContainer 
 			"POSTGRES_DB":       "app",
 			"POSTGRES_USER":     "app",
 			"POSTGRES_PASSWORD": "secret",
+			"TZ":                "America/Los_Angeles",
 		},
 		WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
 	}, "5432/tcp")
-	started.dsn = fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", started.addr)
+	started.dsn = fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable&timezone=UTC", started.addr)
 	return started
 }
 
@@ -451,10 +452,11 @@ func startMySQLContainer(t *testing.T, ctx context.Context) startedContainer {
 			"MYSQL_USER":          "app",
 			"MYSQL_PASSWORD":      "secret",
 			"MYSQL_ROOT_PASSWORD": "rootsecret",
+			"TZ":                  "America/Los_Angeles",
 		},
 		WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
 	}, "3306/tcp")
-	started.dsn = fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", started.addr)
+	started.dsn = fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27", started.addr)
 	waitForMySQLReady(t, started.dsn)
 	return started
 }

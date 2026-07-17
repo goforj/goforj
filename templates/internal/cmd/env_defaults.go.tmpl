@@ -6,7 +6,10 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/joho/godotenv"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
+	_ "time/tzdata" // IANA overrides must work in minimal images without host zoneinfo.
 )
 
 // CompiledEnvDefaultsBase64 stores build-time unset-only env defaults.
@@ -71,6 +74,51 @@ func LoadEnv() error {
 	}
 
 	return nil
+}
+
+// ConfigureTimezone applies TZ to process-local time operations, defaulting to UTC.
+func ConfigureTimezone() error {
+	return configureTimezone(os.Setenv)
+}
+
+// configureTimezone keeps Go and child processes on the same effective location.
+func configureTimezone(setenv func(string, string) error) error {
+	timezone := strings.TrimSpace(os.Getenv("TZ"))
+	if timezone == "" || timezone == ":" {
+		timezone = "UTC"
+	}
+
+	location, err := loadTimezoneLocation(timezone)
+	if err != nil {
+		return fmt.Errorf("load timezone %q: %w", timezone, err)
+	}
+	if err := setenv("TZ", timezone); err != nil {
+		return fmt.Errorf("set timezone environment: %w", err)
+	}
+	time.Local = location
+	return nil
+}
+
+// loadTimezoneLocation preserves native Unix TZ names and files while surfacing invalid configuration.
+func loadTimezoneLocation(timezone string) (*time.Location, error) {
+	source := strings.TrimPrefix(timezone, ":")
+	if !filepath.IsAbs(source) {
+		return time.LoadLocation(source)
+	}
+
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return nil, fmt.Errorf("read timezone data: %w", err)
+	}
+	name := source
+	if source == "/etc/localtime" {
+		name = "Local"
+	}
+	location, err := time.LoadLocationFromTZData(name, data)
+	if err != nil {
+		return nil, fmt.Errorf("parse timezone data: %w", err)
+	}
+	return location, nil
 }
 
 // ApplyCompiledEnvDefaults seeds compiled env defaults only for keys that are

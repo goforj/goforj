@@ -512,14 +512,14 @@ func openBackupDatabase(t *testing.T, driver string, dsn string) *sql.DB {
 func startBackupMySQL(t *testing.T, ctx context.Context) (string, backup.Connection, func()) {
 	t.Helper()
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: "mysql:8.4", ExposedPorts: []string{"3306/tcp"}, Env: map[string]string{"MYSQL_DATABASE": "app", "MYSQL_USER": "app", "MYSQL_PASSWORD": "secret", "MYSQL_ROOT_PASSWORD": "root"},
+		Image: "mysql:8.4", ExposedPorts: []string{"3306/tcp"}, Env: map[string]string{"MYSQL_DATABASE": "app", "MYSQL_USER": "app", "MYSQL_PASSWORD": "secret", "MYSQL_ROOT_PASSWORD": "root", "TZ": "America/Los_Angeles"},
 		WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
 	}, Started: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	host := containerHost(t, ctx, container, "3306/tcp")
-	dsn := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", host)
+	dsn := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27", host)
 	waitForBackupDatabase(t, dsn, "mysql")
 	hostname, port, err := net.SplitHostPort(host)
 	if err != nil {
@@ -532,14 +532,14 @@ func startBackupMySQL(t *testing.T, ctx context.Context) (string, backup.Connect
 func startBackupPostgres(t *testing.T, ctx context.Context) (string, testcontainers.Container, func()) {
 	t.Helper()
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: "postgres:16-alpine", ExposedPorts: []string{"5432/tcp"}, Env: map[string]string{"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret"},
+		Image: "postgres:16-alpine", ExposedPorts: []string{"5432/tcp"}, Env: map[string]string{"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret", "TZ": "America/Los_Angeles"},
 		WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
 	}, Started: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	host := containerHost(t, ctx, container, "5432/tcp")
-	dsn := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", host)
+	dsn := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable&timezone=UTC", host)
 	waitForBackupDatabase(t, dsn, "postgres")
 	return dsn, container, func() { _ = container.Terminate(context.Background()) }
 }

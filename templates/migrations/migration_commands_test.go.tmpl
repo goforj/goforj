@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/inspects"
@@ -15,6 +16,13 @@ import (
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
+
+// TestMigrationAppliedAtUsesUTC verifies audit records do not inherit the process location.
+func TestMigrationAppliedAtUsesUTC(t *testing.T) {
+	if got := migrationAppliedAt(); got.Location() != time.UTC {
+		t.Fatalf("migrationAppliedAt() location = %s, want UTC", got.Location())
+	}
+}
 
 func TestMigrateAppliesByConnectionAndStep(t *testing.T) {
 	dir := t.TempDir()

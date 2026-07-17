@@ -53,6 +53,13 @@ Read:
 - [Runtime Architecture](runtime-architecture.md)
 - [Generated App Extension Points](generated-app-extension-points.md)
 
+### Database connections, DSNs, migrations, or time zones
+
+Read:
+
+- [Generated Database README](../../templates/internal/database/README.md)
+- [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md) when changing generated behavior
+
 ### Auth, login, sessions, cookies, JWT, or future provider support
 
 Read:
@@ -167,6 +174,8 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
   - command prefix routing for named apps
 - [Generated App Extension Points](generated-app-extension-points.md)
   - where app-level customizations should go
+- [Generated Database README](../../templates/internal/database/README.md)
+  - database environment, DSN, time zone, and migration behavior emitted into generated apps
 - [Auth](auth.md)
   - current auth model
   - security invariants

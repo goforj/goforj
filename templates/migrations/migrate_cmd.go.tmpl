@@ -105,7 +105,7 @@ func (c *MigrateCmd) runStream(stream migrationStream) (int, error) {
 			App:        stream.App,
 			Connection: stream.Connection,
 			SourcePath: m.SourcePath(),
-			AppliedAt:  time.Now(),
+			AppliedAt:  migrationAppliedAt(),
 		}
 		if err := dbConn.Table("migrations").Create(&record).Error; err != nil {
 			return applied, err
@@ -116,6 +116,11 @@ func (c *MigrateCmd) runStream(stream migrationStream) (int, error) {
 	}
 
 	return applied, nil
+}
+
+// migrationAppliedAt keeps migration audit metadata independent of the host machine's timezone.
+func migrationAppliedAt() time.Time {
+	return time.Now().UTC()
 }
 
 // migrationRecord stores the migration identity fields that make app-scoped runs auditable.

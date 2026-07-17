@@ -58,7 +58,7 @@ func (c *MigrationCmd) Run() error {
 		return fmt.Errorf("migration name cannot be empty")
 	}
 
-	timestamp := time.Now().Format("2006_01_02_150405")
+	timestamp := migrationTimestamp(time.Now())
 	snake := str.Of(name).Snake().String()
 	baseName := fmt.Sprintf("%s_%s", timestamp, snake)
 
@@ -111,6 +111,11 @@ func (c *MigrationCmd) Run() error {
 		Mode:          c.MakeOpen,
 		EditorCommand: c.EditorCommand,
 	})
+}
+
+// migrationTimestamp keeps migration ordering stable across developer and deployment timezones.
+func migrationTimestamp(now time.Time) string {
+	return now.UTC().Format("2006_01_02_150405")
 }
 
 func (c *MigrationCmd) remove() error {

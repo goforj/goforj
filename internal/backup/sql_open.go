@@ -62,6 +62,8 @@ func ListTables(ctx context.Context, db *sql.DB, dialect SQLDialect) ([]string, 
 func sqlConnectionDetails(connection Connection) (string, string, error) {
 	driver := normalizeDriver(connection.Driver)
 	if connection.DSN != "" {
+		// Custom DSNs remain verbatim because callers opting into driver-specific
+		// settings also own their parse location and session timezone.
 		if driver == "postgres" {
 			return "pgx", connection.DSN, nil
 		}
@@ -86,7 +88,7 @@ func sqlConnectionDetails(connection Connection) (string, string, error) {
 		if port == "" {
 			port = "3306"
 		}
-		return "mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", connection.Username, connection.Password, host, port, connection.Database), nil
+		return "mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27", connection.Username, connection.Password, host, port, connection.Database), nil
 	case "postgres":
 		if connection.Database == "" {
 			return "", "", fmt.Errorf("postgres database is required")
@@ -99,7 +101,7 @@ func sqlConnectionDetails(connection Connection) (string, string, error) {
 		if port == "" {
 			port = "5432"
 		}
-		values := url.Values{"sslmode": {"disable"}}
+		values := url.Values{"sslmode": {"disable"}, "timezone": {"UTC"}}
 		postgresURL := url.URL{Scheme: "postgres", User: url.UserPassword(connection.Username, connection.Password), Host: net.JoinHostPort(host, port), Path: "/" + connection.Database, RawQuery: values.Encode()}
 		return "pgx", postgresURL.String(), nil
 	default:

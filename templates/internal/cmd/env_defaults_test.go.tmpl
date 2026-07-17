@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	envpkg "github.com/goforj/env/v2"
 	"os"
@@ -9,7 +10,168 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestConfigureTimezoneDefaultsToUTC verifies an unset runtime timezone has one deterministic interpretation.
+func TestConfigureTimezoneDefaultsToUTC(t *testing.T) {
+	original := time.Local
+	time.Local = time.FixedZone("previous", 3*60*60)
+	t.Cleanup(func() { time.Local = original })
+	t.Setenv("TZ", "")
+
+	if err := ConfigureTimezone(); err != nil {
+		t.Fatalf("ConfigureTimezone() error = %v", err)
+	}
+	if time.Local != time.UTC {
+		t.Fatalf("time.Local = %s, want UTC", time.Local)
+	}
+	if got := os.Getenv("TZ"); got != "UTC" {
+		t.Fatalf("TZ = %q, want UTC", got)
+	}
+}
+
+// TestConfigureTimezoneLoadsTrimmedTZ verifies explicit IANA locations remain available for calendar behavior.
+func TestConfigureTimezoneLoadsTrimmedTZ(t *testing.T) {
+	original := time.Local
+	t.Cleanup(func() { time.Local = original })
+	t.Setenv("TZ", "  :America/Chicago  ")
+
+	if err := ConfigureTimezone(); err != nil {
+		t.Fatalf("ConfigureTimezone() error = %v", err)
+	}
+	if got := time.Local.String(); got != "America/Chicago" {
+		t.Fatalf("time.Local = %q, want America/Chicago", got)
+	}
+	if got := os.Getenv("TZ"); got != ":America/Chicago" {
+		t.Fatalf("TZ = %q, want trimmed location", got)
+	}
+}
+
+// TestConfigureTimezoneLoadsAbsoluteTZFiles verifies native Unix zoneinfo paths remain supported.
+func TestConfigureTimezoneLoadsAbsoluteTZFiles(t *testing.T) {
+	data, err := os.ReadFile("/etc/localtime")
+	if os.IsNotExist(err) {
+		t.Skip("system zoneinfo file is unavailable")
+	}
+	if err != nil {
+		t.Fatalf("read system zoneinfo: %v", err)
+	}
+	copyPath := filepath.Join(t.TempDir(), "localtime")
+	if err := os.WriteFile(copyPath, data, 0o644); err != nil {
+		t.Fatalf("write zoneinfo copy: %v", err)
+	}
+
+	for _, test := range []struct {
+		name     string
+		timezone string
+		wantName string
+	}{
+		{name: "system localtime", timezone: "/etc/localtime", wantName: "Local"},
+		{name: "absolute copy", timezone: copyPath, wantName: copyPath},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			original := time.Local
+			t.Cleanup(func() { time.Local = original })
+			t.Setenv("TZ", test.timezone)
+
+			if err := ConfigureTimezone(); err != nil {
+				t.Fatalf("ConfigureTimezone() error = %v", err)
+			}
+			if got := time.Local.String(); got != test.wantName {
+				t.Fatalf("time.Local = %q, want %q", got, test.wantName)
+			}
+			if got := os.Getenv("TZ"); got != test.timezone {
+				t.Fatalf("TZ = %q, want %q", got, test.timezone)
+			}
+		})
+	}
+}
+
+// TestConfigureTimezoneRejectsInvalidTZWithoutMutation verifies bad configuration fails before changing process state.
+func TestConfigureTimezoneRejectsInvalidTZWithoutMutation(t *testing.T) {
+	original := time.Local
+	previous := time.FixedZone("previous", 3*60*60)
+	time.Local = previous
+	t.Cleanup(func() { time.Local = original })
+	t.Setenv("TZ", "  Invalid/Timezone  ")
+
+	err := ConfigureTimezone()
+	if err == nil {
+		t.Fatal("ConfigureTimezone() error = nil, want invalid timezone error")
+	}
+	if !strings.Contains(err.Error(), `load timezone "Invalid/Timezone"`) {
+		t.Fatalf("ConfigureTimezone() error = %q, want timezone context", err)
+	}
+	if time.Local != previous {
+		t.Fatalf("time.Local changed to %s after invalid timezone", time.Local)
+	}
+}
+
+// TestConfigureTimezoneRejectsMissingAbsoluteTZWithoutMutation verifies path errors do not change process state.
+func TestConfigureTimezoneRejectsMissingAbsoluteTZWithoutMutation(t *testing.T) {
+	original := time.Local
+	previous := time.FixedZone("previous", 3*60*60)
+	time.Local = previous
+	t.Cleanup(func() { time.Local = original })
+	missing := filepath.Join(t.TempDir(), "missing-zoneinfo")
+	t.Setenv("TZ", missing)
+
+	err := ConfigureTimezone()
+	if err == nil {
+		t.Fatal("ConfigureTimezone() error = nil, want missing zoneinfo error")
+	}
+	if !strings.Contains(err.Error(), "read timezone data") {
+		t.Fatalf("ConfigureTimezone() error = %q, want read context", err)
+	}
+	if time.Local != previous {
+		t.Fatalf("time.Local changed to %s after missing zoneinfo", time.Local)
+	}
+}
+
+// TestConfigureTimezoneRejectsInvalidAbsoluteTZWithoutMutation verifies malformed TZif data fails before mutation.
+func TestConfigureTimezoneRejectsInvalidAbsoluteTZWithoutMutation(t *testing.T) {
+	original := time.Local
+	previous := time.FixedZone("previous", 3*60*60)
+	time.Local = previous
+	t.Cleanup(func() { time.Local = original })
+	path := filepath.Join(t.TempDir(), "invalid-zoneinfo")
+	if err := os.WriteFile(path, []byte("not TZif data"), 0o644); err != nil {
+		t.Fatalf("write invalid zoneinfo: %v", err)
+	}
+	t.Setenv("TZ", path)
+
+	err := ConfigureTimezone()
+	if err == nil {
+		t.Fatal("ConfigureTimezone() error = nil, want malformed zoneinfo error")
+	}
+	if !strings.Contains(err.Error(), "parse timezone data") {
+		t.Fatalf("ConfigureTimezone() error = %q, want parse context", err)
+	}
+	if time.Local != previous {
+		t.Fatalf("time.Local changed to %s after malformed zoneinfo", time.Local)
+	}
+}
+
+// TestConfigureTimezoneRejectsEnvironmentFailureWithoutMutation verifies the location changes only after environment publication.
+func TestConfigureTimezoneRejectsEnvironmentFailureWithoutMutation(t *testing.T) {
+	original := time.Local
+	previous := time.FixedZone("previous", 3*60*60)
+	time.Local = previous
+	t.Cleanup(func() { time.Local = original })
+	t.Setenv("TZ", "UTC")
+
+	err := configureTimezone(func(string, string) error { return errors.New("denied") })
+	if err == nil {
+		t.Fatal("configureTimezone() error = nil, want environment error")
+	}
+	if !strings.Contains(err.Error(), "set timezone environment: denied") {
+		t.Fatalf("configureTimezone() error = %q, want environment context", err)
+	}
+	if time.Local != previous {
+		t.Fatalf("time.Local changed to %s after environment failure", time.Local)
+	}
+}
 
 func TestApplyCompiledEnvDefaultsOnlySeedsUnsetKeys(t *testing.T) {
 	t.Setenv("FEATURE_B", "from-env")
