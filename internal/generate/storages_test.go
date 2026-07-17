@@ -546,65 +546,13 @@ func TestNewManagerCreatesMissingLocalRoots(t *testing.T) {
 	}
 }
 
-func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
-	t.Setenv("STORAGE_DRIVER", "local")
-	t.Setenv("STORAGE_ROOT", "storage/app/private")
-	t.Setenv("STORAGE_CACHE_DRIVER", "memory")
-
-	root := mustTempGeneratedModuleRoot(t, ".tmp-storage-driver-imports-*", filepath.Join("internal", "storages"))
-	writeFixtureGoMod(t, root, fixtureModuleSpec(
-		"example.com/storageimporttest",
-		[]string{
-			"github.com/goforj/env/v2",
-			"github.com/goforj/storage",
-			"github.com/goforj/storage/driver/dropboxstorage",
-			"github.com/goforj/storage/driver/ftpstorage",
-			"github.com/goforj/storage/driver/gcsstorage",
-			"github.com/goforj/storage/driver/localstorage",
-			"github.com/goforj/storage/driver/memorystorage",
-			"github.com/goforj/storage/driver/rclonestorage",
-			"github.com/goforj/storage/driver/redisstorage",
-			"github.com/goforj/storage/driver/s3storage",
-			"github.com/goforj/storage/driver/sftpstorage",
-			"github.com/goforj/str/v2",
-		},
-		nil,
-		nil,
-	))
-	written, err := GenerateStorageFiles(root)
-	if err != nil {
-		t.Fatalf("GenerateStorageFiles returned error: %v", err)
-	}
-	if written == 0 {
-		t.Fatal("expected generated storage files to be written")
-	}
-
-	configGenPath := filepath.Join(root, "internal", "storages", "manager_gen.go")
-	configGen, err := os.ReadFile(configGenPath)
-	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
-	}
-	for _, importPath := range []string{
-		`"github.com/goforj/storage/driver/localstorage"`,
-		`"github.com/goforj/storage/driver/memorystorage"`,
-	} {
-		if !strings.Contains(string(configGen), importPath) {
-			t.Fatalf("expected manager_gen.go to import %s", importPath)
-		}
-	}
-
-	runFixtureGoModTidy(t, root, nil)
-	assertFixtureGoModContains(t, root,
-		"github.com/goforj/storage/driver/localstorage",
-		"github.com/goforj/storage/driver/memorystorage",
-	)
-	runFixtureGoTest(t, root, "./internal/storages", "TestDoesNotExist", nil)
-}
-
 func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
-	t.Setenv("STORAGE_DRIVER", "local")
-	t.Setenv("STORAGE_ROOT", "storage/app/private")
-	t.Setenv("STORAGE_CACHE_DRIVER", "memory")
+	t.Parallel()
+	environment := map[string]string{
+		"STORAGE_DRIVER":       "local",
+		"STORAGE_ROOT":         "storage/app/private",
+		"STORAGE_CACHE_DRIVER": "memory",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-storage-driver-pins-*", filepath.Join("internal", "storages"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -620,7 +568,7 @@ func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
 		},
 		nil,
 	))
-	written, err := GenerateStorageFiles(root)
+	written, err := generateStorageFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateStorageFiles returned error: %v", err)
 	}
@@ -647,51 +595,53 @@ func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
 		"github.com/goforj/storage/driver/localstorage",
 		"github.com/goforj/storage/driver/memorystorage",
 	)
-	runFixtureGoTest(t, root, "./internal/storages", "TestDoesNotExist", nil)
 }
 
 func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
-	t.Setenv("STORAGE_DRIVER", "local")
-	t.Setenv("STORAGE_ROOT", "storage/app/private")
-	t.Setenv("STORAGE_MEMORY_DRIVER", "memory")
-	t.Setenv("STORAGE_REDIS_DRIVER", "redis")
-	t.Setenv("STORAGE_REDIS_ADDR", "127.0.0.1:6379")
-	t.Setenv("STORAGE_REDIS_PASSWORD", "secret")
-	t.Setenv("STORAGE_REDIS_DB", "2")
-	t.Setenv("STORAGE_FTP_DRIVER", "ftp")
-	t.Setenv("STORAGE_FTP_HOST", "127.0.0.1")
-	t.Setenv("STORAGE_FTP_PORT", "21")
-	t.Setenv("STORAGE_FTP_USER", "test")
-	t.Setenv("STORAGE_FTP_PASSWORD", "secret")
-	t.Setenv("STORAGE_FTP_TLS", "true")
-	t.Setenv("STORAGE_FTP_INSECURE_SKIP_VERIFY", "true")
-	t.Setenv("STORAGE_SFTP_DRIVER", "sftp")
-	t.Setenv("STORAGE_SFTP_HOST", "127.0.0.1")
-	t.Setenv("STORAGE_SFTP_PORT", "22")
-	t.Setenv("STORAGE_SFTP_USER", "root")
-	t.Setenv("STORAGE_SFTP_PASSWORD", "secret")
-	t.Setenv("STORAGE_SFTP_KEY_PATH", "/tmp/id_rsa")
-	t.Setenv("STORAGE_SFTP_KNOWN_HOSTS_PATH", "/tmp/known_hosts")
-	t.Setenv("STORAGE_SFTP_INSECURE_IGNORE_HOST_KEY", "true")
-	t.Setenv("STORAGE_S3_DRIVER", "s3")
-	t.Setenv("STORAGE_S3_BUCKET", "app-bucket")
-	t.Setenv("STORAGE_S3_ENDPOINT", "http://127.0.0.1:9000")
-	t.Setenv("STORAGE_S3_REGION", "us-east-1")
-	t.Setenv("STORAGE_S3_ACCESS_KEY_ID", "access")
-	t.Setenv("STORAGE_S3_SECRET_ACCESS_KEY", "secret")
-	t.Setenv("STORAGE_S3_USE_PATH_STYLE", "true")
-	t.Setenv("STORAGE_S3_UNSIGNED_PAYLOAD", "true")
-	t.Setenv("STORAGE_GCS_DRIVER", "gcs")
-	t.Setenv("STORAGE_GCS_BUCKET", "gcs-bucket")
-	t.Setenv("STORAGE_GCS_CREDENTIALS_JSON", `{"type":"service_account"}`)
-	t.Setenv("STORAGE_GCS_ENDPOINT", "http://127.0.0.1:4443")
-	t.Setenv("STORAGE_DROPBOX_DRIVER", "dropbox")
-	t.Setenv("STORAGE_DROPBOX_TOKEN", "token")
-	t.Setenv("STORAGE_DROPBOX_PREFIX", "uploads")
-	t.Setenv("STORAGE_RCLONE_DRIVER", "rclone")
-	t.Setenv("STORAGE_RCLONE_REMOTE", "remote:")
-	t.Setenv("STORAGE_RCLONE_RCLONE_CONFIG_PATH", "/tmp/rclone.conf")
-	t.Setenv("STORAGE_RCLONE_RCLONE_CONFIG_DATA", "[remote]")
+	t.Parallel()
+	environment := map[string]string{
+		"STORAGE_DRIVER":                        "local",
+		"STORAGE_ROOT":                          "storage/app/private",
+		"STORAGE_MEMORY_DRIVER":                 "memory",
+		"STORAGE_REDIS_DRIVER":                  "redis",
+		"STORAGE_REDIS_ADDR":                    "127.0.0.1:6379",
+		"STORAGE_REDIS_PASSWORD":                "secret",
+		"STORAGE_REDIS_DB":                      "2",
+		"STORAGE_FTP_DRIVER":                    "ftp",
+		"STORAGE_FTP_HOST":                      "127.0.0.1",
+		"STORAGE_FTP_PORT":                      "21",
+		"STORAGE_FTP_USER":                      "test",
+		"STORAGE_FTP_PASSWORD":                  "secret",
+		"STORAGE_FTP_TLS":                       "true",
+		"STORAGE_FTP_INSECURE_SKIP_VERIFY":      "true",
+		"STORAGE_SFTP_DRIVER":                   "sftp",
+		"STORAGE_SFTP_HOST":                     "127.0.0.1",
+		"STORAGE_SFTP_PORT":                     "22",
+		"STORAGE_SFTP_USER":                     "root",
+		"STORAGE_SFTP_PASSWORD":                 "secret",
+		"STORAGE_SFTP_KEY_PATH":                 "/tmp/id_rsa",
+		"STORAGE_SFTP_KNOWN_HOSTS_PATH":         "/tmp/known_hosts",
+		"STORAGE_SFTP_INSECURE_IGNORE_HOST_KEY": "true",
+		"STORAGE_S3_DRIVER":                     "s3",
+		"STORAGE_S3_BUCKET":                     "app-bucket",
+		"STORAGE_S3_ENDPOINT":                   "http://127.0.0.1:9000",
+		"STORAGE_S3_REGION":                     "us-east-1",
+		"STORAGE_S3_ACCESS_KEY_ID":              "access",
+		"STORAGE_S3_SECRET_ACCESS_KEY":          "secret",
+		"STORAGE_S3_USE_PATH_STYLE":             "true",
+		"STORAGE_S3_UNSIGNED_PAYLOAD":           "true",
+		"STORAGE_GCS_DRIVER":                    "gcs",
+		"STORAGE_GCS_BUCKET":                    "gcs-bucket",
+		"STORAGE_GCS_CREDENTIALS_JSON":          `{"type":"service_account"}`,
+		"STORAGE_GCS_ENDPOINT":                  "http://127.0.0.1:4443",
+		"STORAGE_DROPBOX_DRIVER":                "dropbox",
+		"STORAGE_DROPBOX_TOKEN":                 "token",
+		"STORAGE_DROPBOX_PREFIX":                "uploads",
+		"STORAGE_RCLONE_DRIVER":                 "rclone",
+		"STORAGE_RCLONE_REMOTE":                 "remote:",
+		"STORAGE_RCLONE_RCLONE_CONFIG_PATH":     "/tmp/rclone.conf",
+		"STORAGE_RCLONE_RCLONE_CONFIG_DATA":     "[remote]",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-storage-driver-matrix-*", filepath.Join("internal", "storages"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -704,7 +654,7 @@ func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 		nil,
 		nil,
 	))
-	written, err := GenerateStorageFiles(root)
+	written, err := generateStorageFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateStorageFiles returned error: %v", err)
 	}

@@ -92,9 +92,12 @@ func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []s
 }
 
 func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
-	t.Setenv("QUEUE_DRIVER", "null")
-	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
-	t.Setenv("QUEUE_CRITICAL_NAME", "critical")
+	t.Parallel()
+	environment := map[string]string{
+		"QUEUE_DRIVER":          "null",
+		"QUEUE_CRITICAL_DRIVER": "sync",
+		"QUEUE_CRITICAL_NAME":   "critical",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-generation-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -104,7 +107,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		queueLocalReplaces(t),
 	))
 	writeQueueRuntimeFixture(t, root)
-	written, err := GenerateQueueFiles(root)
+	written, err := generateQueueFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
@@ -299,9 +302,12 @@ func TestGeneratedAccessorsFallbackWithoutRuntimeEnv(t *testing.T) {
 }
 
 func TestGenerateQueueFilesAcceptsDefaultQueueCompatibilityAlias(t *testing.T) {
-	t.Setenv("QUEUE_DRIVER", "null")
-	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
-	t.Setenv("QUEUE_CRITICAL_DEFAULT_QUEUE", "critical")
+	t.Parallel()
+	environment := map[string]string{
+		"QUEUE_DRIVER":                 "null",
+		"QUEUE_CRITICAL_DRIVER":        "sync",
+		"QUEUE_CRITICAL_DEFAULT_QUEUE": "critical",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-legacy-name-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -311,7 +317,7 @@ func TestGenerateQueueFilesAcceptsDefaultQueueCompatibilityAlias(t *testing.T) {
 		queueLocalReplaces(t),
 	))
 	writeQueueRuntimeFixture(t, root)
-	if _, err := GenerateQueueFiles(root); err != nil {
+	if _, err := generateQueueFiles(fixtureGenerationInput(root, environment)); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
 
@@ -342,9 +348,12 @@ func TestLegacyDefaultQueueAlias(t *testing.T) {
 }
 
 func TestGenerateQueueFilesNamedQueuesInheritRootConfig(t *testing.T) {
-	t.Setenv("QUEUE_DRIVER", "null")
-	t.Setenv("QUEUE_WORKERS", "9")
-	t.Setenv("QUEUE_REPORTS_WORKERS", "2")
+	t.Parallel()
+	environment := map[string]string{
+		"QUEUE_DRIVER":          "null",
+		"QUEUE_WORKERS":         "9",
+		"QUEUE_REPORTS_WORKERS": "2",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-inheritance-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -354,7 +363,7 @@ func TestGenerateQueueFilesNamedQueuesInheritRootConfig(t *testing.T) {
 		queueLocalReplaces(t),
 	))
 	writeQueueRuntimeFixture(t, root)
-	if _, err := GenerateQueueFiles(root); err != nil {
+	if _, err := generateQueueFiles(fixtureGenerationInput(root, environment)); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
 
@@ -575,28 +584,32 @@ func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 	}
 }
 
-func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
-	t.Setenv("QUEUE_DRIVER", "null")
-	t.Setenv("QUEUE_SYNC_DRIVER", "sync")
-	t.Setenv("QUEUE_WORKERPOOL_DRIVER", "workerpool")
-	t.Setenv("QUEUE_REDIS_DRIVER", "redis")
-	t.Setenv("QUEUE_REDIS_NAME", "critical")
-	t.Setenv("QUEUE_REDIS_QUEUES", "critical=1")
-	t.Setenv("QUEUE_NATS_DRIVER", "nats")
-	t.Setenv("QUEUE_NATS_URL", "nats://127.0.0.1:4222")
-	t.Setenv("QUEUE_SQS_DRIVER", "sqs")
-	t.Setenv("QUEUE_SQS_REGION", "us-east-1")
-	t.Setenv("QUEUE_SQS_ENDPOINT", "http://127.0.0.1:4566")
-	t.Setenv("QUEUE_SQS_ACCESS_KEY", "test")
-	t.Setenv("QUEUE_SQS_SECRET_KEY", "test")
-	t.Setenv("QUEUE_RABBITMQ_DRIVER", "rabbitmq")
-	t.Setenv("QUEUE_RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/")
-	t.Setenv("QUEUE_SQLITE_DRIVER", "sqlite")
-	t.Setenv("QUEUE_SQLITE_DSN", "file::memory:?cache=shared")
-	t.Setenv("QUEUE_POSTGRES_DRIVER", "postgres")
-	t.Setenv("QUEUE_POSTGRES_DSN", "postgres://queue:queue@127.0.0.1:5432/queue?sslmode=disable")
-	t.Setenv("QUEUE_MYSQL_DRIVER", "mysql")
-	t.Setenv("QUEUE_MYSQL_DSN", "queue:queue@tcp(127.0.0.1:3306)/queue?parseTime=true")
+// TestGenerateQueueFilesDriverMatrixCompiles keeps every supported Queue driver import resolvable in one authoritative fixture.
+func TestGenerateQueueFilesDriverMatrixCompiles(t *testing.T) {
+	t.Parallel()
+	environment := map[string]string{
+		"QUEUE_DRIVER":            "null",
+		"QUEUE_SYNC_DRIVER":       "sync",
+		"QUEUE_WORKERPOOL_DRIVER": "workerpool",
+		"QUEUE_REDIS_DRIVER":      "redis",
+		"QUEUE_REDIS_NAME":        "critical",
+		"QUEUE_REDIS_QUEUES":      "critical=1",
+		"QUEUE_NATS_DRIVER":       "nats",
+		"QUEUE_NATS_URL":          "nats://127.0.0.1:4222",
+		"QUEUE_SQS_DRIVER":        "sqs",
+		"QUEUE_SQS_REGION":        "us-east-1",
+		"QUEUE_SQS_ENDPOINT":      "http://127.0.0.1:4566",
+		"QUEUE_SQS_ACCESS_KEY":    "test",
+		"QUEUE_SQS_SECRET_KEY":    "test",
+		"QUEUE_RABBITMQ_DRIVER":   "rabbitmq",
+		"QUEUE_RABBITMQ_URL":      "amqp://guest:guest@127.0.0.1:5672/",
+		"QUEUE_SQLITE_DRIVER":     "sqlite",
+		"QUEUE_SQLITE_DSN":        "file::memory:?cache=shared",
+		"QUEUE_POSTGRES_DRIVER":   "postgres",
+		"QUEUE_POSTGRES_DSN":      "postgres://queue:queue@127.0.0.1:5432/queue?sslmode=disable",
+		"QUEUE_MYSQL_DRIVER":      "mysql",
+		"QUEUE_MYSQL_DSN":         "queue:queue@tcp(127.0.0.1:3306)/queue?parseTime=true",
+	}
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-driver-imports-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -618,7 +631,7 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 		queueLocalReplaces(t),
 	))
 	writeQueueRuntimeFixture(t, root)
-	written, err := GenerateQueueFiles(root)
+	written, err := generateQueueFiles(fixtureGenerationInput(root, environment))
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
