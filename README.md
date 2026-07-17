@@ -1,5 +1,21 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/goforj/docs/refs/heads/main/docs/public/assets/goforj-full.png" width="500" alt="GoForj Logo">
+  <a href="https://goforj.dev">
+    <img src="https://raw.githubusercontent.com/goforj/docs/main/docs/public/assets/goforj-og-20260527.jpg" width="600" alt="GoForj">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/actions/workflow/status/goforj/goforj/test.yml?branch=main&amp;event=push&amp;label=test%20suite&amp;logo=githubactions&amp;style=flat-square" alt="Test suite"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=test&amp;label=unit&amp;logo=githubactions&amp;style=flat-square" alt="Unit tests"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=integration&amp;label=integration&amp;logo=githubactions&amp;style=flat-square" alt="Integration tests"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=watcher%20churn%20%28race%29&amp;label=race&amp;logo=githubactions&amp;style=flat-square" alt="Race tests"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=lighthouse-integration&amp;label=lighthouse&amp;logo=githubactions&amp;style=flat-square" alt="Lighthouse integration tests"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=backup%20and%20restore%20integration&amp;label=backup%20%26%20restore&amp;logo=githubactions&amp;style=flat-square" alt="Backup and restore integration tests"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=generator-integration&amp;label=generator&amp;logo=githubactions&amp;style=flat-square" alt="Generator integration tests"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=uptime%20gopher%20%28demo%29&amp;label=demo%20monitoring&amp;logo=githubactions&amp;style=flat-square" alt="Demo monitoring tests"></a>
 </p>
 
 <p align="center">
