@@ -18,8 +18,6 @@ env:
 
 jobs:
   test:
-#    if: false # disable default job
-    # runs-on: [self-hosted, linux, x64, docker, goforj]
     runs-on: ubuntu-latest
 
     steps:
@@ -33,40 +31,14 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            internal/coredeps/modules.go
 
-      - name: Purge Go build cache
-        if: false # Temporarily disabled: deterministic test-renders workspace should improve cache reuse.
-        run: |
-          set -euo pipefail
-          GOCACHE_DIR="$(go env GOCACHE)"
-          echo "Purging GOCACHE at: $GOCACHE_DIR"
-          rm -rf "$GOCACHE_DIR"
-          # Defensive cleanup for self-hosted runner paths that can leak across Docker overlays.
-          rm -rf "$HOME/.cache/go-build" || true
-          go clean -cache -testcache || true
-
-      # ------------------------------------------------------------------
-      # Pre-fetch modules (local runner cache)
-      # ------------------------------------------------------------------
-      - name: Download Go modules
-        run: go mod download
-
-      # ------------------------------------------------------------------
-      # Install wire once (local runner cache)
-      # ------------------------------------------------------------------
       - name: Install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
-      - name: Run Go tests and multi-App smoke
-        run: |
-          go test ./... -v
-          go test -tags=integration,multiapp ./internal/forj \
-            -run '^(TestMakeAppMultiApp(Runtime|SQLiteMigrations)Smoke|TestRunnableScenarioPathIntegration)$' \
-            -count=1 -v
+      - name: Run Go tests
+        run: go test ./... -v
 
-      # ------------------------------------------------------------------
-      # Build GoForj binary
-      # ------------------------------------------------------------------
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
@@ -86,10 +58,9 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: go.sum
-
-      - name: Download Go modules
-        run: go mod download
+          cache-dependency-path: |
+            go.sum
+            internal/coredeps/modules.go
 
       - name: Run watcher concurrency stress tests
         run: |
@@ -156,12 +127,9 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
+          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'internal/coredeps/modules.go', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
-
-      - name: Download Go modules
-        run: go mod download
 
       - name: Install wire
         run: go install "$WIRE_INSTALL_TARGET"
@@ -190,7 +158,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
+          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'internal/coredeps/modules.go', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
@@ -204,9 +172,34 @@ jobs:
           GOWORK=off go mod tidy
           GOWORK=off go build .
 
-  lighthouse-integration:
-#    runs-on: [self-hosted, linux, x64, docker, goforj]
+  integration-shards:
+    name: Integration (${{ matrix.name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: framework 1/6
+            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=0
+          - name: framework 2/6
+            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=1
+          - name: framework 3/6
+            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=2
+          - name: framework 4/6
+            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=3
+          - name: framework 5/6
+            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=4
+          - name: framework 6/6
+            args: framework --framework-profile=integration --framework-shard-count=6 --framework-shard-index=5
+          - name: multi-App
+            args: framework --framework-profile=multiapp
+          - name: rendered sqlite
+            args: rendered --variant=sqlite
+          - name: rendered mysql
+            args: rendered --variant=mysql
+          - name: rendered postgres
+            args: rendered --variant=postgres
     env:
       CLICOLOR_FORCE: "1"
 
@@ -219,142 +212,74 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Purge Go build cache
-        if: false # Restored build cache should be reusable across workflow runs.
-        run: |
-          set -euo pipefail
-          GOCACHE_DIR="$(go env GOCACHE)"
-          echo "Purging GOCACHE at: $GOCACHE_DIR"
-          rm -rf "$GOCACHE_DIR"
-          # Defensive cleanup for self-hosted runner paths that can leak across Docker overlays.
-          rm -rf "$HOME/.cache/go-build" || true
-          go clean -cache -testcache || true
+          cache-dependency-path: |
+            go.sum
+            internal/coredeps/modules.go
 
       - name: Verify Docker runtime
         run: |
-          if ! command -v docker >/dev/null 2>&1; then
-            if [ "$(id -u)" = "0" ]; then
-              apt-get update
-              apt-get install -y docker.io
-            else
-              echo "Docker is missing and sudo is unavailable; please preinstall Docker on this runner."
-              exit 1
-            fi
-          fi
-          if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
-            if [ "$(id -u)" = "0" ]; then
-              apt-get update
-              apt-get install -y docker-compose-plugin
-            else
-              echo "Docker Compose is missing and sudo is unavailable; please preinstall Docker Compose on this runner."
-              exit 1
-            fi
-          fi
-          docker info
-          if command -v docker-compose >/dev/null 2>&1; then
-            docker-compose version
-          else
-            docker compose version
-          fi
-
-      - name: Start Redis
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y redis-server
-          redis-server --daemonize yes --save "" --appendonly no
-          for attempt in {1..30}; do
-            if redis-cli ping | grep -q PONG; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Redis did not become ready"
-          exit 1
-
-      - name: Download Go modules
-        run: go mod download
+          docker info >/dev/null
+          docker compose version >/dev/null
 
       - name: Install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Build GoForj binary
-        run: go install ./cmd/forj
+        run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
+
+      - name: Run integration shard
+        env:
+          FORJ_INTEGRATION_FORJ_PATH: ${{ runner.temp }}/forj
+        run: '"$FORJ_INTEGRATION_FORJ_PATH" test:integration ${{ matrix.args }} -v'
+
+  integration:
+    name: integration
+    if: ${{ always() }}
+    needs: integration-shards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every integration shard
+        env:
+          SHARD_RESULT: ${{ needs.integration-shards.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "One or more integration shards failed: $SHARD_RESULT"
+            exit 1
+          fi
+
+  lighthouse-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLICOLOR_FORCE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            internal/coredeps/modules.go
+
+      - name: Verify Docker runtime
+        run: |
+          docker info >/dev/null
+          docker compose version >/dev/null
+
+      - name: Install wire
+        run: go install "$WIRE_INSTALL_TARGET"
+
+      - name: Build GoForj binary
+        run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
 
       - name: Run lighthouse integration tests
         env:
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: "6379"
-        run: go test -tags=integration,lighthouse ./internal/forj -run TestLighthouse -v
-
-  integration:
-#    runs-on: [self-hosted, linux, x64, docker, goforj]
-    runs-on: ubuntu-latest
-    env:
-      CLICOLOR_FORCE: "1"
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Purge Go build cache
-        if: false # Restored build cache should be reusable across workflow runs.
-        run: |
-          set -euo pipefail
-          GOCACHE_DIR="$(go env GOCACHE)"
-          echo "Purging GOCACHE at: $GOCACHE_DIR"
-          rm -rf "$GOCACHE_DIR"
-          # Defensive cleanup for self-hosted runner paths that can leak across Docker overlays.
-          rm -rf "$HOME/.cache/go-build" || true
-          go clean -cache -testcache || true
-
-      - name: Verify Docker runtime
-        run: |
-          if ! command -v docker >/dev/null 2>&1; then
-            if [ "$(id -u)" = "0" ]; then
-              apt-get update
-              apt-get install -y docker.io
-            else
-              echo "Docker is missing and sudo is unavailable; please preinstall Docker on this runner."
-              exit 1
-            fi
-          fi
-          if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
-            if [ "$(id -u)" = "0" ]; then
-              apt-get update
-              apt-get install -y docker-compose-plugin
-            else
-              echo "Docker Compose is missing and sudo is unavailable; please preinstall Docker Compose on this runner."
-              exit 1
-            fi
-          fi
-          docker info
-          if command -v docker-compose >/dev/null 2>&1; then
-            docker-compose version
-          else
-            docker compose version
-          fi
-
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Install wire
-        run: go install "$WIRE_INSTALL_TARGET"
-
-      - name: Build GoForj binary
-        run: go install ./cmd/forj
-
-      - name: Run consolidated integration tests
-        run: |
-          set -euo pipefail
-          forj test:integration all --variant all -v
+          FORJ_INTEGRATION_FORJ_PATH: ${{ runner.temp }}/forj
+        run: '"$FORJ_INTEGRATION_FORJ_PATH" test:integration framework --framework-profile=lighthouse -v'
 
   backup-integration:
     name: Backup and Restore Integration
@@ -376,14 +301,16 @@ jobs:
           cache-dependency-path: |
             go.sum
             integration/go.sum
+            internal/coredeps/modules.go
 
       - name: Verify Docker runtime
         run: docker info
 
-      - name: Install native database clients
+      - name: Verify native database clients
         run: |
-          sudo apt-get update
-          sudo apt-get install -y default-mysql-client postgresql-client
+          for client in mysql mysqldump psql pg_dump; do
+            command -v "$client" >/dev/null
+          done
 
       - name: Install wire
         run: go install "$WIRE_INSTALL_TARGET"
@@ -431,6 +358,9 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: |
+            go.sum
+            internal/coredeps/modules.go
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -439,14 +369,11 @@ jobs:
           cache: npm
           cache-dependency-path: templates/demo/frontend/package-lock.json
 
-      - name: Download Go modules
-        run: go mod download
-
       - name: Install wire
         run: go install "$WIRE_INSTALL_TARGET"
 
       - name: Build GoForj binary
-        run: go install ./cmd/forj
+        run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
 
       - name: Render demo app
         run: |
@@ -482,7 +409,7 @@ jobs:
             goforj_version: ""
           YAML
           cd "${UPTIME_GOPHER_DEMO_DIR}"
-          forj render
+          "$RUNNER_TEMP/forj" render
 
       - name: Run demo backend monitoring tests
         run: |
@@ -494,11 +421,10 @@ jobs:
         run: |
           set -euo pipefail
           cd "${UPTIME_GOPHER_DEMO_DIR}/cmd/app/frontend"
-          npm install
+          npm ci --prefer-offline --no-audit
           npm run test:monitoring-ui
 
   generator-integration:
-#    runs-on: [self-hosted, linux, x64, docker, goforj]
     runs-on: ubuntu-latest
     env:
       CLICOLOR_FORCE: "1"
@@ -521,29 +447,22 @@ jobs:
           path: |
             ${{ env.GOCACHE }}
             ${{ env.GOMODCACHE }}
-          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'go.mod', 'integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go', 'internal/generate/caches.go', 'internal/generate/storages.go', 'internal/forj/internal/caches/manager_gen.go', 'internal/forj/internal/storages/manager_gen.go') }}
+          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'go.mod', 'integration/go.sum', 'integration/go.mod', 'internal/coredeps/modules.go') }}
           restore-keys: |
             generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
       - name: Verify Docker runtime
-        run: |
-          if ! command -v docker >/dev/null 2>&1; then
-            if [ "$(id -u)" = "0" ]; then
-              apt-get update
-              apt-get install -y docker.io
-            else
-              echo "Docker is missing and sudo is unavailable; please preinstall Docker on this runner."
-              exit 1
-            fi
-          fi
-          docker info
+        run: docker info >/dev/null
 
       - name: Restore Docker image cache
         id: generator-docker-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/generator-docker-images
-          key: generator-docker-${{ runner.os }}-${{ env.GENERATOR_DOCKER_CACHE_VERSION }}-${{ hashFiles('.github/workflows/test.yml', 'integration/generator_integration_test.go') }}
+          key: generator-docker-${{ runner.os }}-${{ env.GENERATOR_DOCKER_CACHE_VERSION }}-${{ hashFiles('.github/generator-integration-images.txt') }}
+          restore-keys: |
+            generator-docker-${{ runner.os }}-${{ env.GENERATOR_DOCKER_CACHE_VERSION }}-
+            generator-docker-${{ runner.os }}-
 
       - name: Load cached Docker images
         run: |
@@ -562,14 +481,7 @@ jobs:
           set -euo pipefail
           cache_dir="$HOME/.cache/generator-docker-images"
           mkdir -p "$cache_dir"
-          images=(
-            "redis:7-alpine"
-            "memcached:1.6-alpine"
-            "amazon/dynamodb-local:2.5.4"
-            "postgres:16-alpine"
-            "mysql:8.4"
-            "nats:2.10-alpine"
-          )
+          mapfile -t images < .github/generator-integration-images.txt
           for image in "${images[@]}"; do
             docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
             archive_name="$(echo "$image" | tr '/:' '__').tar"
