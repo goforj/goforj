@@ -48,7 +48,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/queue/driver/sqlitequeue":          "v0.2.1",
 	"github.com/goforj/queue/driver/sqlqueuecore":         "v0.2.1",
 	"github.com/goforj/queue/driver/sqsqueue":             "v0.2.1",
-	"github.com/goforj/scheduler/v2":                      "v2.1.3",
+	"github.com/goforj/scheduler/v2":                      "v2.1.4",
 	"github.com/goforj/storage":                           "v0.5.0",
 	"github.com/goforj/storage/driver/dropboxstorage":     "v0.5.0",
 	"github.com/goforj/storage/driver/ftpstorage":         "v0.5.0",

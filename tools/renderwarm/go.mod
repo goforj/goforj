@@ -23,7 +23,7 @@ require (
 	github.com/goforj/metrics v0.2.0
 	github.com/goforj/null/v6 v6.0.2
 	github.com/goforj/queue v0.2.1
-	github.com/goforj/scheduler/v2 v2.1.3
+	github.com/goforj/scheduler/v2 v2.1.4
 	github.com/goforj/storage v0.5.0
 	github.com/goforj/str v1.3.0
 	github.com/goforj/str/v2 v2.0.1
