@@ -29,8 +29,6 @@ type authRenderedIntegrationCase struct {
 	components project.Components
 }
 
-func cleanupAuthDatabaseFixtures() {}
-
 func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 	if _, err := exec.LookPath("wire"); err != nil {
 		t.Skip("wire is required for rendered app integration tests")
@@ -439,16 +437,7 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 		t.Fatal("expected auth_access cookie after login")
 	}
 
-	time.Sleep(3 * time.Second)
-
-	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusOK)
-	afterAccess := authCookieValue(t, client.jar, baseURL, "auth_access")
-	if afterAccess == "" {
-		t.Fatal("expected refreshed auth_access cookie")
-	}
-	if afterAccess == beforeAccess {
-		t.Fatal("expected auth_access cookie to rotate after expiry/refresh")
-	}
+	waitForRenderedAuthAccessRotation(t, client, baseURL, beforeAccess, 3*time.Second)
 
 	sessionsResp = client.sessions()
 	if len(sessionsResp.Sessions) != 2 {
@@ -537,6 +526,23 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	}, http.StatusLocked)
 }
 
+// waitForRenderedAuthAccessRotation observes the expiry boundary directly instead of padding every driver case with a fixed sleep.
+func waitForRenderedAuthAccessRotation(t *testing.T, client *renderedAuthHTTPClient, baseURL string, beforeAccess string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusOK)
+		afterAccess := authCookieValue(t, client.jar, baseURL, "auth_access")
+		if afterAccess != "" && afterAccess != beforeAccess {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expected auth_access cookie to rotate after expiry/refresh")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func runRenderedAuthCommand(t *testing.T, projectDir, name string, args []string, env []string) {
 	t.Helper()
 
@@ -561,7 +567,7 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 		key   string
 		value string
 	}{
-		{"AUTH_ACCESS_TOKEN_TTL", "2s"},
+		{"AUTH_ACCESS_TOKEN_TTL", "1s"},
 		{"AUTH_SESSION_IDLE_TTL", "30m"},
 		{"AUTH_SESSION_TTL", "30m"},
 		{"AUTH_COOKIE_SECURE", "false"},

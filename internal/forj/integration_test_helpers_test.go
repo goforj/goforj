@@ -37,7 +37,6 @@ var (
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	cleanupAuthDatabaseFixtures()
 	testkit.CleanupIntegrationHarness()
 	if sharedCleanup != nil {
 		sharedCleanup()

@@ -119,6 +119,7 @@ func buildFullRenderCombos() []renderCombo {
 			enabled:    componentLabels(cfg),
 		})
 	}
+	combos = deduplicateComponentRenderCombos(combos)
 	combos = append(combos, prSentinelRenderCombos()...)
 	return combos
 }
@@ -470,9 +471,24 @@ func buildCuratedRenderCombos() []renderCombo {
 		}
 	}
 
+	combos = deduplicateComponentRenderCombos(combos)
 	combos = append(combos, prSentinelRenderCombos()...)
 	combos = append(combos, starterKitRenderCombos()...)
 	return combos
+}
+
+// deduplicateComponentRenderCombos keeps one compile for each effective component contract after dependency resolution.
+func deduplicateComponentRenderCombos(combos []renderCombo) []renderCombo {
+	unique := make([]renderCombo, 0, len(combos))
+	seen := make(map[project.Components]struct{}, len(combos))
+	for _, combo := range combos {
+		if _, ok := seen[combo.components]; ok {
+			continue
+		}
+		seen[combo.components] = struct{}{}
+		unique = append(unique, combo)
+	}
+	return unique
 }
 
 // componentLabels returns the human-friendly component labels for logging.

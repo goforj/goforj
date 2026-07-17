@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -241,11 +242,17 @@ func TestMain(m *testing.M) {
 func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	ctx := context.Background()
 	redis := startRedisContainer(t, ctx)
-	memcached := startMemcachedContainer(t, ctx)
-	dynamo := startDynamoDBContainer(t, ctx)
-	postgres := startPostgresContainer(t, ctx)
-	mysql := startMySQLContainer(t, ctx)
-	nats := startNATSContainer(t, ctx)
+	services := startContainerGroup(t, ctx, cacheContainerStartSpecs())
+	memcached := services["memcached"]
+	dynamo := services["dynamo"]
+	dynamo.endpoint = "http://" + dynamo.addr
+	postgres := services["postgres"]
+	postgres.dsn = fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", postgres.addr)
+	mysql := services["mysql"]
+	mysql.dsn = fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", mysql.addr)
+	waitForMySQLReady(t, mysql.dsn)
+	nats := services["nats"]
+	nats.url = "nats://" + nats.addr
 
 	fileDir := filepath.Join(t.TempDir(), "cache-file")
 	sqlitePath := filepath.Join(t.TempDir(), "cache.sqlite3")
@@ -304,6 +311,69 @@ func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/caches", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
 }
 
+// cacheContainerStartSpecs defines independent cache services so the smoke test can start them as one concurrent group.
+func cacheContainerStartSpecs() []containerStartSpec {
+	return []containerStartSpec{
+		{
+			name: "memcached",
+			request: testcontainers.ContainerRequest{
+				Image:        "memcached:1.6-alpine",
+				ExposedPorts: []string{"11211/tcp"},
+				WaitingFor:   wait.ForListeningPort("11211/tcp").WithStartupTimeout(30 * time.Second),
+			},
+			port: "11211/tcp",
+		},
+		{
+			name: "dynamo",
+			request: testcontainers.ContainerRequest{
+				Image:        "amazon/dynamodb-local:2.5.4",
+				ExposedPorts: []string{"8000/tcp"},
+				WaitingFor:   wait.ForListeningPort("8000/tcp").WithStartupTimeout(30 * time.Second),
+			},
+			port: "8000/tcp",
+		},
+		{
+			name: "postgres",
+			request: testcontainers.ContainerRequest{
+				Image:        "postgres:16-alpine",
+				ExposedPorts: []string{"5432/tcp"},
+				Env: map[string]string{
+					"POSTGRES_DB":       "app",
+					"POSTGRES_USER":     "app",
+					"POSTGRES_PASSWORD": "secret",
+				},
+				WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
+			},
+			port: "5432/tcp",
+		},
+		{
+			name: "mysql",
+			request: testcontainers.ContainerRequest{
+				Image:        "mysql:8.4",
+				ExposedPorts: []string{"3306/tcp"},
+				Env: map[string]string{
+					"MYSQL_DATABASE":      "app",
+					"MYSQL_USER":          "app",
+					"MYSQL_PASSWORD":      "secret",
+					"MYSQL_ROOT_PASSWORD": "rootsecret",
+				},
+				WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
+			},
+			port: "3306/tcp",
+		},
+		{
+			name: "nats",
+			request: testcontainers.ContainerRequest{
+				Image:        "nats:2.10-alpine",
+				Cmd:          []string{"-js"},
+				ExposedPorts: []string{"4222/tcp"},
+				WaitingFor:   wait.ForListeningPort("4222/tcp").WithStartupTimeout(30 * time.Second),
+			},
+			port: "4222/tcp",
+		},
+	}
+}
+
 func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 	ctx := context.Background()
 	redis := startRedisContainer(t, ctx)
@@ -360,12 +430,27 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 
 type startedContainer struct {
 	container testcontainers.Container
+	image     string
 	host      string
 	port      string
 	addr      string
 	endpoint  string
 	url       string
 	dsn       string
+}
+
+// containerStartSpec names one service so concurrent completion order cannot change environment wiring.
+type containerStartSpec struct {
+	name    string
+	request testcontainers.ContainerRequest
+	port    string
+}
+
+// containerStartResult carries one concurrent startup outcome back to the owning test goroutine.
+type containerStartResult struct {
+	name    string
+	started startedContainer
+	err     error
 }
 
 type startedFTPServer struct {
@@ -405,60 +490,6 @@ func startRedisContainer(t *testing.T, ctx context.Context) startedContainer {
 	}, "6379/tcp")
 }
 
-func startMemcachedContainer(t *testing.T, ctx context.Context) startedContainer {
-	t.Helper()
-	return startGenericContainer(t, ctx, testcontainers.ContainerRequest{
-		Image:        "memcached:1.6-alpine",
-		ExposedPorts: []string{"11211/tcp"},
-		WaitingFor:   wait.ForListeningPort("11211/tcp").WithStartupTimeout(30 * time.Second),
-	}, "11211/tcp")
-}
-
-func startDynamoDBContainer(t *testing.T, ctx context.Context) startedContainer {
-	t.Helper()
-	started := startGenericContainer(t, ctx, testcontainers.ContainerRequest{
-		Image:        "amazon/dynamodb-local:2.5.4",
-		ExposedPorts: []string{"8000/tcp"},
-		WaitingFor:   wait.ForListeningPort("8000/tcp").WithStartupTimeout(30 * time.Second),
-	}, "8000/tcp")
-	started.endpoint = "http://" + started.addr
-	return started
-}
-
-func startPostgresContainer(t *testing.T, ctx context.Context) startedContainer {
-	t.Helper()
-	started := startGenericContainer(t, ctx, testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_DB":       "app",
-			"POSTGRES_USER":     "app",
-			"POSTGRES_PASSWORD": "secret",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
-	}, "5432/tcp")
-	started.dsn = fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", started.addr)
-	return started
-}
-
-func startMySQLContainer(t *testing.T, ctx context.Context) startedContainer {
-	t.Helper()
-	started := startGenericContainer(t, ctx, testcontainers.ContainerRequest{
-		Image:        "mysql:8.4",
-		ExposedPorts: []string{"3306/tcp"},
-		Env: map[string]string{
-			"MYSQL_DATABASE":      "app",
-			"MYSQL_USER":          "app",
-			"MYSQL_PASSWORD":      "secret",
-			"MYSQL_ROOT_PASSWORD": "rootsecret",
-		},
-		WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
-	}, "3306/tcp")
-	started.dsn = fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", started.addr)
-	waitForMySQLReady(t, started.dsn)
-	return started
-}
-
 func waitForMySQLReady(t *testing.T, dsn string) {
 	t.Helper()
 
@@ -484,47 +515,96 @@ func waitForMySQLReady(t *testing.T, dsn string) {
 	}
 }
 
-func startNATSContainer(t *testing.T, ctx context.Context) startedContainer {
+// startContainerGroup overlaps independent Docker startup and teardown while keeping failures attached to the parent test.
+func startContainerGroup(t *testing.T, ctx context.Context, specs []containerStartSpec) map[string]startedContainer {
 	t.Helper()
-	started := startGenericContainer(t, ctx, testcontainers.ContainerRequest{
-		Image:        "nats:2.10-alpine",
-		Cmd:          []string{"-js"},
-		ExposedPorts: []string{"4222/tcp"},
-		WaitingFor:   wait.ForListeningPort("4222/tcp").WithStartupTimeout(30 * time.Second),
-	}, "4222/tcp")
-	started.url = "nats://" + started.addr
-	return started
+	groupContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan containerStartResult, len(specs))
+	for _, spec := range specs {
+		spec := spec
+		go func() {
+			started, err := startGenericContainerResult(groupContext, spec.request, spec.port)
+			results <- containerStartResult{name: spec.name, started: started, err: err}
+		}()
+	}
+
+	startedByName := make(map[string]startedContainer, len(specs))
+	startedContainers := make([]startedContainer, 0, len(specs))
+	failures := make([]string, 0)
+	for range specs {
+		result := <-results
+		if result.err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", result.name, result.err))
+			cancel()
+			continue
+		}
+		startedByName[result.name] = result.started
+		startedContainers = append(startedContainers, result.started)
+	}
+	if len(failures) > 0 {
+		sort.Strings(failures)
+		_ = terminateContainerGroup(startedContainers)
+		t.Fatalf("start container group: %s", strings.Join(failures, "; "))
+	}
+	t.Cleanup(func() {
+		if failures := terminateContainerGroup(startedContainers); len(failures) > 0 {
+			t.Errorf("terminate container group: %s", strings.Join(failures, "; "))
+		}
+	})
+	return startedByName
 }
 
-func startGenericContainer(t *testing.T, ctx context.Context, req testcontainers.ContainerRequest, port string) startedContainer {
-	t.Helper()
+// startGenericContainerResult starts one container without calling testing methods from a worker goroutine.
+func startGenericContainerResult(ctx context.Context, req testcontainers.ContainerRequest, port string) (startedContainer, error) {
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
 		Started:          true,
 	})
 	if err != nil {
-		t.Fatalf("start container %s: %v", req.Image, err)
+		return startedContainer{}, err
 	}
-	t.Cleanup(func() {
-		if err := container.Terminate(context.Background()); err != nil {
-			t.Fatalf("terminate container %s: %v", req.Image, err)
-		}
-	})
 
 	host, err := container.Host(ctx)
 	if err != nil {
-		t.Fatalf("container host %s: %v", req.Image, err)
+		_ = container.Terminate(context.Background())
+		return startedContainer{}, fmt.Errorf("container host %s: %w", req.Image, err)
 	}
 	mapped, err := container.MappedPort(ctx, nat.Port(port))
 	if err != nil {
-		t.Fatalf("container mapped port %s: %v", req.Image, err)
+		_ = container.Terminate(context.Background())
+		return startedContainer{}, fmt.Errorf("container mapped port %s: %w", req.Image, err)
 	}
 	return startedContainer{
 		container: container,
+		image:     req.Image,
 		host:      host,
 		port:      mapped.Port(),
 		addr:      net.JoinHostPort(host, mapped.Port()),
+	}, nil
+}
+
+// terminateContainerGroup removes independent services concurrently so Docker stop grace periods do not accumulate.
+func terminateContainerGroup(containers []startedContainer) []string {
+	results := make(chan string, len(containers))
+	for _, started := range containers {
+		started := started
+		go func() {
+			if err := started.container.Terminate(context.Background()); err != nil {
+				results <- fmt.Sprintf("%s: %v", started.image, err)
+				return
+			}
+			results <- ""
+		}()
 	}
+	failures := make([]string, 0)
+	for range containers {
+		if failure := <-results; failure != "" {
+			failures = append(failures, failure)
+		}
+	}
+	sort.Strings(failures)
+	return failures
 }
 
 func startSharedContainer(t *testing.T, ctx context.Context, key string, req testcontainers.ContainerRequest, port string) startedContainer {
@@ -551,30 +631,11 @@ func startSharedContainer(t *testing.T, ctx context.Context, key string, req tes
 
 func startGenericContainerWithoutCleanup(t *testing.T, ctx context.Context, req testcontainers.ContainerRequest, port string) startedContainer {
 	t.Helper()
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
+	started, err := startGenericContainerResult(ctx, req, port)
 	if err != nil {
 		t.Fatalf("start container %s: %v", req.Image, err)
 	}
-
-	host, err := container.Host(ctx)
-	if err != nil {
-		_ = container.Terminate(context.Background())
-		t.Fatalf("container host %s: %v", req.Image, err)
-	}
-	mapped, err := container.MappedPort(ctx, nat.Port(port))
-	if err != nil {
-		_ = container.Terminate(context.Background())
-		t.Fatalf("container mapped port %s: %v", req.Image, err)
-	}
-	return startedContainer{
-		container: container,
-		host:      host,
-		port:      mapped.Port(),
-		addr:      net.JoinHostPort(host, mapped.Port()),
-	}
+	return started
 }
 
 func terminateSharedContainers() {
@@ -901,7 +962,7 @@ func setEnv(t *testing.T, envs map[string]string) {
 
 func newTempModule(t *testing.T, pattern string) string {
 	t.Helper()
-	root, err := os.MkdirTemp(repoRoot(t), pattern)
+	root, err := os.MkdirTemp("", pattern)
 	if err != nil {
 		t.Fatalf("mkdir temp module: %v", err)
 	}
@@ -1008,13 +1069,4 @@ func loadStorageManagerFixture(t *testing.T) []byte {
 		t.Fatalf("read storage manager fixture: %v", err)
 	}
 	return content
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to resolve test file path")
-	}
-	return filepath.Join(filepath.Dir(currentFile), "..")
 }

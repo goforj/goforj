@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -35,31 +36,30 @@ func TestPortableTransferMatrix(t *testing.T) {
 		"sqlite": openBackupSQLite(t),
 	}
 	defer databases["sqlite"].Close()
-	mysql, _, stopMySQL := startBackupMySQL(t, ctx)
-	defer stopMySQL()
+	mysql, postgres, stopDatabases := startBackupDatabasePair(t, ctx)
+	defer stopDatabases()
 	databases["mysql"] = openBackupDatabase(t, "mysql", mysql)
 	defer databases["mysql"].Close()
-	postgres, _, stopPostgres := startBackupPostgres(t, ctx)
-	defer stopPostgres()
 	databases["postgres"] = openBackupDatabase(t, "postgres", postgres)
 	defer databases["postgres"].Close()
 
 	drivers := []string{"sqlite", "mysql", "postgres"}
 	for _, sourceDriver := range drivers {
+		source := databases[sourceDriver]
+		resetBackupFixture(t, sourceDriver, source, true)
+		sourceDialect, err := backup.NewSQLDialect(sourceDriver)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{"portable_users"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		archiveSnapshot := marshalBackupArchive(t, archive)
 		for _, targetDriver := range drivers {
 			t.Run(sourceDriver+"_to_"+targetDriver, func(t *testing.T) {
-				source := databases[sourceDriver]
 				target := databases[targetDriver]
-				resetBackupFixture(t, sourceDriver, source, true)
-				sourceDialect, err := backup.NewSQLDialect(sourceDriver)
-				if err != nil {
-					t.Fatal(err)
-				}
 				targetDialect, err := backup.NewSQLDialect(targetDriver)
-				if err != nil {
-					t.Fatal(err)
-				}
-				archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{"portable_users"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -75,6 +75,7 @@ func TestPortableTransferMatrix(t *testing.T) {
 				if err := tx.Commit(); err != nil {
 					t.Fatal(err)
 				}
+				assertBackupArchiveUnchanged(t, archive, archiveSnapshot)
 				got, err := backup.ExportPortable(ctx, target, targetDialect, []string{"portable_users"})
 				if err != nil {
 					t.Fatal(err)
@@ -87,19 +88,23 @@ func TestPortableTransferMatrix(t *testing.T) {
 		}
 	}
 	for _, sourceDriver := range drivers {
+		source := databases[sourceDriver]
+		resetLargeBackupFixture(t, sourceDriver, source, true)
+		sourceDialect, err := backup.NewSQLDialect(sourceDriver)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{"large_users"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(archive.Tables[0].Rows); got != 5000 {
+			t.Fatalf("exported large rows = %d, want 5000", got)
+		}
+		archiveSnapshot := marshalBackupArchive(t, archive)
 		for _, targetDriver := range drivers {
 			t.Run("large_"+sourceDriver+"_to_"+targetDriver, func(t *testing.T) {
-				source := databases[sourceDriver]
 				target := databases[targetDriver]
-				resetLargeBackupFixture(t, sourceDriver, source, true)
-				sourceDialect, err := backup.NewSQLDialect(sourceDriver)
-				if err != nil {
-					t.Fatal(err)
-				}
-				archive, err := backup.ExportPortable(ctx, source, sourceDialect, []string{"large_users"})
-				if err != nil {
-					t.Fatal(err)
-				}
 				resetLargeBackupFixture(t, targetDriver, target, false)
 				targetDialect, err := backup.NewSQLDialect(targetDriver)
 				if err != nil {
@@ -116,9 +121,7 @@ func TestPortableTransferMatrix(t *testing.T) {
 				if err := tx.Commit(); err != nil {
 					t.Fatal(err)
 				}
-				if got := len(archive.Tables[0].Rows); got != 5000 {
-					t.Fatalf("transferred large rows = %d, want 5000", got)
-				}
+				assertBackupArchiveUnchanged(t, archive, archiveSnapshot)
 				assertLargeBackupRows(t, target, targetDriver)
 			})
 		}
@@ -135,6 +138,25 @@ func TestPortableTransferMatrix(t *testing.T) {
 				t.Fatalf("chained transfer changed rows\nfirst=%v\nsecond=%v", first.Tables[0].Rows, second.Tables[0].Rows)
 			}
 		})
+	}
+}
+
+// marshalBackupArchive captures the stable representation reused across transfer targets.
+func marshalBackupArchive(t *testing.T, archive backup.PortableArchive) []byte {
+	t.Helper()
+	snapshot, err := backup.MarshalArchive(archive)
+	if err != nil {
+		t.Fatalf("marshal portable archive: %v", err)
+	}
+	return snapshot
+}
+
+// assertBackupArchiveUnchanged protects source reuse from target-specific import mutation.
+func assertBackupArchiveUnchanged(t *testing.T, archive backup.PortableArchive, snapshot []byte) {
+	t.Helper()
+	current := marshalBackupArchive(t, archive)
+	if !bytes.Equal(current, snapshot) {
+		t.Fatal("portable import mutated the reusable source archive")
 	}
 }
 
@@ -335,24 +357,16 @@ func resetLargeBackupFixture(t *testing.T, driver string, db *sql.DB, withData b
 	if !withData {
 		return
 	}
-	placeholder := "?"
-	if driver == "postgres" {
-		placeholder = "$1, $2"
-	} else {
-		placeholder += ", ?"
-	}
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	stmt, err := tx.Prepare("INSERT INTO large_users (id, value) VALUES (" + placeholder + ")")
-	if err != nil {
-		_ = tx.Rollback()
-		t.Fatal(err)
-	}
-	defer stmt.Close()
-	for id := 1; id <= 5000; id++ {
-		if _, err := stmt.Exec(id, fmt.Sprintf("large-user-%05d", id)); err != nil {
+	const rowCount = 5000
+	const batchSize = 500
+	for firstID := 1; firstID <= rowCount; firstID += batchSize {
+		lastID := min(firstID+batchSize-1, rowCount)
+		query, args := largeBackupInsertBatch(driver, firstID, lastID)
+		if _, err := tx.Exec(query, args...); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
@@ -360,6 +374,27 @@ func resetLargeBackupFixture(t *testing.T, driver string, db *sql.DB, withData b
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// largeBackupInsertBatch builds portable multi-row fixture inserts so coverage size does not require 5,000 database round trips.
+func largeBackupInsertBatch(driver string, firstID, lastID int) (string, []any) {
+	var query strings.Builder
+	query.WriteString("INSERT INTO large_users (id, value) VALUES ")
+	args := make([]any, 0, (lastID-firstID+1)*2)
+	parameter := 1
+	for id := firstID; id <= lastID; id++ {
+		if id > firstID {
+			query.WriteString(", ")
+		}
+		if driver == "postgres" {
+			fmt.Fprintf(&query, "($%d, $%d)", parameter, parameter+1)
+			parameter += 2
+		} else {
+			query.WriteString("(?, ?)")
+		}
+		args = append(args, id, fmt.Sprintf("large-user-%05d", id))
+	}
+	return query.String(), args
 }
 
 // assertLargeBackupRows verifies count and boundary values after a cross-database transfer.
@@ -508,13 +543,109 @@ func openBackupDatabase(t *testing.T, driver string, dsn string) *sql.DB {
 	return db
 }
 
+const backupDatabaseDriverLabel = "goforj.integration.backup.driver"
+
+// startBackupDatabasePair overlaps independent MySQL and Postgres startup for the portable transfer matrix.
+func startBackupDatabasePair(t *testing.T, ctx context.Context) (string, string, func()) {
+	t.Helper()
+	containers, err := testcontainers.ParallelContainers(ctx, testcontainers.ParallelContainerRequest{
+		backupMySQLContainerRequest(),
+		backupPostgresContainerRequest(),
+	}, testcontainers.ParallelContainersOptions{WorkersCount: 2})
+	if err != nil {
+		_ = terminateBackupContainers(containers)
+		t.Fatalf("start backup database containers: %v", err)
+	}
+	releaseContainers := true
+	defer func() {
+		if releaseContainers {
+			_ = terminateBackupContainers(containers)
+		}
+	}()
+
+	byDriver := make(map[string]testcontainers.Container, len(containers))
+	for _, container := range containers {
+		inspection, inspectErr := container.Inspect(ctx)
+		if inspectErr != nil {
+			t.Fatalf("inspect backup database container: %v", inspectErr)
+		}
+		driver := ""
+		if inspection.Config != nil {
+			driver = inspection.Config.Labels[backupDatabaseDriverLabel]
+		}
+		if driver == "" {
+			t.Fatal("backup database container is missing its driver label")
+		}
+		byDriver[driver] = container
+	}
+	if len(byDriver) != 2 || byDriver["mysql"] == nil || byDriver["postgres"] == nil {
+		t.Fatalf("backup database containers = %v, want mysql and postgres", byDriver)
+	}
+
+	mysqlHost := containerHost(t, ctx, byDriver["mysql"], "3306/tcp")
+	postgresHost := containerHost(t, ctx, byDriver["postgres"], "5432/tcp")
+	mysqlDSN := fmt.Sprintf("app:secret@tcp(%s)/app?parseTime=true", mysqlHost)
+	postgresDSN := fmt.Sprintf("postgres://app:secret@%s/app?sslmode=disable", postgresHost)
+	waitForBackupDatabase(t, mysqlDSN, "mysql")
+	waitForBackupDatabase(t, postgresDSN, "postgres")
+	stop := func() {
+		if failures := terminateBackupContainers(containers); len(failures) > 0 {
+			t.Errorf("terminate backup database containers: %s", strings.Join(failures, "; "))
+		}
+	}
+	releaseContainers = false
+	return mysqlDSN, postgresDSN, stop
+}
+
+// backupMySQLContainerRequest defines the shared MySQL fixture without coupling callers to its lifecycle.
+func backupMySQLContainerRequest() testcontainers.GenericContainerRequest {
+	return testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
+		Image:        "mysql:8.4",
+		ExposedPorts: []string{"3306/tcp"},
+		Env:          map[string]string{"MYSQL_DATABASE": "app", "MYSQL_USER": "app", "MYSQL_PASSWORD": "secret", "MYSQL_ROOT_PASSWORD": "root"},
+		Labels:       map[string]string{backupDatabaseDriverLabel: "mysql"},
+		WaitingFor:   wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
+	}, Started: true}
+}
+
+// backupPostgresContainerRequest defines the shared Postgres fixture without coupling callers to its lifecycle.
+func backupPostgresContainerRequest() testcontainers.GenericContainerRequest {
+	return testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
+		Image:        "postgres:16-alpine",
+		ExposedPorts: []string{"5432/tcp"},
+		Env:          map[string]string{"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret"},
+		Labels:       map[string]string{backupDatabaseDriverLabel: "postgres"},
+		WaitingFor:   wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
+	}, Started: true}
+}
+
+// terminateBackupContainers overlaps Docker stop grace periods and returns every cleanup failure.
+func terminateBackupContainers(containers []testcontainers.Container) []string {
+	results := make(chan string, len(containers))
+	for _, container := range containers {
+		container := container
+		go func() {
+			if err := container.Terminate(context.Background()); err != nil {
+				results <- err.Error()
+				return
+			}
+			results <- ""
+		}()
+	}
+	failures := make([]string, 0)
+	for range containers {
+		if failure := <-results; failure != "" {
+			failures = append(failures, failure)
+		}
+	}
+	sort.Strings(failures)
+	return failures
+}
+
 // startBackupMySQL starts the MySQL matrix participant and returns connection metadata.
 func startBackupMySQL(t *testing.T, ctx context.Context) (string, backup.Connection, func()) {
 	t.Helper()
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: "mysql:8.4", ExposedPorts: []string{"3306/tcp"}, Env: map[string]string{"MYSQL_DATABASE": "app", "MYSQL_USER": "app", "MYSQL_PASSWORD": "secret", "MYSQL_ROOT_PASSWORD": "root"},
-		WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
-	}, Started: true})
+	container, err := testcontainers.GenericContainer(ctx, backupMySQLContainerRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,10 +662,7 @@ func startBackupMySQL(t *testing.T, ctx context.Context) (string, backup.Connect
 // startBackupPostgres starts the Postgres matrix participant.
 func startBackupPostgres(t *testing.T, ctx context.Context) (string, testcontainers.Container, func()) {
 	t.Helper()
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: "postgres:16-alpine", ExposedPorts: []string{"5432/tcp"}, Env: map[string]string{"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret"},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
-	}, Started: true})
+	container, err := testcontainers.GenericContainer(ctx, backupPostgresContainerRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
