@@ -149,7 +149,7 @@ steps:
       path: .env
       language: dotenv
       old: |
-        QUEUE_SUPPORTED_DRIVERS=workerpool,redis # comma separated driver names; options: null, sync, workerpool, redis, nats, sqs, rabbitmq, sqlite, postgres, mysql
+        QUEUE_SUPPORTED_DRIVERS=workerpool,redis
       new: |
         QUEUE_SUPPORTED_DRIVERS=workerpool,redis,sync
 

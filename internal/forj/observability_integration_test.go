@@ -186,15 +186,21 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	envText := readRenderedFile(t, projectDir, ".env")
 	for _, token := range []string{
 		"METRICS_PORT=10000",
-		"METRICS_API_PORT=10000",
 		"METRICS_JOBS_PORT=10002",
 		"METRICS_SCHEDULER_PORT=10001",
-		"OBSERVABILITY_METRICS_TARGET_MODE=auto",
-		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
 		"GRAFANA_PORT=13001",
 	} {
 		if !strings.Contains(envText, token) {
 			t.Fatalf(".env missing %q\n%s", token, envText)
+		}
+	}
+	for _, token := range []string{
+		"METRICS_API_PORT=",
+		"OBSERVABILITY_METRICS_TARGET_MODE=",
+		"OBSERVABILITY_METRICS_TARGET_HOST=",
+	} {
+		if strings.Contains(envText, token) {
+			t.Fatalf(".env contains fallback-equivalent %q\n%s", token, envText)
 		}
 	}
 

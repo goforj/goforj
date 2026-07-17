@@ -13,8 +13,7 @@ import (
 func TestEnsureEnvironmentDefaultsIgnoresCommentedAndSimilarKeys(t *testing.T) {
 	root := t.TempDir()
 	keys := []string{
-		"APP_KEY", "APP_DIAG_TOKEN", "LIGHTHOUSE_URL", "LIGHTHOUSE_SECRET", "LIGHTHOUSE_ENABLED",
-		"SWAGGER_ENABLED", "FORJ_MAKE_OPEN", "FORJ_EDITOR", "API_JWT_SECRET_KEY",
+		"APP_KEY", "APP_DIAG_TOKEN", "LIGHTHOUSE_SECRET", "API_JWT_SECRET_KEY",
 	}
 	sourceLines := make([]string, 0, len(keys)*2+1)
 	for _, key := range keys {
@@ -25,7 +24,7 @@ func TestEnsureEnvironmentDefaultsIgnoresCommentedAndSimilarKeys(t *testing.T) {
 		t.Fatalf("write owner environment: %v", err)
 	}
 
-	renderer := environmentDefaultsRenderer(t, root, project.Components{})
+	renderer := environmentDefaultsRenderer(t, root, project.Components{Auth: true})
 	if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
 		t.Fatalf("ensure environment defaults: %v", err)
 	}
@@ -45,6 +44,34 @@ func TestEnsureEnvironmentDefaultsIgnoresCommentedAndSimilarKeys(t *testing.T) {
 		assignment := finalEnvironmentAssignment(lines, key)
 		if strings.TrimSpace(assignment.value) == "" || assignment.value == "xxx" {
 			t.Fatalf("generated %s value = %q, want concrete secret", key, assignment.value)
+		}
+	}
+	for _, key := range []string{"LIGHTHOUSE_URL", "LIGHTHOUSE_ENABLED", "SWAGGER_ENABLED", "FORJ_MAKE_OPEN", "FORJ_EDITOR"} {
+		if assignment := finalEnvironmentAssignment(lines, key); assignment.exists() {
+			t.Fatalf("default-valued %s assignment was added:\n%s", key, updated)
+		}
+	}
+}
+
+// TestEnsureEnvironmentDefaultsGatesCapabilitySecrets keeps unrelated framework credentials out of CLI-only projects.
+func TestEnsureEnvironmentDefaultsGatesCapabilitySecrets(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), nil, 0o600); err != nil {
+		t.Fatalf("write owner environment: %v", err)
+	}
+
+	renderer := environmentDefaultsRenderer(t, root, project.Components{CLI: true})
+	if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
+		t.Fatalf("ensure environment defaults: %v", err)
+	}
+	updated := readEnvironmentDefaultsFile(t, root)
+	lines := strings.Split(updated, "\n")
+	if assignment := finalEnvironmentAssignment(lines, "APP_KEY"); !assignment.exists() || assignment.value == "" {
+		t.Fatalf("generated APP_KEY assignment missing:\n%s", updated)
+	}
+	for _, key := range []string{"APP_DIAG_TOKEN", "LIGHTHOUSE_SECRET", "API_JWT_SECRET_KEY"} {
+		if assignment := finalEnvironmentAssignment(lines, key); assignment.exists() {
+			t.Fatalf("CLI-only environment contains %s:\n%s", key, updated)
 		}
 	}
 }
@@ -70,7 +97,7 @@ func TestEnsureEnvironmentDefaultsPreservesOwnerSyntaxAndDeduplicatesLighthouseS
 		t.Fatalf("write owner environment: %v", err)
 	}
 
-	renderer := environmentDefaultsRenderer(t, root, project.Components{})
+	renderer := environmentDefaultsRenderer(t, root, project.Components{Auth: true})
 	if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
 		t.Fatalf("ensure environment defaults: %v", err)
 	}
@@ -88,7 +115,7 @@ func TestEnsureEnvironmentDefaultsReplacesQuotedJWTPlaceholder(t *testing.T) {
 		t.Fatalf("write owner environment: %v", err)
 	}
 
-	renderer := environmentDefaultsRenderer(t, root, project.Components{})
+	renderer := environmentDefaultsRenderer(t, root, project.Components{Auth: true})
 	if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
 		t.Fatalf("ensure environment defaults: %v", err)
 	}
@@ -110,7 +137,7 @@ func TestEnsureEnvironmentDefaultsPreservesInterpolatedJWTSecret(t *testing.T) {
 		t.Fatalf("write owner environment: %v", err)
 	}
 
-	renderer := environmentDefaultsRenderer(t, root, project.Components{})
+	renderer := environmentDefaultsRenderer(t, root, project.Components{Auth: true})
 	if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
 		t.Fatalf("ensure environment defaults: %v", err)
 	}
@@ -124,12 +151,7 @@ func completeOwnerEnvironment(jwtLines ...string) string {
 	lines := []string{
 		"APP_KEY=owner-app-key",
 		"APP_DIAG_TOKEN=owner-diagnostic-token",
-		"LIGHTHOUSE_URL=wss://owner.example/ws",
 		"LIGHTHOUSE_SECRET=owner-secret",
-		"LIGHTHOUSE_ENABLED=false",
-		"SWAGGER_ENABLED=false",
-		"FORJ_MAKE_OPEN=never",
-		"FORJ_EDITOR=vim",
 	}
 	lines = append(lines, jwtLines...)
 	return strings.Join(append(lines, ""), "\n")

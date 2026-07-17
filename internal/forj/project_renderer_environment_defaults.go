@@ -6,6 +6,7 @@ import (
 
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/envfile"
+	"github.com/goforj/goforj/project"
 )
 
 // environmentAssignment retains the decoded value and source position of one controlling dotenv assignment.
@@ -34,21 +35,17 @@ func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
 	lighthouseSecret := finalEnvironmentAssignment(lines, "LIGHTHOUSE_SECRET")
 	jwtSecret := finalEnvironmentAssignment(lines, "API_JWT_SECRET_KEY")
 	isOwnerEnvironment := path == ".env"
-	needsURL := isOwnerEnvironment && !finalEnvironmentAssignment(lines, "LIGHTHOUSE_URL").exists()
-	needsAppDiagToken := isOwnerEnvironment && !appDiagToken.exists()
-	needsSecret := isOwnerEnvironment && !lighthouseSecret.exists()
-	needsEnabled := isOwnerEnvironment && !finalEnvironmentAssignment(lines, "LIGHTHOUSE_ENABLED").exists()
-	needsSwagger := isOwnerEnvironment && !finalEnvironmentAssignment(lines, "SWAGGER_ENABLED").exists()
-	needsForjMakeOpen := isOwnerEnvironment && !finalEnvironmentAssignment(lines, "FORJ_MAKE_OPEN").exists()
-	needsForjEditor := isOwnerEnvironment && !finalEnvironmentAssignment(lines, "FORJ_EDITOR").exists()
+	components := project.ProjectComponents(p.config)
+	needsAppDiagToken := isOwnerEnvironment && components.WebAPI && !appDiagToken.exists()
+	needsSecret := isOwnerEnvironment && components.HasRuntime() && !lighthouseSecret.exists()
 	needsKey := isOwnerEnvironment && !appKey.exists()
-	needsJWTSecret := isOwnerEnvironment && (!jwtSecret.exists() || strings.TrimSpace(jwtSecret.value) == "" || strings.TrimSpace(jwtSecret.value) == "xxx")
+	needsJWTSecret := isOwnerEnvironment && components.Auth && (!jwtSecret.exists() || strings.TrimSpace(jwtSecret.value) == "" || strings.TrimSpace(jwtSecret.value) == "xxx")
 
 	needsGrafanaPortDefault := false
 	if isOwnerEnvironment && p.config.Render.Components.Grafana {
 		lines, needsGrafanaPortDefault = migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
 	}
-	if !(duplicateSecretRemoved || needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsSwagger || needsForjMakeOpen || needsForjEditor || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
+	if !(duplicateSecretRemoved || needsAppDiagToken || needsSecret || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
 		return nil
 	}
 
@@ -88,32 +85,8 @@ func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
 	if needsAppDiagToken {
 		writeLines = append(writeLines, "APP_DIAG_TOKEN="+appDiagTokenValue)
 	}
-	if needsURL {
-		writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/lighthouse/ws/agent")
-	}
 	if needsSecret {
 		writeLines = append(writeLines, "LIGHTHOUSE_SECRET="+lighthouseSecretValue)
-	}
-	if needsEnabled {
-		writeLines = append(writeLines, "LIGHTHOUSE_ENABLED=true")
-	}
-	if needsSwagger {
-		writeLines = append(writeLines, "SWAGGER_ENABLED=true")
-	}
-	if needsForjMakeOpen || needsForjEditor {
-		if len(writeLines) > 0 {
-			writeLines = append(writeLines, "")
-		}
-		if !strings.Contains(text, "# Forj") {
-			writeLines = append(writeLines, "# Forj")
-		}
-		if needsForjMakeOpen {
-			writeLines = append(writeLines, "FORJ_MAKE_OPEN=auto # options: auto, always, never")
-		}
-		if needsForjEditor {
-			writeLines = append(writeLines, "# Optional editor command for make commands; falls back to common GUI editors.")
-			writeLines = append(writeLines, "FORJ_EDITOR=")
-		}
 	}
 	if needsJWTSecret {
 		line := "API_JWT_SECRET_KEY=" + jwtSecretValue

@@ -263,11 +263,11 @@ It currently includes:
 - OAuth start/callback/link routes
 - OAuth cleanup of expired callback state
 
-Generated `.env` behavior:
+Generated configuration behavior:
 
-- OAuth env vars are included only when the `OAuth` component is enabled
-- provider credentials are commented out by default
-- uncomment and fill only the providers you actually configure
+- generated `.env` files do not include OAuth credential stubs
+- providers remain disabled until their required credentials are configured
+- the generated `internal/auth/README.md` documents the credential matrix for GitHub, Google, Microsoft, and Apple
 
 Live-provider setup still requires operator configuration for:
 
@@ -433,6 +433,7 @@ Notes:
 - when `AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION=true`, registration creates the user, sends verification email, and does not issue a session until verification is completed
 - local password flows enforce the configured policy during register, password reset, and password change
 - generated apps do not emit password policy env vars into `.env` by default; the built-in defaults apply unless the app opts to override them
+- the Vue starter is the only generated frontend that reads `FRONTEND_AUTH_PASSWORD_*`; custom backend password policy values need matching frontend values to keep its guidance aligned
 - the local bootstrap user remains a convenience path and does not enforce the configured password policy
 
 Important token-exposure rule:
@@ -460,6 +461,7 @@ Current policy:
 - bootstrap is local-only
 - bootstrap is a no-op if the user already exists
 - bootstrap also no-ops when auth tables do not exist yet
+- generated local `.env` files supply `admin`, `admin@example.com`, and `admin` for first-touch use; the service defaults remain empty
 
 Do not broaden bootstrap behavior casually.
 

@@ -202,12 +202,36 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 	if err != nil {
 		t.Fatalf("read %s: %v", envPath, err)
 	}
-	hasOAuthEnv := strings.Contains(string(envSrc), "AUTH_OAUTH_")
-	if enabled && !hasOAuthEnv {
-		t.Fatalf("expected oauth env stubs in %s", envPath)
+	if strings.Contains(string(envSrc), "AUTH_OAUTH_") {
+		t.Fatalf("expected OAuth configuration to stay out of %s", envPath)
 	}
-	if !enabled && hasOAuthEnv {
-		t.Fatalf("expected oauth env stubs to be absent from %s", envPath)
+
+	readmePath := filepath.Join(projectDir, "internal", "auth", "README.md")
+	readmeSrc, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", readmePath, err)
+	}
+	readme := string(readmeSrc)
+	providerConfiguration := []string{
+		"AUTH_OAUTH_GITHUB_CLIENT_ID",
+		"AUTH_OAUTH_GITHUB_CLIENT_SECRET",
+		"AUTH_OAUTH_GOOGLE_CLIENT_ID",
+		"AUTH_OAUTH_GOOGLE_CLIENT_SECRET",
+		"AUTH_OAUTH_MICROSOFT_CLIENT_ID",
+		"AUTH_OAUTH_MICROSOFT_CLIENT_SECRET",
+		"AUTH_OAUTH_APPLE_CLIENT_ID",
+		"AUTH_OAUTH_APPLE_TEAM_ID",
+		"AUTH_OAUTH_APPLE_KEY_ID",
+		"AUTH_OAUTH_APPLE_PRIVATE_KEY",
+	}
+	for _, key := range providerConfiguration {
+		documented := strings.Contains(readme, "`"+key+"`")
+		if enabled && !documented {
+			t.Fatalf("expected %s to document %s", readmePath, key)
+		}
+		if !enabled && documented {
+			t.Fatalf("expected %s to omit OAuth configuration when the component is disabled", readmePath)
+		}
 	}
 }
 

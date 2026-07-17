@@ -333,6 +333,36 @@ func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	}
 }
 
+// TestResourceRenderValuesExposeAvailableDriverCatalog keeps template hints distinct from the compiled driver subset.
+func TestResourceRenderValuesExposeAvailableDriverCatalog(t *testing.T) {
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	values, err := resourceRenderValuesForPlanWithConsumers(plan, components, project.LocalServiceIntent{}, nil)
+	if err != nil {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "database", got: values.DatabaseAvailableDrivers, want: "sqlite,mysql,postgres"},
+		{name: "cache", got: values.CacheAvailableDrivers, want: "memory,file,null,redis,memcached,dynamodb,sqlite,postgres,mysql,nats"},
+		{name: "storage", got: values.StorageAvailableDrivers, want: "local,memory,redis,ftp,sftp,s3,gcs,dropbox,rclone"},
+		{name: "events", got: values.EventsAvailableDrivers, want: "inproc,null,redis,nats,natsjetstream,kafka,gcppubsub,sns"},
+		{name: "queue", got: values.QueueAvailableDrivers, want: "null,sync,workerpool,redis,nats,sqs,rabbitmq,sqlite,postgres,mysql"},
+		{name: "mail", got: values.MailAvailableDrivers, want: "log,smtp,resend,postmark,mailgun,sendgrid,ses"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got != test.want {
+				t.Fatalf("available drivers = %q, want %q", test.got, test.want)
+			}
+		})
+	}
+}
+
 // TestResourceRenderValuesRejectInvalidConsumers prevents service-planning errors from degrading into different Redis flags.
 func TestResourceRenderValuesRejectInvalidConsumers(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Cache: true}

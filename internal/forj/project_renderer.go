@@ -821,6 +821,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: projectComponents.Auth && projectComponents.HasDatabase(),
 			templates: []string{
 				"internal/mail/auth_delivery.go.tmpl",
+				"internal/auth/README.md.tmpl",
 				"internal/auth/controller.go.tmpl",
 				"internal/auth/delivery.go.tmpl",
 				"internal/auth/bootstrap_cmd.go.tmpl",

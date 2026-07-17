@@ -29,22 +29,28 @@ func normalizeQueueDriver(value string) string {
 type resourceRenderValues struct {
 	DatabaseDriver           string
 	DatabaseSupportedDrivers string
+	DatabaseAvailableDrivers string
 	DatabaseMySQL            bool
 	DatabasePostgres         bool
 	DatabaseSQLite           bool
 	DatabaseExternal         bool
 	CacheDriver              string
 	CacheSupportedDrivers    string
+	CacheAvailableDrivers    string
 	QueueDriver              string
 	QueueSupportedDrivers    string
+	QueueAvailableDrivers    string
 	EventsDriver             string
 	EventsSupportedDrivers   string
+	EventsAvailableDrivers   string
 	StorageDriver            string
 	StorageSupportedDrivers  string
+	StorageAvailableDrivers  string
 	StoragePublicDriver      string
 	StorageFaviconsDriver    string
 	MailDriver               string
 	MailSupportedDrivers     string
+	MailAvailableDrivers     string
 	CacheSettingsDriver      string
 	CacheSessionsDriver      string
 	RedisActive              bool
@@ -325,20 +331,31 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 		return resourceRenderValues{}, fmt.Errorf("resolve resource services: %w", err)
 	}
 	values := resourceRenderValues{}
-	set := func(key project.ResourceKey, active *string, supported *string) {
+	availableDrivers := make(map[project.ResourceKey]string)
+	for _, definition := range project.ResourceCatalog() {
+		drivers := append([]project.DriverDefinition(nil), definition.Drivers...)
+		sort.SliceStable(drivers, func(left, right int) bool { return drivers[left].Order < drivers[right].Order })
+		names := make([]string, 0, len(drivers))
+		for _, driver := range drivers {
+			names = append(names, driver.Name)
+		}
+		availableDrivers[definition.Key] = strings.Join(names, ",")
+	}
+	set := func(key project.ResourceKey, active *string, supported *string, available *string) {
 		selection, ok := plan.Selection(key)
 		if !ok {
 			return
 		}
 		*active = selection.Active
 		*supported = strings.Join(selection.Supported, ",")
+		*available = availableDrivers[key]
 	}
-	set(project.ResourceDatabase, &values.DatabaseDriver, &values.DatabaseSupportedDrivers)
-	set(project.ResourceCache, &values.CacheDriver, &values.CacheSupportedDrivers)
-	set(project.ResourceQueue, &values.QueueDriver, &values.QueueSupportedDrivers)
-	set(project.ResourceEvents, &values.EventsDriver, &values.EventsSupportedDrivers)
-	set(project.ResourceStorage, &values.StorageDriver, &values.StorageSupportedDrivers)
-	set(project.ResourceMail, &values.MailDriver, &values.MailSupportedDrivers)
+	set(project.ResourceDatabase, &values.DatabaseDriver, &values.DatabaseSupportedDrivers, &values.DatabaseAvailableDrivers)
+	set(project.ResourceCache, &values.CacheDriver, &values.CacheSupportedDrivers, &values.CacheAvailableDrivers)
+	set(project.ResourceQueue, &values.QueueDriver, &values.QueueSupportedDrivers, &values.QueueAvailableDrivers)
+	set(project.ResourceEvents, &values.EventsDriver, &values.EventsSupportedDrivers, &values.EventsAvailableDrivers)
+	set(project.ResourceStorage, &values.StorageDriver, &values.StorageSupportedDrivers, &values.StorageAvailableDrivers)
+	set(project.ResourceMail, &values.MailDriver, &values.MailSupportedDrivers, &values.MailAvailableDrivers)
 	values.DatabaseMySQL = values.DatabaseDriver == "mysql"
 	values.DatabasePostgres = values.DatabaseDriver == "postgres"
 	values.DatabaseSQLite = values.DatabaseDriver == "sqlite"

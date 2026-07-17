@@ -11,42 +11,26 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestDefaultResourceTemplatesOmitAdvancedPlaceholderWall keeps the brainless default compact.
-func TestDefaultResourceTemplatesOmitAdvancedPlaceholderWall(t *testing.T) {
-	components := project.Components{DatabaseMySQL: true, Docker: true, Jobs: true, Mail: true}
-	plan := defaultResourcePlanForTest(t, components)
-	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
-	if strings.Contains(environment, "Advanced driver configuration") {
-		t.Fatalf("normal environment gained Advanced placeholders:\n%s", environment)
-	}
-}
-
-// TestResourceTemplatesRenderRedisOnlyForSupportedProjects keeps unrelated Apps free of unused infrastructure settings.
-func TestResourceTemplatesRenderRedisOnlyForSupportedProjects(t *testing.T) {
+// TestSupportOnlyRedisOmitsTopologyAssignments keeps compiled alternatives from cluttering runtime configuration.
+func TestSupportOnlyRedisOmitsTopologyAssignments(t *testing.T) {
 	tests := []struct {
-		name        string
-		components  project.Components
-		wantRedis   bool
-		wantHost    string
-		wantHostEnv bool
+		name          string
+		components    project.Components
+		wantCachePair bool
 	}{
 		{
-			name:       "storage only",
+			name:       "unrelated storage",
 			components: project.Components{CLI: true, Docker: true, Storage: true},
 		},
 		{
-			name:        "portable cache",
-			components:  project.Components{CLI: true, Cache: true},
-			wantRedis:   true,
-			wantHost:    "REDIS_HOST=\n",
-			wantHostEnv: true,
+			name:          "portable cache",
+			components:    project.Components{CLI: true, Cache: true},
+			wantCachePair: true,
 		},
 		{
-			name:        "compose cache",
-			components:  project.Components{CLI: true, Docker: true, Cache: true},
-			wantRedis:   true,
-			wantHost:    "REDIS_HOST=redis\n",
-			wantHostEnv: true,
+			name:          "compose cache",
+			components:    project.Components{CLI: true, Docker: true, Cache: true},
+			wantCachePair: true,
 		},
 	}
 
@@ -55,27 +39,26 @@ func TestResourceTemplatesRenderRedisOnlyForSupportedProjects(t *testing.T) {
 			plan := defaultResourcePlanForTest(t, test.components)
 			environment, _ := renderResourceTemplates(t, test.components, plan, project.LocalServiceIntent{})
 			hostEnvironment := renderResourceHostEnvironment(t, test.components, plan, project.LocalServiceIntent{})
-			hasRedis := strings.Contains(environment, "\n# Redis\n")
-			if hasRedis != test.wantRedis {
-				t.Fatalf("Redis environment block present = %t, want %t:\n%s", hasRedis, test.wantRedis, environment)
+			for path, source := range map[string]string{".env": environment, ".env.host": hostEnvironment} {
+				if strings.Contains(source, "REDIS_") || strings.Contains(source, "COMPOSE_PROFILES=redis") {
+					t.Fatalf("support-only Redis projected topology into %s:\n%s", path, source)
+				}
 			}
-			if test.wantHost != "" && !strings.Contains(environment, "\n"+test.wantHost) {
-				t.Fatalf("rendered environment missing %q:\n%s", test.wantHost, environment)
-			}
-			if !test.wantRedis && strings.Contains(environment, "\nREDIS_") {
-				t.Fatalf("unrelated project received Redis assignments:\n%s", environment)
-			}
-			hasHostRedis := strings.Contains(hostEnvironment, "\nREDIS_HOST=")
-			if hasHostRedis != test.wantHostEnv {
-				t.Fatalf("Redis host override present = %t, want %t:\n%s", hasHostRedis, test.wantHostEnv, hostEnvironment)
+			if test.wantCachePair {
+				lines := strings.Split(environment, "\n")
+				active, activeSet := envfile.Lookup(lines, "CACHE_DRIVER")
+				supported, supportedSet := envfile.Lookup(lines, "CACHE_SUPPORTED_DRIVERS")
+				if !activeSet || active != "memory" || !supportedSet || supported != "memory,redis" {
+					t.Fatalf("support-only Redis lost the Cache driver contract:\n%s", environment)
+				}
 			}
 		})
 	}
 }
 
-// TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders verifies active and built-in opt-in drivers receive actionable dotenv hints.
-func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true, Mail: true, Storage: true}
+// TestAdvancedResourceSelectionsDoNotProjectPlaceholderComments keeps driver manifests without a commented configuration wall.
+func TestAdvancedResourceSelectionsDoNotProjectPlaceholderComments(t *testing.T) {
+	components := project.Components{Cache: true, DatabaseSQLite: true, Docker: true, Events: true, Jobs: true, Mail: true, Storage: true}
 	plan := defaultResourcePlanForTest(t, components)
 	plan = resourceContractTestSelection(plan, project.ResourceCache, "memcached", "memcached")
 	plan = resourceContractTestSelection(plan, project.ResourceQueue, "workerpool", "sqs")
@@ -89,10 +72,29 @@ func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
 
 	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	environmentExample := string(envfile.RedactExample([]byte(environment)))
-	if !strings.Contains(environment, "STORAGE_PUBLIC_DRIVER=s3") {
-		t.Fatalf("rendered environment ignored the generated public-storage selection:\n%s", environment)
+	wantSelections := map[string]string{
+		"CACHE_DRIVER":              "memcached",
+		"CACHE_SUPPORTED_DRIVERS":   "memory,redis,memcached",
+		"QUEUE_DRIVER":              "workerpool",
+		"QUEUE_SUPPORTED_DRIVERS":   "workerpool,redis,sqs",
+		"EVENTS_DRIVER":             "kafka",
+		"EVENTS_SUPPORTED_DRIVERS":  "inproc,redis,kafka",
+		"STORAGE_DRIVER":            "s3",
+		"STORAGE_SUPPORTED_DRIVERS": "local,s3",
+		"STORAGE_PUBLIC_DRIVER":     "s3",
+		"MAIL_DRIVER":               "resend",
+		"MAIL_SUPPORTED_DRIVERS":    "log,smtp,resend",
 	}
-	for _, want := range []string{
+	for path, source := range map[string]string{".env": environment, ".env.example": environmentExample} {
+		lines := strings.Split(source, "\n")
+		for key, want := range wantSelections {
+			got, set := envfile.Lookup(lines, key)
+			if !set || got != want {
+				t.Errorf("%s %s = %q, %t; want %q:\n%s", path, key, got, set, want, source)
+			}
+		}
+	}
+	for _, unwanted := range []string{
 		"# Advanced driver configuration",
 		"# CACHE_ADDRESSES=",
 		"# QUEUE_REGION=us-east-1",
@@ -102,21 +104,11 @@ func TestAdvancedResourceTemplatesEmitSelectedSafePlaceholders(t *testing.T) {
 		"# STORAGE_SECRET_ACCESS_KEY=",
 		"# MAIL_RESEND_API_KEY=",
 	} {
-		if !strings.Contains(environment, want) {
-			t.Errorf("rendered environment omitted %q:\n%s", want, environment)
-		}
-		if !strings.Contains(environmentExample, want) {
-			t.Errorf("rendered environment example omitted %q:\n%s", want, environmentExample)
-		}
-	}
-	for _, unwanted := range []string{"# STORAGE_TOKEN=", "# MAIL_POSTMARK_SERVER_TOKEN="} {
 		if strings.Contains(environment, unwanted) {
-			t.Errorf("rendered environment included unselected placeholder %q:\n%s", unwanted, environment)
+			t.Errorf("rendered environment projected placeholder %q:\n%s", unwanted, environment)
 		}
-	}
-	for _, secretKey := range []string{"QUEUE_ACCESS_KEY", "STORAGE_SECRET_ACCESS_KEY", "MAIL_RESEND_API_KEY"} {
-		if strings.Contains(environment, "\n"+secretKey+"=") {
-			t.Errorf("secret placeholder %s was emitted as an active assignment", secretKey)
+		if strings.Contains(environmentExample, unwanted) {
+			t.Errorf("rendered environment example projected placeholder %q:\n%s", unwanted, environmentExample)
 		}
 	}
 }
@@ -202,24 +194,42 @@ func TestExternalResourceTemplatesDoNotInventLocalHosts(t *testing.T) {
 	}
 }
 
-// TestPortableRedisTemplatesRetainLocalTransitionDefaults preserves the normal inactive bridge and explicit unused-local intent.
-func TestPortableRedisTemplatesRetainLocalTransitionDefaults(t *testing.T) {
+// TestRedisTopologyRendersOnlyForActiveOrLocalIntent keeps profile and endpoint state tied to actual placement.
+func TestRedisTopologyRendersOnlyForActiveOrLocalIntent(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)
-	environment, _ := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
-	hostEnvironment := renderResourceHostEnvironment(t, components, plan, project.LocalServiceIntent{})
-	if !strings.Contains(environment, "\nREDIS_HOST=redis\n") || !strings.Contains(hostEnvironment, "REDIS_HOST=localhost") {
-		t.Fatalf("portable Redis defaults were omitted:\n.env:\n%s\n.env.host:\n%s", environment, hostEnvironment)
-	}
-	if strings.Contains(environment, "COMPOSE_PROFILES=redis") {
-		t.Fatalf("support-only Redis unexpectedly started locally:\n%s", environment)
-	}
 
 	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	environment, _ = renderResourceTemplates(t, components, plan, intent)
-	if !strings.Contains(environment, "COMPOSE_PROFILES=redis") {
-		t.Fatalf("owner-retained unused local Redis omitted its exact profile:\n%s", environment)
-	}
+	t.Run("local service requested without an active consumer", func(t *testing.T) {
+		environment, _ := renderResourceTemplates(t, components, plan, intent)
+		hostEnvironment := renderResourceHostEnvironment(t, components, plan, intent)
+		if !strings.Contains(environment, "COMPOSE_PROFILES=redis") {
+			t.Fatalf("local Redis intent omitted its exact Compose profile:\n%s", environment)
+		}
+		if strings.Contains(environment, "REDIS_HOST=") || strings.Contains(environment, "REDIS_PORT=") {
+			t.Fatalf("inactive Redis consumer projected root endpoint assignments:\n%s", environment)
+		}
+		if !strings.Contains(hostEnvironment, "REDIS_HOST=localhost") || !strings.Contains(hostEnvironment, "REDIS_PORT=6379") {
+			t.Fatalf("requested local Redis omitted host topology:\n%s", hostEnvironment)
+		}
+	})
+
+	t.Run("active local consumer", func(t *testing.T) {
+		activePlan := redisResourcePlanForTest(t, components)
+		environment, _ := renderResourceTemplates(t, components, activePlan, intent)
+		hostEnvironment := renderResourceHostEnvironment(t, components, activePlan, intent)
+		for _, want := range []string{
+			"COMPOSE_PROFILES=redis", "REDIS_HOST=redis", "REDIS_PORT=6379",
+			"REDIS_PASSWORD=\n", "REDIS_DB=0\n",
+		} {
+			if !strings.Contains(environment, want) {
+				t.Fatalf("active local Redis omitted %q:\n%s", want, environment)
+			}
+		}
+		if !strings.Contains(hostEnvironment, "REDIS_HOST=localhost") || !strings.Contains(hostEnvironment, "REDIS_PORT=6379") {
+			t.Fatalf("active local Redis omitted host topology:\n%s", hostEnvironment)
+		}
+	})
 }
 
 // resourceContractTestSelection replaces one active driver while retaining every existing built-in choice.
