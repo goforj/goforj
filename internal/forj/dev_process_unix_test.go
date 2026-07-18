@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// TestUnixProcessRunningResultClassifiesProbeErrors verifies stale locks are removed only when absence is known.
-func TestUnixProcessRunningResultClassifiesProbeErrors(t *testing.T) {
+// TestDevUnixProcessRunningResultClassifiesProbeErrors verifies stale locks are removed only when absence is known.
+func TestDevUnixProcessRunningResultClassifiesProbeErrors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -33,8 +33,8 @@ func TestUnixProcessRunningResultClassifiesProbeErrors(t *testing.T) {
 	}
 }
 
-// TestIsProcessRunningRecognizesCurrentUnixProcess verifies the host probe reaches the current process.
-func TestIsProcessRunningRecognizesCurrentUnixProcess(t *testing.T) {
+// TestDevIsProcessRunningRecognizesCurrentUnixProcess verifies the host probe reaches the current process.
+func TestDevIsProcessRunningRecognizesCurrentUnixProcess(t *testing.T) {
 	t.Parallel()
 	if !isProcessRunning(os.Getpid()) {
 		t.Fatalf("isProcessRunning(%d) = false, want true", os.Getpid())
@@ -46,8 +46,8 @@ func TestIsProcessRunningRecognizesCurrentUnixProcess(t *testing.T) {
 	}
 }
 
-// TestSignalUnixDevInterruptTargetsCurrentProcess verifies the TUI uses the signal DevCmd observes.
-func TestSignalUnixDevInterruptTargetsCurrentProcess(t *testing.T) {
+// TestDevSignalUnixInterruptTargetsCurrentProcess verifies the TUI uses the signal DevCmd observes.
+func TestDevSignalUnixInterruptTargetsCurrentProcess(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("interrupt sent")
 	var gotPID int

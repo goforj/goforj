@@ -10,8 +10,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// TestWindowsProcessRunningRejectsInvalidPIDs verifies invalid lock contents never reach OpenProcess.
-func TestWindowsProcessRunningRejectsInvalidPIDs(t *testing.T) {
+// TestDevWindowsProcessRunningRejectsInvalidPIDs verifies invalid lock contents never reach OpenProcess.
+func TestDevWindowsProcessRunningRejectsInvalidPIDs(t *testing.T) {
 	t.Parallel()
 	openCalled := false
 	openProcess := func(uint32, bool, uint32) (windows.Handle, error) {
@@ -34,8 +34,8 @@ func TestWindowsProcessRunningRejectsInvalidPIDs(t *testing.T) {
 	}
 }
 
-// TestWindowsProcessRunningClassifiesOpenFailure verifies protected processes retain their locks.
-func TestWindowsProcessRunningClassifiesOpenFailure(t *testing.T) {
+// TestDevWindowsProcessRunningClassifiesOpenFailure verifies protected processes retain their locks.
+func TestDevWindowsProcessRunningClassifiesOpenFailure(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -62,8 +62,8 @@ func TestWindowsProcessRunningClassifiesOpenFailure(t *testing.T) {
 	}
 }
 
-// TestWindowsProcessRunningReadsAndClosesHandle verifies active, exited, and uncertain process states.
-func TestWindowsProcessRunningReadsAndClosesHandle(t *testing.T) {
+// TestDevWindowsProcessRunningReadsAndClosesHandle verifies active, exited, and uncertain process states.
+func TestDevWindowsProcessRunningReadsAndClosesHandle(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -110,8 +110,8 @@ func TestWindowsProcessRunningReadsAndClosesHandle(t *testing.T) {
 	}
 }
 
-// TestSignalWindowsDevInterruptUsesCurrentConsoleGroup verifies Ctrl+C reaches DevCmd's console signal listener.
-func TestSignalWindowsDevInterruptUsesCurrentConsoleGroup(t *testing.T) {
+// TestDevSignalWindowsInterruptUsesCurrentConsoleGroup verifies Ctrl+C reaches DevCmd's console signal listener.
+func TestDevSignalWindowsInterruptUsesCurrentConsoleGroup(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("interrupt sent")
 	var gotEvent uint32

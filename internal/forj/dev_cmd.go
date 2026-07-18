@@ -758,7 +758,7 @@ func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
 	}
 	appBinary := projectlayout.RuntimeExecutable(".", app)
 	appReady := projectlayout.RuntimeReadyStamp(".", app)
-	appWireGen := filepath.ToSlash(filepath.Join(projectlayout.WireDir(".", app), "wire_gen\\.go$"))
+	appWireGen := filepath.ToSlash(filepath.Join(projectlayout.WireDir(".", app), "wire_gen")) + `\.go$`
 	if isDevBuildWatcher(baseName) {
 		watch.Exec = devBuildCommandForApp(watch.Exec, app)
 	} else {
