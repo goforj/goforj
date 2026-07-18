@@ -2,9 +2,9 @@
 
 Status:
 
-- proposed
+- completed and implemented
 - intended for generated App command surfaces
-- focused first on database and Redis-backed resources
+- first cut covers database and cache resources
 
 ## Purpose
 
@@ -15,7 +15,7 @@ The goal is to make common infrastructure access feel simple:
 
 ```bash
 forj db
-forj redis
+forj cache
 ```
 
 while preserving GoForj's normal model:
@@ -29,10 +29,10 @@ while preserving GoForj's normal model:
 
 ## Problem
 
-Developers frequently need to inspect common local services:
+Developers frequently need to inspect common App resources:
 
 - a MySQL, MariaDB, Postgres, or SQLite database
-- Redis used by queues, cache, events, or local development services
+- a Redis-backed cache store
 
 Without a framework command, users need to remember:
 
@@ -51,7 +51,8 @@ needs to be.
 - Keep the canonical command shape aligned with existing GoForj command grammar.
 - Resolve connection details from the App owner's configuration.
 - Prefer host-machine client tools when available.
-- Fall back to Docker Compose only when the local client executable is missing.
+- Fall back to Docker Compose only when the local client executable is missing
+  and the selected endpoint maps to a generated local service.
 - Keep fallback behavior deterministic and inspectable.
 - Support named App resources where the generated configuration supports them.
 - Preserve the same command surface through `forj` delegation and built App
@@ -77,22 +78,19 @@ Canonical commands:
 
 ```bash
 forj db:shell
-forj redis:shell
+forj cache:shell
 ```
 
 Short aliases:
 
 ```bash
 forj db
-forj redis
+forj cache
 ```
 
-Optional discoverability aliases may be supported:
-
-```bash
-forj shell:db
-forj shell:redis
-```
+The first cut does not expose `shell:db`, `shell:cache`, or other `shell:*`
+aliases. Help and generated documentation use only the canonical
+`resource:shell` names and their short resource aliases.
 
 The canonical shape should remain `resource:shell` because existing GoForj
 commands generally use resource-first grammar:
@@ -110,22 +108,24 @@ Avoid making backend names the canonical command:
 ```bash
 forj mysql
 forj postgres
+forj redis
 forj shell:mysql
 ```
 
-The App has a database resource. MySQL, Postgres, and SQLite are selected
-drivers behind that resource. If the App changes drivers, `forj db` should keep
-working.
+The App has database and cache resources. MySQL, Postgres, SQLite, and Redis are
+selected drivers behind those resources. If an App changes a resource driver,
+the resource command name stays stable and dispatches to the new driver's shell
+behavior when one is available.
 
 ## Resource Addressing
 
 The command model must support Apps with more than one configured resource.
 
-The default command should choose the default App resource:
+The default command chooses the default App resource:
 
 ```bash
 forj db
-forj redis
+forj cache
 ```
 
 If multiple shellable resources exist and the user does not provide a resource
@@ -138,9 +138,10 @@ Select database connection
   reporting  postgres  postgres:5432/reports
 ```
 
-Selection should only run when stdin and stdout are attached to a TTY. In
-non-interactive contexts, the command should choose the default resource unless
-the user passes a flag that requires explicit selection.
+Selection only runs when stdin and stdout are attached to a TTY. In
+non-interactive contexts, the command always chooses the default resource. It
+does not infer a lone shellable named resource. If the default is not shellable,
+the command fails and requires an explicit resource name.
 
 When a resource name is provided, the command should resolve that App-facing
 resource name before choosing the backend client:
@@ -148,27 +149,30 @@ resource name before choosing the backend client:
 ```bash
 forj db reporting
 forj db --connection reporting
+forj db default
 forj cache:shell sessions
 forj cache:shell rate-limits
-forj queue:shell critical
+forj cache:shell default
 ```
+
+`default` is an accepted explicit selector for both database connections and
+cache stores.
 
 Use the App resource name as the user-facing selector, not the backend service
 name. For example, `sessions` is the cache resource even if it happens to use
-Redis, and `critical` is the queue resource even if its backend queue name is
-`production-critical-jobs`.
+Redis.
 
-Resource names should follow the generated named-resource model:
+Resource names follow the generated named-resource model:
 
 - databases: `default`, named database connections
 - caches: `default`, named cache accessors
-- queues: `default`, named queue resources
-- events: `default`, named event buses if generated support exists
 
-The command should fail clearly when the selected resource is not shellable:
+Queue and event resource selectors are deferred beyond the first cut.
+
+The command fails clearly when the selected resource is not shellable:
 
 ```text
-cache sessions uses memory driver; no external shell is available
+cache store sessions uses driver "memory"; no external shell is available
 ```
 
 This keeps shell commands aligned with App resources while avoiding fake shells
@@ -176,19 +180,19 @@ for in-process drivers.
 
 ## Interactive Selection
 
-Interactive selection is allowed when a command has more than one possible
-resource and no resource name was provided.
+Interactive selection is available when no resource name was provided and both
+stdin and stdout are terminals.
 
-Suggested behavior:
+Implemented behavior:
 
 1. Build the resource list from generated App configuration.
 2. Mark the default resource.
 3. Filter or annotate resources that are not shellable.
-4. If exactly one shellable resource exists, use it without prompting.
-5. If multiple shellable resources exist and the terminal is interactive, show a
-   compact selection list.
-6. If multiple shellable resources exist and the terminal is not interactive,
-   use the default resource.
+4. Honor an explicit resource name, including `default`, without prompting.
+5. In an interactive terminal, use the only shellable resource or show a compact
+   selector when more than one is available.
+6. Outside an interactive terminal, use only the default resource. If it is not
+   shellable, fail instead of silently switching to a named resource.
 
 The selection list should show enough context to choose quickly:
 
@@ -201,9 +205,8 @@ The selection list should show enough context to choose quickly:
 Example:
 
 ```text
-Select cache resource
+Select cache store
 
-  default       memory   no external shell
   sessions      redis    redis:6379/0
   rate-limits   redis    redis:6379/1
 ```
@@ -211,18 +214,18 @@ Select cache resource
 If the user selects a non-shellable resource, fail clearly:
 
 ```text
-cache default uses memory driver; no external shell is available
+cache store default uses driver "memory"; no external shell is available
 ```
 
-Suggested flags:
+Selection flags:
 
-- `--select` always opens the interactive selector when available.
+- `--select` requests the interactive selector when a TTY is available.
 - `--no-select` disables prompting and uses the default resource when no name is
   provided.
-- `--json` may be added later for machine-readable resource discovery, but
-  `forj about --json` is the current discovery path.
 
 Do not prompt in CI, when stdin is not a TTY, or when stdout is not a TTY.
+That safety rule also applies to `--select`; non-interactive execution remains
+default-only.
 
 ## Ownership
 
@@ -247,9 +250,9 @@ should use the same command implementation and App environment.
 This keeps command behavior tied to the App's actual generated configuration and
 component selection.
 
-## First Commands
+## Implemented Commands
 
-## `db:shell`
+### `db:shell`
 
 `db:shell` opens a shell client for the configured database.
 
@@ -267,7 +270,7 @@ forj db -- --batch -e "select count(*) from users"
 forj db reporting -- -c "select count(*) from users"
 ```
 
-Suggested flags:
+Implemented flags:
 
 - optional `[connection]` selects a named database connection.
 - `--connection <name>` selects a named database connection when an explicit
@@ -289,16 +292,29 @@ Connection names should map to generated database env scopes:
 - named connection uses `DB_<NAME>_*` with root fallback rules where the
   database configuration already supports them
 
+`default` is accepted explicitly as either the positional connection or the
+value of `--connection`.
+
 Supported driver mappings:
 
 | Driver | Local Client | Compose Service | Notes |
 | --- | --- | --- | --- |
 | `mysql` | `mysql` | `mysql` | Also acceptable for MariaDB-backed local services. |
-| `mariadb` | `mysql` or `mariadb` | `mysql` | Prefer an available compatible client. |
+| `mariadb` | `mysql` | `mysql` | Normalized to the MySQL client contract. |
 | `postgres` | `psql` | `postgres` | `postgresql` should normalize to `postgres`. |
 | `postgresql` | `psql` | `postgres` | Alias of `postgres`. |
 | `sqlite` | `sqlite3` | none | Uses the configured database path or DSN. |
 | `sqlite3` | `sqlite3` | none | Alias of `sqlite`. |
+
+Database discovery and connection precedence match the generated runtime. A
+selected `DB_DSN` or `DB_<NAME>_DSN` takes precedence over split connection
+fields. MySQL DSNs are translated into the equivalent TCP or Unix-socket client
+arguments, Postgres URL and keyword DSNs retain their target and non-secret
+options, and SQLite uses the same DSN, configured path, and generated default
+path order as the App runtime. An unusable DSN fails before launch rather than
+silently selecting a different target. MySQL DSN options without a portable
+equivalent across the supported MySQL and MariaDB clients, including TLS
+profiles, fail rather than silently downgrading the connection.
 
 ### Database Shell Examples
 
@@ -342,43 +358,7 @@ The wrapper adds configured connection arguments first and then appends
 passthrough client arguments. This keeps configuration App-owned while still
 allowing native `mysql`, `psql`, and `sqlite3` flags.
 
-## `redis:shell`
-
-`redis:shell` opens `redis-cli` for the configured Redis endpoint.
-
-Examples:
-
-```bash
-forj redis
-forj redis --method local
-forj redis --method compose
-forj redis --db 1
-forj redis --print
-forj redis --exec PING
-```
-
-Suggested flags:
-
-- `--method auto|local|compose` chooses the launch method.
-- `--db <n>` overrides the selected Redis logical database.
-- `--print` prints the selected command with secrets masked and does not run it.
-- `--exec <command...>` runs one Redis command instead of opening an interactive
-  shell.
-- `--verbose` prints method-selection details before launching.
-- `--no-color` disables ANSI output in GoForj messages.
-
-The initial Redis command may resolve the shared Redis env keys:
-
-- `REDIS_HOST`
-- `REDIS_PORT`
-- `REDIS_PASSWORD`
-- `REDIS_DB`
-
-Later versions may support selecting Redis-backed App resources, such as a
-specific cache, queue, or events transport, when those resources expose distinct
-Redis endpoints.
-
-## `cache:shell`
+### `cache:shell`
 
 `cache:shell` opens a shell client for a shellable cache resource.
 
@@ -391,27 +371,27 @@ forj cache:shell sessions
 forj cache:shell rate-limits --print
 ```
 
-The command should resolve the selected cache resource and then choose the
-backend client based on its driver.
+The command resolves the selected cache resource and supports Redis-backed
+stores with `redis-cli`.
 
-Initial useful mappings:
+First-cut mappings:
 
 | Driver | Shell Behavior |
 | --- | --- |
 | `redis` | Open `redis-cli` using the selected cache resource connection details. |
-| `memcached` | Open a practical Memcached client if one is available, or fail with guidance. |
-| `sqlite`, `mysql`, `postgres` | Open the matching database client when the cache driver uses a database backend and exposes enough connection details. |
-| `memory`, `file`, `null` | Report that no external shell is available. |
+| all other drivers | Report that no external shell is available. |
 
-This command should not pretend that every cache backend has a meaningful
-interactive shell. It should be useful when a resource maps to external
-infrastructure and explicit when it does not.
+Without an explicit store name, non-interactive execution uses only the default
+cache. It fails if that cache is not Redis-backed, even when exactly one named
+Redis cache exists. Interactive selection may choose a shellable named cache;
+scripts must name it explicitly.
 
-## `queue:shell`
+### Deferred: `queue:shell`
 
-`queue:shell` may be useful for queue resources backed by shellable
-infrastructure, but it should not be part of the first implementation unless the
-driver-specific behavior is clear.
+`queue:shell` is not implemented in the first cut. Queue resources can use
+backends whose meaningful inspection surfaces differ substantially, so queue
+inspection remains in Lighthouse or backend-specific tools until that behavior
+has a separate design.
 
 Examples:
 
@@ -429,8 +409,8 @@ Potential mappings:
 | `sync`, `workerpool`, `null` | Report that no external shell is available. |
 | `sqs`, `nats`, `rabbitmq` | Requires driver-specific design before exposing a shell command. |
 
-The first cut should avoid presenting queue shelling as universal. Queue
-inspection may be better served by Lighthouse or queue-specific admin commands.
+These mappings remain possible future work; the implemented command surface does
+not advertise `queue:shell`.
 
 ## Method Selection
 
@@ -439,7 +419,8 @@ The default method is `auto`.
 For `auto`, use this order:
 
 1. Try a local client executable on `PATH`.
-2. If the executable is missing, try a generated Docker Compose service.
+2. If the executable is missing and the selected endpoint maps to a generated
+   local service, try that Docker Compose service.
 3. If neither method is available, print an actionable error.
 
 Important rule:
@@ -462,6 +443,10 @@ Fallback should only happen for method availability problems, such as:
 - local client executable not found
 - Docker Compose unavailable when `--method compose` is selected
 - expected Compose service missing
+
+Both automatic fallback and explicit `--method compose` refuse external or
+opaque endpoints. A Compose launch must preserve the selected resource identity;
+it cannot redirect an external connection to a similarly typed local service.
 
 ## Output Model
 
@@ -486,7 +471,7 @@ Opening database default via docker compose service mysql.
 `--print` should show a runnable command with secrets masked:
 
 ```text
-mysql -h mysql -P 3306 -u user -p'***' db
+MYSQL_PWD='***' mysql -h mysql -P 3306 -u user db
 ```
 
 Errors should name the failing boundary:
@@ -495,17 +480,16 @@ Errors should name the failing boundary:
 mysql client not found; trying docker compose service mysql
 ```
 
-Only print fallback attempts in default mode when the first method is
-unavailable and the user would otherwise see a pause or surprising behavior.
+Fallback attempts are printed only with `--verbose`.
 
 Final failures should be specific:
 
 ```text
-mysql client not found and docker compose service mysql is not available
+mysql client not found; docker compose fallback unavailable: docker compose service mysql is not configured
 ```
 
 ```text
-missing DB_PASSWORD for database connection default
+missing DB_USERNAME
 ```
 
 ```text
@@ -520,43 +504,51 @@ Rules:
 
 - `--print` must mask passwords, tokens, and DSN secrets.
 - verbose output must not include raw passwords.
-- client commands may pass secrets through environment variables when the client
-  supports it, such as `PGPASSWORD`.
-- avoid placing passwords in process arguments when a practical client-specific
-  environment option exists.
+- client passwords are passed through client-specific environment variables:
+  `MYSQL_PWD`, `PGPASSWORD`, `PGSSLPASSWORD`, and `REDISCLI_AUTH`.
+- generated values replace inherited variables of the same name so stale
+  credentials cannot win by environment ordering.
+- Compose uses `docker compose exec -e NAME` and supplies the value through the
+  child environment, keeping the secret itself out of Docker's argument list.
+- Postgres passwords are removed from URL and keyword DSNs before the sanitized
+  DSN is placed in arguments.
 
-For MySQL-compatible clients, fully hiding the password from process listings is
-harder because `mysql` commonly accepts `-p...`. Prefer the most practical
-client option available, but never echo the raw value in GoForj output.
+Environment variables are not a universal secret store; operators must still
+apply the process and container visibility controls appropriate to their
+platform. The first-cut guarantee is that GoForj does not echo raw credentials
+or deliberately place them in process arguments when a supported client
+environment variable exists.
 
 ## Environment Resolution
 
 The command should use the same env-loading behavior as other generated App
 commands.
 
-Database resolution should mirror generated database connection behavior:
+Database resolution mirrors generated database connection behavior:
 
 - read the selected connection's scoped env values
 - fall back to root `DB_*` values where the database configuration already does
   that
 - normalize driver names before choosing the client
+- honor DSN precedence and translate the same target into client-native arguments
 - report missing required keys before launching a client
 
-Redis resolution should start with shared `REDIS_*` keys.
-
-Resource-specific commands should use generated named-resource configuration
-before falling back to shared connection settings. For example, a named cache
-resource should resolve `CACHE_<NAME>_*` driver and connection settings before
-using root cache or shared Redis configuration.
+`cache:shell` resolves a selected cache from generated `CACHE_*` and
+`CACHE_<NAME>_*` configuration, normalizes its active driver, and then chooses
+the matching client behavior. A Redis cache may inherit shared `REDIS_*`
+connection defaults under the normal Cache runtime rules, but those keys never
+create a separate infrastructure command.
 
 Do not open full App infrastructure just to build a shell command. These
 commands should inspect configuration and launch an external process.
 
 ## Docker Compose Behavior
 
-Compose fallback is only for generated local development services.
+Compose fallback is only for generated local development services and uses
+`docker compose exec`. The first cut does not use `docker compose run --rm` and
+does not start stopped services on behalf of the user.
 
-Suggested Compose commands:
+Compose commands use these shapes:
 
 ```bash
 docker compose exec mysql mysql ...
@@ -564,13 +556,13 @@ docker compose exec postgres psql ...
 docker compose exec redis redis-cli ...
 ```
 
-Implementation should detect Docker Compose availability with:
+Every resource-shell command preflights Docker Compose availability with:
 
 ```bash
 docker compose version
 ```
 
-Service names should come from generated service conventions:
+Service names come from generated service conventions:
 
 - `mysql`
 - `postgres`
@@ -578,36 +570,39 @@ Service names should come from generated service conventions:
 
 If the service is not present in `docker-compose.yml`, fail clearly.
 
+Before Compose execution, validate that the effective endpoint from the
+configured fields or DSN is the generated service name, `localhost`, or a
+loopback address. Reject empty or external hosts, Unix sockets, service-file
+targets, and other opaque DSN targets. This guard applies to both automatic
+fallback and explicit `--method compose`.
+
 Do not assume Compose exists for SQLite.
 
 ## Interactive Process Handling
 
-Interactive shells should preserve the terminal:
+Interactive shells preserve the terminal:
 
 - attach stdin
 - attach stdout
 - attach stderr
-- forward exit status from the child process
+- return the exact non-zero child exit status through the command error
 - avoid wrapping the client in log output
 
-This is similar to the behavior expected from delegated App commands that own
-the terminal.
+The built App entrypoint recognizes that status-bearing error and exits with the
+same code, so direct binaries and `forj`-delegated commands preserve client
+failure status. Wrapper/configuration failures continue through the normal
+GoForj fatal-error path.
 
 ## Generated Component Selection
 
 Generate `db:shell` only when the App has a database component.
 
-Generate `redis:shell` when the App has a Redis-relevant component or when the
-rendered env includes Redis configuration. Initial candidates:
+Generate `cache:shell` only when the App has Cache participation.
 
-- jobs with Redis queue support
-- Redis cache support
-- Redis events support
-- explicit Docker Redis service
-
-If Redis env keys are present but no component currently uses Redis, the command
-may still be useful for local development, but the first implementation should
-avoid over-generating commands with no App-owned resource.
+Do not generate commands for infrastructure providers. Redis may back a cache,
+queue, event bus, storage resource, or local service, but that does not create a
+`redis:shell` command. The resource owns its command and its configured driver
+selects the client. `queue:shell` and other resource shells remain deferred.
 
 ## Relationship To `about`
 
@@ -646,6 +641,9 @@ Unit tests should cover:
 - method selection when local client exists
 - method selection when local client is missing
 - Compose service detection
+- rejection of external and opaque Compose targets
+- DSN target parity and credential extraction
+- exact child exit-code propagation
 - failure messages for missing config
 
 Rendered App tests should cover:
@@ -653,14 +651,14 @@ Rendered App tests should cover:
 - MySQL render includes `db:shell`
 - Postgres render includes `db:shell`
 - SQLite render includes `db:shell`
-- Redis-backed render includes `redis:shell`
 - Redis-backed cache render includes `cache:shell`
+- Redis-backed resources do not expose `redis:shell`
 - Apps without databases do not expose `db:shell`
 
 Integration tests may cover:
 
 - `db --print` for each database driver
-- `redis --print`
+- `cache --print` for each shellable cache driver
 - Compose fallback command construction
 
 Full interactive client sessions do not need broad integration coverage. The
@@ -669,12 +667,11 @@ exit-code forwarding.
 
 ## Implementation Notes
 
-Suggested package placement:
+Implemented package placement:
 
 - `templates/internal/cmd/db_shell_cmd.go.tmpl`
-- `templates/internal/cmd/redis_shell_cmd.go.tmpl`
 - `templates/internal/cmd/cache_shell_cmd.go.tmpl`
-- small shared helpers under `templates/internal/cmd/resource_shell.go.tmpl`
+- `templates/internal/cmd/command_exit_code.go.tmpl` for the shared App boundary
 
 Keep this in `internal/cmd` unless a resource-specific package already owns the
 workflow strongly enough to justify placement there.
@@ -684,29 +681,25 @@ Command constructors should be cheap and should not dial infrastructure.
 Use external process execution with terminal streams attached. Avoid shelling
 through `bash -c` when direct `exec.Command` argument construction is practical.
 
-## Open Questions
+## Resolved Decisions
 
-- Should `shell:db` and `shell:redis` be supported as aliases, or should help
-  text and docs rely only on `db` and `redis`?
-- Should `db:shell --connection` use `default` as an explicit accepted value?
-- Should `redis:shell` accept resource references such as
-  `--resource cache:sessions`, or should `cache:shell sessions` remain the only
-  resource-specific path?
-- Should Compose fallback use `docker compose exec` only, or should it support
-  `docker compose run --rm` for stopped services?
-- Should `queue:shell` ship in the first implementation, or should queue
-  inspection remain in Lighthouse until driver-specific admin behavior is
-  clearer?
+- Do not add `shell:*` aliases. Use `db:shell` and `cache:shell`, plus their
+  short resource aliases.
+- Accept `default` as an explicit database or cache selector.
+- Keep provider names behind resource commands. A Redis-backed cache is opened
+  through `cache:shell <name>`, not an infrastructure-specific command.
+- Use only `docker compose exec`, and only when the selected endpoint maps to
+  the generated local service.
+- Defer `queue:shell` until queue inspection has a driver-specific contract.
 
-## Recommended First Cut
+## Implemented First Cut
 
-Implement:
+The completed first cut provides:
 
 ```bash
 forj db
 forj db:shell
-forj redis
-forj redis:shell
+forj cache
 forj cache:shell
 ```
 
@@ -720,8 +713,9 @@ with:
 - `--select`
 - `--no-select`
 - database `--connection`
-- Redis `--db`
 - cache optional `[name]`
 
-Use local client first, Compose only when the client executable is missing, and
-clear errors for real connection failures.
+It uses the local client first, falls back to Compose only when the client
+executable is missing and the endpoint is local-mapped, preserves exact child
+status, and reports real connection/configuration failures without retrying
+through another method.

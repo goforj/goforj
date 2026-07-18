@@ -28,7 +28,7 @@ func main() {
 
 	handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})
 	if err != nil {
-		console.Fatalf("%v", err)
+		handleCommandError(err)
 	} else if handled {
 		return
 	}
@@ -42,6 +42,15 @@ func main() {
 	}
 
 	if err := application.Run(nil, args); err != nil {
-		console.Fatalf("%v", err)
+		handleCommandError(err)
 	}
+}
+
+// handleCommandError preserves child process statuses while retaining the App's normal fatal error handling.
+func handleCommandError(err error) {
+	if code, ok := cmd.CommandExitCode(err); ok {
+		console.Errorf("%v", err)
+		os.Exit(code)
+	}
+	console.Fatalf("%v", err)
 }
