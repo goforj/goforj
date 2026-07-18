@@ -1,0 +1,19 @@
+{{- define "developer-service-redis-volumes" }}
+  redis:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-redis-services" }}
+  redis:
+    profiles: [redis]
+    restart: unless-stopped
+    image: redis:7.4
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:${REDIS_PORT:-6379}:6379
+    volumes:
+      - redis:/data
+    networks:
+      - backend
+{{ end -}}

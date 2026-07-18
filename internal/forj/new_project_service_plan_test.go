@@ -31,7 +31,7 @@ func TestPlanNewProjectServiceTasksStartsActiveRedis(t *testing.T) {
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
 	wantPre := []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker-compose up -d"}}
-	wantDown := []project.DevTask{{Name: "Docker Compose Down", Cmd: "docker-compose down"}}
+	wantDown := []project.DevTask{{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}}
 	if !reflect.DeepEqual(tasks.Pre, wantPre) {
 		t.Fatalf("pre tasks = %#v, want %#v", tasks.Pre, wantPre)
 	}

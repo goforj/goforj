@@ -199,6 +199,60 @@ func TestEffectiveResourceConsumersUseNamedAppStorageEnvelope(t *testing.T) {
 	}
 }
 
+// TestEffectiveResourceConsumersRecognizeOnlyGeneratedRustFS verifies an owner S3 endpoint cannot be captured by a local profile.
+func TestEffectiveResourceConsumersRecognizeOnlyGeneratedRustFS(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true, Storage: true}
+	plan := defaultResourcePlanForTest(t, components)
+	storage, _ := plan.Selection(project.ResourceStorage)
+	storage.Active = "s3"
+	storage.Supported = append(storage.Supported, "s3")
+	var err error
+	plan, err = plan.WithSelection(project.ResourceStorage, storage).Normalized(components)
+	if err != nil {
+		t.Fatalf("normalize S3 plan: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		endpoint  string
+		wantState project.ServiceState
+	}{
+		{name: "generated endpoint", endpoint: "http://rustfs:9000", wantState: project.ServiceStateActiveLocal},
+		{name: "provider default", wantState: project.ServiceStateExternalRequired},
+		{name: "generated host without service port", endpoint: "http://rustfs", wantState: project.ServiceStateExternalRequired},
+		{name: "external endpoint", endpoint: "https://objects.example.com", wantState: project.ServiceStateExternalRequired},
+		{name: "neighboring local host", endpoint: "http://rustfs-tools:9000", wantState: project.ServiceStateExternalRequired},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := []byte("STORAGE_DRIVER=s3\nSTORAGE_ENDPOINT=" + test.endpoint + "\n")
+			consumers, err := resolveConsumersForComponents(source, plan, components)
+			if err != nil {
+				t.Fatalf("discover S3 consumers: %v", err)
+			}
+			resolved, err := project.ResolveServicePlanWithConsumers(
+				plan,
+				components,
+				project.LocalServiceIntent{}.WithMode(project.ServiceStorageS3, project.LocalServiceModeLocal),
+				consumers,
+			)
+			if err != nil {
+				t.Fatalf("resolve S3 service plan: %v", err)
+			}
+			var activeRequirement project.ServiceRequirement
+			for _, requirement := range resolved.RequirementsFor(project.ServiceStorageS3) {
+				if len(requirement.ActiveConsumers) > 0 {
+					activeRequirement = requirement
+					break
+				}
+			}
+			if activeRequirement.State != test.wantState {
+				t.Fatalf("active S3 requirement = %#v; all requirements = %#v; want %s", activeRequirement, resolved.RequirementsFor(project.ServiceStorageS3), test.wantState)
+			}
+		})
+	}
+}
+
 // TestEffectiveResourceConsumersUseEachConfiguredAppDatabase verifies disjoint App database participation shares one build contract.
 func TestEffectiveResourceConsumersUseEachConfiguredAppDatabase(t *testing.T) {
 	config := &project.Config{

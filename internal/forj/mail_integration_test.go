@@ -33,7 +33,7 @@ func TestRenderedMailpitDefaultsWithDocker(t *testing.T) {
 	composeText := readRenderedFile(t, projectDir, "docker-compose.yml")
 	for _, token := range []string{
 		"mailpit:",
-		"image: axllent/mailpit:v1.27",
+		"image: axllent/mailpit:v1.30.4",
 		"${MAILPIT_SMTP_PORT:-1025}:1025",
 		"${MAILPIT_HTTP_PORT:-8025}:8025",
 	} {

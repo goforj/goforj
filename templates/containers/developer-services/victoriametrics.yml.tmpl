@@ -1,0 +1,46 @@
+{{- define "developer-service-victoriametrics-volumes" }}
+  victoriametrics:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-victoriametrics-services" }}
+  victoriametrics:
+    profiles: [victoriametrics, grafana]
+    restart: unless-stopped
+    image: victoriametrics/victoria-metrics:v1.120.0
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:${OBSERVABILITY_VM_PORT:-8428}:8428
+    volumes:
+      - victoriametrics:/victoria-metrics-data
+    command:
+      - --storageDataPath=/victoria-metrics-data
+      - --httpListenAddr=:8428
+      - --retentionPeriod=30d
+    networks:
+      - backend
+{{- if .Components.Observability }}
+
+  vmagent:
+    profiles: [victoriametrics, grafana]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    build:
+      context: ./containers/observability/vmagent
+    environment:
+      - TZ=${TZ:-UTC}
+    depends_on:
+      - victoriametrics
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - -promscrape.config=/etc/vmagent/prometheus.yml
+      - -remoteWrite.url=http://victoriametrics:8428/api/v1/write
+    networks:
+      - backend
+{{- end }}
+{{ end -}}

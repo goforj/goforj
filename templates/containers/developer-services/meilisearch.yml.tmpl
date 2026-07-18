@@ -1,0 +1,30 @@
+{{- define "developer-service-meilisearch-volumes" }}
+  meilisearch:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-meilisearch-services" }}
+  meilisearch:
+    profiles: [meilisearch]
+    x-forj-test: false
+    restart: unless-stopped
+    image: getmeili/meilisearch:v1.49.0
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+      - MEILI_ENV=development
+      - MEILI_NO_ANALYTICS=true
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${MEILISEARCH_PORT:-7700}:7700
+    volumes:
+      - meilisearch:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - backend
+{{ end -}}

@@ -29,6 +29,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 		"OBSERVABILITY_VM_PORT": "18428",
 		"GRAFANA_PORT":          "13001",
 		"GRAFANA_ADMIN_USER":    "ops",
+		"COMPOSE_PROFILES":      "mailpit,victoriametrics,grafana",
 		"QUEUE_REPORTS_DRIVER":  "redis",
 		"CACHE_SESSIONS_DRIVER": "memory",
 		"STORAGE_PUBLIC_DRIVER": "local",
@@ -63,7 +64,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 		t.Fatalf("api = %#v ok=%v", api, ok)
 	}
 	grafana, ok := resourceByID(resources, "grafana")
-	if !ok || grafana.Auth != "ops / admin" || grafana.Owner != "goforj" {
+	if !ok || grafana.Auth != "ops" || grafana.Owner != "goforj" {
 		t.Fatalf("grafana = %#v ok=%v", grafana, ok)
 	}
 	for _, id := range []string{"database-default", "queue-reports", "cache-sessions", "storage-public", "events-audit"} {
@@ -108,6 +109,40 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	}
 	if app, ok := resourceByID(resources, "app"); !ok || app.URL != "http://localhost:3000" {
 		t.Fatalf("app = %#v ok=%v", app, ok)
+	}
+}
+
+// TestRegistryToolResourcesFollowExactProfiles prevents component flags and neighboring tokens from advertising dormant tools.
+func TestRegistryToolResourcesFollowExactProfiles(t *testing.T) {
+	config := &project.Config{}
+	config.Render.Components.Docker = true
+	config.Render.Components.Mail = true
+	config.Render.Components.Observability = true
+	config.Render.Components.Grafana = true
+
+	resources, err := RegistryForProject(config, map[string]string{
+		"COMPOSE_PROFILES": "mailpit-debug,victoriametrics-tools,grafana-preview",
+	}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list neighboring profiles: %v", err)
+	}
+	for _, id := range []string{"mailpit", "victoria-metrics", "grafana"} {
+		if _, ok := resourceByID(resources, id); ok {
+			t.Fatalf("neighboring profiles advertised dormant %s: %#v", id, resources)
+		}
+	}
+
+	resources, err = RegistryForProject(config, map[string]string{"COMPOSE_PROFILES": "grafana"}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list Grafana profile: %v", err)
+	}
+	for _, id := range []string{"victoria-metrics", "grafana"} {
+		if _, ok := resourceByID(resources, id); !ok {
+			t.Fatalf("Grafana profile omitted active %s: %#v", id, resources)
+		}
+	}
+	if _, ok := resourceByID(resources, "mailpit"); ok {
+		t.Fatalf("Grafana profile advertised dormant Mailpit: %#v", resources)
 	}
 }
 

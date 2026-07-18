@@ -1,16 +1,43 @@
 package forj
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
+
+type composeEnvironmentValues []string
+
+// UnmarshalYAML normalizes both Compose environment syntaxes so catalog-wide assertions stay schema-neutral.
+func (values *composeEnvironmentValues) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.SequenceNode:
+		return node.Decode((*[]string)(values))
+	case yaml.MappingNode:
+		for index := 0; index < len(node.Content); index += 2 {
+			var value string
+			if err := node.Content[index+1].Decode(&value); err != nil {
+				return err
+			}
+			*values = append(*values, node.Content[index].Value+"="+value)
+		}
+		return nil
+	case 0, yaml.ScalarNode:
+		return nil
+	default:
+		return fmt.Errorf("unsupported Compose environment YAML kind %d", node.Kind)
+	}
+}
 
 // TestResourceTemplatesRenderDefaultAndRedisPlans verifies environment and Compose consume the same concrete plan.
 func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
@@ -94,6 +121,238 @@ func TestResourceTemplatesRenderDefaultAndRedisPlans(t *testing.T) {
 	}
 }
 
+// TestDeveloperServiceCatalogMatchesRenderedSurfaces keeps profile discovery and Compose ownership synchronized.
+func TestDeveloperServiceCatalogMatchesRenderedSurfaces(t *testing.T) {
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
+
+	definitions := devservices.Catalog()
+	profiles := make([]string, 0, len(definitions))
+	knownProfiles := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		profiles = append(profiles, definition.Profile)
+		knownProfiles[definition.Profile] = struct{}{}
+	}
+	advertisedProfiles := []string{}
+	for _, line := range strings.Split(environment, "\n") {
+		if values, ok := strings.CutPrefix(line, "##   "); ok {
+			advertisedProfiles = append(advertisedProfiles, strings.Split(values, ",")...)
+		}
+	}
+	if !slices.Equal(advertisedProfiles, profiles) {
+		t.Fatalf("development-service advertisement = %#v, want catalog order %#v:\n%s", advertisedProfiles, profiles, environment)
+	}
+	activeProfiles, set := envfile.Lookup(strings.Split(environment, "\n"), "COMPOSE_PROFILES")
+	if want := "mailpit,victoriametrics,grafana"; !set || activeProfiles != want {
+		t.Fatalf("default COMPOSE_PROFILES = %q, set=%t; want compatibility defaults %q", activeProfiles, set, want)
+	}
+
+	var document struct {
+		Services map[string]struct {
+			Profiles []string `yaml:"profiles"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &document); err != nil {
+		t.Fatalf("decode rendered Compose: %v\n%s", err, compose)
+	}
+	ownersByProfile := make(map[string][]string, len(definitions))
+	for serviceName, service := range document.Services {
+		for _, profile := range service.Profiles {
+			if _, ok := knownProfiles[profile]; !ok {
+				t.Fatalf("Compose service %q uses profile %q absent from the developer-service catalog", serviceName, profile)
+			}
+			ownersByProfile[profile] = append(ownersByProfile[profile], serviceName)
+		}
+	}
+
+	wantOwners := map[string][]string{
+		"redis":           {"redis"},
+		"rustfs":          {"rustfs"},
+		"opensearch":      {"opensearch", "opensearch-dashboards"},
+		"nats":            {"nats"},
+		"rabbitmq":        {"rabbitmq"},
+		"redpanda":        {"redpanda", "redpanda-console"},
+		"dynamodb":        {"dynamodb"},
+		"elasticmq":       {"elasticmq", "elasticmq-ui"},
+		"pubsub":          {"gcppubsub"},
+		"memcached":       {"memcached"},
+		"sftpgo":          {"sftpgo"},
+		"adminer":         {"adminer"},
+		"jaeger":          {"jaeger"},
+		"qdrant":          {"qdrant"},
+		"temporal":        {"temporal"},
+		"keycloak":        {"keycloak"},
+		"mockserver":      {"mockserver"},
+		"toxiproxy":       {"toxiproxy"},
+		"clickhouse":      {"clickhouse"},
+		"meilisearch":     {"meilisearch"},
+		"mailpit":         {"mailpit"},
+		"victoriametrics": {"victoriametrics", "vmagent"},
+		"grafana":         {"grafana", "grafana-seed", "victoriametrics", "vmagent"},
+	}
+	for _, definition := range definitions {
+		got := ownersByProfile[definition.Profile]
+		slices.Sort(got)
+		want, ok := wantOwners[definition.Profile]
+		if !ok {
+			t.Fatalf("catalog profile %q has no asserted Compose ownership", definition.Profile)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("Compose owners for profile %q = %#v, want %#v", definition.Profile, got, want)
+		}
+	}
+	if len(ownersByProfile) != len(definitions) {
+		t.Fatalf("rendered profile count = %d, catalog count = %d: %#v", len(ownersByProfile), len(definitions), ownersByProfile)
+	}
+}
+
+// TestDeveloperServiceDefaultHostPortsDoNotCollide keeps the complete profile union usable as the catalog grows.
+func TestDeveloperServiceDefaultHostPortsDoNotCollide(t *testing.T) {
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	_, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
+
+	var document struct {
+		Services map[string]struct {
+			Profiles []string `yaml:"profiles"`
+			Ports    []string `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &document); err != nil {
+		t.Fatalf("decode rendered Compose: %v\n%s", err, compose)
+	}
+	defaultHostPort := regexp.MustCompile(`:-([0-9]+)}:[0-9]+(?:/(?:tcp|udp))?$`)
+	owners := map[string]string{}
+	for serviceName, service := range document.Services {
+		if len(service.Profiles) == 0 {
+			continue
+		}
+		for _, binding := range service.Ports {
+			match := defaultHostPort.FindStringSubmatch(binding)
+			if len(match) != 2 {
+				t.Fatalf("profiled service %q has no deterministic default host port in %q", serviceName, binding)
+			}
+			if owner, exists := owners[match[1]]; exists {
+				t.Fatalf("profiled services %q and %q both default to host port %s", owner, serviceName, match[1])
+			}
+			owners[match[1]] = serviceName
+		}
+	}
+}
+
+// TestDeveloperServiceProfilesFollowExplicitProviderIntent verifies generated activation uses exact catalog tokens.
+func TestDeveloperServiceProfilesFollowExplicitProviderIntent(t *testing.T) {
+	components := project.Components{Cache: true, DatabaseSQLite: true, Docker: true, Storage: true}
+	plan := defaultResourcePlanForTest(t, components)
+	storage, ok := plan.Selection(project.ResourceStorage)
+	if !ok {
+		t.Fatal("default Storage plan omitted its selection")
+	}
+	storage.Supported = append(storage.Supported, "s3")
+	var err error
+	plan, err = plan.WithSelection(project.ResourceStorage, storage).Normalized(components)
+	if err != nil {
+		t.Fatalf("normalize S3-capable resource plan: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		intent project.LocalServiceIntent
+		want   string
+	}{
+		{name: "dormant by default"},
+		{name: "Redis local", intent: project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal), want: "redis"},
+		{name: "RustFS local", intent: project.LocalServiceIntent{}.WithMode(project.ServiceStorageS3, project.LocalServiceModeLocal), want: "rustfs"},
+		{
+			name: "catalog order",
+			intent: project.LocalServiceIntent{}.
+				WithMode(project.ServiceStorageS3, project.LocalServiceModeLocal).
+				WithMode(project.ServiceRedis, project.LocalServiceModeLocal),
+			want: "redis,rustfs",
+		},
+		{
+			name: "external providers remain dormant",
+			intent: project.LocalServiceIntent{}.
+				WithMode(project.ServiceRedis, project.LocalServiceModeExternal).
+				WithMode(project.ServiceStorageS3, project.LocalServiceModeExternal),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			environment, _ := renderResourceTemplates(t, components, plan, test.intent)
+			got, set := envfile.Lookup(strings.Split(environment, "\n"), "COMPOSE_PROFILES")
+			if !set || got != test.want {
+				t.Fatalf("COMPOSE_PROFILES = %q, set=%t; want %q\n%s", got, set, test.want, environment)
+			}
+		})
+	}
+}
+
+// TestDeveloperServiceRuntimeContracts locks pinned images, readiness probes, safe binds, and example redaction.
+func TestDeveloperServiceRuntimeContracts(t *testing.T) {
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	environment, compose := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
+
+	for _, want := range []string{
+		"image: rustfs/rustfs:1.0.0-beta.10",
+		"curl -fsS http://127.0.0.1:9000/health && curl -fsS http://127.0.0.1:9001/rustfs/console/health",
+		"${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${RUSTFS_API_PORT:-9000}:9000",
+		"image: opensearchproject/opensearch:3.7.0",
+		"image: opensearchproject/opensearch-dashboards:3.7.0",
+		`-u \"admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}\"`,
+		"${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${OPENSEARCH_HTTP_PORT:-9200}:9200",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("developer-service Compose contract omitted %q:\n%s", want, compose)
+		}
+	}
+	var model struct {
+		Services map[string]struct {
+			RenderedTest *bool `yaml:"x-forj-test"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &model); err != nil {
+		t.Fatalf("decode developer-service Compose contract: %v\n%s", err, compose)
+	}
+	for _, serviceName := range []string{"opensearch", "opensearch-dashboards"} {
+		service, ok := model.Services[serviceName]
+		if !ok || service.RenderedTest == nil || *service.RenderedTest {
+			t.Fatalf("standalone OpenSearch service %q rendered-test marker = %#v, want false", serviceName, service.RenderedTest)
+		}
+	}
+
+	exampleLines := strings.Split(string(envfile.RedactExample([]byte(environment))), "\n")
+	for _, key := range []string{
+		"RUSTFS_ACCESS_KEY",
+		"RUSTFS_SECRET_KEY",
+		"OPENSEARCH_INITIAL_ADMIN_PASSWORD",
+		"NATS_PASSWORD",
+		"RABBITMQ_PASSWORD",
+		"SFTPGO_ADMIN_PASSWORD",
+		"KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
+		"CLICKHOUSE_PASSWORD",
+	} {
+		value, set := envfile.Lookup(exampleLines, key)
+		if !set || value != "" {
+			t.Fatalf("redacted example %s = %q, set=%t; want an empty committed credential", key, value, set)
+		}
+	}
+	for key, want := range map[string]string{
+		"DEV_SERVICE_IP_ADDRESS":     "127.0.0.1",
+		"RUSTFS_API_PORT":            "9000",
+		"OPENSEARCH_HTTP_PORT":       "9200",
+		"OPENSEARCH_DASHBOARDS_PORT": "5601",
+	} {
+		value, set := envfile.Lookup(exampleLines, key)
+		if !set || value != want {
+			t.Fatalf("redacted example %s = %q, set=%t; want %q", key, value, set, want)
+		}
+	}
+}
+
 // TestDefaultEnvironmentIsCompactAndIntentional keeps a new project's primary configuration focused on active choices.
 func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 	const environmentReference = "# Environment reference: https://goforj.dev/reference/env-vars"
@@ -142,6 +401,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 		"# Events",
 		"# Queue",
 		"# Runtime",
+		"# Development Services",
 		"# Docker",
 	}
 	if strings.Join(sections, "\n") != strings.Join(wantSections, "\n") {
@@ -178,6 +438,25 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 		"EVENTS_DRIVER", "EVENTS_SUPPORTED_DRIVERS",
 		"QUEUE_DRIVER", "QUEUE_SUPPORTED_DRIVERS", "QUEUE_WORKERS", "QUEUE_SHUTDOWN_TIMEOUT",
 		"SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT",
+		"COMPOSE_PROFILES", "DEV_SERVICE_IP_ADDRESS",
+		"RUSTFS_API_PORT", "RUSTFS_CONSOLE_PORT", "RUSTFS_ACCESS_KEY", "RUSTFS_SECRET_KEY",
+		"OPENSEARCH_HTTP_PORT", "OPENSEARCH_ANALYZER_PORT", "OPENSEARCH_DASHBOARDS_PORT",
+		"OPENSEARCH_INITIAL_ADMIN_PASSWORD",
+		"NATS_CLIENT_PORT", "NATS_MONITORING_PORT", "NATS_USERNAME", "NATS_PASSWORD",
+		"RABBITMQ_AMQP_PORT", "RABBITMQ_MANAGEMENT_PORT", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD",
+		"REDPANDA_ADVERTISED_HOST", "REDPANDA_SCHEMA_REGISTRY_PORT", "REDPANDA_PANDAPROXY_PORT",
+		"REDPANDA_KAFKA_PORT", "REDPANDA_ADMIN_PORT", "REDPANDA_CONSOLE_PORT",
+		"DYNAMODB_PORT", "ELASTICMQ_PORT", "ELASTICMQ_UI_PORT", "PUBSUB_PORT",
+		"MEMCACHED_PORT", "MEMCACHED_MEMORY_MB",
+		"SFTPGO_SFTP_PORT", "SFTPGO_HTTP_PORT", "SFTPGO_ADMIN_USERNAME", "SFTPGO_ADMIN_PASSWORD",
+		"ADMINER_PORT", "JAEGER_UI_PORT", "JAEGER_OTLP_GRPC_PORT", "JAEGER_OTLP_HTTP_PORT",
+		"QDRANT_HTTP_PORT", "QDRANT_GRPC_PORT", "TEMPORAL_GRPC_PORT", "TEMPORAL_UI_PORT",
+		"KEYCLOAK_HTTP_PORT", "KEYCLOAK_MEMORY_LIMIT", "KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME",
+		"KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
+		"MOCKSERVER_PORT", "MOCKSERVER_MEMORY_LIMIT", "MOCKSERVER_LOG_LEVEL",
+		"TOXIPROXY_API_PORT", "TOXIPROXY_PROXY_PORT", "TOXIPROXY_LOG_LEVEL",
+		"CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_NATIVE_PORT", "CLICKHOUSE_DATABASE",
+		"CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD", "MEILISEARCH_PORT",
 		"IP_ADDRESS",
 	}
 	if strings.Join(keys, "\n") != strings.Join(wantKeys, "\n") {
@@ -222,17 +501,13 @@ func TestResourceTemplatesDefaultComposeServicesToUTC(t *testing.T) {
 
 	var document struct {
 		Services map[string]struct {
-			Environment []string `yaml:"environment"`
+			Environment composeEnvironmentValues `yaml:"environment"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal([]byte(compose), &document); err != nil {
 		t.Fatalf("decode rendered Compose: %v\n%s", err, compose)
 	}
-	for _, serviceName := range []string{"victoriametrics", "vmagent", "grafana", "grafana-seed", "mailpit", "mysql", "redis"} {
-		service, ok := document.Services[serviceName]
-		if !ok {
-			t.Fatalf("rendered Compose omitted expected service %q:\n%s", serviceName, compose)
-		}
+	for serviceName, service := range document.Services {
 		found := false
 		for _, value := range service.Environment {
 			if value == "TZ=${TZ:-UTC}" {
@@ -253,7 +528,7 @@ func TestResourceTemplatesDefaultComposeServicesToUTC(t *testing.T) {
 		t.Fatalf("decode rendered Postgres Compose: %v\n%s", err, postgresCompose)
 	}
 	postgres, ok := document.Services["postgres"]
-	if !ok || len(postgres.Environment) == 0 || postgres.Environment[len(postgres.Environment)-1] != "TZ=${TZ:-UTC}" {
+	if !ok || !slices.Contains(postgres.Environment, "TZ=${TZ:-UTC}") {
 		t.Fatalf("rendered Postgres service omitted the UTC timezone default: %#v", postgres.Environment)
 	}
 }
@@ -426,6 +701,15 @@ func TestResourceTemplatesOmitDisabledCapabilities(t *testing.T) {
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("Docker-disabled project emitted service %q:\n%s", forbidden, compose)
 		}
+	}
+	var document struct {
+		Services map[string]yaml.Node `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &document); err != nil {
+		t.Fatalf("decode Docker-disabled Compose: %v\n%s", err, compose)
+	}
+	if len(document.Services) != 0 {
+		t.Fatalf("Docker-disabled project emitted Compose services: %#v\n%s", document.Services, compose)
 	}
 }
 
@@ -611,5 +895,6 @@ func renderResourceTemplatesWithConsumers(t *testing.T, components project.Compo
 	if err != nil {
 		t.Fatalf("read Compose: %v", err)
 	}
-	return string(environment), string(compose)
+	// Git may check template sources out with CRLF on Windows, but these assertions target rendered content rather than host line endings.
+	return strings.ReplaceAll(string(environment), "\r\n", "\n"), strings.ReplaceAll(string(compose), "\r\n", "\n")
 }

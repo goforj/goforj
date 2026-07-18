@@ -13,105 +13,11 @@ volumes:
   postgres:
     driver: local
 {{ end }}
-{{- if .Components.Observability }}
-  victoriametrics:
-    driver: local
-{{ end }}
-{{- if .Components.Grafana }}
-  grafana:
-    driver: local
-{{ end }}
-{{- if .Resources.RedisSupported }}
-  redis:
-    driver: local
+{{- if .Components.Docker }}
+{{ template "developer-service-catalog-volumes" . -}}
 {{ end }}
 
 services:
-
-{{- if .Components.Observability }}
-  victoriametrics:
-    restart: unless-stopped
-    image: victoriametrics/victoria-metrics:v1.120.0
-    environment:
-      - TZ=${TZ:-UTC}
-    ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${OBSERVABILITY_VM_PORT:-8428}:8428
-    volumes:
-      - victoriametrics:/victoria-metrics-data
-    command:
-      - --storageDataPath=/victoria-metrics-data
-      - --httpListenAddr=:8428
-      - --retentionPeriod=30d
-    networks:
-      - backend
-
-  vmagent:
-    restart: unless-stopped
-    build:
-      context: ./containers/observability/vmagent
-    environment:
-      - TZ=${TZ:-UTC}
-    depends_on:
-      - victoriametrics
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command:
-      - -promscrape.config=/etc/vmagent/prometheus.yml
-      - -remoteWrite.url=http://victoriametrics:8428/api/v1/write
-    networks:
-      - backend
-{{- end }}
-
-{{- if .Components.Grafana }}
-  grafana:
-    restart: unless-stopped
-    build:
-      context: ./containers/observability/grafana
-    depends_on:
-      - victoriametrics
-    ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${GRAFANA_PORT:-13001}:3000
-    environment:
-      - TZ=${TZ:-UTC}
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana:/var/lib/grafana
-    networks:
-      - backend
-
-  grafana-seed:
-    restart: "no"
-    stop_grace_period: 1s
-    build:
-      context: ./containers/observability/grafana
-      dockerfile: Dockerfile.seed
-    depends_on:
-      - grafana
-    environment:
-      - TZ=${TZ:-UTC}
-      - GRAFANA_URL=http://grafana:3000
-      - GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-    entrypoint: ["sh"]
-    command: ["/seed-dashboards.sh"]
-    networks:
-      - backend
-{{- end }}
-
-{{- if and .Components.Mail .Components.Docker }}
-  mailpit:
-    restart: unless-stopped
-    image: axllent/mailpit:v1.27
-    environment:
-      - TZ=${TZ:-UTC}
-    ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${MAILPIT_SMTP_PORT:-1025}:1025
-      - ${IP_ADDRESS:-0.0.0.0}:${MAILPIT_HTTP_PORT:-8025}:8025
-    networks:
-      - backend
-{{- end }}
 
 {{- if .Resources.DatabaseMySQL }}
   mysql:
@@ -152,17 +58,7 @@ services:
       - backend
 {{ end }}
 
-{{- if .Resources.RedisSupported }}
-  redis:
-    profiles: [redis]
-    restart: unless-stopped
-    image: redis:7.4
-    environment:
-      - TZ=${TZ:-UTC}
-    ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${REDIS_PORT:-6379}:6379
-    volumes:
-      - redis:/data
-    networks:
-      - backend
+{{- if .Components.Docker }}
+  # These catalog services remain dormant until COMPOSE_PROFILES selects them.
+{{ template "developer-service-catalog-services" . -}}
 {{ end }}

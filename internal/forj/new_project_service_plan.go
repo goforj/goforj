@@ -21,7 +21,7 @@ func planNewProjectServiceTasks(resourcePlan project.ResourcePlan, servicePlan p
 		}},
 		Down: []project.DevTask{{
 			Name: "Docker Compose Down",
-			Cmd:  "docker-compose down",
+			Cmd:  dockerComposeDownDevCommand(),
 		}},
 	}
 	if waitTask, ok := newProjectDatabaseWaitTask(resourcePlan, servicePlan); ok {

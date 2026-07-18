@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
@@ -293,29 +294,49 @@ func TestComposeRedisServiceWithoutProfile(t *testing.T) {
 	}
 }
 
-// TestSeedComposeProfilesPreservesTokens verifies local Redis activation edits one exact profile token.
-func TestSeedComposeProfilesPreservesTokens(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
-	plan := redisResourcePlanForTest(t, components)
-	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics,redis-debug\n"), plan, components, intent)
-	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis-debug,redis\n" {
-		t.Fatalf("seeded profiles = %q changed=%t", updated, changed)
+// TestPrepareResourceEnvironmentMigratesComponentToolsToProfiles preserves existing startup behavior after catalog adoption.
+func TestPrepareResourceEnvironmentMigratesComponentToolsToProfiles(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.WriteFile(".env", []byte("COMPOSE_PROFILES=owner-tool\n"), 0o600); err != nil {
+		t.Fatalf("write owner environment: %v", err)
 	}
-	second, changed := seedComposeProfiles(updated, plan, components, intent)
-	if changed || string(second) != string(updated) {
-		t.Fatalf("profile seeding is not idempotent: %q changed=%t", second, changed)
+	compose := "services:\n  mailpit:\n    image: mailpit\n  victoriametrics:\n    image: victoriametrics\n  grafana:\n    image: grafana\n"
+	if err := os.WriteFile("docker-compose.yml", []byte(compose), 0o644); err != nil {
+		t.Fatalf("write legacy Compose: %v", err)
+	}
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan := defaultResourcePlanForTest(t, components)
+	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
+		config:    &project.Config{Render: project.RenderConfig{Components: components}},
+		resources: resourceRenderState{plan: plan},
+	}
+	if err := renderer.prepareResourceEnvironment(); err != nil {
+		t.Fatalf("prepare resource environment: %v", err)
+	}
+	if !renderer.resources.pendingEnvironmentWrite {
+		t.Fatal("legacy component tools did not schedule an owner environment migration")
+	}
+	profiles, set := envfile.Lookup(strings.Split(string(renderer.resources.pendingEnvironment), "\n"), "COMPOSE_PROFILES")
+	want := "owner-tool,mailpit,victoriametrics,grafana"
+	if !set || profiles != want {
+		t.Fatalf("migrated COMPOSE_PROFILES = %q, set=%t; want %q\n%s", profiles, set, want, renderer.resources.pendingEnvironment)
 	}
 }
 
-// TestSeedComposeProfilesHonorsRetainedUnusedRedis keeps explicit owner lifecycle intent independent of the active driver.
-func TestSeedComposeProfilesHonorsRetainedUnusedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
-	plan := defaultResourcePlanForTest(t, components)
-	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics\n"), plan, components, intent)
-	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis\n" {
-		t.Fatalf("seeded retained profile = %q changed=%t", updated, changed)
+// TestComposeServiceWithoutProfileRequiresAnExactUnprofiledService keeps migration detection away from volumes and neighbors.
+func TestComposeServiceWithoutProfileRequiresAnExactUnprofiledService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yml")
+	compose := "volumes:\n  mailpit:\nservices:\n  mailpit-debug:\n    image: owner\n  mailpit:\n    profiles: [mailpit]\n    image: mailpit\n"
+	if err := os.WriteFile(path, []byte(compose), 0o644); err != nil {
+		t.Fatalf("write Compose: %v", err)
+	}
+	if composeServiceWithoutProfile(path, "mailpit") {
+		t.Fatal("profiled Mailpit was mistaken for a legacy unprofiled service")
+	}
+	if composeServiceWithoutProfile(path, "mailpit-debug") != true {
+		t.Fatal("exact unprofiled owner service was not detected")
 	}
 }
 
@@ -342,7 +363,7 @@ func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
 	}
-	if values.CacheSessionsDriver != "redis" || !values.RedisActive || !values.RedisSupported || !values.RedisLocal {
+	if values.CacheSessionsDriver != "redis" || !values.RedisActive || !values.RedisLocal {
 		t.Fatalf("render values = %#v", values)
 	}
 }

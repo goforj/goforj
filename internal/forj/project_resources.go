@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/str/v2"
 
+	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/internal/resourceenv"
@@ -29,37 +30,47 @@ func normalizeQueueDriver(value string) string {
 
 // resourceRenderValues is the template-facing projection of a validated transient resource plan.
 type resourceRenderValues struct {
-	DatabaseDriver            string
-	DatabaseSupportedDrivers  string
-	DatabaseAvailableDrivers  string
-	DatabaseMySQL             bool
-	DatabasePostgres          bool
-	DatabaseSQLite            bool
-	DatabaseExternal          bool
-	CacheDriver               string
-	CacheSupportedDrivers     string
-	CacheAvailableDrivers     string
-	QueueDriver               string
-	QueueSupportedDrivers     string
-	QueueAvailableDrivers     string
-	EventsDriver              string
-	EventsSupportedDrivers    string
-	EventsAvailableDrivers    string
-	StorageDriver             string
-	StorageSupportedDrivers   string
-	StorageAvailableDrivers   string
-	StoragePublicDriver       string
-	StorageFaviconsDriver     string
-	MailDriver                string
-	MailSupportedDrivers      string
-	MailAvailableDrivers      string
-	CacheSettingsDriver       string
-	CacheSessionsDriver       string
-	RedisActive               bool
-	RedisSupported            bool
-	RedisLocal                bool
-	RedisLocalRequestedUnused bool
-	RedisExternal             bool
+	DatabaseDriver                 string
+	DatabaseSupportedDrivers       string
+	DatabaseAvailableDrivers       string
+	DatabaseMySQL                  bool
+	DatabasePostgres               bool
+	DatabaseSQLite                 bool
+	DatabaseExternal               bool
+	CacheDriver                    string
+	CacheSupportedDrivers          string
+	CacheAvailableDrivers          string
+	QueueDriver                    string
+	QueueSupportedDrivers          string
+	QueueAvailableDrivers          string
+	EventsDriver                   string
+	EventsSupportedDrivers         string
+	EventsAvailableDrivers         string
+	StorageDriver                  string
+	StorageSupportedDrivers        string
+	StorageAvailableDrivers        string
+	StoragePublicDriver            string
+	StorageFaviconsDriver          string
+	MailDriver                     string
+	MailSupportedDrivers           string
+	MailAvailableDrivers           string
+	CacheSettingsDriver            string
+	CacheSessionsDriver            string
+	RedisActive                    bool
+	RedisLocal                     bool
+	RedisLocalRequestedUnused      bool
+	RedisExternal                  bool
+	CacheMemcachedLocal            bool
+	CacheDynamoDBLocal             bool
+	CacheNATSLocal                 bool
+	QueueNATSLocal                 bool
+	QueueSQSLocal                  bool
+	QueueRabbitMQLocal             bool
+	EventsNATSLocal                bool
+	EventsKafkaLocal               bool
+	EventsGCPPubSubLocal           bool
+	DevelopmentServiceProfileLines []string
+	ComposeProfiles                string
 }
 
 // prepareResourceRenderState resolves one validated resource snapshot for every renderer entry point.
@@ -153,6 +164,23 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	}
 	_, profilesSet := envfile.Lookup(strings.Split(string(source), "\n"), "COMPOSE_PROFILES")
 	legacyLocalRedis := !profilesSet && composeRedisServiceWithoutProfile(p.workspace.path("docker-compose.yml"))
+	if ownerExists {
+		for _, migration := range []struct {
+			service string
+			profile string
+		}{
+			{service: "mailpit", profile: "mailpit"},
+			{service: "victoriametrics", profile: "victoriametrics"},
+			{service: "grafana", profile: "grafana"},
+		} {
+			if !composeServiceWithoutProfile(p.workspace.path("docker-compose.yml"), migration.service) {
+				continue
+			}
+			var profileChanged bool
+			source, profileChanged = seedExactComposeProfile(source, migration.profile)
+			p.resources.pendingEnvironmentWrite = p.resources.pendingEnvironmentWrite || profileChanged
+		}
+	}
 	if legacyLocalRedis {
 		p.resources.serviceIntent = p.resources.serviceIntent.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
 		if ownerExists {
@@ -268,18 +296,6 @@ func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponent
 	return plan.WithSelection(project.ResourceDatabase, selection).Normalized(projectComponents)
 }
 
-// seedComposeProfiles appends Redis whenever explicit owner intent asks Compose to retain that local service.
-func seedComposeProfiles(source []byte, plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent) ([]byte, bool) {
-	if !components.Docker || !resourcePlanIncludesDriver(plan, components, "redis") {
-		return source, false
-	}
-	mode, ok := intent.Mode(project.ServiceRedis)
-	if !ok || mode != project.LocalServiceModeLocal {
-		return source, false
-	}
-	return seedExactComposeProfile(source, "redis")
-}
-
 // seedExactComposeProfile appends one profile token without replacing unrelated owner intent.
 func seedExactComposeProfile(source []byte, profile string) ([]byte, bool) {
 	lines := strings.Split(string(source), "\n")
@@ -298,13 +314,18 @@ func seedExactComposeProfile(source []byte, profile string) ([]byte, bool) {
 
 // composeRedisServiceWithoutProfile detects the pre-profile generated Redis service during one-way migration.
 func composeRedisServiceWithoutProfile(path string) bool {
+	return composeServiceWithoutProfile(path, "redis")
+}
+
+// composeServiceWithoutProfile detects a generated service that predates its catalog lifecycle profile.
+func composeServiceWithoutProfile(path string, serviceName string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	lines := strings.Split(string(data), "\n")
 	inServices := false
-	inRedis := false
+	inService := false
 	for _, line := range lines {
 		if line == "services:" {
 			inServices = true
@@ -314,17 +335,17 @@ func composeRedisServiceWithoutProfile(path string) bool {
 			continue
 		}
 		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") && strings.HasSuffix(strings.TrimSpace(line), ":") {
-			if inRedis {
+			if inService {
 				return true
 			}
-			inRedis = strings.TrimSpace(line) == "redis:"
+			inService = strings.TrimSpace(line) == strings.TrimSpace(serviceName)+":"
 			continue
 		}
-		if inRedis && strings.HasPrefix(strings.TrimSpace(line), "profiles:") {
+		if inService && strings.HasPrefix(strings.TrimSpace(line), "profiles:") {
 			return false
 		}
 	}
-	return inRedis
+	return inService
 }
 
 // resourceRenderValuesForPlanWithConsumers includes environment-resolved named and App-scoped service activity.
@@ -333,7 +354,9 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 	if err != nil {
 		return resourceRenderValues{}, fmt.Errorf("resolve resource services: %w", err)
 	}
-	values := resourceRenderValues{}
+	values := resourceRenderValues{
+		DevelopmentServiceProfileLines: developmentServiceProfileLines(),
+	}
 	availableDrivers := make(map[project.ResourceKey]string)
 	for _, definition := range project.ResourceCatalog() {
 		drivers := append([]project.DriverDefinition(nil), definition.Drivers...)
@@ -375,7 +398,6 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.StorageFaviconsDriver = named.Active
 		}
 	}
-	values.RedisSupported = resourcePlanIncludesDriver(plan, components, "redis")
 	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
 		switch requirement.State {
 		case project.ServiceStateActiveLocal:
@@ -392,7 +414,83 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.RedisActive = true
 		}
 	}
+	values.CacheMemcachedLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceCacheMemcached)
+	values.CacheDynamoDBLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceCacheDynamoDB)
+	values.CacheNATSLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceCacheNATS)
+	values.QueueNATSLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceQueueNATS)
+	values.QueueSQSLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceQueueSQS)
+	values.QueueRabbitMQLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceQueueRabbitMQ)
+	values.EventsNATSLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceEventsNATS)
+	values.EventsKafkaLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceEventsKafka)
+	values.EventsGCPPubSubLocal = servicePlanHasActiveLocalRequirement(servicePlan, project.ServiceEventsGCPPubSub)
+	values.ComposeProfiles = activeDevelopmentServiceProfiles(servicePlan, components)
 	return values, nil
+}
+
+// servicePlanHasActiveLocalRequirement reports whether any endpoint affinity for a capability uses its catalog provider.
+func servicePlanHasActiveLocalRequirement(servicePlan project.ServicePlan, service project.ServiceKey) bool {
+	for _, requirement := range servicePlan.RequirementsFor(service) {
+		if requirement.State == project.ServiceStateActiveLocal {
+			return true
+		}
+	}
+	return false
+}
+
+// developmentServiceProfileLines wraps catalog discovery without making generated dotenv comments hard to scan.
+func developmentServiceProfileLines() []string {
+	const maximumLineLength = 88
+	lines := []string{}
+	current := ""
+	for _, definition := range devservices.Catalog() {
+		candidate := definition.Profile
+		if current != "" {
+			candidate = current + "," + candidate
+		}
+		if current != "" && len(candidate) > maximumLineLength {
+			lines = append(lines, current)
+			current = definition.Profile
+			continue
+		}
+		current = candidate
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+// activeDevelopmentServiceProfiles projects compatibility defaults and explicit local-provider intent into the owner environment.
+func activeDevelopmentServiceProfiles(servicePlan project.ServicePlan, components project.Components) string {
+	profiles := []string{}
+	components = components.WithResolvedDependencies()
+	for _, definition := range devservices.Catalog() {
+		enabled := false
+		for _, component := range definition.DefaultFor {
+			if components.Enabled(component) {
+				enabled = true
+				break
+			}
+		}
+		for _, provider := range definition.Providers {
+			if enabled {
+				break
+			}
+			for _, requirement := range servicePlan.RequirementsFor(provider) {
+				if requirement.State == project.ServiceStateActiveLocal || requirement.State == project.ServiceStateLocalRequestedUnused {
+					enabled = true
+					break
+				}
+			}
+			if enabled {
+				break
+			}
+		}
+		if enabled {
+			profiles = append(profiles, definition.Profile)
+		}
+	}
+	return strings.Join(profiles, ",")
 }
 
 // DriverEnvironmentPlaceholders renders only opt-in driver hints selected by the effective build contract.
@@ -495,31 +593,6 @@ func applyDatabaseRenderCapabilities(components *project.Components, plan projec
 			components.DatabaseSQLite = true
 		}
 	}
-}
-
-// resourcePlanIncludesDriver keeps shared services available when a root selection compiles the driver or a generated named resource activates it.
-func resourcePlanIncludesDriver(plan project.ResourcePlan, components project.Components, driver string) bool {
-	for _, definition := range project.ResourceCatalog() {
-		if !definition.AppliesTo(components) {
-			continue
-		}
-		selection, ok := plan.Selection(definition.Key)
-		if !ok {
-			continue
-		}
-		if selection.Active == driver {
-			return true
-		}
-		if stringSliceContainsFold(selection.Supported, driver) {
-			return true
-		}
-	}
-	for _, named := range plan.GeneratedNamedSelections(components) {
-		if named.Active == driver {
-			return true
-		}
-	}
-	return false
 }
 
 // splitDriverList normalizes an owner list without changing its relative order before catalog validation.

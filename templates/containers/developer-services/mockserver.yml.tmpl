@@ -1,0 +1,19 @@
+{{- define "developer-service-mockserver-volumes" }}{{ end -}}
+
+{{- define "developer-service-mockserver-services" }}
+  mockserver:
+    profiles: [mockserver]
+    x-forj-test: false
+    restart: unless-stopped
+    image: mockserver/mockserver:7.4.0
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${MOCKSERVER_MEMORY_LIMIT:-1g}
+    environment:
+      - TZ=${TZ:-UTC}
+      - MOCKSERVER_LOG_LEVEL=${MOCKSERVER_LOG_LEVEL:-INFO}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${MOCKSERVER_PORT:-1080}:1080
+    networks:
+      - backend
+{{ end -}}

@@ -1,0 +1,29 @@
+{{- define "developer-service-rabbitmq-volumes" }}
+  rabbitmq:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-rabbitmq-services" }}
+  rabbitmq:
+    profiles: [rabbitmq]
+    restart: unless-stopped
+    image: rabbitmq:4.3.2-management
+    hostname: rabbitmq
+    environment:
+      - TZ=${TZ:-UTC}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USERNAME:-goforj}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-goforj}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${RABBITMQ_AMQP_PORT:-5672}:5672
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - backend
+{{ end -}}

@@ -1,0 +1,70 @@
+{{- define "developer-service-redpanda-volumes" }}
+  redpanda:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-redpanda-services" }}
+  redpanda:
+    profiles: [redpanda]
+    x-forj-test: false
+    restart: unless-stopped
+    image: docker.redpanda.com/redpandadata/redpanda:v26.1.13
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://${REDPANDA_ADVERTISED_HOST:-localhost}:${REDPANDA_KAFKA_PORT:-19092}
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://${REDPANDA_ADVERTISED_HOST:-localhost}:${REDPANDA_PANDAPROXY_PORT:-18082}
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --default-log-level=info
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${REDPANDA_SCHEMA_REGISTRY_PORT:-18081}:18081
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${REDPANDA_PANDAPROXY_PORT:-18082}:18082
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${REDPANDA_KAFKA_PORT:-19092}:19092
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${REDPANDA_ADMIN_PORT:-19644}:9644
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - backend
+
+  redpanda-console:
+    profiles: [redpanda]
+    x-forj-test: false
+    restart: unless-stopped
+    image: docker.redpanda.com/redpandadata/console:v3.8.0
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console'
+    environment:
+      TZ: ${TZ:-UTC}
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+        schemaRegistry:
+          enabled: true
+          urls: ["http://redpanda:8081"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${REDPANDA_CONSOLE_PORT:-18080}:8080
+    networks:
+      - backend
+{{ end -}}
