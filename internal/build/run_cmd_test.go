@@ -330,8 +330,17 @@ func TestWaitForRunProcessRequiresStartedProcess(t *testing.T) {
 	}
 }
 
+// TestBuildChildExitHelper gives exit-code tests a native subprocess on every supported operating system.
+func TestBuildChildExitHelper(t *testing.T) {
+	if os.Getenv("GOFORJ_BUILD_CHILD_EXIT_HELPER") != "1" {
+		return
+	}
+	os.Exit(7)
+}
+
 func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
-	child := exec.Command("sh", "-c", "exit 7")
+	child := exec.Command(os.Args[0], "-test.run=^TestBuildChildExitHelper$")
+	child.Env = append(os.Environ(), "GOFORJ_BUILD_CHILD_EXIT_HELPER=1")
 	err := child.Run()
 	if err == nil {
 		t.Fatal("expected child command to fail")

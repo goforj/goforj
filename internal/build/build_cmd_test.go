@@ -119,7 +119,7 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat built binary: %v", err)
 	}
-	if info.Mode()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Fatalf("expected built binary to be executable, mode %s", info.Mode())
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin", ".app.publish")); !os.IsNotExist(err) {
@@ -491,15 +491,7 @@ func TestRunWireCommandPrintsDetailSeparately(t *testing.T) {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
 
-	wireScript := filepath.Join(binDir, "wire")
-	script := "#!/bin/sh\n" +
-		"echo 'wire: /tmp/test/wire.go:13:2: multiple bindings for Example' 1>&2\n" +
-		"echo 'current:' 1>&2\n" +
-		"echo '  <- provider \"NewExample\"' 1>&2\n" +
-		"exit 1\n"
-	if err := os.WriteFile(wireScript, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wire script: %v", err)
-	}
+	buildFailingWireFixture(t, binDir)
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -534,6 +526,38 @@ func TestRunWireCommandPrintsDetailSeparately(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected stderr to contain %q, got %q", want, output)
 		}
+	}
+}
+
+// buildFailingWireFixture compiles a native helper so command diagnostics are exercised without a host shell dependency.
+func buildFailingWireFixture(t *testing.T, binDir string) {
+	t.Helper()
+	sourcePath := filepath.Join(t.TempDir(), "main.go")
+	source := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	fmt.Fprintln(os.Stderr, "wire: /tmp/test/wire.go:13:2: multiple bindings for Example")
+	fmt.Fprintln(os.Stderr, "current:")
+	fmt.Fprintln(os.Stderr, "  <- provider \"NewExample\"")
+	os.Exit(1)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("write wire fixture source: %v", err)
+	}
+	wireName := "wire"
+	if runtime.GOOS == "windows" {
+		wireName += ".exe"
+	}
+	command := exec.Command("go", "build", "-o", filepath.Join(binDir, wireName), sourcePath)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build wire fixture: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
 }
 
