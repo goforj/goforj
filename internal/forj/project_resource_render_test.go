@@ -785,5 +785,6 @@ func renderResourceTemplatesWithConsumers(t *testing.T, components project.Compo
 	if err != nil {
 		t.Fatalf("read Compose: %v", err)
 	}
-	return string(environment), string(compose)
+	// Git may check template sources out with CRLF on Windows, but these assertions target rendered content rather than host line endings.
+	return strings.ReplaceAll(string(environment), "\r\n", "\n"), strings.ReplaceAll(string(compose), "\r\n", "\n")
 }
