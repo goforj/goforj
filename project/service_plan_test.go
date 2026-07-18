@@ -46,6 +46,53 @@ func TestResolveServicePlanRedisStates(t *testing.T) {
 	}
 }
 
+// TestResolveServicePlanS3States applies the shared local-provider policy to RustFS-backed S3 storage.
+func TestResolveServicePlanS3States(t *testing.T) {
+	tests := []struct {
+		name       string
+		s3Active   bool
+		docker     bool
+		intent     LocalServiceIntent
+		wantState  ServiceState
+		wantExists bool
+	}{
+		{name: "active local", s3Active: true, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceStorageS3, LocalServiceModeLocal), wantState: ServiceStateActiveLocal, wantExists: true},
+		{name: "active external explicitly", s3Active: true, docker: true, intent: LocalServiceIntent{}.WithMode(ServiceStorageS3, LocalServiceModeExternal), wantState: ServiceStateExternalRequired, wantExists: true},
+		{name: "active external without intent", s3Active: true, docker: true, wantState: ServiceStateExternalRequired, wantExists: true},
+		{name: "active without Docker", s3Active: true, intent: LocalServiceIntent{}.WithMode(ServiceStorageS3, LocalServiceModeLocal), wantState: ServiceStateExternalRequired, wantExists: true},
+		{name: "available local", docker: true, wantState: ServiceStateAvailableLocal, wantExists: true},
+		{name: "local requested unused", docker: true, intent: LocalServiceIntent{}.WithMode(ServiceStorageS3, LocalServiceModeLocal), wantState: ServiceStateLocalRequestedUnused, wantExists: true},
+		{name: "support without Docker", wantExists: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			components := Components{DatabaseSQLite: true, Docker: test.docker, Storage: true}
+			resourcePlan := servicePlanTestDefaultPlan(t, components)
+			storage, _ := resourcePlan.Selection(ResourceStorage)
+			storage.Supported = append(storage.Supported, "s3")
+			if test.s3Active {
+				storage.Active = "s3"
+			}
+			resourcePlan, err := resourcePlan.WithSelection(ResourceStorage, storage).Normalized(components)
+			if err != nil {
+				t.Fatalf("normalize S3 plan: %v", err)
+			}
+			servicePlan, err := ResolveServicePlan(resourcePlan, components, test.intent)
+			if err != nil {
+				t.Fatalf("ResolveServicePlan returned error: %v", err)
+			}
+			requirement, exists := servicePlan.Requirement(ServiceStorageS3)
+			if exists != test.wantExists {
+				t.Fatalf("S3 requirement exists = %v, want %v", exists, test.wantExists)
+			}
+			if exists && requirement.State != test.wantState {
+				t.Fatalf("S3 state = %q, want %q", requirement.State, test.wantState)
+			}
+		})
+	}
+}
+
 // TestResolveServicePlanDeduplicatesRedisConsumers verifies one service covers every normal shared Redis resource.
 func TestResolveServicePlanDeduplicatesRedisConsumers(t *testing.T) {
 	components := Components{Auth: true, Cache: true, DatabaseMySQL: true, Docker: true, Jobs: true, Events: true, Storage: true}

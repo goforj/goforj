@@ -234,7 +234,7 @@ func (c *DevCmd) Run() error {
 			cleanupDevTerminal()
 			if config.Dev.DownOnExit {
 				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
-				if err := runDevDownTasks(config.Dev.Down); err != nil {
+				if err := runDevDownTasks(effectiveDevDownTasks(config)); err != nil {
 					console.Errorf("forj down failed: %v", err)
 				} else {
 					console.Successf("forj down complete")
@@ -502,11 +502,12 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 
 // runPreDevSetup orders configured tasks around migration so setup commands see the current schema.
 func runPreDevSetup(config *project.Config) error {
-	preTasks := config.Dev.Pre
+	preTasks := effectiveDevPreTasks(config)
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
 	if shouldRunDevAutoMigrate(config) {
-		preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
-		for _, task := range config.Dev.Pre {
+		allTasks := preTasks
+		preTasks = make([]project.DevTask, 0, len(allTasks))
+		for _, task := range allTasks {
 			if shouldRunAfterMigrate(task) {
 				postMigrateTasks = append(postMigrateTasks, task)
 				continue

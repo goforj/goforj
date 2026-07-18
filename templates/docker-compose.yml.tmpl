@@ -21,8 +21,12 @@ volumes:
   grafana:
     driver: local
 {{ end }}
-{{- if .Resources.RedisSupported }}
+{{- if .Components.Docker }}
   redis:
+    driver: local
+  rustfs:
+    driver: local
+  opensearch:
     driver: local
 {{ end }}
 
@@ -152,7 +156,8 @@ services:
       - backend
 {{ end }}
 
-{{- if .Resources.RedisSupported }}
+{{- if .Components.Docker }}
+  # These catalog services remain dormant until COMPOSE_PROFILES selects them.
   redis:
     profiles: [redis]
     restart: unless-stopped
@@ -163,6 +168,83 @@ services:
       - ${IP_ADDRESS:-0.0.0.0}:${REDIS_PORT:-6379}:6379
     volumes:
       - redis:/data
+    networks:
+      - backend
+
+  rustfs:
+    profiles: [rustfs]
+    restart: unless-stopped
+    image: rustfs/rustfs:1.0.0-beta.10
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+      - RUSTFS_VOLUMES=/data
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${RUSTFS_API_PORT:-9000}:9000
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${RUSTFS_CONSOLE_PORT:-9001}:9001
+    volumes:
+      - rustfs:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health && curl -fsS http://127.0.0.1:9001/rustfs/console/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - backend
+
+  opensearch:
+    # OpenSearch requires vm.max_map_count=262144 on Linux hosts.
+    profiles: [opensearch]
+    x-forj-test: false
+    restart: unless-stopped
+    image: opensearchproject/opensearch:3.7.0
+    environment:
+      - TZ=${TZ:-UTC}
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-G0Forj-Local-OpenSearch-2026!}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${OPENSEARCH_HTTP_PORT:-9200}:9200
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${OPENSEARCH_ANALYZER_PORT:-9600}:9600
+    volumes:
+      - opensearch:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -kfsS -u \"admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}\" https://localhost:9200/_cluster/health?wait_for_status=yellow"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+    networks:
+      - backend
+
+  opensearch-dashboards:
+    profiles: [opensearch]
+    x-forj-test: false
+    restart: unless-stopped
+    image: opensearchproject/opensearch-dashboards:3.7.0
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    environment:
+      - TZ=${TZ:-UTC}
+      - OPENSEARCH_HOSTS=["https://opensearch:9200"]
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${OPENSEARCH_DASHBOARDS_PORT:-5601}:5601
     networks:
       - backend
 {{ end }}

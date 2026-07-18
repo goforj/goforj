@@ -185,22 +185,36 @@ func TestRemoveGeneratedAssignmentsIncludesAppLocalCache(t *testing.T) {
 	}
 }
 
-// TestResolveServiceIntentTreatsMissingRedisProfileAsExternal protects explicit placement semantics.
-func TestResolveServiceIntentTreatsMissingRedisProfileAsExternal(t *testing.T) {
-	fallback := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	intent := ResolveServiceIntent([]byte("COMPOSE_PROFILES=metrics,redis-debug\n"), fallback)
-	mode, ok := intent.Mode(project.ServiceRedis)
-	if !ok || mode != project.LocalServiceModeExternal {
-		t.Fatalf("Redis mode = %q selected=%t, want external", mode, ok)
+// TestResolveServiceIntentUsesExactCatalogProfiles protects provider placement from neighboring tokens.
+func TestResolveServiceIntentUsesExactCatalogProfiles(t *testing.T) {
+	fallback := project.LocalServiceIntent{}.
+		WithMode(project.ServiceRedis, project.LocalServiceModeLocal).
+		WithMode(project.ServiceStorageS3, project.LocalServiceModeLocal)
+	intent := ResolveServiceIntent([]byte("COMPOSE_PROFILES=metrics,redis-debug,rustfs-debug\n"), fallback)
+	for _, provider := range []project.ServiceKey{project.ServiceRedis, project.ServiceStorageS3} {
+		mode, ok := intent.Mode(provider)
+		if !ok || mode != project.LocalServiceModeExternal {
+			t.Fatalf("%s mode = %q selected=%t, want external", provider, mode, ok)
+		}
 	}
-	intent = ResolveServiceIntent([]byte("COMPOSE_PROFILES=metrics,redis\n"), fallback)
-	mode, ok = intent.Mode(project.ServiceRedis)
-	if !ok || mode != project.LocalServiceModeLocal {
-		t.Fatalf("Redis mode = %q selected=%t, want local", mode, ok)
+
+	intent = ResolveServiceIntent([]byte("COMPOSE_PROFILES=opensearch,rustfs,redis\n"), fallback)
+	for _, provider := range []project.ServiceKey{project.ServiceRedis, project.ServiceStorageS3} {
+		mode, ok := intent.Mode(provider)
+		if !ok || mode != project.LocalServiceModeLocal {
+			t.Fatalf("%s mode = %q selected=%t, want local", provider, mode, ok)
+		}
 	}
+	if _, ok := intent.Mode(project.ServiceKey("opensearch")); ok {
+		t.Fatal("standalone OpenSearch profile invented a resource-service placement")
+	}
+
 	intent = ResolveServiceIntent([]byte("APP_NAME=Existing\n"), project.LocalServiceIntent{})
-	if mode, ok = intent.Mode(project.ServiceRedis); ok {
+	if mode, ok := intent.Mode(project.ServiceRedis); ok {
 		t.Fatalf("ordinary environment invented Redis placement %q", mode)
+	}
+	if mode, ok := intent.Mode(project.ServiceStorageS3); ok {
+		t.Fatalf("ordinary environment invented S3 placement %q", mode)
 	}
 }
 

@@ -3,6 +3,7 @@ package resourceenv
 import (
 	"crypto/sha256"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -476,6 +477,9 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 		}
 		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"addr=" + addr})}, nil
 	}
+	if driver.Service == project.ServiceStorageS3 {
+		return resolver.resolveS3Endpoint(scope, connection, driver)
+	}
 
 	if resource == project.ResourceDatabase {
 		return resolver.resolveDatabaseEndpoint(scope, connection, driver)
@@ -516,6 +520,31 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 	}
 	sort.Strings(parts)
 	return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, parts)}, nil
+}
+
+// resolveS3Endpoint recognizes only the generated RustFS address as local while preserving opaque external affinity.
+func (resolver resourceConsumerResolver) resolveS3Endpoint(scope resourceConsumerScope, connection resourceConnection, driver project.DriverDefinition) (resourceEndpointResolution, error) {
+	endpoint := strings.TrimSpace(resolver.scopedValue(scope, connection, "ENDPOINT"))
+	if resolver.projectComponents.Docker && isGeneratedRustFSEndpoint(endpoint) {
+		return resourceEndpointResolution{local: true}, nil
+	}
+	if endpoint == "" {
+		// An empty SDK endpoint means the provider default, not the generated RustFS network identity.
+		endpoint = "provider-default"
+	}
+	return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"endpoint=" + endpoint})}, nil
+}
+
+// isGeneratedRustFSEndpoint limits local ownership to the exact Compose network identity without capturing owner endpoints.
+func isGeneratedRustFSEndpoint(endpoint string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "http") || !strings.EqualFold(parsed.Hostname(), "rustfs") {
+		return false
+	}
+	if parsed.Port() != "9000" {
+		return false
+	}
+	return parsed.User == nil && (parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 // resolveDatabaseEndpoint keeps Compose ownership tied to the root selected database engine.

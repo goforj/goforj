@@ -266,7 +266,7 @@ var resourceCatalog = []ResourceDefinition{
 				driverEnvironmentPlaceholder("STORAGE_KNOWN_HOSTS_PATH", "", "known_hosts file used to verify the SFTP server"),
 				driverEnvironmentPlaceholder("STORAGE_INSECURE_IGNORE_HOST_KEY", "false", "explicitly disable SFTP host-key verification for isolated development only"),
 			}, Order: 50},
-			{Name: "s3", Label: "S3", Service: ServiceStorageS3, ServiceLabel: "S3 for storage", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "s3", Label: "S3", Service: ServiceStorageS3, ServiceLabel: "S3 for storage", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("STORAGE_BUCKET", "", "S3 bucket"),
 				driverEnvironmentPlaceholder("STORAGE_REGION", "us-east-1", "AWS region"),
 				driverEnvironmentPlaceholder("STORAGE_ENDPOINT", "", "optional S3-compatible endpoint"),

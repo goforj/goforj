@@ -293,32 +293,6 @@ func TestComposeRedisServiceWithoutProfile(t *testing.T) {
 	}
 }
 
-// TestSeedComposeProfilesPreservesTokens verifies local Redis activation edits one exact profile token.
-func TestSeedComposeProfilesPreservesTokens(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Jobs: true}
-	plan := redisResourcePlanForTest(t, components)
-	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics,redis-debug\n"), plan, components, intent)
-	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis-debug,redis\n" {
-		t.Fatalf("seeded profiles = %q changed=%t", updated, changed)
-	}
-	second, changed := seedComposeProfiles(updated, plan, components, intent)
-	if changed || string(second) != string(updated) {
-		t.Fatalf("profile seeding is not idempotent: %q changed=%t", second, changed)
-	}
-}
-
-// TestSeedComposeProfilesHonorsRetainedUnusedRedis keeps explicit owner lifecycle intent independent of the active driver.
-func TestSeedComposeProfilesHonorsRetainedUnusedRedis(t *testing.T) {
-	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
-	plan := defaultResourcePlanForTest(t, components)
-	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
-	updated, changed := seedComposeProfiles([]byte("COMPOSE_PROFILES=metrics\n"), plan, components, intent)
-	if !changed || string(updated) != "COMPOSE_PROFILES=metrics,redis\n" {
-		t.Fatalf("seeded retained profile = %q changed=%t", updated, changed)
-	}
-}
-
 // TestResourceRenderValuesDistinguishRetainedUnusedRedis keeps default-App command ownership separate from an active App consumer.
 func TestResourceRenderValuesDistinguishRetainedUnusedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
@@ -342,7 +316,7 @@ func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
 	}
-	if values.CacheSessionsDriver != "redis" || !values.RedisActive || !values.RedisSupported || !values.RedisLocal {
+	if values.CacheSessionsDriver != "redis" || !values.RedisActive || !values.RedisLocal {
 		t.Fatalf("render values = %#v", values)
 	}
 }

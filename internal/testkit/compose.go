@@ -38,10 +38,12 @@ type composeFile struct {
 }
 
 type composeService struct {
-	Image       string            `yaml:"image"`
-	Build       *composeBuild     `yaml:"build"`
-	Ports       []string          `yaml:"ports"`
-	Environment composeEnvEntries `yaml:"environment"`
+	Image        string            `yaml:"image"`
+	Build        *composeBuild     `yaml:"build"`
+	Ports        []string          `yaml:"ports"`
+	Environment  composeEnvEntries `yaml:"environment"`
+	Profiles     []string          `yaml:"profiles"`
+	RenderedTest *bool             `yaml:"x-forj-test"`
 }
 
 type composeBuild struct {
@@ -146,7 +148,10 @@ func StartRenderedComposeServices(projectDir string, logf Logf) (*RenderedCompos
 		services:   make(map[string]*StartedContainer, len(model.Services)),
 	}
 	startedNames := make([]string, 0, len(model.Services))
-	for name := range model.Services {
+	for name, service := range model.Services {
+		if !composeServiceEnabledForRenderedTests(service) {
+			continue
+		}
 		startedNames = append(startedNames, name)
 	}
 	sort.Strings(startedNames)
@@ -203,6 +208,9 @@ func (s *RenderedComposeStack) EnvOverrides() map[string]string {
 		overrides["REDIS_HOST"] = normalizeIntegrationHost(redis.Host)
 		overrides["REDIS_PORT"] = redis.Port
 	}
+	if rustfs, ok := s.Service("rustfs"); ok {
+		overrides["STORAGE_ENDPOINT"] = "http://" + net.JoinHostPort(normalizeIntegrationHost(rustfs.Host), rustfs.Port)
+	}
 	return overrides
 }
 
@@ -227,25 +235,14 @@ func (s *RenderedComposeStack) ApplyHostEnvOverrides(paths []string) error {
 }
 
 func loadRenderedCompose(projectDir string) (*composeFile, error) {
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	body, err := os.ReadFile(composePath)
-	if err != nil {
-		return nil, err
-	}
-	var model composeFile
-	if err := yaml.Unmarshal(body, &model); err != nil {
-		return nil, fmt.Errorf("parse docker-compose.yml: %w", err)
-	}
-	env, err := ParseEnvFiles(
-		filepath.Join(projectDir, ".env"),
-	)
+	model, env, err := readActiveComposeModel(projectDir)
 	if err != nil {
 		return nil, err
 	}
 	for name, service := range model.Services {
 		model.Services[name] = interpolateComposeService(service, env)
 	}
-	return &model, nil
+	return model, nil
 }
 
 func interpolateComposeService(service composeService, env map[string]string) composeService {
@@ -399,9 +396,14 @@ func cloneMap(source map[string]string) map[string]string {
 	return cloned
 }
 
+// composeServiceEnabledForRenderedTests keeps standalone tools out of an App dependency harness unless explicitly supported.
+func composeServiceEnabledForRenderedTests(service composeService) bool {
+	return service.RenderedTest == nil || *service.RenderedTest
+}
+
 func prepareRenderedComposeTestEnv(projectDir string) error {
 	_ = os.Remove(filepath.Join(projectDir, ".env.host"))
-	model, err := readComposeModel(projectDir)
+	model, _, err := readActiveComposeModel(projectDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -433,6 +435,14 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 		overrides["REDIS_HOST"] = "localhost"
 		overrides["REDIS_PORT"] = strconv.Itoa(port)
 	}
+	if _, ok := model.Services["rustfs"]; ok {
+		port, err := findOpenPortInRange()
+		if err != nil {
+			return fmt.Errorf("allocate RustFS API test port: %w", err)
+		}
+		overrides["RUSTFS_API_PORT"] = strconv.Itoa(port)
+		overrides["STORAGE_ENDPOINT"] = "http://" + net.JoinHostPort("localhost", strconv.Itoa(port))
+	}
 	if _, ok := model.Services["mailpit"]; ok {
 		smtpPort, err := findOpenPortInRange()
 		if err != nil {
@@ -462,6 +472,59 @@ func readComposeModel(projectDir string) (*composeFile, error) {
 		return nil, fmt.Errorf("parse docker-compose.yml: %w", err)
 	}
 	return &model, nil
+}
+
+// readActiveComposeModel applies the same exact profile selection that Compose uses for ordinary project startup.
+func readActiveComposeModel(projectDir string) (*composeFile, map[string]string, error) {
+	model, err := readComposeModel(projectDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	env, err := ParseEnvFiles(filepath.Join(projectDir, ".env"))
+	if err != nil {
+		return nil, nil, err
+	}
+	profiles := env["COMPOSE_PROFILES"]
+	if processProfiles, set := os.LookupEnv("COMPOSE_PROFILES"); set {
+		profiles = processProfiles
+	}
+	activeProfiles := parseComposeProfiles(profiles)
+	activeServices := make(map[string]composeService, len(model.Services))
+	for name, service := range model.Services {
+		if composeServiceProfileEnabled(service, activeProfiles) {
+			activeServices[name] = service
+		}
+	}
+	model.Services = activeServices
+	return model, env, nil
+}
+
+// parseComposeProfiles normalizes the comma-separated Compose profile contract without allowing substring matches.
+func parseComposeProfiles(value string) map[string]struct{} {
+	profiles := map[string]struct{}{}
+	for _, candidate := range strings.Split(value, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			profiles[candidate] = struct{}{}
+		}
+	}
+	return profiles
+}
+
+// composeServiceProfileEnabled keeps unprofiled services active and admits profiled services on exact token membership.
+func composeServiceProfileEnabled(service composeService, activeProfiles map[string]struct{}) bool {
+	if len(service.Profiles) == 0 {
+		return true
+	}
+	if _, all := activeProfiles["*"]; all {
+		return true
+	}
+	for _, profile := range service.Profiles {
+		if _, active := activeProfiles[profile]; active {
+			return true
+		}
+	}
+	return false
 }
 
 func findOpenPortInRange() (int, error) {

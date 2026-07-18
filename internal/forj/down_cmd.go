@@ -29,13 +29,14 @@ func (c *DownCmd) Run() error {
 		return err
 	}
 
-	if len(config.Dev.Down) == 0 {
+	tasks := effectiveDevDownTasks(config)
+	if len(tasks) == 0 {
 		console.Warnf("No dev down tasks defined in .goforj.yml")
 		return nil
 	}
 
 	console.Actionf("Bringing down resources:")
-	for _, task := range config.Dev.Down {
+	for _, task := range tasks {
 		console.Infof("%s", task.Name)
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().

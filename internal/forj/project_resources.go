@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/str/v2"
 
+	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/internal/resourceenv"
@@ -29,37 +30,38 @@ func normalizeQueueDriver(value string) string {
 
 // resourceRenderValues is the template-facing projection of a validated transient resource plan.
 type resourceRenderValues struct {
-	DatabaseDriver            string
-	DatabaseSupportedDrivers  string
-	DatabaseAvailableDrivers  string
-	DatabaseMySQL             bool
-	DatabasePostgres          bool
-	DatabaseSQLite            bool
-	DatabaseExternal          bool
-	CacheDriver               string
-	CacheSupportedDrivers     string
-	CacheAvailableDrivers     string
-	QueueDriver               string
-	QueueSupportedDrivers     string
-	QueueAvailableDrivers     string
-	EventsDriver              string
-	EventsSupportedDrivers    string
-	EventsAvailableDrivers    string
-	StorageDriver             string
-	StorageSupportedDrivers   string
-	StorageAvailableDrivers   string
-	StoragePublicDriver       string
-	StorageFaviconsDriver     string
-	MailDriver                string
-	MailSupportedDrivers      string
-	MailAvailableDrivers      string
-	CacheSettingsDriver       string
-	CacheSessionsDriver       string
-	RedisActive               bool
-	RedisSupported            bool
-	RedisLocal                bool
-	RedisLocalRequestedUnused bool
-	RedisExternal             bool
+	DatabaseDriver             string
+	DatabaseSupportedDrivers   string
+	DatabaseAvailableDrivers   string
+	DatabaseMySQL              bool
+	DatabasePostgres           bool
+	DatabaseSQLite             bool
+	DatabaseExternal           bool
+	CacheDriver                string
+	CacheSupportedDrivers      string
+	CacheAvailableDrivers      string
+	QueueDriver                string
+	QueueSupportedDrivers      string
+	QueueAvailableDrivers      string
+	EventsDriver               string
+	EventsSupportedDrivers     string
+	EventsAvailableDrivers     string
+	StorageDriver              string
+	StorageSupportedDrivers    string
+	StorageAvailableDrivers    string
+	StoragePublicDriver        string
+	StorageFaviconsDriver      string
+	MailDriver                 string
+	MailSupportedDrivers       string
+	MailAvailableDrivers       string
+	CacheSettingsDriver        string
+	CacheSessionsDriver        string
+	RedisActive                bool
+	RedisLocal                 bool
+	RedisLocalRequestedUnused  bool
+	RedisExternal              bool
+	DevelopmentServiceProfiles string
+	ComposeProfiles            string
 }
 
 // prepareResourceRenderState resolves one validated resource snapshot for every renderer entry point.
@@ -268,18 +270,6 @@ func withProjectDatabaseCapabilities(plan project.ResourcePlan, defaultComponent
 	return plan.WithSelection(project.ResourceDatabase, selection).Normalized(projectComponents)
 }
 
-// seedComposeProfiles appends Redis whenever explicit owner intent asks Compose to retain that local service.
-func seedComposeProfiles(source []byte, plan project.ResourcePlan, components project.Components, intent project.LocalServiceIntent) ([]byte, bool) {
-	if !components.Docker || !resourcePlanIncludesDriver(plan, components, "redis") {
-		return source, false
-	}
-	mode, ok := intent.Mode(project.ServiceRedis)
-	if !ok || mode != project.LocalServiceModeLocal {
-		return source, false
-	}
-	return seedExactComposeProfile(source, "redis")
-}
-
 // seedExactComposeProfile appends one profile token without replacing unrelated owner intent.
 func seedExactComposeProfile(source []byte, profile string) ([]byte, bool) {
 	lines := strings.Split(string(source), "\n")
@@ -333,7 +323,9 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 	if err != nil {
 		return resourceRenderValues{}, fmt.Errorf("resolve resource services: %w", err)
 	}
-	values := resourceRenderValues{}
+	values := resourceRenderValues{
+		DevelopmentServiceProfiles: developmentServiceProfileList(),
+	}
 	availableDrivers := make(map[project.ResourceKey]string)
 	for _, definition := range project.ResourceCatalog() {
 		drivers := append([]project.DriverDefinition(nil), definition.Drivers...)
@@ -375,7 +367,6 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.StorageFaviconsDriver = named.Active
 		}
 	}
-	values.RedisSupported = resourcePlanIncludesDriver(plan, components, "redis")
 	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
 		switch requirement.State {
 		case project.ServiceStateActiveLocal:
@@ -392,7 +383,34 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 			values.RedisActive = true
 		}
 	}
+	values.ComposeProfiles = activeDevelopmentServiceProfiles(servicePlan)
 	return values, nil
+}
+
+// developmentServiceProfileList keeps generated discovery text in canonical catalog order.
+func developmentServiceProfileList() string {
+	profiles := make([]string, 0, len(devservices.Catalog()))
+	for _, definition := range devservices.Catalog() {
+		profiles = append(profiles, definition.Profile)
+	}
+	return strings.Join(profiles, ",")
+}
+
+// activeDevelopmentServiceProfiles projects only explicit local-provider intent into the owner environment.
+func activeDevelopmentServiceProfiles(servicePlan project.ServicePlan) string {
+	profiles := []string{}
+	for _, definition := range devservices.Catalog() {
+		if definition.Provides == "" {
+			continue
+		}
+		for _, requirement := range servicePlan.RequirementsFor(definition.Provides) {
+			if requirement.State == project.ServiceStateActiveLocal || requirement.State == project.ServiceStateLocalRequestedUnused {
+				profiles = append(profiles, definition.Profile)
+				break
+			}
+		}
+	}
+	return strings.Join(profiles, ",")
 }
 
 // DriverEnvironmentPlaceholders renders only opt-in driver hints selected by the effective build contract.
@@ -495,31 +513,6 @@ func applyDatabaseRenderCapabilities(components *project.Components, plan projec
 			components.DatabaseSQLite = true
 		}
 	}
-}
-
-// resourcePlanIncludesDriver keeps shared services available when a root selection compiles the driver or a generated named resource activates it.
-func resourcePlanIncludesDriver(plan project.ResourcePlan, components project.Components, driver string) bool {
-	for _, definition := range project.ResourceCatalog() {
-		if !definition.AppliesTo(components) {
-			continue
-		}
-		selection, ok := plan.Selection(definition.Key)
-		if !ok {
-			continue
-		}
-		if selection.Active == driver {
-			return true
-		}
-		if stringSliceContainsFold(selection.Supported, driver) {
-			return true
-		}
-	}
-	for _, named := range plan.GeneratedNamedSelections(components) {
-		if named.Active == driver {
-			return true
-		}
-	}
-	return false
 }
 
 // splitDriverList normalizes an owner list without changing its relative order before catalog validation.

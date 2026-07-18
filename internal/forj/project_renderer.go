@@ -652,7 +652,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Docker Components Rendering",
 			enabled: p.config.Render.Components.Docker,
-			templates: append([]string{"docker-compose.yml.tmpl"},
+			templates: append([]string{"docker-compose.yml.tmpl", "containers/goforj-development-services.md.tmpl"},
 				func() []string {
 					if p.config.Render.Components.DatabaseMySQL {
 						return []string{
@@ -2221,6 +2221,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 		if normalizeDockerComposeUpTask(&p.config.Dev.Pre, p.config.Render.Components) {
 			changed = true
 		}
+		if normalizeDockerComposeDownTask(&p.config.Dev.Down) {
+			changed = true
+		}
 	}
 	if removeGrafanaSeedTask(&p.config.Dev.Pre) {
 		changed = true
@@ -2307,6 +2310,11 @@ func dockerComposeUpDevCommand(components project.Components) string {
 	return "docker-compose up -d"
 }
 
+// dockerComposeDownDevCommand selects every profile so a later profile edit cannot strand earlier containers.
+func dockerComposeDownDevCommand() string {
+	return `docker-compose --profile "*" down`
+}
+
 func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.Components) bool {
 	changed := false
 	want := dockerComposeUpDevCommand(components)
@@ -2324,6 +2332,20 @@ func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.C
 			(*tasks)[i].Cmd = want
 			changed = true
 		}
+	}
+	return changed
+}
+
+// normalizeDockerComposeDownTask upgrades only the conventional generated teardown command.
+func normalizeDockerComposeDownTask(tasks *[]project.DevTask) bool {
+	changed := false
+	want := dockerComposeDownDevCommand()
+	for i := range *tasks {
+		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" || strings.TrimSpace((*tasks)[i].Cmd) != "docker-compose down" {
+			continue
+		}
+		(*tasks)[i].Cmd = want
+		changed = true
 	}
 	return changed
 }
