@@ -552,9 +552,10 @@ func findOpenPortInRange() (int, error) {
 	return 0, fmt.Errorf("no open port available in range %d-%d", start, end)
 }
 
+// renderedComposePortRange keeps explicit test bindings below the ephemeral range Docker uses for automatic host ports.
 func renderedComposePortRange() (int, int) {
-	start := parsePortRangeValue("FORJ_INTEGRATION_PORT_RANGE_START", 46000)
-	end := parsePortRangeValue("FORJ_INTEGRATION_PORT_RANGE_END", 46999)
+	start := parsePortRangeValue("FORJ_INTEGRATION_PORT_RANGE_START", 20000)
+	end := parsePortRangeValue("FORJ_INTEGRATION_PORT_RANGE_END", 20999)
 	if start > end {
 		start, end = end, start
 	}

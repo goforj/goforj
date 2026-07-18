@@ -299,6 +299,20 @@ services:
 	}
 }
 
+// TestRenderedComposeDefaultPortRangeAvoidsEphemeralPorts protects explicit bindings from Docker's automatic host-port allocator.
+func TestRenderedComposeDefaultPortRangeAvoidsEphemeralPorts(t *testing.T) {
+	t.Setenv("FORJ_INTEGRATION_PORT_RANGE_START", "")
+	t.Setenv("FORJ_INTEGRATION_PORT_RANGE_END", "")
+
+	start, end := renderedComposePortRange()
+	if start < 1024 || end >= 32768 {
+		t.Fatalf("default rendered Compose port range = %d-%d, want non-privileged ports below the common Linux ephemeral range", start, end)
+	}
+	if width := end - start + 1; width < 1000 {
+		t.Fatalf("default rendered Compose port range width = %d, want at least 1000 ports", width)
+	}
+}
+
 // TestPrepareRenderedComposeTestEnvSkipsInactiveProfiles keeps partial profile names from reserving ports for dormant services.
 func TestPrepareRenderedComposeTestEnvSkipsInactiveProfiles(t *testing.T) {
 	projectDir := t.TempDir()
