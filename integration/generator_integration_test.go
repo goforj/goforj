@@ -317,7 +317,7 @@ func cacheContainerStartSpecs() []containerStartSpec {
 		{
 			name: "memcached",
 			request: testcontainers.ContainerRequest{
-				Image:        "memcached:1.6-alpine",
+				Image:        "memcached:1.6.44-alpine",
 				ExposedPorts: []string{"11211/tcp"},
 				WaitingFor:   wait.ForListeningPort("11211/tcp").WithStartupTimeout(30 * time.Second),
 			},
@@ -326,7 +326,7 @@ func cacheContainerStartSpecs() []containerStartSpec {
 		{
 			name: "dynamo",
 			request: testcontainers.ContainerRequest{
-				Image:        "amazon/dynamodb-local:2.5.4",
+				Image:        "amazon/dynamodb-local:3.3.0",
 				ExposedPorts: []string{"8000/tcp"},
 				WaitingFor:   wait.ForListeningPort("8000/tcp").WithStartupTimeout(30 * time.Second),
 			},
@@ -366,7 +366,7 @@ func cacheContainerStartSpecs() []containerStartSpec {
 		{
 			name: "nats",
 			request: testcontainers.ContainerRequest{
-				Image:        "nats:2.10-alpine",
+				Image:        "nats:2.14.3-alpine",
 				Cmd:          []string{"-js"},
 				ExposedPorts: []string{"4222/tcp"},
 				WaitingFor:   wait.ForListeningPort("4222/tcp").WithStartupTimeout(30 * time.Second),
