@@ -225,8 +225,19 @@ func TestDeveloperServiceRuntimeContracts(t *testing.T) {
 			t.Fatalf("developer-service Compose contract omitted %q:\n%s", want, compose)
 		}
 	}
-	if got := strings.Count(compose, "    x-forj-test: false\n"); got != 2 {
-		t.Fatalf("standalone OpenSearch rendered-test exclusions = %d, want engine and Dashboards\n%s", got, compose)
+	var model struct {
+		Services map[string]struct {
+			RenderedTest *bool `yaml:"x-forj-test"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &model); err != nil {
+		t.Fatalf("decode developer-service Compose contract: %v\n%s", err, compose)
+	}
+	for _, serviceName := range []string{"opensearch", "opensearch-dashboards"} {
+		service, ok := model.Services[serviceName]
+		if !ok || service.RenderedTest == nil || *service.RenderedTest {
+			t.Fatalf("standalone OpenSearch service %q rendered-test marker = %#v, want false", serviceName, service.RenderedTest)
+		}
 	}
 
 	exampleLines := strings.Split(string(envfile.RedactExample([]byte(environment))), "\n")
