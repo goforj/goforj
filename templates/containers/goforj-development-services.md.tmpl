@@ -2,20 +2,14 @@
 
 # Development Services
 
-`docker-compose.yml` includes optional local services that stay dormant until
-their exact Compose profile is enabled. Change only the owner-controlled
-`COMPOSE_PROFILES` value in `.env`; the project does not need to be rendered
-again.
+`docker-compose.yml` contains the complete GoForj development-service catalog.
+Every optional service is dormant until its exact Compose profile is enabled.
+Change only the owner-controlled `COMPOSE_PROFILES` value in `.env`; enabling or
+disabling an already-rendered service does not require another project render.
 
 ```env
-COMPOSE_PROFILES=redis,rustfs,opensearch
+COMPOSE_PROFILES=nats,jaeger,adminer
 ```
-
-Redis has no generated password or ACL and retains the existing
-`IP_ADDRESS=0.0.0.0` compatibility default. Before enabling `redis` on an
-untrusted network, set `IP_ADDRESS=127.0.0.1`. External Redis access requires
-an owner-managed Compose override that configures authentication together with
-matching App connection settings.
 
 Then start the selected services:
 
@@ -23,41 +17,40 @@ Then start the selected services:
 docker-compose up -d
 ```
 
-| Profile | Default endpoints | Notes |
-| --- | --- | --- |
-| `redis` | `127.0.0.1:6379` after applying the safety setting above | Shared local Redis service without generated authentication |
-| `rustfs` | S3 API `http://127.0.0.1:9000`; console `http://127.0.0.1:9001` | Credentials come from `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` |
-| `opensearch` | API `https://127.0.0.1:9200`; analyzer `127.0.0.1:9600`; Dashboards `http://127.0.0.1:5601` | Development TLS uses a demo certificate; log in as `admin` with the initial password described below |
+Profile names are exact and comma-delimited. A token such as `redis-debug` does
+not enable `redis`. Unknown tokens are preserved so an owner-managed
+`docker-compose.override.yml` can use the same activation workflow.
 
-The corresponding `*_PORT` assignments in `.env` override these host ports.
-RustFS and OpenSearch ports bind to `127.0.0.1` by default. Change
-`DEV_SERVICE_IP_ADDRESS` only when another host must connect. Redis retains the
-project's `IP_ADDRESS` setting for compatibility; set it to `127.0.0.1` to
-restrict Redis too. Replace the development credentials before exposing any
-service beyond the local machine.
+## Resource Providers
 
-Quote edited secrets with single quotes in `.env` so spaces remain intact and
-characters such as `$` and `#` are not interpreted as dotenv syntax:
+These profiles can satisfy a matching local App resource. GoForj enables the
+profile when that resource is deliberately configured as local and writes the
+container endpoint to `.env` and the host endpoint to `.env.host`. Starting a
+profile alone does not select a driver, widen `*_SUPPORTED_DRIVERS`, or create
+provider objects such as buckets, queues, or topics.
 
-```env
-RUSTFS_SECRET_KEY='replace-with-a-local-secret'
-OPENSEARCH_INITIAL_ADMIN_PASSWORD='G0Forj-Choose-A-New-Local-2026!'
-```
+| Profile | Host endpoints | Container endpoint and App binding | Local defaults |
+| --- | --- | --- | --- |
+| `redis` | `127.0.0.1:6379` after applying the legacy-bind safety setting below | `redis:6379`; shared Redis for Cache, Queue, Events, or Storage | No generated password or ACL |
+| `rustfs` | API `http://127.0.0.1:9000`; console `http://127.0.0.1:9001` | `http://rustfs:9000`; S3 Storage | Access key and secret `rustfsadmin` |
+| `nats` | client `127.0.0.1:4222`; monitoring `http://127.0.0.1:8222` | `nats://goforj:goforj@nats:4222`; NATS Cache, Queue, Events, and NATS JetStream Events | User and password `goforj` |
+| `rabbitmq` | AMQP `127.0.0.1:5672`; management `http://127.0.0.1:15672` | `amqp://goforj:goforj@rabbitmq:5672/`; RabbitMQ Queue | User and password `goforj` |
+| `redpanda` | console `http://127.0.0.1:18080`; schema registry `127.0.0.1:18081`; HTTP proxy `127.0.0.1:18082`; Kafka `127.0.0.1:19092`; admin `127.0.0.1:19644` | `redpanda:9092`; Kafka Events | Development mode without generated authentication |
+| `dynamodb` | `http://127.0.0.1:8000` | `http://dynamodb:8000`; DynamoDB Cache in `us-east-1` | Local shared database without service authentication |
+| `elasticmq` | SQS API `http://127.0.0.1:9324`; UI `http://127.0.0.1:9325` | `http://elasticmq:9324`; SQS Queue | Region `elasticmq`; local placeholder keys `x` / `x` |
+| `pubsub` | `127.0.0.1:8085` | `gcppubsub:8085`; Google Pub/Sub Events | Project `goforj-local`; no generated authentication |
+| `memcached` | `127.0.0.1:11211` | `memcached:11211`; Memcached Cache | 64 MiB cache; no generated authentication |
 
-## Project-Specific Profiles
+Redis and RustFS are shared providers: compatible consumers reuse the one
+profile under the normal service-plan rules. NATS deliberately advertises
+three capabilities from one persisted JetStream-enabled service, so Cache,
+Queue, and Events consumers can share it without infrastructure-specific App
+commands.
 
-Additional tools belong in owner-managed `docker-compose.override.yml`. Give
-each added service an exact `profiles` entry and add that token to
-`COMPOSE_PROFILES`. GoForj preserves the override file and unknown profile
-tokens, so project-specific services follow the same no-rerender activation
-workflow as the built-in catalog.
+### RustFS And S3 Storage
 
-## RustFS And S3 Storage
-
-The `rustfs` profile starts an S3-compatible server; it does not silently
-change the App's storage driver or create a bucket. Create the bucket through
-the RustFS console, then configure a disk that already includes the `s3`
-driver:
+The `rustfs` profile does not create a bucket. Create one through its console,
+then configure a disk whose generated build contract already includes `s3`:
 
 ```env
 COMPOSE_PROFILES=rustfs
@@ -71,36 +64,114 @@ STORAGE_SECRET_ACCESS_KEY=rustfsadmin
 STORAGE_USE_PATH_STYLE=true
 ```
 
-Commands running directly on the host cannot resolve the Compose hostname. Add
-`STORAGE_ENDPOINT=http://localhost:9000` to `.env.host` while retaining
-`STORAGE_ENDPOINT=http://rustfs:9000` in `.env`. If `s3` is not already in
-`STORAGE_SUPPORTED_DRIVERS`, add it and run `forj generate --storage` before
-selecting it; starting RustFS does not widen the compiled App driver contract.
+Commands running directly on the host cannot resolve Compose hostnames. Keep
+`STORAGE_ENDPOINT=http://rustfs:9000` in `.env` and put
+`STORAGE_ENDPOINT=http://localhost:9000` in `.env.host`. If `s3` is not already
+in `STORAGE_SUPPORTED_DRIVERS`, add it and run `forj generate --storage` before
+selecting it; enabling RustFS does not change the compiled App contract.
+
+## Standalone Tools And Services
+
+These profiles are available independently of App resource selection.
+
+| Profile | Default host endpoints | Credentials and behavior |
+| --- | --- | --- |
+| `opensearch` | API `https://127.0.0.1:9200`; analyzer `127.0.0.1:9600`; Dashboards `http://127.0.0.1:5601` | API and Dashboards user `admin`; password from `OPENSEARCH_INITIAL_ADMIN_PASSWORD`; development TLS uses a demo certificate |
+| `sftpgo` | SFTP `127.0.0.1:2022`; admin UI `http://127.0.0.1:8081` | Admin `goforj` / `goforj-local`; create a separate protocol user and establish host-key trust manually before configuring an App SFTP disk |
+| `adminer` | `http://127.0.0.1:8080` | Uses the credentials of the database you choose; none are created by Adminer |
+| `jaeger` | UI `http://127.0.0.1:16686`; OTLP gRPC `127.0.0.1:4317`; OTLP HTTP `127.0.0.1:4318` | Local all-in-one tracing service without generated authentication |
+| `qdrant` | HTTP `http://127.0.0.1:6333`; gRPC `127.0.0.1:6334` | Persistent local vector database without generated authentication |
+| `temporal` | gRPC `127.0.0.1:7233`; UI `http://127.0.0.1:8233` | Development server without generated authentication |
+| `keycloak` | `http://127.0.0.1:8180` | Bootstrap admin `admin` / `G0Forj-Local-Keycloak!`; persistent development-mode realm data |
+| `mockserver` | `http://127.0.0.1:1080` | Empty local expectation store without generated authentication |
+| `toxiproxy` | API `http://127.0.0.1:8474`; proxy listener `127.0.0.1:8666` | No proxy is created automatically; configure the listener target and toxics through the API |
+| `clickhouse` | HTTP `http://127.0.0.1:8123`; native `127.0.0.1:19000` | Database `app`; user `goforj`; password `goforj-local` |
+| `meilisearch` | `http://127.0.0.1:7700` | Persistent development-mode search service without a generated master key |
+
+SFTPGo is intentionally not an automatic Storage provider. Its default admin
+bootstraps the control plane, but a usable FTP or SFTP integration also needs a
+protocol user, home permissions, and an explicit host-key decision. Those are
+owner choices rather than deterministic project-generation defaults.
+
+Toxiproxy publishes one proxy listener so projects can route a chosen local
+dependency through it. GoForj does not guess the upstream service or rewrite
+App endpoints when the profile starts.
+
+## Component-Backed Profiles
+
+Mailpit, VictoriaMetrics, and Grafana now use the same profile lifecycle as the
+rest of the catalog while retaining their established component behavior.
+
+| Profile | Default host endpoints | Activation and credentials |
+| --- | --- | --- |
+| `mailpit` | SMTP `127.0.0.1:1025` after applying the legacy-bind safety setting; UI `http://127.0.0.1:8025` | Seeded for the Mail component and local SMTP; no generated authentication |
+| `victoriametrics` | `http://127.0.0.1:8428` after applying the legacy-bind safety setting | Seeded for Observability; the component adds its generated `vmagent` |
+| `grafana` | `http://127.0.0.1:13001` after applying the legacy-bind safety setting | Seeded for the Grafana component; admin `admin` / `admin`; also starts VictoriaMetrics and uses the generated dashboards when the component is present |
+
+New renders seed these profile tokens when their corresponding components or
+local provider requirements are selected. During the first rerender of an
+older project, GoForj detects exact unprofiled `mailpit`, `victoriametrics`, and
+`grafana` services and appends the matching tokens without removing owner
+profiles. This preserves their previous startup behavior while moving future
+activation into `COMPOSE_PROFILES`.
+
+The dev summary and resource registry show Mailpit, VictoriaMetrics, and
+Grafana links only while their exact profiles are active. Credentials are not
+included in those links.
+
+## Bindings, Credentials, And Data
+
+Most catalog ports use `DEV_SERVICE_IP_ADDRESS=127.0.0.1` and therefore bind to
+loopback by default. Redis, Mailpit, VictoriaMetrics, and Grafana retain the
+older `IP_ADDRESS=0.0.0.0` bind contract for compatibility. Before enabling any
+of those services on an untrusted network, set:
+
+```env
+IP_ADDRESS=127.0.0.1
+```
+
+Change `DEV_SERVICE_IP_ADDRESS` only when another host must reach the other
+catalog services. Replace all development credentials before exposing a
+service beyond the local machine. Quote edited secrets with single quotes in
+`.env` so spaces remain intact and characters such as `$` and `#` are not
+interpreted as dotenv syntax:
+
+```env
+RUSTFS_SECRET_KEY='replace-with-a-local-secret'
+OPENSEARCH_INITIAL_ADMIN_PASSWORD='G0Forj-Choose-A-New-Local-2026!'
+```
+
+Stateful recipes use named volumes where restart persistence is useful.
+Removing a token from `COMPOSE_PROFILES` changes the next Compose selection but
+does not stop an already-created container or delete its data. After disabling
+a profile, run `forj down` or the all-profile teardown before starting the new
+selection:
+
+```bash
+docker-compose --profile "*" down
+```
+
+Ordinary teardown does not remove named volumes. Delete a service volume only
+when a deliberate destructive local reset is appropriate.
 
 ## OpenSearch Host Requirements
 
 OpenSearch needs at least 4 GB available to Docker. Linux and WSL hosts also
-need `vm.max_map_count=262144`; follow the OpenSearch Docker installation
-guide for the persistent host setting. The generated single-node stack keeps
-OpenSearch security enabled, uses a demo TLS certificate, and is intended only
-for local development.
+need `vm.max_map_count=262144`; follow the OpenSearch Docker installation guide
+for the persistent host setting. The generated single-node stack keeps
+OpenSearch security enabled and is intended only for local development.
 
-When calling the local HTTPS API, use the `admin` account and configure the
-client to accept the demo certificate because it is not trusted by the host.
+The `admin` password bootstraps a fresh OpenSearch data volume; changing only
+`OPENSEARCH_INITIAL_ADMIN_PASSWORD` after initialization does not rotate the
+stored password and makes the generated health check use the wrong value.
+Rotate an existing password with OpenSearch security tooling and update `.env`
+at the same time. Removing only the OpenSearch named volume reinitializes it
+and permanently deletes its local indexes.
 
-`OPENSEARCH_INITIAL_ADMIN_PASSWORD` bootstraps a fresh OpenSearch data volume;
-it is not a password-rotation setting. Choose it before the first start.
-Changing only `.env` after initialization leaves the stored security index
-unchanged and makes the generated health check use the wrong password. Rotate
-an existing password with OpenSearch security tooling and update `.env` at the
-same time. For a disposable local cluster, stop Compose and remove only its
-OpenSearch named volume to reinitialize it; that permanently deletes its local
-indexes.
+## Project-Specific Profiles
 
-Removing a token from `COMPOSE_PROFILES` changes the next Compose selection but
-does not stop an already-created container. After disabling a profile, run
-`forj down` or the all-profile teardown below before starting the new selection.
-
-`docker-compose --profile "*" down` stops the entire stack without deleting
-its named volumes. Profile changes and normal teardown never delete service
-data.
+Additional tools belong in owner-managed `docker-compose.override.yml`. Give
+each service an exact `profiles` entry and add that token to
+`COMPOSE_PROFILES`. GoForj preserves the override file and unknown profile
+tokens, so project-specific services use the same no-rerender workflow as the
+built-in catalog.
