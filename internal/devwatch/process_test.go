@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -133,8 +132,9 @@ func TestDevProcessSupervisorRunShell(t *testing.T) {
 	supervisor := NewSupervisor(SupervisorOptions{})
 	registerDevProcessSupervisorCleanup(t, supervisor)
 	var stdout bytes.Buffer
+	shellCommand, expectedOutput := processTestShellCommand()
 	exit, err := supervisor.Run(context.Background(), "shell", Command{
-		Shell:  "printf native-shell",
+		Shell:  shellCommand,
 		Stdout: &stdout,
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestDevProcessSupervisorRunShell(t *testing.T) {
 	if !exit.OK() {
 		t.Fatalf("expected successful shell exit, got %+v", exit)
 	}
-	if stdout.String() != "native-shell" {
+	if stdout.String() != expectedOutput {
 		t.Fatalf("unexpected shell output %q", stdout.String())
 	}
 }
@@ -516,7 +516,7 @@ func processHelperCommand(action string, args ...string) Command {
 // runProcessWaitHelper waits for termination and records when the signal arrived.
 func runProcessWaitHelper() {
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, processTestGracefulSignals()...)
 	defer signal.Stop(signals)
 	if err := os.WriteFile(os.Getenv("GOFORJ_DEV_PROCESS_READY"), []byte("ready"), 0o600); err != nil {
 		os.Exit(7)
