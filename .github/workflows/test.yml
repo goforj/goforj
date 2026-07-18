@@ -53,6 +53,35 @@ jobs:
       - name: build goforj binary
         run: go install ./cmd/forj
 
+  platform:
+    name: platform (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+          - name: windows
+            os: windows-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: compile root packages and tests
+        run: go test -run '^$' ./...
+
+      - name: run platform-sensitive tests
+        run: go test -count=1 ./internal/devwatch ./internal/build ./internal/envfile ./internal/projectlayout ./internal/testexec ./project
+
   watcher-stress:
     name: watcher churn (race)
     runs-on: ubuntu-latest
