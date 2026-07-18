@@ -50,13 +50,17 @@ func (t *processTree) attach(cmd *exec.Cmd) error {
 	if t.job == 0 {
 		return os.ErrProcessDone
 	}
-	var assignErr error
-	if err := cmd.Process.WithHandle(func(handle uintptr) {
-		assignErr = windows.AssignProcessToJobObject(t.job, windows.Handle(handle))
-	}); err != nil {
+	// A dedicated handle keeps Job Object attachment compatible with the repository's Go 1.25 baseline.
+	process, err := windows.OpenProcess(
+		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
+		false,
+		uint32(cmd.Process.Pid),
+	)
+	if err != nil {
 		return err
 	}
-	return assignErr
+	defer windows.CloseHandle(process)
+	return windows.AssignProcessToJobObject(t.job, process)
 }
 
 // terminate requests a graceful CTRL_BREAK from the managed process group.

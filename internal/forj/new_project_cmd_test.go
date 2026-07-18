@@ -2,6 +2,7 @@ package forj
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -450,10 +451,75 @@ func assertNewProjectCommandsRootedAt(t *testing.T, logPath string, target strin
 		t.Fatal("project creation did not run any observed commands")
 	}
 	for _, directory := range directories {
-		relative, err := filepath.Rel(target, directory)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		withinTarget, err := newProjectCommandDirectoryWithinTarget(target, directory)
+		if err != nil {
+			t.Fatalf("resolve command directory %q against target %q: %v", directory, target, err)
+		}
+		if !withinTarget {
 			t.Fatalf("command directory %q is outside target %q", directory, target)
 		}
+	}
+}
+
+// newProjectCommandDirectoryWithinTarget resolves filesystem aliases before checking command containment.
+func newProjectCommandDirectoryWithinTarget(target string, directory string) (bool, error) {
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return false, fmt.Errorf("resolve target path: %w", err)
+	}
+	resolvedDirectory, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return false, fmt.Errorf("resolve command path: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedTarget, resolvedDirectory)
+	if err != nil {
+		return false, err
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)), nil
+}
+
+// TestNewProjectCommandDirectoryWithinTargetResolvesAliases verifies physical containment without allowing symlink escapes.
+func TestNewProjectCommandDirectoryWithinTargetResolvesAliases(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	commandDirectory := filepath.Join(target, "cmd", "app")
+	outside := filepath.Join(root, "outside")
+	for _, directory := range []string{commandDirectory, outside} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatalf("create directory %s: %v", directory, err)
+		}
+	}
+	alias := filepath.Join(root, "target-alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Skipf("symbolic links are unavailable: %v", err)
+	}
+
+	withinTarget, err := newProjectCommandDirectoryWithinTarget(alias, commandDirectory)
+	if err != nil {
+		t.Fatalf("compare aliased target: %v", err)
+	}
+	if !withinTarget {
+		t.Fatalf("physical command directory %q was outside alias %q", commandDirectory, alias)
+	}
+	withinTarget, err = newProjectCommandDirectoryWithinTarget(target, outside)
+	if err != nil {
+		t.Fatalf("compare outside directory: %v", err)
+	}
+	if withinTarget {
+		t.Fatalf("outside command directory %q was accepted beneath target %q", outside, target)
+	}
+
+	escape := filepath.Join(target, "outside-alias")
+	if err := os.Symlink(outside, escape); err != nil {
+		t.Fatalf("create outside alias: %v", err)
+	}
+	withinTarget, err = newProjectCommandDirectoryWithinTarget(target, escape)
+	if err != nil {
+		t.Fatalf("compare outside alias: %v", err)
+	}
+	if withinTarget {
+		t.Fatalf("outside command directory %q was accepted beneath target %q", outside, target)
 	}
 }
 

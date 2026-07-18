@@ -151,7 +151,7 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 	}
 
 	commandRoot := rootedPath(root, "cmd")
-	entries, err := os.ReadDir(commandRoot)
+	entries, err := readDirectory(commandRoot)
 	if err != nil && !os.IsNotExist(err) {
 		recordError(fmt.Errorf("discover Apps in %s: %w", commandRoot, err))
 	}
@@ -174,7 +174,7 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 	}
 
 	appRoot := rootedPath(root, "app")
-	entries, err = os.ReadDir(appRoot)
+	entries, err = readDirectory(appRoot)
 	if err != nil && !os.IsNotExist(err) {
 		recordError(fmt.Errorf("discover Apps in %s: %w", appRoot, err))
 	}
@@ -197,6 +197,18 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 		}
 	}
 	return names, discoveryErr
+}
+
+// readDirectory rejects non-directory roots consistently because Windows can report a regular file as an empty directory listing.
+func readDirectory(path string) ([]os.DirEntry, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", path)
+	}
+	return os.ReadDir(path)
 }
 
 // hasConventionalAppFiles excludes arbitrary app subpackages unless they contain an App-owned composition marker.

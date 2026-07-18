@@ -97,7 +97,7 @@ func TestWorkspaceHelperProcess(t *testing.T) {
 		_, _ = os.Stderr.WriteString("helper stderr details\n")
 		os.Exit(7)
 	case "verify":
-		assertHelperValue(t, "working directory", currentDir(t), os.Getenv(helperDirEnv))
+		assertHelperPath(t, "working directory", currentDir(t), os.Getenv(helperDirEnv))
 		assertHelperValue(t, "GOMODCACHE", os.Getenv("GOMODCACHE"), os.Getenv(helperModCacheEnv))
 		assertHelperValue(t, "GOCACHE", os.Getenv("GOCACHE"), os.Getenv(helperBuildCacheEnv))
 		if expected := os.Getenv(helperExpectedStep); expected != "" {
@@ -116,6 +116,22 @@ func currentDir(t *testing.T) string {
 		t.Fatalf("resolve working directory: %v", err)
 	}
 	return dir
+}
+
+// assertHelperPath verifies that alternate operating-system spellings still identify the requested workspace.
+func assertHelperPath(t *testing.T, name, got, want string) {
+	t.Helper()
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("inspect %s %q: %v", name, got, err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("inspect expected %s %q: %v", name, want, err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("%s = %q, want filesystem location %q", name, got, want)
+	}
 }
 
 // assertHelperValue keeps subprocess policy failures focused on the mismatched setting.

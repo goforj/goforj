@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -1011,8 +1012,13 @@ func TestDevWatchFSNotifyBackendReportsRemovedSubtreeFiles(t *testing.T) {
 				t.Fatalf("%s watched subtree: %v", test.name, err)
 			}
 			event := awaitDevWatchEvent(t, engine.Events(), 2*time.Second)
-			if !devWatchEventContainsChange(event, includedPath, test.operation) {
-				t.Fatalf("%s changes = %#v, want operation %v for included file", test.name, event.Changes, test.operation)
+			expectedOperation := test.operation
+			if runtime.GOOS == "windows" && expectedOperation == OpRename {
+				// ReadDirectoryChangesW can only report that a subtree moved outside the watched root disappeared.
+				expectedOperation |= OpRemove
+			}
+			if !devWatchEventContainsChange(event, includedPath, expectedOperation) {
+				t.Fatalf("%s changes = %#v, want operation %v for included file", test.name, event.Changes, expectedOperation)
 			}
 		})
 	}
