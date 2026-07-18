@@ -14,6 +14,16 @@ import (
 	"time"
 )
 
+// processTestShellCommand preserves the exact POSIX shell output contract exercised by shared supervisor tests.
+func processTestShellCommand() (string, string) {
+	return "printf native-shell", "native-shell"
+}
+
+// processTestGracefulSignals returns the signals that Unix process groups receive during graceful shutdown.
+func processTestGracefulSignals() []os.Signal {
+	return []os.Signal{os.Interrupt, syscall.SIGTERM}
+}
+
 // TestDevProcessUnixHelper provides a process tree that ignores graceful termination.
 func TestDevProcessUnixHelper(t *testing.T) {
 	if os.Getenv("GOFORJ_DEV_PROCESS_UNIX_HELPER") != "1" {

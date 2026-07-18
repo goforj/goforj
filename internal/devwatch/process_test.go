@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -110,8 +109,24 @@ func TestDevProcessSupervisorRun(t *testing.T) {
 	if !exit.OK() {
 		t.Fatalf("expected successful exit, got %+v", exit)
 	}
-	if !strings.Contains(stdout.String(), "cwd="+workingDirectory+" env=native") {
+	reportedDirectory, ok := strings.CutPrefix(stdout.String(), "cwd=")
+	if !ok {
 		t.Fatalf("unexpected stdout %q", stdout.String())
+	}
+	reportedDirectory, ok = strings.CutSuffix(reportedDirectory, " env=native\n")
+	if !ok {
+		t.Fatalf("unexpected stdout %q", stdout.String())
+	}
+	wantDirectory, err := os.Stat(workingDirectory)
+	if err != nil {
+		t.Fatalf("inspect requested working directory: %v", err)
+	}
+	gotDirectory, err := os.Stat(reportedDirectory)
+	if err != nil {
+		t.Fatalf("inspect reported working directory %q: %v", reportedDirectory, err)
+	}
+	if !os.SameFile(gotDirectory, wantDirectory) {
+		t.Fatalf("reported working directory %q is not %q", reportedDirectory, workingDirectory)
 	}
 	if stderr.String() != "helper stderr\n" {
 		t.Fatalf("unexpected stderr %q", stderr.String())
@@ -133,8 +148,9 @@ func TestDevProcessSupervisorRunShell(t *testing.T) {
 	supervisor := NewSupervisor(SupervisorOptions{})
 	registerDevProcessSupervisorCleanup(t, supervisor)
 	var stdout bytes.Buffer
+	shellCommand, expectedOutput := processTestShellCommand()
 	exit, err := supervisor.Run(context.Background(), "shell", Command{
-		Shell:  "printf native-shell",
+		Shell:  shellCommand,
 		Stdout: &stdout,
 	})
 	if err != nil {
@@ -143,7 +159,7 @@ func TestDevProcessSupervisorRunShell(t *testing.T) {
 	if !exit.OK() {
 		t.Fatalf("expected successful shell exit, got %+v", exit)
 	}
-	if stdout.String() != "native-shell" {
+	if stdout.String() != expectedOutput {
 		t.Fatalf("unexpected shell output %q", stdout.String())
 	}
 }
@@ -516,7 +532,7 @@ func processHelperCommand(action string, args ...string) Command {
 // runProcessWaitHelper waits for termination and records when the signal arrived.
 func runProcessWaitHelper() {
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, processTestGracefulSignals()...)
 	defer signal.Stop(signals)
 	if err := os.WriteFile(os.Getenv("GOFORJ_DEV_PROCESS_READY"), []byte("ready"), 0o600); err != nil {
 		os.Exit(7)

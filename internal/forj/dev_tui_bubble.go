@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -640,9 +639,15 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// devForwardInterruptCmd forwards Ctrl+C through the platform signal path observed by DevCmd.
 func devForwardInterruptCmd() tea.Cmd {
+	return devForwardInterruptCmdWith(signalDevInterrupt)
+}
+
+// devForwardInterruptCmdWith converts the platform interrupt into the message shape Bubble Tea expects.
+func devForwardInterruptCmdWith(signalInterrupt func() error) tea.Cmd {
 	return func() tea.Msg {
-		_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+		_ = signalInterrupt()
 		return nil
 	}
 }

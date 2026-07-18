@@ -126,8 +126,8 @@ func main() {
 	if command.process != nil || command.waitCh != nil {
 		t.Fatal("started process state remained after pipeline cleanup")
 	}
-	if err := process.Kill(); !errors.Is(err, os.ErrProcessDone) {
-		t.Fatalf("started process was not reaped, kill returned %v", err)
+	if err := process.Kill(); err == nil {
+		t.Fatal("started process remained killable after pipeline cleanup")
 	}
 }
 
@@ -330,8 +330,17 @@ func TestWaitForRunProcessRequiresStartedProcess(t *testing.T) {
 	}
 }
 
+// TestBuildChildExitHelper gives exit-code tests a native subprocess on every supported operating system.
+func TestBuildChildExitHelper(t *testing.T) {
+	if os.Getenv("GOFORJ_BUILD_CHILD_EXIT_HELPER") != "1" {
+		return
+	}
+	os.Exit(7)
+}
+
 func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
-	child := exec.Command("sh", "-c", "exit 7")
+	child := exec.Command(os.Args[0], "-test.run=^TestBuildChildExitHelper$")
+	child.Env = append(os.Environ(), "GOFORJ_BUILD_CHILD_EXIT_HELPER=1")
 	err := child.Run()
 	if err == nil {
 		t.Fatal("expected child command to fail")

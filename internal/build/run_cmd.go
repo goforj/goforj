@@ -153,7 +153,7 @@ func (c *RunCmd) preflightBinary(root string, packagePath string) (preparedRunBi
 	if err != nil {
 		return preparedRunBinary{}, fmt.Errorf("prepare app compilation: %w", err)
 	}
-	prepared := preparedRunBinary{executable: filepath.Join(outputDir, "app")}
+	prepared := preparedRunBinary{executable: filepath.Join(outputDir, runPreflightExecutableName())}
 
 	cmd := exec.Command("go", "build", "-o", prepared.executable, packagePath)
 	cmd.Dir = root
