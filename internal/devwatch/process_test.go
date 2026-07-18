@@ -109,8 +109,24 @@ func TestDevProcessSupervisorRun(t *testing.T) {
 	if !exit.OK() {
 		t.Fatalf("expected successful exit, got %+v", exit)
 	}
-	if !strings.Contains(stdout.String(), "cwd="+workingDirectory+" env=native") {
+	reportedDirectory, ok := strings.CutPrefix(stdout.String(), "cwd=")
+	if !ok {
 		t.Fatalf("unexpected stdout %q", stdout.String())
+	}
+	reportedDirectory, ok = strings.CutSuffix(reportedDirectory, " env=native\n")
+	if !ok {
+		t.Fatalf("unexpected stdout %q", stdout.String())
+	}
+	wantDirectory, err := os.Stat(workingDirectory)
+	if err != nil {
+		t.Fatalf("inspect requested working directory: %v", err)
+	}
+	gotDirectory, err := os.Stat(reportedDirectory)
+	if err != nil {
+		t.Fatalf("inspect reported working directory %q: %v", reportedDirectory, err)
+	}
+	if !os.SameFile(gotDirectory, wantDirectory) {
+		t.Fatalf("reported working directory %q is not %q", reportedDirectory, workingDirectory)
 	}
 	if stderr.String() != "helper stderr\n" {
 		t.Fatalf("unexpected stderr %q", stderr.String())
