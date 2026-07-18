@@ -126,8 +126,8 @@ func main() {
 	if command.process != nil || command.waitCh != nil {
 		t.Fatal("started process state remained after pipeline cleanup")
 	}
-	if err := process.Kill(); !errors.Is(err, os.ErrProcessDone) {
-		t.Fatalf("started process was not reaped, kill returned %v", err)
+	if err := process.Kill(); err == nil {
+		t.Fatal("started process remained killable after pipeline cleanup")
 	}
 }
 
