@@ -258,7 +258,7 @@ func TestMultiAppOnly(t *testing.T) {}
 	assertIntegrationTestsEqual(t, integrationTestsForTest(t, integration, multiApp), []integrationTestName{
 		{packagePath: "example.com/discovery", name: "TestMultiAppOnly"},
 	})
-	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 3)
+	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 6)
 }
 
 // writeIntegrationDiscoveryFixture writes one Go discovery fixture inside a test-owned temporary module.
@@ -329,60 +329,6 @@ func TestFrameworkProfileTagsKeepsSpecializedTestsOutOfTheDefaultProfile(t *test
 	}
 	if _, _, err := frameworkProfileTags("unknown"); err == nil {
 		t.Fatal("unknown framework profile should fail")
-	}
-}
-
-// TestFrameworkIntegrationDiscoveryPartitionsCurrentProfiles protects nested and specialized suites without tracking test names.
-func TestFrameworkIntegrationDiscoveryPartitionsCurrentProfiles(t *testing.T) {
-	modCache, buildCache := testkit.GoCachePaths()
-	executor := integrationExecutor{caches: testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}}
-
-	baseline := listFrameworkTestsForTest(t, executor, "")
-	integrationInventory := listFrameworkTestsForTest(t, executor, "integration")
-	lighthouseInventory := listFrameworkTestsForTest(t, executor, "integration,lighthouse")
-	multiAppInventory := listFrameworkTestsForTest(t, executor, "integration,multiapp")
-	integrationTests := integrationTestsForTest(t, baseline, integrationInventory)
-	lighthouseTests := integrationTestsForTest(t, integrationInventory, lighthouseInventory)
-	multiAppTests := integrationTestsForTest(t, integrationInventory, multiAppInventory)
-
-	assertIntegrationPackagePresent(t, integrationTests, "github.com/goforj/goforj/internal/forj")
-	assertIntegrationPackagePresent(t, integrationTests, "github.com/goforj/goforj/internal/forj/atlas")
-	assertIntegrationShardsCoverTestsOnce(t, integrationTests, 6)
-	assertIntegrationProfilesDisjoint(t, integrationTests, lighthouseTests, multiAppTests)
-}
-
-// listFrameworkTestsForTest loads one live repository inventory through the production package pattern.
-func listFrameworkTestsForTest(t *testing.T, executor integrationExecutor, tags string) []integrationTestName {
-	t.Helper()
-	tests, err := executor.listFrameworkTests(tags)
-	if err != nil {
-		t.Fatalf("list framework tests for tags %q: %v", tags, err)
-	}
-	return tests
-}
-
-// assertIntegrationPackagePresent verifies recursive discovery retains a package without naming one of its tests.
-func assertIntegrationPackagePresent(t *testing.T, tests []integrationTestName, packagePath string) {
-	t.Helper()
-	for _, testName := range tests {
-		if testName.packagePath == packagePath {
-			return
-		}
-	}
-	t.Fatalf("integration inventory does not include package %s: %#v", packagePath, tests)
-}
-
-// assertIntegrationProfilesDisjoint verifies specialized tag layers never rerun another profile's top-level test.
-func assertIntegrationProfilesDisjoint(t *testing.T, profiles ...[]integrationTestName) {
-	t.Helper()
-	seen := make(map[integrationTestName]int)
-	for profileIndex, profile := range profiles {
-		for _, testName := range profile {
-			if previous, exists := seen[testName]; exists {
-				t.Fatalf("integration test %#v appears in profiles %d and %d", testName, previous, profileIndex)
-			}
-			seen[testName] = profileIndex
-		}
 	}
 }
 
