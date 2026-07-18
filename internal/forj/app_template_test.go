@@ -162,16 +162,6 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`exec.Command(launch.Command, launch.Args...)`,
 			`"{{.GoModuleName}}/internal/runtime"`,
 		},
-		filepath.Join(base, "redis_shell_cmd.go.tmpl"): {
-			`name:"redis:shell" aliases:"redis" help:"Open a shell for the configured Redis endpoint" goforj:"preboot"`,
-			`type RedisShellCmd struct {`,
-			`func (c *RedisShellCmd) applyInlineWrapperFlags() error`,
-			`func (*RedisShellCmd) Help() string`,
-			`func NewRedisShellCmd() *RedisShellCmd`,
-			`func (c *RedisShellCmd) resolveLaunch(config redisShellConfig)`,
-			`exec.Command(launch.Command, launch.Args...)`,
-			`REDISCLI_AUTH`,
-		},
 		filepath.Join(base, "command_exit_code.go.tmpl"): {
 			`func CommandExitCode(err error) (int, bool)`,
 			`errors.As(err, &exitErr)`,
@@ -957,28 +947,6 @@ func TestCommonRenderingIncludesCacheShellCommand(t *testing.T) {
 	} {
 		if !strings.Contains(source, templateName) {
 			t.Fatalf("expected Cache rendering to include %s", templateName)
-		}
-	}
-}
-
-// TestRedisRenderingIncludesShellCommand verifies renderer ownership covers command behavior and its direct tests.
-func TestRedisRenderingIncludesShellCommand(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to resolve current file path")
-	}
-	rendererPath := filepath.Join(filepath.Dir(currentFile), "project_renderer.go")
-	content, err := os.ReadFile(rendererPath)
-	if err != nil {
-		t.Fatalf("read project renderer: %v", err)
-	}
-	source := string(content)
-	for _, templateName := range []string{
-		`"internal/cmd/redis_shell_cmd.go.tmpl"`,
-		`"internal/cmd/redis_shell_cmd_test.go.tmpl"`,
-	} {
-		if !strings.Contains(source, templateName) {
-			t.Fatalf("expected Redis rendering to include %s", templateName)
 		}
 	}
 }

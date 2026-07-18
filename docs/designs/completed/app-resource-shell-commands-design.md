@@ -4,7 +4,7 @@ Status:
 
 - completed and implemented
 - intended for generated App command surfaces
-- first cut covers database, shared Redis, and Redis-backed cache resources
+- first cut covers database and cache resources
 
 ## Purpose
 
@@ -15,7 +15,6 @@ The goal is to make common infrastructure access feel simple:
 
 ```bash
 forj db
-forj redis
 forj cache
 ```
 
@@ -30,10 +29,10 @@ while preserving GoForj's normal model:
 
 ## Problem
 
-Developers frequently need to inspect common local services:
+Developers frequently need to inspect common App resources:
 
 - a MySQL, MariaDB, Postgres, or SQLite database
-- Redis used by queues, cache, events, or local development services
+- a Redis-backed cache store
 
 Without a framework command, users need to remember:
 
@@ -79,7 +78,6 @@ Canonical commands:
 
 ```bash
 forj db:shell
-forj redis:shell
 forj cache:shell
 ```
 
@@ -87,11 +85,10 @@ Short aliases:
 
 ```bash
 forj db
-forj redis
 forj cache
 ```
 
-The first cut does not expose `shell:db`, `shell:redis`, or other `shell:*`
+The first cut does not expose `shell:db`, `shell:cache`, or other `shell:*`
 aliases. Help and generated documentation use only the canonical
 `resource:shell` names and their short resource aliases.
 
@@ -111,12 +108,14 @@ Avoid making backend names the canonical command:
 ```bash
 forj mysql
 forj postgres
+forj redis
 forj shell:mysql
 ```
 
-The App has a database resource. MySQL, Postgres, and SQLite are selected
-drivers behind that resource. If the App changes drivers, `forj db` should keep
-working.
+The App has database and cache resources. MySQL, Postgres, SQLite, and Redis are
+selected drivers behind those resources. If an App changes a resource driver,
+the resource command name stays stable and dispatches to the new driver's shell
+behavior when one is available.
 
 ## Resource Addressing
 
@@ -126,12 +125,8 @@ The default command chooses the default App resource:
 
 ```bash
 forj db
-forj redis
+forj cache
 ```
-
-`redis:shell` is the shared-endpoint command and reads `REDIS_*`. It does not
-select a cache, queue, or event resource. Resource-specific Redis access in the
-first cut is provided by `cache:shell`.
 
 If multiple shellable resources exist and the user does not provide a resource
 name, interactive commands may show a selection list:
@@ -363,42 +358,6 @@ The wrapper adds configured connection arguments first and then appends
 passthrough client arguments. This keeps configuration App-owned while still
 allowing native `mysql`, `psql`, and `sqlite3` flags.
 
-### `redis:shell`
-
-`redis:shell` opens `redis-cli` for the configured Redis endpoint.
-
-Examples:
-
-```bash
-forj redis
-forj redis --method local
-forj redis --method compose
-forj redis --db 1
-forj redis --print
-forj redis --exec PING
-```
-
-Implemented flags:
-
-- `--method auto|local|compose` chooses the launch method.
-- `--db <n>` overrides the selected Redis logical database.
-- `--print` prints the selected command with secrets masked and does not run it.
-- `--exec <command...>` runs one Redis command instead of opening an interactive
-  shell.
-- `--verbose` prints method-selection details before launching.
-- `--no-color` disables ANSI output in GoForj messages.
-
-The Redis command resolves the shared Redis env keys:
-
-- `REDIS_HOST`
-- `REDIS_PORT`
-- `REDIS_PASSWORD`
-- `REDIS_DB`
-
-The command intentionally has no resource selector. Use `cache:shell <name>`
-for a Redis-backed cache store. Queue- and event-specific Redis selection is not
-part of the first cut.
-
 ### `cache:shell`
 
 `cache:shell` opens a shell client for a shellable cache resource.
@@ -574,12 +533,11 @@ Database resolution mirrors generated database connection behavior:
 - honor DSN precedence and translate the same target into client-native arguments
 - report missing required keys before launching a client
 
-Shared Redis resolution uses `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, and
-`REDIS_DB`.
-
-`cache:shell` uses generated `CACHE_*` and `CACHE_<NAME>_*` configuration before
-falling back to the shared Redis connection settings. This is the only
-resource-specific Redis path in the first cut.
+`cache:shell` resolves a selected cache from generated `CACHE_*` and
+`CACHE_<NAME>_*` configuration, normalizes its active driver, and then chooses
+the matching client behavior. A Redis cache may inherit shared `REDIS_*`
+connection defaults under the normal Cache runtime rules, but those keys never
+create a separate infrastructure command.
 
 Do not open full App infrastructure just to build a shell command. These
 commands should inspect configuration and launch an external process.
@@ -641,17 +599,10 @@ Generate `db:shell` only when the App has a database component.
 
 Generate `cache:shell` only when the App has Cache participation.
 
-Generate `redis:shell` when the App builds a Redis-capable resource or when the
-default App owns an explicitly generated local Redis service. Redis-capable
-resources include:
-
-- jobs with Redis queue support
-- Redis cache support
-- Redis events support
-- an explicit generated local Redis service owned by the default App
-
-Redis env keys alone do not create command ownership. `queue:shell` remains
-deferred.
+Do not generate commands for infrastructure providers. Redis may back a cache,
+queue, event bus, storage resource, or local service, but that does not create a
+`redis:shell` command. The resource owns its command and its configured driver
+selects the client. `queue:shell` and other resource shells remain deferred.
 
 ## Relationship To `about`
 
@@ -700,14 +651,14 @@ Rendered App tests should cover:
 - MySQL render includes `db:shell`
 - Postgres render includes `db:shell`
 - SQLite render includes `db:shell`
-- Redis-backed render includes `redis:shell`
 - Redis-backed cache render includes `cache:shell`
+- Redis-backed resources do not expose `redis:shell`
 - Apps without databases do not expose `db:shell`
 
 Integration tests may cover:
 
 - `db --print` for each database driver
-- `redis --print`
+- `cache --print` for each shellable cache driver
 - Compose fallback command construction
 
 Full interactive client sessions do not need broad integration coverage. The
@@ -719,7 +670,6 @@ exit-code forwarding.
 Implemented package placement:
 
 - `templates/internal/cmd/db_shell_cmd.go.tmpl`
-- `templates/internal/cmd/redis_shell_cmd.go.tmpl`
 - `templates/internal/cmd/cache_shell_cmd.go.tmpl`
 - `templates/internal/cmd/command_exit_code.go.tmpl` for the shared App boundary
 
@@ -733,11 +683,11 @@ through `bash -c` when direct `exec.Command` argument construction is practical.
 
 ## Resolved Decisions
 
-- Do not add `shell:*` aliases. Use `db:shell`, `redis:shell`, and
-  `cache:shell`, plus their short aliases.
+- Do not add `shell:*` aliases. Use `db:shell` and `cache:shell`, plus their
+  short resource aliases.
 - Accept `default` as an explicit database or cache selector.
-- Keep `redis:shell` scoped to shared `REDIS_*`; use `cache:shell <name>` for a
-  resource-specific Redis endpoint.
+- Keep provider names behind resource commands. A Redis-backed cache is opened
+  through `cache:shell <name>`, not an infrastructure-specific command.
 - Use only `docker compose exec`, and only when the selected endpoint maps to
   the generated local service.
 - Defer `queue:shell` until queue inspection has a driver-specific contract.
@@ -749,8 +699,6 @@ The completed first cut provides:
 ```bash
 forj db
 forj db:shell
-forj redis
-forj redis:shell
 forj cache
 forj cache:shell
 ```
@@ -765,7 +713,6 @@ with:
 - `--select`
 - `--no-select`
 - database `--connection`
-- Redis `--db`
 - cache optional `[name]`
 
 It uses the local client first, falls back to Compose only when the client

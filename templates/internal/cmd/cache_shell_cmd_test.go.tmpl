@@ -175,6 +175,27 @@ func TestChooseCacheShellStoreUsesDefaultNonInteractively(t *testing.T) {
 	}
 }
 
+// TestCacheShellDispatchesThroughSelectedDriver keeps provider choice behind the cache resource command.
+func TestCacheShellDispatchesThroughSelectedDriver(t *testing.T) {
+	command := &CacheShellCmd{}
+	redis := cacheShellStore{Name: "sessions", Driver: "redis", Addr: "redis:6379"}
+	if got := redis.localClient(); got != "redis-cli" {
+		t.Fatalf("Redis cache local client = %q, want redis-cli", got)
+	}
+	args, _, err := command.clientArgs(redis, false)
+	if err != nil || strings.Join(args, " ") != "-h redis -p 6379" {
+		t.Fatalf("Redis cache client args = %q, %v", strings.Join(args, " "), err)
+	}
+
+	memory := cacheShellStore{Name: "default", Driver: "memory", IsDefault: true}
+	if got := memory.localClient(); got != "" {
+		t.Fatalf("memory cache local client = %q, want empty", got)
+	}
+	if _, _, err := command.clientArgs(memory, false); err == nil || !strings.Contains(err.Error(), `driver "memory"`) {
+		t.Fatalf("memory cache client dispatch error = %v", err)
+	}
+}
+
 // TestCacheShellComposePreservesResourceIdentityAndSecrets verifies fallback cannot retarget or expose credentials in argv.
 func TestCacheShellComposePreservesResourceIdentityAndSecrets(t *testing.T) {
 	root := t.TempDir()
