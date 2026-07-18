@@ -4,7 +4,7 @@
 package {{.AppPackageName}}
 
 import (
-{{- if or .Components.HasRuntime .Components.Cache .Components.HasDatabase }}
+{{- if or .Components.HasRuntime .Components.Cache .Components.HasDatabase (and .Components.Events (not .LegacyEventPipelineField)) }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
@@ -25,9 +25,6 @@ import (
 // RootCmd owns the generated app command surface, including app-local make commands.
 type RootCmd struct {
 	Commands
-{{- if .Components.Events }}
-	GeneratedEventCommands
-{{- end }}
 
 {{- if .Components.Jobs }}
 	BenchmarkRunCmd    jobs.BenchmarkRunCmd    `cmd:""`
@@ -46,6 +43,9 @@ type RootCmd struct {
 {{- if or .Components.WebAPI .Components.WebUI }}
 	MakeControllerCmd makecmd.ControllerCmd `cmd:""`
 {{- end }}
+{{- if .Components.Events }}
+	MakeEventCmd makecmd.EventCmd `cmd:""`
+{{- end }}
 {{- if .Components.Jobs }}
 	MakeJobCmd       makecmd.JobCmd       `cmd:""`
 {{- end }}
@@ -58,6 +58,9 @@ type RootCmd struct {
 {{- end }}
 {{- if .Components.Scheduler }}
 	MakeScheduleCmd makecmd.ScheduleCmd `cmd:""`
+{{- end }}
+{{- if .Components.Events }}
+	MakeSubscriberCmd makecmd.SubscriberCmd `cmd:""`
 {{- end }}
 {{- if .Components.HasDatabase }}
 	MigrateCmd         migrations.MigrateCmd         `cmd:""`
@@ -75,14 +78,14 @@ type RootCmd struct {
 {{- if .Components.Scheduler }}
 	SchedulerCmd schedules.Cmd `cmd:""`
 {{- end }}
+{{- if and .Components.Events (not .LegacyEventPipelineField) }}
+	TestEventPipelineCmd cmd.TestEventPipelineCmd `cmd:""`
+{{- end }}
 }
 
 // NewRootCmd assembles framework and app-owned commands on this App's command surface.
 func NewRootCmd(
 	commands *Commands,
-{{- if .Components.Events }}
-	generatedEventCommands *GeneratedEventCommands,
-{{- end }}
 {{- if .Components.Jobs }}
 	benchmarkRunCmd *jobs.BenchmarkRunCmd,
 	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
@@ -100,6 +103,9 @@ func NewRootCmd(
 {{- if or .Components.WebAPI .Components.WebUI }}
 	makeControllerCmd *makecmd.ControllerCmd,
 {{- end }}
+{{- if .Components.Events }}
+	makeEventCmd *makecmd.EventCmd,
+{{- end }}
 {{- if .Components.Jobs }}
 	makeJobCmd *makecmd.JobCmd,
 {{- end }}
@@ -112,6 +118,9 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Scheduler }}
 	makeScheduleCmd *makecmd.ScheduleCmd,
+{{- end }}
+{{- if .Components.Events }}
+	makeSubscriberCmd *makecmd.SubscriberCmd,
 {{- end }}
 {{- if .Components.HasDatabase }}
 	migrateCmd *migrations.MigrateCmd,
@@ -129,12 +138,12 @@ func NewRootCmd(
 {{- if .Components.Scheduler }}
 	schedulerCmd *schedules.Cmd,
 {{- end }}
+{{- if and .Components.Events (not .LegacyEventPipelineField) }}
+	testEventPipelineCmd *cmd.TestEventPipelineCmd,
+{{- end }}
 ) *RootCmd {
 	return &RootCmd{
-		Commands:          *commands,
-{{- if .Components.Events }}
-		GeneratedEventCommands: *generatedEventCommands,
-{{- end }}
+		Commands: *commands,
 {{- if .Components.Jobs }}
 		BenchmarkRunCmd:    *benchmarkRunCmd,
 		ExampleHelloJobCmd: *exampleHelloJobCmd,
@@ -152,6 +161,9 @@ func NewRootCmd(
 {{- if or .Components.WebAPI .Components.WebUI }}
 		MakeControllerCmd: *makeControllerCmd,
 {{- end }}
+{{- if .Components.Events }}
+		MakeEventCmd: *makeEventCmd,
+{{- end }}
 {{- if .Components.Jobs }}
 		MakeJobCmd:       *makeJobCmd,
 {{- end }}
@@ -164,6 +176,9 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Scheduler }}
 		MakeScheduleCmd: *makeScheduleCmd,
+{{- end }}
+{{- if .Components.Events }}
+		MakeSubscriberCmd: *makeSubscriberCmd,
 {{- end }}
 {{- if .Components.HasDatabase }}
 		MigrateCmd:         *migrateCmd,
@@ -180,6 +195,9 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Scheduler }}
 		SchedulerCmd: *schedulerCmd,
+{{- end }}
+{{- if and .Components.Events (not .LegacyEventPipelineField) }}
+		TestEventPipelineCmd: *testEventPipelineCmd,
 {{- end }}
 	}
 }

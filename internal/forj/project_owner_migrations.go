@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -62,6 +63,9 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 	if err := p.workspace.migrateLegacyDBShellCommandOwners(conventionalApps); err != nil {
 		return err
 	}
+	if err := p.workspace.migrateLegacyEventMakeCommandProviders(conventionalApps, p.config.GoModuleName); err != nil {
+		return err
+	}
 	if err := p.workspace.repairLegacyEventSubscriberOwnerSetNames(p.config, runtimeApps); err != nil {
 		return err
 	}
@@ -69,6 +73,54 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 		filepath.Join("app", "wire", "inject_controllers_app.go"),
 		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
 	)
+}
+
+// migrateLegacyEventMakeCommandProviders moves framework command constructors out of preserved service sets.
+func (w projectRenderWorkspace) migrateLegacyEventMakeCommandProviders(apps []project.App, moduleName string) error {
+	for _, app := range apps {
+		path := filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go")
+		source, err := w.readFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		updated := removeFrameworkEventCommandProvidersFromAppServiceInjector(string(source), moduleName)
+		if updated == string(source) {
+			continue
+		}
+		formatted, err := format.Source([]byte(updated))
+		if err != nil {
+			return fmt.Errorf("migrate legacy Events command providers in %s: %w", path, err)
+		}
+		if err := w.writeFileAtomically(path, formatted, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sourceUsesPackageSelector reports whether executable Go source still refers to one import qualifier.
+func sourceUsesPackageSelector(source string, packageName string) bool {
+	file, err := parser.ParseFile(token.NewFileSet(), "", source, 0)
+	if err != nil {
+		return true
+	}
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		identifier, identifierOK := selector.X.(*ast.Ident)
+		if identifierOK && identifier.Name == packageName {
+			found = true
+			return false
+		}
+		return !found
+	})
+	return found
 }
 
 // migrateLegacyCacheShellCommandOwners repairs preserved commands inside one project workspace.
