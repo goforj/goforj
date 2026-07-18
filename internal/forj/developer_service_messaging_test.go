@@ -2,6 +2,7 @@ package forj
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/project"
@@ -334,7 +335,9 @@ aws {
   accountId = "000000000000"
 }
 `
-	if string(config) != wantConfig {
-		t.Fatalf("ElasticMQ config template =\n%s\nwant:\n%s", config, wantConfig)
+	// Git may check embedded templates out with CRLF on Windows, but this contract targets content rather than host line endings.
+	gotConfig := strings.ReplaceAll(string(config), "\r\n", "\n")
+	if gotConfig != wantConfig {
+		t.Fatalf("ElasticMQ config template =\n%s\nwant:\n%s", gotConfig, wantConfig)
 	}
 }
