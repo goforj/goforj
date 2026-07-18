@@ -123,7 +123,7 @@ func (cmd *TestOpenAPICmd) Run() error {
 // writeOpenAPIFixture creates a native web.Context app whose returned route groups define the indexed API surface.
 func writeOpenAPIFixture(root string, webModuleDir string) error {
 	files := map[string]string{
-		"go.mod": "module example.com/openapi-fixture\n\ngo 1.25.0\n\nrequire github.com/goforj/web v0.6.0\n\nreplace github.com/goforj/web => " + strconv.Quote(filepath.ToSlash(webModuleDir)) + "\n",
+		"go.mod": "module example.com/openapi-fixture\n\ngo 1.25.0\n\nrequire github.com/goforj/web v0.6.1\n\nreplace github.com/goforj/web => " + strconv.Quote(filepath.ToSlash(webModuleDir)) + "\n",
 		".env":   "APP_NAME=OpenAPI Validation Fixture\n",
 		filepath.Join("internal", "hello", "controller.go"): `package hello
 
