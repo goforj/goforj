@@ -2537,15 +2537,3 @@ func (c *DevCmd) acquireLock() (func(), error) {
 	_ = lockFile.Close()
 	return func() { _ = os.Remove(lockPath) }, nil
 }
-
-// isProcessRunning checks whether a PID exists on this host.
-func isProcessRunning(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	if err == nil {
-		return true
-	}
-	return err == syscall.EPERM
-}
