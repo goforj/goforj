@@ -23,13 +23,14 @@ func processTestGracefulSignals() []os.Signal {
 	return []os.Signal{os.Interrupt}
 }
 
-// TestDevProcessWindowsHelper provides a leader and descendant that survive CTRL_BREAK until their Job Object is closed.
+// TestDevProcessWindowsHelper provides a leader and descendant that handle CTRL_BREAK until their Job Object is closed.
 func TestDevProcessWindowsHelper(t *testing.T) {
 	if os.Getenv("GOFORJ_DEV_PROCESS_WINDOWS_HELPER") != "1" {
 		return
 	}
-	// Go exposes the supervisor's CTRL_BREAK event as os.Interrupt rather than a distinct Windows signal.
-	signal.Ignore(os.Interrupt)
+	interrupts := make(chan os.Signal, 1)
+	// Windows signal ignore is not implemented by the Go runtime, so Notify must claim CTRL_BREAK from the default handler.
+	signal.Notify(interrupts, os.Interrupt)
 	if len(os.Args) == 0 {
 		os.Exit(2)
 	}
@@ -61,6 +62,10 @@ func TestDevProcessWindowsHelper(t *testing.T) {
 		if os.Getenv("GOFORJ_DEV_PROCESS_EXIT_LEADER") == "1" {
 			os.Exit(0)
 		}
+		<-interrupts
+		if err := os.WriteFile(os.Getenv("GOFORJ_DEV_PROCESS_INTERRUPT"), []byte("observed"), 0o600); err != nil {
+			os.Exit(9)
+		}
 		time.Sleep(time.Hour)
 	default:
 		os.Exit(2)
@@ -68,13 +73,13 @@ func TestDevProcessWindowsHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-// TestDevProcessSupervisorEscalatesAcrossWindowsJobObject verifies forced shutdown reaches descendants after CTRL_BREAK is ignored.
+// TestDevProcessSupervisorEscalatesAcrossWindowsJobObject verifies forced shutdown reaches descendants after CTRL_BREAK is handled.
 func TestDevProcessSupervisorEscalatesAcrossWindowsJobObject(t *testing.T) {
 	t.Parallel()
-	supervisor := NewSupervisor(SupervisorOptions{StopTimeout: 75 * time.Millisecond})
+	supervisor := NewSupervisor(SupervisorOptions{StopTimeout: 250 * time.Millisecond})
 	registerDevProcessSupervisorCleanup(t, supervisor)
 	directory := t.TempDir()
-	command, start, ready, marker := windowsProcessTreeCommand(directory, false)
+	command, start, ready, marker, interrupt := windowsProcessTreeCommand(directory, false)
 	if _, err := supervisor.StartRuntime(context.Background(), "tree", command); err != nil {
 		t.Fatalf("start process tree: %v", err)
 	}
@@ -86,9 +91,10 @@ func TestDevProcessSupervisorEscalatesAcrossWindowsJobObject(t *testing.T) {
 	if err := supervisor.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown process tree: %v", err)
 	}
-	if elapsed := time.Since(startedAt); elapsed < 50*time.Millisecond {
+	if elapsed := time.Since(startedAt); elapsed < 200*time.Millisecond {
 		t.Fatalf("expected graceful timeout before escalation, took %s", elapsed)
 	}
+	waitForProcessFile(t, interrupt)
 	exit := waitForProcessExit(t, supervisor.Exits())
 	if exit.StopReason != StopReasonShutdown {
 		t.Fatalf("unexpected escalated exit %+v", exit)
@@ -102,7 +108,7 @@ func TestDevProcessSupervisorCleansWindowsJobAfterLeaderExit(t *testing.T) {
 	supervisor := NewSupervisor(SupervisorOptions{})
 	registerDevProcessSupervisorCleanup(t, supervisor)
 	directory := t.TempDir()
-	command, start, ready, marker := windowsProcessTreeCommand(directory, true)
+	command, start, ready, marker, _ := windowsProcessTreeCommand(directory, true)
 	pid, err := supervisor.StartRuntime(context.Background(), "short-leader", command)
 	if err != nil {
 		t.Fatalf("start process tree: %v", err)
@@ -119,10 +125,11 @@ func TestDevProcessSupervisorCleansWindowsJobAfterLeaderExit(t *testing.T) {
 }
 
 // windowsProcessTreeCommand creates a gated leader so Job Object attachment finishes before it spawns its descendant.
-func windowsProcessTreeCommand(directory string, exitLeader bool) (Command, string, string, string) {
+func windowsProcessTreeCommand(directory string, exitLeader bool) (Command, string, string, string, string) {
 	start := filepath.Join(directory, "start")
 	ready := filepath.Join(directory, "child-ready")
 	marker := filepath.Join(directory, "child-survived")
+	interrupt := filepath.Join(directory, "interrupt-observed")
 	command := Command{
 		Args: []string{os.Args[0], "-test.run=^TestDevProcessWindowsHelper$", "--", "leader"},
 		Env: map[string]string{
@@ -130,12 +137,13 @@ func windowsProcessTreeCommand(directory string, exitLeader bool) (Command, stri
 			"GOFORJ_DEV_PROCESS_START":          start,
 			"GOFORJ_DEV_PROCESS_CHILD_READY":    ready,
 			"GOFORJ_DEV_PROCESS_MARKER":         marker,
+			"GOFORJ_DEV_PROCESS_INTERRUPT":      interrupt,
 		},
 	}
 	if exitLeader {
 		command.Env["GOFORJ_DEV_PROCESS_EXIT_LEADER"] = "1"
 	}
-	return command, start, ready, marker
+	return command, start, ready, marker, interrupt
 }
 
 // waitForWindowsProcessFile waits inside a helper process without depending on testing state owned by its parent.

@@ -56,11 +56,16 @@ func TestPrepareExecutableCopiesValidatedArtifact(t *testing.T) {
 
 // TestPrepareExecutableCanonicalizesRelativePath keeps command working directories from prefixing snapshots twice.
 func TestPrepareExecutableCanonicalizesRelativePath(t *testing.T) {
-	source := copyDevWatchHostExecutableFixture(t)
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("resolve working directory: %v", err)
 	}
+	fixtureDirectory, err := os.MkdirTemp(workingDirectory, ".devwatch-relative-*")
+	if err != nil {
+		t.Fatalf("create same-volume executable fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(fixtureDirectory) })
+	source := copyDevWatchHostExecutableFixtureTo(t, fixtureDirectory)
 	relativeSource, err := filepath.Rel(workingDirectory, source)
 	if err != nil {
 		t.Fatalf("resolve relative executable path: %v", err)
@@ -506,12 +511,18 @@ func TestCreatePreparedExecutablePreservesWindowsSuffix(t *testing.T) {
 // copyDevWatchHostExecutableFixture copies the running test binary to a mutable publication path.
 func copyDevWatchHostExecutableFixture(t *testing.T) string {
 	t.Helper()
+	return copyDevWatchHostExecutableFixtureTo(t, t.TempDir())
+}
+
+// copyDevWatchHostExecutableFixtureTo copies the running test binary into a caller-selected filesystem volume.
+func copyDevWatchHostExecutableFixtureTo(t *testing.T, directory string) string {
+	t.Helper()
 	input, err := os.Open(devWatchHostExecutable(t))
 	if err != nil {
 		t.Fatalf("open host executable: %v", err)
 	}
 	defer input.Close()
-	path := filepath.Join(t.TempDir(), "app")
+	path := filepath.Join(directory, "app")
 	output, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
 	if err != nil {
 		t.Fatalf("create host executable fixture: %v", err)
