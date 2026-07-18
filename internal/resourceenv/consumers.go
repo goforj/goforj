@@ -3,6 +3,7 @@ package resourceenv
 import (
 	"crypto/sha256"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -476,6 +477,12 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 		}
 		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"addr=" + addr})}, nil
 	}
+	if driver.Service == project.ServiceStorageS3 {
+		return resolver.resolveS3Endpoint(scope, connection, driver)
+	}
+	if endpoint, handled := resolver.resolveDeveloperServiceEndpoint(scope, connection, driver); handled {
+		return endpoint, nil
+	}
 
 	if resource == project.ResourceDatabase {
 		return resolver.resolveDatabaseEndpoint(scope, connection, driver)
@@ -516,6 +523,82 @@ func (resolver resourceConsumerResolver) resolveEndpoint(scope resourceConsumerS
 	}
 	sort.Strings(parts)
 	return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, parts)}, nil
+}
+
+// resolveDeveloperServiceEndpoint recognizes exact catalog network identities without capturing neighboring external endpoints.
+func (resolver resourceConsumerResolver) resolveDeveloperServiceEndpoint(scope resourceConsumerScope, connection resourceConnection, driver project.DriverDefinition) (resourceEndpointResolution, bool) {
+	localAddress := func(value string, want string) resourceEndpointResolution {
+		value = str.Of(value).Trim().ToLower().String()
+		if resolver.projectComponents.Docker && value == want {
+			return resourceEndpointResolution{local: true}
+		}
+		if value == "" {
+			value = "provider-default"
+		}
+		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"endpoint=" + value})}
+	}
+	localURL := func(value string, scheme string, host string, port string) resourceEndpointResolution {
+		value = strings.TrimSpace(value)
+		parsed, err := url.Parse(value)
+		if err == nil && resolver.projectComponents.Docker && strings.EqualFold(parsed.Scheme, scheme) &&
+			strings.EqualFold(parsed.Hostname(), host) && parsed.Port() == port && parsed.RawQuery == "" && parsed.Fragment == "" &&
+			(parsed.Path == "" || parsed.Path == "/") {
+			return resourceEndpointResolution{local: true}
+		}
+		if value == "" {
+			value = "provider-default"
+		} else if err == nil {
+			parsed.User = nil
+			value = parsed.String()
+		} else {
+			value = "invalid-url"
+		}
+		return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"endpoint=" + value})}
+	}
+
+	switch driver.Service {
+	case project.ServiceCacheMemcached:
+		return localAddress(resolver.scopedValue(scope, connection, "ADDRESSES"), "memcached:11211"), true
+	case project.ServiceCacheDynamoDB:
+		return localURL(resolver.scopedValue(scope, connection, "ENDPOINT"), "http", "dynamodb", "8000"), true
+	case project.ServiceCacheNATS, project.ServiceQueueNATS, project.ServiceEventsNATS:
+		return localURL(resolver.scopedValue(scope, connection, "URL"), "nats", "nats", "4222"), true
+	case project.ServiceQueueSQS:
+		return localURL(resolver.scopedValue(scope, connection, "ENDPOINT"), "http", "elasticmq", "9324"), true
+	case project.ServiceQueueRabbitMQ:
+		return localURL(resolver.scopedValue(scope, connection, "URL"), "amqp", "rabbitmq", "5672"), true
+	case project.ServiceEventsKafka:
+		return localAddress(resolver.scopedValue(scope, connection, "BROKERS"), "redpanda:9092"), true
+	case project.ServiceEventsGCPPubSub:
+		return localAddress(resolver.scopedValue(scope, connection, "URI"), "gcppubsub:8085"), true
+	default:
+		return resourceEndpointResolution{}, false
+	}
+}
+
+// resolveS3Endpoint recognizes only the generated RustFS address as local while preserving opaque external affinity.
+func (resolver resourceConsumerResolver) resolveS3Endpoint(scope resourceConsumerScope, connection resourceConnection, driver project.DriverDefinition) (resourceEndpointResolution, error) {
+	endpoint := strings.TrimSpace(resolver.scopedValue(scope, connection, "ENDPOINT"))
+	if resolver.projectComponents.Docker && isGeneratedRustFSEndpoint(endpoint) {
+		return resourceEndpointResolution{local: true}, nil
+	}
+	if endpoint == "" {
+		// An empty SDK endpoint means the provider default, not the generated RustFS network identity.
+		endpoint = "provider-default"
+	}
+	return resourceEndpointResolution{affinity: opaqueEndpointAffinity(driver.Service, []string{"endpoint=" + endpoint})}, nil
+}
+
+// isGeneratedRustFSEndpoint limits local ownership to the exact Compose network identity without capturing owner endpoints.
+func isGeneratedRustFSEndpoint(endpoint string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "http") || !strings.EqualFold(parsed.Hostname(), "rustfs") {
+		return false
+	}
+	if parsed.Port() != "9000" {
+		return false
+	}
+	return parsed.User == nil && (parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 // resolveDatabaseEndpoint keeps Compose ownership tied to the root selected database engine.

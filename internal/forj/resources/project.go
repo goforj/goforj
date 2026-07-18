@@ -57,18 +57,18 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 		for _, app := range resourceApps {
 			resources = append(resources, primitiveResourcesForApp(env, resourceApps, app)...)
 		}
-		if components.Mail && components.Docker {
-			resources = append(resources, Resource{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: urlWithPort(env, "MAILPIT_HTTP_PORT", "8025"), Description: "Local development inbox.", Enabled: true, Priority: 10, Source: "component", Owner: "goforj"})
+		if components.Docker && composeProfileEnabled(env, "mailpit") {
+			resources = append(resources, Resource{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: urlWithPort(env, "MAILPIT_HTTP_PORT", "8025"), Description: "Local development inbox.", Enabled: true, Priority: 10, Source: "profile", Owner: "goforj"})
 		}
-		if components.Observability {
-			resources = append(resources, Resource{ID: "victoria-metrics", Name: "VictoriaMetrics", Category: "observability", URL: urlWithPort(env, "OBSERVABILITY_VM_PORT", "8428"), Description: "Local metrics database.", Enabled: true, Priority: 20, Source: "component", Runtime: "metrics", Owner: "goforj"})
+		if components.Docker && (composeProfileEnabled(env, "victoriametrics") || composeProfileEnabled(env, "grafana")) {
+			resources = append(resources, Resource{ID: "victoria-metrics", Name: "VictoriaMetrics", Category: "observability", URL: urlWithPort(env, "OBSERVABILITY_VM_PORT", "8428"), Description: "Local metrics database.", Enabled: true, Priority: 20, Source: "profile", Runtime: "metrics", Owner: "goforj"})
 		}
-		if components.Grafana {
+		if components.Docker && composeProfileEnabled(env, "grafana") {
 			admin := strings.TrimSpace(envValue(env, "GRAFANA_ADMIN_USER"))
 			if admin == "" {
 				admin = "admin"
 			}
-			resources = append(resources, Resource{ID: "grafana", Name: "Grafana", Category: "observability", URL: urlWithPort(env, "GRAFANA_PORT", "13001"), Description: fmt.Sprintf("Local Grafana dashboards. Default login: %s / admin.", admin), Enabled: true, Priority: 30, Source: "component", Runtime: "metrics", Auth: fmt.Sprintf("%s / admin", admin), Owner: "goforj"})
+			resources = append(resources, Resource{ID: "grafana", Name: "Grafana", Category: "observability", URL: urlWithPort(env, "GRAFANA_PORT", "13001"), Description: fmt.Sprintf("Local Grafana dashboards. Admin user: %s.", admin), Enabled: true, Priority: 30, Source: "profile", Runtime: "metrics", Auth: admin, Owner: "goforj"})
 		}
 	}
 
@@ -143,6 +143,16 @@ func envValue(env map[string]string, key string) string {
 		return ""
 	}
 	return env[key]
+}
+
+// composeProfileEnabled reports exact comma-delimited membership without matching neighboring owner profiles.
+func composeProfileEnabled(env map[string]string, profile string) bool {
+	for _, token := range strings.Split(envValue(env, "COMPOSE_PROFILES"), ",") {
+		if strings.TrimSpace(token) == profile {
+			return true
+		}
+	}
+	return false
 }
 
 // namedResources derives logical names while allowing callers to exclude more specific environment namespaces.

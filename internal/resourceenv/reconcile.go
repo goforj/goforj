@@ -6,6 +6,7 @@ import (
 
 	"github.com/goforj/str/v2"
 
+	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/project"
 )
@@ -107,15 +108,31 @@ func RemoveGeneratedAssignments(source []byte, components project.Components, ru
 	return source, changed || removedDiagnosticAssignments
 }
 
-// ResolveServiceIntent reconstructs concrete owner intent from exact Compose profile tokens.
+// ResolveServiceIntent reconstructs concrete owner intent from cataloged Compose profile providers.
 func ResolveServiceIntent(source []byte, fallback project.LocalServiceIntent) project.LocalServiceIntent {
 	lines := strings.Split(string(source), "\n")
-	profiles, profilesSet := envfile.Lookup(lines, "COMPOSE_PROFILES")
-	if profilesSet && exactCSVToken(profiles, string(project.ServiceRedis)) {
-		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
+	profiles, _ := envfile.Lookup(lines, "COMPOSE_PROFILES")
+	localProviders := make(map[project.ServiceKey]struct{})
+	for _, definition := range devservices.Enabled(profiles) {
+		for _, provider := range definition.Providers {
+			localProviders[provider] = struct{}{}
+		}
 	}
-	if _, selected := fallback.Mode(project.ServiceRedis); selected {
-		return fallback.WithMode(project.ServiceRedis, project.LocalServiceModeExternal)
+	providers := make(map[project.ServiceKey]struct{})
+	for _, definition := range devservices.Catalog() {
+		for _, provider := range definition.Providers {
+			if _, visited := providers[provider]; visited {
+				continue
+			}
+			providers[provider] = struct{}{}
+			if _, local := localProviders[provider]; local {
+				fallback = fallback.WithMode(provider, project.LocalServiceModeLocal)
+				continue
+			}
+			if _, selected := fallback.Mode(provider); selected {
+				fallback = fallback.WithMode(provider, project.LocalServiceModeExternal)
+			}
+		}
 	}
 	return fallback
 }
@@ -191,16 +208,6 @@ func splitDriverList(value string) []string {
 func stringSliceContainsFold(values []string, want string) bool {
 	for _, value := range values {
 		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(want)) {
-			return true
-		}
-	}
-	return false
-}
-
-// exactCSVToken reports profile membership without substring matches such as redis-debug.
-func exactCSVToken(value string, want string) bool {
-	for _, token := range strings.Split(value, ",") {
-		if strings.TrimSpace(token) == want {
 			return true
 		}
 	}

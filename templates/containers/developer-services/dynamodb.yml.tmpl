@@ -1,0 +1,31 @@
+{{- define "developer-service-dynamodb-volumes" }}
+  dynamodb:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-dynamodb-services" }}
+  dynamodb:
+    profiles: [dynamodb]
+    x-forj-test: false
+    restart: unless-stopped
+    image: amazon/dynamodb-local:3.3.0
+    user: root
+    security_opt:
+      - no-new-privileges:true
+    working_dir: /home/dynamodblocal
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "./data", "-disableTelemetry"]
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${DYNAMODB_PORT:-8000}:8000
+    volumes:
+      - dynamodb:/home/dynamodblocal/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+{{ end -}}

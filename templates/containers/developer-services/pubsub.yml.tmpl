@@ -1,0 +1,29 @@
+{{- define "developer-service-pubsub-volumes" }}{{ end -}}
+
+{{- define "developer-service-pubsub-services" }}
+  gcppubsub:
+    profiles: [pubsub]
+    x-forj-test: false
+    restart: unless-stopped
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:573.0.0-emulators
+    command:
+      - gcloud
+      - beta
+      - emulators
+      - pubsub
+      - start
+      - --host-port=0.0.0.0:8085
+      - --project=${EVENTS_PROJECT_ID:-goforj-local}
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${PUBSUB_PORT:-8085}:8085
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/8085"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - backend
+{{ end -}}

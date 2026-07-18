@@ -1,0 +1,28 @@
+{{- define "developer-service-toxiproxy-volumes" }}{{ end -}}
+
+{{- define "developer-service-toxiproxy-services" }}
+  toxiproxy:
+    profiles: [toxiproxy]
+    x-forj-test: false
+    restart: unless-stopped
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    user: "65532:65532"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+      - LOG_LEVEL=${TOXIPROXY_LOG_LEVEL:-info}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${TOXIPROXY_API_PORT:-8474}:8474
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${TOXIPROXY_PROXY_PORT:-8666}:8666
+    healthcheck:
+      test: ["CMD", "/toxiproxy-cli", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - backend
+{{ end -}}

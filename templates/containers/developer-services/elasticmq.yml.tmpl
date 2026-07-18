@@ -1,0 +1,45 @@
+{{- define "developer-service-elasticmq-volumes" }}
+  elasticmq:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-elasticmq-services" }}
+  elasticmq:
+    profiles: [elasticmq]
+    restart: unless-stopped
+    image: softwaremill/elasticmq-native:1.7.1
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${ELASTICMQ_PORT:-9324}:9324
+    volumes:
+      - elasticmq:/data
+      - ./containers/elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9324/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - backend
+
+  elasticmq-ui:
+    profiles: [elasticmq]
+    x-forj-test: false
+    restart: unless-stopped
+    image: softwaremill/elasticmq-ui:1.7.1
+    depends_on:
+      elasticmq:
+        condition: service_healthy
+    environment:
+      - TZ=${TZ:-UTC}
+      - SQS_ENDPOINT=http://elasticmq:9324
+      - AWS_REGION=elasticmq
+      - AWS_ACCESS_KEY_ID=x
+      - AWS_SECRET_ACCESS_KEY=x
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${ELASTICMQ_UI_PORT:-9325}:3000
+    networks:
+      - backend
+{{ end -}}
