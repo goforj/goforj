@@ -180,6 +180,9 @@ func TestFrameworkPreviewShowsCategoryActionCommands(t *testing.T) {
 			t.Fatalf("expected framework preview to contain %q:\n%s", want, preview)
 		}
 	}
+	if strings.Contains(preview, "redis:shell") {
+		t.Fatalf("framework preview exposed provider-specific redis:shell:\n%s", preview)
+	}
 }
 
 // TestFrameworkFormatterRendersSelectedCommandHelp prevents selected command help from falling back to root help.

@@ -18,9 +18,6 @@ import (
 type Commands struct {
 	ResourcesCmd cmd.ResourcesCmd `cmd:""`
 	AboutCmd cmd.AboutCmd `cmd:""`
-	{{- if .Components.HasDatabase }}
-	DBShellCmd cmd.DBShellCmd `cmd:""`
-	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	AuthCreateUserCmd auth.CreateUserCmd `cmd:""`
 	AuthSetPasswordCmd auth.SetPasswordCmd `cmd:""`
@@ -46,9 +43,6 @@ type Commands struct {
 func NewCommands(
 	resourcesCmd *cmd.ResourcesCmd,
 	aboutCmd *cmd.AboutCmd,
-	{{- if .Components.HasDatabase }}
-	dbShellCmd *cmd.DBShellCmd,
-	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authCreateUserCmd *auth.CreateUserCmd,
 	authSetPasswordCmd *auth.SetPasswordCmd,
@@ -72,9 +66,6 @@ func NewCommands(
 	return &Commands{
 		ResourcesCmd: *resourcesCmd,
 		AboutCmd: *aboutCmd,
-		{{- if .Components.HasDatabase }}
-		DBShellCmd: *dbShellCmd,
-		{{- end }}
 		{{- if and .Components.Auth .Components.HasDatabase }}
 		AuthCreateUserCmd: *authCreateUserCmd,
 		AuthSetPasswordCmd: *authSetPasswordCmd,

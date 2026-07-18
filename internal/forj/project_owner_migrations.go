@@ -28,6 +28,12 @@ type jobsOwnerMigration struct {
 	target string
 }
 
+// dbShellCommandOwnerMigration describes one exact generated DB shell owner cleanup.
+type dbShellCommandOwnerMigration struct {
+	path    string
+	updated []byte
+}
+
 // migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
 func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 	discovery, err := projectlayout.Discover(p.workspace.discoveryRoot())
@@ -51,6 +57,9 @@ func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
 		return err
 	}
 	if err := p.workspace.migrateLegacyCacheShellCommandOwners(conventionalApps); err != nil {
+		return err
+	}
+	if err := p.workspace.migrateLegacyDBShellCommandOwners(conventionalApps); err != nil {
 		return err
 	}
 	if err := p.workspace.repairLegacyEventSubscriberOwnerSetNames(p.config, runtimeApps); err != nil {
@@ -140,6 +149,92 @@ func removeLegacyCacheShellCommandSource(path string, source []byte) ([]byte, bo
 	updated := []byte(strings.Join(filtered, ""))
 	if _, err := parser.ParseFile(token.NewFileSet(), path, updated, 0); err != nil {
 		return nil, false, fmt.Errorf("validate migrated Cache command owner %s: %w", path, err)
+	}
+	return updated, true, nil
+}
+
+// migrateLegacyDBShellCommandOwners moves framework DB shell wiring out of preserved App command owners.
+func (w projectRenderWorkspace) migrateLegacyDBShellCommandOwners(apps []project.App) error {
+	migrations := make([]dbShellCommandOwnerMigration, 0, len(apps))
+	for _, app := range apps {
+		path := filepath.Join(projectlayout.AppDir(".", app), "commands.go")
+		source, err := w.readFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		updated, changed, err := removeLegacyDBShellCommandSource(path, source)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			continue
+		}
+		migrations = append(migrations, dbShellCommandOwnerMigration{path: path, updated: updated})
+	}
+	for _, migration := range migrations {
+		if err := w.writeFileAtomically(migration.path, migration.updated, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeLegacyDBShellCommandSource removes only the exact generated DB shell wiring from an App-owned Commands type.
+func removeLegacyDBShellCommandSource(path string, source []byte) ([]byte, bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return nil, false, fmt.Errorf("parse legacy DB shell command owner %s: %w", path, err)
+	}
+	dbShellSelectors := 0
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if ok && selectorExpressionMatches(selector, "cmd", "DBShellCmd") {
+			dbShellSelectors++
+		}
+		return true
+	})
+	if dbShellSelectors == 0 {
+		return source, false, nil
+	}
+	if dbShellSelectors != 2 {
+		return nil, false, fmt.Errorf("cannot migrate legacy DB shell command owner %s because its DBShellCmd wiring was customized or is incomplete; move DBShellCmd out of the App-owned Commands type manually", path)
+	}
+
+	targets := []*regexp.Regexp{
+		regexp.MustCompile(`^[ \t]*DBShellCmd[ \t]+cmd\.DBShellCmd[ \t]+` + "`cmd:\"\"`" + `[ \t\r]*$`),
+		regexp.MustCompile(`^[ \t]*dbShellCmd[ \t]+\*cmd\.DBShellCmd,[ \t\r]*$`),
+		regexp.MustCompile(`^[ \t]*DBShellCmd:[ \t]*\*dbShellCmd,[ \t\r]*$`),
+	}
+	found := make([]int, len(targets))
+	lines := strings.SplitAfter(string(source), "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		candidate := strings.TrimSuffix(line, "\n")
+		matched := false
+		for index, target := range targets {
+			if !target.MatchString(candidate) {
+				continue
+			}
+			found[index]++
+			matched = true
+			break
+		}
+		if matched {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	for _, count := range found {
+		if count != 1 {
+			return nil, false, fmt.Errorf("cannot migrate legacy DB shell command owner %s because its DBShellCmd wiring was customized or is incomplete; move DBShellCmd out of the App-owned Commands type manually", path)
+		}
+	}
+	updated := []byte(strings.Join(filtered, ""))
+	if _, err := parser.ParseFile(token.NewFileSet(), path, updated, 0); err != nil {
+		return nil, false, fmt.Errorf("validate migrated DB shell command owner %s: %w", path, err)
 	}
 	return updated, true, nil
 }

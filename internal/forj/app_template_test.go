@@ -135,9 +135,9 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "db_shell_cmd.go.tmpl"): {
 			`name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"preboot"`,
 			`type DBShellCmd struct {`,
-			`RawArgs       []string`,
+			`RawArgs    []string`,
 			`passthrough:""`,
-			`Method        string`,
+			`Method     string`,
 			`func (c *DBShellCmd) applyInlineWrapperFlags() error`,
 			`func (c *DBShellCmd) parsedArgs() dbShellParsedArgs`,
 			`func (*DBShellCmd) Help() string`,
@@ -161,6 +161,10 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func (c *CacheShellCmd) resolveLaunch(store cacheShellStore)`,
 			`exec.Command(launch.Command, launch.Args...)`,
 			`"{{.GoModuleName}}/internal/runtime"`,
+		},
+		filepath.Join(base, "command_exit_code.go.tmpl"): {
+			`func CommandExitCode(err error) (int, bool)`,
+			`errors.As(err, &exitErr)`,
 		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutTerminalWidth() int`,
@@ -645,6 +649,8 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 		`if err := cmd.ConfigureTimezone(); err != nil {`,
 		`console.Fatalf("configuring timezone: %v", err)`,
 		`console.Fatalf("%v", err)`,
+		`handleCommandError(err)`,
+		`cmd.CommandExitCode(err)`,
 		`handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})`,
 		`application, err := wire.InitializeApplication()`,
 		`application.Run(nil, args)`,
@@ -914,8 +920,13 @@ func TestDatabaseRenderingIncludesDBShellCommand(t *testing.T) {
 		t.Fatalf("read project renderer: %v", err)
 	}
 	source := string(content)
-	if !strings.Contains(source, `"internal/cmd/db_shell_cmd.go.tmpl"`) {
-		t.Fatal("expected database rendering to include db shell command template")
+	for _, templateName := range []string{
+		`"internal/cmd/db_shell_cmd.go.tmpl"`,
+		`"internal/cmd/db_shell_cmd_test.go.tmpl"`,
+	} {
+		if !strings.Contains(source, templateName) {
+			t.Fatalf("expected database rendering to include %s", templateName)
+		}
 	}
 }
 
@@ -930,8 +941,13 @@ func TestCommonRenderingIncludesCacheShellCommand(t *testing.T) {
 		t.Fatalf("read project renderer: %v", err)
 	}
 	source := string(content)
-	if !strings.Contains(source, `"internal/cmd/cache_shell_cmd.go.tmpl"`) {
-		t.Fatal("expected common rendering to include cache shell command template")
+	for _, templateName := range []string{
+		`"internal/cmd/cache_shell_cmd.go.tmpl"`,
+		`"internal/cmd/cache_shell_cmd_test.go.tmpl"`,
+	} {
+		if !strings.Contains(source, templateName) {
+			t.Fatalf("expected Cache rendering to include %s", templateName)
+		}
 	}
 }
 

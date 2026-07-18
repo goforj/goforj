@@ -319,6 +319,20 @@ func TestSeedComposeProfilesHonorsRetainedUnusedRedis(t *testing.T) {
 	}
 }
 
+// TestResourceRenderValuesDistinguishRetainedUnusedRedis keeps default-App command ownership separate from an active App consumer.
+func TestResourceRenderValuesDistinguishRetainedUnusedRedis(t *testing.T) {
+	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
+	plan := defaultResourcePlanForTest(t, components)
+	intent := project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal)
+	values, err := resourceRenderValuesForPlanWithConsumers(plan, components, intent, nil)
+	if err != nil {
+		t.Fatalf("resourceRenderValuesForPlanWithConsumers returned error: %v", err)
+	}
+	if !values.RedisLocal || !values.RedisLocalRequestedUnused || values.RedisActive {
+		t.Fatalf("render values = %#v, want retained unused local Redis", values)
+	}
+}
+
 // TestResourceRenderValuesIncludeNamedRedis verifies Auth sessions participate in Redis discovery.
 func TestResourceRenderValuesIncludeNamedRedis(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Auth: true, Cache: true}

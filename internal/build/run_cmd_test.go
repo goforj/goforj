@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -319,6 +320,28 @@ func TestWaitForRunProcessReturnsChildErrorWithoutInterrupt(t *testing.T) {
 	err := cmd.waitForRunProcess()
 	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("waitForRunProcess error = %v, want child error", err)
+	}
+}
+
+// TestWaitForRunProcessPreservesSignalExitAfterForwarding verifies source delegation does not turn cancellation into success.
+func TestWaitForRunProcessPreservesSignalExitAfterForwarding(t *testing.T) {
+	childErr := errors.New("child terminated after forwarded signal")
+	waitCh := make(chan error, 1)
+	signals := make(chan os.Signal, 2)
+	signals <- syscall.SIGTERM
+	command := &RunCmd{waitCh: waitCh, process: &os.Process{}}
+	var forwarded os.Signal
+
+	err := command.waitForRunProcessSignalsUsing(signals, func(signal os.Signal) error {
+		forwarded = signal
+		waitCh <- childErr
+		return nil
+	})
+	if !errors.Is(err, childErr) {
+		t.Fatalf("waitForRunProcessSignalsUsing error = %v, want child termination", err)
+	}
+	if forwarded != syscall.SIGTERM {
+		t.Fatalf("forwarded signal = %v, want %v", forwarded, syscall.SIGTERM)
 	}
 }
 

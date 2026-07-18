@@ -4,7 +4,7 @@
 package {{.AppPackageName}}
 
 import (
-{{- if or .Components.HasRuntime .Components.Cache }}
+{{- if or .Components.HasRuntime .Components.Cache .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/cmd"
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
@@ -35,6 +35,9 @@ type RootCmd struct {
 {{- end }}
 {{- if .Components.Cache }}
 	CacheShellCmd cmd.CacheShellCmd `cmd:""`
+{{- end }}
+{{- if .Components.HasDatabase }}
+	DBShellCmd cmd.DBShellCmd `cmd:""`
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 	HttpServeCmd http.ServeCmd `cmd:""`
@@ -87,6 +90,9 @@ func NewRootCmd(
 {{- if .Components.Cache }}
 	cacheShellCmd *cmd.CacheShellCmd,
 {{- end }}
+{{- if .Components.HasDatabase }}
+	dbShellCmd *cmd.DBShellCmd,
+{{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 	httpServeCmd *http.ServeCmd,
 {{- end }}
@@ -135,6 +141,9 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Cache }}
 		CacheShellCmd: *cacheShellCmd,
+{{- end }}
+{{- if .Components.HasDatabase }}
+		DBShellCmd: *dbShellCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 		HttpServeCmd: *httpServeCmd,
