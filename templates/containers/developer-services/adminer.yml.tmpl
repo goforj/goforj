@@ -1,0 +1,22 @@
+{{- define "developer-service-adminer-volumes" }}{{ end -}}
+
+{{- define "developer-service-adminer-services" }}
+  adminer:
+    profiles: [adminer]
+    restart: unless-stopped
+    image: adminer:5.4.2
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${ADMINER_PORT:-8080}:8080
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1',8080)?0:1);"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - backend
+{{ end -}}

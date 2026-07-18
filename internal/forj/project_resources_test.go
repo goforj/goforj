@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
@@ -290,6 +291,52 @@ func TestComposeRedisServiceWithoutProfile(t *testing.T) {
 	}
 	if composeRedisServiceWithoutProfile(path) {
 		t.Fatal("profiled Redis service was mistaken for legacy local intent")
+	}
+}
+
+// TestPrepareResourceEnvironmentMigratesComponentToolsToProfiles preserves existing startup behavior after catalog adoption.
+func TestPrepareResourceEnvironmentMigratesComponentToolsToProfiles(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.WriteFile(".env", []byte("COMPOSE_PROFILES=owner-tool\n"), 0o600); err != nil {
+		t.Fatalf("write owner environment: %v", err)
+	}
+	compose := "services:\n  mailpit:\n    image: mailpit\n  victoriametrics:\n    image: victoriametrics\n  grafana:\n    image: grafana\n"
+	if err := os.WriteFile("docker-compose.yml", []byte(compose), 0o644); err != nil {
+		t.Fatalf("write legacy Compose: %v", err)
+	}
+	components := project.Components{DatabaseSQLite: true, Docker: true}
+	plan := defaultResourcePlanForTest(t, components)
+	renderer := &ProjectRenderer{
+		workspace: currentProjectRenderWorkspace(t),
+		config:    &project.Config{Render: project.RenderConfig{Components: components}},
+		resources: resourceRenderState{plan: plan},
+	}
+	if err := renderer.prepareResourceEnvironment(); err != nil {
+		t.Fatalf("prepare resource environment: %v", err)
+	}
+	if !renderer.resources.pendingEnvironmentWrite {
+		t.Fatal("legacy component tools did not schedule an owner environment migration")
+	}
+	profiles, set := envfile.Lookup(strings.Split(string(renderer.resources.pendingEnvironment), "\n"), "COMPOSE_PROFILES")
+	want := "owner-tool,mailpit,victoriametrics,grafana"
+	if !set || profiles != want {
+		t.Fatalf("migrated COMPOSE_PROFILES = %q, set=%t; want %q\n%s", profiles, set, want, renderer.resources.pendingEnvironment)
+	}
+}
+
+// TestComposeServiceWithoutProfileRequiresAnExactUnprofiledService keeps migration detection away from volumes and neighbors.
+func TestComposeServiceWithoutProfileRequiresAnExactUnprofiledService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yml")
+	compose := "volumes:\n  mailpit:\nservices:\n  mailpit-debug:\n    image: owner\n  mailpit:\n    profiles: [mailpit]\n    image: mailpit\n"
+	if err := os.WriteFile(path, []byte(compose), 0o644); err != nil {
+		t.Fatalf("write Compose: %v", err)
+	}
+	if composeServiceWithoutProfile(path, "mailpit") {
+		t.Fatal("profiled Mailpit was mistaken for a legacy unprofiled service")
+	}
+	if composeServiceWithoutProfile(path, "mailpit-debug") != true {
+		t.Fatal("exact unprofiled owner service was not detected")
 	}
 }
 

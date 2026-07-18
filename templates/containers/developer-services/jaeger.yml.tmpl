@@ -1,0 +1,26 @@
+{{- define "developer-service-jaeger-volumes" }}{{ end -}}
+
+{{- define "developer-service-jaeger-services" }}
+  jaeger:
+    profiles: [jaeger]
+    x-forj-test: false
+    restart: unless-stopped
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+      - JAEGER_LISTEN_HOST=0.0.0.0
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${JAEGER_UI_PORT:-16686}:16686
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${JAEGER_OTLP_GRPC_PORT:-4317}:4317
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${JAEGER_OTLP_HTTP_PORT:-4318}:4318
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:13133/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+{{ end -}}

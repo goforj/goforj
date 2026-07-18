@@ -145,6 +145,7 @@ func TestCollectDevToolLinks(t *testing.T) {
 		"OBSERVABILITY_VM_PORT": "18428",
 		"GRAFANA_PORT":          "13001",
 		"GRAFANA_ADMIN_USER":    "ops",
+		"COMPOSE_PROFILES":      "mailpit,victoriametrics,grafana",
 	}
 
 	got := collectDevToolLinks(config, env)
@@ -180,6 +181,7 @@ func TestBuildDevReadySummaryLines(t *testing.T) {
 	lines := buildDevReadySummaryLines(config, map[string]string{
 		"APP_URL":           "http://localhost:9000",
 		"MAILPIT_HTTP_PORT": "18025",
+		"COMPOSE_PROFILES":  "mailpit",
 	})
 	if len(lines) < 4 {
 		t.Fatalf("buildDevReadySummaryLines() len = %d, want at least 4", len(lines))
