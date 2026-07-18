@@ -222,6 +222,13 @@ func (c *RunCmd) waitForRunProcess() error {
 
 // waitForRunProcessSignals keeps signal delivery injectable while preserving the delegated App's final status.
 func (c *RunCmd) waitForRunProcessSignals(signals <-chan os.Signal) error {
+	return c.waitForRunProcessSignalsUsing(signals, func(signal os.Signal) error {
+		return c.process.Signal(signal)
+	})
+}
+
+// waitForRunProcessSignalsUsing keeps process signaling injectable without relying on platform-specific shell behavior in contract tests.
+func (c *RunCmd) waitForRunProcessSignalsUsing(signals <-chan os.Signal, signalProcess func(os.Signal) error) error {
 	var forwarded bool
 	for {
 		select {
@@ -236,7 +243,7 @@ func (c *RunCmd) waitForRunProcessSignals(signals <-chan os.Signal) error {
 			clearInterruptEcho()
 			if c.process != nil && !forwarded {
 				forwarded = true
-				_ = c.process.Signal(sig)
+				_ = signalProcess(sig)
 			}
 		}
 	}
