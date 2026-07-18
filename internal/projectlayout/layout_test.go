@@ -201,6 +201,16 @@ func TestDiscoverReturnsFilesystemErrors(t *testing.T) {
 			wantApps:  []project.App{project.DefaultApp(), project.DefaultNamedApp("billing")},
 		},
 		{
+			name: "App root is not a directory",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				writeLayoutTestFile(t, filepath.Join(root, "cmd", "billing", "main.go"))
+				writeLayoutTestFile(t, filepath.Join(root, "app"))
+			},
+			wantError: "discover Apps in",
+			wantApps:  []project.App{project.DefaultApp(), project.DefaultNamedApp("billing")},
+		},
+		{
 			name: "command marker cannot be inspected",
 			setup: func(t *testing.T, root string) {
 				t.Helper()
