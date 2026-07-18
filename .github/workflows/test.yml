@@ -80,7 +80,7 @@ jobs:
         run: go test -run '^$' ./...
 
       - name: run platform-sensitive tests
-        run: go test -count=1 ./internal/devwatch ./internal/build ./internal/envfile ./internal/projectlayout ./internal/testexec ./project
+        run: go test -count=1 ./internal/forj ./internal/devwatch ./internal/build ./internal/envfile ./internal/projectlayout ./internal/testexec ./project
 
   watcher-stress:
     name: watcher churn (race)
