@@ -1,0 +1,35 @@
+{{- define "developer-service-sftpgo-volumes" }}
+  sftpgo-data:
+    driver: local
+  sftpgo-home:
+    driver: local
+{{ end -}}
+
+{{- define "developer-service-sftpgo-services" }}
+  sftpgo:
+    profiles: [sftpgo]
+    x-forj-test: false
+    restart: unless-stopped
+    image: drakkan/sftpgo:v2.7.5
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-UTC}
+      - SFTPGO_DATA_PROVIDER__CREATE_DEFAULT_ADMIN=true
+      - SFTPGO_DEFAULT_ADMIN_USERNAME=${SFTPGO_ADMIN_USERNAME:-goforj}
+      - SFTPGO_DEFAULT_ADMIN_PASSWORD=${SFTPGO_ADMIN_PASSWORD:-goforj-local}
+    ports:
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${SFTPGO_SFTP_PORT:-2022}:2022
+      - ${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}:${SFTPGO_HTTP_PORT:-8081}:8080
+    volumes:
+      - sftpgo-data:/var/lib/sftpgo
+      - sftpgo-home:/srv/sftpgo
+    healthcheck:
+      test: ["CMD", "sftpgo", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+{{ end -}}

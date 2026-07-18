@@ -1677,27 +1677,28 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 	}
 
 	components := config.Render.Components
-	if components.Mail && components.Docker {
+	profiles := envValue(env, "COMPOSE_PROFILES")
+	if components.Docker && exactCSVToken(profiles, "mailpit") {
 		tools = append(tools, devToolLink{
 			Label:  "Mailpit",
 			Detail: "(inbox)",
 			URL:    resolveURLWithPort(env, "http", "localhost", "MAILPIT_HTTP_PORT", "8025"),
 		})
 	}
-	if components.Observability {
+	if components.Docker && (exactCSVToken(profiles, "victoriametrics") || exactCSVToken(profiles, "grafana")) {
 		tools = append(tools, devToolLink{
 			Label: "VictoriaMetrics",
 			URL:   resolveURLWithPort(env, "http", "localhost", "OBSERVABILITY_VM_PORT", "8428"),
 		})
 	}
-	if components.Grafana {
+	if components.Docker && exactCSVToken(profiles, "grafana") {
 		adminUser := strings.TrimSpace(envValue(env, "GRAFANA_ADMIN_USER"))
 		if adminUser == "" {
 			adminUser = "admin"
 		}
 		tools = append(tools, devToolLink{
 			Label:  "Grafana",
-			Detail: fmt.Sprintf("(%s / admin)", adminUser),
+			Detail: fmt.Sprintf("(%s)", adminUser),
 			URL:    resolveURLWithPort(env, "http", "localhost", "GRAFANA_PORT", "13001"),
 		})
 	}

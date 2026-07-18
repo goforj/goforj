@@ -155,10 +155,10 @@ var resourceCatalog = []ResourceDefinition{
 			{Name: "file", Label: "File", Order: 20},
 			{Name: "null", Label: "Null", Order: 30},
 			{Name: "redis", Label: "Redis", Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 40},
-			{Name: "memcached", Label: "Memcached", Service: ServiceCacheMemcached, ServiceLabel: "Memcached for cache", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "memcached", Label: "Memcached", Service: ServiceCacheMemcached, ServiceLabel: "Memcached for cache", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("CACHE_ADDRESSES", "", "comma-separated Memcached addresses"),
 			}, Order: 50},
-			{Name: "dynamodb", Label: "DynamoDB", Service: ServiceCacheDynamoDB, ServiceLabel: "DynamoDB for cache", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "dynamodb", Label: "DynamoDB", Service: ServiceCacheDynamoDB, ServiceLabel: "DynamoDB for cache", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("CACHE_REGION", "us-east-1", "AWS region"),
 				driverEnvironmentPlaceholder("CACHE_ENDPOINT", "", "optional DynamoDB endpoint override"),
 			}, Order: 60},
@@ -169,7 +169,7 @@ var resourceCatalog = []ResourceDefinition{
 			{Name: "mysql", Label: "MySQL", Service: ServiceCacheMySQL, ServiceLabel: "MySQL for cache", Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("CACHE_DSN", "", "resource-specific MySQL DSN; DB_* is not inherited"),
 			}, Order: 90},
-			{Name: "nats", Label: "NATS", Service: ServiceCacheNATS, ServiceLabel: "NATS for cache", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "nats", Label: "NATS", Service: ServiceCacheNATS, ServiceLabel: "NATS for cache", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("CACHE_URL", "nats://127.0.0.1:4222", "resource-specific NATS URL"),
 			}, Order: 100},
 		},
@@ -191,16 +191,16 @@ var resourceCatalog = []ResourceDefinition{
 			{Name: "sync", Label: "Sync", Order: 20},
 			{Name: "workerpool", Label: "Workerpool", Order: 30},
 			{Name: "redis", Label: "Redis", Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 40},
-			{Name: "nats", Label: "NATS", Service: ServiceQueueNATS, ServiceLabel: "NATS for queue", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "nats", Label: "NATS", Service: ServiceQueueNATS, ServiceLabel: "NATS for queue", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("QUEUE_URL", "nats://127.0.0.1:4222", "resource-specific NATS URL"),
 			}, Order: 50},
-			{Name: "sqs", Label: "SQS", Service: ServiceQueueSQS, ServiceLabel: "SQS for queue", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "sqs", Label: "SQS", Service: ServiceQueueSQS, ServiceLabel: "SQS for queue", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("QUEUE_REGION", "us-east-1", "AWS region"),
 				driverEnvironmentPlaceholder("QUEUE_ENDPOINT", "", "optional SQS endpoint override"),
 				driverEnvironmentPlaceholder("QUEUE_ACCESS_KEY", "", "AWS access key when the default credential chain is unavailable"),
 				driverEnvironmentPlaceholder("QUEUE_SECRET_KEY", "", "AWS secret key when the default credential chain is unavailable"),
 			}, Order: 60},
-			{Name: "rabbitmq", Label: "RabbitMQ", Service: ServiceQueueRabbitMQ, ServiceLabel: "RabbitMQ for queue", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "rabbitmq", Label: "RabbitMQ", Service: ServiceQueueRabbitMQ, ServiceLabel: "RabbitMQ for queue", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("QUEUE_URL", "amqp://guest:guest@127.0.0.1:5672/", "resource-specific RabbitMQ URL"),
 			}, Order: 70},
 			{Name: "sqlite", Label: "SQLite", Order: 80},
@@ -223,16 +223,16 @@ var resourceCatalog = []ResourceDefinition{
 			{Name: "inproc", Label: "In-process", Order: 10},
 			{Name: "null", Label: "Null", Order: 20},
 			{Name: "redis", Label: "Redis", Service: ServiceRedis, ServiceLabel: "Redis", LocallyProvisionable: true, Order: 30},
-			{Name: "nats", Label: "NATS", Service: ServiceEventsNATS, ServiceLabel: "NATS for events", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "nats", Label: "NATS", Service: ServiceEventsNATS, ServiceLabel: "NATS for events", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("EVENTS_URL", "nats://127.0.0.1:4222", "resource-specific NATS URL"),
 			}, Order: 40},
-			{Name: "natsjetstream", Label: "NATS JetStream", Service: ServiceEventsNATS, ServiceLabel: "NATS JetStream for events", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "natsjetstream", Label: "NATS JetStream", Service: ServiceEventsNATS, ServiceLabel: "NATS JetStream for events", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("EVENTS_URL", "nats://127.0.0.1:4222", "resource-specific NATS URL"),
 			}, Order: 50},
-			{Name: "kafka", Label: "Kafka", Service: ServiceEventsKafka, ServiceLabel: "Kafka for events", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "kafka", Label: "Kafka", Service: ServiceEventsKafka, ServiceLabel: "Kafka for events", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("EVENTS_BROKERS", "127.0.0.1:9092", "comma-separated Kafka brokers"),
 			}, Order: 60},
-			{Name: "gcppubsub", Label: "Google Pub/Sub", Service: ServiceEventsGCPPubSub, ServiceLabel: "Google Pub/Sub for events", Environment: []DriverEnvironmentPlaceholder{
+			{Name: "gcppubsub", Label: "Google Pub/Sub", Service: ServiceEventsGCPPubSub, ServiceLabel: "Google Pub/Sub for events", LocallyProvisionable: true, Environment: []DriverEnvironmentPlaceholder{
 				driverEnvironmentPlaceholder("EVENTS_PROJECT_ID", "", "Google Cloud project ID"),
 				driverEnvironmentPlaceholder("EVENTS_URI", "", "optional Pub/Sub emulator or endpoint URI"),
 			}, Order: 70},

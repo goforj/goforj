@@ -235,11 +235,9 @@ func TestSyncCoreLibrariesAddsTemplDependencyForTemplStarter(t *testing.T) {
 }
 
 func TestGrafanaSeedComposeStopsQuickly(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "docker-compose.yml.tmpl"))
-	if err != nil {
-		t.Fatalf("read docker compose template: %v", err)
-	}
-	template := string(data)
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	_, template := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	for _, token := range []string{
 		"grafana-data-init:",
 		"chown -R",
@@ -455,18 +453,14 @@ func TestNormalizeDockerComposeDownTask(t *testing.T) {
 }
 
 func TestDatabaseComposeDataUsesNamedVolumes(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "templates", "docker-compose.yml.tmpl"))
-	if err != nil {
-		t.Fatalf("read docker compose template: %v", err)
-	}
-	template := string(data)
+	components := project.DefaultSelectedComponents()
+	plan := defaultResourcePlanForTest(t, components)
+	_, template := renderResourceTemplates(t, components, plan, project.LocalServiceIntent{})
 	for _, token := range []string{
 		"mariadb:\n    driver: local",
-		"postgres:\n    driver: local",
 		"victoriametrics:\n    driver: local",
 		"grafana:\n    driver: local",
 		"mariadb:/var/lib/mysql",
-		"postgres:/var/lib/postgresql/data",
 		"victoriametrics:/victoria-metrics-data",
 		"grafana:/var/lib/grafana",
 	} {
@@ -482,6 +476,14 @@ func TestDatabaseComposeDataUsesNamedVolumes(t *testing.T) {
 	} {
 		if strings.Contains(template, token) {
 			t.Fatalf("expected docker compose template not to contain %q\n%s", token, template)
+		}
+	}
+	postgresComponents := project.Components{DatabasePostgres: true, Docker: true}
+	postgresPlan := defaultResourcePlanForTest(t, postgresComponents)
+	_, postgresTemplate := renderResourceTemplates(t, postgresComponents, postgresPlan, project.LocalServiceIntent{})
+	for _, token := range []string{"postgres:\n    driver: local", "postgres:/var/lib/postgresql/data"} {
+		if !strings.Contains(postgresTemplate, token) {
+			t.Fatalf("expected Postgres Compose template to contain %q\n%s", token, postgresTemplate)
 		}
 	}
 }

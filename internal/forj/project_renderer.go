@@ -23,6 +23,7 @@ import (
 	"github.com/goforj/console"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/coredeps"
+	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
@@ -652,7 +653,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Docker Components Rendering",
 			enabled: p.config.Render.Components.Docker,
-			templates: append([]string{"docker-compose.yml.tmpl", "containers/goforj-development-services.md.tmpl"},
+			templates: append([]string{
+				"docker-compose.yml.tmpl",
+				"containers/goforj-development-services.md.tmpl",
+				"containers/elasticmq/elasticmq.conf.tmpl",
+			},
 				func() []string {
 					if p.config.Render.Components.DatabaseMySQL {
 						return []string{
@@ -3413,13 +3418,62 @@ func (p *ProjectRenderer) renderTemplateFileAtomically(destPath, tmpl string, da
 	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true)
 }
 
+// parseProjectTemplate composes catalog fragments only for the generated Compose surface.
+func parseProjectTemplate(tmplPath string, source []byte) (*template.Template, error) {
+	t := template.New("")
+	if tmplPath != "docker-compose.yml.tmpl" {
+		return t.Parse(string(source))
+	}
+
+	definitions := devservices.Catalog()
+	for _, definition := range definitions {
+		partial, err := templatesFS.ReadFile(definition.Template)
+		if err != nil {
+			return nil, fmt.Errorf("read developer service template %s: %w", definition.Template, err)
+		}
+		if _, err := t.Parse(string(partial)); err != nil {
+			return nil, fmt.Errorf("parse developer service template %s: %w", definition.Template, err)
+		}
+	}
+	if _, err := t.Parse(developerServiceAggregateTemplate(definitions)); err != nil {
+		return nil, fmt.Errorf("parse developer service catalog template: %w", err)
+	}
+	for _, definition := range definitions {
+		for _, section := range []string{"volumes", "services"} {
+			name := developerServiceTemplateName(definition, section)
+			if t.Lookup(name) == nil {
+				return nil, fmt.Errorf("developer service template %s does not define %q", definition.Template, name)
+			}
+		}
+	}
+	return t.Parse(string(source))
+}
+
+// developerServiceAggregateTemplate projects catalog order into the two Compose map sections.
+func developerServiceAggregateTemplate(definitions []devservices.Definition) string {
+	var source strings.Builder
+	for _, section := range []string{"volumes", "services"} {
+		fmt.Fprintf(&source, "{{ define %q }}", "developer-service-catalog-"+section)
+		for _, definition := range definitions {
+			fmt.Fprintf(&source, "{{ template %q . }}", developerServiceTemplateName(definition, section))
+		}
+		source.WriteString("{{ end }}")
+	}
+	return source.String()
+}
+
+// developerServiceTemplateName keeps partial identities deterministic from stable catalog keys.
+func developerServiceTemplateName(definition devservices.Definition, section string) string {
+	return "developer-service-" + string(definition.Key) + "-" + section
+}
+
 // renderTemplateFileWithAtomicWrite shares rendering while reserving atomic replacement for transactional files.
 func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl string, data any, atomic bool) error {
 	tmplBytes, err := templatesFS.ReadFile(tmpl)
 	if err != nil {
 		return err
 	}
-	t, err := template.New("").Parse(string(tmplBytes))
+	t, err := parseProjectTemplate(tmpl, tmplBytes)
 	if err != nil {
 		return fmt.Errorf("parse template %s: %w", tmpl, err)
 	}

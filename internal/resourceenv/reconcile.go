@@ -114,26 +114,24 @@ func ResolveServiceIntent(source []byte, fallback project.LocalServiceIntent) pr
 	profiles, _ := envfile.Lookup(lines, "COMPOSE_PROFILES")
 	localProviders := make(map[project.ServiceKey]struct{})
 	for _, definition := range devservices.Enabled(profiles) {
-		if definition.Provides != "" {
-			localProviders[definition.Provides] = struct{}{}
+		for _, provider := range definition.Providers {
+			localProviders[provider] = struct{}{}
 		}
 	}
 	providers := make(map[project.ServiceKey]struct{})
 	for _, definition := range devservices.Catalog() {
-		provider := definition.Provides
-		if provider == "" {
-			continue
-		}
-		if _, visited := providers[provider]; visited {
-			continue
-		}
-		providers[provider] = struct{}{}
-		if _, local := localProviders[provider]; local {
-			fallback = fallback.WithMode(provider, project.LocalServiceModeLocal)
-			continue
-		}
-		if _, selected := fallback.Mode(provider); selected {
-			fallback = fallback.WithMode(provider, project.LocalServiceModeExternal)
+		for _, provider := range definition.Providers {
+			if _, visited := providers[provider]; visited {
+				continue
+			}
+			providers[provider] = struct{}{}
+			if _, local := localProviders[provider]; local {
+				fallback = fallback.WithMode(provider, project.LocalServiceModeLocal)
+				continue
+			}
+			if _, selected := fallback.Mode(provider); selected {
+				fallback = fallback.WithMode(provider, project.LocalServiceModeExternal)
+			}
 		}
 	}
 	return fallback

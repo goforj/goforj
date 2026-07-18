@@ -2,25 +2,26 @@
 
 ## Status
 
-- Design decision: complete for the initial built-in catalog.
-- Implemented scope: always-rendered Redis, RustFS, and OpenSearch Compose profiles; exact profile
-  activation; Redis and S3 service-plan integration; invocation-time development lifecycle support;
-  profile-aware test filtering; and generated developer documentation.
-- Future scope: richer catalog recipes and endpoint metadata, resource-registry links, helper commands,
-  a first-party Search resource, and broader live integration coverage.
+- Design decision: complete for the expanded built-in catalog.
+- Implemented scope: always-rendered optional Compose profiles; modular catalog-owned recipes;
+  multi-capability resource-provider bindings; exact profile activation; component-default and legacy
+  profile migration; invocation-time lifecycle support; profile-aware test filtering; active component
+  tool links; and generated developer documentation.
 - Target repository: `goforj`.
 
-This document describes the behavior shipped by the initial catalog slice. The final section separates
-possible catalog expansion from the completed acceptance criteria.
+This document records the completed catalog contract. It does not claim that every recipe has a live
+Docker integration lane.
 
 ## Decision
 
 Every Docker-enabled GoForj project receives the same built-in set of optional developer services in
-its generated `docker-compose.yml`. Each service is inactive behind an exact Docker Compose profile.
+its generated `docker-compose.yml`. Each catalog service is inactive behind an exact Docker Compose
+profile unless a selected local resource or compatibility component seeds that profile in the initial
+owner environment.
 
 Catalog availability is not another project choice. GoForj does not persist a developer-service list
-in `.goforj.yml`, infer catalog inclusion from selected components, or require a rerender before an
-already-rendered service can be enabled.
+in `.goforj.yml`, infer which definitions should be rendered from the current components, or require a
+rerender before an already-rendered service can be enabled.
 
 `COMPOSE_PROFILES` is the activation state:
 
@@ -28,15 +29,15 @@ already-rendered service can be enabled.
 COMPOSE_PROFILES=
 ```
 
-A developer can enable one or more services later by changing that owner-managed value:
+A developer can enable any combination later by editing that owner-managed value:
 
 ```env
-COMPOSE_PROFILES=redis,rustfs
+COMPOSE_PROFILES=nats,jaeger,adminer
 ```
 
-The next direct Compose startup observes the new value without changing `.goforj.yml`, regenerating
-Compose, or rebuilding an App. Projects with a normal `forj dev` watcher session also pick it up in
-their pre-development lifecycle.
+The next direct Compose startup observes the change without modifying `.goforj.yml`, regenerating
+Compose, or rebuilding the App. Normal watcher-backed `forj dev` sessions observe the same effective
+profile value through their pre-development lifecycle.
 
 The contract separates three concerns:
 
@@ -46,145 +47,202 @@ COMPOSE_PROFILES          decides which catalog services start on this machine
 App resource config      decides whether and how an App consumes a service
 ```
 
-Starting a profile does not silently add an App driver, change the selected driver, create a bucket or
-index, or redirect an explicitly external endpoint.
+Starting a profile does not silently add an App driver, change a selected driver, create a bucket,
+queue, topic, realm, user, or index, or redirect an explicitly external endpoint.
 
-## Why The Catalog Is Separate From App Resources
+## Catalog Architecture
 
-Some developer services provide infrastructure used by App resources:
+The canonical `internal/devservices` catalog records each entry's stable key, label, exact profile,
+ordered list of resource service keys it can provide, optional component defaults, owned template
+partial, and presentation order. Catalog access returns defensive copies, and profile lookup and
+enablement use exact tokens.
 
-- Redis can back Cache, Queue, Events, or Storage.
-- RustFS can provide an S3-compatible endpoint for Storage.
+One entry may provide several App capabilities. This is necessary for NATS, whose one local service
+can satisfy Cache, Queue, and Events requirements, and for shared Redis, which continues to serve the
+existing cross-resource Redis contract. Provider metadata controls local service planning; it does
+not gate whether a recipe is rendered.
 
-Other services are useful before GoForj has a matching App primitive. OpenSearch supports manual
-development and extension work even though this slice does not introduce a first-party Search
-resource.
+Each catalog entry owns a Compose partial under
+`templates/containers/developer-services`. A partial defines that entry's volume and service blocks.
+The project renderer loads the partial named by every catalog definition and builds the aggregate
+volume and service templates consumed by `docker-compose.yml`. The catalog order therefore determines
+deterministic output without restoring one monolithic Compose template.
 
-The Compose catalog therefore cannot be derived only from `ResourceCatalog`, supported-driver lists,
-or the current component set. Those inputs describe App capabilities, not every useful local tool.
-
-The current canonical catalog metadata records a stable key, label, profile, ordering, and an optional
-service requirement supplied by the entry. It connects Redis and RustFS to service planning without
-controlling whether their Compose definitions are rendered. Endpoint metadata and resource discovery
-are not yet part of this catalog definition.
+This arrangement makes the catalog definition, recipe ownership, profile advertisement, provider
+selection, and rendered composition one connected contract. Adding an entry requires a catalog
+definition and its partial rather than edits scattered through a hard-coded aggregate.
 
 ## Shipped Catalog
 
-The initial catalog establishes these stable profile identities:
+The complete catalog has these stable user-facing profiles:
 
-| Profile | Generated services | Role | Current App integration |
-| --- | --- | --- | --- |
-| `redis` | Redis 7.4 | Resource provider | Existing shared Redis service contract |
-| `rustfs` | RustFS `1.0.0-beta.10` | Resource provider and local admin tool | S3-compatible Storage service |
-| `opensearch` | OpenSearch 3.7.0 and OpenSearch Dashboards 3.7.0 | Standalone service and local admin tool | None |
+| Profile | Generated services | Role and integration |
+| --- | --- | --- |
+| `redis` | Redis | Shared local provider for Redis-backed Cache, Queue, Events, and Storage |
+| `rustfs` | RustFS API and console | S3-compatible Storage provider and admin tool |
+| `opensearch` | OpenSearch and OpenSearch Dashboards | Standalone search and administration stack; no first-party Search resource |
+| `nats` | NATS with JetStream and monitoring | One provider for NATS Cache, Queue, NATS Events, and NATS JetStream Events |
+| `rabbitmq` | RabbitMQ and management UI | RabbitMQ Queue provider |
+| `redpanda` | Redpanda and Redpanda Console | Kafka Events provider and administration stack |
+| `dynamodb` | DynamoDB Local | DynamoDB Cache provider |
+| `elasticmq` | ElasticMQ and ElasticMQ UI | SQS Queue provider and administration stack |
+| `pubsub` | Google Cloud Pub/Sub emulator | Google Pub/Sub Events provider |
+| `memcached` | Memcached | Memcached Cache provider |
+| `sftpgo` | SFTPGo SFTP endpoint and web administration | Standalone file-transfer tool; deliberately not an automatic Storage provider |
+| `adminer` | Adminer | Standalone database browser |
+| `jaeger` | Jaeger UI and OTLP receivers | Standalone tracing service |
+| `qdrant` | Qdrant HTTP and gRPC APIs | Standalone vector database |
+| `temporal` | Temporal development server and UI | Standalone workflow service |
+| `keycloak` | Keycloak development server | Standalone identity service |
+| `mockserver` | MockServer | Standalone API test double |
+| `toxiproxy` | Toxiproxy API and one proxy listener | Standalone network-failure tool; no upstream is selected automatically |
+| `clickhouse` | ClickHouse HTTP and native APIs | Standalone analytics database |
+| `meilisearch` | Meilisearch | Standalone application-search service |
+| `mailpit` | Mailpit SMTP and web inbox | SMTP Mail provider and Mail-component compatibility default |
+| `victoriametrics` | VictoriaMetrics and component-dependent vmagent | Observability-component compatibility default |
+| `grafana` | Grafana and component-dependent dashboard seeding | Grafana-component compatibility default; also selects VictoriaMetrics |
 
-The profile is the user-facing lifecycle unit. One profile can contain multiple Compose services when
-the containers form one useful stack, as OpenSearch and Dashboards do.
+The profile is the user-facing lifecycle unit. One profile may own several containers when they form
+one useful stack, as with OpenSearch, Redpanda, and ElasticMQ. VictoriaMetrics declares both the
+`victoriametrics` and `grafana` profiles so selecting Grafana also starts its datasource.
 
-All three entries are rendered for every Docker project. Their Compose definitions use reviewed
-version tags, named volumes where data should survive ordinary restarts, explicit published-port settings,
-and the generated backend network. RustFS and OpenSearch include service health checks; Dashboards
-waits for the OpenSearch service to become healthy.
-
-Existing required services such as a selected local MySQL or Postgres database retain their current
-component and service-plan behavior. This work does not move all existing Compose services behind
-profiles.
+Catalog images and component build bases use explicit tags. Stateful services use named volumes where
+restart persistence is useful, and services that need startup ordering use health or dependency
+conditions. Existing required services such as a selected local MySQL or Postgres database retain
+their unprofiled component and service-plan behavior.
 
 ## Activation Contract
 
 Profile matching is exact and comma-delimited. `redis-debug` does not activate `redis`, and
-`rustfs-tools` does not activate `rustfs`. Combinations activate the union of the exact profiles.
+`rustfs-tools` does not activate `rustfs`. Combinations activate the union of exact profiles.
 
-An absent or empty `COMPOSE_PROFILES` value leaves all optional catalog entries inactive. Services
-without profiles continue to follow their existing Compose behavior.
-
-Unknown profile tokens remain owner intent. GoForj preserves them so an owner-managed Compose
-override can define additional profiled services. Built-in catalog profile names are a generated
-configuration compatibility contract and must not be repurposed.
+An absent or empty `COMPOSE_PROFILES` value leaves optional entries inactive unless a new render seeds
+profiles from selected local providers or component compatibility defaults. Unknown tokens remain
+owner intent and survive reconciliation so an owner-managed Compose override can define additional
+profiled services. Built-in profile names are a generated-configuration compatibility contract and
+must not be repurposed.
 
 Docker Compose can also start an explicitly targeted profiled service. GoForj's normal development
 lifecycle uses the effective `COMPOSE_PROFILES` value instead.
 
-For a newly rendered project, GoForj may seed `COMPOSE_PROFILES` from an active local Redis or S3
-service requirement. OpenSearch has no App provider binding and is never enabled from App resource
-selection. After generation, the `.env` assignment is owner-managed and survives reconciliation.
-
-## Generated Ownership
-
-GoForj owns the generated `docker-compose.yml` and may refresh built-in catalog definitions during a
-render. Project-specific Compose customization belongs in the normal owner-managed override surface,
-not in edits to the generated catalog.
-
-The ownership rules are:
-
-- framework catalog definitions and image pins are generated;
-- `.env` owns profile activation, ports, bootstrap credentials, and local connection values;
-- unrelated profile tokens and existing owner environment values survive reconciliation;
-- named-volume declarations are generated, while their stored data remains user state;
-- disabling a profile, rerendering, and ordinary shutdown do not delete named volumes; and
-- there is no `dev.services` or equivalent list in `.goforj.yml`.
-
-Generated `containers/goforj-development-services.md` documents available profiles, endpoints,
-credentials, resource binding examples, host-versus-container addresses, and data ownership. Its
-GoForj-specific name and generated marker establish framework ownership without claiming an existing
-generic `containers/README.md`. A catalog-list command is not part of the completed slice.
-
-An existing project needs one render to receive a catalog introduced by a newer GoForj release. Once
-the service exists in its Compose file, later activation changes require only `COMPOSE_PROFILES`.
+An existing project needs one render to receive catalog definitions introduced by a newer GoForj
+release. After the definitions exist in its Compose file, later activation changes require only an
+edit to `COMPOSE_PROFILES`.
 
 ## Resource Provider Integration
 
-The current catalog can associate an entry with one existing service requirement:
+Catalog definitions may provide zero, one, or several existing service requirements:
 
-- `redis` provides the shared Redis service requirement;
-- `rustfs` provides the S3 storage service requirement; and
-- `opensearch` has no provider association.
+- `redis` provides the existing shared Redis requirement;
+- `rustfs` provides S3 Storage;
+- `nats` provides NATS Cache, NATS Queue, and NATS or NATS JetStream Events;
+- `rabbitmq` provides RabbitMQ Queue;
+- `redpanda` provides Kafka Events;
+- `dynamodb` provides DynamoDB Cache;
+- `elasticmq` provides SQS Queue;
+- `pubsub` provides Google Pub/Sub Events;
+- `memcached` provides Memcached Cache; and
+- `mailpit` provides local SMTP Mail.
 
-S3 is locally provisionable in the service catalog. A Docker project's S3 consumer is classified as
-local only when its endpoint is the exact generated container address `http://rustfs:9000` (with an
-optional trailing slash). An empty endpoint remains the SDK's external provider default, and
-`http://rustfs` without port `9000` is not captured as local.
+The corresponding drivers are locally provisionable. Initial profile selection is projected from
+active-local or retained local service requirements. Resource-specific container values are generated
+only for exact local endpoints, with matching host values in `.env.host`:
+
+| Provider | Exact container value |
+| --- | --- |
+| RustFS | `STORAGE_ENDPOINT=http://rustfs:9000` |
+| NATS | `CACHE_URL`, `QUEUE_URL`, or `EVENTS_URL` at `nats://goforj:goforj@nats:4222` |
+| RabbitMQ | `QUEUE_URL=amqp://goforj:goforj@rabbitmq:5672/` |
+| Redpanda | `EVENTS_BROKERS=redpanda:9092` |
+| DynamoDB Local | `CACHE_ENDPOINT=http://dynamodb:8000` |
+| ElasticMQ | `QUEUE_ENDPOINT=http://elasticmq:9324` with local region and placeholder credentials |
+| Pub/Sub emulator | `EVENTS_URI=gcppubsub:8085` with a local project ID |
+| Memcached | `CACHE_ADDRESSES=memcached:11211` |
+| Mailpit | `MAIL_SMTP_HOST=mailpit` and `MAIL_SMTP_PORT=1025` |
 
 Endpoint affinity remains strict:
 
 - an explicitly external endpoint remains external;
-- a neighboring name such as `rustfs-tools` is not treated as the generated provider;
-- Redis and S3 become local intent only through their exact provider profiles;
-- compatible consumers share an existing provider only under the existing service-plan rules; and
-- activating `rustfs` does not add `s3` to supported drivers, select it, create a bucket, or overwrite
-  owner credentials.
+- neighboring names such as `rustfs-tools`, `nats-debug`, and `rabbitmq-admin` are not captured;
+- missing ports or a different port do not match the generated provider;
+- compatible consumers share a provider only under existing service-plan rules; and
+- activating a profile does not add a supported driver, select it, create provider objects, or
+  overwrite owner credentials.
 
-The profile owns local service lifecycle. App configuration still owns whether the App consumes the
-service.
+Redis retains its established service-intent bridge. The other providers use exact generated
+container endpoints for local affinity and project corresponding localhost endpoints for host-run
+commands.
+
+SFTPGo is intentionally excluded from provider metadata. Its generated default administrator can
+configure the control plane, but a usable FTP or SFTP App disk also needs a protocol user, home
+permissions, and an explicit host-key trust decision. Those are owner-managed security and data
+choices, so generation does not pretend the service is ready to bind automatically.
+
+## Component Defaults And Migration
+
+Mailpit, VictoriaMetrics, and Grafana previously followed component-specific unprofiled startup. They
+now use catalog profiles without losing their established component behavior:
+
+- the Mail component seeds `mailpit`, and local SMTP requirements can select the same profile;
+- the Observability component seeds `victoriametrics` and adds its generated vmagent; and
+- the Grafana component seeds `grafana`, uses generated provisioning and dashboard seeding, and also
+  starts VictoriaMetrics through the shared profile declaration.
+
+For an existing owner environment, reconciliation inspects the previous generated Compose file. An
+exact unprofiled `mailpit`, `victoriametrics`, or `grafana` service causes its matching profile token to
+be appended once. Existing owner and unknown tokens keep their order and are not removed. A profiled
+service, neighboring service name, or volume with the same name does not trigger migration.
+
+New renders derive these defaults through catalog `DefaultFor` metadata rather than special-case
+Compose inclusion. After the initial seed or one-way migration, `.env` remains the owner-controlled
+activation surface.
+
+## Generated Ownership
+
+GoForj owns the generated `docker-compose.yml`, the catalog partials used to produce it, the ElasticMQ
+configuration, and `containers/goforj-development-services.md`. A rerender may refresh built-in
+recipes and image pins. Project-specific customization belongs in the normal owner-managed
+`docker-compose.override.yml`, not in edits to generated catalog definitions.
+
+The ownership rules are:
+
+- framework catalog definitions, recipes, companion configuration, and image pins are generated;
+- `.env` owns profile activation, published ports, bootstrap credentials, and local connection values;
+- `.env.host` owns host-process endpoint projection;
+- unrelated profile tokens and existing owner values survive reconciliation;
+- named-volume declarations are generated, while their stored data remains user state;
+- disabling a profile, rerendering, and ordinary shutdown do not delete named volumes; and
+- there is no `dev.services` or equivalent list in `.goforj.yml`.
+
+The generated guide lists every profile, host and container endpoints, local credential defaults,
+resource bindings, SFTPGo's manual bootstrap boundary, bind-address compatibility, and data ownership.
+
+The dev summary and resource registry expose Mailpit, VictoriaMetrics, and Grafana links only when
+their exact profiles are enabled. They do not expose passwords or infer activation from neighboring
+tokens.
 
 ## Development Lifecycle
 
-The App resource service plan cannot be the only trigger for Compose startup because a standalone
-`opensearch` profile has no App consumer.
+The App resource service plan cannot be the only Compose startup trigger because standalone profiles
+such as `jaeger`, `keycloak`, and `opensearch` have no App consumer.
 
-At each invocation, `forj dev` uses the process `COMPOSE_PROFILES` value when it is present and falls
-back to the project's `.env` value otherwise. For Docker projects, it adds the conventional Compose
-startup task when at least one profile token is present and no task with that conventional name is
-already configured. This allows a newly enabled built-in or owner-defined profile to start without
-rerendering while preserving an owner's custom conventional task. Compose itself validates unknown
-tokens and reports `no service selected` when a nonempty selection matches no service.
+At each invocation, `forj dev` uses the process `COMPOSE_PROFILES` value when present and otherwise
+falls back to the project's `.env` value. For Docker projects, it adds the conventional Compose startup
+task when at least one profile token is present and no owner task with that conventional name already
+exists. This lets any built-in or owner-defined profile start without rerendering while preserving an
+owner's custom conventional task. Compose validates unknown tokens.
 
 Existing generated startup tasks continue to cover unprofiled required services. A Docker project
-with only inactive catalog entries does not add a profile-only Compose startup task, and a stale
-generated task is suppressed after its last active profile is removed when neither the base Compose
-file nor its conventional override contains an unprofiled service. Owner-customized conventional
-tasks are preserved. A project without dev watches or configured dev Apps still exits before
-pre-development tasks, so profile-only and CLI-only projects use direct Compose startup.
+with only inactive catalog entries does not add a profile-only startup task. A stale generated task is
+suppressed after the last active profile is removed when neither the base Compose file nor its
+conventional override contains an unprofiled service. Owner-customized tasks are preserved.
 
-`forj dev` teardown and `forj down` ensure the conventional
-`docker-compose --profile "*" down` task is present for Docker projects even when generation did not
-persist one. Existing generated `docker-compose down` tasks are normalized to that command, while
-owner-customized conventional tasks are preserved. Selecting all profiles ensures a service is still
-included after its activation token is removed. Ordinary teardown does not pass `-v`, so it does not
-request deletion of named volumes.
+`forj dev` teardown and `forj down` ensure the conventional all-profile Compose down task is present
+for Docker projects. Selecting all profiles ensures a container is still included after its activation
+token is removed. Ordinary teardown does not request named-volume deletion.
 
 Removing a token changes later Compose selection; it does not stop a container that was already
-created. Developers run `forj down` or the all-profile Compose teardown when disabling an active
+created. Developers use `forj down` or an all-profile Compose teardown when disabling a running
 profile before starting the new selection.
 
 ## Profile-Aware Test Rendering
@@ -193,143 +251,123 @@ The rendered-project test harness filters Compose services before allocating hos
 testcontainers:
 
 - services without profiles remain active;
-- a profiled service is active when at least one of its declared profiles is an exact enabled token;
-- inactive Redis, RustFS, OpenSearch, and Dashboards services are skipped; and
+- a profiled service is active when at least one declared profile is an exact enabled token;
+- inactive catalog services are skipped; and
 - unknown and neighboring tokens do not accidentally activate a built-in service.
 
-This prevents the always-baked catalog from increasing ordinary render-test container counts or
-network requirements. An active RustFS dependency receives an isolated API port and host-side
-`STORAGE_ENDPOINT`. OpenSearch and Dashboards carry an explicit `x-forj-test: false` marker because the
-generic App dependency harness does not reproduce their Compose network and dependency semantics;
-they remain assigned to a future dedicated live lane.
+Recipes whose dependency, network, resource, or bootstrap semantics are not modeled by the generic
+harness carry an explicit test exclusion. Structural, unit, and render tests cover the catalog and its
+profile behavior; this design does not claim a live Docker matrix for every entry.
 
 ## Security And Operational Defaults
 
 An always-rendered catalog must be inert while disabled and explicit about local-development security
 when enabled.
 
-- RustFS, OpenSearch, and Dashboards bind their published ports to
-  `DEV_SERVICE_IP_ADDRESS=127.0.0.1` by default.
-- Redis retains its existing `IP_ADDRESS` bind contract for compatibility; projects that leave
-  `IP_ADDRESS=0.0.0.0` should treat unauthenticated Redis as reachable on all host interfaces. Generated
-  guidance tells developers to select loopback before enabling it on an untrusted network or supply an
-  authenticated owner override and matching App configuration.
-- RustFS authentication remains enabled with overridable development credentials.
-- OpenSearch uses a bounded single-node configuration, an explicit heap limit, TLS, and an overridable
-  initial administrator password. That value bootstraps a fresh persisted security index and does not
-  rotate an existing password; generated guidance covers deliberate rotation and destructive local reset.
-- The generated documentation distinguishes container endpoints from host endpoints and identifies
-  the credentials as local-development defaults, including dotenv quoting for `$`, `#`, and spaces.
-- The shipped recipes do not require privileged mode, host networking, a Docker socket mount, or a
-  broad host-directory mount.
+- Most catalog ports bind through `DEV_SERVICE_IP_ADDRESS=127.0.0.1` by default.
+- Redis, Mailpit, VictoriaMetrics, and Grafana preserve their established
+  `IP_ADDRESS=0.0.0.0` contract for compatibility. Generated guidance tells developers to set
+  `IP_ADDRESS=127.0.0.1` before enabling them on an untrusted network.
+- Services with bootstrap authentication use overridable local credentials. Services documented as
+  unauthenticated rely on loopback isolation and must not be exposed casually.
+- RustFS authentication remains enabled, but bucket creation and App driver selection remain explicit.
+- OpenSearch keeps security and development TLS enabled. Its initial password bootstraps a fresh
+  persisted security index and does not rotate an existing password.
+- SFTPGo creates an administrator but not a protocol user or an App host-key policy.
+- Toxiproxy creates no upstream mapping, and enabling it does not redirect App traffic.
+- Generated documentation distinguishes container endpoints from host endpoints and explains dotenv
+  quoting for local secrets.
+- The recipes do not require privileged mode, host networking, a Docker socket mount, or a broad
+  host-directory mount.
 
 The catalog is a development convenience, not production orchestration. Production credentials, TLS
 policy, clustering, backups, migration, and availability remain deployment responsibilities.
 
 ## Compatibility
 
-The existing exact `redis` profile and resource behavior remain valid.
+The existing exact `redis`, `rustfs`, and `opensearch` profiles remain valid. Redis preserves its
+shared-service and bind-address contracts. Mailpit, VictoriaMetrics, and Grafana keep their existing
+component defaults through initial profile seeding and one-way migration from exact unprofiled
+services.
 
-Adding an inactive entry changes generated Compose output but does not activate its containers, change
-App source or API, alter the resource build contract, or raise the minimum Go version.
+Adding an inactive catalog entry changes generated Compose output but does not activate its container,
+change an App source API, alter the resource build contract, redirect an external endpoint, or raise
+the minimum Go version.
 
 Compatibility risks are classified separately:
 
-- **Generated configuration:** Docker projects gain inactive services, volumes, environment defaults,
-  documentation, and stable profile names.
-- **Runtime behavior:** enabling a profile starts its pinned local stack and exposes the documented
-  ports.
-- **Persisted data:** named-volume contents survive disablement and ordinary teardown.
+- **Generated configuration:** Docker projects gain optional services, volumes, environment defaults,
+  companion configuration, documentation, and stable profile names.
+- **Runtime behavior:** enabling a profile starts its pinned local stack and exposes documented ports.
+- **Persisted data:** named-volume contents survive profile disablement and ordinary teardown.
 - **Operational migration:** a future image or data-format change may require release notes and a
   service-specific migration path.
-- **Owner configuration:** unrelated profile tokens and existing owner environment values remain
-  intact during reconciliation.
+- **Owner configuration:** unknown profile tokens and existing owner environment values remain intact
+  during reconciliation.
 
-## Non-Goals Of The Completed Slice
+## Non-Goals
 
 - Do not add a developer-service selection stage to `forj new`.
 - Do not persist selected or available catalog entries in `.goforj.yml`.
-- Do not activate every catalog profile by default.
+- Do not activate every profile by default.
 - Do not use components or supported resource drivers as the catalog inclusion gate.
-- Do not silently add App drivers, dependencies, resource instances, buckets, indexes, credentials,
-  or endpoint overrides.
-- Do not introduce a first-party Search resource for OpenSearch.
+- Do not silently add App drivers, dependencies, resource instances, buckets, queues, topics, realms,
+  protocol users, credentials, or endpoint overrides.
+- Do not introduce first-party Search, Vector, Workflow, or Identity resources merely because a local
+  tool exists.
 - Do not redirect external or opaque resource endpoints to local containers.
-- Do not add active service links to the resource registry in this slice.
 - Do not accept arbitrary Compose fragments, images, or install scripts in project YAML. Owners use
   the standard Compose override surface.
 - Do not delete developer-service data during profile disablement, rerender, or ordinary shutdown.
-- Do not present these Compose recipes as production deployment manifests.
+- Do not present these recipes as production deployment manifests.
 
 ## Completed Verification
 
-The implementation has focused coverage for:
+The implementation has focused structural, unit, and render coverage for:
 
-- stable catalog metadata, ordering, defensive copies, and exact lookups;
+- stable catalog metadata, ordering, defensive copies, exact lookups, and template ownership;
+- aggregate rendering from every catalog partial;
 - exact and combined profile parsing, including neighboring and unknown tokens;
-- Redis and RustFS local-service intent reconciliation;
-- generated Compose and `.env` output for the built-in catalog;
-- RustFS endpoint classification without redirecting external S3 endpoints;
-- Redis and S3 service-plan states;
-- invocation-time `forj dev` startup task selection, stale-task suppression, Compose override
-  eligibility, and process-environment precedence;
-- Docker project all-profile teardown availability and generated-command normalization; and
-- profile-aware rendered-project test filtering before port allocation and container startup,
-  including RustFS host projection and explicit standalone OpenSearch exclusion.
+- provider-to-profile projection, including NATS multi-capability sharing;
+- strict generated endpoint affinity without redirecting external endpoints;
+- generated Compose, `.env`, `.env.host`, companion configuration, and developer guide output;
+- Mailpit, VictoriaMetrics, and Grafana component defaults and exact one-way migration;
+- invocation-time `forj dev` task selection, stale-task suppression, override eligibility, and process
+  environment precedence;
+- all-profile teardown availability and generated-command normalization;
+- profile-aware rendered-project filtering before port allocation and container startup; and
+- exact active-profile gating for Mailpit, VictoriaMetrics, and Grafana links.
 
-These unit and render tests verify the completed contract. They do not claim a live Docker integration
-matrix for every catalog entry.
+These checks verify the completed contract without claiming live integration coverage for every
+catalog recipe.
 
 ## Completed Acceptance Criteria
 
-- Every Docker-enabled render contains the Redis, RustFS, and OpenSearch catalog; Docker-disabled
-  renders contain no generated Compose catalog.
-- All catalog containers are inactive when `COMPOSE_PROFILES` is absent or empty, while existing
-  unprofiled required services retain their behavior.
-- Exact `redis`, `rustfs`, and `opensearch` tokens select only their intended stacks; comma-delimited
-  combinations select the union.
-- Neighboring tokens such as `redis-debug` and `rustfs-tools` do not activate built-in entries.
-- Changing only `COMPOSE_PROFILES` is sufficient for the next direct Compose startup after the catalog
-  has been rendered; normal watcher-backed `forj dev` sessions pick up the same change.
-- `forj dev` can start a standalone active profile in a normal watcher-backed project even when no App
-  resource requires it and avoids a profile-only startup when none is active.
-- Removing the last active profile suppresses a stale generated profile-only startup task without
-  removing owner-customized tasks or startup required by an unprofiled base or override service.
-- Generated teardown selects all profiles so clearing activation state does not strand catalog
-  containers, and ordinary teardown does not delete their named volumes.
-- Redis retains its existing profile and shared-service compatibility.
-- RustFS renders a pinned, authenticated S3-compatible service and console while leaving driver
-  selection, compilation, bucket creation, and owner endpoint configuration explicit.
-- OpenSearch renders a pinned, bounded single-node service and dashboard without requiring a Search
-  component or resource.
-- RustFS and OpenSearch host ports default to loopback, and the generated documentation explains local
-  credentials and host-versus-container endpoints.
-- Unrelated profile tokens and existing owner environment values survive reconciliation.
-- Profile-aware render tests do not start the full catalog accidentally.
+- Every Docker-enabled render contains all catalog profiles; Docker-disabled renders contain no
+  generated Compose catalog.
+- Optional containers remain dormant unless an exact profile is enabled, while existing unprofiled
+  required services retain their behavior.
+- Every advertised token selects only its owned stack; neighboring tokens do not activate entries.
+- Editing only `COMPOSE_PROFILES` changes the next startup selection after the catalog is rendered.
+- Unknown owner profiles and existing owner environment values survive reconciliation.
+- Catalog definitions own modular Compose partials, and deterministic aggregation includes every
+  definition's volumes and services.
+- Redis, RustFS, NATS, RabbitMQ, Redpanda, DynamoDB Local, ElasticMQ, Pub/Sub, Memcached, and Mailpit
+  project exact local provider intent without capturing external endpoints.
+- NATS can satisfy Cache, Queue, and Events requirements through one profile and one local service.
+- SFTPGo remains standalone until an owner creates a protocol user and chooses host-key handling.
+- Mailpit, VictoriaMetrics, and Grafana are profile-controlled, seed from their components, and migrate
+  exact legacy unprofiled services without discarding owner tokens.
+- Grafana activation also includes VictoriaMetrics; component-specific vmagent and dashboard seeding
+  remain conditional on the corresponding generated components.
+- Most new service ports default to loopback, while the preserved legacy `IP_ADDRESS` bindings and
+  their safety action are documented explicitly.
+- Profile-aware render tests do not start the complete catalog accidentally.
+- Generated teardown can select every profile without requesting deletion of named volumes.
 
-## Future Catalog Expansion
+## Future Work
 
-The following ideas are compatible with this design but are not completed acceptance criteria:
-
-1. Enrich the canonical definition with Compose recipe ownership, service names, endpoints, ports,
-   environment keys, descriptions, and resource-link metadata instead of keeping those details in the
-   current templates and integration code.
-2. Compose catalog entries from reusable generated fragments so adding a built-in service does not
-   require editing one monolithic Compose template.
-3. Publish active-only API and admin links through the existing resource registry for RustFS,
-   OpenSearch, and future services, without exposing secrets.
-4. Add a helper that lists profiles or edits `COMPOSE_PROFILES` token by token while preserving the
-   same activation contract.
-5. Introduce a first-party Search resource only when its App API and OpenSearch provider contract are
-   designed independently.
-6. Add live Docker validation for empty, individual, combined, and unknown profile selections,
-   including dependency readiness and supported host architectures.
-7. Add direct Compose lifecycle coverage for all-profile shutdown without making normal shutdown
-   destructive.
-8. Define image and persisted-data migration policy before changing an existing pinned service in a
-   way that requires operator action.
-
-For a future built-in entry, maintainers should choose a stable exact profile, check naming and port
-collisions, pin and review the image, define safe port and volume behavior, document activation and
-App binding, add exact-token render coverage, and add focused live coverage proportional to the
-service's operational risk.
+The completed catalog does not prevent later additions such as richer endpoint metadata, generalized
+active-service links, resource-oriented helper commands, a first-party Search resource, or dedicated
+live lanes for heavier stacks. Those additions must preserve exact profile activation, owner
+environment ownership, strict endpoint affinity, and the modular partial contract.

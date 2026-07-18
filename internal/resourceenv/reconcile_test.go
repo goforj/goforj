@@ -218,6 +218,38 @@ func TestResolveServiceIntentUsesExactCatalogProfiles(t *testing.T) {
 	}
 }
 
+// TestResolveServiceIntentExpandsMultiCapabilityProfiles preserves resource-specific service identities behind one lifecycle token.
+func TestResolveServiceIntentExpandsMultiCapabilityProfiles(t *testing.T) {
+	natsProviders := []project.ServiceKey{
+		project.ServiceCacheNATS,
+		project.ServiceQueueNATS,
+		project.ServiceEventsNATS,
+	}
+	fallback := project.LocalServiceIntent{}
+	for _, provider := range natsProviders {
+		fallback = fallback.WithMode(provider, project.LocalServiceModeExternal)
+	}
+
+	intent := ResolveServiceIntent([]byte("COMPOSE_PROFILES=nats\n"), fallback)
+	for _, provider := range natsProviders {
+		mode, ok := intent.Mode(provider)
+		if !ok || mode != project.LocalServiceModeLocal {
+			t.Fatalf("NATS provider %s mode = %q selected=%t, want local", provider, mode, ok)
+		}
+	}
+
+	intent = ResolveServiceIntent([]byte("COMPOSE_PROFILES=nats-debug,jaeger\n"), fallback)
+	for _, provider := range natsProviders {
+		mode, ok := intent.Mode(provider)
+		if !ok || mode != project.LocalServiceModeExternal {
+			t.Fatalf("neighbor NATS provider %s mode = %q selected=%t, want external", provider, mode, ok)
+		}
+	}
+	if _, ok := intent.Mode(project.ServiceKey("jaeger")); ok {
+		t.Fatal("standalone Jaeger profile invented a resource-service placement")
+	}
+}
+
 // defaultResourcePlanForTest builds the same concrete driver plan used by a new project.
 func defaultResourcePlanForTest(t *testing.T, components project.Components) project.ResourcePlan {
 	t.Helper()
