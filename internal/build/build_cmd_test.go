@@ -174,6 +174,33 @@ func TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs(t *testing.T) {
 	}
 }
 
+// TestUniqueBuildOutputNameRemainsUniqueConcurrently verifies rapid builds cannot share a staging path.
+func TestUniqueBuildOutputNameRemainsUniqueConcurrently(t *testing.T) {
+	const count = 128
+	names := make(chan string, count)
+	var builds sync.WaitGroup
+	for range count {
+		builds.Add(1)
+		go func() {
+			defer builds.Done()
+			names <- uniqueBuildOutputName("app")
+		}()
+	}
+	builds.Wait()
+	close(names)
+
+	seen := make(map[string]struct{}, count)
+	for name := range names {
+		if _, exists := seen[name]; exists {
+			t.Fatalf("uniqueBuildOutputName() repeated %q", name)
+		}
+		seen[name] = struct{}{}
+	}
+	if len(seen) != count {
+		t.Fatalf("uniqueBuildOutputName() produced %d names, want %d", len(seen), count)
+	}
+}
+
 // TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary verifies
 // overlapping publishers cannot expose a missing, malformed, or partial executable.
 func TestConcurrentAtomicBuildPublicationNeverLaunchesPartialBinary(t *testing.T) {

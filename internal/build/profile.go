@@ -8,12 +8,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/goforj/goforj/internal/compileprofile"
 )
 
 const profileToolCommand = "__forj_build_profile_exec"
+
+// atomicBuildOutputSequence avoids relying on host clock resolution for overlapping build identity.
+var atomicBuildOutputSequence atomic.Uint64
 
 type goBuildOptions struct {
 	extraEnv      []string
@@ -204,7 +208,7 @@ func uniqueBuildOutputName(base string) string {
 	if base == "" || base == "." || base == string(os.PathSeparator) {
 		base = "app"
 	}
-	return fmt.Sprintf(".%s.%d.%d.build", base, os.Getpid(), time.Now().UnixNano())
+	return fmt.Sprintf(".%s.%d.%d.build", base, os.Getpid(), atomicBuildOutputSequence.Add(1))
 }
 
 // buildReadyStampPath returns the watcher trigger written after a binary is fully published.
