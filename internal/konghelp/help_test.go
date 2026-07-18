@@ -175,7 +175,7 @@ func TestMaintainerHelpEnabledFromEnv(t *testing.T) {
 // TestFrameworkPreviewShowsCategoryActionCommands keeps the framework preview representative of GoForj commands.
 func TestFrameworkPreviewShowsCategoryActionCommands(t *testing.T) {
 	preview := Preview(string(project.HelpFormatFramework))
-	for _, want := range []string{"make:command", "make:migration", "cache:shell", "db:shell"} {
+	for _, want := range []string{"make:command", "make:migration", "cache:shell", "db:shell", "redis:shell"} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("expected framework preview to contain %q:\n%s", want, preview)
 		}

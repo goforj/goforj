@@ -185,6 +185,7 @@ type templateRenderConfig struct {
 	AppIsDefault                bool
 	HasNamedApps                bool
 	RuntimeApps                 []runtimeAppMetadata
+	RedisShell                  bool
 	LegacyEventPipelineField    bool
 	LegacyEventPipelineProvider bool
 }
@@ -372,6 +373,21 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return err
 	}
 	projectComponents = p.projectRenderComponents()
+	projectResources, err := resourceRenderValuesForPlanWithConsumers(
+		p.resources.plan,
+		projectComponents,
+		p.resources.serviceIntent,
+		p.resources.serviceConsumers,
+	)
+	if err != nil {
+		return err
+	}
+	redisShellEnabled := redisShellForApp(p.resources.plan, projectComponents, true, projectResources)
+	if input.renderAll && !redisShellEnabled {
+		if err := p.workspace.validateRedisShellGeneratedCleanupArtifacts(); err != nil {
+			return err
+		}
+	}
 	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
 	if !p.config.Render.Components.WebUI {
 		p.config.Render.StarterKit = project.StarterKitNone
@@ -540,6 +556,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/json_helpers.go.tmpl",
 				"internal/cmd/resources_cmd.go.tmpl",
+				"internal/cmd/command_exit_code.go.tmpl",
+				"internal/cmd/command_exit_code_test.go.tmpl",
 				"internal/monitoring/seed_cmd.go.tmpl",
 				"internal/monitoring/reset_cmd.go.tmpl",
 				"internal/monitoring/retention_cmd.go.tmpl",
@@ -596,6 +614,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/observability/cache_observer.go.tmpl",
 				"internal/observability/cache_observer_test.go.tmpl",
 				"internal/cmd/cache_shell_cmd.go.tmpl",
+				"internal/cmd/cache_shell_cmd_test.go.tmpl",
+			},
+		},
+		{
+			title:   "Redis Shell Command Rendering",
+			enabled: redisShellEnabled,
+			templates: []string{
+				"internal/cmd/redis_shell_cmd.go.tmpl",
+				"internal/cmd/redis_shell_cmd_test.go.tmpl",
 			},
 		},
 		{
@@ -640,6 +667,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Cache Components Cleanup",
 			enabled: input.renderAll && !projectComponents.Cache,
 			action:  p.workspace.cleanupDisabledCacheGeneratedFiles,
+		},
+		{
+			title:   "Redis Shell Command Cleanup",
+			enabled: input.renderAll && !redisShellEnabled,
+			action:  p.workspace.cleanupDisabledRedisShellGeneratedFiles,
 		},
 		{
 			title:   "Legacy File Cleanup",
@@ -971,6 +1003,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/database/connections_test.go.tmpl",
 				"internal/database/fingerprinting_test.go.tmpl",
 				"internal/cmd/db_shell_cmd.go.tmpl",
+				"internal/cmd/db_shell_cmd_test.go.tmpl",
 				"internal/makecmd/make_model_cmd.go.tmpl",
 				"internal/makecmd/make_model_mysql_integration_test.go.tmpl",
 				"internal/makecmd/make_model_postgres_integration_test.go.tmpl",
@@ -3455,9 +3488,18 @@ func (p *ProjectRenderer) prepareTemplateData(data any) (any, error) {
 			return nil, err
 		}
 		config.Resources = resources
+		config.RedisShell = redisShellForApp(p.resources.plan, config.Components, config.AppIsDefault, resources)
 		return config, nil
 	}
 	return value, nil
+}
+
+// redisShellForApp reports whether one App owns a Redis-capable resource or the project explicitly owns a local Redis service.
+func redisShellForApp(plan project.ResourcePlan, components project.Components, appIsDefault bool, resources resourceRenderValues) bool {
+	if resourcePlanIncludesDriver(plan, components, "redis") {
+		return true
+	}
+	return appIsDefault && resources.RedisLocalRequestedUnused
 }
 
 // projectRenderComponents derives shared capabilities and includes environment-owned database build support.

@@ -217,16 +217,17 @@ func (c *RunCmd) waitForRunProcess() error {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	return c.waitForRunProcessSignals(signals)
+}
 
+// waitForRunProcessSignals keeps signal delivery injectable while preserving the delegated App's final status.
+func (c *RunCmd) waitForRunProcessSignals(signals <-chan os.Signal) error {
 	var forwarded bool
 	for {
 		select {
 		case err := <-c.waitCh:
 			c.waitCh = nil
 			c.process = nil
-			if forwarded {
-				return nil
-			}
 			return err
 		case sig := <-signals:
 			if c.outputGate != nil {
@@ -273,6 +274,9 @@ func ChildExitCode(err error) (int, bool) {
 func exitCodeFromError(err error) (int, bool) {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return 128 + int(status.Signal()), true
+		}
 		return exitErr.ExitCode(), true
 	}
 	return 0, false

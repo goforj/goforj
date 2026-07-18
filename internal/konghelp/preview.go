@@ -74,6 +74,7 @@ type frameworkPreviewCLI struct {
 	MakeMigration frameworkPreviewCommand `cmd:"" name:"make:migration" help:"Create a new migration"`
 	CacheShell    frameworkPreviewCommand `cmd:"" name:"cache:shell" help:"Open a configured cache shell"`
 	DBShell       frameworkPreviewCommand `cmd:"" name:"db:shell" help:"Open a configured database shell"`
+	RedisShell    frameworkPreviewCommand `cmd:"" name:"redis:shell" help:"Open the configured Redis shell"`
 	Migrate       frameworkPreviewCommand `cmd:"" name:"migrate" help:"Run database migrations"`
 }
 

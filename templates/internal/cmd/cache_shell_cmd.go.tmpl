@@ -6,12 +6,17 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
 
 	"{{.GoModuleName}}/internal/runtime"
 
@@ -58,6 +63,22 @@ type cacheShellLaunch struct {
 	Env     map[string]string
 }
 
+// cacheShellProcessExit carries the exact child status to the command boundary.
+type cacheShellProcessExit struct {
+	Command string
+	Code    int
+}
+
+// Error describes the cache client failure without discarding its status.
+func (e *cacheShellProcessExit) Error() string {
+	return fmt.Sprintf("%s exited with code %d", e.Command, e.Code)
+}
+
+// ExitCode returns the exact status reported by the cache client process.
+func (e *cacheShellProcessExit) ExitCode() int {
+	return e.Code
+}
+
 // Signature defines CLI metadata for this command.
 func (*CacheShellCmd) Signature() string {
 	return `name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"preboot"`
@@ -89,6 +110,9 @@ func (c *CacheShellCmd) Run() error {
 	if err := c.applyInlineWrapperFlags(); err != nil {
 		return err
 	}
+	if err := c.applyNoColor(); err != nil {
+		return err
+	}
 	store, err := c.selectedStore()
 	if err != nil {
 		return err
@@ -107,6 +131,18 @@ func (c *CacheShellCmd) Run() error {
 	return runCacheShellLaunch(launch)
 }
 
+// applyNoColor keeps errors emitted by the generated main boundary ANSI-free.
+func (c *CacheShellCmd) applyNoColor() error {
+	if !c.NoColor {
+		return nil
+	}
+	if err := os.Setenv("NO_COLOR", "1"); err != nil {
+		return fmt.Errorf("disable cache shell color: %w", err)
+	}
+	return nil
+}
+
+// applyInlineWrapperFlags recovers wrapper flags that Kong leaves in passthrough arguments after positional input begins.
 func (c *CacheShellCmd) applyInlineWrapperFlags() error {
 	if len(c.RawArgs) == 0 {
 		return nil
@@ -173,6 +209,7 @@ func (c *CacheShellCmd) applyInlineWrapperFlags() error {
 	return nil
 }
 
+// selectedStore resolves explicit names before applying interactive and default-resource selection rules.
 func (c *CacheShellCmd) selectedStore() (cacheShellStore, error) {
 	name := strings.TrimSpace(c.Store)
 	if name == "" {
@@ -188,33 +225,48 @@ func (c *CacheShellCmd) selectedStore() (cacheShellStore, error) {
 	if c.Select && c.NoSelect {
 		return cacheShellStore{}, fmt.Errorf("--select and --no-select cannot be used together")
 	}
+	return chooseCacheShellStore(c, stores, cacheShellInteractive())
+}
+
+// chooseCacheShellStore applies the default-resource contract independently from terminal detection.
+func chooseCacheShellStore(c *CacheShellCmd, stores []cacheShellStore, interactive bool) (cacheShellStore, error) {
 	shellable := cacheShellableStores(stores)
 	if len(shellable) == 0 {
 		return cacheShellStore{}, cacheShellNoShellableStoresError(stores)
 	}
-	if shouldSelectCacheShellStore(c, shellable) {
+	if shouldSelectCacheShellStore(c, shellable, interactive) {
 		return selectCacheShellStore(shellable)
 	}
-	for _, store := range stores {
-		if store.IsDefault && store.localClient() != "" {
-			return store, nil
-		}
-	}
-	if len(shellable) == 1 && !c.NoSelect {
+	if interactive && !c.NoSelect && len(shellable) == 1 {
 		return shellable[0], nil
 	}
 	for _, store := range stores {
-		if store.IsDefault {
-			return cacheShellStore{}, fmt.Errorf("cache store %s uses driver %q; pass a Redis cache store name", store.Name, store.Driver)
+		if !store.IsDefault {
+			continue
 		}
+		if store.localClient() == "" {
+			return cacheShellStore{}, cacheShellUnsupportedStoreError(store)
+		}
+		return store, nil
 	}
 	return shellable[0], nil
 }
 
+// cacheShellUnsupportedStoreError names the selected App resource and its non-shellable driver.
+func cacheShellUnsupportedStoreError(store cacheShellStore) error {
+	driver := strings.TrimSpace(store.Driver)
+	if driver == "" {
+		driver = "memory"
+	}
+	return fmt.Errorf("cache store %s uses driver %q; no external shell is available", store.Name, driver)
+}
+
+// clientPassthroughArgs removes the optional store selector and delimiter from redis-cli arguments.
 func (c *CacheShellCmd) clientPassthroughArgs() []string {
 	return c.parsedArgs().ClientArgs
 }
 
+// parsedArgs separates the optional positional store name from client passthrough arguments.
 func (c *CacheShellCmd) parsedArgs() cacheShellParsedArgs {
 	raw := append([]string(nil), c.RawArgs...)
 	out := cacheShellParsedArgs{}
@@ -229,11 +281,12 @@ func (c *CacheShellCmd) parsedArgs() cacheShellParsedArgs {
 	return out
 }
 
-func shouldSelectCacheShellStore(c *CacheShellCmd, stores []cacheShellStore) bool {
+// shouldSelectCacheShellStore keeps selectors out of scripts while honoring explicit interactive selection.
+func shouldSelectCacheShellStore(c *CacheShellCmd, stores []cacheShellStore, interactive bool) bool {
 	if c.NoSelect {
 		return false
 	}
-	if !cacheShellInteractive() {
+	if !interactive {
 		return false
 	}
 	if c.Select {
@@ -242,6 +295,7 @@ func shouldSelectCacheShellStore(c *CacheShellCmd, stores []cacheShellStore) boo
 	return len(stores) > 1
 }
 
+// cacheShellStores projects runtime discovery into the connection fields required by external clients.
 func cacheShellStores() []cacheShellStore {
 	instances := runtime.DiscoverCacheInstances()
 	out := make([]cacheShellStore, 0, len(instances))
@@ -264,6 +318,7 @@ func cacheShellStores() []cacheShellStore {
 	return out
 }
 
+// cacheShellableStores excludes in-process drivers that have no external client.
 func cacheShellableStores(stores []cacheShellStore) []cacheShellStore {
 	out := make([]cacheShellStore, 0, len(stores))
 	for _, store := range stores {
@@ -274,6 +329,7 @@ func cacheShellableStores(stores []cacheShellStore) []cacheShellStore {
 	return out
 }
 
+// cacheShellNoShellableStoresError reports configured drivers and a concrete Redis enablement path.
 func cacheShellNoShellableStoresError(stores []cacheShellStore) error {
 	configured := make([]string, 0, len(stores))
 	for _, store := range stores {
@@ -292,12 +348,13 @@ func cacheShellNoShellableStoresError(stores []cacheShellStore) error {
 	)
 }
 
+// findCacheShellStore matches canonical CLI names while preserving the selected resource's configuration.
 func findCacheShellStore(stores []cacheShellStore, name string) (cacheShellStore, error) {
 	normalized := normalizeCacheShellStoreName(name)
 	for _, store := range stores {
 		if normalizeCacheShellStoreName(store.Name) == normalized {
 			if store.localClient() == "" {
-				return cacheShellStore{}, fmt.Errorf("cache store %s uses driver %q; supported shell driver: redis", store.Name, store.Driver)
+				return cacheShellStore{}, cacheShellUnsupportedStoreError(store)
 			}
 			return store, nil
 		}
@@ -309,6 +366,7 @@ func findCacheShellStore(stores []cacheShellStore, name string) (cacheShellStore
 	return cacheShellStore{}, fmt.Errorf("unknown cache store %q; available: %s", name, strings.Join(available, ", "))
 }
 
+// selectCacheShellStore presents only shellable resources and accepts either an index or canonical name.
 func selectCacheShellStore(stores []cacheShellStore) (cacheShellStore, error) {
 	fmt.Println("Select cache store")
 	fmt.Println()
@@ -346,6 +404,7 @@ func selectCacheShellStore(stores []cacheShellStore) (cacheShellStore, error) {
 	return findCacheShellStore(stores, choice)
 }
 
+// resolveLaunch falls back to Compose only when the selected local client is unavailable.
 func (c *CacheShellCmd) resolveLaunch(store cacheShellStore) (cacheShellLaunch, error) {
 	switch c.Method {
 	case "", "auto":
@@ -363,7 +422,7 @@ func (c *CacheShellCmd) resolveLaunch(store cacheShellStore) (cacheShellLaunch, 
 			}
 			return compose, nil
 		}
-		return cacheShellLaunch{}, fmt.Errorf("%s client not found and docker compose service %s is not available", store.localClient(), store.composeService())
+		return cacheShellLaunch{}, fmt.Errorf("%s client not found; docker compose fallback unavailable: %w", store.localClient(), composeErr)
 	case "local":
 		return c.localLaunch(store, !c.Print)
 	case "compose":
@@ -375,6 +434,7 @@ func (c *CacheShellCmd) resolveLaunch(store cacheShellStore) (cacheShellLaunch, 
 
 var errCacheShellClientMissing = errors.New("cache shell client missing")
 
+// localLaunch keeps the selected store's configured endpoint when redis-cli runs on the host.
 func (c *CacheShellCmd) localLaunch(store cacheShellStore, requireClient bool) (cacheShellLaunch, error) {
 	client := store.localClient()
 	if client == "" {
@@ -397,6 +457,7 @@ func (c *CacheShellCmd) localLaunch(store cacheShellStore, requireClient bool) (
 	}, nil
 }
 
+// composeLaunch fixes redis-cli to the generated service after proving that it represents the selected resource.
 func (c *CacheShellCmd) composeLaunch(store cacheShellStore) (cacheShellLaunch, error) {
 	service := store.composeService()
 	if service == "" {
@@ -405,9 +466,12 @@ func (c *CacheShellCmd) composeLaunch(store cacheShellStore) (cacheShellLaunch, 
 	if !cacheShellComposeServiceExists(service) {
 		return cacheShellLaunch{}, fmt.Errorf("docker compose service %s is not configured", service)
 	}
+	if err := store.validateComposeTarget(service); err != nil {
+		return cacheShellLaunch{}, err
+	}
 	if !c.Print {
-		if _, err := exec.LookPath("docker"); err != nil {
-			return cacheShellLaunch{}, fmt.Errorf("docker client not found")
+		if err := cacheShellCheckDockerCompose(); err != nil {
+			return cacheShellLaunch{}, err
 		}
 	}
 	args, envVars, err := c.clientArgs(store, true)
@@ -415,8 +479,11 @@ func (c *CacheShellCmd) composeLaunch(store cacheShellStore) (cacheShellLaunch, 
 		return cacheShellLaunch{}, err
 	}
 	dockerArgs := []string{"compose", "exec"}
-	for key, value := range envVars {
-		dockerArgs = append(dockerArgs, "-e", key+"="+value)
+	if cacheShellComposeNeedsNoTTY(c.Exec, c.clientPassthroughArgs(), cacheShellInteractive()) {
+		dockerArgs = append(dockerArgs, "-T")
+	}
+	for _, key := range cacheShellSortedEnvKeys(envVars) {
+		dockerArgs = append(dockerArgs, "-e", key)
 	}
 	dockerArgs = append(dockerArgs, service, store.localClient())
 	dockerArgs = append(dockerArgs, args...)
@@ -424,10 +491,69 @@ func (c *CacheShellCmd) composeLaunch(store cacheShellStore) (cacheShellLaunch, 
 		Method:  "compose",
 		Command: "docker",
 		Args:    dockerArgs,
-		Env:     nil,
+		Env:     envVars,
 	}, nil
 }
 
+// cacheShellComposeNeedsNoTTY keeps interactive Compose sessions attached while disabling pseudo-TTY allocation for scripts and one-shot Redis commands.
+func cacheShellComposeNeedsNoTTY(execValue string, args []string, interactive bool) bool {
+	return strings.TrimSpace(execValue) != "" || !interactive || cacheShellRedisArgsAreOneShot(args)
+}
+
+// cacheShellRedisArgsAreOneShot recognizes redis-cli commands and operation modes after connection and formatting flags.
+func cacheShellRedisArgsAreOneShot(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+		lower := strings.ToLower(arg)
+		if cacheShellRedisModeFlag(lower) {
+			return true
+		}
+		if cacheShellRedisOptionConsumesNext(lower) {
+			i++
+			continue
+		}
+		if arg == "--" {
+			return i+1 < len(args)
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// cacheShellRedisModeFlag identifies redis-cli modes that execute work without an ordinary command token.
+func cacheShellRedisModeFlag(arg string) bool {
+	for _, flag := range []string{
+		"-x", "--bigkeys", "--cluster", "--eval", "--functions-rdb", "--help", "--hotkeys",
+		"--intrinsic-latency", "--latency", "--latency-dist", "--latency-history", "--lru-test",
+		"--memkeys", "--pipe", "--rdb", "--replica", "--scan", "--slave", "--stat", "--version",
+	} {
+		if arg == flag || strings.HasPrefix(arg, flag+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// cacheShellRedisOptionConsumesNext identifies redis-cli flags whose following token is configuration rather than a Redis command.
+func cacheShellRedisOptionConsumesNext(arg string) bool {
+	switch arg {
+	case "-a", "-h", "-i", "-n", "-p", "-r", "-s", "-u",
+		"--cacert", "--cacertdir", "--cert", "--count", "--dbnum", "--delimiter", "--key",
+		"--pass", "--password", "--pattern", "--quoted-pattern", "--resp", "--sni",
+		"--tls-ciphers", "--tls-ciphersuites", "--uri", "--user":
+		return true
+	default:
+		return false
+	}
+}
+
+// clientArgs dispatches client construction through the selected store driver.
 func (c *CacheShellCmd) clientArgs(store cacheShellStore, compose bool) ([]string, map[string]string, error) {
 	switch store.Driver {
 	case "redis":
@@ -437,6 +563,7 @@ func (c *CacheShellCmd) clientArgs(store cacheShellStore, compose bool) ([]strin
 	}
 }
 
+// redisArgs builds direct redis-cli arguments while keeping authentication out of argv.
 func (c *CacheShellCmd) redisArgs(store cacheShellStore, compose bool) ([]string, map[string]string, error) {
 	host, port := store.redisEndpoint(compose)
 	if host == "" {
@@ -458,21 +585,100 @@ func (c *CacheShellCmd) redisArgs(store cacheShellStore, compose bool) ([]string
 			args = append(args, "--insecure")
 		}
 	}
-	if c.Exec != "" {
-		args = append(args, strings.Fields(c.Exec)...)
+	if strings.TrimSpace(c.Exec) != "" {
+		execArgs, err := parseCacheShellExec(c.Exec)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse --exec: %w", err)
+		}
+		args = append(args, execArgs...)
 	}
 	args = append(args, c.clientPassthroughArgs()...)
-	envVars := map[string]string{}
-	if store.Password != "" {
-		envVars["REDISCLI_AUTH"] = store.Password
-	}
+	envVars := map[string]string{"REDISCLI_AUTH": store.Password}
 	return args, envVars, nil
 }
 
+// parseCacheShellExec tokenizes single-quoted, double-quoted, and backslash-escaped values without evaluating shell expansions.
+func parseCacheShellExec(value string) ([]string, error) {
+	args := []string{}
+	var token strings.Builder
+	var quote rune
+	escaped := false
+	tokenStarted := false
+
+	for _, char := range value {
+		if escaped {
+			token.WriteRune(char)
+			escaped = false
+			tokenStarted = true
+			continue
+		}
+		if quote == '\'' {
+			if char == '\'' {
+				quote = 0
+			} else {
+				token.WriteRune(char)
+			}
+			tokenStarted = true
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			tokenStarted = true
+			continue
+		}
+		if quote == '"' {
+			if char == '"' {
+				quote = 0
+			} else {
+				token.WriteRune(char)
+			}
+			tokenStarted = true
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+			tokenStarted = true
+		default:
+			if unicode.IsSpace(char) {
+				if tokenStarted {
+					args = append(args, token.String())
+					token.Reset()
+					tokenStarted = false
+				}
+				continue
+			}
+			token.WriteRune(char)
+			tokenStarted = true
+		}
+	}
+	if escaped {
+		return nil, fmt.Errorf("command ends with an incomplete escape")
+	}
+	if quote != 0 {
+		kind := "single"
+		if quote == '"' {
+			kind = "double"
+		}
+		return nil, fmt.Errorf("command has an unterminated %s quote", kind)
+	}
+	if tokenStarted {
+		args = append(args, token.String())
+	}
+	if len(args) == 0 {
+		return nil, fmt.Errorf("command is empty")
+	}
+	return args, nil
+}
+
+// launchLabel describes the chosen method without including endpoint credentials.
 func (c *CacheShellCmd) launchLabel(launch cacheShellLaunch) string {
 	if launch.Method == "compose" {
 		service := ""
 		for i := 0; i < len(launch.Args); i++ {
+			if launch.Args[i] == "-T" {
+				continue
+			}
 			if launch.Args[i] == "-e" {
 				i++
 				continue
@@ -490,15 +696,13 @@ func (c *CacheShellCmd) launchLabel(launch cacheShellLaunch) string {
 	return "local " + launch.Command
 }
 
+// runCacheShellLaunch attaches terminal streams and delegates signal policy to an injectable wait loop.
 func runCacheShellLaunch(launch cacheShellLaunch) error {
 	cmd := exec.Command(launch.Command, launch.Args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	for key, value := range launch.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
+	cmd.Env = cacheShellProcessEnv(os.Environ(), launch.Env)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -511,48 +715,90 @@ func runCacheShellLaunch(launch cacheShellLaunch) error {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	return waitCacheShellProcess(
+		launch.Command,
+		waitCh,
+		signals,
+		cacheShellDelegatedInterruptNeedsForwarding(),
+		cmd.Process.Signal,
+	)
+}
 
-	var interrupted bool
-	interrupts := 0
+// waitCacheShellProcess forwards wrapper-targeted interrupts once while avoiding duplicate terminal-group delivery.
+func waitCacheShellProcess(
+	command string,
+	waitCh <-chan error,
+	signals <-chan os.Signal,
+	forwardInterrupt bool,
+	signalProcess func(os.Signal) error,
+) error {
+	interruptForwarded := false
 	for {
 		select {
 		case err := <-waitCh:
-			if interrupted {
-				return nil
-			}
 			if err == nil {
 				return nil
 			}
-			return cacheShellProcessError(launch.Command, err)
-		case sig := <-signals:
-			interrupted = true
-			interrupts++
-			if cmd.Process == nil {
-				continue
+			return cacheShellProcessError(command, err)
+		case received := <-signals:
+			if received == os.Interrupt {
+				if !forwardInterrupt || interruptForwarded {
+					continue
+				}
+				interruptForwarded = true
 			}
-			if interrupts > 1 {
-				_ = cmd.Process.Kill()
-				continue
-			}
-			if sig == os.Interrupt {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-				continue
-			}
-			_ = cmd.Process.Signal(sig)
+			_ = signalProcess(received)
 		}
 	}
 }
 
+// cacheShellDelegatedInterruptNeedsForwarding detects source delegation, whose wrapper signals only the App PID.
+func cacheShellDelegatedInterruptNeedsForwarding() bool {
+	return strings.TrimSpace(os.Getenv("FORJ_COMMAND_PREFIX")) != ""
+}
+
+// cacheShellProcessError preserves ordinary and signal-derived child status for the App boundary.
 func cacheShellProcessError(command string, err error) error {
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return fmt.Errorf("%s exited with code %d", command, exitErr.ExitCode())
+			code := exitErr.ExitCode()
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				code = 128 + int(status.Signal())
+			}
+			return &cacheShellProcessExit{Command: command, Code: code}
 		}
 		return err
 	}
 	return nil
 }
 
+// cacheShellProcessEnv replaces inherited values so stale credentials cannot win by position.
+func cacheShellProcessEnv(inherited []string, overrides map[string]string) []string {
+	out := make([]string, 0, len(inherited)+len(overrides))
+	for _, assignment := range inherited {
+		key, _, _ := strings.Cut(assignment, "=")
+		if _, replaced := overrides[key]; replaced {
+			continue
+		}
+		out = append(out, assignment)
+	}
+	for _, key := range cacheShellSortedEnvKeys(overrides) {
+		out = append(out, key+"="+overrides[key])
+	}
+	return out
+}
+
+// cacheShellSortedEnvKeys keeps argv and diagnostic output deterministic.
+func cacheShellSortedEnvKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// localClient maps external store drivers to their native command-line clients.
 func (s cacheShellStore) localClient() string {
 	switch s.Driver {
 	case "redis":
@@ -562,6 +808,7 @@ func (s cacheShellStore) localClient() string {
 	}
 }
 
+// composeService maps only generated local infrastructure to its stable service name.
 func (s cacheShellStore) composeService() string {
 	switch s.Driver {
 	case "redis":
@@ -571,18 +818,32 @@ func (s cacheShellStore) composeService() string {
 	}
 }
 
+// validateComposeTarget prevents fallback from changing the selected cache resource identity.
+func (s cacheShellStore) validateComposeTarget(service string) error {
+	host, _ := s.redisEndpoint(false)
+	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	if normalized == "" {
+		if address := strings.TrimSpace(s.Addr); address != "" {
+			return fmt.Errorf("cache store %s has malformed Redis address %q and is not mapped to docker compose service %s", s.Name, maskCacheShellValue(address), service)
+		}
+		return fmt.Errorf("cache store %s has no Redis host and is not mapped to docker compose service %s", s.Name, service)
+	}
+	if normalized == strings.ToLower(service) || normalized == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(normalized); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("cache store %s targets %s and is not mapped to docker compose service %s", s.Name, maskCacheShellValue(host), service)
+}
+
+// redisEndpoint preserves configured host addressing locally and uses container-loopback addressing in Compose.
 func (s cacheShellStore) redisEndpoint(compose bool) (string, string) {
 	if compose {
 		return "127.0.0.1", "6379"
 	}
-	if strings.Contains(s.Addr, ":") {
-		host, port, ok := strings.Cut(s.Addr, ":")
-		if ok {
-			return strings.TrimSpace(host), strings.TrimSpace(port)
-		}
-	}
-	if strings.TrimSpace(s.Addr) != "" {
-		return strings.TrimSpace(s.Addr), "6379"
+	if address := strings.TrimSpace(s.Addr); address != "" {
+		return splitCacheShellRedisAddress(address)
 	}
 	host := strings.TrimSpace(s.Host)
 	if host == "" {
@@ -601,6 +862,22 @@ func (s cacheShellStore) redisEndpoint(compose bool) (string, string) {
 	return host, port
 }
 
+// splitCacheShellRedisAddress preserves IPv4, hostnames, and bracketed IPv6 endpoints.
+func splitCacheShellRedisAddress(address string) (string, string) {
+	if host, port, err := net.SplitHostPort(address); err == nil {
+		return host, port
+	}
+	if net.ParseIP(strings.Trim(address, "[]")) != nil {
+		return strings.Trim(address, "[]"), "6379"
+	}
+	if strings.Count(address, ":") == 1 {
+		host, port, _ := strings.Cut(address, ":")
+		return strings.TrimSpace(host), strings.TrimSpace(port)
+	}
+	return address, "6379"
+}
+
+// summary renders a selector-safe endpoint description without exposing credentials.
 func (s cacheShellStore) summary() string {
 	switch s.Driver {
 	case "redis":
@@ -609,11 +886,12 @@ func (s cacheShellStore) summary() string {
 		if db == "" {
 			db = "0"
 		}
-		return host + ":" + port + "/" + db
+		return maskCacheShellValue(host+":"+port) + "/" + db
 	}
 	return "-"
 }
 
+// cacheShellInteractive requires both input and output terminals before enabling selectors or Compose TTY allocation.
 func cacheShellInteractive() bool {
 	stdin, err := os.Stdin.Stat()
 	if err != nil || stdin.Mode()&os.ModeCharDevice == 0 {
@@ -623,36 +901,49 @@ func cacheShellInteractive() bool {
 	return err == nil && stdout.Mode()&os.ModeCharDevice != 0
 }
 
+// cacheShellEnv mirrors generated cache scoping and shared Redis fallbacks for one discovered instance.
 func cacheShellEnv(name, suffix string) string {
+	if suffix == "HOST" {
+		return strings.TrimSpace(env.Get("REDIS_HOST", ""))
+	}
+	if suffix == "PORT" {
+		return strings.TrimSpace(env.Get("REDIS_PORT", ""))
+	}
 	scope := env.WithPrefix("CACHE")
+	selected := scope
 	if name != "" && name != "default" {
-		child := scope.Child(str.Of(name).Snake().ToUpper().String())
-		if value := strings.TrimSpace(child.Get(suffix, "")); value != "" {
+		selected = scope.Child(str.Of(name).Snake().ToUpper().String())
+	}
+	if suffix == "DB" {
+		db := selected.GetInt("DB", env.Get("REDIS_DB", "0"))
+		if db < 0 {
+			db = 0
+		}
+		return strconv.Itoa(db)
+	}
+	value := selected.Get(suffix, "")
+	if suffix == "PASSWORD" {
+		if value != "" {
 			return value
 		}
-	}
-	if value := strings.TrimSpace(scope.Get(suffix, "")); value != "" {
+	} else if value = strings.TrimSpace(value); value != "" {
 		return value
 	}
 	switch suffix {
-	case "HOST":
-		return strings.TrimSpace(env.Get("REDIS_HOST", ""))
-	case "PORT":
-		return strings.TrimSpace(env.Get("REDIS_PORT", ""))
 	case "PASSWORD":
-		return strings.TrimSpace(env.Get("REDIS_PASSWORD", ""))
-	case "DB":
-		return strings.TrimSpace(env.Get("REDIS_DB", ""))
+		return env.Get("REDIS_PASSWORD", "")
 	default:
 		return ""
 	}
 }
 
+// cacheShellBoolEnv accepts the same common truthy spellings used by generated environment configuration.
 func cacheShellBoolEnv(name, suffix string) bool {
 	value := str.Of(cacheShellEnv(name, suffix)).ToLower().Trim().String()
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
+// cacheShellEnvKey formats actionable diagnostics with generated snake-case environment keys.
 func cacheShellEnvKey(name, suffix string) string {
 	if name == "" || name == "default" {
 		return "CACHE_" + suffix
@@ -660,14 +951,30 @@ func cacheShellEnvKey(name, suffix string) string {
 	return "CACHE_" + str.Of(name).Snake().ToUpper().String() + "_" + suffix
 }
 
+// normalizeCacheShellStoreName presents discovered snake-case names through the documented kebab-case CLI contract.
 func normalizeCacheShellStoreName(name string) string {
-	value := str.Of(name).ToLower().Trim().String()
+	value := str.Of(name).Trim().Kebab().ToLower().String()
 	if value == "" {
 		return "default"
 	}
 	return value
 }
 
+// cacheShellCheckDockerCompose verifies the Compose plugin before taking over the terminal.
+func cacheShellCheckDockerCompose() error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("docker client not found: %w", err)
+	}
+	check := exec.Command("docker", "compose", "version")
+	check.Stdout = io.Discard
+	check.Stderr = io.Discard
+	if err := check.Run(); err != nil {
+		return fmt.Errorf("docker compose command is not available: %w", err)
+	}
+	return nil
+}
+
+// cacheShellComposeServiceExists limits fallback to the generated Compose file in the App root.
 func cacheShellComposeServiceExists(service string) bool {
 	if service == "" {
 		return false
@@ -676,34 +983,90 @@ func cacheShellComposeServiceExists(service string) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	return cacheShellComposeDefinesService(data, service)
+}
+
+// cacheShellComposeDefinesService ignores same-named volumes and other nested YAML keys.
+func cacheShellComposeDefinesService(source []byte, service string) bool {
+	inServices := false
+	for _, line := range strings.Split(string(source), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(line, "  ") && trimmed == service+":" {
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent == 0 {
+			inServices = trimmed == "services:"
+			continue
+		}
+		if inServices && indent == 2 && trimmed == service+":" {
 			return true
 		}
 	}
 	return false
 }
 
+// formatCacheShellCommand renders a shell-readable diagnostic without exposing Redis credentials.
 func formatCacheShellCommand(launch cacheShellLaunch, mask bool) string {
 	parts := []string{}
-	for key, value := range launch.Env {
-		if mask {
+	for _, key := range cacheShellSortedEnvKeys(launch.Env) {
+		value := launch.Env[key]
+		if mask && value != "" {
 			value = "***"
 		}
 		parts = append(parts, key+"="+shellQuoteCacheShell(value))
 	}
 	parts = append(parts, launch.Command)
-	for _, arg := range launch.Args {
-		if mask && strings.Contains(arg, "=") && cacheShellLooksSecret(arg) {
-			key, _, _ := strings.Cut(arg, "=")
-			arg = key + "=***"
-		}
+	args := append([]string(nil), launch.Args...)
+	if mask {
+		args = maskCacheShellArgs(args)
+	}
+	for _, arg := range args {
 		parts = append(parts, shellQuoteCacheShell(arg))
 	}
 	return strings.Join(parts, " ")
 }
 
+// maskCacheShellArgs redacts redis-cli credential flags, AUTH commands, assignments, and URLs.
+func maskCacheShellArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	maskCommandRemainder := false
+	for i := 0; i < len(out); i++ {
+		if maskCommandRemainder {
+			out[i] = "***"
+			continue
+		}
+		lower := strings.ToLower(out[i])
+		if lower == "auth" || lower == "requirepass" || lower == "masterauth" {
+			maskCommandRemainder = true
+			continue
+		}
+		switch lower {
+		case "-a", "--pass", "--password", "--auth":
+			if i+1 < len(out) {
+				out[i+1] = "***"
+				i++
+			}
+			continue
+		}
+		for _, prefix := range []string{"--pass=", "--password=", "--auth=", "rediscli_auth="} {
+			if strings.HasPrefix(lower, prefix) {
+				key, _, _ := strings.Cut(out[i], "=")
+				out[i] = key + "=***"
+				lower = strings.ToLower(out[i])
+				break
+			}
+		}
+		if strings.HasPrefix(lower, "-a") && len(out[i]) > 2 {
+			out[i] = "-a***"
+			continue
+		}
+		out[i] = maskCacheShellValue(out[i])
+	}
+	return out
+}
+
+// shellQuoteCacheShell makes printed argv unambiguous without participating in execution.
 func shellQuoteCacheShell(value string) string {
 	if value == "" {
 		return "''"
@@ -716,7 +1079,88 @@ func shellQuoteCacheShell(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func cacheShellLooksSecret(value string) bool {
-	lower := strings.ToLower(value)
-	return strings.Contains(lower, "password") || strings.Contains(lower, "passwd") || strings.Contains(lower, "pwd") || strings.Contains(lower, "auth")
+// maskCacheShellValue removes URL credentials and explicit secret assignments from diagnostics.
+func maskCacheShellValue(value string) string {
+	value = maskCacheShellRawSecrets(value)
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		changed := false
+		if parsed.User != nil {
+			if _, ok := parsed.User.Password(); ok {
+				parsed.User = url.UserPassword(parsed.User.Username(), "***")
+				changed = true
+			}
+		}
+		query := parsed.Query()
+		for key := range query {
+			if cacheShellSecretKey(key) {
+				query.Set(key, "***")
+				changed = true
+			}
+		}
+		if changed {
+			parsed.RawQuery = query.Encode()
+			value = parsed.String()
+		}
+	}
+	if key, _, ok := strings.Cut(value, "="); ok && cacheShellSecretKey(key) {
+		return key + "=***"
+	}
+	return value
+}
+
+// maskCacheShellRawSecrets conservatively redacts user-info and secret query assignments even when URL parsing fails.
+func maskCacheShellRawSecrets(value string) string {
+	value = maskCacheShellRawUserInfo(value)
+	queryStart := strings.IndexByte(value, '?')
+	if queryStart < 0 {
+		return value
+	}
+	queryEnd := strings.IndexByte(value[queryStart+1:], '#')
+	if queryEnd < 0 {
+		queryEnd = len(value)
+	} else {
+		queryEnd += queryStart + 1
+	}
+	parts := strings.Split(value[queryStart+1:queryEnd], "&")
+	for i, part := range parts {
+		key, _, ok := strings.Cut(part, "=")
+		decodedKey, err := url.QueryUnescape(key)
+		if err != nil {
+			decodedKey = key
+		}
+		if ok && cacheShellSecretKey(decodedKey) {
+			parts[i] = key + "=***"
+		}
+	}
+	return value[:queryStart+1] + strings.Join(parts, "&") + value[queryEnd:]
+}
+
+// maskCacheShellRawUserInfo removes a password-shaped authority segment without requiring a valid URL.
+func maskCacheShellRawUserInfo(value string) string {
+	authorityStart := 0
+	if scheme := strings.Index(value, "://"); scheme >= 0 {
+		authorityStart = scheme + 3
+	}
+	authorityEnd := len(value)
+	if boundary := strings.IndexAny(value[authorityStart:], "/?#"); boundary >= 0 {
+		authorityEnd = authorityStart + boundary
+	}
+	authority := value[authorityStart:authorityEnd]
+	at := strings.LastIndexByte(authority, '@')
+	if at < 0 {
+		return value
+	}
+	colon := strings.IndexByte(authority[:at], ':')
+	if colon < 0 {
+		return value
+	}
+	secretStart := authorityStart + colon + 1
+	secretEnd := authorityStart + at
+	return value[:secretStart] + "***" + value[secretEnd:]
+}
+
+// cacheShellSecretKey identifies values that must never appear in diagnostic output.
+func cacheShellSecretKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(lower, "password") || strings.Contains(lower, "passwd") || strings.Contains(lower, "pwd") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "auth")
 }

@@ -29,36 +29,37 @@ func normalizeQueueDriver(value string) string {
 
 // resourceRenderValues is the template-facing projection of a validated transient resource plan.
 type resourceRenderValues struct {
-	DatabaseDriver           string
-	DatabaseSupportedDrivers string
-	DatabaseAvailableDrivers string
-	DatabaseMySQL            bool
-	DatabasePostgres         bool
-	DatabaseSQLite           bool
-	DatabaseExternal         bool
-	CacheDriver              string
-	CacheSupportedDrivers    string
-	CacheAvailableDrivers    string
-	QueueDriver              string
-	QueueSupportedDrivers    string
-	QueueAvailableDrivers    string
-	EventsDriver             string
-	EventsSupportedDrivers   string
-	EventsAvailableDrivers   string
-	StorageDriver            string
-	StorageSupportedDrivers  string
-	StorageAvailableDrivers  string
-	StoragePublicDriver      string
-	StorageFaviconsDriver    string
-	MailDriver               string
-	MailSupportedDrivers     string
-	MailAvailableDrivers     string
-	CacheSettingsDriver      string
-	CacheSessionsDriver      string
-	RedisActive              bool
-	RedisSupported           bool
-	RedisLocal               bool
-	RedisExternal            bool
+	DatabaseDriver            string
+	DatabaseSupportedDrivers  string
+	DatabaseAvailableDrivers  string
+	DatabaseMySQL             bool
+	DatabasePostgres          bool
+	DatabaseSQLite            bool
+	DatabaseExternal          bool
+	CacheDriver               string
+	CacheSupportedDrivers     string
+	CacheAvailableDrivers     string
+	QueueDriver               string
+	QueueSupportedDrivers     string
+	QueueAvailableDrivers     string
+	EventsDriver              string
+	EventsSupportedDrivers    string
+	EventsAvailableDrivers    string
+	StorageDriver             string
+	StorageSupportedDrivers   string
+	StorageAvailableDrivers   string
+	StoragePublicDriver       string
+	StorageFaviconsDriver     string
+	MailDriver                string
+	MailSupportedDrivers      string
+	MailAvailableDrivers      string
+	CacheSettingsDriver       string
+	CacheSessionsDriver       string
+	RedisActive               bool
+	RedisSupported            bool
+	RedisLocal                bool
+	RedisLocalRequestedUnused bool
+	RedisExternal             bool
 }
 
 // prepareResourceRenderState resolves one validated resource snapshot for every renderer entry point.
@@ -377,8 +378,11 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 	values.RedisSupported = resourcePlanIncludesDriver(plan, components, "redis")
 	for _, requirement := range servicePlan.RequirementsFor(project.ServiceRedis) {
 		switch requirement.State {
-		case project.ServiceStateActiveLocal, project.ServiceStateLocalRequestedUnused:
+		case project.ServiceStateActiveLocal:
 			values.RedisLocal = true
+		case project.ServiceStateLocalRequestedUnused:
+			values.RedisLocal = true
+			values.RedisLocalRequestedUnused = true
 		case project.ServiceStateExternalRequired:
 			if requirement.EndpointAffinity == "" {
 				values.RedisExternal = true

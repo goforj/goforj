@@ -161,11 +161,13 @@ To use a driver that is not built in, add it to `CACHE_SUPPORTED_DRIVERS`, run `
 
 Generated Apps include `cache:shell`, with the short alias `cache`, for opening a shell against configured Redis cache stores.
 
-Open the default Redis cache, or the only configured Redis cache when the default cache is not shellable:
+Open the default Redis cache:
 
 ```bash
 forj cache
 ```
+
+Without an explicit name, non-interactive use always selects the default cache. If that cache is not Redis-backed, the command fails even when exactly one named Redis cache exists. Name that cache explicitly in scripts. In an interactive terminal, cache selection may choose a shellable named Redis cache.
 
 Use the canonical command when you want the full name:
 
@@ -180,7 +182,7 @@ forj cache sessions
 forj cache --store sessions
 ```
 
-By default, `forj cache` tries `redis-cli` first. If the local client is missing, it falls back to the generated Docker Compose `redis` service when one exists.
+By default, `forj cache` tries `redis-cli` first. If the local client is missing, it falls back to `docker compose exec` only when the selected cache endpoint maps to the generated local `redis` service. It refuses to redirect an external cache endpoint to local Compose.
 
 Choose the method explicitly:
 

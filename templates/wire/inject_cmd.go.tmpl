@@ -43,6 +43,9 @@ var cmdSet = wire.NewSet(
 	{{- if .Components.HasDatabase }}
 	cmd.NewDBShellCmd,
 	{{- end }}
+	{{- if .RedisShell }}
+	cmd.NewRedisShellCmd,
+	{{- end }}
 	{{- if or .Components.WebAPI .Components.WebUI }}
 	cmd.NewHealthCmd,
 	{{- end }}
