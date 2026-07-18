@@ -246,7 +246,7 @@ func primitiveTemplateContracts() []primitiveTemplateContract {
 			key: project.ComponentEvents,
 			appMarkers: []primitiveTemplateMarker{
 				{path: "wire/app.go.tmpl", token: "func (a *App) Events() *events.Manager"},
-				{path: "app/root_cmd.go.tmpl", token: "GeneratedEventCommands"},
+				{path: "app/root_cmd.go.tmpl", token: "MakeEventCmd makecmd.EventCmd"},
 				{path: "wire/inject_managers.go.tmpl", token: "func provideEventManager("},
 				{path: "wire/inject_http.go.tmpl", token: "for _, check := range events.ReadinessChecks()"},
 			},
@@ -381,10 +381,12 @@ func assertProjectedTemplateMarker(t *testing.T, marker primitiveTemplateMarker,
 func assertPrimitiveAppMappings(t *testing.T, renderer *ProjectRenderer, key project.ComponentKey, app project.App, want bool) {
 	t.Helper()
 	var frameworkPath string
+	frameworkWant := want
 	var ownerPath string
 	switch key {
 	case project.ComponentEvents:
 		frameworkPath = filepath.Join(app.AppDir, "event_commands.go")
+		frameworkWant = false
 		ownerPath = filepath.Join(app.WireDir, "inject_subscribers_app.go")
 	case project.ComponentJobs:
 		frameworkPath = filepath.Join(app.WireDir, "inject_jobs.go")
@@ -394,8 +396,8 @@ func assertPrimitiveAppMappings(t *testing.T, renderer *ProjectRenderer, key pro
 	default:
 		t.Fatalf("unsupported primitive mapping component %q", key)
 	}
-	if got := templateMappingDestExists(renderer.appFrameworkMappings(app), frameworkPath); got != want {
-		t.Fatalf("%s framework mapping %s presence = %t, want %t", key, frameworkPath, got, want)
+	if got := templateMappingDestExists(renderer.appFrameworkMappings(app), frameworkPath); got != frameworkWant {
+		t.Fatalf("%s framework mapping %s presence = %t, want %t", key, frameworkPath, got, frameworkWant)
 	}
 	if got := templateMappingDestExists(renderer.appOwnedMappings(app), ownerPath); got != want {
 		t.Fatalf("%s owner mapping %s presence = %t, want %t", key, ownerPath, got, want)
@@ -419,27 +421,38 @@ func testEventCommandProjection(t *testing.T) {
 	config := primitiveProjectionConfig(t, project.ComponentEvents, true, false)
 	base := workspace.templateDataForApp(config, project.DefaultApp())
 	tests := []struct {
-		name                  string
-		legacyField           bool
-		legacyProvider        bool
-		wantGeneratedPipeline bool
-		wantBackfillProvider  bool
+		name                 string
+		legacyField          bool
+		legacyProvider       bool
+		wantRootPipeline     bool
+		wantPipelineProvider bool
 	}{
-		{name: "new App", wantGeneratedPipeline: true},
+		{name: "new App", wantRootPipeline: true, wantPipelineProvider: true},
 		{name: "legacy field and provider", legacyField: true, legacyProvider: true},
-		{name: "legacy field without provider", legacyField: true, wantBackfillProvider: true},
+		{name: "legacy field without provider", legacyField: true, wantPipelineProvider: true},
+		{name: "legacy provider without field", legacyProvider: true, wantRootPipeline: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			data := base
 			data.LegacyEventPipelineField = test.legacyField
 			data.LegacyEventPipelineProvider = test.legacyProvider
-			commands := renderSharedTemplate(t, "app/event_commands.go.tmpl", data)
+			root := renderSharedTemplate(t, "app/root_cmd.go.tmpl", data)
 			wiring := renderSharedTemplate(t, "wire/inject_cmd.go.tmpl", data)
-			assertFormattedGoTemplate(t, "app/event_commands.go.tmpl", commands)
+			assertFormattedGoTemplate(t, "app/root_cmd.go.tmpl", root)
 			assertFormattedGoTemplate(t, "wire/inject_cmd.go.tmpl", wiring)
-			assertTemplateMarker(t, "app/event_commands.go.tmpl", commands, "TestEventPipelineCmd", test.wantGeneratedPipeline)
-			assertTemplateMarker(t, "wire/inject_cmd.go.tmpl", wiring, "cmd.NewTestEventPipelineCmd,", test.wantBackfillProvider)
+			assertTemplateMarker(t, "app/root_cmd.go.tmpl", root, "TestEventPipelineCmd", test.wantRootPipeline)
+			assertTemplateMarker(t, "wire/inject_cmd.go.tmpl", wiring, "cmd.NewTestEventPipelineCmd,", test.wantPipelineProvider)
+			for _, marker := range []string{"MakeEventCmd", "MakeSubscriberCmd"} {
+				assertTemplateMarker(t, "app/root_cmd.go.tmpl", root, marker, true)
+			}
+			for _, marker := range []string{"makecmd.NewEventCmd,", "makecmd.NewSubscriberCmd,"} {
+				assertTemplateMarker(t, "wire/inject_cmd.go.tmpl", wiring, marker, true)
+			}
+			for _, marker := range []string{"GeneratedEventCommands", "NewGeneratedEventCommands"} {
+				assertTemplateMarker(t, "app/root_cmd.go.tmpl", root, marker, false)
+				assertTemplateMarker(t, "wire/inject_cmd.go.tmpl", wiring, marker, false)
+			}
 		})
 	}
 

@@ -768,10 +768,13 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	for _, snippet := range []string{
 		`MakeCommandCmd    makecmd.CommandCmd    ` + "`cmd:\"\"`",
 		`MakeControllerCmd makecmd.ControllerCmd ` + "`cmd:\"\"`",
+		`MakeEventCmd makecmd.EventCmd ` + "`cmd:\"\"`",
 		`MakeJobCmd       makecmd.JobCmd       ` + "`cmd:\"\"`",
 		`MakeMigrationCmd makecmd.MigrationCmd ` + "`cmd:\"\"`",
 		`MakeQueueCmd makecmd.QueueCmd ` + "`cmd:\"\"`",
 		`MakeScheduleCmd makecmd.ScheduleCmd ` + "`cmd:\"\"`",
+		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
+		`TestEventPipelineCmd cmd.TestEventPipelineCmd ` + "`cmd:\"\"`",
 		`BenchmarkRunCmd    jobs.BenchmarkRunCmd    ` + "`cmd:\"\"`",
 		`ExampleHelloJobCmd jobs.ExampleHelloJobCmd ` + "`cmd:\"\"`",
 		`HttpServeCmd http.ServeCmd ` + "`cmd:\"\"`",
@@ -785,21 +788,6 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		}
 	}
 
-	eventTemplatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "app", "event_commands.go.tmpl")
-	eventContent, err := os.ReadFile(eventTemplatePath)
-	if err != nil {
-		t.Fatalf("read event command template: %v", err)
-	}
-	eventSource := string(eventContent)
-	for _, snippet := range []string{
-		`MakeEventCmd      makecmd.EventCmd      ` + "`cmd:\"\"`",
-		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
-		`TestEventPipelineCmd cmd.TestEventPipelineCmd ` + "`cmd:\"\"`",
-	} {
-		if !strings.Contains(eventSource, snippet) {
-			t.Fatalf("expected event command template to contain %q", snippet)
-		}
-	}
 	for _, snippet := range []string{
 		`name:"run" aliases:"app"`,
 		`name:"http:serve" aliases:"api"`,

@@ -614,6 +614,7 @@ func syncLegacyAppServiceInjector(content string, moduleName string, appImportPa
 	updated = replaceGoImportPath(updated, compositionAppPath, compositionAppPath, "")
 	updated = ensureGoImport(updated, compositionAppPath, "")
 	updated = removeFrameworkMetricsProviderFromAppServiceInjector(updated, moduleName)
+	updated = removeFrameworkEventCommandProvidersFromAppServiceInjector(updated, moduleName)
 	return updated
 }
 
@@ -623,6 +624,17 @@ func removeFrameworkMetricsProviderFromAppServiceInjector(content string, module
 		ReplaceFirst("\tmetrics.NewManager,\n", "").
 		ReplaceFirst("\t"+strconv.Quote(moduleName+"/internal/metrics")+"\n", "").
 		String()
+}
+
+// removeFrameworkEventCommandProvidersFromAppServiceInjector leaves owner services intact while command wiring returns to the framework set.
+func removeFrameworkEventCommandProvidersFromAppServiceInjector(content string, moduleName string) string {
+	providerPattern := regexp.MustCompile(`(?m)^[ \t]*makecmd\.New(?:Event|Subscriber)Cmd,[ \t\r]*\n`)
+	updated := providerPattern.ReplaceAllString(content, "")
+	if updated == content || sourceUsesPackageSelector(updated, "makecmd") {
+		return updated
+	}
+	importPattern := regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(strconv.Quote(strings.TrimSpace(moduleName)+"/internal/makecmd")) + `[ \t\r]*\n`)
+	return importPattern.ReplaceAllString(updated, "")
 }
 
 // syncLegacyAppLifecycleRegistry updates preserved app lifecycle registration imports after the runtime package rename.

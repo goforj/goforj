@@ -1744,7 +1744,9 @@ var appSet = wire.NewSet(
 	for _, unexpected := range []string{
 		"\t\"example.com/testapp/internal/app\"",
 		"\tapp.NewTimeouts",
+		"\t\"example.com/testapp/internal/makecmd\"",
 		"\t\"example.com/testapp/internal/metrics\"",
+		"makecmd.NewEventCmd",
 		"metrics.NewManager",
 		"compositionapp",
 		"runtimeruntime",
@@ -1758,6 +1760,39 @@ var appSet = wire.NewSet(
 	idempotent := syncLegacyAppServiceInjector(updated, "example.com/testapp", "app")
 	if idempotent != updated {
 		t.Fatalf("expected migration to be idempotent:\n%s", idempotent)
+	}
+}
+
+// TestSyncLegacyAppServiceInjectorPreservesCustomMakeCommandUse verifies import cleanup is selector-aware.
+func TestSyncLegacyAppServiceInjectorPreservesCustomMakeCommandUse(t *testing.T) {
+	legacy := `package wire
+
+import (
+	"github.com/goforj/wire"
+
+	"example.com/testapp/app"
+	"example.com/testapp/internal/makecmd"
+	"example.com/testapp/internal/runtime"
+)
+
+var appSet = wire.NewSet(
+	app.NewLifecycleRegistry,
+	runtime.NewTimeouts,
+	makecmd.NewEventCmd,
+	provideCustomCommand,
+)
+
+func provideCustomCommand() any { return makecmd.NewCommandCmd() }
+`
+
+	updated := syncLegacyAppServiceInjector(legacy, "example.com/testapp", "app")
+	for _, want := range []string{`"example.com/testapp/internal/makecmd"`, "provideCustomCommand", "makecmd.NewCommandCmd"} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("expected migrated service injector to preserve %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "makecmd.NewEventCmd") {
+		t.Fatalf("expected migrated service injector to remove the framework Event command provider:\n%s", updated)
 	}
 }
 

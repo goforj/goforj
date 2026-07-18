@@ -2601,6 +2601,9 @@ func (p *ProjectRenderer) renderApp(app project.App) error {
 	if err := p.writeTemplateMappingsForApp(app, p.appFrameworkMappings(app)); err != nil {
 		return err
 	}
+	if _, err := p.workspace.removeFileIfExists(filepath.Join(projectlayout.AppDir(".", app), "event_commands.go")); err != nil {
+		return err
+	}
 	if err := p.migrateFrontendDistPlaceholder(app); err != nil {
 		return err
 	}
@@ -2744,9 +2747,6 @@ func (p *ProjectRenderer) appFrameworkMappings(app project.App) []templateMappin
 	}
 	if components.Jobs {
 		mappings = append(mappings, mapTemplateTo("wire/inject_jobs.go.tmpl", filepath.Join(wireDir, "inject_jobs.go")))
-	}
-	if components.Events {
-		mappings = append(mappings, mapTemplateTo("app/event_commands.go.tmpl", filepath.Join(appDir, "event_commands.go")))
 	}
 	return mappings
 }
