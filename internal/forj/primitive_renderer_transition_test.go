@@ -352,7 +352,7 @@ func validatePrimitiveTransition(renderer *ProjectRenderer, key project.Componen
 func primitiveRemovalSurface(app project.App, key project.ComponentKey) (string, string) {
 	switch key {
 	case project.ComponentEvents:
-		return filepath.Join(app.AppDir, "event_commands.go"), "package workerapp\n"
+		return filepath.Join(app.WireDir, "inject_subscribers_app.go"), "package wire\n"
 	case project.ComponentStorage:
 		return filepath.Join(app.WireDir, "app.go"), "package workerapp\ntype App struct{}\nfunc (a *App) Storage() any { return nil }\n"
 	case project.ComponentJobs:
@@ -430,7 +430,7 @@ func primitiveAdditiveExpectedPaths(app project.App, key project.ComponentKey) [
 			filepath.Join("internal", "observability", "cache_observer.go"),
 		}
 	case project.ComponentEvents:
-		return []string{filepath.Join(app.AppDir, "event_commands.go"), filepath.Join(app.WireDir, "inject_subscribers_app.go")}
+		return []string{filepath.Join(app.AppDir, "root_cmd.go"), filepath.Join(app.WireDir, "inject_subscribers_app.go")}
 	case project.ComponentStorage:
 		return []string{filepath.Join(app.WireDir, "app.go")}
 	case project.ComponentJobs:
@@ -462,9 +462,15 @@ func assertPrimitiveAdditiveSurface(t *testing.T, app project.App, key project.C
 		return
 	}
 	if key == project.ComponentEvents {
-		body := readPrimitiveRendererFile(t, filepath.Join(app.AppDir, "event_commands.go"))
-		if !strings.Contains(body, "GeneratedEventCommands") {
-			t.Fatalf("additive Events render omitted generated command boundary:\n%s", body)
+		body := readPrimitiveRendererFile(t, filepath.Join(app.AppDir, "root_cmd.go"))
+		for _, command := range []string{"MakeEventCmd", "MakeSubscriberCmd", "TestEventPipelineCmd"} {
+			if !strings.Contains(body, command) {
+				t.Fatalf("additive Events render omitted %s from RootCmd:\n%s", command, body)
+			}
+		}
+		legacyPath := filepath.Join(app.AppDir, "event_commands.go")
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("additive Events render retained obsolete %s: %v", legacyPath, err)
 		}
 		return
 	}

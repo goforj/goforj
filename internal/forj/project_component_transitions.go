@@ -163,7 +163,6 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 		}
 		for _, path := range []string{
 			filepath.Join(projectlayout.WireDir(".", app), "inject_subscribers_app.go"),
-			filepath.Join(projectlayout.AppDir(".", app), "event_commands.go"),
 		} {
 			exists, err := p.workspace.renderPathExists(path)
 			if err != nil {
@@ -189,10 +188,6 @@ func (p *ProjectRenderer) validateEventsRenderTransition(projectComponents proje
 		if p.workspace.legacyEventPipelineProvider(app) {
 			path := filepath.Join(projectlayout.WireDir(".", app), "inject_cmd_app.go")
 			return fmt.Errorf("cannot disable Events for App %q while %s provides TestEventPipelineCmd; automatic Events removal is not supported", app.Name, path)
-		}
-		if p.workspace.legacyEventMakeCommandProvider(app) {
-			path := filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go")
-			return fmt.Errorf("cannot disable Events for App %q while %s provides Events make commands; automatic Events removal is not supported", app.Name, path)
 		}
 	}
 	return nil
@@ -502,41 +497,6 @@ func legacyAppServiceInjectorRequiresManualMigration(file *ast.File) bool {
 					found = true
 					return false
 				}
-			}
-		}
-		return !found
-	})
-	return found
-}
-
-// legacyEventMakeCommandProvider inspects owner service sets inside one project workspace.
-func (w projectRenderWorkspace) legacyEventMakeCommandProvider(app project.App) bool {
-	file, exists, err := w.parsedRenderGoFile(filepath.Join(projectlayout.WireDir(".", app), "inject_services_app.go"))
-	if err != nil || !exists {
-		return false
-	}
-	return astFileContainsSelector(file, "makecmd", "NewEventCmd", "NewSubscriberCmd")
-}
-
-// astFileContainsSelector reports whether parsed owner code references any requested qualified selector.
-func astFileContainsSelector(file *ast.File, packageName string, selectorNames ...string) bool {
-	if file == nil {
-		return false
-	}
-	wanted := make(map[string]struct{}, len(selectorNames))
-	for _, selectorName := range selectorNames {
-		wanted[selectorName] = struct{}{}
-	}
-	found := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		expression, ok := node.(ast.Expr)
-		if !ok {
-			return true
-		}
-		for selectorName := range wanted {
-			if selectorExpressionMatches(expression, packageName, selectorName) {
-				found = true
-				return false
 			}
 		}
 		return !found
