@@ -1013,6 +1013,7 @@ type watcherExit struct {
 	name    string
 	process *devwatch.Exit
 	err     error
+	output  string
 }
 
 type watcherLifecycleState string
@@ -1198,11 +1199,8 @@ watcherLoop:
 				}
 			case exit := <-runtime.exitCh:
 				runtime.stopAfterExit(exit, 5*time.Second)
-				if err := watcherExitError(exit); err != nil {
+				if err := unexpectedWatcherExitError(exit); err != nil {
 					return err
-				}
-				if !watcherExitOK(exit) {
-					return fmt.Errorf("dev watchers exited with code %d", watcherExitCode(exit))
 				}
 				return nil
 			}

@@ -61,6 +61,7 @@ type devWatcherTask struct {
 	controller *devWatcherController
 	spec       devCompiledWatcher
 	triggerCh  chan struct{}
+	outputTail *devTaskOutputTail
 
 	runtimeMu           sync.Mutex
 	mu                  sync.Mutex
@@ -171,6 +172,7 @@ func newDevWatcherControllerWithOptions(
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	retainFailureOutput := shouldRetainDevWatcherFailureOutput(outWriter)
 	outputMu := &sync.Mutex{}
 	outWriter = devWatcherSynchronizedWriter{mu: outputMu, writer: outWriter}
 	errWriter = devWatcherSynchronizedWriter{mu: outputMu, writer: errWriter}
@@ -202,10 +204,15 @@ func newDevWatcherControllerWithOptions(
 		if options.reconcile && structuredRuntime {
 			spec.Postpone = true
 		}
-		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, soundOnError, lifecycle, appNameWidth, showAppColumn)
+		var outputTail *devTaskOutputTail
+		if retainFailureOutput {
+			outputTail = newDevTaskOutputTail(40)
+		}
+		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, appNameWidth, showAppColumn)
 		controller.tasks[spec.ID] = &devWatcherTask{
 			controller: controller, spec: spec, triggerCh: make(chan struct{}, 1),
-			paused: options.reconcile && (structuredBuild || structuredRuntime), startAfterReconcile: startAfterReconcile,
+			outputTail: outputTail, paused: options.reconcile && (structuredBuild || structuredRuntime),
+			startAfterReconcile: startAfterReconcile,
 		}
 		controller.order = append(controller.order, spec.ID)
 	}
@@ -226,6 +233,7 @@ func configureCompiledDevCommand(
 	streamer *devwatchStreamer,
 	outWriter io.Writer,
 	errWriter io.Writer,
+	outputTail *devTaskOutputTail,
 	soundOnError bool,
 	lifecycle *devwatchLifecycleState,
 	appNameWidth int,
@@ -234,6 +242,10 @@ func configureCompiledDevCommand(
 	triggerCommand := strings.Join(strings.Fields(spec.Command.Shell), " ")
 	spec.DisplayCommand = triggerCommand
 	appName := spec.App
+	if outputTail != nil {
+		outWriter = io.MultiWriter(outWriter, outputTail)
+		errWriter = io.MultiWriter(errWriter, outputTail)
+	}
 	stdout := newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle)
 	stderr := newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle)
 	if spec.Kind == devWatcherAppRun && !spec.Legacy && !spec.FullProcessOverride {
@@ -263,6 +275,12 @@ func configureCompiledDevCommand(
 			hook(string(output.Data))
 		}
 	}
+}
+
+// shouldRetainDevWatcherFailureOutput limits replay to alternate-screen sessions where live diagnostics disappear on exit.
+func shouldRetainDevWatcherFailureOutput(outWriter io.Writer) bool {
+	_, ok := outWriter.(*devBubbleWriter)
+	return ok
 }
 
 // compiledDevRuntimeApps returns distinct app labels in watcher order.
@@ -477,6 +495,10 @@ func (c *devWatcherController) handleProcessExit(exit devwatch.Exit) {
 	exitErr := exit.Err
 	if exitErr == nil {
 		exitErr = fmt.Errorf("runtime %q exited unexpectedly with code %d", task.spec.Name, exit.ExitCode)
+	}
+	if !task.spec.Legacy {
+		_, _ = fmt.Fprintf(c.errWriter, "forj dev: %s exited; waiting for the next successful build: %v\n", task.spec.Name, exitErr)
+		return
 	}
 	c.publishExit(task.spec.ID, task.spec.Name, &exit, exitErr)
 }
@@ -968,11 +990,15 @@ func (c *devWatcherController) publishExit(id string, name string, processExit *
 	}
 	c.exited[id] = true
 	c.mu.Unlock()
+	output := ""
+	if task := c.tasks[id]; task != nil && task.outputTail != nil {
+		output = task.outputTail.String()
+	}
 	select {
-	case c.exitCh <- watcherExit{id: id, name: name, process: processExit, err: err}:
+	case c.exitCh <- watcherExit{id: id, name: name, process: processExit, err: err, output: output}:
 	case <-c.ctx.Done():
 		select {
-		case c.exitCh <- watcherExit{id: id, name: name, process: processExit, err: err}:
+		case c.exitCh <- watcherExit{id: id, name: name, process: processExit, err: err, output: output}:
 		default:
 		}
 	}
@@ -1036,6 +1062,20 @@ func watcherExitError(exit watcherExit) error {
 		return exit.process.Err
 	}
 	return nil
+}
+
+// unexpectedWatcherExitError keeps the failing watcher identifiable after the shared runtime shuts down.
+func unexpectedWatcherExitError(exit watcherExit) error {
+	var exitErr error
+	if err := watcherExitError(exit); err != nil {
+		exitErr = fmt.Errorf("dev watcher %q exited: %w", exit.name, err)
+	} else if !watcherExitOK(exit) {
+		exitErr = fmt.Errorf("dev watcher %q exited with code %d", exit.name, watcherExitCode(exit))
+	}
+	if exitErr == nil || strings.TrimSpace(exit.output) == "" {
+		return exitErr
+	}
+	return fmt.Errorf("%w\n\nLast watcher output:\n%s", exitErr, strings.TrimSpace(exit.output))
 }
 
 // isIntentionalWatcherExit distinguishes coordinated native stops from command failures.
