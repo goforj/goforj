@@ -1,0 +1,62 @@
+package http
+
+import "testing"
+
+// TestAggregateRuntimeConfigInheritsCapturedListenerDefaults verifies aggregate execution keeps construction-time environment settings.
+func TestAggregateRuntimeConfigInheritsCapturedListenerDefaults(t *testing.T) {
+	t.Setenv("API_HTTP_HOST", "127.18.0.14")
+	defaults := defaultRuntimeConfig()
+
+	got := inheritRuntimeConfig(RuntimeConfig{DisableMetricsEndpoint: true}, defaults)
+	if got.Host != "127.18.0.14" {
+		t.Fatalf("aggregate HTTP host = %q, want environment-derived host", got.Host)
+	}
+	if got.Port != defaults.Port {
+		t.Fatalf("aggregate HTTP port = %q, want captured default %q", got.Port, defaults.Port)
+	}
+	if !got.DisableMetricsEndpoint {
+		t.Fatal("aggregate HTTP config re-enabled the per-runtime metrics endpoint")
+	}
+}
+
+// TestPartialRuntimeConfigPreservesExplicitListenerValues verifies each explicit listener field wins independently.
+func TestPartialRuntimeConfigPreservesExplicitListenerValues(t *testing.T) {
+	defaults := RuntimeConfig{Host: "127.18.0.14", Port: "4300"}
+	tests := []struct {
+		name     string
+		config   RuntimeConfig
+		wantHost string
+		wantPort string
+	}{
+		{
+			name:     "explicit host",
+			config:   RuntimeConfig{Host: "127.0.0.1", DisableMetricsEndpoint: true},
+			wantHost: "127.0.0.1",
+			wantPort: "4300",
+		},
+		{
+			name:     "explicit port",
+			config:   RuntimeConfig{Port: "4400", DisableMetricsEndpoint: true},
+			wantHost: "127.18.0.14",
+			wantPort: "4400",
+		},
+		{
+			name:     "explicit host and port",
+			config:   RuntimeConfig{Host: "127.0.0.2", Port: "4500", DisableMetricsEndpoint: true},
+			wantHost: "127.0.0.2",
+			wantPort: "4500",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := inheritRuntimeConfig(test.config, defaults)
+			if got.Host != test.wantHost || got.Port != test.wantPort {
+				t.Fatalf("listener = %s:%s, want %s:%s", got.Host, got.Port, test.wantHost, test.wantPort)
+			}
+			if got.DisableMetricsEndpoint != test.config.DisableMetricsEndpoint {
+				t.Fatalf("DisableMetricsEndpoint = %t, want %t", got.DisableMetricsEndpoint, test.config.DisableMetricsEndpoint)
+			}
+		})
+	}
+}

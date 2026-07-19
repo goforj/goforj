@@ -705,6 +705,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/inspect_child_event_test.go.tmpl",
 				"internal/http/inspects_bench_test.go.tmpl",
 				"internal/http/runtime_bench_test.go.tmpl",
+				"internal/http/runtime_test.go.tmpl",
 				"internal/http/server_test.go.tmpl",
 				"internal/http/swagger.go.tmpl",
 				"internal/http/swagger_test.go.tmpl",

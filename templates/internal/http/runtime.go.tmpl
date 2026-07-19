@@ -65,7 +65,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 		ctx = context.Background()
 	}
 	ctx = runtime.WithSource(ctx, runtime.SourceHTTP)
-	cfg = normalizeRuntimeConfig(cfg)
+	cfg = inheritRuntimeConfig(cfg, r.config)
 
 {{- if .ProjectComponents.Metrics }}
 	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.HTTPEnabled() && r.metricsManager.Registry() != nil {
@@ -76,6 +76,17 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 {{- end }}
 	r.lighthouse.Start(ctx)
 	return r.server.Serve(ctx, cfg.Host, cfg.Port)
+}
+
+// inheritRuntimeConfig keeps sparse aggregate-run overrides from discarding listener defaults captured during construction.
+func inheritRuntimeConfig(cfg RuntimeConfig, defaults RuntimeConfig) RuntimeConfig {
+	if strings.TrimSpace(cfg.Host) == "" {
+		cfg.Host = defaults.Host
+	}
+	if strings.TrimSpace(cfg.Port) == "" {
+		cfg.Port = defaults.Port
+	}
+	return normalizeRuntimeConfig(cfg)
 }
 
 // defaultRuntimeConfig builds the HTTP defaults shared by direct and hosted execution.
