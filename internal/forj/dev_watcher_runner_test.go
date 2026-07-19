@@ -2,6 +2,7 @@ package forj
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -52,6 +53,7 @@ func TestConfigureCompiledDevCommandPreservesFullProcessOverride(t *testing.T) {
 		nil,
 		io.Discard,
 		io.Discard,
+		nil,
 		false,
 		newDevwatchLifecycleState(1, []string{"Run App"}),
 		0,
@@ -139,6 +141,7 @@ func TestConfigureCompiledDevCommandSelectsRuntimeWrapper(t *testing.T) {
 				nil,
 				io.Discard,
 				io.Discard,
+				nil,
 				false,
 				newDevwatchLifecycleState(1, []string{spec.Name}),
 				0,
@@ -168,11 +171,10 @@ func TestConfigureCompiledDevCommandSelectsRuntimeWrapper(t *testing.T) {
 // TestDevWatcherControllerTracksRuntimeExitGeneration verifies delayed old exits and immediate current exits preserve PID ownership.
 func TestDevWatcherControllerTracksRuntimeExitGeneration(t *testing.T) {
 	const runtimeID = "structured:app:app:app_run"
+	output := newDevTaskOutputTail(40)
 	controller := &devWatcherController{
-		ctx:    context.Background(),
-		tasks:  make(map[string]*devWatcherTask),
-		exitCh: make(chan watcherExit, 1),
-		exited: make(map[string]bool),
+		ctx: context.Background(), tasks: make(map[string]*devWatcherTask),
+		exitCh: make(chan watcherExit, 1), exited: make(map[string]bool), errWriter: output,
 	}
 	task := &devWatcherTask{
 		controller: controller,
@@ -208,19 +210,18 @@ func TestDevWatcherControllerTracksRuntimeExitGeneration(t *testing.T) {
 	}
 	select {
 	case exit := <-controller.exitCh:
-		if exit.process == nil || exit.process.PID != 202 || exit.err == nil {
-			t.Fatalf("current runtime exit = %+v, want matching terminal completion", exit)
-		}
+		t.Fatalf("current structured runtime exit terminated the controller: %+v", exit)
 	default:
-		t.Fatal("current runtime exit did not terminate the watcher")
+	}
+	if !strings.Contains(output.String(), "Run App exited; waiting for the next successful build") {
+		t.Fatalf("runtime exit output = %q, want recoverable failure guidance", output.String())
 	}
 
 	const immediateRuntimeID = "structured:app:immediate:app_run"
+	immediateOutput := newDevTaskOutputTail(40)
 	immediateController := &devWatcherController{
-		ctx:    context.Background(),
-		tasks:  make(map[string]*devWatcherTask),
-		exitCh: make(chan watcherExit, 1),
-		exited: make(map[string]bool),
+		ctx: context.Background(), tasks: make(map[string]*devWatcherTask),
+		exitCh: make(chan watcherExit, 1), exited: make(map[string]bool), errWriter: immediateOutput,
 	}
 	immediateTask := &devWatcherTask{
 		controller: immediateController,
@@ -260,31 +261,30 @@ func TestDevWatcherControllerTracksRuntimeExitGeneration(t *testing.T) {
 	}
 	select {
 	case exit := <-immediateController.exitCh:
-		if exit.process == nil || exit.process.PID != 303 {
-			t.Fatalf("immediate runtime exit = %+v, want PID 303", exit)
-		}
+		t.Fatalf("immediate structured runtime exit terminated the controller: %+v", exit)
 	default:
-		t.Fatal("immediate runtime exit was lost around PID publication")
+	}
+	if !strings.Contains(immediateOutput.String(), "Run Immediate exited; waiting for the next successful build") {
+		t.Fatalf("immediate runtime output = %q, want recoverable failure guidance", immediateOutput.String())
 	}
 }
 
-// TestDevWatcherControllerImmediateRuntimeExitUsesPublishedPID verifies an exit racing StartRuntime return remains terminal.
+// TestDevWatcherControllerImmediateRuntimeExitUsesPublishedPID verifies an early crash clears ownership without ending dev.
 func TestDevWatcherControllerImmediateRuntimeExitUsesPublishedPID(t *testing.T) {
 	requireDevWatcherRunnerTestPlatform(t)
-	controller := newDevWatcherRunnerTestController(t, []devCompiledWatcher{{
+	output := newDevTaskOutputTail(40)
+	controller, err := newDevWatcherController([]devCompiledWatcher{{
 		Name: "Run Immediate", Kind: devWatcherAppRun, App: "app",
 		Command: devwatch.Command{Shell: "exit 23"}, FullProcessOverride: true,
-	}})
+	}}, nil, io.Discard, output, false)
+	if err != nil {
+		t.Fatalf("start dev watcher controller: %v", err)
+	}
 	defer controller.stop(time.Second)
 
-	select {
-	case exit := <-controller.exitCh:
-		if exit.process == nil || exit.process.PID <= 0 || exit.process.ExitCode != 23 || exit.err == nil {
-			t.Fatalf("immediate runtime exit = %+v, want published PID and code 23", exit)
-		}
-	case <-time.After(4 * time.Second):
-		t.Fatal("timed out waiting for immediate runtime exit")
-	}
+	waitForDevWatcherRunnerCondition(t, "immediate runtime failure to remain visible", func() bool {
+		return strings.Contains(output.String(), "Run Immediate exited; waiting for the next successful build")
+	})
 	task := controller.tasks["Run Immediate"]
 	task.mu.Lock()
 	runtimeLive := task.runtimeLive
@@ -292,6 +292,160 @@ func TestDevWatcherControllerImmediateRuntimeExitUsesPublishedPID(t *testing.T) 
 	task.mu.Unlock()
 	if runtimeLive || runtimePID != 0 {
 		t.Fatalf("immediate runtime ownership after exit: live=%t PID=%d", runtimeLive, runtimePID)
+	}
+	select {
+	case exit := <-controller.exitCh:
+		t.Fatalf("immediate structured runtime exit terminated the controller: %+v", exit)
+	default:
+	}
+}
+
+// TestDevWatcherControllerRestartsCrashedRuntimeAfterSuccessfulBuild verifies build publication recovers a stopped App.
+func TestDevWatcherControllerRestartsCrashedRuntimeAfterSuccessfulBuild(t *testing.T) {
+	requireDevWatcherRunnerTestPlatform(t)
+	const buildID = "structured:app:app:app_build"
+	const runtimeID = "structured:app:app:app_run"
+	crashMarker := filepath.Join(t.TempDir(), "first-runtime-crashed")
+	runtimeCommand := "if [ ! -f " + devWatcherRunnerShellQuote(crashMarker) + " ]; then : > " +
+		devWatcherRunnerShellQuote(crashMarker) + "; exit 23; fi; exec sleep 30"
+	output := newDevTaskOutputTail(40)
+	controller, err := newDevWatcherController([]devCompiledWatcher{
+		{
+			ID: buildID, Name: "Build App", Kind: devWatcherAppBuild, App: "app", Postpone: true,
+			Command: devwatch.Command{Shell: "true"}, OnSuccess: []string{runtimeID},
+		},
+		{
+			ID: runtimeID, Name: "Run App", Kind: devWatcherAppRun, App: "app",
+			Command: devwatch.Command{Shell: runtimeCommand}, FullProcessOverride: true,
+		},
+	}, nil, io.Discard, output, false)
+	if err != nil {
+		t.Fatalf("start dev watcher controller: %v", err)
+	}
+	defer controller.stop(time.Second)
+
+	waitForDevWatcherRunnerCondition(t, "runtime crash to become recoverable", func() bool {
+		return strings.Contains(output.String(), "Run App exited; waiting for the next successful build")
+	})
+	select {
+	case exit := <-controller.exitCh:
+		t.Fatalf("runtime crash terminated the controller: %+v", exit)
+	default:
+	}
+
+	controller.tasks[buildID].request()
+	waitForDevWatcherRunnerCondition(t, "successful build to restart runtime", func() bool {
+		task := controller.tasks[runtimeID]
+		task.mu.Lock()
+		live := task.runtimeLive
+		task.mu.Unlock()
+		return live && controller.supervisor.RuntimeRunning(runtimeID)
+	})
+	select {
+	case exit := <-controller.exitCh:
+		t.Fatalf("restarted runtime terminated the controller: %+v", exit)
+	default:
+	}
+}
+
+// TestDevWatcherControllerCustomExitRemainsTerminal verifies explicit custom watcher exit policy is unchanged.
+func TestDevWatcherControllerCustomExitRemainsTerminal(t *testing.T) {
+	requireDevWatcherRunnerTestPlatform(t)
+	controller := newDevWatcherRunnerTestController(t, []devCompiledWatcher{{
+		ID: "custom:desktop", Name: "Harbor Desktop", Kind: devWatcherCustom, Exit: true,
+		Command: devwatch.Command{Shell: "false"},
+	}})
+	defer controller.stop(time.Second)
+
+	select {
+	case exit := <-controller.exitCh:
+		if exit.name != "Harbor Desktop" || exit.process == nil || exit.process.ExitCode != 1 {
+			t.Fatalf("custom watcher exit = %+v, want terminal code 1", exit)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("timed out waiting for custom watcher terminal exit")
+	}
+}
+
+// TestUnexpectedWatcherExitErrorIncludesWatcherName verifies child errors retain their watcher identity.
+func TestUnexpectedWatcherExitErrorIncludesWatcherName(t *testing.T) {
+	processErr := errors.New("exit status 1")
+	err := unexpectedWatcherExitError(watcherExit{
+		name:   "Harbor Desktop",
+		err:    processErr,
+		output: "Wails development server port is already in use",
+	})
+	if err == nil {
+		t.Fatal("expected watcher exit error")
+	}
+	if !strings.Contains(err.Error(), `dev watcher "Harbor Desktop" exited`) {
+		t.Fatalf("error = %q, want watcher name", err)
+	}
+	if !errors.Is(err, processErr) {
+		t.Fatalf("error = %v, want wrapped process error", err)
+	}
+	if !strings.Contains(err.Error(), "Last watcher output:\nWails development server port is already in use") {
+		t.Fatalf("error = %q, want retained watcher output", err)
+	}
+}
+
+// TestUnexpectedWatcherExitErrorIncludesWatcherNameForExitCode verifies status-only failures retain their watcher identity.
+func TestUnexpectedWatcherExitErrorIncludesWatcherNameForExitCode(t *testing.T) {
+	err := unexpectedWatcherExitError(watcherExit{
+		name:    "Harbor Desktop",
+		process: &devwatch.Exit{ExitCode: 23},
+	})
+	if err == nil {
+		t.Fatal("expected watcher exit error")
+	}
+	if got, want := err.Error(), `dev watcher "Harbor Desktop" exited with code 23`; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// TestDevWatcherControllerRetainsOnlyFailingTUIWatcherOutput verifies fatal replay stays scoped to one watcher.
+func TestDevWatcherControllerRetainsOnlyFailingTUIWatcherOutput(t *testing.T) {
+	compiled := []devCompiledWatcher{
+		{
+			ID: "desktop", Name: "Harbor Desktop", Kind: devWatcherCustom, Postpone: true,
+			Command: devwatch.Command{Shell: "wails dev"},
+		},
+		{
+			ID: "daemon", Name: "Run harbord", Kind: devWatcherCustom, Postpone: true,
+			Command: devwatch.Command{Shell: "./bin/harbord --foreground"},
+		},
+	}
+	bubble := &devBubbleWriter{disabled: true}
+	controller, err := newDevWatcherController(compiled, nil, bubble, bubble, false)
+	if err != nil {
+		t.Fatalf("create watcher controller: %v", err)
+	}
+	defer controller.stop(time.Second)
+
+	if _, err := controller.tasks["desktop"].spec.Command.Stdout.Write([]byte("desktop port conflict\n")); err != nil {
+		t.Fatalf("write desktop output: %v", err)
+	}
+	if _, err := controller.tasks["daemon"].spec.Command.Stdout.Write([]byte("daemon healthy\n")); err != nil {
+		t.Fatalf("write daemon output: %v", err)
+	}
+	controller.publishExit("desktop", "Harbor Desktop", &devwatch.Exit{ExitCode: 1}, errors.New("exit status 1"))
+
+	exit := <-controller.exitCh
+	if !strings.Contains(exit.output, "desktop port conflict") {
+		t.Fatalf("retained output = %q, want desktop diagnostic", exit.output)
+	}
+	if strings.Contains(exit.output, "daemon healthy") {
+		t.Fatalf("retained output = %q, unexpectedly included another watcher", exit.output)
+	}
+}
+
+// TestShouldRetainDevWatcherFailureOutputLimitsReplayToTUI verifies plain sessions do not duplicate streamed diagnostics.
+func TestShouldRetainDevWatcherFailureOutputLimitsReplayToTUI(t *testing.T) {
+	if !shouldRetainDevWatcherFailureOutput(&devBubbleWriter{}) {
+		t.Fatal("expected Bubble Tea output to retain a failure tail")
+	}
+	if shouldRetainDevWatcherFailureOutput(io.Discard) {
+		t.Fatal("expected plain output to avoid retaining a duplicate failure tail")
 	}
 }
 
@@ -1225,6 +1379,19 @@ func waitForDevWatcherRunnerLog(t *testing.T, path string, condition func([]stri
 	lines := readDevWatcherRunnerLog(t, path)
 	t.Fatalf("timed out waiting for runner log condition: %v", lines)
 	return nil
+}
+
+// waitForDevWatcherRunnerCondition polls controller state without coupling tests to scheduler timing.
+func waitForDevWatcherRunnerCondition(t *testing.T, description string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
 }
 
 // waitForDevWatcherRunnerTaskIdle waits until a command has completed runner bookkeeping.

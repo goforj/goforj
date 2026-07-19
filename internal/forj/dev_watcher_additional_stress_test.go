@@ -192,14 +192,17 @@ func TestDevWatcherOutputBackpressureReapsProcesses(t *testing.T) {
 	waitForDevWatcherChurnBuildLine(t, lifecycle, "output-build-exit:")
 	waitForDevWatcherChurnTaskIdle(t, controller.tasks[buildID])
 	waitForDevWatcherChurnBuildLine(t, lifecycle, "output-runtime-exit:")
-	var runtimeExit watcherExit
+	waitForDevWatcherChurnCondition(t, "output-heavy runtime to become restartable", func() bool {
+		task := controller.tasks[runtimeID]
+		task.mu.Lock()
+		live := task.runtimeLive
+		task.mu.Unlock()
+		return !live && !controller.supervisor.RuntimeRunning(runtimeID)
+	})
 	select {
-	case runtimeExit = <-controller.exitCh:
-	case <-time.After(devWatcherChurnTimeout):
-		t.Fatal("timed out waiting for output-heavy runtime reaping")
-	}
-	if runtimeExit.id != runtimeID || runtimeExit.process == nil || runtimeExit.process.ExitCode != 0 {
-		t.Fatalf("output-heavy runtime exit=%+v, want reaped successful runtime %q", runtimeExit, runtimeID)
+	case exit := <-controller.exitCh:
+		t.Fatalf("output-heavy structured runtime terminated the controller: %+v", exit)
+	default:
 	}
 	buildPID := additionalStressLifecyclePID(t, lifecycle, "output-build-start:")
 	runtimePID := additionalStressLifecyclePID(t, lifecycle, "output-runtime-start:")
