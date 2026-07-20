@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/goforj/goforj/internal/forj/resources"
-	"github.com/goforj/goforj/internal/managedenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -51,11 +50,7 @@ type devStatusResourceResolver func(context.Context, *project.Config, map[string
 
 // loadDevStatusProject applies development precedence once before loading config, tasks, and host resources.
 func loadDevStatusProject() (devStatusProjectContext, error) {
-	managedEnvironment, err := managedenv.Capture()
-	if err != nil {
-		return devStatusProjectContext{}, fmt.Errorf("capture managed environment: %w", err)
-	}
-	if err := loadDevEnvironment(false, managedEnvironment); err != nil {
+	if err := loadDevEnvironment(false); err != nil {
 		return devStatusProjectContext{}, fmt.Errorf("load development environment: %w", err)
 	}
 	config, err := project.LoadProjectConfig()

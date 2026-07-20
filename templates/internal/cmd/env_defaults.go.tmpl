@@ -2,20 +2,15 @@ package cmd
 
 import (
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/joho/godotenv"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 	_ "time/tzdata" // IANA overrides must work in minimal images without host zoneinfo.
 )
-
-// internalManagedEnvKeys carries names separately so managed values remain ordinary process environment entries.
-const internalManagedEnvKeys = "FORJ_INTERNAL_MANAGED_ENV_KEYS"
 
 // CompiledEnvDefaultsBase64 stores build-time unset-only env defaults.
 var CompiledEnvDefaultsBase64 string
@@ -23,18 +18,8 @@ var CompiledEnvDefaultsBase64 string
 // CompiledEnvOverridesBase64 stores build-time forced env overrides.
 var CompiledEnvOverridesBase64 string
 
-// LoadEnv applies compiled and file-backed layers before restoring explicitly managed runtime values.
-func LoadEnv() (returnErr error) {
-	managedEnv, err := captureInternalManagedEnvironment()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := os.Unsetenv(internalManagedEnvKeys); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("remove managed environment metadata: %w", err))
-		}
-	}()
-
+// LoadEnv applies compiled and file-backed layers using the env package's canonical precedence.
+func LoadEnv() error {
 	overrideAppEnv, hasOverride, err := compiledEnvValue(strings.TrimSpace(CompiledEnvOverridesBase64), "APP_ENV")
 	if err != nil {
 		return err
@@ -87,7 +72,7 @@ func LoadEnv() (returnErr error) {
 		return err
 	}
 
-	return applyInternalManagedEnvironment(managedEnv)
+	return nil
 }
 
 // ConfigureTimezone applies TZ to process-local time operations, defaulting to UTC.
@@ -194,109 +179,6 @@ func appOverlayKeyAllowed(key string) bool {
 		return false
 	default:
 		return true
-	}
-}
-
-// internalManagedEnvValue preserves present-empty values without serializing secrets into launcher metadata.
-type internalManagedEnvValue struct {
-	key   string
-	value string
-}
-
-// captureInternalManagedEnvironment snapshots only keys explicitly named by the trusted dev launcher.
-func captureInternalManagedEnvironment() ([]internalManagedEnvValue, error) {
-	raw, present := os.LookupEnv(internalManagedEnvKeys)
-	if !present {
-		return nil, nil
-	}
-	keys, captureErr := parseInternalManagedEnvKeys(raw)
-	values := make([]internalManagedEnvValue, 0, len(keys))
-	if captureErr == nil {
-		for _, key := range keys {
-			value, ok := os.LookupEnv(key)
-			if !ok {
-				captureErr = fmt.Errorf("%s lists %q, but that environment value is not present", internalManagedEnvKeys, key)
-				break
-			}
-			values = append(values, internalManagedEnvValue{key: key, value: value})
-		}
-	}
-	if unsetErr := os.Unsetenv(internalManagedEnvKeys); unsetErr != nil {
-		unsetErr = fmt.Errorf("remove managed environment metadata: %w", unsetErr)
-		if captureErr != nil {
-			return nil, errors.Join(captureErr, unsetErr)
-		}
-		return nil, unsetErr
-	}
-	return values, captureErr
-}
-
-// applyInternalManagedEnvironment restores captured values after dotenv and App overlays finish.
-func applyInternalManagedEnvironment(values []internalManagedEnvValue) error {
-	if err := os.Unsetenv(internalManagedEnvKeys); err != nil {
-		return fmt.Errorf("remove managed environment metadata: %w", err)
-	}
-	for _, value := range values {
-		if err := os.Setenv(value.key, value.value); err != nil {
-			return fmt.Errorf("restore managed environment %s: %w", value.key, err)
-		}
-	}
-	return nil
-}
-
-// parseInternalManagedEnvKeys rejects ambiguous or framework-owned names before dotenv mutation.
-func parseInternalManagedEnvKeys(raw string) ([]string, error) {
-	if raw == "" {
-		return nil, fmt.Errorf("%s must list at least one environment key", internalManagedEnvKeys)
-	}
-	if strings.TrimSpace(raw) != raw {
-		return nil, fmt.Errorf("%s must not contain surrounding whitespace", internalManagedEnvKeys)
-	}
-	keys := strings.Split(raw, ",")
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		if !isInternalManagedEnvKey(key) {
-			return nil, fmt.Errorf("%s contains invalid environment key %q", internalManagedEnvKeys, key)
-		}
-		if isInternalManagedEnvKeyReserved(key) {
-			return nil, fmt.Errorf("%s contains reserved environment key %q", internalManagedEnvKeys, key)
-		}
-		foldedKey := strings.ToUpper(key)
-		if _, exists := seen[foldedKey]; exists {
-			return nil, fmt.Errorf("%s contains duplicate environment key %q", internalManagedEnvKeys, key)
-		}
-		seen[foldedKey] = struct{}{}
-	}
-	if !sort.SliceIsSorted(keys, func(left, right int) bool {
-		return strings.ToUpper(keys[left]) < strings.ToUpper(keys[right])
-	}) {
-		return nil, fmt.Errorf("%s environment keys must be sorted", internalManagedEnvKeys)
-	}
-	return keys, nil
-}
-
-// isInternalManagedEnvKey accepts the portable identifier grammar shared by supported hosts.
-func isInternalManagedEnvKey(key string) bool {
-	for index, char := range key {
-		if char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || index > 0 && char >= '0' && char <= '9' {
-			continue
-		}
-		return false
-	}
-	return key != ""
-}
-
-// isInternalManagedEnvKeyReserved keeps App/bootstrap controls outside runtime override ownership.
-func isInternalManagedEnvKeyReserved(key string) bool {
-	foldedKey := strings.ToUpper(key)
-	if strings.HasPrefix(foldedKey, "FORJ_INTERNAL_") {
-		return true
-	}
-	switch foldedKey {
-	case "APP_ENV", "FORJ_APP", "FORJ_BUILD_PROGRESS", "FORJ_COMMAND_PREFIX", "FORJ_DEV_PLAIN":
-		return true
-	default:
-		return false
 	}
 }
 
