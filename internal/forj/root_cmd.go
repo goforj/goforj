@@ -27,6 +27,7 @@ type RootCmd struct {
 	AtlasMCPCmd               atlas.MCPCmd                    `cmd:""`
 	MakeAppCmd                makeapp.Cmd                     `cmd:""`
 	DevCmd                    DevCmd                          `cmd:""`
+	DevStatusCmd              DevStatusCmd                    `cmd:""`
 	DownCmd                   DownCmd                         `cmd:""`
 	BuildBinaryCmd            BuildBinaryCmd                  `cmd:""`
 	TestRenderCmd             TestRenderCmd                   `cmd:""`
@@ -77,6 +78,7 @@ func NewRootCmd(
 		AtlasMCPCmd:               atlasCommands.mcp,
 		MakeAppCmd:                authoring.makeApp,
 		DevCmd:                    runtime.dev,
+		DevStatusCmd:              runtime.devStatus,
 		DownCmd:                   runtime.down,
 		BuildBinaryCmd:            builds.buildBinary,
 		TestRenderCmd:             tests.render,

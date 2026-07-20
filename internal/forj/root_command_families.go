@@ -47,17 +47,19 @@ func NewBuildCommands(appLogger *logger.AppLogger, runner *apiindex.Runner) *bui
 
 // runtimeCommands carries commands that start, supervise, or stop an App runtime.
 type runtimeCommands struct {
-	dev  DevCmd
-	down DownCmd
-	run  build.RunCmd
+	dev       DevCmd
+	devStatus DevStatusCmd
+	down      DownCmd
+	run       build.RunCmd
 }
 
 // NewRuntimeCommands constructs the runtime family around its shared logger and API index runner.
 func NewRuntimeCommands(appLogger *logger.AppLogger, runner *apiindex.Runner) *runtimeCommands {
 	return &runtimeCommands{
-		dev:  DevCmd{},
-		down: *NewDownCmd(appLogger),
-		run:  *build.NewRunCmd(appLogger, runner),
+		dev:       DevCmd{},
+		devStatus: DevStatusCmd{},
+		down:      *NewDownCmd(appLogger),
+		run:       *build.NewRunCmd(appLogger, runner),
 	}
 }
 
