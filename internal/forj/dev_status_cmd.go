@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/goforj/internal/managedenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -41,11 +40,13 @@ var (
 
 // DevStatusReport is the stable machine-readable result returned by dev:status.
 type DevStatusReport struct {
-	SchemaVersion int                `json:"schema_version"`
-	Supported     bool               `json:"supported"`
-	Problem       string             `json:"problem,omitempty"`
-	Project       string             `json:"project,omitempty"`
-	Services      []DevStatusService `json:"services"`
+	SchemaVersion   int                 `json:"schema_version"`
+	Supported       bool                `json:"supported"`
+	Problem         string              `json:"problem,omitempty"`
+	ResourceProblem string              `json:"resource_problem,omitempty"`
+	Project         string              `json:"project,omitempty"`
+	Services        []DevStatusService  `json:"services"`
+	Resources       []DevStatusResource `json:"resources"`
 }
 
 // DevStatusService describes the current aggregate state of one Compose service.
@@ -67,9 +68,6 @@ type DevStatusContainer struct {
 	Health   string `json:"health,omitempty"`
 	ExitCode int    `json:"exit_code"`
 }
-
-// devStatusTaskLoader resolves the effective startup tasks after applying normal development environment precedence.
-type devStatusTaskLoader func() ([]project.DevTask, error)
 
 // devStatusComposeRunner executes one trusted Compose query without a shell.
 type devStatusComposeRunner func(context.Context, string, []string, io.Writer) error
@@ -102,9 +100,10 @@ type devStatusBoundedBuffer struct {
 type DevStatusCmd struct {
 	JSON bool `name:"json" help:"Print the versioned JSON status contract"`
 
-	stdout    io.Writer
-	loadTasks devStatusTaskLoader
-	run       devStatusComposeRunner
+	stdout           io.Writer
+	loadProject      devStatusProjectLoader
+	resolveResources devStatusResourceResolver
+	run              devStatusComposeRunner
 }
 
 // Signature declares the hidden machine-oriented development status command.
@@ -119,17 +118,28 @@ func (c *DevStatusCmd) Run() error {
 	}
 
 	report := newDevStatusReport()
-	loadTasks := c.loadTasks
-	if loadTasks == nil {
-		loadTasks = loadDevStatusTasks
+	loadProject := c.loadProject
+	if loadProject == nil {
+		loadProject = loadDevStatusProject
 	}
-	tasks, err := loadTasks()
+	projectContext, err := loadProject()
 	if err != nil {
 		report.Problem = devStatusProblem("load project development status", err)
 		return c.writeReport(report)
 	}
 
-	composeCommand, found, supported := selectDevStatusComposeCommand(tasks)
+	resolveResources := c.resolveResources
+	if resolveResources == nil {
+		resolveResources = resolveDevStatusResources
+	}
+	resolvedResources, resolveErr := resolveResources(context.Background(), projectContext.config, projectContext.environment)
+	projectResources, validationErr := projectDevStatusResources(resolvedResources)
+	report.Resources = projectResources
+	if resourceErr := errors.Join(resolveErr, validationErr); resourceErr != nil {
+		report.ResourceProblem = devStatusProblem("resolve project resources", resourceErr)
+	}
+
+	composeCommand, found, supported := selectDevStatusComposeCommand(projectContext.tasks)
 	if !found {
 		return c.writeReport(report)
 	}
@@ -171,10 +181,13 @@ func (c *DevStatusCmd) Run() error {
 	return c.writeReport(report)
 }
 
-// writeReport writes one JSON object while preserving a non-nil services array.
+// writeReport writes one JSON object while preserving every collection's stable array shape.
 func (c *DevStatusCmd) writeReport(report DevStatusReport) error {
 	if report.Services == nil {
 		report.Services = make([]DevStatusService, 0)
+	}
+	if report.Resources == nil {
+		report.Resources = make([]DevStatusResource, 0)
 	}
 	stdout := c.stdout
 	if stdout == nil {
@@ -206,23 +219,8 @@ func newDevStatusReport() DevStatusReport {
 		SchemaVersion: devStatusSchemaVersion,
 		Supported:     true,
 		Services:      make([]DevStatusService, 0),
+		Resources:     make([]DevStatusResource, 0),
 	}
-}
-
-// loadDevStatusTasks mirrors dev environment precedence before resolving the effective startup task list.
-func loadDevStatusTasks() ([]project.DevTask, error) {
-	managedEnvironment, err := managedenv.Capture()
-	if err != nil {
-		return nil, fmt.Errorf("capture managed environment: %w", err)
-	}
-	if err := loadDevEnvironment(false, managedEnvironment); err != nil {
-		return nil, fmt.Errorf("load development environment: %w", err)
-	}
-	config, err := project.LoadProjectConfig()
-	if err != nil {
-		return nil, err
-	}
-	return effectiveDevPreTasks(config), nil
 }
 
 // selectDevStatusComposeCommand accepts only commands whose tokens are fixed by the GoForj convention.

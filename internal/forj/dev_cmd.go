@@ -1232,11 +1232,17 @@ func (session *devWatchSession) reloadProjectConfig() error {
 	return nil
 }
 
+// snapshotProcessEnv splits only well-formed process entries while preserving values that contain equals signs.
 func snapshotProcessEnv() map[string]string {
+	return processEnvironmentMap(os.Environ())
+}
+
+// processEnvironmentMap converts process entries without truncating values or admitting empty platform pseudo-keys.
+func processEnvironmentMap(entries []string) map[string]string {
 	envMap := map[string]string{}
-	for _, entry := range os.Environ() {
+	for _, entry := range entries {
 		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
+		if !ok || key == "" {
 			continue
 		}
 		envMap[key] = value

@@ -18,6 +18,7 @@ type Resource struct {
 	Priority    int    `json:"priority,omitempty"`
 	Source      string `json:"source,omitempty"`
 	App         string `json:"app,omitempty"`
+	Service     string `json:"service,omitempty"`
 	Runtime     string `json:"runtime,omitempty"`
 	Health      string `json:"health,omitempty"`
 	Auth        string `json:"auth,omitempty"`
@@ -126,6 +127,7 @@ func Filter(resources []Resource, options ...FilterOption) []Resource {
 	return out
 }
 
+// normalize removes disabled and duplicate entries before applying stable presentation order.
 func normalize(resources []Resource) []Resource {
 	seen := map[string]struct{}{}
 	out := make([]Resource, 0, len(resources))
@@ -135,6 +137,7 @@ func normalize(resources []Resource) []Resource {
 		resource.Category = strings.TrimSpace(resource.Category)
 		resource.URL = strings.TrimSpace(resource.URL)
 		resource.App = strings.TrimSpace(resource.App)
+		resource.Service = strings.TrimSpace(resource.Service)
 		resource.Runtime = strings.TrimSpace(resource.Runtime)
 		resource.Health = strings.TrimSpace(resource.Health)
 		resource.Auth = strings.TrimSpace(resource.Auth)

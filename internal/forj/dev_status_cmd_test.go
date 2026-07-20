@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/goforj/goforj/internal/forj/resources"
 	"github.com/goforj/goforj/project"
 )
 
@@ -155,6 +157,9 @@ func TestDevStatusCmdReportsCapabilityBoundaries(t *testing.T) {
 			if report.Services == nil || len(report.Services) != 0 {
 				t.Fatalf("services = %#v, want non-nil empty array", report.Services)
 			}
+			if report.Resources == nil || len(report.Resources) != 0 {
+				t.Fatalf("resources = %#v, want non-nil empty array", report.Resources)
+			}
 		})
 	}
 }
@@ -249,7 +254,211 @@ func TestDevStatusCmdReportsObservationFailures(t *testing.T) {
 			if report.Services == nil || len(report.Services) != 0 {
 				t.Fatalf("services = %#v, want non-nil empty array", report.Services)
 			}
+			if report.Resources == nil || len(report.Resources) != 0 {
+				t.Fatalf("resources = %#v, want non-nil empty array", report.Resources)
+			}
 		})
+	}
+}
+
+// TestDevStatusCmdProjectsHostResources verifies assigned addresses and explicit ownership without running generated App code.
+func TestDevStatusCmdProjectsHostResources(t *testing.T) {
+	t.Parallel()
+	config := &project.Config{}
+	config.Render.Components.WebAPI = true
+	config.Render.Components.Docker = true
+	loadCount := 0
+	runCount := 0
+	var output bytes.Buffer
+	command := &DevStatusCmd{
+		JSON:   true,
+		stdout: &output,
+		loadProject: func() (devStatusProjectContext, error) {
+			loadCount++
+			return devStatusProjectContext{
+				config: config,
+				environment: map[string]string{
+					"APP_URL":                "http://localhost:3000",
+					"IP_ADDRESS":             "127.77.42.18",
+					"LIGHTHOUSE_URL":         "ws://localhost:3000/lighthouse/ws/agent",
+					"API_SWAGGER_ENABLED":    "true",
+					"COMPOSE_PROFILES":       "mailpit,grafana",
+					"MAILPIT_HTTP_PORT":      "8025",
+					"OBSERVABILITY_VM_PORT":  "8428",
+					"GRAFANA_PORT":           "13001",
+					"GRAFANA_ADMIN_USER":     "must-not-escape",
+					"GRAFANA_ADMIN_PASSWORD": "also-must-not-escape",
+				},
+				tasks: []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker compose up -d"}},
+			}, nil
+		},
+		run: func(_ context.Context, executable string, arguments []string, stdout io.Writer) error {
+			runCount++
+			if executable != "docker" || !reflect.DeepEqual(arguments, []string{"compose", "ps", "--all", "--format", "json"}) {
+				t.Fatalf("Compose query = %q %#v", executable, arguments)
+			}
+			_, err := io.WriteString(stdout, "[]")
+			return err
+		},
+	}
+	if err := command.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if loadCount != 1 || runCount != 1 {
+		t.Fatalf("loads = %d, Compose queries = %d; want one host config load and one Compose query", loadCount, runCount)
+	}
+	var report DevStatusReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if report.Problem != "" || report.ResourceProblem != "" || report.Resources == nil {
+		t.Fatalf("status problems/resources = (%q, %q, %#v)", report.Problem, report.ResourceProblem, report.Resources)
+	}
+	for _, expected := range []struct {
+		id      string
+		url     string
+		app     string
+		service string
+	}{
+		{id: "app", url: "http://127.77.42.18:3000", app: project.DefaultAppName},
+		{id: "api", url: "http://127.77.42.18:3000", app: project.DefaultAppName},
+		{id: "swagger", url: "http://127.77.42.18:3000/swagger", app: project.DefaultAppName},
+		{id: "lighthouse", url: "http://127.77.42.18:3000/lighthouse", app: project.DefaultAppName},
+		{id: "mailpit", url: "http://127.77.42.18:8025", service: "mailpit"},
+		{id: "victoria-metrics", url: "http://127.77.42.18:8428", service: "victoriametrics"},
+		{id: "grafana", url: "http://127.77.42.18:13001", service: "grafana"},
+	} {
+		resource, found := devStatusResourceByID(report.Resources, expected.id)
+		if !found || resource.URL != expected.url || resource.App != expected.app || resource.Service != expected.service {
+			t.Errorf("resource %q = %#v found=%t", expected.id, resource, found)
+		}
+	}
+	serialized := output.String()
+	for _, secret := range []string{"must-not-escape", "also-must-not-escape", `"auth":`, `"source":`} {
+		if strings.Contains(strings.ToLower(serialized), strings.ToLower(secret)) {
+			t.Fatalf("status output exposed excluded resource data %q: %s", secret, serialized)
+		}
+	}
+}
+
+// TestDevStatusCmdKeepsResourceFailuresIndependent verifies Compose state survives partial registry errors.
+func TestDevStatusCmdKeepsResourceFailuresIndependent(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	command := &DevStatusCmd{
+		JSON:   true,
+		stdout: &output,
+		loadProject: func() (devStatusProjectContext, error) {
+			return devStatusProjectContext{
+				config:      &project.Config{},
+				environment: map[string]string{},
+				tasks:       []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker-compose up -d"}},
+			}, nil
+		},
+		resolveResources: func(context.Context, *project.Config, map[string]string) ([]resources.Resource, error) {
+			return []resources.Resource{{ID: "app", Name: "App", Category: "app", URL: "http://localhost:3000", Enabled: true, App: project.DefaultAppName, Owner: "goforj"}}, errors.New("secondary resolver unavailable")
+		},
+		run: func(_ context.Context, _ string, _ []string, stdout io.Writer) error {
+			_, err := io.WriteString(stdout, `[{"ID":"mysql-1","Name":"demo-mysql-1","Project":"demo","Service":"mysql","State":"running","Health":"healthy"}]`)
+			return err
+		},
+	}
+	if err := command.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	var report DevStatusReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if report.Problem != "" || report.ResourceProblem == "" || len([]rune(report.ResourceProblem)) > devStatusMaximumProblemRunes {
+		t.Fatalf("problems = (%q, %q), want bounded resource-only problem", report.Problem, report.ResourceProblem)
+	}
+	if len(report.Services) != 1 || report.Services[0].ID != "mysql" || len(report.Resources) != 1 || report.Resources[0].ID != "app" {
+		t.Fatalf("partial report = services %#v resources %#v", report.Services, report.Resources)
+	}
+}
+
+// TestProjectDevStatusResourcesValidatesAndBounds verifies disabled, duplicate, unsafe, and oversized entries are contained.
+func TestProjectDevStatusResourcesValidatesAndBounds(t *testing.T) {
+	t.Parallel()
+	resourcesToProject := []resources.Resource{
+		{ID: "disabled", Name: "Disabled", Category: "tool", Enabled: false},
+		{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: "http://localhost:8025", Description: "Local inbox.", Enabled: true, Service: "mailpit", Auth: "secret", Source: "profile"},
+		{ID: "mailpit", Name: "Duplicate", Category: "mail", Enabled: true},
+		{ID: "unsafe", Name: "Unsafe\nName", Category: "tool", Enabled: true},
+		{ID: "credential-url", Name: "Credential URL", Category: "tool", URL: "http://user:password@localhost:3000", Enabled: true},
+		{ID: "dual-owner", Name: "Dual owner", Category: "tool", Enabled: true, App: "app", Service: "tool"},
+	}
+	projected, err := projectDevStatusResources(resourcesToProject)
+	if err == nil {
+		t.Fatal("projectDevStatusResources() error = nil, want partial validation problem")
+	}
+	if len(projected) != 1 || projected[0].ID != "mailpit" || projected[0].Service != "mailpit" {
+		t.Fatalf("projected resources = %#v", projected)
+	}
+	serialized, marshalErr := json.Marshal(projected)
+	if marshalErr != nil {
+		t.Fatalf("json.Marshal() error = %v", marshalErr)
+	}
+	if bytes.Contains(serialized, []byte("secret")) || bytes.Contains(serialized, []byte("profile")) {
+		t.Fatalf("projected resources exposed excluded fields: %s", serialized)
+	}
+
+	many := make([]resources.Resource, 0, devStatusMaximumResources+1)
+	for index := 0; index <= devStatusMaximumResources; index++ {
+		many = append(many, resources.Resource{ID: fmt.Sprintf("resource-%03d", index), Name: "Resource", Category: "tool", Enabled: true})
+	}
+	bounded, err := projectDevStatusResources(many)
+	if err == nil || len(bounded) != devStatusMaximumResources {
+		t.Fatalf("bounded resources = %d error=%v, want %d and error", len(bounded), err, devStatusMaximumResources)
+	}
+}
+
+// TestDevStatusCmdOmitsDisabledResources verifies registry filtering cannot advertise dormant project surfaces.
+func TestDevStatusCmdOmitsDisabledResources(t *testing.T) {
+	t.Parallel()
+	config := &project.Config{}
+	config.Render.Components.WebAPI = true
+	config.Render.Components.Docker = true
+	var output bytes.Buffer
+	command := &DevStatusCmd{
+		JSON:   true,
+		stdout: &output,
+		loadProject: func() (devStatusProjectContext, error) {
+			return devStatusProjectContext{
+				config: config,
+				environment: map[string]string{
+					"LIGHTHOUSE_ENABLED":  "false",
+					"API_SWAGGER_ENABLED": "false",
+					"COMPOSE_PROFILES":    "mailpit-debug,grafana-preview",
+				},
+			}, nil
+		},
+	}
+	if err := command.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	var report DevStatusReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	for _, id := range []string{"lighthouse", "swagger", "mailpit", "victoria-metrics", "grafana"} {
+		if _, found := devStatusResourceByID(report.Resources, id); found {
+			t.Fatalf("disabled resource %q present in %#v", id, report.Resources)
+		}
+	}
+	if report.Resources == nil {
+		t.Fatal("resources = nil, want stable array")
+	}
+}
+
+// TestProcessEnvironmentMapPreservesValues verifies process entries split once and ignore malformed pseudo-keys.
+func TestProcessEnvironmentMapPreservesValues(t *testing.T) {
+	t.Parallel()
+	got := processEnvironmentMap([]string{"APP_URL=http://localhost:3000?a=b", "EMPTY=", "MALFORMED", "=platform"})
+	want := map[string]string{"APP_URL": "http://localhost:3000?a=b", "EMPTY": ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("processEnvironmentMap() = %#v, want %#v", got, want)
 	}
 }
 
@@ -273,6 +482,16 @@ func TestDevStatusCmdCommandWiring(t *testing.T) {
 	}
 }
 
+// devStatusResourceByID returns one projected resource for focused contract assertions.
+func devStatusResourceByID(projectResources []DevStatusResource, id string) (DevStatusResource, bool) {
+	for _, resource := range projectResources {
+		if resource.ID == id {
+			return resource, true
+		}
+	}
+	return DevStatusResource{}, false
+}
+
 // TestDevStatusCmdRequiresJSON verifies the human invocation cannot accidentally receive a machine-only payload.
 func TestDevStatusCmdRequiresJSON(t *testing.T) {
 	t.Parallel()
@@ -289,8 +508,15 @@ func runDevStatusCommandForTest(t *testing.T, tasks []project.DevTask, runner de
 	command := &DevStatusCmd{
 		JSON:   true,
 		stdout: &output,
-		loadTasks: func() ([]project.DevTask, error) {
-			return append([]project.DevTask(nil), tasks...), nil
+		loadProject: func() (devStatusProjectContext, error) {
+			return devStatusProjectContext{
+				config:      &project.Config{},
+				environment: map[string]string{},
+				tasks:       append([]project.DevTask(nil), tasks...),
+			}, nil
+		},
+		resolveResources: func(context.Context, *project.Config, map[string]string) ([]resources.Resource, error) {
+			return []resources.Resource{}, nil
 		},
 		run: runner,
 	}
