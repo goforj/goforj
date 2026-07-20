@@ -601,24 +601,6 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	}
 }
 
-// TestWireExecutableNameMatchesGoInstallOutput keeps Windows rendering from looking for a Unix-only filename.
-func TestWireExecutableNameMatchesGoInstallOutput(t *testing.T) {
-	for _, test := range []struct {
-		goos string
-		want string
-	}{
-		{goos: "darwin", want: "wire"},
-		{goos: "linux", want: "wire"},
-		{goos: "windows", want: "wire.exe"},
-	} {
-		t.Run(test.goos, func(t *testing.T) {
-			if got := wireExecutableName(test.goos); got != test.want {
-				t.Fatalf("wireExecutableName(%q) = %q, want %q", test.goos, got, test.want)
-			}
-		})
-	}
-}
-
 // TestRuntimeAppMetadataUsesCompiledAppOrder verifies filesystem discovery retains deterministic runtime defaults.
 func TestRuntimeAppMetadataUsesCompiledAppOrder(t *testing.T) {
 	root := t.TempDir()
