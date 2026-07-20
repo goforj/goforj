@@ -378,6 +378,54 @@ func TestDevStatusCmdKeepsResourceFailuresIndependent(t *testing.T) {
 	}
 }
 
+// TestDevStatusCmdResourcesOnlySkipsCompose verifies catalog requests return before any container-runtime query.
+func TestDevStatusCmdResourcesOnlySkipsCompose(t *testing.T) {
+	t.Parallel()
+	loadCount := 0
+	resolveCount := 0
+	var output bytes.Buffer
+	command := &DevStatusCmd{
+		JSON:          true,
+		ResourcesOnly: true,
+		stdout:        &output,
+		loadProject: func() (devStatusProjectContext, error) {
+			loadCount++
+			return devStatusProjectContext{
+				config:      &project.Config{},
+				environment: map[string]string{"IP_ADDRESS": "127.77.20.16"},
+				tasks:       []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker compose up -d"}},
+			}, nil
+		},
+		resolveResources: func(context.Context, *project.Config, map[string]string) ([]resources.Resource, error) {
+			resolveCount++
+			return []resources.Resource{{ID: "app", Name: "App", Category: "app", URL: "http://127.77.20.16:3000", Enabled: true, App: project.DefaultAppName, Owner: "goforj"}}, errors.New("optional resource resolver unavailable")
+		},
+		run: func(context.Context, string, []string, io.Writer) error {
+			t.Fatal("Compose runner was called for --resources-only")
+			return nil
+		},
+	}
+	if err := command.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if loadCount != 1 || resolveCount != 1 {
+		t.Fatalf("loads = %d, resource resolutions = %d; want one each", loadCount, resolveCount)
+	}
+	var report DevStatusReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if !report.Supported || report.Problem != "" || report.ResourceProblem == "" || len([]rune(report.ResourceProblem)) > devStatusMaximumProblemRunes {
+		t.Fatalf("capability/problems = (%t, %q, %q), want bounded resource-only problem", report.Supported, report.Problem, report.ResourceProblem)
+	}
+	if report.Services == nil || len(report.Services) != 0 {
+		t.Fatalf("services = %#v, want non-nil empty array", report.Services)
+	}
+	if report.Resources == nil || len(report.Resources) != 1 || report.Resources[0].ID != "app" {
+		t.Fatalf("resources = %#v, want projected App", report.Resources)
+	}
+}
+
 // TestProjectDevStatusResourcesValidatesAndBounds verifies disabled, duplicate, unsafe, and oversized entries are contained.
 func TestProjectDevStatusResourcesValidatesAndBounds(t *testing.T) {
 	t.Parallel()
@@ -479,6 +527,19 @@ func TestDevStatusCmdCommandWiring(t *testing.T) {
 	}
 	if !root.DevStatusCmd.JSON {
 		t.Fatalf("DevStatusCmd.JSON = false, want true")
+	}
+
+	resourceRoot := RootCmd{}
+	resourceParser, err := kong.New(&resourceRoot)
+	if err != nil {
+		t.Fatalf("kong.New(resources) error = %v", err)
+	}
+	resourceContext, err := resourceParser.Parse([]string{"dev:status", "--json", "--resources-only"})
+	if err != nil {
+		t.Fatalf("Parse(resources) error = %v", err)
+	}
+	if resourceContext.Command() != "dev:status" || !resourceRoot.DevStatusCmd.JSON || !resourceRoot.DevStatusCmd.ResourcesOnly {
+		t.Fatalf("resource command = %q %#v, want dev:status resource-only mode", resourceContext.Command(), resourceRoot.DevStatusCmd)
 	}
 }
 

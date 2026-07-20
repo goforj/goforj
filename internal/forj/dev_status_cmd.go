@@ -98,7 +98,8 @@ type devStatusBoundedBuffer struct {
 
 // DevStatusCmd reports current development container state for machine consumers.
 type DevStatusCmd struct {
-	JSON bool `name:"json" help:"Print the versioned JSON status contract"`
+	JSON          bool `name:"json" help:"Print the versioned JSON status contract"`
+	ResourcesOnly bool `name:"resources-only" help:"Report host-resolved project resources without querying the container runtime"`
 
 	stdout           io.Writer
 	loadProject      devStatusProjectLoader
@@ -137,6 +138,9 @@ func (c *DevStatusCmd) Run() error {
 	report.Resources = projectResources
 	if resourceErr := errors.Join(resolveErr, validationErr); resourceErr != nil {
 		report.ResourceProblem = devStatusProblem("resolve project resources", resourceErr)
+	}
+	if c.ResourcesOnly {
+		return c.writeReport(report)
 	}
 
 	composeCommand, found, supported := selectDevStatusComposeCommand(projectContext.tasks)
