@@ -10,6 +10,8 @@ import (
 	"golang.org/x/term"
 )
 
+const devSectionSeparatorRuleWidth = 5
+
 func buildDevFooterSeparatorLine() string {
 	return buildDevSectionSeparatorLine("")
 }
@@ -26,7 +28,15 @@ func buildDevShutdownSeparatorLine() string {
 
 func buildDevSectionSeparatorLine(label string) string {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || width <= 0 {
+	if err != nil {
+		width = 0
+	}
+	return buildDevSectionSeparatorLineAtWidth(label, width)
+}
+
+// buildDevSectionSeparatorLineAtWidth keeps compact-label and narrow-terminal behavior testable without depending on the test process TTY.
+func buildDevSectionSeparatorLineAtWidth(label string, width int) string {
+	if width <= 0 {
 		width = 120
 	}
 	if width < 20 {
@@ -42,15 +52,12 @@ func buildDevSectionSeparatorLine(label string) string {
 	if width <= centerWidth {
 		return centerText
 	}
-	left := 5
-	if width-centerWidth-left < 0 {
-		left = 0
+	sideWidth := devSectionSeparatorRuleWidth
+	if available := (width - centerWidth) / 2; available < sideWidth {
+		sideWidth = available
 	}
-	right := width - centerWidth - left
-	if right < 0 {
-		right = 0
-	}
-	return ruleStyle.Render(strings.Repeat("─", left)) + centerText + ruleStyle.Render(strings.Repeat("─", right))
+	rule := ruleStyle.Render(strings.Repeat("─", sideWidth))
+	return rule + centerText + rule
 }
 
 func buildDevFooterLine(env map[string]string) string {

@@ -55,6 +55,36 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	}
 }
 
+// TestBuildDevSectionSeparatorLineUsesCompactBalancedRules prevents wide terminals from dominating the development transcript.
+func TestBuildDevSectionSeparatorLineUsesCompactBalancedRules(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		width int
+		want  string
+	}{
+		{name: "wide terminal", label: "Start", width: 120, want: "───── Start ─────"},
+		{name: "unavailable terminal", label: "Start", want: "───── Start ─────"},
+		{name: "narrow terminal", label: "A label wider than the minimum terminal", width: 12, want: " A label wider than the minimum terminal "},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			line := stripANSI(buildDevSectionSeparatorLineAtWidth(test.label, test.width))
+			if line != test.want {
+				t.Fatalf("separator = %q, want %q", line, test.want)
+			}
+		})
+	}
+}
+
+// TestBuildDevSectionSeparatorLineKeepsFullWidthForUnlabeledBoundaries preserves structural TUI edges that rely on terminal width.
+func TestBuildDevSectionSeparatorLineKeepsFullWidthForUnlabeledBoundaries(t *testing.T) {
+	line := stripANSI(buildDevSectionSeparatorLineAtWidth("", 48))
+	if got := charmansi.StringWidth(line); got != 48 {
+		t.Fatalf("unlabeled separator width = %d, want 48: %q", got, line)
+	}
+}
+
 // TestDevBubbleModelResetFooterLine keeps the rendered footer synchronized with the writer's refreshed default.
 func TestDevBubbleModelResetFooterLine(t *testing.T) {
 	model := devBubbleModel{footerLine: "temporary"}
