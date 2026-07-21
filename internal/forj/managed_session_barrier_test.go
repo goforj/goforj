@@ -44,6 +44,10 @@ type recordingManagedBarrierClient struct {
 	barrierReplies  []managedsession.BarrierResponse
 	replaceErrors   []error
 	barrierErrors   []error
+	runtimeRequests []managedsession.RuntimePlanRequest
+	runtimeReplies  []managedsession.RuntimePlanResponse
+	runtimeErrors   []error
+	peer            managedsession.Peer
 }
 
 // ReplacePublications records one client-side replacement and returns the next configured result.
@@ -76,6 +80,36 @@ func (client *recordingManagedBarrierClient) Barrier(_ context.Context, request 
 	reply := client.barrierReplies[0]
 	client.barrierReplies = client.barrierReplies[1:]
 	return reply, nil
+}
+
+// RuntimePlan records one optional assignment request and returns the next configured response.
+func (client *recordingManagedBarrierClient) RuntimePlan(_ context.Context, request managedsession.RuntimePlanRequest) (managedsession.RuntimePlanResponse, error) {
+	client.runtimeRequests = append(client.runtimeRequests, request)
+	if len(client.runtimeErrors) > 0 {
+		err := client.runtimeErrors[0]
+		client.runtimeErrors = client.runtimeErrors[1:]
+		return managedsession.RuntimePlanResponse{}, err
+	}
+	if len(client.runtimeReplies) == 0 {
+		return managedsession.RuntimePlanResponse{
+			SchemaVersion: managedsession.SchemaVersion,
+			Fence:         request.Fence,
+			Plan: managedsession.RuntimePlan{
+				Apps:             []managedsession.RuntimePlanApp{},
+				ServiceEndpoints: []managedsession.RuntimePlanServiceEndpoint{},
+			},
+		}, nil
+	}
+	reply := client.runtimeReplies[0]
+	client.runtimeReplies = client.runtimeReplies[1:]
+	return reply, nil
+}
+
+// Peer returns the negotiated daemon capabilities used by the optional plan gate.
+func (client *recordingManagedBarrierClient) Peer() managedsession.Peer {
+	peer := client.peer
+	peer.Capabilities = append([]managedsession.Capability(nil), peer.Capabilities...)
+	return peer
 }
 
 // managedBarrierTestRegistration returns a valid attached-session fence for helper tests.
@@ -211,6 +245,45 @@ func TestReconnectingManagedSessionDoesNotReconnectRemotePolicyFailures(t *testi
 	}
 	if initial.closeCalls != 0 {
 		t.Fatalf("initial close calls = %d, want no reconnect cleanup", initial.closeCalls)
+	}
+}
+
+// TestReconnectingManagedSessionRuntimePlanUsesNegotiatedCapability proves the assignment call keeps the current fence.
+func TestReconnectingManagedSessionRuntimePlanUsesNegotiatedCapability(t *testing.T) {
+	registration := managedBarrierTestRegistration(t)
+	client := &reconnectingManagedBarrierFixture{recordingManagedBarrierClient: recordingManagedBarrierClient{
+		peer: managedsession.Peer{Capabilities: []managedsession.Capability{managedsession.CapabilityRuntimePlanV1}},
+	}}
+	connection, err := newReconnectingManagedSession(
+		client,
+		registration,
+		managedBarrierTestLaunchContext(),
+		func(context.Context, managedsession.LaunchContext) (managedSessionClient, managedsession.RegisterResponse, error) {
+			t.Fatal("runtime plan test must not reconnect")
+			return nil, managedsession.RegisterResponse{}, errors.New("unreachable")
+		},
+	)
+	if err != nil {
+		t.Fatalf("newReconnectingManagedSession() error = %v", err)
+	}
+	if !connection.RuntimePlanAvailable() {
+		t.Fatal("RuntimePlanAvailable() = false, want negotiated capability")
+	}
+	response, err := connection.RuntimePlan(t.Context(), managedsession.RuntimePlanRequest{
+		SchemaVersion: managedsession.SchemaVersion,
+		Fence:         registration.Fence,
+		ActiveApps:    []managedsession.ActiveApp{},
+	})
+	if err != nil {
+		t.Fatalf("RuntimePlan() error = %v", err)
+	}
+	if response.Fence != registration.Fence || len(client.runtimeRequests) != 1 || client.runtimeRequests[0].Fence != registration.Fence {
+		t.Fatalf("runtime plan response/request = %#v / %#v, want registration fence %#v", response, client.runtimeRequests, registration.Fence)
+	}
+
+	client.peer.Capabilities = nil
+	if connection.RuntimePlanAvailable() {
+		t.Fatal("RuntimePlanAvailable() = true without negotiated capability")
 	}
 }
 

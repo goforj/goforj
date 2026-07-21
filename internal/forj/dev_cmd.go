@@ -146,6 +146,9 @@ func (c *DevCmd) Run() error {
 	var managedRegistration managedsession.RegisterResponse
 	var managedIdentity string
 	var managedBarrier func(context.Context) error
+	var managedRuntimePlan func(context.Context) error
+	managedRuntimeOverlayRestore := func() {}
+	defer func() { managedRuntimeOverlayRestore() }()
 	if inheritedContext != nil {
 		managedClient, registration, openErr := managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
 		managedRegistration = registration
@@ -170,6 +173,26 @@ func (c *DevCmd) Run() error {
 		managedIdentity = managedProjectIdentity(config, inheritedContext.ProjectRoot)
 		managedBarrier = func(ctx context.Context) error {
 			return waitForManagedComposeBarrier(ctx, managedConnection, managedRegistration, managedIdentity)
+		}
+		managedRuntimePlan = func(ctx context.Context) error {
+			if !managedConnection.RuntimePlanAvailable() {
+				return nil
+			}
+			request, err := managedRuntimePlanRequest(config, managedRegistration)
+			if err != nil {
+				return err
+			}
+			response, err := managedConnection.RuntimePlan(ctx, request)
+			if err != nil {
+				return err
+			}
+			restore, err := installManagedRuntimeOverlay(response.Plan)
+			if err != nil {
+				return err
+			}
+			managedRuntimeOverlayRestore()
+			managedRuntimeOverlayRestore = restore
+			return nil
 		}
 	}
 
@@ -245,7 +268,7 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	if managedBarrier != nil {
-		if err := runManagedDevInitialLifecycle(config, os.Stdout, os.Stderr, runCtx, managedBarrier); err != nil {
+		if err := runManagedDevInitialLifecycleWithPlan(config, os.Stdout, os.Stderr, runCtx, managedBarrier, managedRuntimePlan); err != nil {
 			return err
 		}
 	} else if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
@@ -1826,6 +1849,9 @@ func runDevSubprocess(run devSubprocessRun) error {
 	stdin := io.Reader(os.Stdin)
 	env := map[string]string{"CLICOLOR_FORCE": "1"}
 	for key, value := range run.env {
+		env[key] = value
+	}
+	for key, value := range currentManagedRuntimeOverlay() {
 		env[key] = value
 	}
 	// Direct dev commands have no protocol consumer, so watcher-only progress must never reach their writers.

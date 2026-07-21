@@ -25,6 +25,11 @@ type managedBarrierClient interface {
 	Barrier(context.Context, managedsession.BarrierRequest) (managedsession.BarrierResponse, error)
 }
 
+// managedRuntimePlanClient is the optional semantic assignment surface negotiated by newer Harbor daemons.
+type managedRuntimePlanClient interface {
+	RuntimePlan(context.Context, managedsession.RuntimePlanRequest) (managedsession.RuntimePlanResponse, error)
+}
+
 // managedSessionClient extends the barrier surface with the close operation needed when a broken client is replaced.
 type managedSessionClient interface {
 	managedBarrierClient
@@ -133,6 +138,53 @@ func (session *reconnectingManagedSession) Barrier(
 		}
 	}
 	return managedsession.BarrierResponse{}, errors.New("managed session barrier retry exhausted")
+}
+
+// RuntimePlan forwards one exact assignment request and reconnects once when the IPC stream is lost.
+func (session *reconnectingManagedSession) RuntimePlan(
+	ctx context.Context,
+	request managedsession.RuntimePlanRequest,
+) (managedsession.RuntimePlanResponse, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		client, registration := session.snapshot()
+		if client == nil {
+			return managedsession.RuntimePlanResponse{}, managedsession.ErrClosed
+		}
+		planClient, supported := client.(managedRuntimePlanClient)
+		if !supported {
+			return managedsession.RuntimePlanResponse{}, errors.New("managed session runtime-plan capability is unavailable")
+		}
+		request.Fence = registration.Fence
+		response, err := planClient.RuntimePlan(ctx, request)
+		if err == nil {
+			return response, nil
+		}
+		if !managedSessionTransportFailure(err) || attempt != 0 {
+			return managedsession.RuntimePlanResponse{}, err
+		}
+		if err := session.reconnectAfterFailure(ctx, client); err != nil {
+			return managedsession.RuntimePlanResponse{}, err
+		}
+	}
+	return managedsession.RuntimePlanResponse{}, errors.New("managed session runtime-plan retry exhausted")
+}
+
+// RuntimePlanAvailable reports whether the current negotiated client advertises semantic assignments.
+func (session *reconnectingManagedSession) RuntimePlanAvailable() bool {
+	if session == nil {
+		return false
+	}
+	client, _ := session.snapshot()
+	peerClient, ok := client.(interface{ Peer() managedsession.Peer })
+	if !ok {
+		return false
+	}
+	for _, capability := range peerClient.Peer().Capabilities {
+		if capability == managedsession.CapabilityRuntimePlanV1 {
+			return true
+		}
+	}
+	return false
 }
 
 // snapshot returns the current client and fence without holding the lock across transport I/O.

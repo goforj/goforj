@@ -24,7 +24,7 @@ func OpenLaunchSession(ctx context.Context, launch LaunchContext) (*Client, Regi
 	defer cancel()
 	client, err := Dial(registrationContext, func(dialContext context.Context) (net.Conn, error) {
 		return dialManagedEndpoint(dialContext, launch.EndpointReference)
-	}, ClientConfig{Capabilities: []Capability{CapabilityV1, CapabilityLaunchContextV1}})
+	}, ClientConfig{Capabilities: []Capability{CapabilityV1, CapabilityLaunchContextV1, CapabilityRuntimePlanV1}})
 	if err != nil {
 		return nil, RegisterResponse{}, err
 	}

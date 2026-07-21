@@ -86,6 +86,18 @@ func runManagedDevInitialLifecycle(
 	ctx context.Context,
 	barrier func(context.Context) error,
 ) error {
+	return runManagedDevInitialLifecycleWithPlan(config, outWriter, errWriter, ctx, barrier, nil)
+}
+
+// runManagedDevInitialLifecycleWithPlan inserts one optional trusted runtime overlay after Compose is admitted.
+func runManagedDevInitialLifecycleWithPlan(
+	config *project.Config,
+	outWriter io.Writer,
+	errWriter io.Writer,
+	ctx context.Context,
+	barrier func(context.Context) error,
+	runtimePlan func(context.Context) error,
+) error {
 	plan, err := planManagedDevLifecycle(config)
 	if err != nil {
 		return err
@@ -127,6 +139,11 @@ func runManagedDevInitialLifecycle(
 	if barrier != nil {
 		if err := barrier(ctx); err != nil {
 			return fmt.Errorf("managed Compose barrier failed: %w", err)
+		}
+	}
+	if runtimePlan != nil {
+		if err := runtimePlan(ctx); err != nil {
+			return fmt.Errorf("managed runtime plan failed: %w", err)
 		}
 	}
 	if err := runDevTasks("Running post-compose setup", plan.postCompose); err != nil {
