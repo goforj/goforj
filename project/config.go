@@ -169,6 +169,12 @@ func (c DevConfig) ValidateManagedTaskPhases() error {
 		if task.Phase == "" {
 			return fmt.Errorf("%s[%d]: task %q has no managed lifecycle phase", scope, index, strings.TrimSpace(task.Name))
 		}
+		if scope == "dev.pre" && !isDevStartupPhase(task.Phase) {
+			return fmt.Errorf("%s[%d]: task %q uses teardown lifecycle phase %q", scope, index, strings.TrimSpace(task.Name), task.Phase)
+		}
+		if scope == "dev.down" && !isDevTeardownPhase(task.Phase) {
+			return fmt.Errorf("%s[%d]: task %q uses startup lifecycle phase %q", scope, index, strings.TrimSpace(task.Name), task.Phase)
+		}
 		return nil
 	}
 	for index, task := range c.Pre {
@@ -182,6 +188,26 @@ func (c DevConfig) ValidateManagedTaskPhases() error {
 		}
 	}
 	return nil
+}
+
+// isDevStartupPhase reports whether a phase belongs to the startup task list.
+func isDevStartupPhase(phase DevTaskPhase) bool {
+	switch phase {
+	case DevTaskPhasePreCompose, DevTaskPhaseCompose, DevTaskPhasePostCompose, DevTaskPhasePostMigrate:
+		return true
+	default:
+		return false
+	}
+}
+
+// isDevTeardownPhase reports whether a phase belongs to the teardown task list.
+func isDevTeardownPhase(phase DevTaskPhase) bool {
+	switch phase {
+	case DevTaskPhasePreComposeDown, DevTaskPhaseComposeDown, DevTaskPhasePostComposeDown:
+		return true
+	default:
+		return false
+	}
 }
 
 // DefaultAppName is the conventional app name used when no named app is selected.

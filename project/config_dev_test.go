@@ -101,6 +101,14 @@ func TestDevTaskLifecycleMetadataValidation(t *testing.T) {
 	if err := managed.ValidateManagedTaskPhases(); err != nil {
 		t.Fatalf("managed task validation failed: %v", err)
 	}
+	wrongStartupScope := DevConfig{Pre: []DevTask{{Name: "Compose down", Cmd: "docker compose down", ID: DevTaskIDComposeDown, Phase: DevTaskPhaseComposeDown}}}
+	if err := wrongStartupScope.ValidateManagedTaskPhases(); err == nil || !strings.Contains(err.Error(), "uses teardown lifecycle phase") {
+		t.Fatalf("startup scope validation error = %v, want teardown-phase rejection", err)
+	}
+	wrongTeardownScope := DevConfig{Down: []DevTask{{Name: "Compose", Cmd: "docker compose up", ID: DevTaskIDCompose, Phase: DevTaskPhaseCompose}}}
+	if err := wrongTeardownScope.ValidateManagedTaskPhases(); err == nil || !strings.Contains(err.Error(), "uses startup lifecycle phase") {
+		t.Fatalf("teardown scope validation error = %v, want startup-phase rejection", err)
+	}
 }
 
 // TestDevWatchJSONSeparatesLegacyAndNativeMatchers verifies JSON uses one watch key whose shape preserves both watcher modes.
