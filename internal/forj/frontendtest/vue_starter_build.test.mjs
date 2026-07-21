@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
@@ -13,7 +12,7 @@ const viteEntry = requireFromFrontend.resolve('vite')
 const { build, createLogger } = await import(pathToFileURL(viteEntry).href)
 const { lucideIconImports } = await import(pathToFileURL(path.join(frontendRoot, 'goforj-lucide-imports.mjs')).href)
 
-test('the production graph resolves only used Lucide icons', async () => {
+test('the production graph resolves only used Lucide icons and retains the component showroom', async () => {
   let moduleIDs = []
 
   await build({
@@ -37,44 +36,10 @@ test('the production graph resolves only used Lucide icons', async () => {
   assert.ok(!lucideModules.some((id) => id.endsWith('/dist/esm/lucide-vue.mjs')), 'the Lucide package barrel entered the production graph')
   assert.ok(lucideModules.some((id) => id.endsWith('/dist/esm/icons/loader-circle.mjs')), 'the Loader2Icon alias was not resolved')
   assert.ok(lucideModules.length < 100, `expected fewer than 100 Lucide modules, received ${lucideModules.length}`)
-  assert.ok(!normalized.some((id) => id.includes('/src/views/components/')), 'the development-only component showroom entered the production graph')
-  assert.ok(moduleIDs.length < 1100, `expected fewer than 1100 total modules, received ${moduleIDs.length}`)
-})
-
-test('the development-scoped graph retains the component showroom', async () => {
-  let moduleIDs = []
-
-  await build({
-    root: frontendRoot,
-    configFile: path.join(frontendRoot, 'vite.config.ts'),
-    logLevel: 'silent',
-    define: {
-      'import.meta.env.DEV': 'true',
-    },
-    plugins: [{
-      name: 'goforj:test-development-module-graph',
-      generateBundle() {
-        moduleIDs = [...this.getModuleIds()]
-      },
-    }],
-    build: {
-      minify: false,
-      reportCompressedSize: false,
-      write: false,
-    },
-  })
-
-  const normalized = moduleIDs.map((id) => id.replaceAll('\\', '/'))
   for (const view of ['Overview', 'Forms', 'Navigation', 'Overlays', 'Data']) {
-    assert.ok(normalized.some((id) => id.endsWith(`/src/views/components/Components${view}View.vue`)), `Components${view}View.vue was removed from the development graph`)
+    assert.ok(normalized.some((id) => id.endsWith(`/src/views/components/Components${view}View.vue`)), `Components${view}View.vue was removed from the production graph`)
   }
-
-  const [router, navigation] = await Promise.all([
-    readFile(path.join(frontendRoot, 'src/router.ts'), 'utf8'),
-    readFile(path.join(frontendRoot, 'src/lib/navigation.ts'), 'utf8'),
-  ])
-  assert.ok(router.includes('import.meta.env.DEV'), 'the component showroom routes are not development-scoped')
-  assert.ok(navigation.includes('import.meta.env.DEV'), 'the component showroom navigation is not development-scoped')
+  assert.ok(moduleIDs.length < 1500, `expected fewer than 1500 total modules, received ${moduleIDs.length}`)
 })
 
 test('local Lucide aliases resolve to their direct icon module', async () => {
