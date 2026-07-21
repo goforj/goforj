@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -22,6 +23,8 @@ const (
 	CapabilityV1 Capability = "managed-session.v1"
 	// CapabilityLaunchContextV1 identifies the optional inherited launch-ticket proof.
 	CapabilityLaunchContextV1 Capability = "managed-session.launch-context.v1"
+	// CapabilityEventsV1 identifies the optional ordered state and output event stream.
+	CapabilityEventsV1 Capability = "managed-session.events.v1"
 	// ErrorCodeUnavailable identifies a temporary Harbor state that callers may retry.
 	ErrorCodeUnavailable ErrorCode = "unavailable"
 	// MethodRegister attaches one authenticated GoForj process to a Harbor session.
@@ -46,6 +49,7 @@ const (
 	maximumIdentifierBytes            = 256
 	maximumEndpointIDBytes            = 128
 	maximumWireTokenBytes             = 128
+	maximumManagedSessionEventText    = 64 * 1024
 )
 
 // Capability is an independently negotiated managed-session feature name.
@@ -531,6 +535,148 @@ func ValidateReplacePublicationsCorrelation(request ReplacePublicationsRequest, 
 	return nil
 }
 
+// EventKind identifies one bounded managed-session event shape.
+type EventKind string
+
+const (
+	// EventKindLogChunk carries normalized pre-decoration output from one App or watcher.
+	EventKindLogChunk EventKind = "log.chunk"
+	// EventKindOutputGap records an inclusive range omitted by bounded event backpressure.
+	EventKindOutputGap EventKind = "output.gap"
+)
+
+// Validate verifies that an event kind is understood by this protocol version.
+func (kind EventKind) Validate() error {
+	switch kind {
+	case EventKindLogChunk, EventKindOutputGap:
+		return nil
+	default:
+		return fmt.Errorf("unsupported managed session event kind %q", kind)
+	}
+}
+
+// EventStream identifies the honest source stream for a managed-session output event.
+type EventStream string
+
+const (
+	// EventStreamStdout identifies bytes captured from a process stdout pipe.
+	EventStreamStdout EventStream = "stdout"
+	// EventStreamStderr identifies bytes captured from a process stderr pipe.
+	EventStreamStderr EventStream = "stderr"
+	// EventStreamPTYCombined identifies a terminal-owned stream whose channels cannot be separated.
+	EventStreamPTYCombined EventStream = "pty/combined"
+)
+
+// Validate verifies that an output stream preserves its source provenance.
+func (stream EventStream) Validate() error {
+	switch stream {
+	case EventStreamStdout, EventStreamStderr, EventStreamPTYCombined:
+		return nil
+	default:
+		return fmt.Errorf("unsupported managed session event stream %q", stream)
+	}
+}
+
+// Event carries one ordered, stable-session state or normalized pre-decoration output record.
+// Sequence is assigned before send and is the only ordering authority; timestamps are diagnostic metadata.
+type Event struct {
+	SchemaVersion uint16      `json:"schema_version"`
+	ProjectID     ProjectID   `json:"project_id"`
+	SessionID     SessionID   `json:"session_id"`
+	Sequence      uint64      `json:"sequence"`
+	Timestamp     string      `json:"timestamp"`
+	Kind          EventKind   `json:"kind"`
+	AppID         string      `json:"app_id,omitempty"`
+	WatcherID     string      `json:"watcher_id,omitempty"`
+	Stream        EventStream `json:"stream,omitempty"`
+	// Text is normalized valid UTF-8; byte-exact binary output is outside this v1 contract.
+	Text         string `json:"text,omitempty"`
+	DroppedFrom  uint64 `json:"dropped_from,omitempty"`
+	DroppedTo    uint64 `json:"dropped_to,omitempty"`
+	DroppedCount uint64 `json:"dropped_count,omitempty"`
+}
+
+// Validate verifies that an event contains complete bounded identity, ordering, and gap semantics.
+func (event Event) Validate() error {
+	if event.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("managed session event schema version %d is unsupported", event.SchemaVersion)
+	}
+	if err := validateIdentifier("managed session event project ID", string(event.ProjectID)); err != nil {
+		return err
+	}
+	if err := validateIdentifier("managed session event session ID", string(event.SessionID)); err != nil {
+		return err
+	}
+	if event.Sequence == 0 || event.Sequence > MaximumSequence {
+		return fmt.Errorf("managed session event sequence must be between 1 and %d", MaximumSequence)
+	}
+	if err := validateManagedSessionEventTimestamp(event.Timestamp); err != nil {
+		return err
+	}
+	if err := event.Kind.Validate(); err != nil {
+		return err
+	}
+	if event.AppID == "" && event.WatcherID == "" {
+		return errors.New("managed session event source identity is required")
+	}
+	if event.AppID != "" {
+		if err := validateWireToken("managed session event App ID", event.AppID, maximumManagedSessionTokenBytes); err != nil {
+			return err
+		}
+	}
+	if event.WatcherID != "" {
+		if err := validateWireToken("managed session event watcher ID", event.WatcherID, maximumManagedSessionTokenBytes); err != nil {
+			return err
+		}
+	}
+	switch event.Kind {
+	case EventKindLogChunk:
+		if err := event.Stream.Validate(); err != nil {
+			return err
+		}
+		if event.Text == "" {
+			return errors.New("managed session log event text is required")
+		}
+		if !utf8.ValidString(event.Text) || len(event.Text) > maximumManagedSessionEventText {
+			return fmt.Errorf("managed session log event text must be valid UTF-8 of at most %d bytes", maximumManagedSessionEventText)
+		}
+		if event.DroppedFrom != 0 || event.DroppedTo != 0 || event.DroppedCount != 0 {
+			return errors.New("managed session log event must not carry a dropped range")
+		}
+	case EventKindOutputGap:
+		if err := event.Stream.Validate(); err != nil {
+			return err
+		}
+		if event.Text != "" {
+			return errors.New("managed session output gap must not carry text")
+		}
+		if event.DroppedFrom == 0 || event.DroppedTo < event.DroppedFrom || event.DroppedTo >= event.Sequence {
+			return errors.New("managed session output gap range must precede its event sequence")
+		}
+		if event.DroppedCount == 0 || event.DroppedCount != event.DroppedTo-event.DroppedFrom+1 {
+			return errors.New("managed session output gap dropped count does not match its range")
+		}
+	}
+	return nil
+}
+
+// MarshalEvent validates and encodes one managed-session event object.
+func MarshalEvent(event Event) ([]byte, error) {
+	return marshalManagedObject("managed session event", event, event.Validate)
+}
+
+// DecodeEvent strictly decodes and validates one managed-session event object.
+func DecodeEvent(payload []byte) (Event, error) {
+	var event Event
+	if err := decodeManagedObject(payload, "managed session event", &event); err != nil {
+		return Event{}, err
+	}
+	if err := event.Validate(); err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
 // BarrierPhase identifies a lifecycle synchronization point in v1.
 type BarrierPhase string
 
@@ -752,6 +898,19 @@ func validateManagedSessionDigest(digest string) error {
 	}
 	if _, err := hex.DecodeString(digest); err != nil || strings.ToLower(digest) != digest {
 		return errors.New("managed session descriptor digest must be 64 lowercase hexadecimal characters")
+	}
+	return nil
+}
+
+// validateManagedSessionEventTimestamp accepts only an RFC3339 timestamp with an explicit UTC zone.
+func validateManagedSessionEventTimestamp(timestamp string) error {
+	parsed, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return errors.New("managed session event timestamp must be RFC3339 UTC")
+	}
+	_, offset := parsed.Zone()
+	if offset != 0 {
+		return errors.New("managed session event timestamp must be RFC3339 UTC")
 	}
 	return nil
 }
