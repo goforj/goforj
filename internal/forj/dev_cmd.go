@@ -24,6 +24,7 @@ import (
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/managedsession"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
@@ -115,6 +116,13 @@ func loadDevEnvironment(reload bool) error {
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
+	inheritedContext, err := managedsession.CaptureInheritedLaunchContext()
+	if err != nil {
+		return fmt.Errorf("capture managed launch context: %w", err)
+	}
+	if inheritedContext != nil {
+		return errors.New("managed development launch is not available before session transport wiring")
+	}
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
