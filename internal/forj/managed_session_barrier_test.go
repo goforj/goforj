@@ -2,11 +2,40 @@ package forj
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/internal/managedsession"
 	"github.com/goforj/goforj/project"
 )
+
+// reconnectingManagedBarrierFixture adds lifecycle closure accounting to the barrier recorder.
+type reconnectingManagedBarrierFixture struct {
+	recordingManagedBarrierClient
+	closeCalls int
+}
+
+// Close records replacement cleanup for the reconnecting session fixture.
+func (client *reconnectingManagedBarrierFixture) Close() error {
+	client.closeCalls++
+	return nil
+}
+
+// managedBarrierTestLaunchContext returns one valid inherited authority for reconnect tests.
+func managedBarrierTestLaunchContext() managedsession.LaunchContext {
+	return managedsession.LaunchContext{
+		SchemaVersion:             managedsession.ManagedLaunchContextSchemaVersion,
+		ProjectID:                 "project-orders",
+		SessionID:                 "session-orders",
+		ProjectRoot:               "/tmp/orders",
+		ExpectedSessionGeneration: 1,
+		DescriptorDigest:          strings.Repeat("a", 64),
+		EndpointReference:         "/tmp/harbord.sock",
+		Owner:                     managedsession.SessionOwnerHarbor,
+		Ticket:                    strings.Repeat("b", 32),
+	}
+}
 
 // recordingManagedBarrierClient records the complete replacement and barrier requests used by the retry helper.
 type recordingManagedBarrierClient struct {
@@ -96,6 +125,92 @@ func TestWaitForManagedComposeBarrierRetriesUnavailableCalls(t *testing.T) {
 	}
 	if len(client.replaceRequests) != 2 || len(client.barrierRequests) != 1 {
 		t.Fatalf("calls = replacements %d, barriers %d; want two replacements and one barrier", len(client.replaceRequests), len(client.barrierRequests))
+	}
+}
+
+// TestReconnectingManagedSessionRetriesPublicationAfterDisconnect proves a lost stream is replayed before the
+// barrier helper gives up, while a successful remote response remains the only terminal success condition.
+func TestReconnectingManagedSessionRetriesPublicationAfterDisconnect(t *testing.T) {
+	registration := managedBarrierTestRegistration(t)
+	initial := &reconnectingManagedBarrierFixture{recordingManagedBarrierClient: recordingManagedBarrierClient{
+		replaceErrors: []error{managedsession.ErrDisconnected},
+	}}
+	replacement := &reconnectingManagedBarrierFixture{}
+	reconnectCalls := 0
+	connection, err := newReconnectingManagedSession(
+		initial,
+		registration,
+		managedBarrierTestLaunchContext(),
+		func(context.Context, managedsession.LaunchContext) (managedSessionClient, managedsession.RegisterResponse, error) {
+			reconnectCalls++
+			return replacement, registration, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newReconnectingManagedSession() error = %v", err)
+	}
+	if err := waitForManagedComposeBarrier(t.Context(), connection, registration, "orders"); err != nil {
+		t.Fatalf("waitForManagedComposeBarrier() error = %v", err)
+	}
+	if reconnectCalls != 1 || initial.closeCalls != 1 || len(initial.replaceRequests) != 1 || len(replacement.replaceRequests) != 1 {
+		t.Fatalf("reconnect calls=%d initial closes=%d initial replacements=%d replacement replacements=%d", reconnectCalls, initial.closeCalls, len(initial.replaceRequests), len(replacement.replaceRequests))
+	}
+}
+
+// TestReconnectingManagedSessionRetriesBarrierAfterDisconnect proves a barrier loss resets only the connection and
+// preserves the exact session fence on the replayed request.
+func TestReconnectingManagedSessionRetriesBarrierAfterDisconnect(t *testing.T) {
+	registration := managedBarrierTestRegistration(t)
+	initial := &reconnectingManagedBarrierFixture{recordingManagedBarrierClient: recordingManagedBarrierClient{
+		barrierErrors: []error{managedsession.ErrDisconnected},
+	}}
+	replacement := &reconnectingManagedBarrierFixture{}
+	reconnectCalls := 0
+	connection, err := newReconnectingManagedSession(
+		initial,
+		registration,
+		managedBarrierTestLaunchContext(),
+		func(context.Context, managedsession.LaunchContext) (managedSessionClient, managedsession.RegisterResponse, error) {
+			reconnectCalls++
+			return replacement, registration, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newReconnectingManagedSession() error = %v", err)
+	}
+	if err := waitForManagedComposeBarrier(t.Context(), connection, registration, "orders"); err != nil {
+		t.Fatalf("waitForManagedComposeBarrier() error = %v", err)
+	}
+	if reconnectCalls != 1 || initial.closeCalls != 1 || len(initial.barrierRequests) != 1 || len(replacement.barrierRequests) != 1 {
+		t.Fatalf("reconnect calls=%d initial closes=%d initial barriers=%d replacement barriers=%d", reconnectCalls, initial.closeCalls, len(initial.barrierRequests), len(replacement.barrierRequests))
+	}
+	if replacement.barrierRequests[0].Fence != registration.Fence {
+		t.Fatalf("replayed barrier fence = %#v, want %#v", replacement.barrierRequests[0].Fence, registration.Fence)
+	}
+}
+
+// TestReconnectingManagedSessionDoesNotReconnectRemotePolicyFailures keeps authorization and validation failures terminal.
+func TestReconnectingManagedSessionDoesNotReconnectRemotePolicyFailures(t *testing.T) {
+	initial := &reconnectingManagedBarrierFixture{recordingManagedBarrierClient: recordingManagedBarrierClient{
+		replaceErrors: []error{managedsession.RemoteError{Failure: managedsession.WireError{Code: managedsession.ErrorCode("permission_denied"), Message: "denied"}}},
+	}}
+	connection, err := newReconnectingManagedSession(
+		initial,
+		managedBarrierTestRegistration(t),
+		managedBarrierTestLaunchContext(),
+		func(context.Context, managedsession.LaunchContext) (managedSessionClient, managedsession.RegisterResponse, error) {
+			t.Fatal("reconnect callback must not run for a remote policy failure")
+			return nil, managedsession.RegisterResponse{}, errors.New("unreachable")
+		},
+	)
+	if err != nil {
+		t.Fatalf("newReconnectingManagedSession() error = %v", err)
+	}
+	if err := waitForManagedComposeBarrier(t.Context(), connection, managedBarrierTestRegistration(t), "orders"); err == nil {
+		t.Fatal("waitForManagedComposeBarrier() accepted a remote policy failure")
+	}
+	if initial.closeCalls != 0 {
+		t.Fatalf("initial close calls = %d, want no reconnect cleanup", initial.closeCalls)
 	}
 }
 

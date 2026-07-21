@@ -136,14 +136,29 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	defer unlock()
-	var managedClient *managedsession.Client
+	var managedConnection *reconnectingManagedSession
 	var managedRegistration managedsession.RegisterResponse
 	if inheritedContext != nil {
-		managedClient, managedRegistration, err = managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
+		managedClient, registration, openErr := managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
+		managedRegistration = registration
+		err = openErr
 		if err != nil {
 			return err
 		}
-		defer managedClient.Close()
+		managedConnection, err = newReconnectingManagedSession(
+			managedClient,
+			managedRegistration,
+			*inheritedContext,
+			func(ctx context.Context, launch managedsession.LaunchContext) (managedSessionClient, managedsession.RegisterResponse, error) {
+				client, response, err := managedsession.OpenLaunchSession(ctx, launch)
+				return client, response, err
+			},
+		)
+		if err != nil {
+			_ = managedClient.Close()
+			return err
+		}
+		defer managedConnection.Close()
 	}
 
 	outputSession := devOutputSession{}
@@ -240,9 +255,14 @@ func (c *DevCmd) Run() error {
 		reloadRuntime:  runtimeState.Sync,
 		managedContext: runCtx,
 	}
-	if managedClient != nil {
+	if managedConnection != nil {
+		identity := managedProjectIdentity(config, inheritedContext.ProjectRoot)
 		session.managedBarrier = func(ctx context.Context) error {
-			return waitForManagedComposeBarrier(ctx, managedClient, managedRegistration, managedProjectIdentity(config, inheritedContext.ProjectRoot))
+			if err := waitForManagedComposeBarrier(ctx, managedConnection, managedRegistration, identity); err != nil {
+				return err
+			}
+			go runManagedSessionHeartbeat(ctx, managedConnection, managedRegistration, identity, errWriter)
+			return nil
 		}
 	}
 

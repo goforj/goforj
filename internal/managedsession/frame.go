@@ -12,6 +12,8 @@ import (
 var (
 	// ErrClosed reports a managed-session operation after the connection closed.
 	ErrClosed = errors.New("managed session is closed")
+	// ErrDisconnected reports a transport failure while a managed-session call was in flight.
+	ErrDisconnected = errors.New("managed session transport disconnected")
 	// ErrEmptyFrame reports a zero-length frame.
 	ErrEmptyFrame = errors.New("managed session frame is empty")
 	// ErrFrameUnusable reports a stream whose frame boundary can no longer be trusted.

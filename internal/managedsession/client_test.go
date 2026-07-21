@@ -396,6 +396,30 @@ func TestClientCallHonorsContextDeadline(t *testing.T) {
 	}
 }
 
+// TestClientClassifiesTransportDisconnect marks an EOF during an in-flight call so a managed caller can reconnect
+// without retrying protocol or authorization failures.
+func TestClientClassifiesTransportDisconnect(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- runTestManagedSessionPeer(serverConnection, func(reader *frameReader, _ *frameWriter, _ Version) error {
+			_, err := readTestEnvelope(reader)
+			return err
+		})
+	}()
+	client, err := NewClient(context.Background(), clientConnection, ClientConfig{})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if _, err := client.Register(context.Background(), validRegisterRequest()); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Register() error = %v, want ErrDisconnected", err)
+	}
+	_ = client.Close()
+	if err := <-serverDone; err != nil {
+		t.Fatalf("fake Harbor peer error = %v", err)
+	}
+}
+
 func TestClientRejectsWelcomeProtocolMismatch(t *testing.T) {
 	clientConnection, serverConnection := net.Pipe()
 	serverDone := make(chan error, 1)

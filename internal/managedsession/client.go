@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strconv"
@@ -364,7 +365,7 @@ func (client *Client) call(ctx context.Context, method string, payload []byte) (
 		return nil, fmt.Errorf("validate request: %w", err)
 	}
 	if err := client.writeEnvelope(message); err != nil {
-		return nil, fmt.Errorf("write request: %w", err)
+		return nil, wrapManagedSessionTransportError("write request", err)
 	}
 	response, err := client.readEnvelope()
 	if err != nil {
@@ -374,7 +375,7 @@ func (client *Client) call(ctx context.Context, method string, payload []byte) (
 		if !time.Now().Before(deadline) {
 			return nil, context.DeadlineExceeded
 		}
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, wrapManagedSessionTransportError("read response", err)
 	}
 	if response.Kind != kindResponse {
 		return nil, fmt.Errorf("managed session response kind %q is not response", response.Kind)
@@ -389,6 +390,19 @@ func (client *Client) call(ctx context.Context, method string, payload []byte) (
 		return nil, RemoteError{Failure: *response.Error}
 	}
 	return append([]byte(nil), response.Payload...), nil
+}
+
+// wrapManagedSessionTransportError marks only stream failures as reconnectable while preserving protocol errors as terminal.
+func wrapManagedSessionTransportError(operation string, err error) error {
+	wrapped := fmt.Errorf("%s: %w", operation, err)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) {
+		return errors.Join(ErrDisconnected, wrapped)
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		return errors.Join(ErrDisconnected, wrapped)
+	}
+	return wrapped
 }
 
 // writeEnvelope validates and frames one envelope.
