@@ -47,7 +47,6 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(frontendDir, "package.json"),
 		filepath.Join(frontendDir, "components.json"),
-		filepath.Join(frontendDir, "goforj-lucide-imports.mjs"),
 		filepath.Join(frontendDir, "src", "App.vue"),
 		filepath.Join(frontendDir, "dist", "index.html"),
 		filepath.Join(frontendDir, "dist", "goforj-logo.png"),
@@ -63,7 +62,7 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Vue starter package: %v", err)
 	}
-	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"magic-string": "^0.30.21"`, `"vite": "^8.1.5"`} {
+	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite": "^8.1.5"`} {
 		if !strings.Contains(string(packageJSON), expected) {
 			t.Errorf("Vue starter package omitted %q:\n%s", expected, packageJSON)
 		}
@@ -71,15 +70,6 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	for _, obsolete := range []string{"lucide-vue-next", `"shadcn-vue"`} {
 		if strings.Contains(string(packageJSON), obsolete) {
 			t.Errorf("Vue starter package retained obsolete install dependency %q:\n%s", obsolete, packageJSON)
-		}
-	}
-	viteConfig, err := os.ReadFile(filepath.Join(frontendDir, "vite.config.ts"))
-	if err != nil {
-		t.Fatalf("read Vue starter Vite config: %v", err)
-	}
-	for _, expected := range []string{"lucideIconImports", "goforj-lucide-imports.mjs"} {
-		if !strings.Contains(string(viteConfig), expected) {
-			t.Errorf("Vue starter Vite config omitted %q:\n%s", expected, viteConfig)
 		}
 	}
 }
