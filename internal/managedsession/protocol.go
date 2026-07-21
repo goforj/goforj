@@ -25,6 +25,8 @@ const (
 	CapabilityLaunchContextV1 Capability = "managed-session.launch-context.v1"
 	// CapabilityEventsV1 identifies the optional ordered state and output event stream.
 	CapabilityEventsV1 Capability = "managed-session.events.v1"
+	// CapabilityRuntimePlanV1 identifies the optional semantic endpoint-assignment plan.
+	CapabilityRuntimePlanV1 Capability = "managed-session.runtime-plan.v1"
 	// ErrorCodeUnavailable identifies a temporary Harbor state that callers may retry.
 	ErrorCodeUnavailable ErrorCode = "unavailable"
 	// MethodRegister attaches one authenticated GoForj process to a Harbor session.
@@ -33,6 +35,8 @@ const (
 	MethodReplacePublications = "managed-session.v1.publications.replace"
 	// MethodBarrier asks Harbor whether a named lifecycle barrier has been acknowledged.
 	MethodBarrier = "managed-session.v1.barrier"
+	// MethodRuntimePlan asks Harbor for one authenticated semantic runtime assignment plan.
+	MethodRuntimePlan = "managed-session.v1.runtime-plan"
 	// MaximumFrameSize bounds each length-prefixed JSON frame.
 	MaximumFrameSize uint32 = 1 << 20
 	// MaximumSequence is the largest generation representable exactly by JSON number clients.

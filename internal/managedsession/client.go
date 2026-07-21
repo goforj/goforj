@@ -246,6 +246,29 @@ func (client *Client) Barrier(ctx context.Context, request BarrierRequest) (Barr
 	return response, nil
 }
 
+// RuntimePlan requests one semantic endpoint-assignment plan when the optional capability was negotiated.
+func (client *Client) RuntimePlan(ctx context.Context, request RuntimePlanRequest) (RuntimePlanResponse, error) {
+	if !containsCapability(client.peer.Capabilities, CapabilityRuntimePlanV1) {
+		return RuntimePlanResponse{}, errors.New("managed session runtime-plan capability was not negotiated")
+	}
+	payload, err := MarshalRuntimePlanRequest(request)
+	if err != nil {
+		return RuntimePlanResponse{}, err
+	}
+	responsePayload, err := client.call(ctx, MethodRuntimePlan, payload)
+	if err != nil {
+		return RuntimePlanResponse{}, err
+	}
+	response, err := DecodeRuntimePlanResponse(responsePayload)
+	if err != nil {
+		return RuntimePlanResponse{}, err
+	}
+	if err := ValidateRuntimePlanCorrelation(request, response); err != nil {
+		return RuntimePlanResponse{}, err
+	}
+	return response, nil
+}
+
 // negotiate performs the unauthenticated Hello/Welcome exchange before calls are allowed.
 func (client *Client) negotiate(ctx context.Context) error {
 	deadline, cancel, err := operationContext(ctx, client.config.HandshakeTimeout)
