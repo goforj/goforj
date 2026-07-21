@@ -66,6 +66,7 @@ type devWatchSession struct {
 	reconcileFrontendDeps bool
 	managedContext        context.Context
 	managedBarrier        func(context.Context) error
+	managedHeartbeat      func()
 }
 
 // Signature declares the development command exposed by the root CLI.
@@ -143,6 +144,8 @@ func (c *DevCmd) Run() error {
 	defer unlock()
 	var managedConnection *reconnectingManagedSession
 	var managedRegistration managedsession.RegisterResponse
+	var managedIdentity string
+	var managedBarrier func(context.Context) error
 	if inheritedContext != nil {
 		managedClient, registration, openErr := managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
 		managedRegistration = registration
@@ -164,6 +167,10 @@ func (c *DevCmd) Run() error {
 			return err
 		}
 		defer managedConnection.Close()
+		managedIdentity = managedProjectIdentity(config, inheritedContext.ProjectRoot)
+		managedBarrier = func(ctx context.Context) error {
+			return waitForManagedComposeBarrier(ctx, managedConnection, managedRegistration, managedIdentity)
+		}
 	}
 
 	outputSession := devOutputSession{}
@@ -237,7 +244,11 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
+	if managedBarrier != nil {
+		if err := runManagedDevInitialLifecycle(config, os.Stdout, os.Stderr, runCtx, managedBarrier); err != nil {
+			return err
+		}
+	} else if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
 	outputSession = buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
@@ -261,13 +272,8 @@ func (c *DevCmd) Run() error {
 		managedContext: runCtx,
 	}
 	if managedConnection != nil {
-		identity := managedProjectIdentity(config, inheritedContext.ProjectRoot)
-		session.managedBarrier = func(ctx context.Context) error {
-			if err := waitForManagedComposeBarrier(ctx, managedConnection, managedRegistration, identity); err != nil {
-				return err
-			}
-			go runManagedSessionHeartbeat(ctx, managedConnection, managedRegistration, identity, errWriter)
-			return nil
+		session.managedHeartbeat = func() {
+			go runManagedSessionHeartbeat(runCtx, managedConnection, managedRegistration, managedIdentity, errWriter)
 		}
 	}
 
@@ -1215,6 +1221,11 @@ watcherLoop:
 		runtime, err := startDevWatcherRuntime(session)
 		if err != nil {
 			return err
+		}
+		if session.managedHeartbeat != nil {
+			heartbeat := session.managedHeartbeat
+			session.managedHeartbeat = nil
+			heartbeat()
 		}
 		if session.managedBarrier != nil {
 			barrier := session.managedBarrier

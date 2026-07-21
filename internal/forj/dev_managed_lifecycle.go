@@ -1,10 +1,20 @@
 package forj
 
 import (
+	"context"
 	"fmt"
+	"io"
 
 	"github.com/goforj/goforj/project"
 )
+
+// managedDevLifecyclePlan groups startup tasks by their explicit managed phase.
+type managedDevLifecyclePlan struct {
+	preCompose  []project.DevTask
+	compose     []project.DevTask
+	postCompose []project.DevTask
+	postMigrate []project.DevTask
+}
 
 // validateManagedDevLifecycle validates the task contract Harbor relies on without mutating the loaded project.
 func validateManagedDevLifecycle(config *project.Config) error {
@@ -12,7 +22,16 @@ func validateManagedDevLifecycle(config *project.Config) error {
 		return nil
 	}
 
-	// Render migrations are deliberately read-only here: managed admission may happen before a user chooses to persist a render.
+	normalized := normalizedManagedDevConfig(config)
+
+	if err := normalized.Dev.ValidateManagedTaskPhases(); err != nil {
+		return fmt.Errorf("managed development lifecycle requires explicit task phases; run forj render or phase custom tasks: %w", err)
+	}
+	return nil
+}
+
+// normalizedManagedDevConfig returns a read-only migration view for managed startup planning.
+func normalizedManagedDevConfig(config *project.Config) project.Config {
 	normalized := *config
 	normalized.Dev = config.Dev
 	normalized.Dev.Pre = append([]project.DevTask(nil), config.Dev.Pre...)
@@ -21,9 +40,101 @@ func validateManagedDevLifecycle(config *project.Config) error {
 	normalizeGeneratedDatabaseWaitTask(&normalized.Dev.Pre)
 	normalizeDockerComposeDownTask(&normalized.Dev.Down)
 	migrateGeneratedDevFrontendInstallTasks(&normalized)
+	return normalized
+}
 
+// planManagedDevLifecycle returns the effective startup tasks in their explicit phase order.
+func planManagedDevLifecycle(config *project.Config) (managedDevLifecyclePlan, error) {
+	if config == nil {
+		return managedDevLifecyclePlan{}, nil
+	}
+	normalized := normalizedManagedDevConfig(config)
+	normalized.Dev.Pre = effectiveDevPreTasks(&normalized)
 	if err := normalized.Dev.ValidateManagedTaskPhases(); err != nil {
-		return fmt.Errorf("managed development lifecycle requires explicit task phases; run forj render or phase custom tasks: %w", err)
+		return managedDevLifecyclePlan{}, fmt.Errorf("managed development lifecycle requires explicit task phases; run forj render or phase custom tasks: %w", err)
+	}
+	plan := managedDevLifecyclePlan{}
+	for _, task := range normalized.Dev.Pre {
+		switch task.Phase {
+		case project.DevTaskPhasePreCompose:
+			plan.preCompose = append(plan.preCompose, task)
+		case project.DevTaskPhaseCompose:
+			plan.compose = append(plan.compose, task)
+		case project.DevTaskPhasePostCompose:
+			plan.postCompose = append(plan.postCompose, task)
+		case project.DevTaskPhasePostMigrate:
+			plan.postMigrate = append(plan.postMigrate, task)
+		default:
+			return managedDevLifecyclePlan{}, fmt.Errorf("managed development startup task %q has unsupported phase %q", task.Name, task.Phase)
+		}
+	}
+	return plan, nil
+}
+
+// runManagedDevInitialLifecycle executes explicit startup phases around Harbor's authoritative Compose barrier.
+func runManagedDevInitialLifecycle(
+	config *project.Config,
+	outWriter io.Writer,
+	errWriter io.Writer,
+	ctx context.Context,
+	barrier func(context.Context) error,
+) error {
+	plan, err := planManagedDevLifecycle(config)
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	spaBuilt := false
+	if config.Dev.UsesStructuredApps() {
+		if err := runDevTasks("Running pre-compose setup", plan.preCompose); err != nil {
+			return err
+		}
+		spaBuilt, err = runDevInitialSPABuilds(config, outWriter, errWriter)
+		if err != nil {
+			return err
+		}
+		writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
+		if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+			return err
+		}
+	} else {
+		writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
+		if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		if err := runDevTasks("Running pre-compose setup", plan.preCompose); err != nil {
+			return err
+		}
+		spaBuilt, err = runDevInitialSPABuilds(config, outWriter, errWriter)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := runDevTasks("Running Compose", plan.compose); err != nil {
+		return err
+	}
+	if barrier != nil {
+		if err := barrier(ctx); err != nil {
+			return fmt.Errorf("managed Compose barrier failed: %w", err)
+		}
+	}
+	if err := runDevTasks("Running post-compose setup", plan.postCompose); err != nil {
+		return err
+	}
+	if err := runDevAppSetup(config, outWriter, errWriter); err != nil {
+		return err
+	}
+	if err := runDevTasks("Running post-migrate setup", plan.postMigrate); err != nil {
+		return err
+	}
+	if spaBuilt || len(plan.postMigrate) > 0 {
+		if err := runDevBuild(config, outWriter, errWriter); err != nil {
+			return fmt.Errorf("post-setup forj build failed: %w", err)
+		}
 	}
 	return nil
 }
