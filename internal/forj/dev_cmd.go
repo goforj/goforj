@@ -115,6 +115,14 @@ func loadDevEnvironment(reload bool) error {
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
+	config, err := loadDevProjectConfig(console.Default())
+	if err != nil {
+		return err
+	}
+	if config == nil {
+		return nil
+	}
+
 	// Prevent concurrent dev sessions from clobbering each other.
 	unlock, err := c.acquireLock()
 	if err != nil {
@@ -132,10 +140,6 @@ func (c *DevCmd) Run() error {
 	}
 	defer cleanupDevTerminal()
 
-	config, err := project.LoadProjectConfig()
-	if err != nil {
-		return err
-	}
 	baseWatches := normalizeDevWatchesForRuntime(config, copyDevWatches(config.Dev.Watches))
 	config.Dev.Watches = devWatchesForApps(config, baseWatches)
 
@@ -238,6 +242,30 @@ func (c *DevCmd) Run() error {
 	}
 
 	return fmt.Errorf("dev watchers exited unexpectedly")
+}
+
+// loadDevProjectConfig turns an absent project into guidance while preserving real configuration failures.
+func loadDevProjectConfig(commandConsole *console.Console) (*project.Config, error) {
+	config, err := project.LoadProjectConfig()
+	if err == nil {
+		return config, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		writeDevProjectNotFound(commandConsole)
+		return nil, nil
+	}
+	return nil, fmt.Errorf("load project configuration: %w", err)
+}
+
+// writeDevProjectNotFound explains the project-root requirement without presenting normal navigation as a failure.
+func writeDevProjectNotFound(commandConsole *console.Console) {
+	commandConsole.Info(commandConsole.Style("No GoForj project found", console.StyleBold))
+	commandConsole.Printf(
+		"  Run %s from a project root containing %s.\n",
+		commandConsole.Style("forj dev", console.ColorCyan),
+		commandConsole.Style(".goforj.yml", console.ColorCyan),
+	)
+	commandConsole.Printf("  Starting fresh? Run %s.\n", commandConsole.Style("forj new", console.ColorCyan))
 }
 
 // devInitialTaskPlan separates framework setup from work that must retain the historical binary-ready contract.
