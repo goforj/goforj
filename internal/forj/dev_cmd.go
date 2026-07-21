@@ -64,6 +64,8 @@ type devWatchSession struct {
 	reloadRuntime         func() (*devwatchStreamer, error)
 	reconcile             bool
 	reconcileFrontendDeps bool
+	managedContext        context.Context
+	managedBarrier        func(context.Context) error
 }
 
 // Signature declares the development command exposed by the root CLI.
@@ -135,8 +137,9 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 	var managedClient *managedsession.Client
+	var managedRegistration managedsession.RegisterResponse
 	if inheritedContext != nil {
-		managedClient, _, err = managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
+		managedClient, managedRegistration, err = managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
 		if err != nil {
 			return err
 		}
@@ -224,17 +227,23 @@ func (c *DevCmd) Run() error {
 	runtimeState.refreshWriters()
 
 	session := &devWatchSession{
-		config:        config,
-		baseWatches:   baseWatches,
-		streamer:      currentStreamer,
-		restartCh:     restartCh,
-		buildCh:       buildCh,
-		renderCh:      renderCh,
-		commandCh:     commandCh,
-		stopCh:        runCtx.Done(),
-		outWriter:     outWriter,
-		errWriter:     errWriter,
-		reloadRuntime: runtimeState.Sync,
+		config:         config,
+		baseWatches:    baseWatches,
+		streamer:       currentStreamer,
+		restartCh:      restartCh,
+		buildCh:        buildCh,
+		renderCh:       renderCh,
+		commandCh:      commandCh,
+		stopCh:         runCtx.Done(),
+		outWriter:      outWriter,
+		errWriter:      errWriter,
+		reloadRuntime:  runtimeState.Sync,
+		managedContext: runCtx,
+	}
+	if managedClient != nil {
+		session.managedBarrier = func(ctx context.Context) error {
+			return waitForManagedComposeBarrier(ctx, managedClient, managedRegistration, managedProjectIdentity(config, inheritedContext.ProjectRoot))
+		}
 	}
 
 	if err := c.runWatchersLoop(session); err != nil {
@@ -1181,6 +1190,15 @@ watcherLoop:
 		runtime, err := startDevWatcherRuntime(session)
 		if err != nil {
 			return err
+		}
+		if session.managedBarrier != nil {
+			barrier := session.managedBarrier
+			session.managedBarrier = nil
+			go func() {
+				if err := barrier(session.managedContext); err != nil && !errors.Is(err, context.Canceled) {
+					_, _ = fmt.Fprintf(session.errWriter, "forj dev: managed Compose barrier unavailable: %v\n", err)
+				}
+			}()
 		}
 		if session.reconcile {
 			reconcileErr := runDevWatcherReconciliation(
