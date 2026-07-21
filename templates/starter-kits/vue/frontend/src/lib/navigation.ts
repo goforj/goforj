@@ -11,20 +11,24 @@ export type AppNavItem = {
   }>
 }
 
+const componentNavItems: AppNavItem[] = import.meta.env.DEV
+  ? [{
+      title: 'Components',
+      url: '/components',
+      icon: Blocks,
+      items: [
+        { title: 'Overview', url: '/components/overview' },
+        { title: 'Forms', url: '/components/forms' },
+        { title: 'Navigation', url: '/components/navigation' },
+        { title: 'Overlays', url: '/components/overlays' },
+        { title: 'Data', url: '/components/data' },
+      ],
+    }]
+  : []
+
 export const appNavMain: AppNavItem[] = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
-  {
-    title: 'Components',
-    url: '/components',
-    icon: Blocks,
-    items: [
-      { title: 'Overview', url: '/components/overview' },
-      { title: 'Forms', url: '/components/forms' },
-      { title: 'Navigation', url: '/components/navigation' },
-      { title: 'Overlays', url: '/components/overlays' },
-      { title: 'Data', url: '/components/data' },
-    ],
-  },
+  ...componentNavItems,
 ]
 
 export function findAppNavItem(path: string) {
