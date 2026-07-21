@@ -282,8 +282,14 @@ func (c *DevCmd) Run() error {
 			cleanupDevTerminal()
 			if config.Dev.DownOnExit {
 				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
-				if err := runDevDownTasks(effectiveDevDownTasks(config)); err != nil {
-					console.Errorf("forj down failed: %v", err)
+				var downErr error
+				if managedConnection != nil {
+					downErr = runManagedDevDownTasks(config)
+				} else {
+					downErr = runDevDownTasks(effectiveDevDownTasks(config))
+				}
+				if downErr != nil {
+					console.Errorf("forj down failed: %v", downErr)
 				} else {
 					console.Successf("forj down complete")
 				}

@@ -16,6 +16,13 @@ type managedDevLifecyclePlan struct {
 	postMigrate []project.DevTask
 }
 
+// managedDevTeardownPlan groups teardown tasks by their explicit managed phase.
+type managedDevTeardownPlan struct {
+	preComposeDown  []project.DevTask
+	composeDown     []project.DevTask
+	postComposeDown []project.DevTask
+}
+
 // validateManagedDevLifecycle validates the task contract Harbor relies on without mutating the loaded project.
 func validateManagedDevLifecycle(config *project.Config) error {
 	if config == nil {
@@ -137,4 +144,43 @@ func runManagedDevInitialLifecycle(
 		}
 	}
 	return nil
+}
+
+// planManagedDevTeardown returns effective teardown tasks in their explicit phase order.
+func planManagedDevTeardown(config *project.Config) (managedDevTeardownPlan, error) {
+	if config == nil {
+		return managedDevTeardownPlan{}, nil
+	}
+	normalized := normalizedManagedDevConfig(config)
+	normalized.Dev.Down = effectiveDevDownTasks(&normalized)
+	if err := normalized.Dev.ValidateManagedTaskPhases(); err != nil {
+		return managedDevTeardownPlan{}, fmt.Errorf("managed development teardown requires explicit task phases; run forj render or phase custom tasks: %w", err)
+	}
+	plan := managedDevTeardownPlan{}
+	for _, task := range normalized.Dev.Down {
+		switch task.Phase {
+		case project.DevTaskPhasePreComposeDown:
+			plan.preComposeDown = append(plan.preComposeDown, task)
+		case project.DevTaskPhaseComposeDown:
+			plan.composeDown = append(plan.composeDown, task)
+		case project.DevTaskPhasePostComposeDown:
+			plan.postComposeDown = append(plan.postComposeDown, task)
+		default:
+			return managedDevTeardownPlan{}, fmt.Errorf("managed development teardown task %q has unsupported phase %q", task.Name, task.Phase)
+		}
+	}
+	return plan, nil
+}
+
+// runManagedDevDownTasks executes Harbor-owned teardown in the explicit typed phase order.
+func runManagedDevDownTasks(config *project.Config) error {
+	plan, err := planManagedDevTeardown(config)
+	if err != nil {
+		return err
+	}
+	tasks := make([]project.DevTask, 0, len(plan.preComposeDown)+len(plan.composeDown)+len(plan.postComposeDown))
+	tasks = append(tasks, plan.preComposeDown...)
+	tasks = append(tasks, plan.composeDown...)
+	tasks = append(tasks, plan.postComposeDown...)
+	return runDevDownTasks(tasks)
 }

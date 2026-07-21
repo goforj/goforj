@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -170,5 +171,22 @@ func TestRunManagedDevInitialLifecycleStopsOnBarrierFailure(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(data)); got != "compose" {
 		t.Fatalf("managed barrier failure transcript = %q, want only compose", got)
+	}
+}
+
+// TestPlanManagedDevTeardownOrdersTypedPhases verifies raw down configuration cannot reorder managed cleanup.
+func TestPlanManagedDevTeardownOrdersTypedPhases(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{Down: []project.DevTask{
+		{Name: "after", Cmd: "after", ID: "after", Phase: project.DevTaskPhasePostComposeDown},
+		{Name: "compose", Cmd: "compose", ID: project.DevTaskIDComposeDown, Phase: project.DevTaskPhaseComposeDown},
+		{Name: "before", Cmd: "before", ID: "before", Phase: project.DevTaskPhasePreComposeDown},
+	}}}
+
+	plan, err := planManagedDevTeardown(config)
+	if err != nil {
+		t.Fatalf("planManagedDevTeardown() error = %v", err)
+	}
+	if got := []string{plan.preComposeDown[0].ID, plan.composeDown[0].ID, plan.postComposeDown[0].ID}; !reflect.DeepEqual(got, []string{"before", project.DevTaskIDComposeDown, "after"}) {
+		t.Fatalf("teardown order = %#v, want phase order", got)
 	}
 }
