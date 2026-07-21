@@ -30,7 +30,7 @@ type devOutputSession struct {
 
 // buildDevOutputSession selects plain terminal streams or a coordinated TUI output session.
 func buildDevOutputSession(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) devOutputSession {
-	if !term.IsTerminal(int(os.Stdout.Fd())) || strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" {
+	if !term.IsTerminal(int(os.Stdout.Fd())) || strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" || devConfigUsesWatcherStdin(config) {
 		return devOutputSession{
 			stdout:   os.Stdout,
 			stderr:   os.Stderr,
@@ -39,6 +39,26 @@ func buildDevOutputSession(config *project.Config, requestRestart func(), reques
 		}
 	}
 	return buildDevOutputSessionBubble(config, requestRestart, requestRender, requestCommand)
+}
+
+// devConfigUsesWatcherStdin keeps explicitly interactive children on the plain terminal because they cannot share input with Bubble Tea.
+func devConfigUsesWatcherStdin(config *project.Config) bool {
+	if config == nil {
+		return false
+	}
+	for _, watch := range config.Dev.Watches {
+		if watch.Stdin {
+			return true
+		}
+		if strings.TrimSpace(watch.Watch) == "" {
+			continue
+		}
+		options, err := parseLegacyDevWatchOptions(watch.Watch)
+		if err == nil && options.stdin {
+			return true
+		}
+	}
+	return false
 }
 
 func disableDevFooter(writer io.Writer) {

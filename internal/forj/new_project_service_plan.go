@@ -2,6 +2,11 @@ package forj
 
 import "github.com/goforj/goforj/project"
 
+const (
+	generatedMySQLDevWaitCommand    = "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done; mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'"
+	generatedPostgresDevWaitCommand = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done; psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'"
+)
+
 // newProjectServiceTaskPlan groups generated development lifecycle tasks without persisting transient resource topology.
 type newProjectServiceTaskPlan struct {
 	Pre  []project.DevTask
@@ -55,10 +60,10 @@ func newProjectDatabaseWaitTask(resourcePlan project.ResourcePlan, servicePlan p
 	switch selection.Active {
 	case "mysql":
 		serviceKey = project.ServiceMySQL
-		command = "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done; mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'"
+		command = generatedMySQLDevWaitCommand
 	case "postgres":
 		serviceKey = project.ServicePostgres
-		command = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done; psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'"
+		command = generatedPostgresDevWaitCommand
 	default:
 		return project.DevTask{}, false
 	}

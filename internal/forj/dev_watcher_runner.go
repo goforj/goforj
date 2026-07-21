@@ -153,6 +153,7 @@ func newDevWatcherControllerWithOptions(
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	retainFailureOutput := shouldRetainDevWatcherFailureOutput(outWriter)
+	attachPTY := shouldAttachDevWatcherPTY(outWriter, runtime.GOOS)
 	outputMu := &sync.Mutex{}
 	outWriter = devWatcherSynchronizedWriter{mu: outputMu, writer: outWriter}
 	errWriter = devWatcherSynchronizedWriter{mu: outputMu, writer: errWriter}
@@ -188,7 +189,7 @@ func newDevWatcherControllerWithOptions(
 		if retainFailureOutput {
 			outputTail = newDevTaskOutputTail(40)
 		}
-		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, appNameWidth, showAppColumn)
+		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, appNameWidth, showAppColumn, attachPTY)
 		controller.tasks[spec.ID] = &devWatcherTask{
 			controller: controller, spec: spec, triggerCh: make(chan struct{}, 1),
 			outputTail: outputTail, paused: options.reconcile && (structuredBuild || structuredRuntime),
@@ -218,6 +219,7 @@ func configureCompiledDevCommand(
 	lifecycle *devwatchLifecycleState,
 	appNameWidth int,
 	showAppColumn bool,
+	attachPTY bool,
 ) {
 	triggerCommand := strings.Join(strings.Fields(spec.Command.Shell), " ")
 	spec.DisplayCommand = triggerCommand
@@ -244,7 +246,7 @@ func configureCompiledDevCommand(
 	spec.Command.Shell = ""
 	spec.Command.Stdout = stdout
 	spec.Command.Stderr = stderr
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+	if attachPTY {
 		spec.Command.PTY = true
 		// A pseudo-terminal combines both streams; one transcript sink prevents every line from appearing twice.
 		spec.Command.Stderr = nil
@@ -255,6 +257,14 @@ func configureCompiledDevCommand(
 			hook(string(output.Data))
 		}
 	}
+}
+
+// shouldAttachDevWatcherPTY keeps nested terminal renderers away from the alternate-screen TUI while preserving plain-session compatibility.
+func shouldAttachDevWatcherPTY(outWriter io.Writer, goos string) bool {
+	if asDevOutputController(outWriter) != nil {
+		return false
+	}
+	return goos == "linux" || goos == "darwin"
 }
 
 // shouldRetainDevWatcherFailureOutput limits replay to alternate-screen sessions where live diagnostics disappear on exit.

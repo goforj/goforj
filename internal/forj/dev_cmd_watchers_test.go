@@ -1321,6 +1321,27 @@ func TestDecorateWatcherLineUsesLastCarriageReturnSegment(t *testing.T) {
 	}
 }
 
+// TestFinalDevwatchTerminalFrameKeepsOnlyTheVisibleRedraw prevents spinner history from becoming one concatenated transcript line.
+func TestFinalDevwatchTerminalFrameKeepsOnlyTheVisibleRedraw(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "ordinary line", line: "ready", want: "ready"},
+		{name: "terminal newline carriage return", line: "ready\r", want: "ready"},
+		{name: "redraw frames", line: "first\rsecond\rfinal\r", want: "final"},
+		{name: "repeated terminal carriage return", line: "first\rfinal\r\r", want: "final"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := finalDevwatchTerminalFrame(test.line); got != test.want {
+				t.Fatalf("finalDevwatchTerminalFrame(%q) = %q, want %q", test.line, got, test.want)
+			}
+		})
+	}
+}
+
 func TestDevwatchWriterPreservesANSIForNormalOutput(t *testing.T) {
 	var out bytes.Buffer
 	writer := newDevwatchWriter(&out, nil, "stdout", "API", "./bin/app run", newDevwatchLifecycleState(0, nil))
@@ -1537,6 +1558,234 @@ func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
 	want := []string{"spa-admin", "spa-portal", "app"}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("reconciliation order = %#v, want %#v", lines, want)
+	}
+}
+
+// TestDevPlanInitialTasksUsesFastPathForConventionalSetup verifies existing generated task identities need no new config phase.
+func TestDevPlanInitialTasksUsesFastPathForConventionalSetup(t *testing.T) {
+	pre := []project.DevTask{
+		{Name: "Run Docker Compose", Cmd: "docker compose up -d"},
+		{Name: "Waiting for Database to be ready", Cmd: strings.Replace(generatedMySQLDevWaitCommand, "docker-compose", "docker compose", 1)},
+		{Name: "Install Frontend Dependencies", Cmd: "cd cmd/app/frontend && npm install --no-audit >/dev/null"},
+	}
+	config := &project.Config{Dev: project.DevConfig{
+		Pre:  pre,
+		Apps: map[string]project.DevApp{project.DefaultAppName: {}},
+	}}
+
+	plan := planDevInitialTasks(config)
+	if !plan.fastPath {
+		t.Fatal("conventional setup did not select the one-build startup path")
+	}
+	if !reflect.DeepEqual(plan.preBuild, pre) || len(plan.postMigrate) != 0 {
+		t.Fatalf("startup task plan = %#v, want conventional tasks before build", plan)
+	}
+}
+
+// TestDevPlanInitialTasksFallsBackForCustomSetup keeps arbitrary pre tasks on the historical binary-ready path.
+func TestDevPlanInitialTasksFallsBackForCustomSetup(t *testing.T) {
+	custom := project.DevTask{Name: "Warm App Cache", Cmd: "./bin/app cache:warm"}
+	config := &project.Config{Dev: project.DevConfig{
+		Pre:  []project.DevTask{custom},
+		Apps: map[string]project.DevApp{project.DefaultAppName: {}},
+	}}
+
+	plan := planDevInitialTasks(config)
+	if plan.fastPath {
+		t.Fatal("custom setup unexpectedly selected the reordered startup path")
+	}
+	if len(plan.preBuild) != 0 || len(plan.postMigrate) != 0 {
+		t.Fatalf("custom startup task plan = %#v, want compatibility fallback", plan)
+	}
+}
+
+// TestDevPlanInitialTasksPreservesLegacyComposeBuildOrder keeps image-building owner hooks behind the historical bootstrap App build.
+func TestDevPlanInitialTasksPreservesLegacyComposeBuildOrder(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{
+		Pre: []project.DevTask{{
+			Name: "Run Docker Compose",
+			Cmd:  "docker compose up -d --build",
+		}},
+		Apps: map[string]project.DevApp{project.DefaultAppName: {}},
+	}}
+
+	plan := planDevInitialTasks(config)
+	if plan.fastPath {
+		t.Fatal("legacy Compose image build unexpectedly moved ahead of the initial App build")
+	}
+}
+
+// TestDevPlanInitialTasksPreservesBinaryReadyGeneratorWithoutAutoMigrate keeps owner commands behind the first App build.
+func TestDevPlanInitialTasksPreservesBinaryReadyGeneratorWithoutAutoMigrate(t *testing.T) {
+	custom := project.DevTask{Name: "Generate reports", Cmd: "./bin/app reports:generate"}
+	config := &project.Config{Dev: project.DevConfig{
+		Pre:  []project.DevTask{custom},
+		Apps: map[string]project.DevApp{project.DefaultAppName: {}},
+	}}
+
+	plan := planDevInitialTasks(config)
+	if plan.fastPath {
+		t.Fatal("owner generator unexpectedly moved ahead of the initial App build")
+	}
+	if len(plan.preBuild) != 0 || len(plan.postMigrate) != 0 {
+		t.Fatalf("owner generator startup task plan = %#v, want compatibility fallback", plan)
+	}
+}
+
+// TestDevPlanInitialTasksDefersGeneratorUntilAfterAutoMigrate keeps the established schema-before-generation order.
+func TestDevPlanInitialTasksDefersGeneratorUntilAfterAutoMigrate(t *testing.T) {
+	custom := project.DevTask{Name: "Generate reports", Cmd: "./bin/app reports:generate"}
+	config := &project.Config{Dev: project.DevConfig{
+		Pre:         []project.DevTask{custom},
+		AutoMigrate: true,
+		Apps:        map[string]project.DevApp{project.DefaultAppName: {}},
+	}, Render: project.RenderConfig{Components: project.Components{DatabaseSQLite: true}}}
+
+	plan := planDevInitialTasks(config)
+	if !plan.fastPath {
+		t.Fatal("post-migrate generator did not select the structured startup path")
+	}
+	if len(plan.preBuild) != 0 || !reflect.DeepEqual(plan.postMigrate, []project.DevTask{custom}) {
+		t.Fatalf("post-migrate startup task plan = %#v, want generator after migration", plan)
+	}
+}
+
+// TestRunDevInitialLifecycleBuildsStructuredAppOnce verifies conventional setup and SPA inputs settle before compilation.
+func TestRunDevInitialLifecycleBuildsStructuredAppOnce(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join("cmd", "app", "frontend"), 0o755); err != nil {
+		t.Fatalf("mkdir frontend: %v", err)
+	}
+	logPath := filepath.Join(root, "startup.log")
+	toolsDir := t.TempDir()
+	npmPath := filepath.Join(toolsDir, "npm")
+	if err := os.WriteFile(npmPath, []byte("#!/bin/sh\n"+appendDevLifecycleTestLine(logPath, "pre")+"\n"), 0o755); err != nil {
+		t.Fatalf("write fake npm: %v", err)
+	}
+	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	config := devInitialLifecycleTestConfig(logPath)
+	config.Dev.Pre = []project.DevTask{generatedDevFrontendInstallTask(project.DefaultApp())}
+
+	if err := runDevInitialLifecycle(config, io.Discard, io.Discard); err != nil {
+		t.Fatalf("runDevInitialLifecycle() error = %v", err)
+	}
+	assertDevLifecycleTestLines(t, logPath, []string{"pre", "spa", "app"})
+}
+
+// TestRunDevInitialLifecyclePreservesCustomPreCompatibility keeps unknown tasks between a bootstrap build and the SPA-owning rebuild.
+func TestRunDevInitialLifecyclePreservesCustomPreCompatibility(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join("cmd", "app", "frontend"), 0o755); err != nil {
+		t.Fatalf("mkdir frontend: %v", err)
+	}
+	logPath := filepath.Join(root, "startup.log")
+	config := devInitialLifecycleTestConfig(logPath)
+	config.Dev.Pre = []project.DevTask{{Name: "Owner setup", Cmd: appendDevLifecycleTestLine(logPath, "pre")}}
+
+	if err := runDevInitialLifecycle(config, io.Discard, io.Discard); err != nil {
+		t.Fatalf("runDevInitialLifecycle() error = %v", err)
+	}
+	assertDevLifecycleTestLines(t, logPath, []string{"app", "pre", "spa", "app"})
+}
+
+// TestRunDevInitialLifecycleBuildsFreshEmbeddedSPAOnce proves a clean checkout can create embedded assets before its only App compile.
+func TestRunDevInitialLifecycleBuildsFreshEmbeddedSPAOnce(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	frontendRoot := filepath.Join("cmd", "app", "frontend")
+	if err := os.MkdirAll(frontendRoot, 0o755); err != nil {
+		t.Fatalf("mkdir frontend: %v", err)
+	}
+	if err := os.WriteFile("go.mod", []byte("module example.com/fresh-embedded-spa\n\ngo 1.22.0\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	mainSource := `package main
+
+import "embed"
+
+//go:embed all:frontend/dist/*
+var frontend embed.FS
+
+func main() {
+	_ = frontend
+}
+`
+	if err := os.WriteFile(filepath.Join("cmd", "app", "main.go"), []byte(mainSource), 0o644); err != nil {
+		t.Fatalf("write embedded App: %v", err)
+	}
+	toolsDir := t.TempDir()
+	npmPath := filepath.Join(toolsDir, "npm")
+	if err := os.WriteFile(npmPath, []byte("#!/bin/sh\ntouch .prepared\n"), 0o755); err != nil {
+		t.Fatalf("write fake npm: %v", err)
+	}
+	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	buildCountPath := filepath.Join(root, "build-count.log")
+	config := &project.Config{Dev: project.DevConfig{
+		Pre: []project.DevTask{generatedDevFrontendInstallTask(project.DefaultApp())},
+		Apps: map[string]project.DevApp{
+			project.DefaultAppName: {
+				Build: &project.DevAppCommand{
+					Exec: "mkdir -p bin && go build -o ./bin/app ./cmd/app && " + appendDevLifecycleTestLine(buildCountPath, "build"),
+					Env:  map[string]string{"GOCACHE": "/tmp/gocache"},
+				},
+				Run: &project.DevAppCommand{Disabled: true},
+				SPAs: map[string]project.DevSPA{
+					"frontend": {
+						Path: frontendRoot,
+						Build: "test -f .prepared && mkdir -p dist && " +
+							"printf '%s\\n' '<!doctype html>' > dist/index.html",
+					},
+				},
+			},
+		},
+	}}
+
+	if err := runDevInitialLifecycle(config, io.Discard, io.Discard); err != nil {
+		t.Fatalf("runDevInitialLifecycle() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(frontendRoot, "dist", "index.html")); err != nil {
+		t.Fatalf("SPA build did not create embedded dist output: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("bin", "app")); err != nil {
+		t.Fatalf("real Go build did not create App binary: %v", err)
+	}
+	assertDevLifecycleTestLines(t, buildCountPath, []string{"build"})
+}
+
+// devInitialLifecycleTestConfig returns one structured app whose commands record their execution order.
+func devInitialLifecycleTestConfig(logPath string) *project.Config {
+	return &project.Config{Dev: project.DevConfig{
+		Apps: map[string]project.DevApp{
+			project.DefaultAppName: {
+				Build: &project.DevAppCommand{
+					Exec: "mkdir -p bin && : > bin/app && " + appendDevLifecycleTestLine(logPath, "app"),
+				},
+				Run: &project.DevAppCommand{Disabled: true},
+				SPAs: map[string]project.DevSPA{
+					"frontend": {Path: filepath.Join("cmd", "app", "frontend"), Build: appendDevLifecycleTestLine(logPath, "spa")},
+				},
+			},
+		},
+	}}
+}
+
+// appendDevLifecycleTestLine returns a shell command that records one lifecycle phase without hiding quoting behavior.
+func appendDevLifecycleTestLine(logPath string, line string) string {
+	return "printf '%s\\n' " + shellQuote(line) + " >> " + shellQuote(logPath)
+}
+
+// assertDevLifecycleTestLines compares the durable phase transcript with the expected startup graph.
+func assertDevLifecycleTestLines(t *testing.T, logPath string, want []string) {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got := strings.Fields(string(data)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("startup order = %#v, want %#v", got, want)
 	}
 }
 

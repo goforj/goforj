@@ -16,6 +16,12 @@ func buildDevFooterSeparatorLine() string {
 	return buildDevSectionSeparatorLine("")
 }
 
+// buildDevWatcherStopSeparatorLine keeps the transcript boundary compact once the full-width interactive footer is gone.
+func buildDevWatcherStopSeparatorLine() string {
+	borderColor := lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
+	return lipgloss.NewStyle().Foreground(borderColor).Render(strings.Repeat("─", devSectionSeparatorRuleWidth*2))
+}
+
 func buildDevStartupSeparatorLine() string {
 	success := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	return buildDevSectionSeparatorLine(success.Render(console.SuccessMark() + " Startup"))

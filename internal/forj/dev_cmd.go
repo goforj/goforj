@@ -196,21 +196,8 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	writeDevAppBuildLine(os.Stdout, activeDevAppsForConfig(config))
-	if err := runDevInitialBuild(config, os.Stdout, os.Stderr); err != nil {
+	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
 		return err
-	}
-	if err := runPreDevSetup(config); err != nil {
-		return err
-	}
-	spaBuilt, err := runDevInitialSPABuilds(config, os.Stdout, os.Stderr)
-	if err != nil {
-		return err
-	}
-	if spaBuilt {
-		if err := runDevBuild(config, os.Stdout, os.Stderr); err != nil {
-			return fmt.Errorf("post-SPA forj build failed: %w", err)
-		}
 	}
 	output := buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
 	outWriter := output.stdout
@@ -251,6 +238,168 @@ func (c *DevCmd) Run() error {
 	}
 
 	return fmt.Errorf("dev watchers exited unexpectedly")
+}
+
+// devInitialTaskPlan separates framework setup from work that must retain the historical binary-ready contract.
+type devInitialTaskPlan struct {
+	preBuild    []project.DevTask
+	postMigrate []project.DevTask
+	fastPath    bool
+}
+
+// runDevInitialLifecycle builds structured projects once when every configured setup task has a known safe phase.
+func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	plan := planDevInitialTasks(config)
+	if plan.fastPath {
+		if err := runDevTasks("Running pre-dev setup", plan.preBuild); err != nil {
+			return err
+		}
+		if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
+		if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		if err := runDevAppSetup(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		if err := runDevTasks("Running post-migrate setup", plan.postMigrate); err != nil {
+			return err
+		}
+		if len(plan.postMigrate) > 0 {
+			if err := runDevBuild(config, outWriter, errWriter); err != nil {
+				return fmt.Errorf("post-setup forj build failed: %w", err)
+			}
+		}
+		return nil
+	}
+
+	writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
+	if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+		return err
+	}
+	rebuildAfterSetup, err := runPreDevSetup(config)
+	if err != nil {
+		return err
+	}
+	spaBuilt, err := runDevInitialSPABuilds(config, outWriter, errWriter)
+	if err != nil {
+		return err
+	}
+	if spaBuilt || rebuildAfterSetup {
+		if err := runDevBuild(config, outWriter, errWriter); err != nil {
+			return fmt.Errorf("post-setup forj build failed: %w", err)
+		}
+	}
+	return nil
+}
+
+// planDevInitialTasks preserves arbitrary pre-task ordering unless every task matches a framework-owned bootstrap convention.
+func planDevInitialTasks(config *project.Config) devInitialTaskPlan {
+	if config == nil {
+		return devInitialTaskPlan{}
+	}
+	tasks := effectiveDevPreTasks(config)
+	plan := devInitialTaskPlan{
+		preBuild:    make([]project.DevTask, 0, len(tasks)),
+		postMigrate: make([]project.DevTask, 0, len(tasks)),
+		fastPath:    config.Dev.UsesStructuredApps(),
+	}
+	autoMigrate := shouldRunDevAutoMigrate(config)
+	for _, task := range tasks {
+		if autoMigrate && shouldRunAfterMigrate(task) {
+			plan.postMigrate = append(plan.postMigrate, task)
+			continue
+		}
+		if isConventionalDevBootstrapTask(task) {
+			plan.preBuild = append(plan.preBuild, task)
+			continue
+		}
+		plan.fastPath = false
+	}
+	return plan
+}
+
+// isConventionalDevBootstrapTask recognizes only framework task identities whose commands cannot require an App binary.
+func isConventionalDevBootstrapTask(task project.DevTask) bool {
+	name := strings.TrimSpace(task.Name)
+	switch {
+	case name == "Run Docker Compose":
+		return isConventionalDevComposeUpCommand(task.Cmd)
+	case name == "Waiting for Database to be ready":
+		command := normalizeDevComposeExecutable(task.Cmd)
+		return command == generatedMySQLDevWaitCommand || command == generatedPostgresDevWaitCommand
+	case name == "Seed Grafana Dashboards":
+		command := normalizeDevComposeExecutable(task.Cmd)
+		return command == "docker-compose up -d --force-recreate grafana-seed" ||
+			command == "docker-compose run --rm --no-deps grafana-seed"
+	case isFrontendDependencyDevTaskName(name):
+		return isConventionalDevFrontendInstallCommand(task)
+	default:
+		return false
+	}
+}
+
+// isConventionalDevComposeUpCommand matches the normalized Compose startup whose behavior is independent of an existing App binary.
+func isConventionalDevComposeUpCommand(command string) bool {
+	command = normalizeDevComposeExecutable(command)
+	return command == "docker-compose up -d"
+}
+
+// normalizeDevComposeExecutable treats the current plugin spelling like the historical generated binary.
+func normalizeDevComposeExecutable(command string) string {
+	command = strings.TrimSpace(command)
+	if strings.HasPrefix(command, "docker compose ") {
+		return "docker-compose " + strings.TrimPrefix(command, "docker compose ")
+	}
+	return command
+}
+
+// isFrontendDependencyDevTaskName matches the stable default and named-App task identities emitted by GoForj.
+func isFrontendDependencyDevTaskName(name string) bool {
+	return name == "Install Frontend Dependencies" ||
+		strings.HasPrefix(name, "Install ") && strings.HasSuffix(name, " Frontend Dependencies")
+}
+
+// isConventionalDevFrontendInstallCommand accepts generated npm setup plus the quiet flags used by upgraded projects.
+func isConventionalDevFrontendInstallCommand(task project.DevTask) bool {
+	app, ok := devFrontendInstallTaskApp(task.Name)
+	if !ok {
+		return false
+	}
+	base := devFrontendInstallTask(app, "npm install").Cmd
+	command := strings.TrimSpace(task.Cmd)
+	if command == base {
+		return true
+	}
+	if !strings.HasPrefix(command, base+" ") {
+		return false
+	}
+	for _, field := range strings.Fields(strings.TrimPrefix(command, base+" ")) {
+		switch field {
+		case "--no-audit", "--no-fund", "--no-progress", "--loglevel=error", ">/dev/null":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// devFrontendInstallTaskApp resolves the App encoded in GoForj's stable frontend task identity.
+func devFrontendInstallTaskApp(name string) (project.App, bool) {
+	name = strings.TrimSpace(name)
+	if name == "Install Frontend Dependencies" {
+		return project.DefaultApp(), true
+	}
+	if !strings.HasPrefix(name, "Install ") || !strings.HasSuffix(name, " Frontend Dependencies") {
+		return project.App{}, false
+	}
+	appName := strings.TrimSuffix(strings.TrimPrefix(name, "Install "), " Frontend Dependencies")
+	if !project.IsSafeAppName(appName) || project.IsReservedAppName(appName) {
+		return project.App{}, false
+	}
+	return project.DefaultNamedApp(appName), true
 }
 
 // ensureDevDatabaseExistsWithWriters provisions only service-backed databases because SQLite needs no external preparation.
@@ -504,10 +653,16 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
-// runPreDevSetup orders configured tasks around migration so setup commands see the current schema.
-func runPreDevSetup(config *project.Config) error {
+// runPreDevSetup orders configured tasks around migration and reports when generated source requires another build.
+func runPreDevSetup(config *project.Config) (bool, error) {
 	preTasks := effectiveDevPreTasks(config)
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
+	rebuildAfterSetup := false
+	for _, task := range preTasks {
+		if shouldRunAfterMigrate(task) {
+			rebuildAfterSetup = true
+		}
+	}
 	if shouldRunDevAutoMigrate(config) {
 		allTasks := preTasks
 		preTasks = make([]project.DevTask, 0, len(allTasks))
@@ -520,15 +675,15 @@ func runPreDevSetup(config *project.Config) error {
 		}
 	}
 	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
-		return err
+		return false, err
 	}
 	if err := runDevAppSetup(config, os.Stdout, os.Stderr); err != nil {
-		return err
+		return false, err
 	}
 	if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return rebuildAfterSetup, nil
 }
 
 // runDevAppSetup catches databases and migrations up before dev starts or restarts app processes.
@@ -995,7 +1150,7 @@ watcherLoop:
 			case <-session.stopCh:
 				disableDevFooter(session.outWriter)
 				disableDevFooter(session.errWriter)
-				fmt.Println(buildDevFooterSeparatorLine())
+				fmt.Println(buildDevWatcherStopSeparatorLine())
 				runtime.stopAndDrain(true)
 				return errDevInterrupted
 			case <-session.restartCh:

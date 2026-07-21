@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	charmansi "github.com/charmbracelet/x/ansi"
+	"github.com/goforj/goforj/project"
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -33,6 +34,27 @@ func TestBuildDevFooterLine(t *testing.T) {
 	}
 	if !strings.Contains(line, "[x] Command") {
 		t.Fatalf("expected command shortcut in footer line: %q", line)
+	}
+}
+
+// TestDevConfigUsesWatcherStdinKeepsInteractiveChildrenOffTheTUI verifies both supported config shapes retain direct terminal ownership.
+func TestDevConfigUsesWatcherStdinKeepsInteractiveChildrenOffTheTUI(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *project.Config
+		want   bool
+	}{
+		{name: "nil config"},
+		{name: "noninteractive", config: &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{{Exec: "wails dev"}}}}},
+		{name: "structured stdin", config: &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{{Exec: "go run .", Stdin: true}}}}, want: true},
+		{name: "legacy stdin", config: &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{{Watch: "-file .go -stdin", Exec: "go run ."}}}}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := devConfigUsesWatcherStdin(test.config); got != test.want {
+				t.Fatalf("devConfigUsesWatcherStdin() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -82,6 +104,14 @@ func TestBuildDevSectionSeparatorLineKeepsFullWidthForUnlabeledBoundaries(t *tes
 	line := stripANSI(buildDevSectionSeparatorLineAtWidth("", 48))
 	if got := charmansi.StringWidth(line); got != 48 {
 		t.Fatalf("unlabeled separator width = %d, want 48: %q", got, line)
+	}
+}
+
+// TestBuildDevWatcherStopSeparatorLineStaysCompact prevents shutdown from restoring a terminal-width rule above the watcher summary.
+func TestBuildDevWatcherStopSeparatorLineStaysCompact(t *testing.T) {
+	line := stripANSI(buildDevWatcherStopSeparatorLine())
+	if want := strings.Repeat("─", devSectionSeparatorRuleWidth*2); line != want {
+		t.Fatalf("watcher stop separator = %q, want %q", line, want)
 	}
 }
 
