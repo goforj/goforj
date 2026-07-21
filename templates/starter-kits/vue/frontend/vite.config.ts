@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
   return {
     envDir: projectRoot,
     define: frontendEnv.define,
+    build: {
+      reportCompressedSize: false,
+      target: ['chrome107', 'edge107', 'firefox104', 'safari16'],
+    },
     plugins: [vue(), tailwindcss()],
     resolve: {
       alias: {

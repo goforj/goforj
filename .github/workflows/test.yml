@@ -17,6 +17,29 @@ env:
   WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.2.0"
 
 jobs:
+  vue-starter:
+    name: vue starter
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: templates/starter-kits/vue/frontend/package-lock.json
+
+      - name: install Vue starter dependencies
+        working-directory: templates/starter-kits/vue/frontend
+        run: npm ci --prefer-offline --no-audit
+
+      - name: test Vue starter build graph
+        run: node --test internal/forj/frontendtest/vue_starter_build.test.mjs
+
   test:
     runs-on: ubuntu-latest
 
