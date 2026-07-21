@@ -129,6 +129,11 @@ func (c *DevCmd) Run() error {
 	if config == nil {
 		return nil
 	}
+	if inheritedContext != nil {
+		if err := validateManagedDevLifecycle(config); err != nil {
+			return err
+		}
+	}
 
 	// Prevent concurrent dev sessions from clobbering each other.
 	unlock, err := c.acquireLock()
