@@ -21,12 +21,16 @@ func planNewProjectServiceTasks(resourcePlan project.ResourcePlan, servicePlan p
 
 	tasks := newProjectServiceTaskPlan{
 		Pre: []project.DevTask{{
-			Name: "Run Docker Compose",
-			Cmd:  dockerComposeUpDevCommand(components),
+			Name:  "Run Docker Compose",
+			Cmd:   dockerComposeUpDevCommand(components),
+			ID:    project.DevTaskIDCompose,
+			Phase: project.DevTaskPhaseCompose,
 		}},
 		Down: []project.DevTask{{
-			Name: "Docker Compose Down",
-			Cmd:  dockerComposeDownDevCommand(),
+			Name:  "Docker Compose Down",
+			Cmd:   dockerComposeDownDevCommand(),
+			ID:    project.DevTaskIDComposeDown,
+			Phase: project.DevTaskPhaseComposeDown,
 		}},
 	}
 	if waitTask, ok := newProjectDatabaseWaitTask(resourcePlan, servicePlan); ok {
@@ -72,5 +76,10 @@ func newProjectDatabaseWaitTask(resourcePlan project.ResourcePlan, servicePlan p
 	if !ok || requirement.State != project.ServiceStateActiveLocal {
 		return project.DevTask{}, false
 	}
-	return project.DevTask{Name: "Waiting for Database to be ready", Cmd: command}, true
+	return project.DevTask{
+		Name:  "Waiting for Database to be ready",
+		Cmd:   command,
+		ID:    project.DevTaskIDDatabaseReady,
+		Phase: project.DevTaskPhasePostCompose,
+	}, true
 }

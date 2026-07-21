@@ -31,6 +31,9 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`Dirs     DevWatchMatchers`,
 			`Apps              map[string]any`,
 			`Extra`,
+			`DevTaskIDCompose`,
+			`DevTaskPhaseCompose`,
+			`ValidateManagedTaskPhases`,
 			`ModuleReplaces`,
 			`Observability`,
 			`Cache`,
@@ -41,7 +44,7 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 			`func (c *DevConfig) SetApps(`,
 		},
 		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
-			`import "{{.GoModuleName}}/project"`,
+			`"{{.GoModuleName}}/project"`,
 			`*[]project.DevWatch`,
 			`func applyDevConfigUpdate(`,
 			`func mergeLighthouseDevWatches(`,

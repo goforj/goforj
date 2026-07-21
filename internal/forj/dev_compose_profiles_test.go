@@ -28,7 +28,12 @@ func TestEffectiveDevPreTasksStartsProfilesAtInvocationTime(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("COMPOSE_PROFILES=rustfs,opensearch\n"), 0o644); err != nil {
 		t.Fatalf("write owner environment: %v", err)
 	}
-	want := []project.DevTask{{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)}}
+	want := []project.DevTask{{
+		Name:  "Run Docker Compose",
+		Cmd:   dockerComposeUpDevCommand(config.Render.Components),
+		ID:    project.DevTaskIDCompose,
+		Phase: project.DevTaskPhaseCompose,
+	}}
 	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, want) {
 		t.Fatalf("enabled profile tasks = %#v, want %#v", got, want)
 	}
@@ -87,7 +92,7 @@ func TestEffectiveDevPreTasksSuppressesStaleProfileOnlyStartup(t *testing.T) {
 		t.Fatalf("write profile-only Compose file: %v", err)
 	}
 
-	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{})}
+	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{}), ID: project.DevTaskIDCompose, Phase: project.DevTaskPhaseCompose}
 	config := &project.Config{
 		Render: project.RenderConfig{Components: project.Components{Docker: true}},
 		Dev:    project.DevConfig{Pre: []project.DevTask{generated}},
@@ -154,7 +159,7 @@ func TestEffectiveDevPreTasksFailsOpenForCustomComposeSelection(t *testing.T) {
 		t.Fatalf("write owner Compose file: %v", err)
 	}
 
-	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{})}
+	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{}), ID: project.DevTaskIDCompose, Phase: project.DevTaskPhaseCompose}
 	config := &project.Config{
 		Render: project.RenderConfig{Components: project.Components{Docker: true}},
 		Dev:    project.DevConfig{Pre: []project.DevTask{generated}},
@@ -197,7 +202,7 @@ func TestEffectiveDevPreTasksFailsOpenForComposeEnvironmentIndirection(t *testin
 	}
 	t.Setenv("DEV_PROFILES", "rustfs")
 
-	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{})}
+	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{}), ID: project.DevTaskIDCompose, Phase: project.DevTaskPhaseCompose}
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true}}}
 	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("interpolated Compose profiles tasks = %#v, want fail-open startup", got)
@@ -214,7 +219,12 @@ func TestEffectiveDevPreTasksFailsOpenForComposeEnvironmentIndirection(t *testin
 // TestEffectiveDevDownTasksAlwaysCoversDockerProjects verifies removed profiles cannot strand prior containers.
 func TestEffectiveDevDownTasksAlwaysCoversDockerProjects(t *testing.T) {
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true}}}
-	want := []project.DevTask{{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}}
+	want := []project.DevTask{{
+		Name:  "Docker Compose Down",
+		Cmd:   dockerComposeDownDevCommand(),
+		ID:    project.DevTaskIDComposeDown,
+		Phase: project.DevTaskPhaseComposeDown,
+	}}
 	if got := effectiveDevDownTasks(config); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Docker down tasks = %#v, want %#v", got, want)
 	}

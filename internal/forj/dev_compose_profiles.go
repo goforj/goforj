@@ -41,7 +41,12 @@ func effectiveDevPreTasks(config *project.Config) []project.DevTask {
 		filtered = append(filtered, task)
 	}
 	if composeNeeded && !hasComposeTask {
-		filtered = append(filtered, project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)})
+		filtered = append(filtered, project.DevTask{
+			Name:  "Run Docker Compose",
+			Cmd:   dockerComposeUpDevCommand(config.Render.Components),
+			ID:    project.DevTaskIDCompose,
+			Phase: project.DevTaskPhaseCompose,
+		})
 	}
 	return filtered
 }
@@ -56,7 +61,12 @@ func effectiveDevDownTasks(config *project.Config) []project.DevTask {
 		normalizeDockerComposeDownTask(&tasks)
 		return tasks
 	}
-	return append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()})
+	return append(tasks, project.DevTask{
+		Name:  "Docker Compose Down",
+		Cmd:   dockerComposeDownDevCommand(),
+		ID:    project.DevTaskIDComposeDown,
+		Phase: project.DevTaskPhaseComposeDown,
+	})
 }
 
 // composeProfilesEnabled follows Compose's process-over-dotenv precedence and reports whether indirect dotenv syntax was resolved reliably.

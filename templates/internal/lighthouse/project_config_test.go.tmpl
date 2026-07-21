@@ -544,6 +544,27 @@ func TestApplyDevConfigUpdatePreservesNativeLifecycleControls(t *testing.T) {
 	}
 }
 
+// TestApplyDevConfigUpdatePreservesGeneratedTaskMetadata verifies older Lighthouse task payloads cannot erase lifecycle identity.
+func TestApplyDevConfigUpdatePreservesGeneratedTaskMetadata(t *testing.T) {
+	current := project.DevConfig{
+		Pre: []project.DevTask{
+			{
+				Name:  "Run Docker Compose",
+				Cmd:   "docker-compose up -d",
+				ID:    project.DevTaskIDCompose,
+				Phase: project.DevTaskPhaseCompose,
+			},
+		},
+	}
+	updates := []project.DevTask{
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
+	}
+	applyDevConfigUpdate(&current, devConfigUpdate{Pre: &updates})
+	if len(current.Pre) != 1 || current.Pre[0].ID != project.DevTaskIDCompose || current.Pre[0].Phase != project.DevTaskPhaseCompose {
+		t.Fatalf("generated task metadata was erased: %#v", current.Pre)
+	}
+}
+
 // TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex verifies that a
 // replacement row cannot inherit hidden native settings from a deleted watcher.
 func TestMergeLighthouseDevWatchesDoesNotTransferControlsByIndex(t *testing.T) {

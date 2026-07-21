@@ -2227,6 +2227,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 		if normalizeDockerComposeUpTask(&p.config.Dev.Pre, p.config.Render.Components) {
 			changed = true
 		}
+		if normalizeGeneratedDatabaseWaitTask(&p.config.Dev.Pre) {
+			changed = true
+		}
 		if normalizeDockerComposeDownTask(&p.config.Dev.Down) {
 			changed = true
 		}
@@ -2334,8 +2337,19 @@ func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.C
 		if (*tasks)[i].Name != "Run Docker Compose" {
 			continue
 		}
-		if legacy[(*tasks)[i].Cmd] && (*tasks)[i].Cmd != want {
+		if !legacy[(*tasks)[i].Cmd] {
+			continue
+		}
+		if (*tasks)[i].Cmd != want {
 			(*tasks)[i].Cmd = want
+			changed = true
+		}
+		if (*tasks)[i].ID == "" {
+			(*tasks)[i].ID = project.DevTaskIDCompose
+			changed = true
+		}
+		if (*tasks)[i].Phase == "" {
+			(*tasks)[i].Phase = project.DevTaskPhaseCompose
 			changed = true
 		}
 	}
@@ -2347,11 +2361,49 @@ func normalizeDockerComposeDownTask(tasks *[]project.DevTask) bool {
 	changed := false
 	want := dockerComposeDownDevCommand()
 	for i := range *tasks {
-		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" || strings.TrimSpace((*tasks)[i].Cmd) != "docker-compose down" {
+		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" {
 			continue
 		}
-		(*tasks)[i].Cmd = want
-		changed = true
+		command := strings.TrimSpace((*tasks)[i].Cmd)
+		if command != "docker-compose down" && command != want {
+			continue
+		}
+		if (*tasks)[i].Cmd != want {
+			(*tasks)[i].Cmd = want
+			changed = true
+		}
+		if (*tasks)[i].ID == "" {
+			(*tasks)[i].ID = project.DevTaskIDComposeDown
+			changed = true
+		}
+		if (*tasks)[i].Phase == "" {
+			(*tasks)[i].Phase = project.DevTaskPhaseComposeDown
+			changed = true
+		}
+	}
+	return changed
+}
+
+// normalizeGeneratedDatabaseWaitTask adds lifecycle metadata only to exact framework readiness tasks.
+func normalizeGeneratedDatabaseWaitTask(tasks *[]project.DevTask) bool {
+	changed := false
+	for i := range *tasks {
+		task := &(*tasks)[i]
+		if strings.TrimSpace(task.Name) != "Waiting for Database to be ready" {
+			continue
+		}
+		normalized := normalizeDevComposeExecutable(task.Cmd)
+		if normalized != generatedMySQLDevWaitCommand && normalized != generatedPostgresDevWaitCommand {
+			continue
+		}
+		if task.ID == "" {
+			task.ID = project.DevTaskIDDatabaseReady
+			changed = true
+		}
+		if task.Phase == "" {
+			task.Phase = project.DevTaskPhasePostCompose
+			changed = true
+		}
 	}
 	return changed
 }
