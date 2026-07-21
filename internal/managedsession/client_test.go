@@ -338,6 +338,7 @@ func TestClientRejectsWelcomeProtocolMismatch(t *testing.T) {
 	}
 }
 
+// validRegisterRequest returns the canonical registration fixture used by client tests.
 func validRegisterRequest() RegisterRequest {
 	return RegisterRequest{
 		SchemaVersion:             SchemaVersion,
@@ -353,6 +354,7 @@ func validRegisterRequest() RegisterRequest {
 	}
 }
 
+// validReplaceRequest returns one canonical publication replacement fixture.
 func validReplaceRequest() ReplacePublicationsRequest {
 	fence := ManagedPublicationFence{ProjectID: "project-orders", SessionID: "session-orders", SessionGeneration: 2}
 	return ReplacePublicationsRequest{
@@ -367,6 +369,7 @@ func validReplaceRequest() ReplacePublicationsRequest {
 	}
 }
 
+// runTestManagedSessionPeer performs the minimal Harbor handshake for net.Pipe tests.
 func runTestManagedSessionPeer(connection net.Conn, handle func(*frameReader, *frameWriter, Version) error) error {
 	reader := &frameReader{reader: connection, limit: MaximumFrameSize}
 	writer := &frameWriter{writer: connection, limit: MaximumFrameSize}
@@ -403,6 +406,7 @@ func runTestManagedSessionPeer(connection net.Conn, handle func(*frameReader, *f
 	return handle(reader, writer, protocol)
 }
 
+// readTestEnvelope reads and validates one fake-peer envelope.
 func readTestEnvelope(reader *frameReader) (envelope, error) {
 	payload, err := reader.readFrame()
 	if err != nil {
@@ -418,6 +422,7 @@ func readTestEnvelope(reader *frameReader) (envelope, error) {
 	return message, nil
 }
 
+// writeTestResponse writes one correlated successful fake-peer response.
 func writeTestResponse(writer *frameWriter, protocol Version, requestID string, payload any) error {
 	message, err := newEnvelopePayload(kindResponse, payload)
 	if err != nil {
@@ -428,6 +433,7 @@ func writeTestResponse(writer *frameWriter, protocol Version, requestID string, 
 	return writer.writeFrame(mustJSON(message))
 }
 
+// mustJSON encodes a test envelope and fails immediately on an impossible fixture error.
 func mustJSON(value any) []byte {
 	payload, err := json.Marshal(value)
 	if err != nil {
