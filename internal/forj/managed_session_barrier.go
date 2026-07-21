@@ -15,9 +15,12 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-const managedComposeBarrierRetryDelay = 100 * time.Millisecond
-
-const managedComposeHeartbeatInterval = 5 * time.Second
+const (
+	managedComposeBarrierRetryDelay = 100 * time.Millisecond
+	// managedComposeBarrierTimeout gives Harbor a short window to finish network admission without delaying a failed start.
+	managedComposeBarrierTimeout    = 30 * time.Second
+	managedComposeHeartbeatInterval = 5 * time.Second
+)
 
 // managedBarrierClient is the narrow client surface needed to synchronize one managed Compose session.
 type managedBarrierClient interface {
@@ -263,6 +266,9 @@ func waitForManagedComposeBarrier(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	barrierContext, cancel := managedComposeBarrierContext(ctx)
+	defer cancel()
+	ctx = barrierContext
 	if client == nil {
 		return errors.New("managed Compose barrier client is required")
 	}
@@ -315,6 +321,14 @@ func waitForManagedComposeBarrier(
 			return err
 		}
 	}
+}
+
+// managedComposeBarrierContext bounds a temporary Harbor readiness race without overriding an existing lifecycle deadline.
+func managedComposeBarrierContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, managedComposeBarrierTimeout)
 }
 
 // managedSessionRetryable keeps retries limited to Harbor's explicit temporary-unavailable category.

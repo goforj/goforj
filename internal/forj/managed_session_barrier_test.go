@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goforj/goforj/internal/managedsession"
 	"github.com/goforj/goforj/project"
@@ -159,6 +160,45 @@ func TestWaitForManagedComposeBarrierRetriesUnavailableCalls(t *testing.T) {
 	}
 	if len(client.replaceRequests) != 2 || len(client.barrierRequests) != 1 {
 		t.Fatalf("calls = replacements %d, barriers %d; want two replacements and one barrier", len(client.replaceRequests), len(client.barrierRequests))
+	}
+}
+
+// TestWaitForManagedComposeBarrierHonorsCallerDeadline proves a temporary Harbor outage cannot outlive the lifecycle context.
+func TestWaitForManagedComposeBarrierHonorsCallerDeadline(t *testing.T) {
+	registration := managedBarrierTestRegistration(t)
+	client := &recordingManagedBarrierClient{
+		barrierReplies: make([]managedsession.BarrierResponse, 8),
+	}
+	for index := range client.barrierReplies {
+		client.barrierReplies[index] = managedsession.BarrierResponse{
+			SchemaVersion: managedsession.SchemaVersion,
+			Fence:         registration.Fence,
+			Phase:         managedsession.BarrierPhaseCompose,
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+
+	err := waitForManagedComposeBarrier(ctx, client, registration, "orders")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitForManagedComposeBarrier() error = %v, want deadline exceeded", err)
+	}
+	if len(client.barrierRequests) < 2 {
+		t.Fatalf("barrier requests = %d, want retry before deadline", len(client.barrierRequests))
+	}
+}
+
+// TestManagedComposeBarrierContextAddsDefaultDeadline proves an unbounded dev context receives the startup safety budget.
+func TestManagedComposeBarrierContextAddsDefaultDeadline(t *testing.T) {
+	before := time.Now()
+	ctx, cancel := managedComposeBarrierContext(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("managedComposeBarrierContext() returned no deadline")
+	}
+	if deadline.Before(before.Add(managedComposeBarrierTimeout-time.Second)) || deadline.After(before.Add(managedComposeBarrierTimeout+time.Second)) {
+		t.Fatalf("managed barrier deadline = %v, want about %v", deadline, before.Add(managedComposeBarrierTimeout))
 	}
 }
 
