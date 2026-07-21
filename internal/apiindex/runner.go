@@ -93,11 +93,18 @@ type AppResolver func() project.App
 // Runner generates API contract artifacts for a project App.
 type Runner struct {
 	resolveApp AppResolver
+	runCached  cachedIndexRunner
 }
+
+// cachedIndexRunner captures Web's cache-aware indexing boundary for focused GoForj path tests.
+type cachedIndexRunner func(context.Context, webindex.IndexOptions, string) (webindex.Manifest, error)
 
 // NewRunner creates an API index runner whose App selection remains late-bound to CLI dispatch.
 func NewRunner(resolveApp AppResolver) *Runner {
-	return &Runner{resolveApp: resolveApp}
+	return &Runner{
+		resolveApp: resolveApp,
+		runCached:  webindex.RunCached,
+	}
 }
 
 // Prepare creates a validated candidate while leaving publication under the caller's control.
@@ -232,6 +239,9 @@ func (r *Runner) prepareDefaultPaths(paths paths, options runOptions) (prepared 
 		active:      before,
 		locks:       webindexArtifactLockCoordinator{},
 	}
+	if err := seedStagedArtifacts(paths, candidate.stagedPaths, before); err != nil {
+		return prepared, errors.Join(err, candidate.Discard())
+	}
 	manifest, err := r.runIndex(candidate.stagedPaths, options)
 	prepared.report = reportFromManifest(paths.appName, outcomeChanged, manifest)
 	if err != nil {
@@ -243,13 +253,21 @@ func (r *Runner) prepareDefaultPaths(paths paths, options runOptions) (prepared 
 	}
 	if before.equal(candidate.candidates) {
 		prepared.report.outcome = outcomeUnchanged
+		unchanged, err := candidate.discardIfActiveUnchanged()
+		if err != nil {
+			return prepared, err
+		}
+		if unchanged {
+			return prepared, nil
+		}
+		prepared.report.outcome = outcomeChanged
 	}
 	candidate.report = prepared.report
 	prepared.candidate = candidate
 	return prepared, nil
 }
 
-// runIndex applies GoForj's generated and runtime directory exclusions to web's analyzer.
+// runIndex keeps Web's private analysis cache outside ephemeral candidate directories so every build can reuse it.
 func (r *Runner) runIndex(paths paths, options runOptions) (webindex.Manifest, error) {
 	openAPIOptions, err := openAPIOptions(paths, options.buildTags)
 	if err != nil {
@@ -264,21 +282,8 @@ func (r *Runner) runIndex(paths paths, options runOptions) (webindex.Manifest, e
 		RouteCompositionPath: paths.routeComposition,
 		BuildTags:            options.buildTags,
 		Strict:               options.strict,
-		SkipDir: func(_ string, name string) bool {
-			return shouldSkipSourceDir(name)
-		},
 	}
-	return webindex.Run(context.Background(), indexOptions)
-}
-
-// shouldSkipSourceDir avoids generated runtime data that is not project source.
-func shouldSkipSourceDir(name string) bool {
-	switch name {
-	case "_data", "bin":
-		return true
-	default:
-		return false
-	}
+	return r.runCached(context.Background(), indexOptions, apiIndexCachePath(paths))
 }
 
 // reportFromManifest captures counts before projection so every command reports the same contract totals.
