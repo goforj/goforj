@@ -14,7 +14,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestProjectDescribeCmdReportsDeterministicStaticTopology verifies the descriptor has no dotenv or process-state dependency.
+// TestProjectDescribeCmdReportsDeterministicStaticTopology verifies dotenv topology is read without exposing values or changing process state.
 func TestProjectDescribeCmdReportsDeterministicStaticTopology(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "billing"), 0o755); err != nil {
@@ -45,6 +45,7 @@ func TestProjectDescribeCmdReportsDeterministicStaticTopology(t *testing.T) {
 		command := &ProjectDescribeCmd{
 			JSON:       true,
 			stdout:     &output,
+			root:       root,
 			loadConfig: func() (*project.Config, error) { return config, nil },
 			discover: func(string) (projectlayout.Discovery, error) {
 				return projectlayout.Discover(root)
@@ -94,8 +95,123 @@ func TestProjectDescribeCmdReportsDeterministicStaticTopology(t *testing.T) {
 	if !reflect.DeepEqual(first.Apps, wantApps) {
 		t.Fatalf("apps = %#v, want %#v", first.Apps, wantApps)
 	}
-	if !reflect.DeepEqual(first.GoForj.CLICapabilities, []string{projectDescribeCapability}) || len(first.GoForj.GeneratedProject.Capabilities) != 0 {
+	if !reflect.DeepEqual(first.GoForj.CLICapabilities, []string{projectDescribeCapability, projectDescribeServiceRequirementsCapability}) || len(first.GoForj.GeneratedProject.Capabilities) != 0 {
 		t.Fatalf("capabilities = %#v", first.GoForj)
+	}
+	if len(first.ServiceRequirements) != 0 {
+		t.Fatalf("service requirements = %#v, want none", first.ServiceRequirements)
+	}
+}
+
+// TestProjectDescribeCmdReportsServiceRequirements verifies service intent joins remain deterministic and secret-free.
+func TestProjectDescribeCmdReportsServiceRequirements(t *testing.T) {
+	root := t.TempDir()
+	config := &project.Config{
+		ProjectName:  "orders",
+		GoModuleName: "example.com/orders",
+		Render:       project.RenderConfig{Components: project.Components{Docker: true, DatabaseMySQL: true, Cache: true}},
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\nCACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCOMPOSE_PROFILES=redis\nCACHE_ADDR=redis:6379\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var output bytes.Buffer
+	command := &ProjectDescribeCmd{
+		JSON:       true,
+		stdout:     &output,
+		root:       root,
+		loadConfig: func() (*project.Config, error) { return config, nil },
+		discover:   func(string) (projectlayout.Discovery, error) { return projectlayout.Discovery{}, nil },
+		cliVersion: func() string { return "v1.2.3" },
+	}
+	if err := command.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	var report ProjectDescribeReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(report.ServiceRequirements) != 2 {
+		t.Fatalf("service requirements = %#v, want MySQL and Redis", report.ServiceRequirements)
+	}
+	if report.ServiceRequirements[0].ID != "requirement.mysql.database" || report.ServiceRequirements[0].Owner != "compose" || report.ServiceRequirements[0].Kind != "database" || report.ServiceRequirements[0].Driver != "mysql" {
+		t.Fatalf("MySQL requirement = %#v", report.ServiceRequirements[0])
+	}
+	if report.ServiceRequirements[0].Endpoints[0].NativePort != 3306 || report.ServiceRequirements[0].Endpoints[0].Visibility != "host" {
+		t.Fatalf("MySQL endpoint = %#v", report.ServiceRequirements[0].Endpoints)
+	}
+	if report.ServiceRequirements[1].ID != "requirement.redis.cache" || report.ServiceRequirements[1].Owner != "compose" || report.ServiceRequirements[1].Kind != "cache" || report.ServiceRequirements[1].Driver != "redis" {
+		t.Fatalf("Redis requirement = %#v", report.ServiceRequirements[1])
+	}
+	if report.ServiceRequirements[1].Endpoints[0].NativePort != 6379 || report.ServiceRequirements[1].Consumers[0] != project.DefaultAppName {
+		t.Fatalf("Redis endpoint/consumers = %#v", report.ServiceRequirements[1])
+	}
+}
+
+// TestProjectDescribeCmdKeepsExternalServiceAffinitySecretFree verifies external endpoint changes never enter descriptor IDs or output.
+func TestProjectDescribeCmdKeepsExternalServiceAffinitySecretFree(t *testing.T) {
+	root := t.TempDir()
+	config := &project.Config{
+		ProjectName:  "orders",
+		GoModuleName: "example.com/orders",
+		Render:       project.RenderConfig{Components: project.Components{Docker: true, Cache: true}},
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("CACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCACHE_ADDR=redis://owner:top-secret@cache.example:6379\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var output bytes.Buffer
+	command := &ProjectDescribeCmd{
+		JSON:       true,
+		stdout:     &output,
+		root:       root,
+		loadConfig: func() (*project.Config, error) { return config, nil },
+		discover:   func(string) (projectlayout.Discovery, error) { return projectlayout.Discovery{}, nil },
+		cliVersion: func() string { return "v1.2.3" },
+	}
+	if err := command.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if strings.Contains(output.String(), "top-secret") || strings.Contains(output.String(), "cache.example") {
+		t.Fatalf("descriptor exposed external endpoint material: %s", output.String())
+	}
+	var report ProjectDescribeReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(report.ServiceRequirements) != 2 {
+		t.Fatalf("service requirements = %#v, want available and external Redis requirements", report.ServiceRequirements)
+	}
+	var redis ProjectDescribeServiceRequirement
+	for _, candidate := range report.ServiceRequirements {
+		if candidate.Owner == "external" {
+			redis = candidate
+		}
+	}
+	if redis.ID != "requirement.redis.cache" || redis.Owner != "external" || len(redis.Endpoints) != 1 || redis.Endpoints[0].Visibility != "private" {
+		t.Fatalf("external Redis requirement = %#v", redis)
+	}
+}
+
+// TestProjectDescribeCmdRejectsInvalidServiceTopology verifies malformed owner selections fail before a partial descriptor is emitted.
+func TestProjectDescribeCmdRejectsInvalidServiceTopology(t *testing.T) {
+	root := t.TempDir()
+	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Cache: true}}}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("CACHE_DRIVER=not-a-driver\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var output bytes.Buffer
+	command := &ProjectDescribeCmd{
+		JSON:       true,
+		stdout:     &output,
+		root:       root,
+		loadConfig: func() (*project.Config, error) { return config, nil },
+		discover:   func(string) (projectlayout.Discovery, error) { return projectlayout.Discovery{}, nil },
+	}
+	err := command.Run()
+	if err == nil || !strings.Contains(err.Error(), "resolve project service requirements") {
+		t.Fatalf("Run() error = %v, want service topology failure", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("Run() wrote partial descriptor: %s", output.Bytes())
 	}
 }
 
