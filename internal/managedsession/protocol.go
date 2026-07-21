@@ -20,6 +20,10 @@ const (
 	SchemaVersion uint16 = 1
 	// CapabilityV1 identifies the first bounded managed-session feature set.
 	CapabilityV1 Capability = "managed-session.v1"
+	// CapabilityLaunchContextV1 identifies the optional inherited launch-ticket proof.
+	CapabilityLaunchContextV1 Capability = "managed-session.launch-context.v1"
+	// ErrorCodeUnavailable identifies a temporary Harbor state that callers may retry.
+	ErrorCodeUnavailable ErrorCode = "unavailable"
 	// MethodRegister attaches one authenticated GoForj process to a Harbor session.
 	MethodRegister = "managed-session.v1.register"
 	// MethodReplacePublications replaces every private publication observed by a session.
@@ -268,6 +272,8 @@ type RegisterRequest struct {
 	Owner                     SessionOwner `json:"owner"`
 	Capabilities              []Capability `json:"capabilities"`
 	ActiveApps                []ActiveApp  `json:"active_apps"`
+	// LaunchTicket is present only when the negotiated launch-context capability is selected.
+	LaunchTicket string `json:"launch_ticket,omitempty"`
 }
 
 // Validate verifies a registration against the exact Harbor v1 identity shape.
@@ -321,6 +327,21 @@ func (request RegisterRequest) Validate() error {
 		}
 		if index > 0 && request.ActiveApps[index-1].ID >= app.ID {
 			return errors.New("managed session active Apps must be sorted and unique")
+		}
+	}
+	launchCapability := containsCapability(request.Capabilities, CapabilityLaunchContextV1)
+	if launchCapability && request.Owner == SessionOwnerHarbor && request.LaunchTicket == "" {
+		return errors.New("managed session launch-context capability requires a launch ticket")
+	}
+	if request.LaunchTicket != "" {
+		if request.Owner != SessionOwnerHarbor {
+			return errors.New("managed session launch ticket requires Harbor ownership")
+		}
+		if !containsCapability(request.Capabilities, CapabilityLaunchContextV1) {
+			return errors.New("managed session launch ticket requires the launch-context capability")
+		}
+		if err := validateWireToken("managed session launch ticket", request.LaunchTicket, maximumManagedSessionTokenBytes); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -85,6 +85,10 @@ func CaptureInheritedLaunchContext() (*LaunchContext, error) {
 	if !present {
 		return nil, nil
 	}
+	// The carrier is one-use authority; clearing the inherited name prevents nested project tools from replaying a retired path.
+	if err := os.Unsetenv(ManagedLaunchContextEnvironment); err != nil {
+		return nil, fmt.Errorf("clear managed launch context environment: %w", err)
+	}
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("managed launch context path is empty")
 	}

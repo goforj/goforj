@@ -77,8 +77,8 @@ func TestCaptureInheritedLaunchContextConsumesOwnerOnlyFile(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("context file stat after capture = %v, want not exist", err)
 	}
-	if _, err := CaptureInheritedLaunchContext(); err == nil {
-		t.Fatal("replayed context unexpectedly succeeded")
+	if replayed, err := CaptureInheritedLaunchContext(); err != nil || replayed != nil {
+		t.Fatalf("replayed context = %#v, error = %v, want no inherited context", replayed, err)
 	}
 }
 

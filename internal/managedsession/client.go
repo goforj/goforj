@@ -134,6 +134,9 @@ func (client *Client) Register(ctx context.Context, request RegisterRequest) (Re
 	if err != nil {
 		return RegisterResponse{}, fmt.Errorf("normalize managed session registration: %w", err)
 	}
+	if normalized.LaunchTicket != "" && !containsCapability(client.peer.Capabilities, CapabilityLaunchContextV1) {
+		return RegisterResponse{}, errors.New("managed session launch context capability was not negotiated")
+	}
 	payload, err := MarshalRegisterRequest(normalized)
 	if err != nil {
 		return RegisterResponse{}, err
@@ -150,6 +153,32 @@ func (client *Client) Register(ctx context.Context, request RegisterRequest) (Re
 		return RegisterResponse{}, err
 	}
 	return response, nil
+}
+
+// RegisterUntilAttached retries only Harbor's explicit startup race until the caller context ends.
+func (client *Client) RegisterUntilAttached(ctx context.Context, request RegisterRequest) (RegisterResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		response, err := client.Register(ctx, request)
+		if err == nil {
+			return response, nil
+		}
+		var remoteError RemoteError
+		if !errors.As(err, &remoteError) || remoteError.Failure.Code != ErrorCodeUnavailable || !remoteError.Failure.Retryable {
+			return RegisterResponse{}, err
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return RegisterResponse{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // ReplacePublications sends a complete observed publication replacement and validates its acknowledgement.

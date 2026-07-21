@@ -209,6 +209,97 @@ func TestManagedSessionValidationRejectsUnsafePublicationAndDigest(t *testing.T)
 	}
 }
 
+// TestManagedSessionLaunchTicketRequiresNegotiatedCapability keeps ticket use bound to negotiated protocol authority.
+func TestManagedSessionLaunchTicketRequiresNegotiatedCapability(t *testing.T) {
+	request := validRegisterRequest()
+	request.LaunchTicket = strings.Repeat("b", 64)
+	if err := request.Validate(); err == nil {
+		t.Fatal("launch ticket without capability passed validation")
+	}
+	request.Capabilities = []Capability{CapabilityLaunchContextV1, CapabilityV1}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("negotiated launch ticket rejected: %v", err)
+	}
+	request.LaunchTicket = ""
+	if err := request.Validate(); err == nil {
+		t.Fatal("negotiated launch capability without ticket passed validation")
+	}
+	request.LaunchTicket = strings.Repeat(" ", 64)
+	if err := request.Validate(); err == nil {
+		t.Fatal("whitespace launch ticket passed validation")
+	}
+}
+
+// TestClientRejectsLaunchTicketWhenTheDaemonDidNotNegotiateIt keeps the secret off the wire for older Harbor peers.
+func TestClientRejectsLaunchTicketWhenTheDaemonDidNotNegotiateIt(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- runTestManagedSessionPeer(serverConnection, func(_ *frameReader, _ *frameWriter, _ Version) error {
+			return nil
+		})
+	}()
+	client, err := NewClient(context.Background(), clientConnection, ClientConfig{Capabilities: []Capability{CapabilityV1, CapabilityLaunchContextV1}})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	request := validRegisterRequest()
+	request.LaunchTicket = strings.Repeat("b", 64)
+	if _, err := client.Register(context.Background(), request); err == nil || !strings.Contains(err.Error(), "was not negotiated") {
+		t.Fatalf("Register() error = %v, want negotiation rejection", err)
+	}
+	_ = client.Close()
+	if err := <-serverDone; err != nil {
+		t.Fatalf("fake Harbor peer error = %v", err)
+	}
+}
+
+// TestClientRegisterUntilAttachedRetriesOnlyUnavailable proves the startup race does not broaden retries to invalid requests.
+func TestClientRegisterUntilAttachedRetriesOnlyUnavailable(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- runTestManagedSessionPeerWithCapabilities(serverConnection, []Capability{CapabilityLaunchContextV1, CapabilityV1}, func(reader *frameReader, writer *frameWriter, protocol Version) error {
+			for attempt := 1; ; attempt++ {
+				message, err := readTestEnvelope(reader)
+				if err != nil {
+					return err
+				}
+				if attempt == 1 {
+					failure := WireError{Code: ErrorCodeUnavailable, Message: "Harbor is temporarily unavailable.", Retryable: true}
+					if err := writer.writeFrame(mustJSON(envelope{Kind: kindResponse, Protocol: &protocol, RequestID: message.RequestID, Error: &failure})); err != nil {
+						return err
+					}
+					continue
+				}
+				request, err := DecodeRegisterRequest(message.Payload)
+				if err != nil {
+					return err
+				}
+				return writeTestResponse(writer, protocol, message.RequestID, RegisterResponse{
+					SchemaVersion:    SchemaVersion,
+					Fence:            ManagedPublicationFence{ProjectID: request.ProjectID, SessionID: request.SessionID, SessionGeneration: request.ExpectedSessionGeneration + 1},
+					AttachmentTicket: "ticket-1",
+				})
+			}
+		})
+	}()
+	client, err := NewClient(context.Background(), clientConnection, ClientConfig{Capabilities: []Capability{CapabilityV1, CapabilityLaunchContextV1}})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	request := validRegisterRequest()
+	request.Capabilities = []Capability{CapabilityLaunchContextV1, CapabilityV1}
+	request.LaunchTicket = strings.Repeat("b", 64)
+	if _, err := client.RegisterUntilAttached(context.Background(), request); err != nil {
+		t.Fatalf("RegisterUntilAttached() error = %v", err)
+	}
+	_ = client.Close()
+	if err := <-serverDone; err != nil {
+		t.Fatalf("fake Harbor peer error = %v", err)
+	}
+}
+
 func TestClientRejectsRegisterCorrelationMismatch(t *testing.T) {
 	clientConnection, serverConnection := net.Pipe()
 	serverDone := make(chan error, 1)
@@ -371,6 +462,11 @@ func validReplaceRequest() ReplacePublicationsRequest {
 
 // runTestManagedSessionPeer performs the minimal Harbor handshake for net.Pipe tests.
 func runTestManagedSessionPeer(connection net.Conn, handle func(*frameReader, *frameWriter, Version) error) error {
+	return runTestManagedSessionPeerWithCapabilities(connection, []Capability{CapabilityV1}, handle)
+}
+
+// runTestManagedSessionPeerWithCapabilities performs the minimal Harbor handshake with an explicit capability set.
+func runTestManagedSessionPeerWithCapabilities(connection net.Conn, capabilities []Capability, handle func(*frameReader, *frameWriter, Version) error) error {
 	reader := &frameReader{reader: connection, limit: MaximumFrameSize}
 	writer := &frameWriter{writer: connection, limit: MaximumFrameSize}
 	defer connection.Close()
@@ -394,7 +490,7 @@ func runTestManagedSessionPeer(connection net.Conn, handle func(*frameReader, *f
 		ProtocolRanges: []VersionRange{{Min: protocol, Max: protocol}},
 		Role:           RoleDaemon,
 		DaemonVersion:  "0.19.0",
-		Capabilities:   []Capability{CapabilityV1},
+		Capabilities:   capabilities,
 	})
 	if err != nil {
 		return err

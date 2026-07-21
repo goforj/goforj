@@ -120,9 +120,6 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("capture managed launch context: %w", err)
 	}
-	if inheritedContext != nil {
-		return errors.New("managed development launch is not available before session transport wiring")
-	}
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
@@ -137,6 +134,14 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	defer unlock()
+	var managedClient *managedsession.Client
+	if inheritedContext != nil {
+		managedClient, _, err = managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
+		if err != nil {
+			return err
+		}
+		defer managedClient.Close()
+	}
 
 	outputSession := devOutputSession{}
 	var cleanupOnce sync.Once
