@@ -57,10 +57,13 @@ type Client struct {
 	writer     *frameWriter
 	config     ClientConfig
 	peer       Peer
-	requestID  atomic.Uint64
-	callMutex  sync.Mutex
-	closeOnce  sync.Once
-	closed     chan struct{}
+	// launchContext is retained only for an explicitly inherited Harbor session so a new IPC connection can replay
+	// the same durable process identity after Harbor restarts. It never leaves this process or enters a request log.
+	launchContext *LaunchContext
+	requestID     atomic.Uint64
+	callMutex     sync.Mutex
+	closeOnce     sync.Once
+	closed        chan struct{}
 }
 
 // Dial opens and negotiates a managed-session client through an injected transport dialer.
@@ -126,6 +129,27 @@ func (client *Client) Close() error {
 		_ = client.connection.Close()
 	})
 	return nil
+}
+
+// ReconnectLaunchSession opens a fresh authenticated connection and replays the retained Harbor launch identity.
+//
+// Harbor accepts the replay only when the durable attached session still names this process, checkout, descriptor,
+// generation, and launch credential. The original client remains usable until the caller replaces it with the
+// returned client, which lets a recovery loop preserve the current fence while the new connection is negotiated.
+func (client *Client) ReconnectLaunchSession(ctx context.Context) (*Client, RegisterResponse, error) {
+	if client == nil {
+		return nil, RegisterResponse{}, errors.New("managed session client is required")
+	}
+	if client.launchContext == nil {
+		return nil, RegisterResponse{}, errors.New("managed session client has no inherited launch context")
+	}
+	select {
+	case <-client.closed:
+		return nil, RegisterResponse{}, ErrClosed
+	default:
+	}
+	launch := *client.launchContext
+	return OpenLaunchSession(ctx, launch)
 }
 
 // Register attaches the process and validates the returned session fence.

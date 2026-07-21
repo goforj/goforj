@@ -55,6 +55,8 @@ func OpenLaunchSession(ctx context.Context, launch LaunchContext) (*Client, Regi
 		_ = client.Close()
 		return nil, RegisterResponse{}, fmt.Errorf("register managed launch session: %w", err)
 	}
+	retainedLaunch := launch
+	client.launchContext = &retainedLaunch
 	return client, response, nil
 }
 
