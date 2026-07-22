@@ -3,6 +3,7 @@ package forj
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,62 @@ func TestManagedComposeBarrierContextAddsDefaultDeadline(t *testing.T) {
 	}
 	if deadline.Before(before.Add(managedComposeBarrierTimeout-time.Second)) || deadline.After(before.Add(managedComposeBarrierTimeout+time.Second)) {
 		t.Fatalf("managed barrier deadline = %v, want about %v", deadline, before.Add(managedComposeBarrierTimeout))
+	}
+}
+
+// TestManagedSessionHeartbeatStopsAfterConsecutiveFailures proves route refresh cannot issue unbounded IPC retries.
+func TestManagedSessionHeartbeatStopsAfterConsecutiveFailures(t *testing.T) {
+	ticks := make(chan time.Time, managedHeartbeatFailureLimit)
+	for index := 0; index < managedHeartbeatFailureLimit; index++ {
+		ticks <- time.Now()
+	}
+	barrierCalls := 0
+	done := make(chan struct{})
+	go func() {
+		runManagedSessionHeartbeatLoop(context.Background(), ticks, io.Discard, func(context.Context) error {
+			barrierCalls++
+			return errors.New("managed route is unavailable")
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runManagedSessionHeartbeatLoop() did not stop after its failure budget")
+	}
+	if barrierCalls != managedHeartbeatFailureLimit {
+		t.Fatalf("barrier calls = %d, want %d", barrierCalls, managedHeartbeatFailureLimit)
+	}
+}
+
+// TestManagedSessionHeartbeatResetsFailuresAfterSuccess keeps one transient route refresh failure from disabling future refreshes.
+func TestManagedSessionHeartbeatResetsFailuresAfterSuccess(t *testing.T) {
+	wantCalls := managedHeartbeatFailureLimit + 2
+	ticks := make(chan time.Time, wantCalls)
+	for index := 0; index < wantCalls; index++ {
+		ticks <- time.Now()
+	}
+	barrierCalls := 0
+	done := make(chan struct{})
+	go func() {
+		runManagedSessionHeartbeatLoop(context.Background(), ticks, io.Discard, func(context.Context) error {
+			barrierCalls++
+			if barrierCalls == 2 {
+				return nil
+			}
+			return errors.New("managed route is unavailable")
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runManagedSessionHeartbeatLoop() did not stop after the reset failure budget")
+	}
+	if barrierCalls != wantCalls {
+		t.Fatalf("barrier calls = %d, want %d", barrierCalls, wantCalls)
 	}
 }
 

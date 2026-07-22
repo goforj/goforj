@@ -20,6 +20,8 @@ const (
 	// managedComposeBarrierTimeout gives Harbor a short window to finish network admission without delaying a failed start.
 	managedComposeBarrierTimeout    = 30 * time.Second
 	managedComposeHeartbeatInterval = 5 * time.Second
+	// managedHeartbeatFailureLimit prevents a healthy watcher process from retrying a broken Harbor route forever.
+	managedHeartbeatFailureLimit = 2
 )
 
 // managedBarrierClient is the narrow client surface needed to synchronize one managed Compose session.
@@ -270,14 +272,39 @@ func runManagedSessionHeartbeat(
 ) {
 	ticker := time.NewTicker(managedComposeHeartbeatInterval)
 	defer ticker.Stop()
+	runManagedSessionHeartbeatLoop(ctx, ticker.C, errWriter, func(ctx context.Context) error {
+		return waitForManagedComposeBarrier(ctx, client, registration, identity)
+	})
+}
+
+// runManagedSessionHeartbeatLoop retries route refreshes only within a bounded consecutive-failure budget.
+func runManagedSessionHeartbeatLoop(
+	ctx context.Context,
+	ticks <-chan time.Time,
+	errWriter io.Writer,
+	barrier func(context.Context) error,
+) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if barrier == nil {
+		return
+	}
+	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if err := waitForManagedComposeBarrier(ctx, client, registration, identity); err != nil && !errors.Is(err, context.Canceled) {
+		case <-ticks:
+			if err := barrier(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				consecutiveFailures++
 				_, _ = fmt.Fprintf(errWriter, "forj dev: managed session heartbeat unavailable: %v\n", err)
+				if consecutiveFailures >= managedHeartbeatFailureLimit {
+					return
+				}
+				continue
 			}
+			consecutiveFailures = 0
 		}
 	}
 }
