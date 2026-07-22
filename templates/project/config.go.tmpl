@@ -40,86 +40,10 @@ type DevWatchMatchers struct {
 	Extra map[string]any `yaml:",inline" json:"-"`
 }
 
-// DevTaskPhase identifies the lifecycle boundary at which a development task belongs.
-//
-// An empty phase is intentionally supported for legacy projects. Those tasks retain
-// the historical standalone execution order until a later render explicitly assigns
-// them a managed lifecycle boundary.
-type DevTaskPhase string
-
-const (
-	// DevTaskIDCompose identifies the generated Compose startup task.
-	DevTaskIDCompose = "goforj.compose"
-	// DevTaskIDComposeDown identifies the generated Compose teardown task.
-	DevTaskIDComposeDown = "goforj.compose-down"
-	// DevTaskIDDatabaseReady identifies the generated database readiness task.
-	DevTaskIDDatabaseReady = "goforj.database-ready"
-	// DevTaskIDFrontendDependenciesPrefix prefixes App-scoped frontend setup task IDs.
-	DevTaskIDFrontendDependenciesPrefix = "goforj.frontend-dependencies:"
-
-	// DevTaskPhasePreCompose runs before the managed Compose boundary.
-	DevTaskPhasePreCompose DevTaskPhase = "pre-compose"
-	// DevTaskPhaseCompose owns the typed Compose startup boundary.
-	DevTaskPhaseCompose DevTaskPhase = "compose"
-	// DevTaskPhasePostCompose runs after Compose is ready and before migration work.
-	DevTaskPhasePostCompose DevTaskPhase = "post-compose"
-	// DevTaskPhasePostMigrate runs after the framework migration boundary.
-	DevTaskPhasePostMigrate DevTaskPhase = "post-migrate"
-	// DevTaskPhasePreComposeDown runs before the typed Compose teardown boundary.
-	DevTaskPhasePreComposeDown DevTaskPhase = "pre-compose-down"
-	// DevTaskPhaseComposeDown owns the typed Compose teardown boundary.
-	DevTaskPhaseComposeDown DevTaskPhase = "compose-down"
-	// DevTaskPhasePostComposeDown runs after the typed Compose teardown boundary.
-	DevTaskPhasePostComposeDown DevTaskPhase = "post-compose-down"
-)
-
-// FrontendDependenciesTaskID returns the stable generated ID for an App's frontend setup.
-func FrontendDependenciesTaskID(appName string) string {
-	appName = strings.TrimSpace(appName)
-	if appName == "" {
-		appName = DefaultAppName
-	}
-	return DevTaskIDFrontendDependenciesPrefix + appName
-}
-
-// IsKnown reports whether the phase is one of the versioned lifecycle values.
-func (p DevTaskPhase) IsKnown() bool {
-	switch p {
-	case "", DevTaskPhasePreCompose, DevTaskPhaseCompose, DevTaskPhasePostCompose,
-		DevTaskPhasePostMigrate, DevTaskPhasePreComposeDown, DevTaskPhaseComposeDown,
-		DevTaskPhasePostComposeDown:
-		return true
-	default:
-		return false
-	}
-}
-
 // DevTask represents a task to be run in development mode.
 type DevTask struct {
-	Name  string       `yaml:"name" json:"name"`
-	Cmd   string       `yaml:"cmd" json:"cmd"`
-	ID    string       `yaml:"id,omitempty" json:"id,omitempty"`
-	Phase DevTaskPhase `yaml:"phase,omitempty" json:"phase,omitempty"`
-}
-
-// Validate checks the optional phase without making legacy tasks invalid.
-func (t DevTask) Validate() error {
-	if !t.Phase.IsKnown() {
-		return fmt.Errorf("dev task %q has unknown lifecycle phase %q", strings.TrimSpace(t.Name), t.Phase)
-	}
-	if t.Phase != "" && strings.TrimSpace(t.ID) == "" {
-		return fmt.Errorf("dev task %q has lifecycle phase %q without stable id", strings.TrimSpace(t.Name), t.Phase)
-	}
-	if strings.TrimSpace(t.ID) == "" {
-		return nil
-	}
-	for index, r := range t.ID {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == ':' || r == '-' || r == '_' {
-			continue
-		}
-		return fmt.Errorf("dev task %q has invalid stable id %q at byte %d", strings.TrimSpace(t.Name), t.ID, index)
-	}
-	return nil
+	Name string `yaml:"name" json:"name"`
+	Cmd  string `yaml:"cmd" json:"cmd"`
 }
 
 // DevConfig represents development lifecycle configuration.
@@ -135,86 +59,6 @@ type DevConfig struct {
 	Apps              map[string]any    `yaml:"apps,omitempty" json:"apps,omitempty"`
 	Extra             map[string]any    `yaml:",inline" json:"-"`
 	appsConfigured    bool
-}
-
-// ValidateTaskPhases validates lifecycle metadata while allowing older unphased tasks.
-func (c DevConfig) ValidateTaskPhases() error {
-	seenIDs := make(map[string]string)
-	validate := func(scope string, index int, task DevTask) error {
-		if err := task.Validate(); err != nil {
-			return fmt.Errorf("%s[%d]: %w", scope, index, err)
-		}
-		id := strings.TrimSpace(task.ID)
-		if id == "" {
-			return nil
-		}
-		if previous, exists := seenIDs[id]; exists {
-			return fmt.Errorf("%s[%d]: duplicate dev task id %q already used by %s", scope, index, id, previous)
-		}
-		seenIDs[id] = fmt.Sprintf("%s[%d]", scope, index)
-		return nil
-	}
-	for index, task := range c.Pre {
-		if err := validate("dev.pre", index, task); err != nil {
-			return err
-		}
-	}
-	for index, task := range c.Down {
-		if err := validate("dev.down", index, task); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ValidateManagedTaskPhases rejects legacy or ambiguous tasks before a managed session is admitted.
-func (c DevConfig) ValidateManagedTaskPhases() error {
-	if err := c.ValidateTaskPhases(); err != nil {
-		return err
-	}
-	validate := func(scope string, index int, task DevTask) error {
-		if task.Phase == "" {
-			return fmt.Errorf("%s[%d]: task %q has no managed lifecycle phase", scope, index, strings.TrimSpace(task.Name))
-		}
-		if scope == "dev.pre" && !isDevStartupPhase(task.Phase) {
-			return fmt.Errorf("%s[%d]: task %q uses teardown lifecycle phase %q", scope, index, strings.TrimSpace(task.Name), task.Phase)
-		}
-		if scope == "dev.down" && !isDevTeardownPhase(task.Phase) {
-			return fmt.Errorf("%s[%d]: task %q uses startup lifecycle phase %q", scope, index, strings.TrimSpace(task.Name), task.Phase)
-		}
-		return nil
-	}
-	for index, task := range c.Pre {
-		if err := validate("dev.pre", index, task); err != nil {
-			return err
-		}
-	}
-	for index, task := range c.Down {
-		if err := validate("dev.down", index, task); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// isDevStartupPhase reports whether a phase belongs to the startup task list.
-func isDevStartupPhase(phase DevTaskPhase) bool {
-	switch phase {
-	case DevTaskPhasePreCompose, DevTaskPhaseCompose, DevTaskPhasePostCompose, DevTaskPhasePostMigrate:
-		return true
-	default:
-		return false
-	}
-}
-
-// isDevTeardownPhase reports whether a phase belongs to the teardown task list.
-func isDevTeardownPhase(phase DevTaskPhase) bool {
-	switch phase {
-	case DevTaskPhasePreComposeDown, DevTaskPhaseComposeDown, DevTaskPhasePostComposeDown:
-		return true
-	default:
-		return false
-	}
 }
 
 // UnmarshalYAML preserves an explicit empty native App allowlist across config round trips.

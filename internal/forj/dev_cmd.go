@@ -24,7 +24,6 @@ import (
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/devwatch"
-	"github.com/goforj/goforj/internal/managedsession"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
@@ -64,9 +63,6 @@ type devWatchSession struct {
 	reloadRuntime         func() (*devwatchStreamer, error)
 	reconcile             bool
 	reconcileFrontendDeps bool
-	managedContext        context.Context
-	managedBarrier        func(context.Context) error
-	managedHeartbeat      func()
 }
 
 // Signature declares the development command exposed by the root CLI.
@@ -119,21 +115,12 @@ func loadDevEnvironment(reload bool) error {
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
-	inheritedContext, err := managedsession.CaptureInheritedLaunchContext()
-	if err != nil {
-		return fmt.Errorf("capture managed launch context: %w", err)
-	}
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
 	}
 	if config == nil {
 		return nil
-	}
-	if inheritedContext != nil {
-		if err := validateManagedDevLifecycle(config); err != nil {
-			return err
-		}
 	}
 
 	// Prevent concurrent dev sessions from clobbering each other.
@@ -142,59 +129,6 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	defer unlock()
-	var managedConnection *reconnectingManagedSession
-	var managedRegistration managedsession.RegisterResponse
-	var managedIdentity string
-	var managedBarrier func(context.Context) error
-	var managedRuntimePlan func(context.Context) error
-	managedRuntimeOverlayRestore := func() {}
-	defer func() { managedRuntimeOverlayRestore() }()
-	if inheritedContext != nil {
-		managedClient, registration, openErr := managedsession.OpenLaunchSession(context.Background(), *inheritedContext)
-		managedRegistration = registration
-		err = openErr
-		if err != nil {
-			return err
-		}
-		managedConnection, err = newReconnectingManagedSession(
-			managedClient,
-			managedRegistration,
-			*inheritedContext,
-			func(ctx context.Context, launch managedsession.LaunchContext) (managedSessionClient, managedsession.RegisterResponse, error) {
-				client, response, err := managedsession.OpenLaunchSession(ctx, launch)
-				return client, response, err
-			},
-		)
-		if err != nil {
-			_ = managedClient.Close()
-			return err
-		}
-		defer managedConnection.Close()
-		managedIdentity = managedProjectIdentity(config, inheritedContext.ProjectRoot)
-		managedBarrier = func(ctx context.Context) error {
-			return waitForManagedComposeBarrier(ctx, managedConnection, managedRegistration, managedIdentity)
-		}
-		managedRuntimePlan = func(ctx context.Context) error {
-			if !managedConnection.RuntimePlanAvailable() {
-				return nil
-			}
-			request, err := managedRuntimePlanRequest(config, managedRegistration)
-			if err != nil {
-				return err
-			}
-			response, err := managedConnection.RuntimePlan(ctx, request)
-			if err != nil {
-				return err
-			}
-			restore, err := installManagedRuntimeOverlay(response.Plan)
-			if err != nil {
-				return err
-			}
-			managedRuntimeOverlayRestore()
-			managedRuntimeOverlayRestore = restore
-			return nil
-		}
-	}
 
 	outputSession := devOutputSession{}
 	var cleanupOnce sync.Once
@@ -267,11 +201,7 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	if managedBarrier != nil {
-		if err := runManagedDevInitialLifecycleWithPlan(config, os.Stdout, os.Stderr, runCtx, managedBarrier, managedRuntimePlan); err != nil {
-			return err
-		}
-	} else if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
+	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
 	outputSession = buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
@@ -281,23 +211,17 @@ func (c *DevCmd) Run() error {
 	runtimeState.refreshWriters()
 
 	session := &devWatchSession{
-		config:         config,
-		baseWatches:    baseWatches,
-		streamer:       currentStreamer,
-		restartCh:      restartCh,
-		buildCh:        buildCh,
-		renderCh:       renderCh,
-		commandCh:      commandCh,
-		stopCh:         runCtx.Done(),
-		outWriter:      outWriter,
-		errWriter:      errWriter,
-		reloadRuntime:  runtimeState.Sync,
-		managedContext: runCtx,
-	}
-	if managedConnection != nil {
-		session.managedHeartbeat = func() {
-			go runManagedSessionHeartbeat(runCtx, managedConnection, managedRegistration, managedIdentity, errWriter)
-		}
+		config:        config,
+		baseWatches:   baseWatches,
+		streamer:      currentStreamer,
+		restartCh:     restartCh,
+		buildCh:       buildCh,
+		renderCh:      renderCh,
+		commandCh:     commandCh,
+		stopCh:        runCtx.Done(),
+		outWriter:     outWriter,
+		errWriter:     errWriter,
+		reloadRuntime: runtimeState.Sync,
 	}
 
 	if err := c.runWatchersLoop(session); err != nil {
@@ -305,14 +229,8 @@ func (c *DevCmd) Run() error {
 			cleanupDevTerminal()
 			if config.Dev.DownOnExit {
 				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
-				var downErr error
-				if managedConnection != nil {
-					downErr = runManagedDevDownTasks(config)
-				} else {
-					downErr = runDevDownTasks(effectiveDevDownTasks(config))
-				}
-				if downErr != nil {
-					console.Errorf("forj down failed: %v", downErr)
+				if err := runDevDownTasks(effectiveDevDownTasks(config)); err != nil {
+					console.Errorf("forj down failed: %v", err)
 				} else {
 					console.Successf("forj down complete")
 				}
@@ -1251,20 +1169,6 @@ watcherLoop:
 		if err != nil {
 			return err
 		}
-		if session.managedHeartbeat != nil {
-			heartbeat := session.managedHeartbeat
-			session.managedHeartbeat = nil
-			heartbeat()
-		}
-		if session.managedBarrier != nil {
-			barrier := session.managedBarrier
-			session.managedBarrier = nil
-			go func() {
-				if err := barrier(session.managedContext); err != nil && !errors.Is(err, context.Canceled) {
-					_, _ = fmt.Fprintf(session.errWriter, "forj dev: managed Compose barrier unavailable: %v\n", err)
-				}
-			}()
-		}
 		if session.reconcile {
 			reconcileErr := runDevWatcherReconciliation(
 				session.config,
@@ -1849,9 +1753,6 @@ func runDevSubprocess(run devSubprocessRun) error {
 	stdin := io.Reader(os.Stdin)
 	env := map[string]string{"CLICOLOR_FORCE": "1"}
 	for key, value := range run.env {
-		env[key] = value
-	}
-	for key, value := range currentManagedRuntimeOverlay() {
 		env[key] = value
 	}
 	// Direct dev commands have no protocol consumer, so watcher-only progress must never reach their writers.

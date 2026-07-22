@@ -30,8 +30,8 @@ func TestPlanNewProjectServiceTasksStartsActiveRedis(t *testing.T) {
 	resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, intent, true)
 
 	tasks := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
-	wantPre := []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker-compose up -d", ID: project.DevTaskIDCompose, Phase: project.DevTaskPhaseCompose}}
-	wantDown := []project.DevTask{{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand(), ID: project.DevTaskIDComposeDown, Phase: project.DevTaskPhaseComposeDown}}
+	wantPre := []project.DevTask{{Name: "Run Docker Compose", Cmd: "docker-compose up -d"}}
+	wantDown := []project.DevTask{{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}}
 	if !reflect.DeepEqual(tasks.Pre, wantPre) {
 		t.Fatalf("pre tasks = %#v, want %#v", tasks.Pre, wantPre)
 	}
@@ -105,9 +105,6 @@ func TestPlanNewProjectServiceTasksAddsMySQLWait(t *testing.T) {
 	if tasks.Pre[1].Name != "Waiting for Database to be ready" || !containsAllNewProjectServiceCommandFragments(tasks.Pre[1].Cmd, "exec -T mysql", "mysqladmin ping") {
 		t.Fatalf("MySQL wait task = %#v", tasks.Pre[1])
 	}
-	if tasks.Pre[1].ID != project.DevTaskIDDatabaseReady || tasks.Pre[1].Phase != project.DevTaskPhasePostCompose {
-		t.Fatalf("MySQL wait metadata = %#v", tasks.Pre[1])
-	}
 }
 
 // TestPlanNewProjectServiceTasksAddsPostgresWait verifies local Postgres readiness follows Compose startup.
@@ -121,9 +118,6 @@ func TestPlanNewProjectServiceTasksAddsPostgresWait(t *testing.T) {
 	}
 	if tasks.Pre[1].Name != "Waiting for Database to be ready" || !containsAllNewProjectServiceCommandFragments(tasks.Pre[1].Cmd, "exec -T postgres", "pg_isready") {
 		t.Fatalf("Postgres wait task = %#v", tasks.Pre[1])
-	}
-	if tasks.Pre[1].ID != project.DevTaskIDDatabaseReady || tasks.Pre[1].Phase != project.DevTaskPhasePostCompose {
-		t.Fatalf("Postgres wait metadata = %#v", tasks.Pre[1])
 	}
 }
 

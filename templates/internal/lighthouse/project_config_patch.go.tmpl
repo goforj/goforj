@@ -1,10 +1,6 @@
 package lighthouse
 
-import (
-	"strings"
-
-	"{{.GoModuleName}}/project"
-)
+import "{{.GoModuleName}}/project"
 
 // devConfigUpdate represents the fields a Lighthouse client explicitly sends
 // so omitted framework lifecycle configuration survives settings saves.
@@ -27,10 +23,10 @@ func applyDevConfigUpdate(current *project.DevConfig, update devConfigUpdate) {
 		return
 	}
 	if update.Pre != nil {
-		current.Pre = mergeLighthouseDevTasks(current.Pre, *update.Pre)
+		current.Pre = *update.Pre
 	}
 	if update.Down != nil {
-		current.Down = mergeLighthouseDevTasks(current.Down, *update.Down)
+		current.Down = *update.Down
 	}
 	if update.Run != nil {
 		current.Run = *update.Run
@@ -53,39 +49,6 @@ func applyDevConfigUpdate(current *project.DevConfig, update devConfigUpdate) {
 	if update.Apps != nil {
 		current.SetApps(*update.Apps)
 	}
-}
-
-// mergeLighthouseDevTasks preserves hidden framework metadata when an older editor sends only task names and commands.
-func mergeLighthouseDevTasks(current []project.DevTask, updates []project.DevTask) []project.DevTask {
-	if len(updates) == 0 {
-		return updates
-	}
-	currentMatches := make(map[string][]int, len(current))
-	for index, task := range current {
-		key := lighthouseDevTaskKey(task)
-		currentMatches[key] = append(currentMatches[key], index)
-	}
-	merged := make([]project.DevTask, 0, len(updates))
-	for _, update := range updates {
-		key := lighthouseDevTaskKey(update)
-		matches := currentMatches[key]
-		if len(matches) == 1 {
-			existing := current[matches[0]]
-			if update.ID == "" {
-				update.ID = existing.ID
-			}
-			if update.Phase == "" {
-				update.Phase = existing.Phase
-			}
-		}
-		merged = append(merged, update)
-	}
-	return merged
-}
-
-// lighthouseDevTaskKey matches only unchanged task text so metadata cannot cross a user edit or duplicate.
-func lighthouseDevTaskKey(task project.DevTask) string {
-	return strings.TrimSpace(task.Name) + "\x00" + strings.TrimSpace(task.Cmd)
 }
 
 // mergeLighthouseDevWatches preserves controls hidden by the scalar watcher

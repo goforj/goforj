@@ -21,11 +21,7 @@ func generatedDevFrontendInstallTask(app project.App) project.DevTask {
 
 // legacyGeneratedDevFrontendInstallTask identifies only the install task emitted before quiet npm setup became the default.
 func legacyGeneratedDevFrontendInstallTask(app project.App) project.DevTask {
-	task := devFrontendInstallTask(app, legacyFrontendNPMInstallCommand)
-	// Legacy projects have no phase field; retain that exact shape so migration can identify it.
-	task.ID = ""
-	task.Phase = ""
-	return task
+	return devFrontendInstallTask(app, legacyFrontendNPMInstallCommand)
 }
 
 // devFrontendInstallTask builds the app-scoped task identity shared by generation and conservative migration.
@@ -36,10 +32,8 @@ func devFrontendInstallTask(app project.App, installCommand string) project.DevT
 		name = "Install " + app.Name + " Frontend Dependencies"
 	}
 	return project.DevTask{
-		Name:  name,
-		Cmd:   "cd " + filepath.ToSlash(projectlayout.FrontendDir(".", app)) + " && " + installCommand,
-		ID:    project.FrontendDependenciesTaskID(app.Name),
-		Phase: project.DevTaskPhasePreCompose,
+		Name: name,
+		Cmd:  "cd " + filepath.ToSlash(projectlayout.FrontendDir(".", app)) + " && " + installCommand,
 	}
 }
 
@@ -74,27 +68,14 @@ func migrateGeneratedDevFrontendInstallTask(tasks []project.DevTask, app project
 	migrated := make([]project.DevTask, 0, len(tasks))
 	changed := false
 	for _, task := range tasks {
-		switch {
-		case task == legacy:
-			changed = true
-			if !hasReplacement {
-				migrated = append(migrated, want)
-				hasReplacement = true
-			}
-		case strings.TrimSpace(task.Name) == want.Name && isConventionalDevFrontendInstallCommand(task):
-			annotated := task
-			if annotated.ID == "" {
-				annotated.ID = want.ID
-			}
-			if annotated.Phase == "" {
-				annotated.Phase = want.Phase
-			}
-			if annotated != task {
-				changed = true
-			}
-			migrated = append(migrated, annotated)
-		default:
+		if task != legacy {
 			migrated = append(migrated, task)
+			continue
+		}
+		changed = true
+		if !hasReplacement {
+			migrated = append(migrated, want)
+			hasReplacement = true
 		}
 	}
 	if !changed {

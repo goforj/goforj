@@ -407,7 +407,7 @@ func TestNormalizeGrafanaDevTasks(t *testing.T) {
 	}
 
 	want := []project.DevTask{
-		{Name: "Run Docker Compose", Cmd: "docker-compose up -d", ID: project.DevTaskIDCompose, Phase: project.DevTaskPhaseCompose},
+		{Name: "Run Docker Compose", Cmd: "docker-compose up -d"},
 	}
 	if !reflect.DeepEqual(tasks, want) {
 		t.Fatalf("tasks = %#v, want %#v", tasks, want)
@@ -441,7 +441,7 @@ func TestNormalizeDockerComposeDownTask(t *testing.T) {
 		t.Fatal("expected legacy generated Compose teardown to be normalized")
 	}
 	want := []project.DevTask{
-		{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand(), ID: project.DevTaskIDComposeDown, Phase: project.DevTaskPhaseComposeDown},
+		{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()},
 		{Name: "Docker Compose Down", Cmd: "docker compose down --timeout 5"},
 	}
 	if !reflect.DeepEqual(tasks, want) {
@@ -449,26 +449,6 @@ func TestNormalizeDockerComposeDownTask(t *testing.T) {
 	}
 	if normalizeDockerComposeDownTask(&tasks) {
 		t.Fatal("current and customized Compose teardown tasks should be stable")
-	}
-}
-
-// TestNormalizeGeneratedDatabaseWaitTaskAddsMetadataOnlyToExactFrameworkCommands verifies legacy readiness tasks migrate without claiming custom setup.
-func TestNormalizeGeneratedDatabaseWaitTaskAddsMetadataOnlyToExactFrameworkCommands(t *testing.T) {
-	tasks := []project.DevTask{
-		{Name: "Waiting for Database to be ready", Cmd: strings.Replace(generatedMySQLDevWaitCommand, "docker-compose", "docker compose", 1)},
-		{Name: "Waiting for Database to be ready", Cmd: "docker compose exec -T mysql ./owner-check"},
-	}
-	if !normalizeGeneratedDatabaseWaitTask(&tasks) {
-		t.Fatal("expected exact database readiness task to receive lifecycle metadata")
-	}
-	if tasks[0].ID != project.DevTaskIDDatabaseReady || tasks[0].Phase != project.DevTaskPhasePostCompose {
-		t.Fatalf("database readiness metadata = %#v", tasks[0])
-	}
-	if tasks[1].ID != "" || tasks[1].Phase != "" {
-		t.Fatalf("custom database task was classified as generated: %#v", tasks[1])
-	}
-	if normalizeGeneratedDatabaseWaitTask(&tasks) {
-		t.Fatal("database readiness migration should be idempotent")
 	}
 }
 

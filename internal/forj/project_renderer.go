@@ -2227,9 +2227,6 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 		if normalizeDockerComposeUpTask(&p.config.Dev.Pre, p.config.Render.Components) {
 			changed = true
 		}
-		if normalizeGeneratedDatabaseWaitTask(&p.config.Dev.Pre) {
-			changed = true
-		}
 		if normalizeDockerComposeDownTask(&p.config.Dev.Down) {
 			changed = true
 		}
@@ -2327,59 +2324,18 @@ func dockerComposeDownDevCommand() string {
 func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.Components) bool {
 	changed := false
 	want := dockerComposeUpDevCommand(components)
+	legacy := map[string]bool{
+		"docker-compose up -d":                                true,
+		"docker-compose up -d --build":                        true,
+		"docker-compose up -d --scale grafana-seed=0":         true,
+		"docker-compose up -d --build --scale grafana-seed=0": true,
+	}
 	for i := range *tasks {
 		if (*tasks)[i].Name != "Run Docker Compose" {
 			continue
 		}
-		if !isConventionalDockerComposeUpCommand((*tasks)[i].Cmd) {
-			continue
-		}
-		if (*tasks)[i].Cmd != want {
+		if legacy[(*tasks)[i].Cmd] && (*tasks)[i].Cmd != want {
 			(*tasks)[i].Cmd = want
-			changed = true
-		}
-		if (*tasks)[i].ID == "" {
-			(*tasks)[i].ID = project.DevTaskIDCompose
-			changed = true
-		}
-		if (*tasks)[i].Phase == "" {
-			(*tasks)[i].Phase = project.DevTaskPhaseCompose
-			changed = true
-		}
-	}
-	return changed
-}
-
-// isConventionalDockerComposeUpCommand recognizes only generated Compose startup commands from supported executable spellings.
-func isConventionalDockerComposeUpCommand(command string) bool {
-	switch command {
-	case "docker-compose up -d",
-		"docker-compose up -d --build",
-		"docker-compose up -d --scale grafana-seed=0",
-		"docker-compose up -d --build --scale grafana-seed=0",
-		"docker compose up -d",
-		"docker compose up -d --build",
-		"docker compose up -d --scale grafana-seed=0",
-		"docker compose up -d --build --scale grafana-seed=0":
-		return true
-	default:
-		return false
-	}
-}
-
-// annotateDockerComposeUpTask adds lifecycle metadata without changing the configured command executed by managed development.
-func annotateDockerComposeUpTask(tasks *[]project.DevTask) bool {
-	changed := false
-	for i := range *tasks {
-		if (*tasks)[i].Name != "Run Docker Compose" || !isConventionalDockerComposeUpCommand((*tasks)[i].Cmd) {
-			continue
-		}
-		if (*tasks)[i].ID == "" {
-			(*tasks)[i].ID = project.DevTaskIDCompose
-			changed = true
-		}
-		if (*tasks)[i].Phase == "" {
-			(*tasks)[i].Phase = project.DevTaskPhaseCompose
 			changed = true
 		}
 	}
@@ -2391,73 +2347,11 @@ func normalizeDockerComposeDownTask(tasks *[]project.DevTask) bool {
 	changed := false
 	want := dockerComposeDownDevCommand()
 	for i := range *tasks {
-		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" {
+		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" || strings.TrimSpace((*tasks)[i].Cmd) != "docker-compose down" {
 			continue
 		}
-		command := strings.TrimSpace((*tasks)[i].Cmd)
-		if !isConventionalDockerComposeDownCommand(command) {
-			continue
-		}
-		if (*tasks)[i].Cmd != want {
-			(*tasks)[i].Cmd = want
-			changed = true
-		}
-		if (*tasks)[i].ID == "" {
-			(*tasks)[i].ID = project.DevTaskIDComposeDown
-			changed = true
-		}
-		if (*tasks)[i].Phase == "" {
-			(*tasks)[i].Phase = project.DevTaskPhaseComposeDown
-			changed = true
-		}
-	}
-	return changed
-}
-
-// isConventionalDockerComposeDownCommand recognizes only generated Compose teardown commands from supported executable spellings.
-func isConventionalDockerComposeDownCommand(command string) bool {
-	return command == "docker-compose down" || command == "docker compose down" || command == dockerComposeDownDevCommand() || command == `docker compose --profile "*" down`
-}
-
-// annotateDockerComposeDownTask adds lifecycle metadata without changing the configured command executed by managed development.
-func annotateDockerComposeDownTask(tasks *[]project.DevTask) bool {
-	changed := false
-	for i := range *tasks {
-		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" || !isConventionalDockerComposeDownCommand(strings.TrimSpace((*tasks)[i].Cmd)) {
-			continue
-		}
-		if (*tasks)[i].ID == "" {
-			(*tasks)[i].ID = project.DevTaskIDComposeDown
-			changed = true
-		}
-		if (*tasks)[i].Phase == "" {
-			(*tasks)[i].Phase = project.DevTaskPhaseComposeDown
-			changed = true
-		}
-	}
-	return changed
-}
-
-// normalizeGeneratedDatabaseWaitTask adds lifecycle metadata only to exact framework readiness tasks.
-func normalizeGeneratedDatabaseWaitTask(tasks *[]project.DevTask) bool {
-	changed := false
-	for i := range *tasks {
-		task := &(*tasks)[i]
-		if strings.TrimSpace(task.Name) != "Waiting for Database to be ready" {
-			continue
-		}
-		normalized := normalizeDevComposeExecutable(task.Cmd)
-		if normalized != generatedMySQLDevWaitCommand && normalized != generatedPostgresDevWaitCommand {
-			continue
-		}
-		if task.ID == "" {
-			task.ID = project.DevTaskIDDatabaseReady
-			changed = true
-		}
-		if task.Phase == "" {
-			task.Phase = project.DevTaskPhasePostCompose
-			changed = true
-		}
+		(*tasks)[i].Cmd = want
+		changed = true
 	}
 	return changed
 }
