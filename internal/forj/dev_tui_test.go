@@ -104,6 +104,16 @@ func TestFinishDevOutputSessionRestoresTerminalExactlyOnce(t *testing.T) {
 	}
 }
 
+// TestDevTerminalModeResetSequenceDoesNotAdvanceTheCursor keeps post-TUI output adjacent to the bootstrap transcript.
+func TestDevTerminalModeResetSequenceDoesNotAdvanceTheCursor(t *testing.T) {
+	if strings.Contains(devTerminalModeResetSequence, "\n") {
+		t.Fatalf("terminal reset sequence advances to another row: %q", devTerminalModeResetSequence)
+	}
+	if !strings.HasSuffix(devTerminalModeResetSequence, "\r\x1b[2K") {
+		t.Fatalf("terminal reset sequence does not clear the restored cursor row: %q", devTerminalModeResetSequence)
+	}
+}
+
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/lighthouse", true, "2"))
 	if strings.Contains(line, "\n") {
