@@ -590,12 +590,8 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	for _, task := range tasks {
 		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
 		outputTail := newDevTaskOutputTail(40)
-		cmd := execx.Command("bash", "-c", task.Cmd).
-			EnvInherit().
-			StdinReader(devNull).
-			StdoutWriter(io.MultiWriter(os.Stdout, outputTail)).
-			StderrWriter(io.MultiWriter(os.Stderr, outputTail))
-		res, err := configureDevTaskTTY(cmd, outputTail).Run()
+		cmd := newDevTaskCommand(task, devNull, os.Stdout, os.Stderr, outputTail)
+		res, err := cmd.Run()
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -606,6 +602,22 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 		}
 	}
 	return nil
+}
+
+// newDevTaskCommand buffers routine output only for framework-shaped dependency installs so successful setup stays compact without hiding failure details.
+func newDevTaskCommand(task project.DevTask, stdin io.Reader, stdout io.Writer, stderr io.Writer, outputTail *devTaskOutputTail) *execx.Cmd {
+	cmd := execx.Command("bash", "-c", task.Cmd).
+		EnvInherit().
+		StdinReader(stdin)
+	if isConventionalDevFrontendInstallCommand(task) {
+		return cmd.
+			StdoutWriter(outputTail).
+			StderrWriter(io.MultiWriter(stderr, outputTail))
+	}
+	cmd = cmd.
+		StdoutWriter(io.MultiWriter(stdout, outputTail)).
+		StderrWriter(io.MultiWriter(stderr, outputTail))
+	return configureDevTaskTTYWithWriter(cmd, stdout, outputTail)
 }
 
 // clearPreDevTaskProgressLine keeps BuildKit-style progress output from visually merging with GoForj's final error line.
@@ -1519,19 +1531,31 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 
 	heading := "Building apps"
 	start := time.Now()
-	setDevStatusLine(outWriter, heading)
-	defer clearDevStatusLine(outWriter)
 
 	results := make([]devBuildResult, len(jobs))
-	var wg sync.WaitGroup
-	for index, job := range jobs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[index] = runDevBuildJobBuffered(job)
-		}()
+	runJobs := func() {
+		var wg sync.WaitGroup
+		for index, job := range jobs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[index] = runDevBuildJobBuffered(job)
+			}()
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+	if usesDevBootstrapConsole(outWriter, errWriter) {
+		if err := runWithLoader(heading, func() error {
+			runJobs()
+			return nil
+		}); err != nil {
+			return err
+		}
+	} else {
+		setDevStatusLine(outWriter, heading)
+		defer clearDevStatusLine(outWriter)
+		runJobs()
+	}
 
 	failures := make([]string, 0)
 	for _, result := range results {
@@ -1594,6 +1618,11 @@ func stripBuildProgressMarkerLines(output string) string {
 // writeDevBuildFailureOutput prints a failed app's buffered transcript only when it is useful.
 func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
 	writeDevActionLine(outWriter, "Build failed for "+result.job.app.Name)
+	writeDevBuildBufferedOutput(outWriter, errWriter, result)
+}
+
+// writeDevBuildBufferedOutput preserves owner-authored build messages after transient progress has released the terminal.
+func writeDevBuildBufferedOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
 	if strings.TrimSpace(result.stdout) != "" {
 		_, _ = io.WriteString(outWriter, result.stdout)
 		if !strings.HasSuffix(result.stdout, "\n") {
@@ -1611,6 +1640,9 @@ func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result
 // runDevBuildCommand keeps app builds compact in the dev transcript.
 func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJob) error {
 	heading := "Building " + job.app.Name
+	if usesDevBootstrapConsole(outWriter, errWriter) {
+		return runDevBuildJobWithLoader(outWriter, errWriter, heading, job)
+	}
 	writeDevActionLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
@@ -1645,6 +1677,30 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 		return err
 	}
 	return publishDevBuildReadyStamp(job.app)
+}
+
+// runDevBuildJobWithLoader keeps the bootstrap terminal active while deferring child output until the transient loader releases the terminal.
+func runDevBuildJobWithLoader(outWriter io.Writer, errWriter io.Writer, heading string, job devBuildJob) error {
+	var result devBuildResult
+	if err := runWithLoader(heading, func() error {
+		result = runDevBuildJobBuffered(job)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if result.err != nil {
+		writeDevBuildFailureOutput(outWriter, errWriter, result)
+		return result.err
+	}
+	writeDevBuildBufferedOutput(outWriter, errWriter, result)
+	return nil
+}
+
+// usesDevBootstrapConsole selects the shared console loader only before Bubble Tea owns the terminal streams.
+func usesDevBootstrapConsole(outWriter io.Writer, errWriter io.Writer) bool {
+	stdout, stdoutOK := outWriter.(*os.File)
+	stderr, stderrOK := errWriter.(*os.File)
+	return stdoutOK && stderrOK && stdout == os.Stdout && stderr == os.Stderr
 }
 
 // publishDevBuildReadyStamp makes custom successful build commands obey the same runtime publication gate as forj build.
@@ -2422,13 +2478,18 @@ func runDevDownTasks(tasks []project.DevTask) error {
 
 // configureDevTaskTTY preserves native command output for interactive helpers like Docker Compose.
 func configureDevTaskTTY(cmd *execx.Cmd, outputTail io.Writer) *execx.Cmd {
+	return configureDevTaskTTYWithWriter(cmd, os.Stdout, outputTail)
+}
+
+// configureDevTaskTTYWithWriter preserves native command output while allowing focused tests and callers to select its destination.
+func configureDevTaskTTYWithWriter(cmd *execx.Cmd, stdout io.Writer, outputTail io.Writer) *execx.Cmd {
 	switch runtime.GOOS {
 	case "linux", "darwin":
 		cmd = cmd.WithPTY()
 		if outputTail != nil {
-			cmd = cmd.StdoutWriter(io.MultiWriter(os.Stdout, outputTail))
+			cmd = cmd.StdoutWriter(io.MultiWriter(stdout, outputTail))
 		} else {
-			cmd = cmd.StdoutWriter(os.Stdout)
+			cmd = cmd.StdoutWriter(stdout)
 		}
 		return cmd.StderrWriter(nil)
 	default:

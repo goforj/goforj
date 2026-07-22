@@ -215,6 +215,97 @@ func TestRunDevTasksIncludesOutputTailOnFailure(t *testing.T) {
 	}
 }
 
+// TestGeneratedFrontendInstallBuffersRoutineStdout keeps npm's success summary out of the startup transcript without discarding diagnostics.
+func TestGeneratedFrontendInstallBuffersRoutineStdout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join("cmd", "app", "frontend"), 0o755); err != nil {
+		t.Fatalf("mkdir frontend: %v", err)
+	}
+	tools := t.TempDir()
+	npmPath := filepath.Join(tools, "npm")
+	script := "#!/bin/sh\nprintf 'up to date in 309ms\\n'\nprintf 'npm warning\\n' >&2\n"
+	if err := os.WriteFile(npmPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake npm: %v", err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	outputTail := newDevTaskOutputTail(40)
+	cmd := newDevTaskCommand(
+		generatedDevFrontendInstallTask(project.DefaultApp()),
+		strings.NewReader(""),
+		&stdout,
+		&stderr,
+		outputTail,
+	)
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("run generated frontend install: %v", err)
+	}
+	if !result.OK() {
+		t.Fatalf("generated frontend install exit code = %d", result.ExitCode)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("routine npm stdout reached transcript: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "npm warning") {
+		t.Fatalf("npm stderr was hidden: %q", stderr.String())
+	}
+	for _, expected := range []string{"up to date in 309ms", "npm warning"} {
+		if !strings.Contains(outputTail.String(), expected) {
+			t.Fatalf("failure tail omitted %q: %q", expected, outputTail.String())
+		}
+	}
+}
+
+// TestGeneratedFrontendInstallFailureRetainsBufferedStdout proves compact success handling still reports every useful failure stream.
+func TestGeneratedFrontendInstallFailureRetainsBufferedStdout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join("cmd", "app", "frontend"), 0o755); err != nil {
+		t.Fatalf("mkdir frontend: %v", err)
+	}
+	tools := t.TempDir()
+	npmPath := filepath.Join(tools, "npm")
+	script := "#!/bin/sh\nprintf 'dependency resolution failed\\n'\nprintf 'npm error registry unavailable\\n' >&2\nexit 7\n"
+	if err := os.WriteFile(npmPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake npm: %v", err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := runDevTasks("Test setup", []project.DevTask{generatedDevFrontendInstallTask(project.DefaultApp())})
+	if err == nil {
+		t.Fatal("expected generated frontend install failure")
+	}
+	for _, expected := range []string{"failed with exit code 7", "dependency resolution failed", "npm error registry unavailable"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("frontend install error omitted %q: %v", expected, err)
+		}
+	}
+}
+
+// TestCustomizedFrontendInstallKeepsStreamingStdout prevents compact framework setup from changing owner-authored task behavior.
+func TestCustomizedFrontendInstallKeepsStreamingStdout(t *testing.T) {
+	task := generatedDevFrontendInstallTask(project.DefaultApp())
+	task.Cmd = "printf 'owner install output\\n'"
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	outputTail := newDevTaskOutputTail(40)
+	cmd := newDevTaskCommand(task, strings.NewReader(""), &stdout, &stderr, outputTail)
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("run customized frontend install: %v", err)
+	}
+	if !result.OK() {
+		t.Fatalf("customized frontend install exit code = %d", result.ExitCode)
+	}
+	if !strings.Contains(stdout.String(), "owner install output") {
+		t.Fatalf("customized frontend stdout was hidden: %q", stdout.String())
+	}
+}
+
 func TestDevWatchesForAppsExpandsDefaultWatchers(t *testing.T) {
 	withConventionalApp(t, "customer-portal")
 
