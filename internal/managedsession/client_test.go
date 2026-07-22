@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -145,6 +146,54 @@ func TestClientRegisterReplaceAndBarrierOverPipe(t *testing.T) {
 		t.Fatal("Barrier() was not acknowledged")
 	}
 	client.Close()
+	if err := <-serverDone; err != nil {
+		t.Fatalf("fake Harbor peer error = %v", err)
+	}
+}
+
+// TestClientPublishEventOverPipe proves the optional event envelope preserves
+// the producer sequence and strict managed-session payload.
+func TestClientPublishEventOverPipe(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- runTestManagedSessionPeerWithCapabilities(serverConnection, []Capability{CapabilityV1, CapabilityEventsV1}, func(reader *frameReader, _ *frameWriter, _ Version) error {
+			envelope, err := readTestEnvelope(reader)
+			if err != nil {
+				return err
+			}
+			if envelope.Kind != kindEvent || envelope.Name != string(EventKindLogChunk) || envelope.Sequence == nil || *envelope.Sequence != 1 {
+				return fmt.Errorf("event envelope = %#v, want log.chunk sequence 1", envelope)
+			}
+			event, err := DecodeEvent(envelope.Payload)
+			if err != nil {
+				return err
+			}
+			if event.Sequence != *envelope.Sequence || event.Text != "ready" {
+				return fmt.Errorf("event payload = %#v, want sequence 1 and ready", event)
+			}
+			return nil
+		})
+	}()
+	client, err := NewClient(context.Background(), clientConnection, ClientConfig{Capabilities: []Capability{CapabilityV1, CapabilityEventsV1}})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	defer client.Close()
+	event := Event{
+		SchemaVersion: SchemaVersion,
+		ProjectID:     "project-orders",
+		SessionID:     "session-orders",
+		Sequence:      1,
+		Timestamp:     "2026-07-21T18:00:00Z",
+		Kind:          EventKindLogChunk,
+		AppID:         "app",
+		Stream:        EventStreamStdout,
+		Text:          "ready",
+	}
+	if err := client.PublishEvent(context.Background(), event); err != nil {
+		t.Fatalf("PublishEvent() error = %v", err)
+	}
 	if err := <-serverDone; err != nil {
 		t.Fatalf("fake Harbor peer error = %v", err)
 	}

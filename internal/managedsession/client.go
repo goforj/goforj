@@ -269,6 +269,53 @@ func (client *Client) RuntimePlan(ctx context.Context, request RuntimePlanReques
 	return response, nil
 }
 
+// PublishEvent sends one negotiated managed-session event without waiting for
+// a response. Event delivery is best-effort at the transport boundary; the
+// Harbor sink remains responsible for applying its exact session fence.
+func (client *Client) PublishEvent(ctx context.Context, event Event) error {
+	if !containsCapability(client.peer.Capabilities, CapabilityEventsV1) {
+		return errors.New("managed session events capability was not negotiated")
+	}
+	payload, err := MarshalEvent(event)
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deadline, cancel, err := operationContext(ctx, client.config.RequestTimeout)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	client.callMutex.Lock()
+	defer client.callMutex.Unlock()
+	select {
+	case <-client.closed:
+		return ErrClosed
+	default:
+	}
+	if err := client.connection.SetDeadline(deadline); err != nil {
+		return fmt.Errorf("set event deadline: %w", err)
+	}
+	defer func() { _ = client.connection.SetDeadline(time.Time{}) }()
+	sequence := event.Sequence
+	message := envelope{
+		Kind:     kindEvent,
+		Protocol: &client.peer.Protocol,
+		Name:     string(event.Kind),
+		Sequence: &sequence,
+		Payload:  json.RawMessage(payload),
+	}
+	if err := client.writeEnvelope(message); err != nil {
+		return wrapManagedSessionTransportError("write event", err)
+	}
+	return nil
+}
+
 // negotiate performs the unauthenticated Hello/Welcome exchange before calls are allowed.
 func (client *Client) negotiate(ctx context.Context) error {
 	deadline, cancel, err := operationContext(ctx, client.config.HandshakeTimeout)

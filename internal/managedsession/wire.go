@@ -18,6 +18,7 @@ const (
 	kindReject   Kind = "reject"
 	kindRequest  Kind = "request"
 	kindResponse Kind = "response"
+	kindEvent    Kind = "event"
 )
 
 // Hello starts protocol negotiation from the GoForj side.
@@ -141,6 +142,8 @@ type envelope struct {
 	RequestID string          `json:"request_id,omitempty"`
 	Method    string          `json:"method,omitempty"`
 	Deadline  *time.Time      `json:"deadline,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Sequence  *uint64         `json:"sequence,omitempty"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Error     *WireError      `json:"error,omitempty"`
 }
@@ -208,6 +211,22 @@ func (message envelope) Validate() error {
 			return validatePayload(message.Payload)
 		}
 		return message.Error.Validate()
+	case kindEvent:
+		if err := message.validateNegotiated(); err != nil {
+			return err
+		}
+		if err := validateWireToken("event name", message.Name, maximumWireTokenBytes); err != nil {
+			return err
+		}
+		if message.Sequence == nil || *message.Sequence == 0 || *message.Sequence > MaximumSequence {
+			return fmt.Errorf("event sequence must be between 1 and %d", MaximumSequence)
+		}
+		if err := validatePayload(message.Payload); err != nil {
+			return err
+		}
+		if message.RequestID != "" || message.Method != "" || message.Deadline != nil || message.Error != nil {
+			return errors.New("event contains fields belonging to another envelope kind")
+		}
 	default:
 		return fmt.Errorf("unsupported envelope kind %q", message.Kind)
 	}

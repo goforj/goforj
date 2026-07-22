@@ -33,6 +33,11 @@ type managedRuntimePlanClient interface {
 	RuntimePlan(context.Context, managedsession.RuntimePlanRequest) (managedsession.RuntimePlanResponse, error)
 }
 
+// managedEventClient is the optional ordered event surface negotiated by newer Harbor daemons.
+type managedEventClient interface {
+	PublishEvent(context.Context, managedsession.Event) error
+}
+
 // managedSessionClient extends the barrier surface with the close operation needed when a broken client is replaced.
 type managedSessionClient interface {
 	managedBarrierClient
@@ -188,6 +193,31 @@ func (session *reconnectingManagedSession) RuntimePlanAvailable() bool {
 		}
 	}
 	return false
+}
+
+// PublishEvent forwards one event and reconnects once when the managed stream is lost.
+func (session *reconnectingManagedSession) PublishEvent(ctx context.Context, event managedsession.Event) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		client, _ := session.snapshot()
+		if client == nil {
+			return managedsession.ErrClosed
+		}
+		eventClient, supported := client.(managedEventClient)
+		if !supported {
+			return errors.New("managed session events capability is unavailable")
+		}
+		if err := eventClient.PublishEvent(ctx, event); err == nil {
+			return nil
+		} else {
+			if !managedSessionTransportFailure(err) || attempt != 0 {
+				return err
+			}
+			if err := session.reconnectAfterFailure(ctx, client); err != nil {
+				return err
+			}
+		}
+	}
+	return errors.New("managed session event retry exhausted")
 }
 
 // snapshot returns the current client and fence without holding the lock across transport I/O.
