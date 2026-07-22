@@ -1413,9 +1413,10 @@ func parseDevAppCommandAcceptsArgs(help string) bool {
 func buildDevOutputSessionBubble(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) devOutputSession {
 	writer := newDevBubbleWriter(config, requestRestart, requestRender, requestCommand)
 	return devOutputSession{
-		stdout:   writer,
-		stderr:   writer,
-		shutdown: func() { _ = writer.Close() },
-		refresh:  func() { writer.RefreshEnv(config) },
+		stdout:           writer,
+		stderr:           writer,
+		shutdown:         func() { _ = writer.Close() },
+		refresh:          func() { writer.RefreshEnv(config) },
+		restoresTerminal: true,
 	}
 }

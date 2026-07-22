@@ -130,12 +130,13 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
-	shutdownWriters := func() {}
+	outputSession := devOutputSession{}
 	var cleanupOnce sync.Once
 	cleanupDevTerminal := func() {
 		cleanupOnce.Do(func() {
-			shutdownWriters()
-			restoreDevTerminalState(nil, nil)
+			finishDevOutputSession(outputSession, func() {
+				restoreDevTerminalState(nil, nil)
+			})
 		})
 	}
 	defer cleanupDevTerminal()
@@ -203,11 +204,10 @@ func (c *DevCmd) Run() error {
 	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
-	output := buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
-	outWriter := output.stdout
-	errWriter := output.stderr
-	shutdownWriters = output.shutdown
-	runtimeState.refreshWriters = output.refresh
+	outputSession = buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
+	outWriter := outputSession.stdout
+	errWriter := outputSession.stderr
+	runtimeState.refreshWriters = outputSession.refresh
 	runtimeState.refreshWriters()
 
 	session := &devWatchSession{
