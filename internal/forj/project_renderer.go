@@ -2327,22 +2327,52 @@ func dockerComposeDownDevCommand() string {
 func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.Components) bool {
 	changed := false
 	want := dockerComposeUpDevCommand(components)
-	legacy := map[string]bool{
-		"docker-compose up -d":                                true,
-		"docker-compose up -d --build":                        true,
-		"docker-compose up -d --scale grafana-seed=0":         true,
-		"docker-compose up -d --build --scale grafana-seed=0": true,
-	}
 	for i := range *tasks {
 		if (*tasks)[i].Name != "Run Docker Compose" {
 			continue
 		}
-		if !legacy[(*tasks)[i].Cmd] {
+		if !isConventionalDockerComposeUpCommand((*tasks)[i].Cmd) {
 			continue
 		}
 		if (*tasks)[i].Cmd != want {
 			(*tasks)[i].Cmd = want
 			changed = true
+		}
+		if (*tasks)[i].ID == "" {
+			(*tasks)[i].ID = project.DevTaskIDCompose
+			changed = true
+		}
+		if (*tasks)[i].Phase == "" {
+			(*tasks)[i].Phase = project.DevTaskPhaseCompose
+			changed = true
+		}
+	}
+	return changed
+}
+
+// isConventionalDockerComposeUpCommand recognizes only generated Compose startup commands from supported executable spellings.
+func isConventionalDockerComposeUpCommand(command string) bool {
+	switch command {
+	case "docker-compose up -d",
+		"docker-compose up -d --build",
+		"docker-compose up -d --scale grafana-seed=0",
+		"docker-compose up -d --build --scale grafana-seed=0",
+		"docker compose up -d",
+		"docker compose up -d --build",
+		"docker compose up -d --scale grafana-seed=0",
+		"docker compose up -d --build --scale grafana-seed=0":
+		return true
+	default:
+		return false
+	}
+}
+
+// annotateDockerComposeUpTask adds lifecycle metadata without changing the configured command executed by managed development.
+func annotateDockerComposeUpTask(tasks *[]project.DevTask) bool {
+	changed := false
+	for i := range *tasks {
+		if (*tasks)[i].Name != "Run Docker Compose" || !isConventionalDockerComposeUpCommand((*tasks)[i].Cmd) {
+			continue
 		}
 		if (*tasks)[i].ID == "" {
 			(*tasks)[i].ID = project.DevTaskIDCompose
@@ -2365,12 +2395,36 @@ func normalizeDockerComposeDownTask(tasks *[]project.DevTask) bool {
 			continue
 		}
 		command := strings.TrimSpace((*tasks)[i].Cmd)
-		if command != "docker-compose down" && command != want {
+		if !isConventionalDockerComposeDownCommand(command) {
 			continue
 		}
 		if (*tasks)[i].Cmd != want {
 			(*tasks)[i].Cmd = want
 			changed = true
+		}
+		if (*tasks)[i].ID == "" {
+			(*tasks)[i].ID = project.DevTaskIDComposeDown
+			changed = true
+		}
+		if (*tasks)[i].Phase == "" {
+			(*tasks)[i].Phase = project.DevTaskPhaseComposeDown
+			changed = true
+		}
+	}
+	return changed
+}
+
+// isConventionalDockerComposeDownCommand recognizes only generated Compose teardown commands from supported executable spellings.
+func isConventionalDockerComposeDownCommand(command string) bool {
+	return command == "docker-compose down" || command == "docker compose down" || command == dockerComposeDownDevCommand() || command == `docker compose --profile "*" down`
+}
+
+// annotateDockerComposeDownTask adds lifecycle metadata without changing the configured command executed by managed development.
+func annotateDockerComposeDownTask(tasks *[]project.DevTask) bool {
+	changed := false
+	for i := range *tasks {
+		if strings.TrimSpace((*tasks)[i].Name) != "Docker Compose Down" || !isConventionalDockerComposeDownCommand(strings.TrimSpace((*tasks)[i].Cmd)) {
+			continue
 		}
 		if (*tasks)[i].ID == "" {
 			(*tasks)[i].ID = project.DevTaskIDComposeDown

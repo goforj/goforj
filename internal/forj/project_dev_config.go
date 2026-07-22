@@ -81,7 +81,7 @@ func migrateGeneratedDevFrontendInstallTask(tasks []project.DevTask, app project
 				migrated = append(migrated, want)
 				hasReplacement = true
 			}
-		case strings.TrimSpace(task.Name) == want.Name && strings.TrimSpace(task.Cmd) == strings.TrimSpace(want.Cmd):
+		case strings.TrimSpace(task.Name) == want.Name && isConventionalDevFrontendInstallCommand(task):
 			annotated := task
 			if annotated.ID == "" {
 				annotated.ID = want.ID

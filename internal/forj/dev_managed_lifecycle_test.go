@@ -40,6 +40,115 @@ func TestValidateManagedDevLifecycleAcceptsGeneratedLegacyTasks(t *testing.T) {
 	}
 }
 
+// TestValidateManagedDevLifecycleAcceptsConventionalModernTasks verifies known plugin Compose spellings and quiet npm setup receive phases in memory.
+func TestValidateManagedDevLifecycleAcceptsConventionalModernTasks(t *testing.T) {
+	tests := []struct {
+		name string
+		pre  project.DevTask
+		down project.DevTask
+	}{
+		{
+			name: "modern ditracker compose",
+			pre: project.DevTask{
+				Name: "Run Docker Compose",
+				Cmd:  "docker compose up -d",
+			},
+			down: project.DevTask{
+				Name: "Docker Compose Down",
+				Cmd:  `docker compose --profile "*" down`,
+			},
+		},
+		{
+			name: "legacy compose",
+			pre: project.DevTask{
+				Name: "Run Docker Compose",
+				Cmd:  "docker-compose up -d --build",
+			},
+			down: project.DevTask{
+				Name: "Docker Compose Down",
+				Cmd:  "docker-compose down",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			frontend := project.DevTask{
+				Name: "Install Frontend Dependencies",
+				Cmd:  "cd cmd/app/frontend && npm install --no-audit --no-fund --no-progress --loglevel=error >/dev/null",
+			}
+			config := &project.Config{
+				Dev: project.DevConfig{
+					Pre: []project.DevTask{
+						test.pre,
+						{
+							Name: "Waiting for Database to be ready",
+							Cmd:  strings.Replace(generatedMySQLDevWaitCommand, "docker-compose", "docker compose", 1),
+						},
+						frontend,
+					},
+					Down: []project.DevTask{test.down},
+				},
+			}
+			if err := validateManagedDevLifecycle(config); err != nil {
+				t.Fatalf("validateManagedDevLifecycle() error = %v", err)
+			}
+			normalized := normalizedManagedDevConfig(config)
+			if normalized.Dev.Pre[0].Cmd != test.pre.Cmd || normalized.Dev.Down[0].Cmd != test.down.Cmd {
+				t.Fatalf("managed migration changed configured commands: %#v", normalized.Dev)
+			}
+			startup, err := planManagedDevLifecycle(config)
+			if err != nil {
+				t.Fatalf("planManagedDevLifecycle() error = %v", err)
+			}
+			teardown, err := planManagedDevTeardown(config)
+			if err != nil {
+				t.Fatalf("planManagedDevTeardown() error = %v", err)
+			}
+			if startup.compose[0].Cmd != test.pre.Cmd || teardown.composeDown[0].Cmd != test.down.Cmd {
+				t.Fatalf("managed plans changed configured commands: startup=%#v teardown=%#v", startup, teardown)
+			}
+			if config.Dev.Pre[0].ID != "" || config.Dev.Pre[1].Phase != "" || config.Dev.Pre[2].ID != "" || config.Dev.Down[0].ID != "" {
+				t.Fatalf("validation mutated config = %#v", config.Dev)
+			}
+		})
+	}
+}
+
+// TestValidateManagedDevLifecycleRejectsUnsupportedConventionalLookingTasks verifies migration does not infer phases from Compose or npm customizations.
+func TestValidateManagedDevLifecycleRejectsUnsupportedConventionalLookingTasks(t *testing.T) {
+	tests := []project.DevConfig{
+		{
+			Pre: []project.DevTask{
+				{
+					Name: "Run Docker Compose",
+					Cmd:  "docker compose up -d --project-name owner",
+				},
+			},
+		},
+		{
+			Down: []project.DevTask{
+				{
+					Name: "Docker Compose Down",
+					Cmd:  "docker compose down --timeout 5",
+				},
+			},
+		},
+		{
+			Pre: []project.DevTask{
+				{
+					Name: "Install Frontend Dependencies",
+					Cmd:  "cd cmd/app/frontend && npm install --ignore-scripts",
+				},
+			},
+		},
+	}
+	for _, dev := range tests {
+		if err := validateManagedDevLifecycle(&project.Config{Dev: dev}); err == nil || !strings.Contains(err.Error(), "no managed lifecycle phase") {
+			t.Fatalf("validateManagedDevLifecycle() error = %v, want unphased-task guidance", err)
+		}
+	}
+}
+
 // TestValidateManagedDevLifecycleRejectsUnphasedCustomTasks verifies ambiguous owner tasks fail before a managed session is opened.
 func TestValidateManagedDevLifecycleRejectsUnphasedCustomTasks(t *testing.T) {
 	config := &project.Config{Dev: project.DevConfig{

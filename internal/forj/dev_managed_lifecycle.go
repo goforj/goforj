@@ -43,9 +43,9 @@ func normalizedManagedDevConfig(config *project.Config) project.Config {
 	normalized.Dev = config.Dev
 	normalized.Dev.Pre = append([]project.DevTask(nil), config.Dev.Pre...)
 	normalized.Dev.Down = append([]project.DevTask(nil), config.Dev.Down...)
-	normalizeDockerComposeUpTask(&normalized.Dev.Pre, normalized.Render.Components)
+	annotateDockerComposeUpTask(&normalized.Dev.Pre)
 	normalizeGeneratedDatabaseWaitTask(&normalized.Dev.Pre)
-	normalizeDockerComposeDownTask(&normalized.Dev.Down)
+	annotateDockerComposeDownTask(&normalized.Dev.Down)
 	migrateGeneratedDevFrontendInstallTasks(&normalized)
 	return normalized
 }
