@@ -513,8 +513,9 @@ messages without parsing watcher names.
 - shared physical filesystem subscriptions, typed matchers, debounce,
   notification health, and polling
 - process supervision, process-tree shutdown, restart, and exit records
-- pseudo-terminal output on Linux and macOS, preserving the historical merged
-  watcher stream and native color/cursor behavior
+- pseudo-terminal output for plain sessions on Linux and macOS, preserving the
+  historical merged watcher stream and native color behavior without letting a
+  nested terminal renderer compete with the alternate-screen TUI
 
 `internal/forj` owns policy:
 
@@ -525,8 +526,12 @@ messages without parsing watcher names.
 - outer-session environment reload, migration setup, and explicit rebuilds
 
 Lifecycle wrappers consistently use the same Bash command contract as the
-rest of `forj dev`, including on Windows. PTY attachment is enabled where the
-platform supports it; other platforms retain separate output streams.
+rest of `forj dev`, including on Windows. PTY attachment is enabled for plain
+sessions where the platform supports it. Alternate-screen sessions and other
+platforms retain separate output streams so stdout and stderr remain line-safe
+and the outer TUI remains the sole terminal owner. A watcher that explicitly
+requests stdin selects the plain session because an interactive child cannot
+safely share terminal input with Bubble Tea.
 
 This boundary keeps the engine reusable without turning `.goforj.yml` or UI
 concerns into low-level watcher dependencies. `internal/devwatch` is an internal
@@ -590,9 +595,23 @@ a separate `wgo` process.
 
 Implemented process behavior:
 
-- Cold start builds listed apps, runs pre-dev setup, builds configured SPAs,
-  rebuilds app artifacts when SPA output was published, and only then starts
-  watcher runtimes.
+- `dev.pre` remains the single pre-development task surface. Structured
+  projects do not need another configuration phase to receive the optimized
+  startup order.
+- On cold start, GoForj recognizes conventional framework bootstrap tasks such
+  as Compose startup, database readiness, frontend dependency installation,
+  and generated-source refreshes, then schedules each task at the earliest
+  lifecycle point where its inputs are valid.
+- When every `dev.pre` task has a known framework lifecycle, configured SPAs
+  build before their owning App and the App compiles only once before watcher
+  runtimes start.
+- Auto-migration still runs through the newly built App binary. A generator
+  that depends on migrated schema runs afterward and causes one final App
+  rebuild so the runtime contains its generated source.
+- An arbitrary custom `dev.pre` task may depend on the historical guarantee
+  that an App binary already exists. GoForj therefore preserves the compatible
+  build, pre-task, SPA-build, and rebuild order for any startup containing an
+  unrecognized task instead of guessing that the task is safe to move.
 - Build commands are one-shot subprocesses.
 - Runtime commands are long-running subprocesses.
 - The conventional runtime command is the bare `./bin/<app>` executable.

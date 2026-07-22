@@ -59,12 +59,30 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 			t.Fatalf("%s URL = %q, want %q", id, resource.URL, url)
 		}
 	}
+	wantOwnership := map[string]struct {
+		app     string
+		service string
+	}{
+		"app":              {app: project.DefaultAppName},
+		"api":              {app: project.DefaultAppName},
+		"swagger":          {app: project.DefaultAppName},
+		"lighthouse":       {app: project.DefaultAppName},
+		"mailpit":          {service: "mailpit"},
+		"victoria-metrics": {service: "victoriametrics"},
+		"grafana":          {service: "grafana"},
+	}
+	for id, ownership := range wantOwnership {
+		resource, ok := resourceByID(resources, id)
+		if !ok || resource.App != ownership.app || resource.Service != ownership.service {
+			t.Errorf("%s ownership = App %q service %q, want App %q service %q", id, resource.App, resource.Service, ownership.app, ownership.service)
+		}
+	}
 	api, ok := resourceByID(resources, "api")
 	if !ok || api.Category != "api" || api.App != project.DefaultAppName || api.Runtime != "http" || api.Health != "http://127.0.0.1:8080/health" {
 		t.Fatalf("api = %#v ok=%v", api, ok)
 	}
 	grafana, ok := resourceByID(resources, "grafana")
-	if !ok || grafana.Auth != "ops" || grafana.Owner != "goforj" {
+	if !ok || grafana.Auth != "ops" || grafana.Owner != "goforj" || grafana.Description != "Local Grafana dashboards." {
 		t.Fatalf("grafana = %#v ok=%v", grafana, ok)
 	}
 	for _, id := range []string{"database-default", "queue-reports", "cache-sessions", "storage-public", "events-audit"} {
@@ -74,6 +92,79 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	}
 	if got := resourceIDs(Filter(resources, Category("queue"), Runtime("jobs"))); !equalStrings(got, []string{"queue-reports"}) {
 		t.Fatalf("queue resources = %#v", got)
+	}
+}
+
+// TestRegistryProjectURLsHonorAssignedIPAddress verifies host placeholders become reachable per-project loopback links.
+func TestRegistryProjectURLsHonorAssignedIPAddress(t *testing.T) {
+	t.Parallel()
+	config := &project.Config{}
+	config.Render.Components.WebAPI = true
+	config.Render.Components.Docker = true
+	resources, err := RegistryForProject(config, map[string]string{
+		"IP_ADDRESS":            "127.77.18.24",
+		"APP_URL":               "http://localhost:3100",
+		"LIGHTHOUSE_URL":        "ws://127.0.0.1:3100/lighthouse/ws/agent",
+		"API_SWAGGER_ENABLED":   "true",
+		"COMPOSE_PROFILES":      "mailpit,grafana",
+		"MAILPIT_HTTP_PORT":     "18025",
+		"OBSERVABILITY_VM_PORT": "18428",
+		"GRAFANA_PORT":          "13001",
+	}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	wantURLs := map[string]string{
+		"app":              "http://127.77.18.24:3100",
+		"api":              "http://127.77.18.24:3100",
+		"swagger":          "http://127.77.18.24:3100/swagger",
+		"lighthouse":       "http://127.77.18.24:3100/lighthouse",
+		"mailpit":          "http://127.77.18.24:18025",
+		"victoria-metrics": "http://127.77.18.24:18428",
+		"grafana":          "http://127.77.18.24:13001",
+	}
+	for id, wantURL := range wantURLs {
+		resource, ok := resourceByID(resources, id)
+		if !ok || resource.URL != wantURL {
+			t.Errorf("%s URL = %q found=%t, want %q", id, resource.URL, ok, wantURL)
+		}
+	}
+}
+
+// TestRegistryProjectURLsPreserveCustomOrigins verifies an assigned address never replaces an intentional development domain.
+func TestRegistryProjectURLsPreserveCustomOrigins(t *testing.T) {
+	t.Parallel()
+	config := &project.Config{}
+	config.Render.Components.WebAPI = true
+	resources, err := RegistryForProject(config, map[string]string{
+		"IP_ADDRESS": "127.77.18.24",
+		"APP_URL":    "https://demo.test:8443",
+	}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if app, ok := resourceByID(resources, "app"); !ok || app.URL != "https://demo.test:8443" {
+		t.Fatalf("app = %#v found=%t", app, ok)
+	}
+	if lighthouse, ok := resourceByID(resources, "lighthouse"); !ok || lighthouse.URL != "https://demo.test:8443/lighthouse" {
+		t.Fatalf("lighthouse = %#v found=%t", lighthouse, ok)
+	}
+}
+
+// TestRegistryProjectURLsRejectWildcardDestinations verifies default bind addresses remain browser-safe localhost links.
+func TestRegistryProjectURLsRejectWildcardDestinations(t *testing.T) {
+	t.Parallel()
+	config := &project.Config{}
+	config.Render.Components.WebAPI = true
+	resources, err := RegistryForProject(config, map[string]string{
+		"IP_ADDRESS":    "0.0.0.0",
+		"API_HTTP_PORT": "3200",
+	}).List(t.Context())
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if app, ok := resourceByID(resources, "app"); !ok || app.URL != "http://localhost:3200" {
+		t.Fatalf("app = %#v found=%t", app, ok)
 	}
 }
 

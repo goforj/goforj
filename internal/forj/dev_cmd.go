@@ -24,7 +24,6 @@ import (
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/devwatch"
-	"github.com/goforj/goforj/internal/managedenv"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
@@ -40,7 +39,6 @@ type devRuntimeState struct {
 	restartCh      chan struct{}
 	buildCh        chan struct{}
 	renderCh       chan struct{}
-	managedEnv     managedenv.Set
 	refreshWriters func()
 	streamer       *devwatchStreamer
 	firstLoad      bool
@@ -65,7 +63,6 @@ type devWatchSession struct {
 	reloadRuntime         func() (*devwatchStreamer, error)
 	reconcile             bool
 	reconcileFrontendDeps bool
-	managedEnv            managedenv.Set
 }
 
 // Signature declares the development command exposed by the root CLI.
@@ -73,13 +70,12 @@ func (*DevCmd) Signature() string {
 	return `name:"dev" help:"Run development watchers"`
 }
 
-// newDevRuntimeState keeps dotenv reloads and launcher-owned restoration on one boundary.
-func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}, managedEnv managedenv.Set) *devRuntimeState {
+// newDevRuntimeState keeps dotenv reloads and output streaming on one boundary.
+func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
 	return &devRuntimeState{
 		restartCh:      restartCh,
 		buildCh:        buildCh,
 		renderCh:       renderCh,
-		managedEnv:     managedEnv,
 		refreshWriters: func() {},
 		firstLoad:      true,
 	}
@@ -94,7 +90,7 @@ func (r *devRuntimeState) Close() {
 func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	firstLoad := r.firstLoad
 	r.firstLoad = false
-	if err := loadDevEnvironment(!firstLoad, r.managedEnv); err != nil {
+	if err := loadDevEnvironment(!firstLoad); err != nil {
 		return nil, err
 	}
 	if r.streamer != nil {
@@ -109,30 +105,24 @@ func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	return r.streamer, nil
 }
 
-// loadDevEnvironment reapplies only explicitly managed values after dotenv has finished its normal precedence work.
-func loadDevEnvironment(reload bool, managedEnv managedenv.Set) error {
-	var loadErr error
+// loadDevEnvironment applies the env package's canonical file precedence for startup or reload.
+func loadDevEnvironment(reload bool) error {
 	if reload {
-		loadErr = envx.Reload()
-	} else {
-		loadErr = envx.Load()
+		return envx.Reload()
 	}
-	applyErr := managedEnv.Apply()
-	if loadErr != nil {
-		if applyErr != nil {
-			return errors.Join(loadErr, applyErr)
-		}
-		return loadErr
-	}
-	return applyErr
+	return envx.Load()
 }
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
-	managedEnv, err := managedenv.Capture()
+	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
-		return fmt.Errorf("capture managed dev environment: %w", err)
+		return err
 	}
+	if config == nil {
+		return nil
+	}
+
 	// Prevent concurrent dev sessions from clobbering each other.
 	unlock, err := c.acquireLock()
 	if err != nil {
@@ -140,20 +130,17 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
-	shutdownWriters := func() {}
+	outputSession := devOutputSession{}
 	var cleanupOnce sync.Once
 	cleanupDevTerminal := func() {
 		cleanupOnce.Do(func() {
-			shutdownWriters()
-			restoreDevTerminalState(nil, nil)
+			finishDevOutputSession(outputSession, func() {
+				restoreDevTerminalState(nil, nil)
+			})
 		})
 	}
 	defer cleanupDevTerminal()
 
-	config, err := project.LoadProjectConfig()
-	if err != nil {
-		return err
-	}
 	baseWatches := normalizeDevWatchesForRuntime(config, copyDevWatches(config.Dev.Watches))
 	config.Dev.Watches = devWatchesForApps(config, baseWatches)
 
@@ -164,7 +151,7 @@ func (c *DevCmd) Run() error {
 		console.Warnf("No dev watches defined in .goforj.yml")
 		return nil
 	}
-	if _, err := compileDevWatchersWithManagedEnvironment(config, managedEnv); err != nil {
+	if _, err := compileDevWatchers(config); err != nil {
 		return err
 	}
 
@@ -207,34 +194,20 @@ func (c *DevCmd) Run() error {
 	defer stopEnvWatch()
 	stopTargetWatch := startDevAppWatcher(runCtx, requestBuild, 500*time.Millisecond)
 	defer stopTargetWatch()
-	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh, managedEnv)
+	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
 	currentStreamer, err := runtimeState.Sync()
 	if err != nil {
 		return err
 	}
-	writeDevAppBuildLine(os.Stdout, activeDevAppsForConfig(config))
-	if err := runDevInitialBuildWithManagedEnvironment(config, os.Stdout, os.Stderr, managedEnv); err != nil {
+	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
-	if err := runPreDevSetupWithManagedEnvironment(config, managedEnv); err != nil {
-		return err
-	}
-	spaBuilt, err := runDevInitialSPABuildsWithManagedEnvironment(config, os.Stdout, os.Stderr, managedEnv)
-	if err != nil {
-		return err
-	}
-	if spaBuilt {
-		if err := runDevBuildWithManagedEnvironment(config, os.Stdout, os.Stderr, managedEnv); err != nil {
-			return fmt.Errorf("post-SPA forj build failed: %w", err)
-		}
-	}
-	output := buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
-	outWriter := output.stdout
-	errWriter := output.stderr
-	shutdownWriters = output.shutdown
-	runtimeState.refreshWriters = output.refresh
+	outputSession = buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
+	outWriter := outputSession.stdout
+	errWriter := outputSession.stderr
+	runtimeState.refreshWriters = outputSession.refresh
 	runtimeState.refreshWriters()
 
 	session := &devWatchSession{
@@ -249,7 +222,6 @@ func (c *DevCmd) Run() error {
 		outWriter:     outWriter,
 		errWriter:     errWriter,
 		reloadRuntime: runtimeState.Sync,
-		managedEnv:    managedEnv,
 	}
 
 	if err := c.runWatchersLoop(session); err != nil {
@@ -270,6 +242,192 @@ func (c *DevCmd) Run() error {
 	}
 
 	return fmt.Errorf("dev watchers exited unexpectedly")
+}
+
+// loadDevProjectConfig turns an absent project into guidance while preserving real configuration failures.
+func loadDevProjectConfig(commandConsole *console.Console) (*project.Config, error) {
+	config, err := project.LoadProjectConfig()
+	if err == nil {
+		return config, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		writeDevProjectNotFound(commandConsole)
+		return nil, nil
+	}
+	return nil, fmt.Errorf("load project configuration: %w", err)
+}
+
+// writeDevProjectNotFound explains the project-root requirement without presenting normal navigation as a failure.
+func writeDevProjectNotFound(commandConsole *console.Console) {
+	commandConsole.Info(commandConsole.Style("No GoForj project found", console.StyleBold))
+	commandConsole.Printf(
+		"  Run %s from a project root containing %s.\n",
+		commandConsole.Style("forj dev", console.ColorCyan),
+		commandConsole.Style(".goforj.yml", console.ColorCyan),
+	)
+	commandConsole.Printf("  Starting fresh? Run %s.\n", commandConsole.Style("forj new", console.ColorCyan))
+}
+
+// devInitialTaskPlan separates framework setup from work that must retain the historical binary-ready contract.
+type devInitialTaskPlan struct {
+	preBuild    []project.DevTask
+	postMigrate []project.DevTask
+	fastPath    bool
+}
+
+// runDevInitialLifecycle builds structured projects once when every configured setup task has a known safe phase.
+func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	plan := planDevInitialTasks(config)
+	if plan.fastPath {
+		if err := runDevTasks("Running pre-dev setup", plan.preBuild); err != nil {
+			return err
+		}
+		if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
+		if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		if err := runDevAppSetup(config, outWriter, errWriter); err != nil {
+			return err
+		}
+		if err := runDevTasks("Running post-migrate setup", plan.postMigrate); err != nil {
+			return err
+		}
+		if len(plan.postMigrate) > 0 {
+			if err := runDevBuild(config, outWriter, errWriter); err != nil {
+				return fmt.Errorf("post-setup forj build failed: %w", err)
+			}
+		}
+		return nil
+	}
+
+	writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
+	if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+		return err
+	}
+	rebuildAfterSetup, err := runPreDevSetup(config)
+	if err != nil {
+		return err
+	}
+	spaBuilt, err := runDevInitialSPABuilds(config, outWriter, errWriter)
+	if err != nil {
+		return err
+	}
+	if spaBuilt || rebuildAfterSetup {
+		if err := runDevBuild(config, outWriter, errWriter); err != nil {
+			return fmt.Errorf("post-setup forj build failed: %w", err)
+		}
+	}
+	return nil
+}
+
+// planDevInitialTasks preserves arbitrary pre-task ordering unless every task matches a framework-owned bootstrap convention.
+func planDevInitialTasks(config *project.Config) devInitialTaskPlan {
+	if config == nil {
+		return devInitialTaskPlan{}
+	}
+	tasks := effectiveDevPreTasks(config)
+	plan := devInitialTaskPlan{
+		preBuild:    make([]project.DevTask, 0, len(tasks)),
+		postMigrate: make([]project.DevTask, 0, len(tasks)),
+		fastPath:    config.Dev.UsesStructuredApps(),
+	}
+	autoMigrate := shouldRunDevAutoMigrate(config)
+	for _, task := range tasks {
+		if autoMigrate && shouldRunAfterMigrate(task) {
+			plan.postMigrate = append(plan.postMigrate, task)
+			continue
+		}
+		if isConventionalDevBootstrapTask(task) {
+			plan.preBuild = append(plan.preBuild, task)
+			continue
+		}
+		plan.fastPath = false
+	}
+	return plan
+}
+
+// isConventionalDevBootstrapTask recognizes only framework task identities whose commands cannot require an App binary.
+func isConventionalDevBootstrapTask(task project.DevTask) bool {
+	name := strings.TrimSpace(task.Name)
+	switch {
+	case name == "Run Docker Compose":
+		return isConventionalDevComposeUpCommand(task.Cmd)
+	case name == "Waiting for Database to be ready":
+		command := normalizeDevComposeExecutable(task.Cmd)
+		return command == generatedMySQLDevWaitCommand || command == generatedPostgresDevWaitCommand
+	case name == "Seed Grafana Dashboards":
+		command := normalizeDevComposeExecutable(task.Cmd)
+		return command == "docker-compose up -d --force-recreate grafana-seed" ||
+			command == "docker-compose run --rm --no-deps grafana-seed"
+	case isFrontendDependencyDevTaskName(name):
+		return isConventionalDevFrontendInstallCommand(task)
+	default:
+		return false
+	}
+}
+
+// isConventionalDevComposeUpCommand matches the normalized Compose startup whose behavior is independent of an existing App binary.
+func isConventionalDevComposeUpCommand(command string) bool {
+	command = normalizeDevComposeExecutable(command)
+	return command == "docker-compose up -d"
+}
+
+// normalizeDevComposeExecutable treats the current plugin spelling like the historical generated binary.
+func normalizeDevComposeExecutable(command string) string {
+	command = strings.TrimSpace(command)
+	if strings.HasPrefix(command, "docker compose ") {
+		return "docker-compose " + strings.TrimPrefix(command, "docker compose ")
+	}
+	return command
+}
+
+// isFrontendDependencyDevTaskName matches the stable default and named-App task identities emitted by GoForj.
+func isFrontendDependencyDevTaskName(name string) bool {
+	return name == "Install Frontend Dependencies" ||
+		strings.HasPrefix(name, "Install ") && strings.HasSuffix(name, " Frontend Dependencies")
+}
+
+// isConventionalDevFrontendInstallCommand accepts generated npm setup plus the quiet flags used by upgraded projects.
+func isConventionalDevFrontendInstallCommand(task project.DevTask) bool {
+	app, ok := devFrontendInstallTaskApp(task.Name)
+	if !ok {
+		return false
+	}
+	base := devFrontendInstallTask(app, "npm install").Cmd
+	command := strings.TrimSpace(task.Cmd)
+	if command == base {
+		return true
+	}
+	if !strings.HasPrefix(command, base+" ") {
+		return false
+	}
+	for _, field := range strings.Fields(strings.TrimPrefix(command, base+" ")) {
+		switch field {
+		case "--no-audit", "--no-fund", "--no-progress", "--loglevel=error", ">/dev/null":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// devFrontendInstallTaskApp resolves the App encoded in GoForj's stable frontend task identity.
+func devFrontendInstallTaskApp(name string) (project.App, bool) {
+	name = strings.TrimSpace(name)
+	if name == "Install Frontend Dependencies" {
+		return project.DefaultApp(), true
+	}
+	if !strings.HasPrefix(name, "Install ") || !strings.HasSuffix(name, " Frontend Dependencies") {
+		return project.App{}, false
+	}
+	appName := strings.TrimSuffix(strings.TrimPrefix(name, "Install "), " Frontend Dependencies")
+	if !project.IsSafeAppName(appName) || project.IsReservedAppName(appName) {
+		return project.App{}, false
+	}
+	return project.DefaultNamedApp(appName), true
 }
 
 // ensureDevDatabaseExistsWithWriters provisions only service-backed databases because SQLite needs no external preparation.
@@ -432,12 +590,8 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	for _, task := range tasks {
 		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
 		outputTail := newDevTaskOutputTail(40)
-		cmd := execx.Command("bash", "-c", task.Cmd).
-			EnvInherit().
-			StdinReader(devNull).
-			StdoutWriter(io.MultiWriter(os.Stdout, outputTail)).
-			StderrWriter(io.MultiWriter(os.Stderr, outputTail))
-		res, err := configureDevTaskTTY(cmd, outputTail).Run()
+		cmd := newDevTaskCommand(task, devNull, os.Stdout, os.Stderr, outputTail)
+		res, err := cmd.Run()
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -448,6 +602,22 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 		}
 	}
 	return nil
+}
+
+// newDevTaskCommand buffers routine output only for framework-shaped dependency installs so successful setup stays compact without hiding failure details.
+func newDevTaskCommand(task project.DevTask, stdin io.Reader, stdout io.Writer, stderr io.Writer, outputTail *devTaskOutputTail) *execx.Cmd {
+	cmd := execx.Command("bash", "-c", task.Cmd).
+		EnvInherit().
+		StdinReader(stdin)
+	if isConventionalDevFrontendInstallCommand(task) {
+		return cmd.
+			StdoutWriter(outputTail).
+			StderrWriter(io.MultiWriter(stderr, outputTail))
+	}
+	cmd = cmd.
+		StdoutWriter(io.MultiWriter(stdout, outputTail)).
+		StderrWriter(io.MultiWriter(stderr, outputTail))
+	return configureDevTaskTTYWithWriter(cmd, stdout, outputTail)
 }
 
 // clearPreDevTaskProgressLine keeps BuildKit-style progress output from visually merging with GoForj's final error line.
@@ -523,15 +693,16 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
-// runPreDevSetup orders configured tasks around migration so setup commands see the current schema.
-func runPreDevSetup(config *project.Config) error {
-	return runPreDevSetupWithManagedEnvironment(config, managedenv.Set{})
-}
-
-// runPreDevSetupWithManagedEnvironment marks only generated App setup while ordinary tasks inherit managed values normally.
-func runPreDevSetupWithManagedEnvironment(config *project.Config, managedEnv managedenv.Set) error {
+// runPreDevSetup orders configured tasks around migration and reports when generated source requires another build.
+func runPreDevSetup(config *project.Config) (bool, error) {
 	preTasks := effectiveDevPreTasks(config)
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
+	rebuildAfterSetup := false
+	for _, task := range preTasks {
+		if shouldRunAfterMigrate(task) {
+			rebuildAfterSetup = true
+		}
+	}
 	if shouldRunDevAutoMigrate(config) {
 		allTasks := preTasks
 		preTasks = make([]project.DevTask, 0, len(allTasks))
@@ -544,24 +715,19 @@ func runPreDevSetupWithManagedEnvironment(config *project.Config, managedEnv man
 		}
 	}
 	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
-		return err
+		return false, err
 	}
-	if err := runDevAppSetupWithManagedEnvironment(config, os.Stdout, os.Stderr, managedEnv); err != nil {
-		return err
+	if err := runDevAppSetup(config, os.Stdout, os.Stderr); err != nil {
+		return false, err
 	}
 	if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return rebuildAfterSetup, nil
 }
 
 // runDevAppSetup catches databases and migrations up before dev starts or restarts app processes.
 func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevAppSetupWithManagedEnvironment(config, outWriter, errWriter, managedenv.Set{})
-}
-
-// runDevAppSetupWithManagedEnvironment lets generated migration commands restore launcher values after App dotenv loading.
-func runDevAppSetupWithManagedEnvironment(config *project.Config, outWriter io.Writer, errWriter io.Writer, managedEnv managedenv.Set) error {
 	if !shouldRunDevAutoMigrate(config) {
 		return nil
 	}
@@ -575,13 +741,9 @@ func runDevAppSetupWithManagedEnvironment(config *project.Config, outWriter io.W
 	}
 	start := time.Now()
 	writeDevActionLine(outWriter, "Running auto-migrate")
-	autoMigrateEnv, err := managedAppEnvironment(devAutoMigrateEnv(), managedEnv)
-	if err != nil {
-		return fmt.Errorf("configure auto-migrate environment: %w", err)
-	}
 	res, err := execx.Command("bash", "-c", devAutoMigrateShellCommand(config)).
 		EnvInherit().
-		Env(autoMigrateEnv).
+		Env(devAutoMigrateEnv()).
 		StdinReader(os.Stdin).
 		StdoutWriter(outWriter).
 		StderrWriter(errWriter).
@@ -844,24 +1006,8 @@ type devBuildJob struct {
 	env     map[string]string
 }
 
-// managedAppEnvironmentMapping names one deliberate bridge into generated App configuration.
-type managedAppEnvironmentMapping struct {
-	source string
-	target string
-}
-
-// managedAppRuntimeEnvironmentMappings bridges shared development settings to generated App-specific configuration.
-var managedAppRuntimeEnvironmentMappings = []managedAppEnvironmentMapping{
-	{source: "IP_ADDRESS", target: "API_HTTP_HOST"},
-}
-
 // devBuildJobs resolves app build commands while preserving the app label for compact output.
 func devBuildJobs(config *project.Config) []devBuildJob {
-	return devBuildJobsWithManagedEnvironment(config, managedenv.Set{})
-}
-
-// devBuildJobsWithManagedEnvironment applies launcher-owned values after project build configuration is resolved.
-func devBuildJobsWithManagedEnvironment(config *project.Config, managedEnv managedenv.Set) []devBuildJob {
 	apps := activeDevAppsForConfig(config)
 	jobs := make([]devBuildJob, 0, len(apps))
 	baseCommand := devBaseBuildCommand(config)
@@ -874,23 +1020,10 @@ func devBuildJobsWithManagedEnvironment(config *project.Config, managedEnv manag
 		dir, env := devBuildExecutionForConfigApp(config, app)
 		jobs = append(jobs, devBuildJob{
 			app: app, command: command, dir: dir,
-			env: managedEnv.CommandEnvironment(env),
+			env: env,
 		})
 	}
 	return jobs
-}
-
-// managedAppEnvironment marks launcher-owned values for restoration inside generated App LoadEnv.
-func managedAppEnvironment(base map[string]string, managedEnv managedenv.Set) (map[string]string, error) {
-	derived := make(map[string]string, len(managedAppRuntimeEnvironmentMappings))
-	for _, mapping := range managedAppRuntimeEnvironmentMappings {
-		value, ok := managedEnv.Lookup(mapping.source)
-		if !ok {
-			continue
-		}
-		derived[mapping.target] = value
-	}
-	return managedEnv.AppEnvironment(base, derived)
 }
 
 // devBuildExecutionForConfigApp carries structured workdir and environment overrides into every build path.
@@ -1037,12 +1170,11 @@ watcherLoop:
 			return err
 		}
 		if session.reconcile {
-			reconcileErr := runDevWatcherReconciliationWithManagedEnvironment(
+			reconcileErr := runDevWatcherReconciliation(
 				session.config,
 				session.outWriter,
 				session.errWriter,
 				session.reconcileFrontendDeps,
-				session.managedEnv,
 			)
 			session.reconcile = false
 			session.reconcileFrontendDeps = false
@@ -1058,7 +1190,7 @@ watcherLoop:
 			case <-session.stopCh:
 				disableDevFooter(session.outWriter)
 				disableDevFooter(session.errWriter)
-				fmt.Println(buildDevFooterSeparatorLine())
+				fmt.Println(buildDevWatcherStopSeparatorLine())
 				runtime.stopAndDrain(true)
 				return errDevInterrupted
 			case <-session.restartCh:
@@ -1091,11 +1223,11 @@ watcherLoop:
 					}
 					return fmt.Errorf("quiesce dev builds: %w", err)
 				}
-				if err := loadDevEnvironment(true, session.managedEnv); err != nil {
+				if err := loadDevEnvironment(true); err != nil {
 					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
-				if err := runDevBuildWithManagedEnvironment(session.config, session.outWriter, session.errWriter, session.managedEnv); err != nil {
+				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
 					runtime.controller.resumeBuilds()
 					console.Errorf("forj build failed: %v", err)
 					resetDevFooterLine(session.outWriter)
@@ -1113,7 +1245,7 @@ watcherLoop:
 				}
 				session.streamer = refreshedStreamer
 				if !session.reconcile {
-					if err := runDevAppSetupWithManagedEnvironment(session.config, session.outWriter, session.errWriter, session.managedEnv); err != nil {
+					if err := runDevAppSetup(session.config, session.outWriter, session.errWriter); err != nil {
 						disableDevFooter(session.outWriter)
 						disableDevFooter(session.errWriter)
 						fmt.Println(buildDevFooterSeparatorLine())
@@ -1166,12 +1298,12 @@ watcherLoop:
 					session.reconcileFrontendDeps = true
 				}
 				if !session.reconcile {
-					if err := runDevBuildWithManagedEnvironment(session.config, session.outWriter, session.errWriter, session.managedEnv); err != nil {
+					if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
 						return err
 					}
 				}
 				if !session.reconcile {
-					if err := runDevAppSetupWithManagedEnvironment(session.config, session.outWriter, session.errWriter, session.managedEnv); err != nil {
+					if err := runDevAppSetup(session.config, session.outWriter, session.errWriter); err != nil {
 						disableDevFooter(session.outWriter)
 						disableDevFooter(session.errWriter)
 						fmt.Println(buildDevFooterSeparatorLine())
@@ -1232,11 +1364,17 @@ func (session *devWatchSession) reloadProjectConfig() error {
 	return nil
 }
 
+// snapshotProcessEnv splits only well-formed process entries while preserving values that contain equals signs.
 func snapshotProcessEnv() map[string]string {
+	return processEnvironmentMap(os.Environ())
+}
+
+// processEnvironmentMap converts process entries without truncating values or admitting empty platform pseudo-keys.
+func processEnvironmentMap(entries []string) map[string]string {
 	envMap := map[string]string{}
-	for _, entry := range os.Environ() {
+	for _, entry := range entries {
 		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
+		if !ok || key == "" {
 			continue
 		}
 		envMap[key] = value
@@ -1266,29 +1404,18 @@ func runDevRender(config *project.Config, outWriter io.Writer, errWriter io.Writ
 
 // runDevWatcherReconciliation rebuilds frontend assets as a barrier before publishing app runtimes.
 func runDevWatcherReconciliation(config *project.Config, outWriter io.Writer, errWriter io.Writer, installFrontendDeps bool) error {
-	return runDevWatcherReconciliationWithManagedEnvironment(config, outWriter, errWriter, installFrontendDeps, managedenv.Set{})
-}
-
-// runDevWatcherReconciliationWithManagedEnvironment preserves launcher ownership across the whole rebuild barrier.
-func runDevWatcherReconciliationWithManagedEnvironment(
-	config *project.Config,
-	outWriter io.Writer,
-	errWriter io.Writer,
-	installFrontendDeps bool,
-	managedEnv managedenv.Set,
-) error {
 	if installFrontendDeps {
 		if err := runDevFrontendDependencySetup(config); err != nil {
 			return fmt.Errorf("install frontend dependencies: %w", err)
 		}
 	}
-	if _, err := runDevInitialSPABuildsWithManagedEnvironment(config, outWriter, errWriter, managedEnv); err != nil {
+	if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
 		return err
 	}
-	if err := runDevBuildWithManagedEnvironment(config, outWriter, errWriter, managedEnv); err != nil {
+	if err := runDevBuild(config, outWriter, errWriter); err != nil {
 		return err
 	}
-	if err := runDevAppSetupWithManagedEnvironment(config, outWriter, errWriter, managedEnv); err != nil {
+	if err := runDevAppSetup(config, outWriter, errWriter); err != nil {
 		return fmt.Errorf("dev app setup failed: %w", err)
 	}
 	return nil
@@ -1343,36 +1470,16 @@ func hasNewStructuredDevSPARoot(before map[string]bool, config *project.Config) 
 
 // runDevBuild rebuilds every active app so a previous binary never masks current source changes.
 func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevBuildWithManagedEnvironment(config, outWriter, errWriter, managedenv.Set{})
-}
-
-// runDevBuildWithManagedEnvironment forces launcher-owned values into every rebuilt App.
-func runDevBuildWithManagedEnvironment(config *project.Config, outWriter io.Writer, errWriter io.Writer, managedEnv managedenv.Set) error {
-	return runDevBuildJobs(config, outWriter, errWriter, "forj build failed", managedEnv)
+	return runDevBuildJobs(config, outWriter, errWriter, "forj build failed")
 }
 
 // runDevInitialBuild builds every active app before pre-dev tasks can call generated app commands.
 func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevInitialBuildWithManagedEnvironment(config, outWriter, errWriter, managedenv.Set{})
-}
-
-// runDevInitialBuildWithManagedEnvironment applies launcher ownership to the first App publication.
-func runDevInitialBuildWithManagedEnvironment(config *project.Config, outWriter io.Writer, errWriter io.Writer, managedEnv managedenv.Set) error {
-	return runDevBuildJobs(config, outWriter, errWriter, "initial forj build failed", managedEnv)
+	return runDevBuildJobs(config, outWriter, errWriter, "initial forj build failed")
 }
 
 // runDevInitialSPABuilds publishes frontend assets after dependency setup and before the runtime-owning rebuild.
 func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWriter io.Writer) (bool, error) {
-	return runDevInitialSPABuildsWithManagedEnvironment(config, outWriter, errWriter, managedenv.Set{})
-}
-
-// runDevInitialSPABuildsWithManagedEnvironment applies launcher ownership to frontend build commands.
-func runDevInitialSPABuildsWithManagedEnvironment(
-	config *project.Config,
-	outWriter io.Writer,
-	errWriter io.Writer,
-	managedEnv managedenv.Set,
-) (bool, error) {
 	watchers, err := compileStructuredDevApps(config)
 	if err != nil {
 		return false, err
@@ -1382,7 +1489,6 @@ func runDevInitialSPABuildsWithManagedEnvironment(
 		if watcher.Kind != devWatcherSPABuild {
 			continue
 		}
-		watcher.Command.Env = managedEnv.CommandEnvironment(watcher.Command.Env)
 		writeDevActionLine(outWriter, "Building "+watcher.App+" frontend")
 		if err := runDevSubprocess(devSubprocessRun{
 			command:    watcher.Command.Shell,
@@ -1408,8 +1514,8 @@ type devBuildResult struct {
 }
 
 // runDevBuildJobs runs app builds together so multi-app dev startup scales with the slowest build.
-func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, failurePrefix string, managedEnv managedenv.Set) error {
-	jobs := devBuildJobsWithManagedEnvironment(config, managedEnv)
+func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, failurePrefix string) error {
+	jobs := devBuildJobs(config)
 	clearDevBuildReadyStamps(jobs)
 	switch len(jobs) {
 	case 0:
@@ -1425,19 +1531,31 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 
 	heading := "Building apps"
 	start := time.Now()
-	setDevStatusLine(outWriter, heading)
-	defer clearDevStatusLine(outWriter)
 
 	results := make([]devBuildResult, len(jobs))
-	var wg sync.WaitGroup
-	for index, job := range jobs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[index] = runDevBuildJobBuffered(job)
-		}()
+	runJobs := func() {
+		var wg sync.WaitGroup
+		for index, job := range jobs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[index] = runDevBuildJobBuffered(job)
+			}()
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+	if usesDevBootstrapConsole(outWriter, errWriter) {
+		if err := runWithLoader(heading, func() error {
+			runJobs()
+			return nil
+		}); err != nil {
+			return err
+		}
+	} else {
+		setDevStatusLine(outWriter, heading)
+		defer clearDevStatusLine(outWriter)
+		runJobs()
+	}
 
 	failures := make([]string, 0)
 	for _, result := range results {
@@ -1500,6 +1618,11 @@ func stripBuildProgressMarkerLines(output string) string {
 // writeDevBuildFailureOutput prints a failed app's buffered transcript only when it is useful.
 func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
 	writeDevActionLine(outWriter, "Build failed for "+result.job.app.Name)
+	writeDevBuildBufferedOutput(outWriter, errWriter, result)
+}
+
+// writeDevBuildBufferedOutput preserves owner-authored build messages after transient progress has released the terminal.
+func writeDevBuildBufferedOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
 	if strings.TrimSpace(result.stdout) != "" {
 		_, _ = io.WriteString(outWriter, result.stdout)
 		if !strings.HasSuffix(result.stdout, "\n") {
@@ -1517,6 +1640,9 @@ func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result
 // runDevBuildCommand keeps app builds compact in the dev transcript.
 func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJob) error {
 	heading := "Building " + job.app.Name
+	if usesDevBootstrapConsole(outWriter, errWriter) {
+		return runDevBuildJobWithLoader(outWriter, errWriter, heading, job)
+	}
 	writeDevActionLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
@@ -1551,6 +1677,30 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 		return err
 	}
 	return publishDevBuildReadyStamp(job.app)
+}
+
+// runDevBuildJobWithLoader keeps the bootstrap terminal active while deferring child output until the transient loader releases the terminal.
+func runDevBuildJobWithLoader(outWriter io.Writer, errWriter io.Writer, heading string, job devBuildJob) error {
+	var result devBuildResult
+	if err := runWithLoader(heading, func() error {
+		result = runDevBuildJobBuffered(job)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if result.err != nil {
+		writeDevBuildFailureOutput(outWriter, errWriter, result)
+		return result.err
+	}
+	writeDevBuildBufferedOutput(outWriter, errWriter, result)
+	return nil
+}
+
+// usesDevBootstrapConsole selects the shared console loader only before Bubble Tea owns the terminal streams.
+func usesDevBootstrapConsole(outWriter io.Writer, errWriter io.Writer) bool {
+	stdout, stdoutOK := outWriter.(*os.File)
+	stderr, stderrOK := errWriter.(*os.File)
+	return stdoutOK && stderrOK && stdout == os.Stdout && stderr == os.Stderr
 }
 
 // publishDevBuildReadyStamp makes custom successful build commands obey the same runtime publication gate as forj build.
@@ -2328,13 +2478,18 @@ func runDevDownTasks(tasks []project.DevTask) error {
 
 // configureDevTaskTTY preserves native command output for interactive helpers like Docker Compose.
 func configureDevTaskTTY(cmd *execx.Cmd, outputTail io.Writer) *execx.Cmd {
+	return configureDevTaskTTYWithWriter(cmd, os.Stdout, outputTail)
+}
+
+// configureDevTaskTTYWithWriter preserves native command output while allowing focused tests and callers to select its destination.
+func configureDevTaskTTYWithWriter(cmd *execx.Cmd, stdout io.Writer, outputTail io.Writer) *execx.Cmd {
 	switch runtime.GOOS {
 	case "linux", "darwin":
 		cmd = cmd.WithPTY()
 		if outputTail != nil {
-			cmd = cmd.StdoutWriter(io.MultiWriter(os.Stdout, outputTail))
+			cmd = cmd.StdoutWriter(io.MultiWriter(stdout, outputTail))
 		} else {
-			cmd = cmd.StdoutWriter(os.Stdout)
+			cmd = cmd.StdoutWriter(stdout)
 		}
 		return cmd.StderrWriter(nil)
 	default:

@@ -283,51 +283,30 @@ func TestCompiledEnvOverridesBeatEnvAndOS(t *testing.T) {
 	}
 }
 
-// TestManagedEnvOverridesBeatEnvLoad verifies launcher-selected values win without changing unrelated dotenv precedence.
-func TestManagedEnvOverridesBeatEnvLoad(t *testing.T) {
-	if os.Getenv("GO_WANT_MANAGED_ENV_OVERRIDES_HELPER") == "1" {
-		runManagedEnvOverridesHelper()
+// TestHostEnvOverridesBeatBaseAndOS verifies host-local values use the env package's ordinary precedence contract.
+func TestHostEnvOverridesBeatBaseAndOS(t *testing.T) {
+	if os.Getenv("GO_WANT_HOST_ENV_OVERRIDES_HELPER") == "1" {
+		runHostEnvOverridesHelper()
 		return
+	}
+	if !envpkg.IsHostEnvironment() && !envpkg.IsDockerInDocker() {
+		t.Skip(".env.host is intentionally inactive inside ordinary application containers")
 	}
 
 	dir := t.TempDir()
-	writeTestEnvFile(t, filepath.Join(dir, ".env"), "HARBOR_EMPTY=not-empty\nHARBOR_TOKEN=from-envfile\nIP_ADDRESS=0.0.0.0\nUNLISTED_VALUE=from-envfile\n")
-	output := runEnvDefaultsHelperProcess(t, "TestManagedEnvOverridesBeatEnvLoad", dir, map[string]string{
-		internalManagedEnvKeys: "HARBOR_EMPTY,HARBOR_TOKEN,IP_ADDRESS",
-		"HARBOR_EMPTY":         "",
-		"HARBOR_TOKEN":         "managed,value with spaces",
-		"IP_ADDRESS":           "127.18.0.11",
-		"UNLISTED_VALUE":       "from-os",
+	writeTestEnvFile(t, filepath.Join(dir, ".env"), "HARBOR_TOKEN=from-base\nIP_ADDRESS=0.0.0.0\n")
+	writeTestEnvFile(t, filepath.Join(dir, ".env.host"), "HARBOR_TOKEN=from-host\nIP_ADDRESS=127.18.0.11\n")
+	output := runEnvDefaultsHelperProcess(t, "TestHostEnvOverridesBeatBaseAndOS", dir, map[string]string{
+		"HARBOR_TOKEN": "from-os",
+		"IP_ADDRESS":   "127.0.0.1",
 	})
 
 	got := parseEnvDefaultsOutput(t, output)
-	if got["HARBOR_TOKEN"] != "managed,value with spaces" {
-		t.Fatalf("HARBOR_TOKEN = %q, want delimiter-safe managed value", got["HARBOR_TOKEN"])
+	if got["HARBOR_TOKEN"] != "from-host" {
+		t.Fatalf("HARBOR_TOKEN = %q, want host-local value", got["HARBOR_TOKEN"])
 	}
 	if got["IP_ADDRESS"] != "127.18.0.11" {
-		t.Fatalf("IP_ADDRESS = %q, want managed address", got["IP_ADDRESS"])
-	}
-	if got["HARBOR_EMPTY"] != "" {
-		t.Fatalf("HARBOR_EMPTY = %q, want present-empty managed value", got["HARBOR_EMPTY"])
-	}
-	if got["UNLISTED_VALUE"] != "from-envfile" {
-		t.Fatalf("UNLISTED_VALUE = %q, want normal dotenv precedence", got["UNLISTED_VALUE"])
-	}
-	if got[internalManagedEnvKeys] != "" {
-		t.Fatalf("%s leaked into the running App", internalManagedEnvKeys)
-	}
-}
-
-// TestLoadEnvRejectsMalformedManagedMarker verifies invalid private metadata fails before environment layering proceeds.
-func TestLoadEnvRejectsMalformedManagedMarker(t *testing.T) {
-	t.Setenv(internalManagedEnvKeys, "IP_ADDRESS,HARBOR_TOKEN")
-	t.Setenv("IP_ADDRESS", "127.18.0.11")
-	t.Setenv("HARBOR_TOKEN", "managed")
-	if err := LoadEnv(); err == nil || !strings.Contains(err.Error(), "must be sorted") {
-		t.Fatalf("LoadEnv() error = %v, want malformed managed marker", err)
-	}
-	if _, ok := os.LookupEnv(internalManagedEnvKeys); ok {
-		t.Fatalf("%s remained after rejected metadata", internalManagedEnvKeys)
+		t.Fatalf("IP_ADDRESS = %q, want host-local address", got["IP_ADDRESS"])
 	}
 }
 
@@ -473,8 +452,8 @@ func runEnvOverridesLayerHelper() {
 	os.Exit(0)
 }
 
-// runManagedEnvOverridesHelper isolates process-wide environment loading from the parent test process.
-func runManagedEnvOverridesHelper() {
+// runHostEnvOverridesHelper isolates process-wide environment loading from the parent test process.
+func runHostEnvOverridesHelper() {
 	dir := os.Getenv("GO_WANT_ENV_DEFAULTS_DIR")
 	if err := os.Chdir(dir); err != nil {
 		fmt.Printf("CHDIR_ERROR=%v\n", err)
@@ -484,7 +463,7 @@ func runManagedEnvOverridesHelper() {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
 		os.Exit(1)
 	}
-	printEnvDefaultsOutput("HARBOR_EMPTY", "HARBOR_TOKEN", "IP_ADDRESS", "UNLISTED_VALUE", internalManagedEnvKeys)
+	printEnvDefaultsOutput("HARBOR_TOKEN", "IP_ADDRESS")
 	os.Exit(0)
 }
 
@@ -544,8 +523,8 @@ func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extr
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_LAYER_HELPER=1")
 	case "TestCompiledEnvOverridesCanForceAppEnvAcrossEnvLoad":
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_APP_ENV_HELPER=1")
-	case "TestManagedEnvOverridesBeatEnvLoad":
-		cmd.Env = append(cmd.Env, "GO_WANT_MANAGED_ENV_OVERRIDES_HELPER=1")
+	case "TestHostEnvOverridesBeatBaseAndOS":
+		cmd.Env = append(cmd.Env, "GO_WANT_HOST_ENV_OVERRIDES_HELPER=1")
 	case "TestAppEnvOverlayCanSelectAppEnvFile":
 		cmd.Env = append(cmd.Env, "GO_WANT_APP_ENV_HELPER=1")
 	}

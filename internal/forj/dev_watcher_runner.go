@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/devwatch"
-	"github.com/goforj/goforj/internal/managedenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -90,7 +89,7 @@ type devWatcherRuntime struct {
 // startDevWatcherRuntime derives startup controls from the session so watcher policy has one source of truth.
 func startDevWatcherRuntime(session *devWatchSession) (*devWatcherRuntime, error) {
 	watcherRuntime := &devWatcherRuntime{session: session}
-	compiled, err := compileDevWatchersWithManagedEnvironment(session.config, session.managedEnv)
+	compiled, err := compileDevWatchers(session.config)
 	if err != nil {
 		return nil, err
 	}
@@ -115,25 +114,6 @@ func startDevWatcherRuntime(session *devWatchSession) (*devWatcherRuntime, error
 	}
 	emitWatcherLifecycleSummary(controller.outWriter, session.streamer, names, watcherStateStarted)
 	return watcherRuntime, nil
-}
-
-// compileDevWatchersWithManagedEnvironment applies launcher ownership after every project-defined command is compiled.
-func compileDevWatchersWithManagedEnvironment(config *project.Config, managedEnv managedenv.Set) ([]devCompiledWatcher, error) {
-	compiled, err := compileDevWatchers(config)
-	if err != nil {
-		return nil, err
-	}
-	for index := range compiled {
-		compiled[index].Command.Env = managedEnv.CommandEnvironment(compiled[index].Command.Env)
-		if compiled[index].Kind != devWatcherAppRun {
-			continue
-		}
-		compiled[index].Command.Env, err = managedAppEnvironment(compiled[index].Command.Env, managedEnv)
-		if err != nil {
-			return nil, fmt.Errorf("configure managed App environment for %s: %w", compiled[index].Name, err)
-		}
-	}
-	return compiled, nil
 }
 
 // newDevWatcherController establishes physical coverage before starting any configured command.
@@ -173,6 +153,7 @@ func newDevWatcherControllerWithOptions(
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	retainFailureOutput := shouldRetainDevWatcherFailureOutput(outWriter)
+	attachPTY := shouldAttachDevWatcherPTY(outWriter, runtime.GOOS)
 	outputMu := &sync.Mutex{}
 	outWriter = devWatcherSynchronizedWriter{mu: outputMu, writer: outWriter}
 	errWriter = devWatcherSynchronizedWriter{mu: outputMu, writer: errWriter}
@@ -208,7 +189,7 @@ func newDevWatcherControllerWithOptions(
 		if retainFailureOutput {
 			outputTail = newDevTaskOutputTail(40)
 		}
-		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, appNameWidth, showAppColumn)
+		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, appNameWidth, showAppColumn, attachPTY)
 		controller.tasks[spec.ID] = &devWatcherTask{
 			controller: controller, spec: spec, triggerCh: make(chan struct{}, 1),
 			outputTail: outputTail, paused: options.reconcile && (structuredBuild || structuredRuntime),
@@ -238,6 +219,7 @@ func configureCompiledDevCommand(
 	lifecycle *devwatchLifecycleState,
 	appNameWidth int,
 	showAppColumn bool,
+	attachPTY bool,
 ) {
 	triggerCommand := strings.Join(strings.Fields(spec.Command.Shell), " ")
 	spec.DisplayCommand = triggerCommand
@@ -264,7 +246,7 @@ func configureCompiledDevCommand(
 	spec.Command.Shell = ""
 	spec.Command.Stdout = stdout
 	spec.Command.Stderr = stderr
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+	if attachPTY {
 		spec.Command.PTY = true
 		// A pseudo-terminal combines both streams; one transcript sink prevents every line from appearing twice.
 		spec.Command.Stderr = nil
@@ -275,6 +257,14 @@ func configureCompiledDevCommand(
 			hook(string(output.Data))
 		}
 	}
+}
+
+// shouldAttachDevWatcherPTY keeps nested terminal renderers away from the alternate-screen TUI while preserving plain-session compatibility.
+func shouldAttachDevWatcherPTY(outWriter io.Writer, goos string) bool {
+	if asDevOutputController(outWriter) != nil {
+		return false
+	}
+	return goos == "linux" || goos == "darwin"
 }
 
 // shouldRetainDevWatcherFailureOutput limits replay to alternate-screen sessions where live diagnostics disappear on exit.

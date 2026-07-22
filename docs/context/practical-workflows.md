@@ -137,6 +137,8 @@ It should not own process naming policy or app log prefix semantics beyond watch
 
 The child app/process topology belongs lower in `run` and runtime launch logic.
 
+Structured projects keep all setup in the existing `dev.pre` list. GoForj schedules recognized framework bootstrap work such as Compose startup, database readiness, frontend dependency installation, and generators around the SPA build, App build, and auto-migration boundaries. If every task is recognized, frontend assets settle before the App's single cold-start compile. An arbitrary custom pre-task retains the historical binary-ready ordering, which can require the compatibility rebuild. Schema-dependent generators run after auto-migration and cause a final App rebuild.
+
 For shutdown, `forj dev` owns watcher process orchestration:
 
 - Ctrl+C, restart, and render-triggered restarts should signal all watcher subprocesses in parallel.

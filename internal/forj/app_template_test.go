@@ -203,12 +203,11 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "env_defaults.go.tmpl"): {
 			`var CompiledEnvDefaultsBase64 string`,
 			`var CompiledEnvOverridesBase64 string`,
-			`const internalManagedEnvKeys = "FORJ_INTERNAL_MANAGED_ENV_KEYS"`,
 			`func ApplyCompiledEnvDefaults() error`,
 			`func ApplyCompiledEnvOverrides() error`,
 			`base64.StdEncoding.DecodeString`,
-			`func captureInternalManagedEnvironment()`,
-			`return applyInternalManagedEnvironment(managedEnv)`,
+			`func LoadEnv() error`,
+			`if err := env.Load(); err != nil`,
 		},
 	}
 

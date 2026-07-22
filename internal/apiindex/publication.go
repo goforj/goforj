@@ -126,6 +126,135 @@ func stagedPaths(paths paths, stagingDir string) paths {
 	return staged
 }
 
+// seedStagedArtifacts lets Web's changed-only publisher reuse active bytes without rewriting and syncing a complete unchanged generation.
+func seedStagedArtifacts(activePaths paths, candidatePaths paths, active snapshots) error {
+	artifacts := []struct {
+		activePath    string
+		candidatePath string
+		snapshot      fileSnapshot
+	}{
+		{activePath: activePaths.out, candidatePath: candidatePaths.out, snapshot: active.out},
+		{activePath: activePaths.diagnostics, candidatePath: candidatePaths.diagnostics, snapshot: active.diagnostics},
+		{activePath: activePaths.openAPI, candidatePath: candidatePaths.openAPI, snapshot: active.openAPI},
+	}
+	for _, artifact := range artifacts {
+		if !artifact.snapshot.exists {
+			continue
+		}
+		if err := seedStagedArtifact(artifact.activePath, artifact.candidatePath, artifact.snapshot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// seedStagedArtifact falls back to a private copy when the active and staging directories cannot share hard links.
+func seedStagedArtifact(activePath string, candidatePath string, snapshot fileSnapshot) error {
+	var linkErr error
+	activeInfo, err := os.Lstat(activePath)
+	if err == nil && activeInfo.Mode().IsRegular() {
+		linkErr = os.Link(activePath, candidatePath)
+		if linkErr == nil {
+			candidateInfo, err := os.Lstat(candidatePath)
+			if err == nil && candidateInfo.Mode().IsRegular() {
+				return nil
+			}
+			linkErr = err
+			if linkErr == nil {
+				linkErr = fmt.Errorf("hard-linked staged artifact is not a regular file")
+			}
+			if err := os.Remove(candidatePath); err != nil {
+				return fmt.Errorf("remove unsafe staged API index link %q: %w", candidatePath, err)
+			}
+		}
+	} else if err != nil {
+		linkErr = err
+	}
+	file, err := os.OpenFile(candidatePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if linkErr != nil {
+			err = errors.Join(linkErr, err)
+		}
+		return fmt.Errorf("seed staged API index artifact %q from %q: %w", candidatePath, activePath, err)
+	}
+	removeCandidate := true
+	defer func() {
+		if removeCandidate {
+			_ = os.Remove(candidatePath)
+		}
+	}()
+	if _, err := file.Write(snapshot.content); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("copy active API index artifact %q to staging: %w", activePath, err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync staged API index artifact %q: %w", candidatePath, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close staged API index artifact %q: %w", candidatePath, err)
+	}
+	removeCandidate = false
+	return nil
+}
+
+// discardIfActiveUnchanged removes an unchanged candidate while holding the publication lock that protects its active generation.
+func (p *preparedCandidate) discardIfActiveUnchanged() (unchanged bool, err error) {
+	lock, err := p.locks.acquire(p.paths)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		err = errors.Join(err, lock.Release())
+	}()
+	linked, err := artifactGenerationsShareFiles(p.paths, p.stagedPaths)
+	if err != nil {
+		return false, err
+	}
+	if !linked {
+		active, err := readSnapshots(p.paths)
+		if err != nil {
+			return false, fmt.Errorf("confirm unchanged API index artifacts: %w", err)
+		}
+		if !active.equal(p.active) {
+			return false, nil
+		}
+	}
+	if err := p.Discard(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// artifactGenerationsShareFiles confirms that every staged artifact still names the same inode as its active counterpart.
+func artifactGenerationsShareFiles(activePaths paths, candidatePaths paths) (bool, error) {
+	artifacts := [][2]string{
+		{activePaths.out, candidatePaths.out},
+		{activePaths.diagnostics, candidatePaths.diagnostics},
+		{activePaths.openAPI, candidatePaths.openAPI},
+	}
+	for _, artifact := range artifacts {
+		activeInfo, err := os.Stat(artifact[0])
+		if err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("inspect active API index artifact %q: %w", artifact[0], err)
+		}
+		candidateInfo, err := os.Stat(artifact[1])
+		if err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("inspect staged API index artifact %q: %w", artifact[1], err)
+		}
+		if !os.SameFile(activeInfo, candidateInfo) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // Publish atomically promotes this candidate and preserves App context on publication failures.
 func (p *preparedCandidate) Publish() error {
 	if err := p.publish(); err != nil {

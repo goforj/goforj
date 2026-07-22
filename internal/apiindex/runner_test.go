@@ -1,6 +1,8 @@
 package apiindex
 
 import (
+	"context"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/web/webindex"
 )
 
 // newTestRunner mirrors the CLI's late-bound App selection without coupling this package back to build.
@@ -52,6 +55,46 @@ func TestRunIndexWritesArtifacts(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("expected artifact %s: %v", p, err)
 		}
+	}
+}
+
+// TestRunIndexUsesPersistentAnalysisCachePath verifies ephemeral artifact paths share Web's stable cross-build state.
+func TestRunIndexUsesPersistentAnalysisCachePath(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root)
+	runner := newTestRunner()
+	var cachePaths []string
+	var outputPaths []string
+	runner.runCached = func(_ context.Context, options webindex.IndexOptions, cachePath string) (webindex.Manifest, error) {
+		cachePaths = append(cachePaths, cachePath)
+		outputPaths = append(outputPaths, options.OutPath)
+		return webindex.Manifest{}, nil
+	}
+	for _, candidate := range []string{"candidate-one", "candidate-two"} {
+		input, err := resolvePaths(paths{
+			root:        root,
+			out:         filepath.Join(root, candidate, "api_index.json"),
+			diagnostics: filepath.Join(root, candidate, "api_index.diagnostics.json"),
+			openAPI:     filepath.Join(root, candidate, "openapi.json"),
+		})
+		if err != nil {
+			t.Fatalf("resolve %s paths: %v", candidate, err)
+		}
+		if _, err := runner.runIndex(input, runOptions{}); err != nil {
+			t.Fatalf("run API index for %s: %v", candidate, err)
+		}
+	}
+	if len(cachePaths) != 2 {
+		t.Fatalf("cached index calls = %d, want 2", len(cachePaths))
+	}
+	wantCachePath := apiIndexCachePath(paths{root: root, appName: project.DefaultAppName})
+	for index, cachePath := range cachePaths {
+		if cachePath != wantCachePath {
+			t.Fatalf("cached index call %d path = %q, want %q", index, cachePath, wantCachePath)
+		}
+	}
+	if outputPaths[0] == outputPaths[1] {
+		t.Fatalf("candidate output paths unexpectedly matched: %q", outputPaths[0])
 	}
 }
 
@@ -133,6 +176,29 @@ func TestRunnerDefaultStatusIncludesActiveApp(t *testing.T) {
 	if !strings.HasPrefix(status, "app customer-portal, unchanged, ") || !strings.Contains(status, " operation") || !strings.Contains(status, " schema") || !strings.Contains(status, " diagnostic") {
 		t.Fatalf("no-change status does not include active app, outcome, and counts: %q", status)
 	}
+}
+
+// TestRunnerPrepareReturnsNilCandidateForUnchangedArtifacts verifies no-op builds avoid a redundant publication transaction.
+func TestRunnerPrepareReturnsNilCandidateForUnchangedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root)
+	writeRouteComposition(t, root, "customer-portal")
+	t.Setenv("FORJ_APP", "customer-portal")
+	runner := newTestRunner()
+	if _, err := runner.RunDefault(Options{Root: root}); err != nil {
+		t.Fatalf("warm API index artifacts: %v", err)
+	}
+	preparation, err := runner.Prepare(Options{Root: root})
+	if err != nil {
+		t.Fatalf("prepare unchanged API index: %v", err)
+	}
+	if preparation.Candidate != nil {
+		t.Fatalf("Prepare() candidate = %T, want nil for unchanged artifacts", preparation.Candidate)
+	}
+	if !strings.HasPrefix(preparation.Status, "app customer-portal, unchanged, ") {
+		t.Fatalf("unchanged preparation status = %q", preparation.Status)
+	}
+	assertNoStagingDirectories(t, filepath.Join(root, "build", "customer-portal"))
 }
 
 // TestRunnerRejectsInvalidExplicitRoot prevents missing source trees from looking like intentional nonparticipation.
@@ -349,6 +415,105 @@ func TestDefaultPathsUsesNamedAppArtifacts(t *testing.T) {
 	}
 	if paths.routeComposition != filepath.Join("app", "customer-portal", "routes.go") {
 		t.Fatalf("unexpected route composition path: %s", paths.routeComposition)
+	}
+}
+
+// TestAPIIndexCachePathIsStableAndIsolated verifies canonical projects and normalized apps receive one opaque cache location each.
+func TestAPIIndexCachePathIsStableAndIsolated(t *testing.T) {
+	cacheRoot := t.TempDir()
+	projectsRoot := t.TempDir()
+	root := filepath.Join(projectsRoot, "workspace-secret-name")
+	otherRoot := filepath.Join(projectsRoot, "other-secret-name")
+	for _, directory := range []string{root, otherRoot} {
+		if err := os.Mkdir(directory, 0o755); err != nil {
+			t.Fatalf("create project root %q: %v", directory, err)
+		}
+	}
+
+	defaultPath := apiIndexCachePathUnderRoot(paths{root: root}, cacheRoot)
+	if repeated := apiIndexCachePathUnderRoot(paths{root: filepath.Join(root, "."), appName: project.DefaultAppName}, cacheRoot); repeated != defaultPath {
+		t.Fatalf("equivalent default-app paths differ: first=%q repeated=%q", defaultPath, repeated)
+	}
+	namedPath := apiIndexCachePathUnderRoot(paths{root: root, appName: "customer-portal"}, cacheRoot)
+	if normalized := apiIndexCachePathUnderRoot(paths{root: root, appName: "  customer-portal  "}, cacheRoot); normalized != namedPath {
+		t.Fatalf("normalized app path = %q, want %q", normalized, namedPath)
+	}
+	otherProjectPath := apiIndexCachePathUnderRoot(paths{root: otherRoot, appName: "customer-portal"}, cacheRoot)
+	if defaultPath == namedPath || namedPath == otherProjectPath || defaultPath == otherProjectPath {
+		t.Fatalf("project/app cache paths are not isolated: default=%q named=%q other=%q", defaultPath, namedPath, otherProjectPath)
+	}
+
+	namespaceRoot := filepath.Join(cacheRoot, "goforj", "api-index")
+	relative, err := filepath.Rel(namespaceRoot, defaultPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("cache path %q is outside namespace %q: relative=%q err=%v", defaultPath, namespaceRoot, relative, err)
+	}
+	if filepath.Base(defaultPath) != apiIndexCacheFilename {
+		t.Fatalf("cache filename = %q, want %q", filepath.Base(defaultPath), apiIndexCacheFilename)
+	}
+	key := filepath.Base(filepath.Dir(defaultPath))
+	decodedKey, err := hex.DecodeString(key)
+	if err != nil || len(decodedKey) != 32 {
+		t.Fatalf("cache key %q is not a SHA-256 digest: bytes=%d err=%v", key, len(decodedKey), err)
+	}
+	if strings.Contains(defaultPath, "workspace-secret-name") || strings.Contains(namedPath, "customer-portal") {
+		t.Fatalf("cache hierarchy exposes raw project/app names: default=%q named=%q", defaultPath, namedPath)
+	}
+
+	t.Run("symlinked root", func(t *testing.T) {
+		link := filepath.Join(projectsRoot, "project-link")
+		if err := os.Symlink(root, link); err != nil {
+			t.Skipf("create project symlink: %v", err)
+		}
+		linkedPath := apiIndexCachePathUnderRoot(paths{root: link}, cacheRoot)
+		if linkedPath != defaultPath {
+			t.Fatalf("symlinked project cache path = %q, want %q", linkedPath, defaultPath)
+		}
+	})
+}
+
+// TestAPIIndexCachePathFallsBackToTemporaryStorage verifies unavailable user-cache discovery retains one namespaced stable path.
+func TestAPIIndexCachePathFallsBackToTemporaryStorage(t *testing.T) {
+	userCacheRoot := filepath.Join(t.TempDir(), "user-cache")
+	temporaryRoot := filepath.Join(t.TempDir(), "temporary-cache")
+	input := paths{root: t.TempDir(), appName: "worker"}
+
+	fallbackUsed := false
+	userPath := apiIndexCachePathWithDirectories(input, func() (string, error) {
+		return userCacheRoot, nil
+	}, func() string {
+		fallbackUsed = true
+		return temporaryRoot
+	})
+	if !strings.HasPrefix(userPath, filepath.Join(userCacheRoot, "goforj", "api-index")+string(filepath.Separator)) {
+		t.Fatalf("user cache path = %q, want root %q", userPath, userCacheRoot)
+	}
+	if fallbackUsed {
+		t.Fatal("temporary directory was consulted despite an available user cache")
+	}
+	fallbackPath := apiIndexCachePathWithDirectories(input, func() (string, error) {
+		return "", errors.New("cache unavailable")
+	}, func() string {
+		return temporaryRoot
+	})
+	if !strings.HasPrefix(fallbackPath, filepath.Join(temporaryRoot, "goforj", "api-index")+string(filepath.Separator)) {
+		t.Fatalf("fallback cache path = %q, want root %q", fallbackPath, temporaryRoot)
+	}
+	emptyRootPath := apiIndexCachePathWithDirectories(input, func() (string, error) {
+		return "  ", nil
+	}, func() string {
+		return temporaryRoot
+	})
+	if emptyRootPath != fallbackPath {
+		t.Fatalf("empty user cache fallback = %q, want %q", emptyRootPath, fallbackPath)
+	}
+	repeated := apiIndexCachePathWithDirectories(input, func() (string, error) {
+		return userCacheRoot, errors.New("still unavailable")
+	}, func() string {
+		return temporaryRoot
+	})
+	if repeated != fallbackPath {
+		t.Fatalf("temporary fallback changed between calls: first=%q repeated=%q", fallbackPath, repeated)
 	}
 }
 

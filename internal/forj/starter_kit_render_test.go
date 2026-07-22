@@ -62,7 +62,7 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Vue starter package: %v", err)
 	}
-	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite": "^7.3.6"`} {
+	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite": "^8.1.5"`} {
 		if !strings.Contains(string(packageJSON), expected) {
 			t.Errorf("Vue starter package omitted %q:\n%s", expected, packageJSON)
 		}

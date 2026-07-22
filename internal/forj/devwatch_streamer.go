@@ -717,7 +717,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		line := data[:idx]
 		w.buf.Next(idx + 1)
 		timestamp := time.Now()
-		rawLine := string(bytes.TrimSuffix(line, []byte{'\r'}))
+		rawLine := finalDevwatchTerminalFrame(string(line))
 		if w.skipBlankAfterTrigger {
 			w.skipBlankAfterTrigger = false
 			if rawLine == "" {
@@ -798,6 +798,15 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		devwatchOutputMu.Unlock()
 	}
 	return len(p), nil
+}
+
+// finalDevwatchTerminalFrame retains the last redraw frame because transcript lines cannot reproduce in-place terminal updates.
+func finalDevwatchTerminalFrame(line string) string {
+	line = strings.TrimRight(line, "\r")
+	if index := strings.LastIndexByte(line, '\r'); index >= 0 {
+		return line[index+1:]
+	}
+	return line
 }
 
 // decorateDevAppLogAppColumn adds a dev-only app column to timestamped runtime log lines.
