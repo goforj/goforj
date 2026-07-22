@@ -3176,15 +3176,15 @@ func installWire() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create wire tool dir: %w", err)
 	}
-	wirePath := filepath.Join(toolDir, "wire")
 	install := exec.Command("go", "install", wireInstallTarget)
 	install.Env = os.Environ()
 	install.Env = append(install.Env, "GOBIN="+toolDir)
 	if out, err := install.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
-	if _, err := os.Stat(wirePath); err != nil {
-		return "", fmt.Errorf("wire install: binary missing after install: %w", err)
+	wirePath, err := exec.LookPath(filepath.Join(toolDir, "wire"))
+	if err != nil {
+		return "", fmt.Errorf("wire install: locate binary after install: %w", err)
 	}
 	return wirePath, nil
 }

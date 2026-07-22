@@ -18,6 +18,7 @@ import (
 
 	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/web/webindex"
 )
 
 type stubAPIIndexer struct {
@@ -110,7 +111,6 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	if err := os.WriteFile(legacyCachePath, []byte("old shared cache binary"), 0o755); err != nil {
 		t.Fatalf("write legacy cache binary: %v", err)
 	}
-
 	cmd := &Cmd{Root: root}
 	if _, err := cmd.runPlainGoBuild(root, []string{"-o", "./bin/app", "./cmd/app"}); err != nil {
 		t.Fatalf("runPlainGoBuild returned error: %v", err)
@@ -122,23 +122,99 @@ func TestRunPlainGoBuildPublishesExecutableAtomically(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Fatalf("expected built binary to be executable, mode %s", info.Mode())
 	}
-	if _, err := os.Stat(filepath.Join(root, "bin", ".app.publish")); !os.IsNotExist(err) {
-		t.Fatalf("expected publish temporary build output to be cleaned up, got %v", err)
+	publishPaths, err := filepath.Glob(filepath.Join(root, "bin", ".app.*.publish"))
+	if err != nil {
+		t.Fatalf("glob publish temporary build outputs: %v", err)
+	}
+	if len(publishPaths) != 0 {
+		t.Fatalf("expected publish temporary build output to be cleaned up, got %v", publishPaths)
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin", ".app.ready")); err != nil {
 		t.Fatalf("expected build ready stamp: %v", err)
 	}
-	cacheEntries, err := os.ReadDir(filepath.Join(root, "bin", ".forj-build-cache"))
+	cachePath := filepath.Join(root, "bin", ".forj-build-cache", "app.target", "app")
+	cacheInfo, err := os.Stat(cachePath)
 	if err != nil {
-		t.Fatalf("read build cache dir: %v", err)
+		t.Fatalf("stat stable build cache output: %v", err)
 	}
-	if len(cacheEntries) != 0 {
-		t.Fatalf("expected hidden build temp output to be cleaned up, got %d entries", len(cacheEntries))
+	if runtime.GOOS != "windows" && cacheInfo.Mode()&0o111 == 0 {
+		t.Fatalf("expected cached build output to be executable, mode %s", cacheInfo.Mode())
+	}
+	if _, err := os.Stat(legacyCachePath); !os.IsNotExist(err) {
+		t.Fatalf("expected superseded stable build output to be removed, got %v", err)
+	}
+	cacheEntries, err := os.ReadDir(filepath.Dir(cachePath))
+	if err != nil {
+		t.Fatalf("read target build cache dir: %v", err)
+	}
+	cacheEntryNames := make([]string, 0, len(cacheEntries))
+	for _, entry := range cacheEntries {
+		cacheEntryNames = append(cacheEntryNames, entry.Name())
+	}
+	wantCacheEntries := []string{webindex.ArtifactPublicationLockFilename, "app"}
+	if !reflect.DeepEqual(cacheEntryNames, wantCacheEntries) {
+		t.Fatalf("target build cache entries = %v, want %v", cacheEntryNames, wantCacheEntries)
 	}
 }
 
-// TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs verifies overlapping builds never share unpublished executables.
-func TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs(t *testing.T) {
+// TestRunPlainGoBuildReusesStableLinkerOutput verifies unchanged builds retain the stable output path that lets Go reuse linker work.
+func TestRunPlainGoBuildReusesStableLinkerOutput(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/stablebuild\n\ngo 1.24\n",
+		"cmd/app/main.go": `package main
+
+import "fmt"
+
+func main() { fmt.Print("ready") }
+`,
+	}
+	for relativePath, contents := range files {
+		absolutePath := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(absolutePath), 0o755); err != nil {
+			t.Fatalf("create %s directory: %v", relativePath, err)
+		}
+		if err := os.WriteFile(absolutePath, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relativePath, err)
+		}
+	}
+
+	binaryName := "app"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	command := &Cmd{Root: root}
+	args := []string{"-o", filepath.ToSlash(filepath.Join(".", "bin", binaryName)), "./cmd/app"}
+	if _, err := command.runPlainGoBuild(root, args); err != nil {
+		t.Fatalf("first runPlainGoBuild: %v", err)
+	}
+	cachePath := filepath.Join(root, "bin", ".forj-build-cache", binaryName+".target", binaryName)
+	firstCacheInfo, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("stat first stable output: %v", err)
+	}
+
+	if _, err := command.runPlainGoBuild(root, args); err != nil {
+		t.Fatalf("second runPlainGoBuild: %v", err)
+	}
+	cacheInfo, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("stat reused stable output: %v", err)
+	}
+	if !os.SameFile(firstCacheInfo, cacheInfo) {
+		t.Fatal("stable output was replaced during an unchanged build")
+	}
+	output, err := exec.Command(filepath.Join(root, "bin", binaryName)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run published executable: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	if string(output) != "ready" {
+		t.Fatalf("published executable output = %q, want ready", output)
+	}
+}
+
+// TestPlanAtomicGoBuildReusesStableOutputWithUniquePublicationPaths verifies overlapping builds share only the serialized linker target.
+func TestPlanAtomicGoBuildReusesStableOutputWithUniquePublicationPaths(t *testing.T) {
 	root := t.TempDir()
 	firstPlan, err := planAtomicGoBuild(root, []string{"-o", "./bin/app", "./cmd/app"})
 	if err != nil {
@@ -158,15 +234,27 @@ func TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs(t *testing.T) {
 	}
 	defer secondPlan.cleanup()
 
-	if firstPlan.build == secondPlan.build {
-		t.Fatalf("expected unique build outputs, got %q", firstPlan.build)
+	if firstPlan.build != secondPlan.build {
+		t.Fatalf("expected stable build output, got %q and %q", firstPlan.build, secondPlan.build)
+	}
+	if !reflect.DeepEqual(firstPlan.args, secondPlan.args) {
+		t.Fatalf("expected stable go build args, got %#v and %#v", firstPlan.args, secondPlan.args)
+	}
+	if firstPlan.publish == secondPlan.publish {
+		t.Fatalf("expected unique publication outputs, got %q", firstPlan.publish)
 	}
 	if firstPlan.ready != filepath.Join(root, "bin", ".app.ready") || secondPlan.ready != filepath.Join(root, "bin", ".app.ready") {
 		t.Fatalf("expected shared ready stamp path, got %q and %q", firstPlan.ready, secondPlan.ready)
 	}
-	for _, path := range []string{firstPlan.build, secondPlan.build} {
-		if filepath.Dir(path) != filepath.Join(root, "bin", ".forj-build-cache") {
-			t.Fatalf("expected hidden build output dir, got %q", path)
+	if filepath.Dir(firstPlan.build) != filepath.Join(root, "bin", ".forj-build-cache", "app.target") {
+		t.Fatalf("expected per-target hidden build output dir, got %q", firstPlan.build)
+	}
+	if firstPlan.legacy != filepath.Join(root, "bin", ".forj-build-cache", "app") || secondPlan.legacy != firstPlan.legacy {
+		t.Fatalf("expected shared superseded build output, got %q and %q", firstPlan.legacy, secondPlan.legacy)
+	}
+	for _, path := range []string{firstPlan.publish, secondPlan.publish} {
+		if filepath.Dir(path) != filepath.Join(root, "bin") {
+			t.Fatalf("expected publication output beside final executable, got %q", path)
 		}
 	}
 	if strings.Contains(strings.Join(firstPlan.args, " "), "./bin/app") || strings.Contains(strings.Join(secondPlan.args, " "), "./bin/app") {
@@ -174,8 +262,63 @@ func TestPlanAtomicGoBuildUsesUniqueHiddenBuildOutputs(t *testing.T) {
 	}
 }
 
-// TestUniqueBuildOutputNameRemainsUniqueConcurrently verifies rapid builds cannot share a staging path.
-func TestUniqueBuildOutputNameRemainsUniqueConcurrently(t *testing.T) {
+// TestAtomicBuildPlanCleanupSupersededOutputPreservesDeterministicTarget keeps migration cleanup away from the reusable linker output.
+func TestAtomicBuildPlanCleanupSupersededOutputPreservesDeterministicTarget(t *testing.T) {
+	root := t.TempDir()
+	stable := filepath.Join(root, ".forj-build-cache", "app.target", "app")
+	legacy := filepath.Join(root, ".forj-build-cache", "app")
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatalf("create stable output directory: %v", err)
+	}
+	if err := os.WriteFile(stable, []byte("stable"), 0o755); err != nil {
+		t.Fatalf("write stable output: %v", err)
+	}
+	if err := os.WriteFile(legacy, []byte("legacy"), 0o755); err != nil {
+		t.Fatalf("write legacy output: %v", err)
+	}
+
+	plan := &atomicBuildPlan{build: stable, legacy: legacy}
+	plan.cleanupSupersededBuildOutput()
+
+	contents, err := os.ReadFile(stable)
+	if err != nil {
+		t.Fatalf("read deterministic target: %v", err)
+	}
+	if string(contents) != "stable" {
+		t.Fatalf("deterministic target = %q, want stable", contents)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("superseded output remains after cleanup: %v", err)
+	}
+}
+
+// TestPlanAtomicGoBuildIsolatesStableOutputsPerTarget verifies independent app targets do not contend on one directory-scoped lock.
+func TestPlanAtomicGoBuildIsolatesStableOutputsPerTarget(t *testing.T) {
+	root := t.TempDir()
+	appPlan, err := planAtomicGoBuild(root, []string{"-o", "./bin/app", "./cmd/app"})
+	if err != nil {
+		t.Fatalf("plan app build: %v", err)
+	}
+	reportingPlan, err := planAtomicGoBuild(root, []string{"-o", "./bin/reporting", "./cmd/reporting"})
+	if err != nil {
+		t.Fatalf("plan reporting build: %v", err)
+	}
+	defer appPlan.cleanup()
+	defer reportingPlan.cleanup()
+
+	if filepath.Dir(appPlan.build) == filepath.Dir(reportingPlan.build) {
+		t.Fatalf("independent target build outputs share lock directory %q", filepath.Dir(appPlan.build))
+	}
+	if appPlan.build != filepath.Join(root, "bin", ".forj-build-cache", "app.target", "app") {
+		t.Fatalf("app stable output = %q", appPlan.build)
+	}
+	if reportingPlan.build != filepath.Join(root, "bin", ".forj-build-cache", "reporting.target", "reporting") {
+		t.Fatalf("reporting stable output = %q", reportingPlan.build)
+	}
+}
+
+// TestUniqueBuildPublicationNameRemainsUniqueConcurrently verifies rapid builds cannot share a publication path.
+func TestUniqueBuildPublicationNameRemainsUniqueConcurrently(t *testing.T) {
 	const count = 128
 	names := make(chan string, count)
 	var builds sync.WaitGroup
@@ -183,7 +326,7 @@ func TestUniqueBuildOutputNameRemainsUniqueConcurrently(t *testing.T) {
 		builds.Add(1)
 		go func() {
 			defer builds.Done()
-			names <- uniqueBuildOutputName("app")
+			names <- uniqueBuildPublicationName("app")
 		}()
 	}
 	builds.Wait()
@@ -192,12 +335,49 @@ func TestUniqueBuildOutputNameRemainsUniqueConcurrently(t *testing.T) {
 	seen := make(map[string]struct{}, count)
 	for name := range names {
 		if _, exists := seen[name]; exists {
-			t.Fatalf("uniqueBuildOutputName() repeated %q", name)
+			t.Fatalf("uniqueBuildPublicationName() repeated %q", name)
 		}
 		seen[name] = struct{}{}
 	}
 	if len(seen) != count {
-		t.Fatalf("uniqueBuildOutputName() produced %d names, want %d", len(seen), count)
+		t.Fatalf("uniqueBuildPublicationName() produced %d names, want %d", len(seen), count)
+	}
+}
+
+// TestPublishBuiltBinaryFallsBackToPrivateCopy verifies filesystems without hard links retain complete atomic publication.
+func TestPublishBuiltBinaryFallsBackToPrivateCopy(t *testing.T) {
+	root := t.TempDir()
+	plan := &atomicBuildPlan{
+		build:   filepath.Join(root, ".forj-build-cache", "app.target", "app"),
+		publish: filepath.Join(root, ".app.fallback.publish"),
+		final:   filepath.Join(root, "app"),
+	}
+	if err := os.MkdirAll(filepath.Dir(plan.build), 0o755); err != nil {
+		t.Fatalf("create stable output directory: %v", err)
+	}
+	if err := os.WriteFile(plan.build, []byte("complete binary"), 0o755); err != nil {
+		t.Fatalf("write stable output: %v", err)
+	}
+	if err := os.WriteFile(plan.final, []byte("previous binary"), 0o755); err != nil {
+		t.Fatalf("write previous published output: %v", err)
+	}
+
+	linkErr := errors.New("hard links unavailable")
+	if err := publishBuiltBinaryWithLink(plan, func(string, string) error { return linkErr }); err != nil {
+		t.Fatalf("publish with copy fallback: %v", err)
+	}
+	contents, err := os.ReadFile(plan.final)
+	if err != nil {
+		t.Fatalf("read published output: %v", err)
+	}
+	if string(contents) != "complete binary" {
+		t.Fatalf("published output = %q", contents)
+	}
+	if _, err := os.Stat(plan.build); err != nil {
+		t.Fatalf("stable output was not retained: %v", err)
+	}
+	if _, err := os.Stat(plan.publish); !os.IsNotExist(err) {
+		t.Fatalf("private publication path remains after rename: %v", err)
 	}
 }
 
@@ -336,12 +516,28 @@ func main() { fmt.Print("beta") }
 		t.Fatal("no binary launch overlapped the repeated publication window")
 	}
 
-	entries, err := os.ReadDir(filepath.Join(root, "bin", ".forj-build-cache"))
-	if err != nil {
-		t.Fatalf("ReadDir(build cache) error = %v", err)
+	cachePath := filepath.Join(root, "bin", ".forj-build-cache", "app.target", "app")
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("Stat(stable build cache) error = %v", err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("build cache retained %d publication artifacts", len(entries))
+	entries, err := os.ReadDir(filepath.Dir(cachePath))
+	if err != nil {
+		t.Fatalf("ReadDir(target build cache) error = %v", err)
+	}
+	entryNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entryNames = append(entryNames, entry.Name())
+	}
+	wantEntries := []string{webindex.ArtifactPublicationLockFilename, "app"}
+	if !reflect.DeepEqual(entryNames, wantEntries) {
+		t.Fatalf("target build cache entries = %v, want %v", entryNames, wantEntries)
+	}
+	publishPaths, err := filepath.Glob(filepath.Join(root, "bin", ".app.*.publish"))
+	if err != nil {
+		t.Fatalf("Glob(publication outputs) error = %v", err)
+	}
+	if len(publishPaths) != 0 {
+		t.Fatalf("publication outputs remain after concurrent builds: %v", publishPaths)
 	}
 }
 

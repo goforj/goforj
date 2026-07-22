@@ -58,6 +58,7 @@ func TestConfigureCompiledDevCommandPreservesFullProcessOverride(t *testing.T) {
 		newDevwatchLifecycleState(1, []string{"Run App"}),
 		0,
 		false,
+		false,
 	)
 	if len(spec.Command.Args) != 3 {
 		t.Fatalf("configured command args = %q, want Bash wrapper", spec.Command.Args)
@@ -145,6 +146,7 @@ func TestConfigureCompiledDevCommandSelectsRuntimeWrapper(t *testing.T) {
 				false,
 				newDevwatchLifecycleState(1, []string{spec.Name}),
 				0,
+				false,
 				false,
 			)
 			if spec.NativeRuntimeCommand != test.wantNative {
@@ -421,6 +423,15 @@ func TestDevWatcherControllerRetainsOnlyFailingTUIWatcherOutput(t *testing.T) {
 		t.Fatalf("create watcher controller: %v", err)
 	}
 	defer controller.stop(time.Second)
+	for _, taskID := range []string{"desktop", "daemon"} {
+		command := controller.tasks[taskID].spec.Command
+		if command.PTY {
+			t.Fatalf("TUI watcher %q unexpectedly owns a nested pseudo-terminal", taskID)
+		}
+		if command.Stdout == nil || command.Stderr == nil {
+			t.Fatalf("TUI watcher %q did not preserve separate stdout and stderr streams", taskID)
+		}
+	}
 
 	if _, err := controller.tasks["desktop"].spec.Command.Stdout.Write([]byte("desktop port conflict\n")); err != nil {
 		t.Fatalf("write desktop output: %v", err)
@@ -446,6 +457,29 @@ func TestShouldRetainDevWatcherFailureOutputLimitsReplayToTUI(t *testing.T) {
 	}
 	if shouldRetainDevWatcherFailureOutput(io.Discard) {
 		t.Fatal("expected plain output to avoid retaining a duplicate failure tail")
+	}
+}
+
+// TestShouldAttachDevWatcherPTYGivesTheOuterTUIExclusiveTerminalOwnership prevents nested terminal renderers from corrupting its reserved rows.
+func TestShouldAttachDevWatcherPTYGivesTheOuterTUIExclusiveTerminalOwnership(t *testing.T) {
+	tests := []struct {
+		name   string
+		writer io.Writer
+		goos   string
+		want   bool
+	}{
+		{name: "Bubble Tea on Darwin", writer: &devBubbleWriter{}, goos: "darwin", want: false},
+		{name: "Bubble Tea on Linux", writer: &devBubbleWriter{}, goos: "linux", want: false},
+		{name: "plain Darwin", writer: io.Discard, goos: "darwin", want: true},
+		{name: "plain Linux", writer: io.Discard, goos: "linux", want: true},
+		{name: "plain Windows", writer: io.Discard, goos: "windows", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shouldAttachDevWatcherPTY(test.writer, test.goos); got != test.want {
+				t.Fatalf("shouldAttachDevWatcherPTY() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

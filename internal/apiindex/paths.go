@@ -1,12 +1,17 @@
 package apiindex
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/goforj/goforj/project"
 )
+
+// apiIndexCacheFilename stays private because the cache is an implementation detail rather than a generated contract artifact.
+const apiIndexCacheFilename = ".api_index.cache"
 
 // paths binds source discovery and all artifacts to one active app.
 type paths struct {
@@ -81,6 +86,50 @@ func rootDefaultPaths(root string, defaults paths) paths {
 	defaults.openAPI = rootPath(defaults.openAPI)
 	defaults.routeComposition = rootPath(defaults.routeComposition)
 	return defaults
+}
+
+// apiIndexCachePath keeps reusable analysis state outside the project so cache writes cannot invalidate Go builds.
+func apiIndexCachePath(input paths) string {
+	return apiIndexCachePathWithDirectories(input, os.UserCacheDir, os.TempDir)
+}
+
+// apiIndexCachePathWithDirectories selects the user cache when available and a process-independent temporary root otherwise.
+func apiIndexCachePathWithDirectories(input paths, userCacheDirectory func() (string, error), temporaryDirectory func() string) string {
+	cacheRoot, err := userCacheDirectory()
+	if err != nil || strings.TrimSpace(cacheRoot) == "" {
+		cacheRoot = temporaryDirectory()
+	}
+	return apiIndexCachePathUnderRoot(input, filepath.Clean(cacheRoot))
+}
+
+// apiIndexCachePathUnderRoot isolates projects and apps without exposing workspace paths in the cache hierarchy.
+func apiIndexCachePathUnderRoot(input paths, cacheRoot string) string {
+	identity := canonicalAPIIndexCacheRoot(input.root) + "\x00" + normalizedAPIIndexCacheAppName(input.appName)
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
+	return filepath.Join(cacheRoot, "goforj", "api-index", key, apiIndexCacheFilename)
+}
+
+// canonicalAPIIndexCacheRoot normalizes equivalent absolute, relative, and symlinked project roots to one cache identity.
+func canonicalAPIIndexCacheRoot(root string) string {
+	absolute, err := filepath.Abs(root)
+	if err == nil {
+		root = absolute
+	}
+	root = filepath.Clean(root)
+	resolved, err := filepath.EvalSymlinks(root)
+	if err == nil {
+		root = resolved
+	}
+	return filepath.Clean(root)
+}
+
+// normalizedAPIIndexCacheAppName maps the implicit app to its conventional identity before hashing.
+func normalizedAPIIndexCacheAppName(appName string) string {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		return project.DefaultAppName
+	}
+	return appName
 }
 
 // participation records whether modern config can make an intentional indexing decision.

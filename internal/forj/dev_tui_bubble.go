@@ -257,7 +257,8 @@ func runDevTTYSttySane(tty *os.File) {
 	_ = cmd.Run()
 }
 
-const devTerminalModeResetSequence = "\x1b[>u\x1b[<u\x1b[?1004l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\r\n"
+// devTerminalModeResetSequence releases terminal modes without advancing past Bubble Tea's restored cursor row.
+const devTerminalModeResetSequence = "\x1b[>u\x1b[<u\x1b[?1004l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\r\x1b[2K"
 
 func (w *devBubbleWriter) scheduleFlushLocked() {
 	if len(w.pending) == 0 {
@@ -1413,9 +1414,10 @@ func parseDevAppCommandAcceptsArgs(help string) bool {
 func buildDevOutputSessionBubble(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) devOutputSession {
 	writer := newDevBubbleWriter(config, requestRestart, requestRender, requestCommand)
 	return devOutputSession{
-		stdout:   writer,
-		stderr:   writer,
-		shutdown: func() { _ = writer.Close() },
-		refresh:  func() { writer.RefreshEnv(config) },
+		stdout:           writer,
+		stderr:           writer,
+		shutdown:         func() { _ = writer.Close() },
+		refresh:          func() { writer.RefreshEnv(config) },
+		restoresTerminal: true,
 	}
 }

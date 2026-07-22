@@ -37,6 +37,155 @@ func TestCandidateRemainsIsolatedUntilPublication(t *testing.T) {
 	}
 }
 
+// TestChangedCandidateBreaksSeedLinksWithoutMutatingActiveArtifacts verifies Web replaces staged links instead of writing through to the active generation.
+func TestChangedCandidateBreaksSeedLinksWithoutMutatingActiveArtifacts(t *testing.T) {
+	fixture := writeStagedFixture(t)
+
+	prepared, err := newTestRunner().prepareDefault(runOptions{root: fixture.root})
+	if err != nil {
+		t.Fatalf("prepare API index: %v", err)
+	}
+	pending := prepared.candidate
+	if pending == nil {
+		t.Fatal("changed fixture did not produce a candidate")
+	}
+	defer discardCandidate(t, pending)
+
+	assertArtifactContents(t, fixture.paths, fixture.previous)
+	for index, activePath := range artifactPaths(fixture.paths) {
+		stagedPath := artifactPaths(pending.stagedPaths)[index]
+		activeInfo, err := os.Stat(activePath)
+		if err != nil {
+			t.Fatalf("stat active artifact %s: %v", activePath, err)
+		}
+		stagedInfo, err := os.Stat(stagedPath)
+		if err != nil {
+			t.Fatalf("stat staged artifact %s: %v", stagedPath, err)
+		}
+		if os.SameFile(activeInfo, stagedInfo) {
+			t.Fatalf("changed staged artifact %s still aliases active artifact %s", stagedPath, activePath)
+		}
+	}
+
+	stagingDir := pending.stagingDir
+	discardCandidate(t, pending)
+	if _, err := os.Stat(stagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging directory remained after changed candidate discard: %v", err)
+	}
+}
+
+// TestSeedStagedArtifactFallsBackToSnapshottedBytes verifies a concurrent source rename or unsupported hard links cannot prevent safe staging.
+func TestSeedStagedArtifactFallsBackToSnapshottedBytes(t *testing.T) {
+	root := t.TempDir()
+	activePath := filepath.Join(root, "active.json")
+	candidatePath := filepath.Join(root, "candidate.json")
+	want := []byte("{\"generation\":\"snapshotted\"}\n")
+	if err := os.WriteFile(activePath, want, 0o644); err != nil {
+		t.Fatalf("write active artifact: %v", err)
+	}
+	snapshot, err := readFileSnapshot(activePath)
+	if err != nil {
+		t.Fatalf("snapshot active artifact: %v", err)
+	}
+	if err := os.Remove(activePath); err != nil {
+		t.Fatalf("remove active artifact before seeding: %v", err)
+	}
+
+	if err := seedStagedArtifact(activePath, candidatePath, snapshot); err != nil {
+		t.Fatalf("seed staged artifact from snapshot fallback: %v", err)
+	}
+	got, err := os.ReadFile(candidatePath)
+	if err != nil {
+		t.Fatalf("read copied staged artifact: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("copied staged artifact = %q, want %q", got, want)
+	}
+}
+
+// TestSeedStagedArtifactCopiesSymlinkTargets verifies moving staging beneath a child directory cannot change relative-link resolution.
+func TestSeedStagedArtifactCopiesSymlinkTargets(t *testing.T) {
+	root := t.TempDir()
+	targetPath := filepath.Join(root, "target.json")
+	activePath := filepath.Join(root, "active.json")
+	stagingDir := filepath.Join(root, "stage")
+	candidatePath := filepath.Join(stagingDir, "candidate.json")
+	want := []byte("{\"generation\":\"linked\"}\n")
+	if err := os.WriteFile(targetPath, want, 0o644); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Symlink(filepath.Base(targetPath), activePath); err != nil {
+		t.Skipf("create active artifact symlink: %v", err)
+	}
+	if err := os.Mkdir(stagingDir, 0o755); err != nil {
+		t.Fatalf("create staging directory: %v", err)
+	}
+	snapshot, err := readFileSnapshot(activePath)
+	if err != nil {
+		t.Fatalf("snapshot active artifact symlink: %v", err)
+	}
+
+	if err := seedStagedArtifact(activePath, candidatePath, snapshot); err != nil {
+		t.Fatalf("seed staged artifact from symlink: %v", err)
+	}
+	info, err := os.Lstat(candidatePath)
+	if err != nil {
+		t.Fatalf("lstat copied staged artifact: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("staged artifact mode = %s, want regular file", info.Mode())
+	}
+	got, err := os.ReadFile(candidatePath)
+	if err != nil {
+		t.Fatalf("read copied staged artifact: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("copied staged artifact = %q, want %q", got, want)
+	}
+}
+
+// TestSeedStagedArtifactsPreservesMissingArtifacts verifies a partial active generation does not invent files before Web produces them.
+func TestSeedStagedArtifactsPreservesMissingArtifacts(t *testing.T) {
+	root := t.TempDir()
+	activePaths := paths{
+		out:         filepath.Join(root, "build", "api_index.json"),
+		diagnostics: filepath.Join(root, "build", "api_index.diagnostics.json"),
+		openAPI:     filepath.Join(root, "build", "openapi.json"),
+	}
+	if err := os.MkdirAll(filepath.Dir(activePaths.out), 0o755); err != nil {
+		t.Fatalf("create active artifact directory: %v", err)
+	}
+	want := []byte("{}\n")
+	if err := os.WriteFile(activePaths.out, want, 0o644); err != nil {
+		t.Fatalf("write partial active artifact: %v", err)
+	}
+	active, err := readSnapshots(activePaths)
+	if err != nil {
+		t.Fatalf("read partial active generation: %v", err)
+	}
+	stagingDir, err := createStagingDir(activePaths)
+	if err != nil {
+		t.Fatalf("create staging directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(stagingDir) }()
+	candidatePaths := stagedPaths(activePaths, stagingDir)
+	if err := seedStagedArtifacts(activePaths, candidatePaths, active); err != nil {
+		t.Fatalf("seed partial active generation: %v", err)
+	}
+	got, err := os.ReadFile(candidatePaths.out)
+	if err != nil {
+		t.Fatalf("read seeded API index: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("seeded API index = %q, want %q", got, want)
+	}
+	for _, path := range []string{candidatePaths.diagnostics, candidatePaths.openAPI} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("missing active artifact unexpectedly seeded at %s: %v", path, err)
+		}
+	}
+}
+
 // TestCandidateDiscardReportsRemovalFailure verifies callers can retry cleanup instead of silently leaking staging data.
 func TestCandidateDiscardReportsRemovalFailure(t *testing.T) {
 	stagingDir := filepath.Join(t.TempDir(), ".forj-api-index-stage-test")

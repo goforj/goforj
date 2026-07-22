@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/goforj/console"
+	"github.com/goforj/goforj/project"
 )
 
 // consoleLoaderWriter provides a concurrency-safe terminal descriptor for loader integration tests.
@@ -109,5 +110,149 @@ func TestRunWithLoaderPropagatesErrorsAndReleasesTheTransient(t *testing.T) {
 	}
 	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 4 {
 		t.Fatalf("transient clear writes = %d, want at least 4: %q", got, output.String())
+	}
+}
+
+// TestRunDevBuildJobWithLoaderAnimatesBootstrapBuild verifies initial App compilation uses the shared console loader and clears it on success.
+func TestRunDevBuildJobWithLoaderAnimatesBootstrapBuild(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+	t.Chdir(t.TempDir())
+
+	output := &consoleLoaderWriter{}
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            output,
+		Stderr:            output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		LoaderInterval:    time.Hour,
+		IsTerminal:        func(int) bool { return true },
+	}))
+
+	err := runDevBuildJobWithLoader(output, output, "Building app", devBuildJob{
+		app:     project.DefaultApp(),
+		command: "true",
+	})
+	if err != nil {
+		t.Fatalf("runDevBuildJobWithLoader() error = %v", err)
+	}
+	if !strings.Contains(output.String(), "Building app") {
+		t.Fatalf("loader omitted build label: %q", output.String())
+	}
+	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 2 {
+		t.Fatalf("loader clear writes = %d, want at least 2: %q", got, output.String())
+	}
+}
+
+// TestRunDevBuildJobWithLoaderKeepsRedirectedOutputStable protects CI logs from spinner frames and carriage-return redraws.
+func TestRunDevBuildJobWithLoaderKeepsRedirectedOutputStable(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+	t.Chdir(t.TempDir())
+
+	var output bytes.Buffer
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            &output,
+		Stderr:            &output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		IsTerminal:        func(int) bool { return false },
+	}))
+
+	err := runDevBuildJobWithLoader(&output, &output, "Building app", devBuildJob{
+		app:     project.DefaultApp(),
+		command: "true",
+	})
+	if err != nil {
+		t.Fatalf("runDevBuildJobWithLoader() error = %v", err)
+	}
+	if got, want := output.String(), "· Building app\n"; got != want {
+		t.Fatalf("redirected loader output = %q, want %q", got, want)
+	}
+}
+
+// TestRunDevBuildJobWithLoaderPreservesSuccessfulCustomOutput keeps owner-authored build messages visible after transient progress completes.
+func TestRunDevBuildJobWithLoaderPreservesSuccessfulCustomOutput(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+	t.Chdir(t.TempDir())
+
+	var output bytes.Buffer
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            &output,
+		Stderr:            &output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		IsTerminal:        func(int) bool { return false },
+	}))
+
+	err := runDevBuildJobWithLoader(&output, &output, "Building app", devBuildJob{
+		app:     project.DefaultApp(),
+		command: "printf 'generated assets\\n'; printf 'build warning\\n' >&2",
+	})
+	if err != nil {
+		t.Fatalf("runDevBuildJobWithLoader() error = %v", err)
+	}
+	for _, expected := range []string{"· Building app", "generated assets", "build warning"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("successful custom build omitted %q: %q", expected, output.String())
+		}
+	}
+}
+
+// TestRunDevBuildJobWithLoaderReplaysFailureAfterCleanup keeps compilation diagnostics visible without corrupting the loader line.
+func TestRunDevBuildJobWithLoaderReplaysFailureAfterCleanup(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+	t.Chdir(t.TempDir())
+
+	output := &consoleLoaderWriter{}
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            output,
+		Stderr:            output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		LoaderInterval:    time.Hour,
+		IsTerminal:        func(int) bool { return true },
+	}))
+
+	err := runDevBuildJobWithLoader(output, output, "Building app", devBuildJob{
+		app:     project.DefaultApp(),
+		command: "printf 'compile failed\\n' >&2; exit 7",
+	})
+	if err == nil {
+		t.Fatal("expected bootstrap build failure")
+	}
+	for _, expected := range []string{"Build failed for app", "compile failed"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("bootstrap failure omitted %q: %q", expected, output.String())
+		}
+	}
+	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 2 {
+		t.Fatalf("loader was not cleared before failure replay: %q", output.String())
 	}
 }

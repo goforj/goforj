@@ -2,7 +2,10 @@ package build
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,12 +15,13 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/compileprofile"
+	"github.com/goforj/web/webindex"
 )
 
 const profileToolCommand = "__forj_build_profile_exec"
 
-// atomicBuildOutputSequence avoids relying on host clock resolution for overlapping build identity.
-var atomicBuildOutputSequence atomic.Uint64
+// atomicBuildPublicationSequence avoids relying on host clock resolution for overlapping publication identity.
+var atomicBuildPublicationSequence atomic.Uint64
 
 type goBuildOptions struct {
 	extraEnv      []string
@@ -130,20 +134,16 @@ func (c *Cmd) runPlainGoBuild(root string, args []string) (string, error) {
 		return "", err
 	}
 	if plan != nil {
-		defer plan.cleanup()
-		if err := c.runGoBuild(root, plan.args, goBuildOptions{allowRecovery: true}); err != nil {
-			return "", err
+		lock, err := webindex.AcquireArtifactPublicationLock(context.Background(), plan.build)
+		if err != nil {
+			return "", fmt.Errorf("lock build cache output: %w", err)
 		}
-		if err := os.Chmod(plan.build, 0o755); err != nil {
-			return "", fmt.Errorf("prepare built binary permissions: %w", err)
+		status, buildErr := c.runAtomicGoBuild(root, plan)
+		releaseErr := lock.Release()
+		if releaseErr != nil {
+			releaseErr = fmt.Errorf("release build cache output lock: %w", releaseErr)
 		}
-		if err := os.Rename(plan.build, plan.final); err != nil {
-			return "", fmt.Errorf("publish built binary: %w", err)
-		}
-		if err := writeBuildReadyStamp(plan.ready); err != nil {
-			return "", fmt.Errorf("write build ready stamp: %w", err)
-		}
-		return c.lastBuildStatus, nil
+		return status, errors.Join(buildErr, releaseErr)
 	}
 	if err := c.runGoBuild(root, args, goBuildOptions{allowRecovery: true}); err != nil {
 		return "", err
@@ -151,16 +151,36 @@ func (c *Cmd) runPlainGoBuild(root string, args []string) (string, error) {
 	return c.lastBuildStatus, nil
 }
 
-// atomicBuildPlan binds command arguments and publication paths for one safely staged binary build.
-type atomicBuildPlan struct {
-	args   []string
-	final  string
-	build  string
-	ready  string
-	legacy string
+// runAtomicGoBuild keeps the stable linker output serialized until its exact completed inode has crossed the publication boundary.
+func (c *Cmd) runAtomicGoBuild(root string, plan *atomicBuildPlan) (string, error) {
+	defer plan.cleanup()
+	if err := c.runGoBuild(root, plan.args, goBuildOptions{allowRecovery: true}); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(plan.build, 0o755); err != nil {
+		return "", fmt.Errorf("prepare built binary permissions: %w", err)
+	}
+	if err := publishBuiltBinary(plan); err != nil {
+		return "", err
+	}
+	plan.cleanupSupersededBuildOutput()
+	if err := writeBuildReadyStamp(plan.ready); err != nil {
+		return "", fmt.Errorf("write build ready stamp: %w", err)
+	}
+	return c.lastBuildStatus, nil
 }
 
-// planAtomicGoBuild stages watched binaries in a hidden unique file so dev never executes a partial file.
+// atomicBuildPlan binds command arguments and publication paths for one safely staged binary build.
+type atomicBuildPlan struct {
+	args    []string
+	final   string
+	build   string
+	publish string
+	ready   string
+	legacy  string
+}
+
+// planAtomicGoBuild keeps Go's output path stable for linker caching while reserving a unique final-publication path.
 func planAtomicGoBuild(root string, args []string) (*atomicBuildPlan, error) {
 	outIndex := outputArgIndex(args)
 	if outIndex < 0 {
@@ -179,36 +199,97 @@ func planAtomicGoBuild(root string, args []string) (*atomicBuildPlan, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, err
 	}
-	buildName := uniqueBuildOutputName(filepath.Base(final))
-	build := filepath.Join(cacheDir, buildName)
+	buildName := filepath.Base(final)
+	// Per-target directories keep the directory-scoped lock from serializing independent app builds.
+	targetCacheDirName := buildName + ".target"
+	targetCacheDir := filepath.Join(cacheDir, targetCacheDirName)
+	if err := os.MkdirAll(targetCacheDir, 0o755); err != nil {
+		return nil, err
+	}
+	build := filepath.Join(targetCacheDir, buildName)
 	buildArg := build
 	if !filepath.IsAbs(finalArg) {
-		buildArg = filepath.Join(filepath.Dir(finalArg), ".forj-build-cache", buildName)
+		buildArg = filepath.Join(filepath.Dir(finalArg), ".forj-build-cache", targetCacheDirName, buildName)
 	}
 	atomicArgs := replaceBuildOutputArg(args, outIndex, buildArg)
-	legacyBuild := filepath.Join(cacheDir, filepath.Base(final))
+	publish := filepath.Join(dir, uniqueBuildPublicationName(filepath.Base(final)))
 	return &atomicBuildPlan{
-		args:   atomicArgs,
-		final:  final,
-		build:  build,
-		ready:  buildReadyStampPath(final),
-		legacy: legacyBuild,
+		args:    atomicArgs,
+		final:   final,
+		build:   build,
+		publish: publish,
+		ready:   buildReadyStampPath(final),
+		legacy:  filepath.Join(cacheDir, buildName),
 	}, nil
 }
 
-// cleanup removes unpublished outputs without disturbing the last complete binary.
+// cleanup removes only this invocation's unpublished output and preserves Go's stable linker cache target.
 func (p *atomicBuildPlan) cleanup() {
-	_ = os.Remove(p.build)
+	_ = os.Remove(p.publish)
+}
+
+// cleanupSupersededBuildOutput removes the prior stable linker target after its replacement has been published.
+func (p *atomicBuildPlan) cleanupSupersededBuildOutput() {
+	if filepath.Clean(p.legacy) == filepath.Clean(p.build) {
+		return
+	}
 	_ = os.Remove(p.legacy)
 }
 
-// uniqueBuildOutputName avoids shared temp paths when dev and manual builds overlap.
-func uniqueBuildOutputName(base string) string {
+// uniqueBuildPublicationName prevents overlapping builders from sharing the path renamed over the live executable.
+func uniqueBuildPublicationName(base string) string {
 	base = strings.TrimSpace(base)
 	if base == "" || base == "." || base == string(os.PathSeparator) {
 		base = "app"
 	}
-	return fmt.Sprintf(".%s.%d.%d.build", base, os.Getpid(), atomicBuildOutputSequence.Add(1))
+	return fmt.Sprintf(".%s.%d.%d.publish", base, os.Getpid(), atomicBuildPublicationSequence.Add(1))
+}
+
+// publishBuiltBinary snapshots the serialized cache output before atomically replacing the executable observed by watchers.
+func publishBuiltBinary(plan *atomicBuildPlan) error {
+	return publishBuiltBinaryWithLink(plan, os.Link)
+}
+
+// publishBuiltBinaryWithLink falls back to a private complete copy on filesystems that do not support hard links.
+func publishBuiltBinaryWithLink(plan *atomicBuildPlan, link func(string, string) error) error {
+	if err := link(plan.build, plan.publish); err != nil {
+		if copyErr := copyBuiltBinary(plan.build, plan.publish); copyErr != nil {
+			return errors.Join(
+				fmt.Errorf("link built binary for publication: %w", err),
+				fmt.Errorf("copy built binary for publication: %w", copyErr),
+			)
+		}
+	}
+	if err := os.Rename(plan.publish, plan.final); err != nil {
+		return fmt.Errorf("publish built binary: %w", err)
+	}
+	return nil
+}
+
+// copyBuiltBinary completes the fallback snapshot under its private name so a partial copy can never become the live executable.
+func copyBuiltBinary(source string, destination string) (returnErr error) {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+
+	info, err := input.Stat()
+	if err != nil {
+		return err
+	}
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, output.Close())
+		if returnErr != nil {
+			_ = os.Remove(destination)
+		}
+	}()
+	_, err = io.Copy(output, input)
+	return err
 }
 
 // buildReadyStampPath returns the watcher trigger written after a binary is fully published.

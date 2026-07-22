@@ -2,7 +2,7 @@ package resources
 
 import (
 	"context"
-	"fmt"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -46,7 +46,7 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 	}
 
 	if lighthouseURL := resolveLighthouseURL(env); lighthouseURL != "" {
-		resources = append(resources, Resource{ID: "lighthouse", Name: "Lighthouse", Category: "operator", URL: lighthouseURL, Description: "Operator UI and local runtime inspection surface.", Enabled: true, Priority: 10, Source: "env", Runtime: "operator", Owner: "goforj"})
+		resources = append(resources, Resource{ID: "lighthouse", Name: "Lighthouse", Category: "operator", URL: lighthouseURL, Description: "Operator UI and local runtime inspection surface.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Runtime: "operator", Owner: "goforj"})
 	}
 
 	if r.Config != nil {
@@ -58,33 +58,35 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 			resources = append(resources, primitiveResourcesForApp(env, resourceApps, app)...)
 		}
 		if components.Docker && composeProfileEnabled(env, "mailpit") {
-			resources = append(resources, Resource{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: urlWithPort(env, "MAILPIT_HTTP_PORT", "8025"), Description: "Local development inbox.", Enabled: true, Priority: 10, Source: "profile", Owner: "goforj"})
+			resources = append(resources, Resource{ID: "mailpit", Name: "Mailpit", Category: "mail", URL: urlWithPort(env, "MAILPIT_HTTP_PORT", "8025"), Description: "Local development inbox.", Enabled: true, Priority: 10, Source: "profile", Service: "mailpit", Owner: "goforj"})
 		}
 		if components.Docker && (composeProfileEnabled(env, "victoriametrics") || composeProfileEnabled(env, "grafana")) {
-			resources = append(resources, Resource{ID: "victoria-metrics", Name: "VictoriaMetrics", Category: "observability", URL: urlWithPort(env, "OBSERVABILITY_VM_PORT", "8428"), Description: "Local metrics database.", Enabled: true, Priority: 20, Source: "profile", Runtime: "metrics", Owner: "goforj"})
+			resources = append(resources, Resource{ID: "victoria-metrics", Name: "VictoriaMetrics", Category: "observability", URL: urlWithPort(env, "OBSERVABILITY_VM_PORT", "8428"), Description: "Local metrics database.", Enabled: true, Priority: 20, Source: "profile", Service: "victoriametrics", Runtime: "metrics", Owner: "goforj"})
 		}
 		if components.Docker && composeProfileEnabled(env, "grafana") {
 			admin := strings.TrimSpace(envValue(env, "GRAFANA_ADMIN_USER"))
 			if admin == "" {
 				admin = "admin"
 			}
-			resources = append(resources, Resource{ID: "grafana", Name: "Grafana", Category: "observability", URL: urlWithPort(env, "GRAFANA_PORT", "13001"), Description: fmt.Sprintf("Local Grafana dashboards. Admin user: %s.", admin), Enabled: true, Priority: 30, Source: "profile", Runtime: "metrics", Auth: admin, Owner: "goforj"})
+			resources = append(resources, Resource{ID: "grafana", Name: "Grafana", Category: "observability", URL: urlWithPort(env, "GRAFANA_PORT", "13001"), Description: "Local Grafana dashboards.", Enabled: true, Priority: 30, Source: "profile", Service: "grafana", Runtime: "metrics", Auth: admin, Owner: "goforj"})
 		}
 	}
 
 	return resources, nil
 }
 
+// resolveAPIURL keeps explicit custom origins while replacing local placeholders with an assigned host address.
 func resolveAPIURL(env map[string]string) string {
 	if raw := strings.TrimSpace(envValue(env, "APP_URL")); raw != "" {
-		return raw
+		return replaceLocalURLHost(raw, resourceURLHost(env))
 	}
 	if port := firstNonEmpty(envValue(env, "API_HTTP_PORT"), envValue(env, "PORT")); port != "" {
-		return "http://localhost:" + port
+		return urlForHostPort("http", resourceURLHost(env), port)
 	}
-	return "http://localhost:3000"
+	return urlForHostPort("http", resourceURLHost(env), "3000")
 }
 
+// resolveSwaggerURL derives the documentation path from the same externally reachable API origin.
 func resolveSwaggerURL(env map[string]string) string {
 	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
 	if enabled == "" {
@@ -101,6 +103,7 @@ func resolveSwaggerURL(env map[string]string) string {
 	return strings.TrimRight(apiURL, "/") + "/swagger"
 }
 
+// resolveLighthouseURL projects websocket configuration onto its browser-facing HTTP endpoint.
 func resolveLighthouseURL(env map[string]string) string {
 	enabled := str.Of(envValue(env, "LIGHTHOUSE_ENABLED")).Trim().ToLower().String()
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
@@ -109,12 +112,12 @@ func resolveLighthouseURL(env map[string]string) string {
 
 	raw := strings.TrimSpace(envValue(env, "LIGHTHOUSE_URL"))
 	if raw == "" {
-		return "http://localhost:3000/lighthouse"
+		return lighthouseURLFromAPI(env)
 	}
 
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "http://localhost:3000/lighthouse"
+		return lighthouseURLFromAPI(env)
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "ws":
@@ -127,17 +130,75 @@ func resolveLighthouseURL(env map[string]string) string {
 	parsed.Path = "/lighthouse"
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
+	return replaceLocalURLHost(parsed.String(), resourceURLHost(env))
+}
+
+// lighthouseURLFromAPI keeps default operator links on the same assigned origin as the App.
+func lighthouseURLFromAPI(env map[string]string) string {
+	parsed, err := url.Parse(resolveAPIURL(env))
+	if err != nil || parsed.Host == "" {
+		return urlForHostPort("http", resourceURLHost(env), "3000") + "/lighthouse"
+	}
+	parsed.Path = "/lighthouse"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
 	return parsed.String()
 }
 
+// urlWithPort creates a browser-facing tool URL on the assigned project address.
 func urlWithPort(env map[string]string, key string, fallback string) string {
 	port := firstNonEmpty(envValue(env, key), fallback)
 	if port == "" {
 		return ""
 	}
-	return "http://localhost:" + port
+	return urlForHostPort("http", resourceURLHost(env), port)
 }
 
+// resourceURLHost excludes wildcard bind addresses because they are not useful browser destinations.
+func resourceURLHost(env map[string]string) string {
+	raw := strings.Trim(strings.TrimSpace(envValue(env, "IP_ADDRESS")), "[]")
+	address := net.ParseIP(raw)
+	if address == nil || address.IsUnspecified() {
+		return "localhost"
+	}
+	return address.String()
+}
+
+// urlForHostPort formats IPv4 and IPv6 destinations without allowing host text to alter URL structure.
+func urlForHostPort(scheme string, host string, port string) string {
+	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}).String()
+}
+
+// replaceLocalURLHost preserves custom domains while replacing local placeholders with Harbor's assigned address.
+func replaceLocalURLHost(rawURL string, assignedHost string) string {
+	if assignedHost == "" || assignedHost == "localhost" {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" || !localURLPlaceholder(parsed.Hostname()) {
+		return rawURL
+	}
+	if port := parsed.Port(); port != "" {
+		parsed.Host = net.JoinHostPort(assignedHost, port)
+	} else if strings.Contains(assignedHost, ":") {
+		parsed.Host = "[" + assignedHost + "]"
+	} else {
+		parsed.Host = assignedHost
+	}
+	return parsed.String()
+}
+
+// localURLPlaceholder identifies origins that represent a bind location rather than an intentional custom domain.
+func localURLPlaceholder(host string) bool {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	if host == "localhost" {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && (address.IsLoopback() || address.IsUnspecified())
+}
+
+// envValue keeps missing maps and keys equivalent to an unset environment value.
 func envValue(env map[string]string, key string) string {
 	if env == nil {
 		return ""
@@ -287,6 +348,7 @@ func appResourceID(category string, appName string, resourceName string) string 
 	return category + "-" + strings.ToLower(appName) + "-" + resourceName
 }
 
+// firstNonEmpty returns the first nonblank value after applying environment whitespace rules.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -297,6 +359,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// uniqueSorted removes empty and duplicate resource names before stable projection.
 func uniqueSorted(values []string) []string {
 	seen := map[string]struct{}{}
 	out := []string{}

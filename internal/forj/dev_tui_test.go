@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	charmansi "github.com/charmbracelet/x/ansi"
+	"github.com/goforj/goforj/project"
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -36,6 +37,83 @@ func TestBuildDevFooterLine(t *testing.T) {
 	}
 }
 
+// TestDevConfigUsesWatcherStdinKeepsInteractiveChildrenOffTheTUI verifies both supported config shapes retain direct terminal ownership.
+func TestDevConfigUsesWatcherStdinKeepsInteractiveChildrenOffTheTUI(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *project.Config
+		want   bool
+	}{
+		{name: "nil config"},
+		{name: "noninteractive", config: &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{{Exec: "wails dev"}}}}},
+		{name: "structured stdin", config: &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{{Exec: "go run .", Stdin: true}}}}, want: true},
+		{name: "legacy stdin", config: &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{{Watch: "-file .go -stdin", Exec: "go run ."}}}}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := devConfigUsesWatcherStdin(test.config); got != test.want {
+				t.Fatalf("devConfigUsesWatcherStdin() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+// TestFinishDevOutputSessionRestoresTerminalExactlyOnce protects the handoff from adding duplicate reset newlines after the TUI exits.
+func TestFinishDevOutputSessionRestoresTerminalExactlyOnce(t *testing.T) {
+	tests := []struct {
+		name                    string
+		hasShutdown             bool
+		restoresTerminal        bool
+		wantShutdownCalls       int
+		wantFallbackRestoration int
+	}{
+		{name: "before session selection", wantFallbackRestoration: 1},
+		{name: "missing terminal owner", restoresTerminal: true, wantFallbackRestoration: 1},
+		{name: "plain session", hasShutdown: true, wantShutdownCalls: 1, wantFallbackRestoration: 1},
+		{name: "bubble session", hasShutdown: true, restoresTerminal: true, wantShutdownCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			shutdownCalls := 0
+			fallbackRestorations := 0
+			ownedRestorations := 0
+			session := devOutputSession{restoresTerminal: test.restoresTerminal}
+			if test.hasShutdown {
+				session.shutdown = func() {
+					shutdownCalls++
+					if test.restoresTerminal {
+						ownedRestorations++
+					}
+				}
+			}
+
+			finishDevOutputSession(session, func() {
+				fallbackRestorations++
+			})
+
+			if shutdownCalls != test.wantShutdownCalls {
+				t.Fatalf("shutdown calls = %d, want %d", shutdownCalls, test.wantShutdownCalls)
+			}
+			if fallbackRestorations != test.wantFallbackRestoration {
+				t.Fatalf("fallback restorations = %d, want %d", fallbackRestorations, test.wantFallbackRestoration)
+			}
+			if got := ownedRestorations + fallbackRestorations; got != 1 {
+				t.Fatalf("terminal restorations = %d, want exactly 1", got)
+			}
+		})
+	}
+}
+
+// TestDevTerminalModeResetSequenceDoesNotAdvanceTheCursor keeps post-TUI output adjacent to the bootstrap transcript.
+func TestDevTerminalModeResetSequenceDoesNotAdvanceTheCursor(t *testing.T) {
+	if strings.Contains(devTerminalModeResetSequence, "\n") {
+		t.Fatalf("terminal reset sequence advances to another row: %q", devTerminalModeResetSequence)
+	}
+	if !strings.HasSuffix(devTerminalModeResetSequence, "\r\x1b[2K") {
+		t.Fatalf("terminal reset sequence does not clear the restored cursor row: %q", devTerminalModeResetSequence)
+	}
+}
+
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/lighthouse", true, "2"))
 	if strings.Contains(line, "\n") {
@@ -52,6 +130,44 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	}
 	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[x] Command") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
+	}
+}
+
+// TestBuildDevSectionSeparatorLineUsesCompactBalancedRules prevents wide terminals from dominating the development transcript.
+func TestBuildDevSectionSeparatorLineUsesCompactBalancedRules(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		width int
+		want  string
+	}{
+		{name: "wide terminal", label: "Start", width: 120, want: "───── Start ─────"},
+		{name: "unavailable terminal", label: "Start", want: "───── Start ─────"},
+		{name: "narrow terminal", label: "A label wider than the minimum terminal", width: 12, want: " A label wider than the minimum terminal "},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			line := stripANSI(buildDevSectionSeparatorLineAtWidth(test.label, test.width))
+			if line != test.want {
+				t.Fatalf("separator = %q, want %q", line, test.want)
+			}
+		})
+	}
+}
+
+// TestBuildDevSectionSeparatorLineKeepsFullWidthForUnlabeledBoundaries preserves structural TUI edges that rely on terminal width.
+func TestBuildDevSectionSeparatorLineKeepsFullWidthForUnlabeledBoundaries(t *testing.T) {
+	line := stripANSI(buildDevSectionSeparatorLineAtWidth("", 48))
+	if got := charmansi.StringWidth(line); got != 48 {
+		t.Fatalf("unlabeled separator width = %d, want 48: %q", got, line)
+	}
+}
+
+// TestBuildDevWatcherStopSeparatorLineStaysCompact prevents shutdown from restoring a terminal-width rule above the watcher summary.
+func TestBuildDevWatcherStopSeparatorLineStaysCompact(t *testing.T) {
+	line := stripANSI(buildDevWatcherStopSeparatorLine())
+	if want := strings.Repeat("─", devSectionSeparatorRuleWidth*2); line != want {
+		t.Fatalf("watcher stop separator = %q, want %q", line, want)
 	}
 }
 
