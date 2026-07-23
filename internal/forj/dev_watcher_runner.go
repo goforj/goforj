@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,7 @@ func startDevWatcherRuntime(session *devWatchSession) (*devWatcherRuntime, error
 	if err != nil {
 		return nil, err
 	}
+	compiled = isolateDevRuntimeEnvironments(compiled, session.inheritedEnv)
 	controller, err := newDevWatcherControllerWithOptions(
 		compiled,
 		session.streamer,
@@ -114,6 +116,59 @@ func startDevWatcherRuntime(session *devWatchSession) (*devWatcherRuntime, error
 	}
 	emitWatcherLifecycleSummary(controller.outWriter, session.streamer, names, watcherStateStarted)
 	return watcherRuntime, nil
+}
+
+// isolateDevRuntimeEnvironments starts App runtimes from the original launcher environment so the
+// framework's own dotenv state cannot become inherited configuration for a nested application.
+func isolateDevRuntimeEnvironments(compiled []devCompiledWatcher, inherited processEnvironment) []devCompiledWatcher {
+	isolated := make([]devCompiledWatcher, len(compiled))
+	copy(isolated, compiled)
+	for index := range isolated {
+		if isolated[index].Legacy || isolated[index].Kind != devWatcherAppRun {
+			continue
+		}
+		isolated[index].Command.Env = mergeDevRuntimeEnvironment(
+			inherited,
+			isolated[index].Command.Env,
+			runtime.GOOS == "windows",
+		)
+		isolated[index].Command.ReplaceEnv = true
+	}
+	return isolated
+}
+
+// mergeDevRuntimeEnvironment applies explicit App settings after the launcher snapshot while respecting
+// Windows' case-insensitive environment namespace.
+func mergeDevRuntimeEnvironment(inherited processEnvironment, overrides map[string]string, caseInsensitive bool) map[string]string {
+	type value struct {
+		key   string
+		value string
+	}
+	values := make(map[string]value, len(inherited)+len(overrides))
+	normalize := func(key string) string {
+		if caseInsensitive {
+			return strings.ToUpper(key)
+		}
+		return key
+	}
+	merge := func(source map[string]string) {
+		keys := make([]string, 0, len(source))
+		for key := range source {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			values[normalize(key)] = value{key: key, value: source[key]}
+		}
+	}
+	merge(inherited)
+	merge(overrides)
+
+	environment := make(map[string]string, len(values))
+	for _, entry := range values {
+		environment[entry.key] = entry.value
+	}
+	return environment
 }
 
 // newDevWatcherController establishes physical coverage before starting any configured command.
