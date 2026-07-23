@@ -33,16 +33,22 @@ import (
 var errDevInterrupted = errors.New("dev interrupted")
 
 // DevCmd runs the project development lifecycle from durable project configuration.
-type DevCmd struct{}
+type DevCmd struct {
+	inheritedEnv processEnvironment
+}
 
 type devRuntimeState struct {
 	restartCh      chan struct{}
 	buildCh        chan struct{}
 	renderCh       chan struct{}
+	inheritedEnv   processEnvironment
 	refreshWriters func()
 	streamer       *devwatchStreamer
 	firstLoad      bool
 }
+
+// processEnvironment retains the values supplied when development started so project dotenv files cannot replace them.
+type processEnvironment map[string]string
 
 type devShellCommandRequest struct {
 	DisplayName  string
@@ -51,6 +57,7 @@ type devShellCommandRequest struct {
 
 type devWatchSession struct {
 	config                *project.Config
+	inheritedEnv          processEnvironment
 	baseWatches           []project.DevWatch
 	streamer              *devwatchStreamer
 	restartCh             chan struct{}
@@ -71,11 +78,12 @@ func (*DevCmd) Signature() string {
 }
 
 // newDevRuntimeState keeps dotenv reloads and output streaming on one boundary.
-func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
+func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}, inheritedEnv processEnvironment) *devRuntimeState {
 	return &devRuntimeState{
 		restartCh:      restartCh,
 		buildCh:        buildCh,
 		renderCh:       renderCh,
+		inheritedEnv:   inheritedEnv,
 		refreshWriters: func() {},
 		firstLoad:      true,
 	}
@@ -90,7 +98,7 @@ func (r *devRuntimeState) Close() {
 func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	firstLoad := r.firstLoad
 	r.firstLoad = false
-	if err := loadDevEnvironment(!firstLoad); err != nil {
+	if err := loadDevEnvironment(!firstLoad, r.inheritedEnv); err != nil {
 		return nil, err
 	}
 	if r.streamer != nil {
@@ -105,16 +113,21 @@ func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	return r.streamer, nil
 }
 
-// loadDevEnvironment applies the env package's canonical file precedence for startup or reload.
-func loadDevEnvironment(reload bool) error {
+// loadDevEnvironment applies dotenv layers, then restores values inherited by the dev process.
+func loadDevEnvironment(reload bool, inheritedEnv processEnvironment) error {
 	if reload {
-		return envx.Reload()
+		if err := envx.Reload(); err != nil {
+			return err
+		}
+	} else if err := envx.Load(); err != nil {
+		return err
 	}
-	return envx.Load()
+	return inheritedEnv.Apply()
 }
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
+	inheritedEnv := c.inheritedEnvironment()
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
@@ -194,7 +207,7 @@ func (c *DevCmd) Run() error {
 	defer stopEnvWatch()
 	stopTargetWatch := startDevAppWatcher(runCtx, requestBuild, 500*time.Millisecond)
 	defer stopTargetWatch()
-	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
+	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh, inheritedEnv)
 	defer runtimeState.Close()
 
 	currentStreamer, err := runtimeState.Sync()
@@ -212,6 +225,7 @@ func (c *DevCmd) Run() error {
 
 	session := &devWatchSession{
 		config:        config,
+		inheritedEnv:  inheritedEnv,
 		baseWatches:   baseWatches,
 		streamer:      currentStreamer,
 		restartCh:     restartCh,
@@ -242,6 +256,14 @@ func (c *DevCmd) Run() error {
 	}
 
 	return fmt.Errorf("dev watchers exited unexpectedly")
+}
+
+// inheritedEnvironment returns the launcher snapshot wired into the command, or the current process for direct construction.
+func (c *DevCmd) inheritedEnvironment() processEnvironment {
+	if c.inheritedEnv != nil {
+		return copyProcessEnvironment(c.inheritedEnv)
+	}
+	return captureProcessEnvironment()
 }
 
 // loadDevProjectConfig turns an absent project into guidance while preserving real configuration failures.
@@ -1223,7 +1245,7 @@ watcherLoop:
 					}
 					return fmt.Errorf("quiesce dev builds: %w", err)
 				}
-				if err := loadDevEnvironment(true); err != nil {
+				if err := loadDevEnvironment(true, session.inheritedEnv); err != nil {
 					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
@@ -1367,6 +1389,36 @@ func (session *devWatchSession) reloadProjectConfig() error {
 // snapshotProcessEnv splits only well-formed process entries while preserving values that contain equals signs.
 func snapshotProcessEnv() map[string]string {
 	return processEnvironmentMap(os.Environ())
+}
+
+// captureProcessEnvironment snapshots the process values supplied before dotenv loading.
+func captureProcessEnvironment() processEnvironment {
+	return processEnvironment(snapshotProcessEnv())
+}
+
+// copyProcessEnvironment protects command execution from later mutations of the launcher snapshot.
+func copyProcessEnvironment(environment processEnvironment) processEnvironment {
+	if environment == nil {
+		return nil
+	}
+	copy := make(processEnvironment, len(environment))
+	for key, value := range environment {
+		copy[key] = value
+	}
+	return copy
+}
+
+// Apply restores inherited values after dotenv layers while leaving APP_ENV with the layer env/v2 selected.
+func (environment processEnvironment) Apply() error {
+	for key, value := range environment {
+		if key == "APP_ENV" {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("restore inherited environment %s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // processEnvironmentMap converts process entries without truncating values or admitting empty platform pseudo-keys.

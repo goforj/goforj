@@ -32,13 +32,14 @@ func main() {
 	if build.HandleProfileTool(os.Args[1:]) {
 		return
 	}
+	inheritedEnv := launcherEnvironment()
 
 	// Default environment
 	setCLIDefaultEnv("APP_ENV", "local")
 	setCLIDefaultEnv("APP_NAME", "GoForj")
 
 	// Initialize application
-	app, err := wire.InitializeApplication()
+	app, err := wire.InitializeApplicationWithEnvironment(inheritedEnv)
 	if err != nil {
 		console.Fatalf("initializing application: %v", err)
 	}
@@ -133,6 +134,18 @@ func main() {
 		}
 		console.Fatalf("%v", err)
 	}
+}
+
+// launcherEnvironment captures only values supplied to the CLI, before framework defaults are installed.
+func launcherEnvironment() map[string]string {
+	values := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			values[key] = value
+		}
+	}
+	return values
 }
 
 // shouldRunFrameworkCommandWithAppEnv keeps framework-owned backup commands in the framework process.

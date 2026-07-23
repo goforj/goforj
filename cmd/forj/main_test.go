@@ -567,6 +567,31 @@ func TestDelegatedAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
 	}
 }
 
+// TestLauncherEnvironmentExcludesCLIDefaults ensures framework defaults do not become launcher-owned overrides.
+func TestLauncherEnvironmentExcludesCLIDefaults(t *testing.T) {
+	previousAppName, hadAppName := os.LookupEnv("APP_NAME")
+	previousAppEnv, hadAppEnv := os.LookupEnv("APP_ENV")
+	previousDefaults := cliDefaultedEnv
+	defer func() {
+		cliDefaultedEnv = previousDefaults
+		restoreEnv("APP_NAME", previousAppName, hadAppName)
+		restoreEnv("APP_ENV", previousAppEnv, hadAppEnv)
+	}()
+
+	cliDefaultedEnv = map[string]bool{}
+	_ = os.Unsetenv("APP_NAME")
+	_ = os.Unsetenv("APP_ENV")
+	launcher := launcherEnvironment()
+	setCLIDefaultEnv("APP_NAME", "GoForj")
+	setCLIDefaultEnv("APP_ENV", "local")
+	if _, ok := launcher["APP_NAME"]; ok {
+		t.Fatal("APP_NAME default was captured as launcher environment")
+	}
+	if _, ok := launcher["APP_ENV"]; ok {
+		t.Fatal("APP_ENV default was captured as launcher environment")
+	}
+}
+
 func TestDelegatedAppEnvRespectsCommandPrefixOverride(t *testing.T) {
 	previousPrefix, hadPrefix := os.LookupEnv("FORJ_COMMAND_PREFIX")
 	defer restoreEnv("FORJ_COMMAND_PREFIX", previousPrefix, hadPrefix)

@@ -105,6 +105,7 @@ type DevStatusCmd struct {
 	loadProject      devStatusProjectLoader
 	resolveResources devStatusResourceResolver
 	run              devStatusComposeRunner
+	inheritedEnv     processEnvironment
 }
 
 // Signature declares the hidden machine-oriented development status command.
@@ -121,7 +122,9 @@ func (c *DevStatusCmd) Run() error {
 	report := newDevStatusReport()
 	loadProject := c.loadProject
 	if loadProject == nil {
-		loadProject = loadDevStatusProject
+		loadProject = func() (devStatusProjectContext, error) {
+			return loadDevStatusProject(c.inheritedEnvironment())
+		}
 	}
 	projectContext, err := loadProject()
 	if err != nil {
@@ -183,6 +186,14 @@ func (c *DevStatusCmd) Run() error {
 	report.Project = projectName
 	report.Services = services
 	return c.writeReport(report)
+}
+
+// inheritedEnvironment returns the launcher snapshot wired into the command, or the current process for direct construction.
+func (c *DevStatusCmd) inheritedEnvironment() processEnvironment {
+	if c.inheritedEnv != nil {
+		return copyProcessEnvironment(c.inheritedEnv)
+	}
+	return captureProcessEnvironment()
 }
 
 // writeReport writes one JSON object while preserving every collection's stable array shape.

@@ -54,12 +54,17 @@ type runtimeCommands struct {
 }
 
 // NewRuntimeCommands constructs the runtime family around its shared logger and API index runner.
-func NewRuntimeCommands(appLogger *logger.AppLogger, runner *apiindex.Runner) *runtimeCommands {
+func NewRuntimeCommands(appLogger *logger.AppLogger, runner *apiindex.Runner, inheritedEnv map[string]string) *runtimeCommands {
+	launcherEnv := copyProcessEnvironment(processEnvironment(inheritedEnv))
 	return &runtimeCommands{
-		dev:       DevCmd{},
-		devStatus: DevStatusCmd{},
-		down:      *NewDownCmd(appLogger),
-		run:       *build.NewRunCmd(appLogger, runner),
+		dev: DevCmd{
+			inheritedEnv: copyProcessEnvironment(launcherEnv),
+		},
+		devStatus: DevStatusCmd{
+			inheritedEnv: copyProcessEnvironment(launcherEnv),
+		},
+		down: *NewDownCmd(appLogger),
+		run:  *build.NewRunCmd(appLogger, runner),
 	}
 }
 

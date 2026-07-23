@@ -20,6 +20,7 @@ var CompiledEnvOverridesBase64 string
 
 // LoadEnv applies compiled and file-backed layers using the env package's canonical precedence.
 func LoadEnv() error {
+	inheritedEnvironment := snapshotInheritedEnvironment()
 	overrideAppEnv, hasOverride, err := compiledEnvValue(strings.TrimSpace(CompiledEnvOverridesBase64), "APP_ENV")
 	if err != nil {
 		return err
@@ -72,6 +73,34 @@ func LoadEnv() error {
 		return err
 	}
 
+	if err := restoreInheritedEnvironment(inheritedEnvironment); err != nil {
+		return err
+	}
+	return ApplyCompiledEnvOverrides()
+}
+
+// snapshotInheritedEnvironment preserves process values supplied by the command launcher before dotenv loading.
+func snapshotInheritedEnvironment() map[string]string {
+	values := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+// restoreInheritedEnvironment keeps launcher-provided values authoritative over project dotenv layers.
+func restoreInheritedEnvironment(values map[string]string) error {
+	for key, value := range values {
+		if key == "APP_ENV" {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("restore inherited environment %s: %w", key, err)
+		}
+	}
 	return nil
 }
 

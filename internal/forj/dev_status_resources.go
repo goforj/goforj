@@ -49,8 +49,8 @@ type devStatusProjectLoader func() (devStatusProjectContext, error)
 type devStatusResourceResolver func(context.Context, *project.Config, map[string]string) ([]resources.Resource, error)
 
 // loadDevStatusProject applies development precedence once before loading config, tasks, and host resources.
-func loadDevStatusProject() (devStatusProjectContext, error) {
-	if err := loadDevEnvironment(false); err != nil {
+func loadDevStatusProject(inheritedEnv processEnvironment) (devStatusProjectContext, error) {
+	if err := loadDevEnvironment(false, inheritedEnv); err != nil {
 		return devStatusProjectContext{}, fmt.Errorf("load development environment: %w", err)
 	}
 	config, err := project.LoadProjectConfig()

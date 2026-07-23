@@ -212,8 +212,7 @@ func TestCompiledEnvDefaultsLayerWithEnvLoad(t *testing.T) {
 	}, "\n")+"\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestCompiledEnvDefaultsLayerWithEnvLoad", dir, map[string]string{
-		"FEATURE_FROM_OS":   "from-os",
-		"FEATURE_COLLISION": "from-os",
+		"FEATURE_FROM_OS": "from-os",
 	})
 
 	got := parseEnvDefaultsOutput(t, output)
@@ -227,7 +226,7 @@ func TestCompiledEnvDefaultsLayerWithEnvLoad(t *testing.T) {
 		t.Fatalf("expected FEATURE_FROM_OS to remain from OS env, got %q", got["FEATURE_FROM_OS"])
 	}
 	if got["FEATURE_COLLISION"] != "from-envfile" {
-		t.Fatalf("expected FEATURE_COLLISION to reflect current env.Load precedence, got %q", got["FEATURE_COLLISION"])
+		t.Fatalf("expected FEATURE_COLLISION default to yield to .env, got %q", got["FEATURE_COLLISION"])
 	}
 }
 
@@ -283,30 +282,33 @@ func TestCompiledEnvOverridesBeatEnvAndOS(t *testing.T) {
 	}
 }
 
-// TestHostEnvOverridesBeatBaseAndOS verifies host-local values use the env package's ordinary precedence contract.
-func TestHostEnvOverridesBeatBaseAndOS(t *testing.T) {
+// TestInheritedEnvironmentOverridesDotenv verifies launched App processes retain inherited values after dotenv loading.
+func TestInheritedEnvironmentOverridesDotenv(t *testing.T) {
 	if os.Getenv("GO_WANT_HOST_ENV_OVERRIDES_HELPER") == "1" {
 		runHostEnvOverridesHelper()
 		return
 	}
-	if !envpkg.IsHostEnvironment() && !envpkg.IsDockerInDocker() {
-		t.Skip(".env.host is intentionally inactive inside ordinary application containers")
-	}
 
 	dir := t.TempDir()
-	writeTestEnvFile(t, filepath.Join(dir, ".env"), "HARBOR_TOKEN=from-base\nIP_ADDRESS=0.0.0.0\n")
-	writeTestEnvFile(t, filepath.Join(dir, ".env.host"), "HARBOR_TOKEN=from-host\nIP_ADDRESS=127.18.0.11\n")
-	output := runEnvDefaultsHelperProcess(t, "TestHostEnvOverridesBeatBaseAndOS", dir, map[string]string{
-		"HARBOR_TOKEN": "from-os",
-		"IP_ADDRESS":   "127.0.0.1",
+	writeTestEnvFile(t, filepath.Join(dir, ".env"), "INHERITED_VALUE=from-dotenv\nDOTENV_ONLY=from-dotenv\nHOST_FALLBACK=from-base\n")
+	writeTestEnvFile(t, filepath.Join(dir, ".env.host"), "INHERITED_VALUE=from-host-fallback\nHOST_FALLBACK=from-host-fallback\n")
+	output := runEnvDefaultsHelperProcess(t, "TestInheritedEnvironmentOverridesDotenv", dir, map[string]string{
+		"INHERITED_VALUE": "from-process",
 	})
 
 	got := parseEnvDefaultsOutput(t, output)
-	if got["HARBOR_TOKEN"] != "from-host" {
-		t.Fatalf("HARBOR_TOKEN = %q, want host-local value", got["HARBOR_TOKEN"])
+	if got["INHERITED_VALUE"] != "from-process" {
+		t.Fatalf("INHERITED_VALUE = %q, want inherited value", got["INHERITED_VALUE"])
 	}
-	if got["IP_ADDRESS"] != "127.18.0.11" {
-		t.Fatalf("IP_ADDRESS = %q, want host-local address", got["IP_ADDRESS"])
+	if got["DOTENV_ONLY"] != "from-dotenv" {
+		t.Fatalf("DOTENV_ONLY = %q, want dotenv value", got["DOTENV_ONLY"])
+	}
+	wantFallback := "from-base"
+	if envpkg.IsHostEnvironment() || envpkg.IsDockerInDocker() {
+		wantFallback = "from-host-fallback"
+	}
+	if got["HOST_FALLBACK"] != wantFallback {
+		t.Fatalf("HOST_FALLBACK = %q, want %q", got["HOST_FALLBACK"], wantFallback)
 	}
 }
 
@@ -393,11 +395,7 @@ func runEnvDefaultsLayerHelper() {
 		"FEATURE_FROM_OS=from-build",
 		"FEATURE_COLLISION=from-build",
 	}, ",")))
-	if err := ApplyCompiledEnvDefaults(); err != nil {
-		fmt.Printf("APPLY_ERROR=%v\n", err)
-		os.Exit(1)
-	}
-	if err := envpkg.Load(); err != nil {
+	if err := LoadEnv(); err != nil {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
 		os.Exit(1)
 	}
@@ -436,16 +434,8 @@ func runEnvOverridesLayerHelper() {
 		"FEATURE_FROM_OS=from-build",
 		"FEATURE_COLLISION=from-build",
 	}, ",")))
-	if err := ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Printf("APPLY_OVERRIDE_ERROR=%v\n", err)
-		os.Exit(1)
-	}
-	if err := envpkg.Load(); err != nil {
+	if err := LoadEnv(); err != nil {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
-		os.Exit(1)
-	}
-	if err := ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Printf("REAPPLY_OVERRIDE_ERROR=%v\n", err)
 		os.Exit(1)
 	}
 	printEnvDefaultsOutput("FEATURE_FROM_BUILD", "FEATURE_FROM_ENVFILE", "FEATURE_FROM_OS", "FEATURE_COLLISION")
@@ -463,7 +453,7 @@ func runHostEnvOverridesHelper() {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
 		os.Exit(1)
 	}
-	printEnvDefaultsOutput("HARBOR_TOKEN", "IP_ADDRESS")
+	printEnvDefaultsOutput("INHERITED_VALUE", "DOTENV_ONLY", "HOST_FALLBACK")
 	os.Exit(0)
 }
 
@@ -523,7 +513,7 @@ func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extr
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_LAYER_HELPER=1")
 	case "TestCompiledEnvOverridesCanForceAppEnvAcrossEnvLoad":
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_APP_ENV_HELPER=1")
-	case "TestHostEnvOverridesBeatBaseAndOS":
+	case "TestInheritedEnvironmentOverridesDotenv":
 		cmd.Env = append(cmd.Env, "GO_WANT_HOST_ENV_OVERRIDES_HELPER=1")
 	case "TestAppEnvOverlayCanSelectAppEnvFile":
 		cmd.Env = append(cmd.Env, "GO_WANT_APP_ENV_HELPER=1")
