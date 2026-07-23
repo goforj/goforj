@@ -2,6 +2,7 @@ package forj
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +13,19 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-const devEnvironmentHelperKey = "GO_WANT_DEV_ENVIRONMENT_HELPER"
+const (
+	devEnvironmentHelperKey        = "GO_WANT_DEV_ENVIRONMENT_HELPER"
+	devEnvironmentWatcherHelperKey = "GO_WANT_DEV_ENVIRONMENT_WATCHER_HELPER"
+)
 
 // TestDevEnvironmentPreservesInheritedValuesAcrossLoadReloadAndChildren protects process-level overrides from dotenv layers.
 func TestDevEnvironmentPreservesInheritedValuesAcrossLoadReloadAndChildren(t *testing.T) {
+	if os.Getenv(devEnvironmentWatcherHelperKey) == "1" {
+		if _, err := fmt.Fprintf(os.Stdout, "%s|%s", os.Getenv("INHERITED_TOKEN"), os.Getenv("DOTENV_ONLY")); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv(devEnvironmentHelperKey) == "1" {
 		runDevEnvironmentHelper(t)
 		return
@@ -137,7 +147,8 @@ func runDevEnvironmentWatcherChild(t *testing.T) {
 	supervisor := devwatch.NewSupervisor(devwatch.SupervisorOptions{})
 	defer supervisor.Close()
 	exit, err := supervisor.Run(context.Background(), "environment", devwatch.Command{
-		Shell:  "printf '%s|%s' \"$INHERITED_TOKEN\" \"$DOTENV_ONLY\"",
+		Args:   []string{os.Args[0], "-test.run=^TestDevEnvironmentPreservesInheritedValuesAcrossLoadReloadAndChildren$"},
+		Env:    map[string]string{devEnvironmentWatcherHelperKey: "1"},
 		Stdout: &output,
 	})
 	if err != nil || !exit.OK() {
