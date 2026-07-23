@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/project"
 )
 
@@ -101,11 +102,11 @@ type DevStatusCmd struct {
 	JSON          bool `name:"json" help:"Print the versioned JSON status contract"`
 	ResourcesOnly bool `name:"resources-only" help:"Report host-resolved project resources without querying the container runtime"`
 
-	stdout           io.Writer
-	loadProject      devStatusProjectLoader
-	resolveResources devStatusResourceResolver
-	run              devStatusComposeRunner
-	inheritedEnv     processEnvironment
+	stdout              io.Writer
+	loadProject         devStatusProjectLoader
+	resolveResources    devStatusResourceResolver
+	run                 devStatusComposeRunner
+	launcherEnvironment *launcher.Environment
 }
 
 // Signature declares the hidden machine-oriented development status command.
@@ -188,12 +189,13 @@ func (c *DevStatusCmd) Run() error {
 	return c.writeReport(report)
 }
 
-// inheritedEnvironment returns the launcher snapshot wired into the command, or the current process for direct construction.
+// inheritedEnvironment returns a private copy of the environment captured at the CLI launcher boundary.
 func (c *DevStatusCmd) inheritedEnvironment() processEnvironment {
-	if c.inheritedEnv != nil {
-		return copyProcessEnvironment(c.inheritedEnv)
+	launcherEnvironment := c.launcherEnvironment
+	if launcherEnvironment == nil {
+		launcherEnvironment = launcher.Provide()
 	}
-	return captureProcessEnvironment()
+	return processEnvironment(launcherEnvironment.Snapshot())
 }
 
 // writeReport writes one JSON object while preserving every collection's stable array shape.

@@ -24,6 +24,7 @@ import (
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
@@ -34,7 +35,7 @@ var errDevInterrupted = errors.New("dev interrupted")
 
 // DevCmd runs the project development lifecycle from durable project configuration.
 type DevCmd struct {
-	inheritedEnv processEnvironment
+	launcherEnvironment *launcher.Environment
 }
 
 type devRuntimeState struct {
@@ -258,12 +259,13 @@ func (c *DevCmd) Run() error {
 	return fmt.Errorf("dev watchers exited unexpectedly")
 }
 
-// inheritedEnvironment returns the launcher snapshot wired into the command, or the current process for direct construction.
+// inheritedEnvironment returns a private copy of the environment captured at the CLI launcher boundary.
 func (c *DevCmd) inheritedEnvironment() processEnvironment {
-	if c.inheritedEnv != nil {
-		return copyProcessEnvironment(c.inheritedEnv)
+	launcherEnvironment := c.launcherEnvironment
+	if launcherEnvironment == nil {
+		launcherEnvironment = launcher.Provide()
 	}
-	return captureProcessEnvironment()
+	return processEnvironment(launcherEnvironment.Snapshot())
 }
 
 // loadDevProjectConfig turns an absent project into guidance while preserving real configuration failures.
@@ -1394,18 +1396,6 @@ func snapshotProcessEnv() map[string]string {
 // captureProcessEnvironment snapshots the process values supplied before dotenv loading.
 func captureProcessEnvironment() processEnvironment {
 	return processEnvironment(snapshotProcessEnv())
-}
-
-// copyProcessEnvironment protects command execution from later mutations of the launcher snapshot.
-func copyProcessEnvironment(environment processEnvironment) processEnvironment {
-	if environment == nil {
-		return nil
-	}
-	copy := make(processEnvironment, len(environment))
-	for key, value := range environment {
-		copy[key] = value
-	}
-	return copy
 }
 
 // Apply restores inherited values after dotenv layers while leaving APP_ENV with the layer env/v2 selected.

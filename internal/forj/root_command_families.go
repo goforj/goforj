@@ -8,6 +8,7 @@ import (
 	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -53,15 +54,14 @@ type runtimeCommands struct {
 	run       build.RunCmd
 }
 
-// NewRuntimeCommands constructs the runtime family around its shared logger and API index runner.
-func NewRuntimeCommands(appLogger *logger.AppLogger, runner *apiindex.Runner, inheritedEnv map[string]string) *runtimeCommands {
-	launcherEnv := copyProcessEnvironment(processEnvironment(inheritedEnv))
+// NewRuntimeCommands constructs the runtime family around its shared logger, API index runner, and launcher environment.
+func NewRuntimeCommands(appLogger *logger.AppLogger, runner *apiindex.Runner, launcherEnvironment *launcher.Environment) *runtimeCommands {
 	return &runtimeCommands{
 		dev: DevCmd{
-			inheritedEnv: copyProcessEnvironment(launcherEnv),
+			launcherEnvironment: launcherEnvironment,
 		},
 		devStatus: DevStatusCmd{
-			inheritedEnv: copyProcessEnvironment(launcherEnv),
+			launcherEnvironment: launcherEnvironment,
 		},
 		down: *NewDownCmd(appLogger),
 		run:  *build.NewRunCmd(appLogger, runner),

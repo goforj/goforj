@@ -18,6 +18,7 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/konghelp"
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
@@ -33,13 +34,15 @@ func main() {
 		return
 	}
 	inheritedEnv := launcherEnvironment()
+	launcherEnv := launcher.Provide()
+	launcherEnv.Set(inheritedEnv)
 
 	// Default environment
 	setCLIDefaultEnv("APP_ENV", "local")
 	setCLIDefaultEnv("APP_NAME", "GoForj")
 
 	// Initialize application
-	app, err := wire.InitializeApplicationWithEnvironment(inheritedEnv)
+	app, err := wire.InitializeApplication()
 	if err != nil {
 		console.Fatalf("initializing application: %v", err)
 	}

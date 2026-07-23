@@ -9,6 +9,7 @@ package wire
 import (
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -21,28 +22,8 @@ func InitializeApplication() (App, error) {
 	projectAuthoringCommands := forj.NewProjectAuthoringCommands(appLogger, projectRenderer)
 	runner := forj.ProvideAPIIndexRunner()
 	buildCommands := forj.NewBuildCommands(appLogger, runner)
-	v := provideEmptyInheritedEnvironment()
-	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner, v)
-	atlasCommands := forj.NewAtlasCommands()
-	testCommands := forj.NewTestCommands(appLogger)
-	benchmarkCommands := forj.NewBenchmarkCommands(appLogger)
-	scenarioCommands := forj.NewScenarioCommands(appLogger)
-	backupCommands := forj.NewBackupCommands()
-	rootCmd := forj.NewRootCmd(projectAuthoringCommands, buildCommands, runtimeCommands, atlasCommands, testCommands, benchmarkCommands, scenarioCommands, backupCommands)
-	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
-	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
-	app := NewApplication(appLogger, cmdRootCmd)
-	return app, nil
-}
-
-// InitializeApplicationWithEnvironment initializes the application with environment values inherited by the CLI launcher.
-func InitializeApplicationWithEnvironment(inheritedEnv map[string]string) (App, error) {
-	appLogger := logger.ProvideAppLogger()
-	projectRenderer := forj.NewProjectRenderer(appLogger)
-	projectAuthoringCommands := forj.NewProjectAuthoringCommands(appLogger, projectRenderer)
-	runner := forj.ProvideAPIIndexRunner()
-	buildCommands := forj.NewBuildCommands(appLogger, runner)
-	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner, inheritedEnv)
+	environment := launcher.Provide()
+	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner, environment)
 	atlasCommands := forj.NewAtlasCommands()
 	testCommands := forj.NewTestCommands(appLogger)
 	benchmarkCommands := forj.NewBenchmarkCommands(appLogger)
