@@ -62,6 +62,41 @@ func TestDevArtifactRootRedirectsCompiledRuntimeAndBuild(t *testing.T) {
 	}
 }
 
+// TestDevArtifactRootPreservesExplicitBuildCache keeps concurrent external artifact roots on one caller-owned Go cache.
+func TestDevArtifactRootPreservesExplicitBuildCache(t *testing.T) {
+	artifacts := t.TempDir()
+	t.Setenv(devArtifactRootEnv, artifacts)
+	cache := filepath.Join(t.TempDir(), "shared-gocache")
+	t.Setenv(devArtifactGoCacheEnv, cache)
+	environment := map[string]string{
+		"GOCACHE": filepath.Join(artifacts, "configured-cache"),
+		"OTHER":   "preserved",
+	}
+	got := devArtifactBuildEnvironment(environment)
+	if got["GOCACHE"] != cache || got["OTHER"] != "preserved" {
+		t.Fatalf("development build environment = %#v", got)
+	}
+	if environment["GOCACHE"] == got["GOCACHE"] {
+		t.Fatal("development build environment mutated its configured input")
+	}
+}
+
+// TestDevArtifactRootRejectsUnsafeSharedBuildCache keeps managed cache writes outside the project checkout.
+func TestDevArtifactRootRejectsUnsafeSharedBuildCache(t *testing.T) {
+	artifacts := t.TempDir()
+	t.Setenv(devArtifactRootEnv, artifacts)
+	checkout, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for _, cache := range []string{"relative", checkout, filepath.Join(checkout, "cache")} {
+		t.Setenv(devArtifactGoCacheEnv, cache)
+		if _, err := devArtifactRoot(); err == nil || !strings.Contains(err.Error(), devArtifactGoCacheEnv) {
+			t.Fatalf("shared cache %q error = %v, want cache-path rejection", cache, err)
+		}
+	}
+}
+
 func TestDevArtifactRootRejectsRelativeAndProjectPaths(t *testing.T) {
 	t.Setenv(devArtifactRootEnv, "artifacts")
 	if _, err := devArtifactRoot(); err == nil || !strings.Contains(err.Error(), "absolute") {

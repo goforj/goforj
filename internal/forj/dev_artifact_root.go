@@ -10,8 +10,12 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// devArtifactRootEnv keeps development-only generated artifacts outside a project checkout when requested.
-const devArtifactRootEnv = "FORJ_DEV_ARTIFACT_ROOT"
+const (
+	// devArtifactRootEnv keeps development-only generated artifacts outside a project checkout when requested.
+	devArtifactRootEnv = "FORJ_DEV_ARTIFACT_ROOT"
+	// devArtifactGoCacheEnv lets managed callers share one external Go cache across isolated artifact roots.
+	devArtifactGoCacheEnv = "FORJ_DEV_GOCACHE"
+)
 
 // devArtifactRoot resolves the inherited development artifact root and rejects paths that could still write into the checkout.
 func devArtifactRoot() (string, error) {
@@ -36,6 +40,19 @@ func devArtifactRoot() (string, error) {
 	}
 	if artifactRoot == root || pathWithin(artifactRoot, root) {
 		return "", fmt.Errorf("%s must be outside the project checkout", devArtifactRootEnv)
+	}
+	cache := strings.TrimSpace(os.Getenv(devArtifactGoCacheEnv))
+	if cache != "" {
+		if !filepath.IsAbs(cache) || filepath.Clean(cache) != cache {
+			return "", fmt.Errorf("%s must be a clean absolute path", devArtifactGoCacheEnv)
+		}
+		cache, err = resolveDevArtifactPath(cache)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", devArtifactGoCacheEnv, err)
+		}
+		if cache == root || pathWithin(cache, root) {
+			return "", fmt.Errorf("%s must be outside the project checkout", devArtifactGoCacheEnv)
+		}
 	}
 	return artifactRoot, nil
 }
@@ -114,7 +131,11 @@ func devArtifactBuildEnvironment(env map[string]string) map[string]string {
 		return env
 	}
 	result := copyDevWatchEnv(env)
-	result["GOCACHE"] = filepath.Join(root, ".gocache")
+	cache := strings.TrimSpace(os.Getenv(devArtifactGoCacheEnv))
+	if cache == "" {
+		cache = filepath.Join(root, ".gocache")
+	}
+	result["GOCACHE"] = cache
 	return result
 }
 
