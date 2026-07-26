@@ -52,9 +52,6 @@ func compileDevWatchers(config *project.Config) ([]devCompiledWatcher, error) {
 	if config == nil {
 		return nil, fmt.Errorf("compile dev watchers: project config is required")
 	}
-	if _, err := devArtifactRoot(); err != nil {
-		return nil, err
-	}
 	if err := validateStructuredDevAppNames(config); err != nil {
 		return nil, err
 	}
@@ -197,9 +194,6 @@ func compileStructuredAppBuild(config *project.Config, app project.App, appConfi
 		}
 		if strings.TrimSpace(commandConfig.Exec) != "" {
 			execCommand = commandConfig.Exec
-			if isExplicitConventionalDevBuild(commandConfig, app) {
-				execCommand = devBuildCommandForApp(execCommand, app)
-			}
 		}
 		if len(commandConfig.Watch) > 0 {
 			includes = commandConfig.Watch
@@ -228,7 +222,7 @@ func compileStructuredAppBuild(config *project.Config, app project.App, appConfi
 	if err != nil {
 		return nil, fmt.Errorf("compile %s: %w", name, err)
 	}
-	commandEnv := devArtifactBuildEnvironment(frameworkDevAppEnv(app, env))
+	commandEnv := frameworkDevAppEnv(app, env)
 	commandEnv["FORJ_BUILD_PROGRESS"] = "1"
 	return &devCompiledWatcher{
 		Watch: compiledWatch.spec, ID: id, Name: name, Kind: devWatcherAppBuild, App: app.Name,
@@ -258,15 +252,12 @@ func compileStructuredAppRuntime(app project.App, components project.Components,
 	if commandConfig != nil && commandConfig.IsMapping() && strings.TrimSpace(commandConfig.Exec) == "" {
 		return nil, fmt.Errorf("compile %s: run.exec is required for a run mapping", name)
 	}
-	conventionalBinary := conventionalDevAppRuntimeCommand(app).Exec
-	binary := devRuntimeShellExecutable(app)
+	binary := conventionalDevAppRuntimeCommand(app).Exec
 	execCommand := binary
 	if commandConfig != nil && strings.TrimSpace(commandConfig.Exec) != "" {
 		execCommand = commandConfig.Exec
 		if commandConfig.Shorthand {
 			execCommand = binary + " " + strings.TrimSpace(commandConfig.Exec)
-		} else if isExplicitConventionalDevRuntimeExec(commandConfig, conventionalBinary) {
-			execCommand = binary
 		}
 	}
 	var configuredWatch []string
@@ -315,23 +306,18 @@ func compileStructuredAppRuntime(app project.App, components project.Components,
 			Stdin: devWatcherStdin(false),
 		},
 		Postpone: postpone, Restart: true, WatchChanges: watchChanges, PollInterval: compiledWatch.pollInterval,
-		FullProcessOverride: commandConfig != nil && commandConfig.IsMapping() && !isExplicitConventionalDevRuntime(commandConfig, conventionalBinary),
+		FullProcessOverride: commandConfig != nil && commandConfig.IsMapping() && !isExplicitConventionalDevRuntime(commandConfig, binary),
 	}, nil
 }
 
 // isExplicitConventionalDevRuntime recognizes a rendered bare-binary snapshot without weakening custom process overrides.
 func isExplicitConventionalDevRuntime(command *project.DevAppCommand, binary string) bool {
-	if !isExplicitConventionalDevRuntimeExec(command, binary) {
+	if command == nil || command.Exec != binary {
 		return false
 	}
 	return len(command.Watch) == 0 && len(command.Ignore) == 0 && command.Root == "" &&
 		command.WorkDir == "" && len(command.Env) == 0 && command.Debounce == "" &&
 		command.Poll == "" && !command.PostponeSet
-}
-
-// isExplicitConventionalDevRuntimeExec identifies the generated executable while allowing its watcher controls to remain user-owned.
-func isExplicitConventionalDevRuntimeExec(command *project.DevAppCommand, binary string) bool {
-	return command != nil && command.Exec == binary
 }
 
 // appendUniqueDevMatchers extends invariant matcher lists without duplicating rendered defaults.
@@ -559,13 +545,10 @@ func compileLegacyDevWatcher(watch project.DevWatch) (devCompiledWatcher, error)
 	if frameworkApp && watch.Name == devAppWatcherName("Build", configuredApp) {
 		kind = devWatcherAppBuild
 		appName = configuredApp
-		execCommand = devBuildCommandForApp(execCommand, project.DefaultNamedApp(configuredApp))
 		env["FORJ_BUILD_PROGRESS"] = "1"
-		env = devArtifactBuildEnvironment(env)
 	} else if frameworkApp && watch.Name == devAppWatcherName("Run", configuredApp) {
 		kind = devWatcherAppRun
 		appName = configuredApp
-		execCommand = redirectLegacyDevRuntimeExec(execCommand, project.DefaultNamedApp(configuredApp))
 		if _, ok := devExecutableTarget(execCommand); ok {
 			nativeRuntimeCommand = execCommand
 		}
@@ -587,30 +570,6 @@ func compileLegacyDevWatcher(watch project.DevWatch) (devCompiledWatcher, error)
 		LogPrefix: options.logPrefix, LogPrefixSet: options.logPrefixSet,
 		NativeRuntimeCommand: nativeRuntimeCommand,
 	}, nil
-}
-
-// isExplicitConventionalDevBuild recognizes the generated build command while leaving a user-owned build process intact.
-func isExplicitConventionalDevBuild(command *project.DevAppCommand, app project.App) bool {
-	return command != nil && command.Exec == conventionalDevAppBuildExec(app)
-}
-
-// conventionalDevAppBuildExec returns the stable generated command spelling used to recognize migrated configurations.
-func conventionalDevAppBuildExec(app project.App) string {
-	app = projectlayout.NormalizeApp(app)
-	command := "forj build -o " + projectlayout.RuntimeExecutable(".", app)
-	if app.Name != project.DefaultAppName {
-		command = prefixForjBuildCommandForApp(command, app.Name)
-	}
-	return command
-}
-
-// redirectLegacyDevRuntimeExec redirects only the generated bare executable at the beginning of a legacy watcher command.
-func redirectLegacyDevRuntimeExec(command string, app project.App) string {
-	conventional := projectlayout.RuntimeExecutable(".", app)
-	if target, ok := devExecutableTarget(command); ok && target == conventional {
-		return devRuntimeShellExecutable(app) + devExecutableArgSuffix(command, target)
-	}
-	return command
 }
 
 // parseLegacyDevWatchOptions implements wgo v0.6.3's watcher flags and common logging-fork additions.

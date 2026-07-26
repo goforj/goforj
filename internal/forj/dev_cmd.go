@@ -172,7 +172,7 @@ func (c *DevCmd) Run() error {
 	if err := ensureDevTools(); err != nil {
 		return err
 	}
-	if err := ensureDevArtifactDir(); err != nil {
+	if err := ensureBinDir(); err != nil {
 		return err
 	}
 
@@ -807,7 +807,7 @@ func shouldRunDevAutoMigrate(config *project.Config) bool {
 func devAutoMigrateShellCommand(config *project.Config) string {
 	for _, app := range activeDevAppsForConfig(config) {
 		if appRenderComponents(config, app).HasDatabase() {
-			return devRuntimeShellExecutable(app) + " migrate"
+			return projectlayout.RuntimeExecutable(".", app) + " migrate"
 		}
 	}
 	return activeDevAppBinaryPath() + " migrate"
@@ -831,7 +831,7 @@ func activeDevApp() project.App {
 
 // activeDevAppBinaryPath points dev helpers at the active app binary.
 func activeDevAppBinaryPath() string {
-	return devRuntimeShellExecutable(activeDevApp())
+	return projectlayout.RuntimeExecutable(".", activeDevApp())
 }
 
 // devWatchesForApps expands the single-app default watchers across every discovered app.
@@ -874,7 +874,7 @@ func devWatchForAppWithConfig(config *project.Config, watch project.DevWatch, ap
 	}
 
 	appWatch := devWatchForApp(watch, app)
-	binary := devRuntimeShellExecutable(app)
+	binary := projectlayout.RuntimeExecutable(".", app)
 	appWatch.Exec = strings.TrimSpace(binary + " " + runCommand)
 	return appWatch, true
 }
@@ -988,8 +988,8 @@ func devWatchForApp(watch project.DevWatch, app project.App) project.DevWatch {
 	if app.Name != project.DefaultAppName {
 		watch.Name = strings.ReplaceAll(watch.Name, "App", app.Name)
 	}
-	appBinary := devRuntimeShellExecutable(app)
-	appReady := devRuntimeReadyStamp(app)
+	appBinary := projectlayout.RuntimeExecutable(".", app)
+	appReady := projectlayout.RuntimeReadyStamp(".", app)
 	appWireGen := filepath.ToSlash(filepath.Join(projectlayout.WireDir(".", app), "wire_gen")) + `\.go$`
 	if isDevBuildWatcher(baseName) {
 		watch.Exec = devBuildCommandForApp(watch.Exec, app)
@@ -1070,7 +1070,7 @@ func devBuildExecutionForConfigApp(config *project.Config, app project.App) (str
 		workDir = devApp.Build.WorkDir
 		configuredEnv = devApp.Build.Env
 	}
-	env := devArtifactBuildEnvironment(frameworkDevAppEnv(app, configuredEnv))
+	env := frameworkDevAppEnv(app, configuredEnv)
 	return workDir, env
 }
 
@@ -1081,9 +1081,6 @@ func devBuildCommandForConfigApp(config *project.Config, baseCommand string, app
 			return ""
 		}
 		if command := strings.TrimSpace(devApp.Build.Exec); command != "" {
-			if isExplicitConventionalDevBuild(devApp.Build, app) {
-				return devBuildCommandForApp(command, app)
-			}
 			return command
 		}
 	}
@@ -1117,20 +1114,13 @@ func devBuildCommandForApp(baseCommand string, app project.App) string {
 	}
 
 	defaultApp := project.DefaultApp()
-	defaultConventionalBinary := projectlayout.RuntimeExecutable(".", defaultApp)
-	appConventionalBinary := projectlayout.RuntimeExecutable(".", app)
-	defaultBinary := devRuntimeExecutable(defaultApp)
-	appBinary := devRuntimeShellExecutable(app)
+	defaultBinary := projectlayout.RuntimeExecutable(".", defaultApp)
+	appBinary := projectlayout.RuntimeExecutable(".", app)
 	defaultPackage := "./" + filepath.ToSlash(projectlayout.CommandDir(".", defaultApp))
 	appPackage := "./" + filepath.ToSlash(projectlayout.CommandDir(".", app))
 
-	const binaryPlaceholder = "__FORJ_DEV_RUNTIME_BINARY__"
-	command = replaceBuildToken(command, defaultConventionalBinary, binaryPlaceholder)
-	command = replaceBuildToken(command, strings.TrimPrefix(defaultConventionalBinary, "./"), binaryPlaceholder)
-	command = replaceBuildToken(command, appConventionalBinary, binaryPlaceholder)
-	command = replaceBuildToken(command, strings.TrimPrefix(appConventionalBinary, "./"), binaryPlaceholder)
-	command = replaceBuildToken(command, defaultBinary, binaryPlaceholder)
-	command = replaceBuildToken(command, binaryPlaceholder, appBinary)
+	command = replaceBuildToken(command, defaultBinary, appBinary)
+	command = replaceBuildToken(command, strings.TrimPrefix(defaultBinary, "./"), strings.TrimPrefix(appBinary, "./"))
 	command = replaceBuildToken(command, defaultPackage, appPackage)
 	command = replaceBuildToken(command, strings.TrimPrefix(defaultPackage, "./"), strings.TrimPrefix(appPackage, "./"))
 	command = removeBuildPackageToken(command, appPackage)
@@ -1766,14 +1756,14 @@ func usesDevBootstrapConsole(outWriter io.Writer, errWriter io.Writer) bool {
 // publishDevBuildReadyStamp makes custom successful build commands obey the same runtime publication gate as forj build.
 func publishDevBuildReadyStamp(app project.App) error {
 	app = projectlayout.NormalizeApp(app)
-	binary := devRuntimeBinary(app)
+	binary := projectlayout.RuntimeBinary(".", app)
 	if _, err := os.Stat(binary); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("inspect built app binary: %w", err)
 	}
-	ready := devRuntimeReadyStamp(app)
+	ready := projectlayout.RuntimeReadyStamp(".", app)
 	if err := os.MkdirAll(filepath.Dir(ready), 0o755); err != nil {
 		return fmt.Errorf("create build ready directory: %w", err)
 	}
@@ -2130,7 +2120,7 @@ func devRuntimeWatcherApp(watcher string) string {
 func clearDevBuildReadyStamps(jobs []devBuildJob) {
 	for _, job := range jobs {
 		app := projectlayout.NormalizeApp(job.app)
-		_ = os.Remove(devRuntimeReadyStamp(app))
+		_ = os.Remove(projectlayout.RuntimeReadyStamp(".", app))
 	}
 }
 
@@ -2227,61 +2217,28 @@ func devBinaryMagicFunctionScript() string {
 
 // devExecutableArgSuffix returns the original command arguments after the executable path.
 func devExecutableArgSuffix(execCmd string, target string) string {
-	_, end, ok := devExecutableShellWord(execCmd)
-	if !ok {
-		return ""
-	}
-	suffix := strings.TrimSpace(execCmd[end:])
+	suffix := str.Of(execCmd).Trim().TrimPrefix(target).String()
 	if suffix == "" {
 		return ""
 	}
-	return " " + suffix
+	if !strings.HasPrefix(suffix, " ") && !strings.HasPrefix(suffix, "\t") {
+		return " " + strings.TrimSpace(suffix)
+	}
+	return suffix
 }
 
 // devExecutableTarget extracts the binary path from watcher commands that execute built app binaries.
 func devExecutableTarget(execCmd string) (string, bool) {
-	target, _, ok := devExecutableShellWord(execCmd)
-	if !ok {
+	fields := strings.Fields(strings.TrimSpace(execCmd))
+	if len(fields) == 0 {
 		return "", false
 	}
+	target := fields[0]
 	normalized := filepath.ToSlash(target)
 	if strings.HasPrefix(normalized, "./bin/") || strings.HasPrefix(normalized, "bin/") || strings.Contains(normalized, "/bin/") {
 		return target, true
 	}
 	return "", false
-}
-
-// devExecutableShellWord reads the first simple shell word, including the single-quoted paths generated for external artifacts.
-func devExecutableShellWord(command string) (string, int, bool) {
-	start := 0
-	for start < len(command) && (command[start] == ' ' || command[start] == '\t') {
-		start++
-	}
-	if start == len(command) {
-		return "", 0, false
-	}
-	if command[start] != '\'' {
-		end := start
-		for end < len(command) && command[end] != ' ' && command[end] != '\t' {
-			end++
-		}
-		return command[start:end], end, true
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); {
-		if command[index] != '\'' {
-			value.WriteByte(command[index])
-			index++
-			continue
-		}
-		if strings.HasPrefix(command[index:], "'\\''") {
-			value.WriteByte('\'')
-			index += len("'\\''")
-			continue
-		}
-		return value.String(), index + 1, true
-	}
-	return "", 0, false
 }
 
 // devExecutableReadyStampTarget returns the build stamp that publishes a watched binary.
@@ -2823,6 +2780,14 @@ func (l *soundLimiter) Allow() bool {
 func ensureDevTools() error {
 	if err := ensureTool("wire", wireInstallTarget); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ensureBinDir creates ./bin for local builds if it's missing.
+func ensureBinDir() error {
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		return fmt.Errorf("ensure bin directory: %w", err)
 	}
 	return nil
 }
