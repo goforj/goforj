@@ -66,7 +66,7 @@ func TestBuildCompiledEnvModes(t *testing.T) {
 		}
 		got := strings.TrimSpace(out.String())
 		wantParts := []string{
-			"mode=from-env",
+			"mode=from-os",
 			"forced=forced",
 			"app_env=production",
 		}

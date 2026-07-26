@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/build"
+	"github.com/goforj/goforj/internal/launcher"
 )
 
 // TestInsertBuildPassthroughBoundaryPreservesGoFlags verifies raw Go syntax reaches the build command intact.
@@ -43,12 +46,13 @@ func TestInsertBuildPassthroughBoundaryPreservesGoFlags(t *testing.T) {
 // TestBuildPassthroughBoundarySurvivesKong verifies parser behavior rather than only the pre-parser transformation.
 func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantGoArgs []string
-		wantStrict bool
-		wantRoot   string
-		wantDev    bool
+		name             string
+		args             []string
+		wantGoArgs       []string
+		wantStrict       bool
+		wantRoot         string
+		wantDev          bool
+		wantEnvOverrides string
 	}{
 		{name: "tags", args: []string{"build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}},
 		{name: "root flag before build", args: []string{"--dev", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
@@ -62,6 +66,7 @@ func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 		{name: "output", args: []string{"build", "-o", "./bin/app"}, wantGoArgs: []string{"-o", "./bin/app"}},
 		{name: "inline output", args: []string{"build", "-o=./bin/app"}, wantGoArgs: []string{"-o=./bin/app"}},
 		{name: "linker flags", args: []string{"build", "-ldflags", "-X example.com/app.Value=dev"}, wantGoArgs: []string{"-ldflags", "-X example.com/app.Value=dev"}},
+		{name: "environment overrides", args: []string{"build", "--env-overrides", "FEATURE_A=true"}, wantEnvOverrides: "FEATURE_A=true"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -88,6 +93,9 @@ func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 			}
 			if test.wantRoot != "" && root.BuildCmd.Root != test.wantRoot {
 				t.Fatalf("root = %q, want %q", root.BuildCmd.Root, test.wantRoot)
+			}
+			if root.BuildCmd.EnvOverrides != test.wantEnvOverrides {
+				t.Fatalf("environment overrides = %q, want %q", root.BuildCmd.EnvOverrides, test.wantEnvOverrides)
 			}
 		})
 	}
@@ -301,26 +309,23 @@ func TestConventionalAppHelpSkipsNonGeneratedProjects(t *testing.T) {
 	}
 }
 
-func TestRunAppHelpForAppShellsThroughRootBinary(t *testing.T) {
+func TestRunAppHelpForAppUsesExistingBinary(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	scriptPath, err := filepath.Abs("fake-forj")
-	if err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
+	scriptPath := filepath.Join("bin", "billing")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$1|$2|$FORJ_APP\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previousArg0 := os.Args[0]
-	defer func() { os.Args[0] = previousArg0 }()
-	os.Args[0] = scriptPath
 
 	output, err := runAppHelpForApp("billing", true)
 	if err != nil {
 		t.Fatalf("run app help: %v\n%s", err, output)
 	}
-	if output != "billing|--help|billing\n" {
+	if output != "--help||billing\n" {
 		t.Fatalf("unexpected help command output: %q", output)
 	}
 }
@@ -329,16 +334,13 @@ func TestRunAppHelpForAppMarksMultiAppHelp(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	scriptPath, err := filepath.Abs("fake-forj")
-	if err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
+	scriptPath := filepath.Join("bin", "app")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$FORJ_MULTI_APP_HELP\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previousArg0 := os.Args[0]
-	defer func() { os.Args[0] = previousArg0 }()
-	os.Args[0] = scriptPath
 
 	output, err := runAppHelpForApp("app", true)
 	if err != nil {
@@ -349,33 +351,54 @@ func TestRunAppHelpForAppMarksMultiAppHelp(t *testing.T) {
 	}
 }
 
+func TestRunAppHelpForAppSkipsMissingBinaryWithoutBuildingSource(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeSourceApp(t, "billing")
+
+	_, err := runAppHelpForApp("billing", true)
+	if !errors.Is(err, errAppBinaryNotFound) {
+		t.Fatalf("missing binary error = %v, want app binary not found", err)
+	}
+}
+
+func TestRunAppHelpForAppBoundsUnresponsiveBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join("bin", "billing")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	_, err := runAppHelpForApp("billing", true)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unresponsive binary error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("unresponsive binary elapsed = %s, want bounded help probe", elapsed)
+	}
+}
+
 func TestPrintGeneratedAppHelpIgnoresUnavailableAppHelp(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	scriptPath, err := filepath.Abs("fake-forj")
-	if err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := `#!/bin/sh
-case "$1" in
-  app)
-    printf '%s\n\n%s\n  %s\n' 'test · app' 'app' 'about    Show environment'
-    exit 0
-    ;;
-  ship-smoke)
-    echo 'custom binary has no framework help' >&2
-    exit 1
-    ;;
-esac
-exit 1
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+	appScript := "#!/bin/sh\nprintf '%s\\n\\n%s\\n  %s\\n' 'test · app' 'app' 'about    Show environment'\n"
+	if err := os.WriteFile(filepath.Join("bin", "app"), []byte(appScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previousArg0 := os.Args[0]
-	defer func() { os.Args[0] = previousArg0 }()
-	os.Args[0] = scriptPath
+	customScript := "#!/bin/sh\necho 'custom binary has no framework help' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join("bin", "ship-smoke"), []byte(customScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	output := captureStdout(t, func() {
 		if err := printGeneratedAppHelp([]string{"app", "ship-smoke"}); err != nil {
@@ -564,6 +587,33 @@ func TestDelegatedAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
 	}
 	if !envHasEntry(env, "FORJ_COMMAND_PREFIX=forj") {
 		t.Fatal("expected delegated app env to include the forj command prefix")
+	}
+}
+
+// TestLauncherEnvironmentExcludesCLIDefaults ensures framework defaults do not become launcher-owned overrides.
+func TestLauncherEnvironmentExcludesCLIDefaults(t *testing.T) {
+	previousAppName, hadAppName := os.LookupEnv("APP_NAME")
+	previousAppEnv, hadAppEnv := os.LookupEnv("APP_ENV")
+	previousDefaults := cliDefaultedEnv
+	defer func() {
+		cliDefaultedEnv = previousDefaults
+		restoreEnv("APP_NAME", previousAppName, hadAppName)
+		restoreEnv("APP_ENV", previousAppEnv, hadAppEnv)
+		launcher.Capture()
+	}()
+
+	cliDefaultedEnv = map[string]bool{}
+	_ = os.Unsetenv("APP_NAME")
+	_ = os.Unsetenv("APP_ENV")
+	launcher.Capture()
+	captured := launcher.Snapshot()
+	setCLIDefaultEnv("APP_NAME", "GoForj")
+	setCLIDefaultEnv("APP_ENV", "local")
+	if _, ok := captured["APP_NAME"]; ok {
+		t.Fatal("APP_NAME default was captured as launcher environment")
+	}
+	if _, ok := captured["APP_ENV"]; ok {
+		t.Fatal("APP_ENV default was captured as launcher environment")
 	}
 }
 

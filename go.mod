@@ -19,7 +19,7 @@ require (
 	github.com/goforj/cache/cachecore v0.4.0
 	github.com/goforj/console v0.1.1
 	github.com/goforj/crypt v1.2.0
-	github.com/goforj/env/v2 v2.5.0
+	github.com/goforj/env/v2 v2.6.0
 	github.com/goforj/execx v1.1.3
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1

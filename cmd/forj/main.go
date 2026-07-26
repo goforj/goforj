@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/console"
@@ -18,6 +20,7 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/konghelp"
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
@@ -32,6 +35,7 @@ func main() {
 	if build.HandleProfileTool(os.Args[1:]) {
 		return
 	}
+	launcher.Capture()
 
 	// Default environment
 	setCLIDefaultEnv("APP_ENV", "local")
@@ -528,6 +532,11 @@ type parsedAppHelp struct {
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
+const (
+	appHelpTimeout   = 500 * time.Millisecond
+	appHelpWaitDelay = 100 * time.Millisecond
+)
+
 // compactGeneratedAppHelp folds identical generated app command surfaces into one shared help block.
 func compactGeneratedAppHelp(results []appHelpResult) (string, bool) {
 	if len(results) <= 1 {
@@ -734,13 +743,20 @@ func collectGeneratedAppHelp(apps []string) []appHelpResult {
 	return results
 }
 
-// runAppHelpForApp invokes the selected app through the root binary so source and built apps share one path.
+// runAppHelpForApp reads help only from an existing app binary so root help remains a read-only operation.
 func runAppHelpForApp(appName string, multi bool) (string, error) {
 	appName = strings.TrimSpace(appName)
 	if appName == "" {
 		appName = project.DefaultAppName
 	}
-	command := exec.Command(os.Args[0], appName, "--help")
+	binPath := filepath.Join(".", "bin", appName)
+	if !regularFileExists(binPath) {
+		return "", errAppBinaryNotFound
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), appHelpTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, binPath, "--help")
+	command.WaitDelay = appHelpWaitDelay
 	command.Env = withAppEnv(delegatedAppEnv(), appName)
 	if multi {
 		command.Env = append(command.Env, "FORJ_MULTI_APP_HELP=1")
@@ -749,6 +765,9 @@ func runAppHelpForApp(appName string, multi bool) (string, error) {
 	command.Stdout = &output
 	command.Stderr = &output
 	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			return output.String(), fmt.Errorf("read %s app help: %w", appName, ctx.Err())
+		}
 		return output.String(), err
 	}
 	return output.String(), nil

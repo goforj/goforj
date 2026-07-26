@@ -814,8 +814,7 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 			`name:"queue:work" aliases:"worker" help:"Runs queue workers indefinitely"`,
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl"): {
-			`fmt.Printf("App: %s\n\n", routeListApp())`,
-			`func routeListApp() string`,
+			`name:"route:list" help:"List HTTP routes"`,
 		},
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "swagger.go.tmpl"): {
 			`func defaultOpenAPISpecPathForApp() string`,
@@ -837,6 +836,25 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 			if !strings.Contains(source, snippet) {
 				t.Fatalf("expected %s to contain %q", file, snippet)
 			}
+		}
+	}
+}
+
+// TestRouteListTemplateOmitsAppHeading verifies route output starts with the route table.
+func TestRouteListTemplateOmitsAppHeading(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl")
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read route list template: %v", err)
+	}
+	source := string(content)
+	for _, unwanted := range []string{"App:", "routeListApp", "FORJ_APP"} {
+		if strings.Contains(source, unwanted) {
+			t.Fatalf("route list template contains obsolete app heading fragment %q", unwanted)
 		}
 	}
 }

@@ -60,7 +60,7 @@ require (
 	github.com/goforj/cache/driver/rediscache v0.4.0
 	github.com/goforj/cache/driver/sqlcore v0.4.0
 	github.com/goforj/cache/driver/sqlitecache v0.4.0
-	github.com/goforj/env/v2 v2.5.0
+	github.com/goforj/env/v2 v2.6.0
 	github.com/goforj/str/v2 v2.0.1
 )
 `
@@ -70,7 +70,7 @@ const storageGeneratorIntegrationGoMod = `module example.com/storagegeneratorint
 go 1.24
 
 require (
-	github.com/goforj/env/v2 v2.5.0
+	github.com/goforj/env/v2 v2.6.0
 	github.com/goforj/storage v0.5.0
 	github.com/goforj/storage/driver/ftpstorage v0.5.0
 	github.com/goforj/storage/driver/gcsstorage v0.5.0

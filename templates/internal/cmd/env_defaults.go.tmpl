@@ -32,10 +32,17 @@ func LoadEnv() error {
 	if err := ApplyCompiledEnvOverrides(); err != nil {
 		return err
 	}
-	if err := ApplyCompiledEnvDefaults(); err != nil {
-		return err
+	if hasDefault && !hasOverride {
+		if _, present := os.LookupEnv("APP_ENV"); !present {
+			if err := os.Setenv("APP_ENV", defaultAppEnv); err != nil {
+				return fmt.Errorf("seed compiled APP_ENV default: %w", err)
+			}
+		}
 	}
 	if err := env.Load(); err != nil {
+		return err
+	}
+	if err := ApplyCompiledEnvDefaults(); err != nil {
 		return err
 	}
 	if err := ApplyCompiledEnvOverrides(); err != nil {
@@ -71,7 +78,6 @@ func LoadEnv() error {
 	if err := ApplyCompiledEnvOverrides(); err != nil {
 		return err
 	}
-
 	return nil
 }
 

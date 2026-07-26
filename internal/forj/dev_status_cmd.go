@@ -121,7 +121,9 @@ func (c *DevStatusCmd) Run() error {
 	report := newDevStatusReport()
 	loadProject := c.loadProject
 	if loadProject == nil {
-		loadProject = loadDevStatusProject
+		loadProject = func() (devStatusProjectContext, error) {
+			return loadDevStatusProject(inheritedLauncherEnvironment())
+		}
 	}
 	projectContext, err := loadProject()
 	if err != nil {

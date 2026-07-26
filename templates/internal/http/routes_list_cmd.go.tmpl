@@ -2,8 +2,6 @@ package http
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/logger"
@@ -28,14 +26,6 @@ func (*RouteListCmd) Signature() string {
 // Run executes the command to list all registered routes.
 func (c *RouteListCmd) Run() error {
 	entries := web.BuildRouteEntries(c.server.GetRoutes())
-	fmt.Printf("App: %s\n\n", routeListApp())
 	fmt.Println(web.RenderRouteTable(entries))
 	return nil
-}
-
-func routeListApp() string {
-	if app := strings.TrimSpace(os.Getenv("FORJ_APP")); app != "" {
-		return app
-	}
-	return "app"
 }
