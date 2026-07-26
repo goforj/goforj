@@ -465,7 +465,7 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 		databasesByDriver[database.Driver] = append(databasesByDriver[database.Driver], database.Name)
 	}
 	if names := databasesByDriver["mysql"]; len(names) > 0 {
-		res, err := execx.Command("docker-compose", "exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
+		res, err := devComposeCommand("exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(outWriter).
@@ -479,7 +479,7 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 		}
 	}
 	if names := databasesByDriver["postgres"]; len(names) > 0 {
-		res, err := execx.Command("docker-compose", "exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
+		res, err := devComposeCommand("exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(outWriter).
@@ -493,6 +493,14 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 		}
 	}
 	return nil
+}
+
+// devComposeCommand uses the installed Compose frontend for framework-owned direct invocations.
+func devComposeCommand(arguments ...string) *execx.Cmd {
+	if _, err := exec.LookPath("docker-compose"); err == nil {
+		return execx.Command("docker-compose", arguments...)
+	}
+	return execx.Command("docker", append([]string{"compose"}, arguments...)...)
 }
 
 type devDatabase struct {

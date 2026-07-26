@@ -236,3 +236,48 @@ func TestEffectiveDevDownTasksAlwaysCoversDockerProjects(t *testing.T) {
 		t.Fatalf("Docker-disabled down tasks = %#v, want none", got)
 	}
 }
+
+// TestResolveDevComposeCommandUsesTheAvailableFrontend preserves task arguments across Docker installations.
+func TestResolveDevComposeCommandUsesTheAvailableFrontend(t *testing.T) {
+	tests := []struct {
+		name            string
+		command         string
+		legacyAvailable bool
+		pluginAvailable bool
+		want            string
+	}{
+		{
+			name:            "plugin only",
+			command:         `docker-compose --profile "*" down`,
+			pluginAvailable: true,
+			want:            `docker compose --profile "*" down`,
+		},
+		{
+			name:            "legacy only",
+			command:         "docker compose up -d",
+			legacyAvailable: true,
+			want:            "docker-compose up -d",
+		},
+		{
+			name:            "configured frontend available",
+			command:         "docker-compose up -d",
+			legacyAvailable: true,
+			pluginAvailable: true,
+			want:            "docker-compose up -d",
+		},
+		{
+			name:            "unrelated owner task",
+			command:         "docker info",
+			pluginAvailable: true,
+			want:            "docker info",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := resolveDevComposeCommand(test.command, test.legacyAvailable, test.pluginAvailable)
+			if got != test.want {
+				t.Fatalf("resolveDevComposeCommand() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package forj
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/goforj/goforj/internal/envfile"
@@ -43,7 +44,7 @@ func effectiveDevPreTasks(config *project.Config) []project.DevTask {
 	if composeNeeded && !hasComposeTask {
 		filtered = append(filtered, project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)})
 	}
-	return filtered
+	return resolveDevComposeTasks(filtered)
 }
 
 // effectiveDevDownTasks keeps teardown independent from the profile value that happens to be active later.
@@ -54,9 +55,33 @@ func effectiveDevDownTasks(config *project.Config) []project.DevTask {
 	}
 	if hasDockerComposeDownTask(tasks) {
 		normalizeDockerComposeDownTask(&tasks)
-		return tasks
+		return resolveDevComposeTasks(tasks)
 	}
-	return append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()})
+	return resolveDevComposeTasks(append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}))
+}
+
+// resolveDevComposeTasks selects an installed Compose frontend without changing owner-supplied arguments.
+func resolveDevComposeTasks(tasks []project.DevTask) []project.DevTask {
+	resolved := append([]project.DevTask(nil), tasks...)
+	_, legacyErr := exec.LookPath("docker-compose")
+	_, pluginErr := exec.LookPath("docker")
+	for index := range resolved {
+		resolved[index].Cmd = resolveDevComposeCommand(resolved[index].Cmd, legacyErr == nil, pluginErr == nil)
+	}
+	return resolved
+}
+
+// resolveDevComposeCommand changes only the executable spelling when the configured frontend is unavailable.
+func resolveDevComposeCommand(command string, legacyAvailable bool, pluginAvailable bool) string {
+	trimmed := strings.TrimSpace(command)
+	switch {
+	case strings.HasPrefix(trimmed, "docker-compose ") && !legacyAvailable && pluginAvailable:
+		return "docker compose " + strings.TrimPrefix(trimmed, "docker-compose ")
+	case strings.HasPrefix(trimmed, "docker compose ") && !pluginAvailable && legacyAvailable:
+		return "docker-compose " + strings.TrimPrefix(trimmed, "docker compose ")
+	default:
+		return command
+	}
 }
 
 // composeProfilesEnabled follows Compose's process-over-dotenv precedence and reports whether indirect dotenv syntax was resolved reliably.
