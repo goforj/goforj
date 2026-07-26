@@ -1,17 +1,32 @@
 package forj
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
 
+const devComposeProbeTimeout = 2 * time.Second
+
+// devComposeAvailability records which installed frontend can execute Compose commands.
+type devComposeAvailability struct {
+	legacy bool
+	plugin bool
+}
+
 // effectiveDevPreTasks starts owner-selected Compose profiles even when generation had no active local service.
 func effectiveDevPreTasks(config *project.Config) []project.DevTask {
+	return effectiveDevPreTasksWithAvailability(config, installedDevComposeAvailability())
+}
+
+// effectiveDevPreTasksWithAvailability resolves generated lifecycle commands against one stable frontend snapshot.
+func effectiveDevPreTasksWithAvailability(config *project.Config, availability devComposeAvailability) []project.DevTask {
 	tasks := append([]project.DevTask(nil), config.Dev.Pre...)
 	if !config.Render.Components.Docker {
 		return tasks
@@ -44,31 +59,62 @@ func effectiveDevPreTasks(config *project.Config) []project.DevTask {
 	if composeNeeded && !hasComposeTask {
 		filtered = append(filtered, project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)})
 	}
-	return resolveDevComposeTasks(filtered)
+	return resolveDevComposeTasks(filtered, availability)
 }
 
 // effectiveDevDownTasks keeps teardown independent from the profile value that happens to be active later.
 func effectiveDevDownTasks(config *project.Config) []project.DevTask {
+	return effectiveDevDownTasksWithAvailability(config, installedDevComposeAvailability())
+}
+
+// effectiveDevDownTasksWithAvailability resolves teardown commands against one stable frontend snapshot.
+func effectiveDevDownTasksWithAvailability(config *project.Config, availability devComposeAvailability) []project.DevTask {
 	tasks := append([]project.DevTask(nil), config.Dev.Down...)
 	if !config.Render.Components.Docker {
 		return tasks
 	}
 	if hasDockerComposeDownTask(tasks) {
 		normalizeDockerComposeDownTask(&tasks)
-		return resolveDevComposeTasks(tasks)
+		return resolveDevComposeTasks(tasks, availability)
 	}
-	return resolveDevComposeTasks(append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}))
+	return resolveDevComposeTasks(append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}), availability)
 }
 
 // resolveDevComposeTasks selects an installed Compose frontend without changing owner-supplied arguments.
-func resolveDevComposeTasks(tasks []project.DevTask) []project.DevTask {
+func resolveDevComposeTasks(tasks []project.DevTask, availability devComposeAvailability) []project.DevTask {
 	resolved := append([]project.DevTask(nil), tasks...)
-	_, legacyErr := exec.LookPath("docker-compose")
-	_, pluginErr := exec.LookPath("docker")
 	for index := range resolved {
-		resolved[index].Cmd = resolveDevComposeCommand(resolved[index].Cmd, legacyErr == nil, pluginErr == nil)
+		resolved[index].Cmd = resolveDevComposeCommand(resolved[index].Cmd, availability.legacy, availability.plugin)
 	}
 	return resolved
+}
+
+// installedDevComposeAvailability verifies executable frontends instead of assuming the Docker CLI includes its Compose plugin.
+func installedDevComposeAvailability() devComposeAvailability {
+	return detectDevComposeAvailability(exec.LookPath, probeDockerComposePlugin)
+}
+
+// detectDevComposeAvailability isolates executable discovery and plugin verification for deterministic tests.
+func detectDevComposeAvailability(
+	lookPath func(string) (string, error),
+	probePlugin func(string) error,
+) devComposeAvailability {
+	availability := devComposeAvailability{}
+	if _, err := lookPath("docker-compose"); err == nil {
+		availability.legacy = true
+	}
+	dockerPath, err := lookPath("docker")
+	if err == nil && probePlugin(dockerPath) == nil {
+		availability.plugin = true
+	}
+	return availability
+}
+
+// probeDockerComposePlugin bounds capability discovery without contacting the Docker daemon.
+func probeDockerComposePlugin(dockerPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), devComposeProbeTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, dockerPath, "compose", "version").Run()
 }
 
 // resolveDevComposeCommand changes only the executable spelling when the configured frontend is unavailable.

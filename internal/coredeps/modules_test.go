@@ -131,7 +131,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/events/driver/snsevents", version: "v0.2.0"},
 		{module: "github.com/goforj/events/eventsfake", version: "v0.2.0"},
 		{module: "github.com/goforj/events/eventstest", version: "v0.2.0"},
-		{module: "github.com/goforj/env/v2", version: "v2.5.0"},
+		{module: "github.com/goforj/env/v2", version: "v2.6.0"},
 		{module: "github.com/goforj/str", version: "v1.3.0"},
 		{module: "github.com/goforj/str/v2", version: "v2.0.1"},
 		{module: "github.com/goforj/queue", version: "v0.2.1"},

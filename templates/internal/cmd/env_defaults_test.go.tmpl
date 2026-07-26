@@ -290,13 +290,18 @@ func TestInheritedEnvironmentOverridesDotenv(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	writeTestEnvFile(t, filepath.Join(dir, ".env"), "INHERITED_VALUE=from-dotenv\nDOTENV_ONLY=from-dotenv\nHOST_FALLBACK=from-base\n")
+	writeTestEnvFile(t, filepath.Join(dir, ".env"), "APP_ENV=local\nINHERITED_VALUE=from-dotenv\nDOTENV_ONLY=from-dotenv\nHOST_FALLBACK=from-base\n")
+	writeTestEnvFile(t, filepath.Join(dir, ".env.production"), "PROFILE_MARKER=production\n")
 	writeTestEnvFile(t, filepath.Join(dir, ".env.host"), "INHERITED_VALUE=from-host-fallback\nHOST_FALLBACK=from-host-fallback\n")
 	output := runEnvDefaultsHelperProcess(t, "TestInheritedEnvironmentOverridesDotenv", dir, map[string]string{
+		"APP_ENV":          "production",
 		"INHERITED_VALUE": "from-process",
 	})
 
 	got := parseEnvDefaultsOutput(t, output)
+	if got["APP_ENV"] != "production" || got["PROFILE_MARKER"] != "production" {
+		t.Fatalf("inherited production profile = APP_ENV:%q marker:%q", got["APP_ENV"], got["PROFILE_MARKER"])
+	}
 	if got["INHERITED_VALUE"] != "from-process" {
 		t.Fatalf("INHERITED_VALUE = %q, want inherited value", got["INHERITED_VALUE"])
 	}
@@ -365,6 +370,7 @@ func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
 		"MARKER=base",
 		"BILLING_APP_ENV=staging",
 		"BILLING_MARKER=app-base",
+		"BILLING_DB_URL=dotenv",
 	}, "\n")+"\n")
 	writeTestEnvFile(t, filepath.Join(dir, ".env.staging"), strings.Join([]string{
 		"MARKER=staging",
@@ -372,7 +378,9 @@ func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
 	}, "\n")+"\n")
 
 	output := runEnvDefaultsHelperProcess(t, "TestAppEnvOverlayCanSelectAppEnvFile", dir, map[string]string{
-		"FORJ_APP": "billing",
+		"FORJ_APP":       "billing",
+		"DB_URL":         "global",
+		"BILLING_DB_URL": "billing",
 	})
 	got := parseEnvDefaultsOutput(t, output)
 	if got["APP_ENV"] != "staging" {
@@ -380,6 +388,9 @@ func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
 	}
 	if got["MARKER"] != "app-staging" {
 		t.Fatalf("expected app overlay to reapply after .env.staging, got %q", got["MARKER"])
+	}
+	if got["DB_URL"] != "billing" {
+		t.Fatalf("expected inherited billing overlay to beat base and dotenv values, got %q", got["DB_URL"])
 	}
 }
 
@@ -453,7 +464,7 @@ func runHostEnvOverridesHelper() {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
 		os.Exit(1)
 	}
-	printEnvDefaultsOutput("INHERITED_VALUE", "DOTENV_ONLY", "HOST_FALLBACK")
+	printEnvDefaultsOutput("APP_ENV", "PROFILE_MARKER", "INHERITED_VALUE", "DOTENV_ONLY", "HOST_FALLBACK")
 	os.Exit(0)
 }
 
@@ -486,7 +497,7 @@ func runAppEnvOverlayHelper() {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
 		os.Exit(1)
 	}
-	printEnvDefaultsOutput("APP_ENV", "MARKER")
+	printEnvDefaultsOutput("APP_ENV", "MARKER", "DB_URL", "BILLING_DB_URL")
 	os.Exit(0)
 }
 

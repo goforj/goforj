@@ -114,16 +114,15 @@ func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	return r.streamer, nil
 }
 
-// loadDevEnvironment applies dotenv layers, then restores values inherited by the dev process.
+// loadDevEnvironment preserves launcher-selected profiles while env/v2 applies process-over-dotenv precedence.
 func loadDevEnvironment(reload bool, inheritedEnv processEnvironment) error {
 	if reload {
-		if err := envx.Reload(); err != nil {
-			return err
-		}
-	} else if err := envx.Load(); err != nil {
+		return envx.Reload()
+	}
+	if err := prepareDevEnvironmentSelectors(inheritedEnv, runtime.GOOS == "windows"); err != nil {
 		return err
 	}
-	return inheritedEnv.Apply()
+	return envx.Load()
 }
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
@@ -497,7 +496,8 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 
 // devComposeCommand uses the installed Compose frontend for framework-owned direct invocations.
 func devComposeCommand(arguments ...string) *execx.Cmd {
-	if _, err := exec.LookPath("docker-compose"); err == nil {
+	availability := installedDevComposeAvailability()
+	if availability.legacy {
 		return execx.Command("docker-compose", arguments...)
 	}
 	return execx.Command("docker", append([]string{"compose"}, arguments...)...)
@@ -1406,17 +1406,35 @@ func captureProcessEnvironment() processEnvironment {
 	return processEnvironment(snapshotProcessEnv())
 }
 
-// Apply restores inherited values after dotenv layers while leaving APP_ENV with the layer env/v2 selected.
-func (environment processEnvironment) Apply() error {
-	for key, value := range environment {
-		if key == "APP_ENV" {
+// prepareDevEnvironmentSelectors removes CLI defaults that were absent at the launcher boundary.
+func prepareDevEnvironmentSelectors(inherited processEnvironment, caseInsensitive bool) error {
+	for _, key := range []string{"APP_ENV", "APP_NAME"} {
+		value, present := inherited.lookup(key, caseInsensitive)
+		if present {
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("restore inherited environment selector %s: %w", key, err)
+			}
 			continue
 		}
-		if err := os.Setenv(key, value); err != nil {
-			return fmt.Errorf("restore inherited environment %s: %w", key, err)
+		if err := os.Unsetenv(key); err != nil {
+			return fmt.Errorf("remove framework environment selector %s: %w", key, err)
 		}
 	}
 	return nil
+}
+
+// lookup applies the operating system's environment-key comparison rules to a captured launcher value.
+func (environment processEnvironment) lookup(name string, caseInsensitive bool) (string, bool) {
+	if !caseInsensitive {
+		value, present := environment[name]
+		return value, present
+	}
+	for key, value := range environment {
+		if strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // processEnvironmentMap converts process entries without truncating values or admitting empty platform pseudo-keys.

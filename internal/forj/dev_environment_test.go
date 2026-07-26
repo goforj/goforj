@@ -89,8 +89,8 @@ func assertDevInheritedEnvironment(t *testing.T, dotenvValue string) {
 	if got := os.Getenv("DOTENV_ONLY"); got != dotenvValue {
 		t.Fatalf("DOTENV_ONLY = %q, want %q", got, dotenvValue)
 	}
-	if got := os.Getenv("APP_ENV"); got != "staging" {
-		t.Fatalf("APP_ENV = %q, want file-owned staging value", got)
+	if got := os.Getenv("APP_ENV"); got != "launcher" {
+		t.Fatalf("APP_ENV = %q, want inherited launcher value", got)
 	}
 }
 

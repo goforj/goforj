@@ -124,7 +124,7 @@ func isolateDevRuntimeEnvironments(compiled []devCompiledWatcher, inherited proc
 	isolated := make([]devCompiledWatcher, len(compiled))
 	copy(isolated, compiled)
 	for index := range isolated {
-		if isolated[index].Legacy || isolated[index].Kind != devWatcherAppRun {
+		if isolated[index].Legacy || isolated[index].Kind != devWatcherAppRun || isolated[index].FullProcessOverride {
 			continue
 		}
 		isolated[index].Command.Env = mergeDevRuntimeEnvironment(

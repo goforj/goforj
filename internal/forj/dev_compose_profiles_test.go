@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,16 @@ import (
 
 	"github.com/goforj/goforj/project"
 )
+
+// effectiveDevPreTasksForTest keeps lifecycle expectations independent from tools installed on the test host.
+func effectiveDevPreTasksForTest(config *project.Config) []project.DevTask {
+	return effectiveDevPreTasksWithAvailability(config, devComposeAvailability{legacy: true, plugin: true})
+}
+
+// effectiveDevDownTasksForTest keeps teardown expectations independent from tools installed on the test host.
+func effectiveDevDownTasksForTest(config *project.Config) []project.DevTask {
+	return effectiveDevDownTasksWithAvailability(config, devComposeAvailability{legacy: true, plugin: true})
+}
 
 // TestEffectiveDevPreTasksStartsProfilesAtInvocationTime verifies profile flips do not require regenerated lifecycle config.
 func TestEffectiveDevPreTasksStartsProfilesAtInvocationTime(t *testing.T) {
@@ -22,26 +33,26 @@ func TestEffectiveDevPreTasksStartsProfilesAtInvocationTime(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(previous) })
 
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true}}}
-	if got := effectiveDevPreTasks(config); len(got) != 0 {
+	if got := effectiveDevPreTasksForTest(config); len(got) != 0 {
 		t.Fatalf("empty profile tasks = %#v, want none", got)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("COMPOSE_PROFILES=rustfs,opensearch\n"), 0o644); err != nil {
 		t.Fatalf("write owner environment: %v", err)
 	}
 	want := []project.DevTask{{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)}}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, want) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, want) {
 		t.Fatalf("enabled profile tasks = %#v, want %#v", got, want)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("COMPOSE_PROFILES=owner-defined\n"), 0o644); err != nil {
 		t.Fatalf("write owner-defined profile: %v", err)
 	}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, want) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, want) {
 		t.Fatalf("owner-defined profile tasks = %#v, want Compose to resolve the profile", got)
 	}
 
 	custom := project.DevTask{Name: "Run Docker Compose", Cmd: "docker compose up custom"}
 	config.Dev.Pre = []project.DevTask{custom}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{custom}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{custom}) {
 		t.Fatalf("custom Compose task changed: %#v", got)
 	}
 }
@@ -63,7 +74,7 @@ func TestEffectiveDevPreTasksHonorsProcessProfileOverride(t *testing.T) {
 	t.Setenv("COMPOSE_PROFILES", "")
 
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true}}}
-	if got := effectiveDevPreTasks(config); len(got) != 0 {
+	if got := effectiveDevPreTasksForTest(config); len(got) != 0 {
 		t.Fatalf("explicit empty process profile tasks = %#v, want none", got)
 	}
 }
@@ -92,13 +103,13 @@ func TestEffectiveDevPreTasksSuppressesStaleProfileOnlyStartup(t *testing.T) {
 		Render: project.RenderConfig{Components: project.Components{Docker: true}},
 		Dev:    project.DevConfig{Pre: []project.DevTask{generated}},
 	}
-	if got := effectiveDevPreTasks(config); len(got) != 0 {
+	if got := effectiveDevPreTasksForTest(config); len(got) != 0 {
 		t.Fatalf("disabled profile tasks = %#v, want stale generated startup suppressed", got)
 	}
 	if err := os.WriteFile(filepath.Join(root, "docker-compose.override.yml"), []byte("services:\n  owner-tool:\n    image: owner/tool:latest\n"), 0o644); err != nil {
 		t.Fatalf("write owner Compose override: %v", err)
 	}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("owner override tasks = %#v, want generated Compose startup retained", got)
 	}
 
@@ -106,7 +117,7 @@ func TestEffectiveDevPreTasksSuppressesStaleProfileOnlyStartup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docker-compose.yml"), []byte(unprofiledCompose), 0o644); err != nil {
 		t.Fatalf("write required-service Compose file: %v", err)
 	}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("required-service tasks = %#v, want generated Compose startup retained", got)
 	}
 }
@@ -159,11 +170,11 @@ func TestEffectiveDevPreTasksFailsOpenForCustomComposeSelection(t *testing.T) {
 		Render: project.RenderConfig{Components: project.Components{Docker: true}},
 		Dev:    project.DevConfig{Pre: []project.DevTask{generated}},
 	}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("custom Compose selection tasks = %#v, want generated task preserved", got)
 	}
 	config.Dev.Pre = nil
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("custom Compose selection without persisted task = %#v, want fail-open startup", got)
 	}
 
@@ -173,7 +184,7 @@ func TestEffectiveDevPreTasksFailsOpenForCustomComposeSelection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "compose.yaml"), []byte("services:\n  owner-tool:\n    image: owner/tool:latest\n"), 0o644); err != nil {
 		t.Fatalf("write alternate standard Compose file: %v", err)
 	}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("alternate Compose selection tasks = %#v, want fail-open startup", got)
 	}
 }
@@ -199,14 +210,14 @@ func TestEffectiveDevPreTasksFailsOpenForComposeEnvironmentIndirection(t *testin
 
 	generated := project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(project.Components{})}
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true}}}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("interpolated Compose profiles tasks = %#v, want fail-open startup", got)
 	}
 
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("COMPOSE_PROFILES=\nCOMPOSE_ENV_FILES=profiles.env\n"), 0o644); err != nil {
 		t.Fatalf("write alternate Compose environment selection: %v", err)
 	}
-	if got := effectiveDevPreTasks(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
+	if got := effectiveDevPreTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{generated}) {
 		t.Fatalf("alternate Compose environment tasks = %#v, want fail-open startup", got)
 	}
 }
@@ -215,24 +226,24 @@ func TestEffectiveDevPreTasksFailsOpenForComposeEnvironmentIndirection(t *testin
 func TestEffectiveDevDownTasksAlwaysCoversDockerProjects(t *testing.T) {
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true}}}
 	want := []project.DevTask{{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}}
-	if got := effectiveDevDownTasks(config); !reflect.DeepEqual(got, want) {
+	if got := effectiveDevDownTasksForTest(config); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Docker down tasks = %#v, want %#v", got, want)
 	}
 
 	config.Dev.Down = []project.DevTask{{Name: "Docker Compose Down", Cmd: "docker-compose down"}}
-	if got := effectiveDevDownTasks(config); !reflect.DeepEqual(got, want) {
+	if got := effectiveDevDownTasksForTest(config); !reflect.DeepEqual(got, want) {
 		t.Fatalf("legacy generated down tasks = %#v, want %#v", got, want)
 	}
 
 	custom := project.DevTask{Name: "Docker Compose Down", Cmd: "docker compose down --timeout 5"}
 	config.Dev.Down = []project.DevTask{custom}
-	if got := effectiveDevDownTasks(config); !reflect.DeepEqual(got, []project.DevTask{custom}) {
+	if got := effectiveDevDownTasksForTest(config); !reflect.DeepEqual(got, []project.DevTask{custom}) {
 		t.Fatalf("custom down task changed: %#v", got)
 	}
 
 	config.Render.Components.Docker = false
 	config.Dev.Down = nil
-	if got := effectiveDevDownTasks(config); len(got) != 0 {
+	if got := effectiveDevDownTasksForTest(config); len(got) != 0 {
 		t.Fatalf("Docker-disabled down tasks = %#v, want none", got)
 	}
 }
@@ -277,6 +288,59 @@ func TestResolveDevComposeCommandUsesTheAvailableFrontend(t *testing.T) {
 			got := resolveDevComposeCommand(test.command, test.legacyAvailable, test.pluginAvailable)
 			if got != test.want {
 				t.Fatalf("resolveDevComposeCommand() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// TestDetectDevComposeAvailabilityRequiresAWorkingPlugin verifies a Docker CLI alone is not treated as Compose support.
+func TestDetectDevComposeAvailabilityRequiresAWorkingPlugin(t *testing.T) {
+	missing := errors.New("missing")
+	tests := []struct {
+		name     string
+		paths    map[string]string
+		probeErr error
+		want     devComposeAvailability
+	}{
+		{
+			name:  "legacy only",
+			paths: map[string]string{"docker-compose": "/tools/docker-compose"},
+			want:  devComposeAvailability{legacy: true},
+		},
+		{
+			name:  "working plugin",
+			paths: map[string]string{"docker": "/tools/docker"},
+			want:  devComposeAvailability{plugin: true},
+		},
+		{
+			name:     "Docker without plugin",
+			paths:    map[string]string{"docker": "/tools/docker"},
+			probeErr: missing,
+			want:     devComposeAvailability{},
+		},
+		{
+			name:  "both frontends",
+			paths: map[string]string{"docker-compose": "/tools/docker-compose", "docker": "/tools/docker"},
+			want:  devComposeAvailability{legacy: true, plugin: true},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lookPath := func(name string) (string, error) {
+				path, found := test.paths[name]
+				if !found {
+					return "", missing
+				}
+				return path, nil
+			}
+			probe := func(path string) error {
+				if path != test.paths["docker"] {
+					t.Fatalf("probe path = %q, want %q", path, test.paths["docker"])
+				}
+				return test.probeErr
+			}
+			if got := detectDevComposeAvailability(lookPath, probe); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("detectDevComposeAvailability() = %#v, want %#v", got, test.want)
 			}
 		})
 	}
