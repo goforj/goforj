@@ -407,14 +407,14 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 
 	composedHelp := runForj(t, "--help")
-	for _, want := range []string{"GoForj CLI", "make:command", "route:list", "make:job", "make:queue", "make:subscriber"} {
+	for _, want := range []string{"GoForj CLI", "app usage", "forj <app> <command>"} {
 		if !strings.Contains(composedHelp, want) {
-			t.Fatalf("expected composed help to include %s, got:\n%s", want, composedHelp)
+			t.Fatalf("expected root help to include %s, got:\n%s", want, composedHelp)
 		}
 	}
-	for _, unexpected := range []string{"Framework Commands", "Application Commands", "Generators", "Migrations", "Unknown commands are delegated to this app.", "────"} {
+	for _, unexpected := range []string{"make:command", "route:list", "make:job", "make:queue", "make:subscriber", "Framework Commands", "Application Commands", "Generators", "Migrations", "Unknown commands are delegated to this app.", "────"} {
 		if strings.Contains(composedHelp, unexpected) {
-			t.Fatalf("expected composed help not to include %s, got:\n%s", unexpected, composedHelp)
+			t.Fatalf("expected read-only root help not to include %s, got:\n%s", unexpected, composedHelp)
 		}
 	}
 
@@ -610,10 +610,13 @@ func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 
 	runForj(t, "make:app", "billing")
 	rootHelp := runForj(t, "--help")
-	for _, want := range []string{"GoForj CLI", "testapp · available in all apps", "testapp · app"} {
+	for _, want := range []string{"GoForj CLI", "app usage", "forj <app> <command>"} {
 		if !strings.Contains(rootHelp, want) {
 			t.Fatalf("expected root help to include %q, got:\n%s", want, rootHelp)
 		}
+	}
+	if strings.Contains(rootHelp, "testapp ·") {
+		t.Fatalf("expected root help not to build unavailable App help, got:\n%s", rootHelp)
 	}
 	if strings.Contains(rootHelp, "App:") {
 		t.Fatalf("expected root help to omit app labels, got:\n%s", rootHelp)

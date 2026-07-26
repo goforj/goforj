@@ -2,6 +2,7 @@ package forj
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/goforj/goforj/internal/envfile"
@@ -11,6 +12,11 @@ import (
 
 // effectiveDevPreTasks starts owner-selected Compose profiles even when generation had no active local service.
 func effectiveDevPreTasks(config *project.Config) []project.DevTask {
+	return effectiveDevPreTasksWithLegacy(config, installedDevComposeUsesLegacy())
+}
+
+// effectiveDevPreTasksWithLegacy resolves Compose commands against one stable frontend choice.
+func effectiveDevPreTasksWithLegacy(config *project.Config, useLegacy bool) []project.DevTask {
 	tasks := append([]project.DevTask(nil), config.Dev.Pre...)
 	if !config.Render.Components.Docker {
 		return tasks
@@ -43,20 +49,49 @@ func effectiveDevPreTasks(config *project.Config) []project.DevTask {
 	if composeNeeded && !hasComposeTask {
 		filtered = append(filtered, project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)})
 	}
-	return filtered
+	return resolveDevComposeTasks(filtered, useLegacy)
 }
 
 // effectiveDevDownTasks keeps teardown independent from the profile value that happens to be active later.
 func effectiveDevDownTasks(config *project.Config) []project.DevTask {
+	return effectiveDevDownTasksWithLegacy(config, installedDevComposeUsesLegacy())
+}
+
+// effectiveDevDownTasksWithLegacy resolves teardown commands against one stable frontend choice.
+func effectiveDevDownTasksWithLegacy(config *project.Config, useLegacy bool) []project.DevTask {
 	tasks := append([]project.DevTask(nil), config.Dev.Down...)
 	if !config.Render.Components.Docker {
 		return tasks
 	}
 	if hasDockerComposeDownTask(tasks) {
 		normalizeDockerComposeDownTask(&tasks)
-		return tasks
+		return resolveDevComposeTasks(tasks, useLegacy)
 	}
-	return append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()})
+	return resolveDevComposeTasks(append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}), useLegacy)
+}
+
+// resolveDevComposeTasks selects one Compose frontend without changing command arguments.
+func resolveDevComposeTasks(tasks []project.DevTask, useLegacy bool) []project.DevTask {
+	resolved := append([]project.DevTask(nil), tasks...)
+	for index := range resolved {
+		resolved[index].Cmd = resolveDevComposeCommand(resolved[index].Cmd, useLegacy)
+	}
+	return resolved
+}
+
+// installedDevComposeUsesLegacy prefers the standalone frontend when it is installed.
+func installedDevComposeUsesLegacy() bool {
+	_, err := exec.LookPath("docker-compose")
+	return err == nil
+}
+
+// resolveDevComposeCommand upgrades legacy syntax only when the standalone frontend is unavailable.
+func resolveDevComposeCommand(command string, useLegacy bool) string {
+	trimmed := strings.TrimSpace(command)
+	if strings.HasPrefix(trimmed, "docker-compose ") && !useLegacy {
+		return "docker compose " + strings.TrimPrefix(trimmed, "docker-compose ")
+	}
+	return command
 }
 
 // composeProfilesEnabled follows Compose's process-over-dotenv precedence and reports whether indirect dotenv syntax was resolved reliably.

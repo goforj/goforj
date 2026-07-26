@@ -24,6 +24,7 @@ import (
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
@@ -39,10 +40,14 @@ type devRuntimeState struct {
 	restartCh      chan struct{}
 	buildCh        chan struct{}
 	renderCh       chan struct{}
+	inheritedEnv   processEnvironment
 	refreshWriters func()
 	streamer       *devwatchStreamer
 	firstLoad      bool
 }
+
+// processEnvironment retains the values supplied when development started so project dotenv files cannot replace them.
+type processEnvironment map[string]string
 
 type devShellCommandRequest struct {
 	DisplayName  string
@@ -51,6 +56,7 @@ type devShellCommandRequest struct {
 
 type devWatchSession struct {
 	config                *project.Config
+	inheritedEnv          processEnvironment
 	baseWatches           []project.DevWatch
 	streamer              *devwatchStreamer
 	restartCh             chan struct{}
@@ -71,11 +77,12 @@ func (*DevCmd) Signature() string {
 }
 
 // newDevRuntimeState keeps dotenv reloads and output streaming on one boundary.
-func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
+func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}, inheritedEnv processEnvironment) *devRuntimeState {
 	return &devRuntimeState{
 		restartCh:      restartCh,
 		buildCh:        buildCh,
 		renderCh:       renderCh,
+		inheritedEnv:   inheritedEnv,
 		refreshWriters: func() {},
 		firstLoad:      true,
 	}
@@ -90,7 +97,7 @@ func (r *devRuntimeState) Close() {
 func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	firstLoad := r.firstLoad
 	r.firstLoad = false
-	if err := loadDevEnvironment(!firstLoad); err != nil {
+	if err := loadDevEnvironment(!firstLoad, r.inheritedEnv); err != nil {
 		return nil, err
 	}
 	if r.streamer != nil {
@@ -105,16 +112,20 @@ func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	return r.streamer, nil
 }
 
-// loadDevEnvironment applies the env package's canonical file precedence for startup or reload.
-func loadDevEnvironment(reload bool) error {
+// loadDevEnvironment preserves launcher-selected profiles while env/v2 applies process-over-dotenv precedence.
+func loadDevEnvironment(reload bool, inheritedEnv processEnvironment) error {
 	if reload {
 		return envx.Reload()
+	}
+	if err := prepareDevEnvironmentSelectors(inheritedEnv, runtime.GOOS == "windows"); err != nil {
+		return err
 	}
 	return envx.Load()
 }
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
+	inheritedEnv := inheritedLauncherEnvironment()
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
@@ -194,7 +205,7 @@ func (c *DevCmd) Run() error {
 	defer stopEnvWatch()
 	stopTargetWatch := startDevAppWatcher(runCtx, requestBuild, 500*time.Millisecond)
 	defer stopTargetWatch()
-	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
+	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh, inheritedEnv)
 	defer runtimeState.Close()
 
 	currentStreamer, err := runtimeState.Sync()
@@ -212,6 +223,7 @@ func (c *DevCmd) Run() error {
 
 	session := &devWatchSession{
 		config:        config,
+		inheritedEnv:  inheritedEnv,
 		baseWatches:   baseWatches,
 		streamer:      currentStreamer,
 		restartCh:     restartCh,
@@ -242,6 +254,11 @@ func (c *DevCmd) Run() error {
 	}
 
 	return fmt.Errorf("dev watchers exited unexpectedly")
+}
+
+// inheritedLauncherEnvironment returns a private copy of the environment captured at the CLI boundary.
+func inheritedLauncherEnvironment() processEnvironment {
+	return processEnvironment(launcher.Snapshot())
 }
 
 // loadDevProjectConfig turns an absent project into guidance while preserving real configuration failures.
@@ -441,7 +458,7 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 		databasesByDriver[database.Driver] = append(databasesByDriver[database.Driver], database.Name)
 	}
 	if names := databasesByDriver["mysql"]; len(names) > 0 {
-		res, err := execx.Command("docker-compose", "exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
+		res, err := devComposeCommand("exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(outWriter).
@@ -455,7 +472,7 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 		}
 	}
 	if names := databasesByDriver["postgres"]; len(names) > 0 {
-		res, err := execx.Command("docker-compose", "exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
+		res, err := devComposeCommand("exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
 			EnvInherit().
 			StdinReader(os.Stdin).
 			StdoutWriter(outWriter).
@@ -469,6 +486,14 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 		}
 	}
 	return nil
+}
+
+// devComposeCommand uses the installed Compose frontend for framework-owned direct invocations.
+func devComposeCommand(arguments ...string) *execx.Cmd {
+	if installedDevComposeUsesLegacy() {
+		return execx.Command("docker-compose", arguments...)
+	}
+	return execx.Command("docker", append([]string{"compose"}, arguments...)...)
 }
 
 type devDatabase struct {
@@ -1223,7 +1248,7 @@ watcherLoop:
 					}
 					return fmt.Errorf("quiesce dev builds: %w", err)
 				}
-				if err := loadDevEnvironment(true); err != nil {
+				if err := loadDevEnvironment(true, session.inheritedEnv); err != nil {
 					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
@@ -1367,6 +1392,37 @@ func (session *devWatchSession) reloadProjectConfig() error {
 // snapshotProcessEnv splits only well-formed process entries while preserving values that contain equals signs.
 func snapshotProcessEnv() map[string]string {
 	return processEnvironmentMap(os.Environ())
+}
+
+// prepareDevEnvironmentSelectors removes CLI defaults that were absent at the launcher boundary.
+func prepareDevEnvironmentSelectors(inherited processEnvironment, caseInsensitive bool) error {
+	for _, key := range []string{"APP_ENV", "APP_NAME"} {
+		value, present := inherited.lookup(key, caseInsensitive)
+		if present {
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("restore inherited environment selector %s: %w", key, err)
+			}
+			continue
+		}
+		if err := os.Unsetenv(key); err != nil {
+			return fmt.Errorf("remove framework environment selector %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// lookup applies the operating system's environment-key comparison rules to a captured launcher value.
+func (environment processEnvironment) lookup(name string, caseInsensitive bool) (string, bool) {
+	if !caseInsensitive {
+		value, present := environment[name]
+		return value, present
+	}
+	for key, value := range environment {
+		if strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // processEnvironmentMap converts process entries without truncating values or admitting empty platform pseudo-keys.
