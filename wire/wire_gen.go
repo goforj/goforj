@@ -9,7 +9,6 @@ package wire
 import (
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
-	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -22,8 +21,7 @@ func InitializeApplication() (App, error) {
 	projectAuthoringCommands := forj.NewProjectAuthoringCommands(appLogger, projectRenderer)
 	runner := forj.ProvideAPIIndexRunner()
 	buildCommands := forj.NewBuildCommands(appLogger, runner)
-	environment := launcher.Provide()
-	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner, environment)
+	runtimeCommands := forj.NewRuntimeCommands(appLogger, runner)
 	atlasCommands := forj.NewAtlasCommands()
 	testCommands := forj.NewTestCommands(appLogger)
 	benchmarkCommands := forj.NewBenchmarkCommands(appLogger)

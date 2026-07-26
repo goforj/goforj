@@ -1,7 +1,6 @@
 package forj
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,12 +11,12 @@ import (
 
 // effectiveDevPreTasksForTest keeps lifecycle expectations independent from tools installed on the test host.
 func effectiveDevPreTasksForTest(config *project.Config) []project.DevTask {
-	return effectiveDevPreTasksWithAvailability(config, devComposeAvailability{legacy: true, plugin: true})
+	return effectiveDevPreTasksWithLegacy(config, true)
 }
 
 // effectiveDevDownTasksForTest keeps teardown expectations independent from tools installed on the test host.
 func effectiveDevDownTasksForTest(config *project.Config) []project.DevTask {
-	return effectiveDevDownTasksWithAvailability(config, devComposeAvailability{legacy: true, plugin: true})
+	return effectiveDevDownTasksWithLegacy(config, true)
 }
 
 // TestEffectiveDevPreTasksStartsProfilesAtInvocationTime verifies profile flips do not require regenerated lifecycle config.
@@ -251,96 +250,39 @@ func TestEffectiveDevDownTasksAlwaysCoversDockerProjects(t *testing.T) {
 // TestResolveDevComposeCommandUsesTheAvailableFrontend preserves task arguments across Docker installations.
 func TestResolveDevComposeCommandUsesTheAvailableFrontend(t *testing.T) {
 	tests := []struct {
-		name            string
-		command         string
-		legacyAvailable bool
-		pluginAvailable bool
-		want            string
+		name      string
+		command   string
+		useLegacy bool
+		want      string
 	}{
 		{
-			name:            "plugin only",
-			command:         `docker-compose --profile "*" down`,
-			pluginAvailable: true,
-			want:            `docker compose --profile "*" down`,
+			name:    "plugin only",
+			command: `docker-compose --profile "*" down`,
+			want:    `docker compose --profile "*" down`,
 		},
 		{
-			name:            "legacy only",
-			command:         "docker compose up -d",
-			legacyAvailable: true,
-			want:            "docker-compose up -d",
+			name:      "owner plugin command preserved",
+			command:   "docker compose up -d",
+			useLegacy: true,
+			want:      "docker compose up -d",
 		},
 		{
-			name:            "configured frontend available",
-			command:         "docker-compose up -d",
-			legacyAvailable: true,
-			pluginAvailable: true,
-			want:            "docker-compose up -d",
+			name:      "configured frontend available",
+			command:   "docker-compose up -d",
+			useLegacy: true,
+			want:      "docker-compose up -d",
 		},
 		{
-			name:            "unrelated owner task",
-			command:         "docker info",
-			pluginAvailable: true,
-			want:            "docker info",
+			name:    "unrelated owner task",
+			command: "docker info",
+			want:    "docker info",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := resolveDevComposeCommand(test.command, test.legacyAvailable, test.pluginAvailable)
+			got := resolveDevComposeCommand(test.command, test.useLegacy)
 			if got != test.want {
 				t.Fatalf("resolveDevComposeCommand() = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-// TestDetectDevComposeAvailabilityRequiresAWorkingPlugin verifies a Docker CLI alone is not treated as Compose support.
-func TestDetectDevComposeAvailabilityRequiresAWorkingPlugin(t *testing.T) {
-	missing := errors.New("missing")
-	tests := []struct {
-		name     string
-		paths    map[string]string
-		probeErr error
-		want     devComposeAvailability
-	}{
-		{
-			name:  "legacy only",
-			paths: map[string]string{"docker-compose": "/tools/docker-compose"},
-			want:  devComposeAvailability{legacy: true},
-		},
-		{
-			name:  "working plugin",
-			paths: map[string]string{"docker": "/tools/docker"},
-			want:  devComposeAvailability{plugin: true},
-		},
-		{
-			name:     "Docker without plugin",
-			paths:    map[string]string{"docker": "/tools/docker"},
-			probeErr: missing,
-			want:     devComposeAvailability{},
-		},
-		{
-			name:  "both frontends",
-			paths: map[string]string{"docker-compose": "/tools/docker-compose", "docker": "/tools/docker"},
-			want:  devComposeAvailability{legacy: true, plugin: true},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			lookPath := func(name string) (string, error) {
-				path, found := test.paths[name]
-				if !found {
-					return "", missing
-				}
-				return path, nil
-			}
-			probe := func(path string) error {
-				if path != test.paths["docker"] {
-					t.Fatalf("probe path = %q, want %q", path, test.paths["docker"])
-				}
-				return test.probeErr
-			}
-			if got := detectDevComposeAvailability(lookPath, probe); !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("detectDevComposeAvailability() = %#v, want %#v", got, test.want)
 			}
 		})
 	}

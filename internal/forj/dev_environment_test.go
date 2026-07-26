@@ -58,7 +58,7 @@ func TestDevEnvironmentPreservesInheritedValuesAcrossLoadReloadAndChildren(t *te
 
 // runDevEnvironmentHelper exercises the env package's real initial and reload behavior in an isolated process.
 func runDevEnvironmentHelper(t *testing.T) {
-	inherited := captureProcessEnvironment()
+	inherited := processEnvironment(snapshotProcessEnv())
 	if err := loadDevEnvironment(false, inherited); err != nil {
 		t.Fatalf("initial load: %v", err)
 	}

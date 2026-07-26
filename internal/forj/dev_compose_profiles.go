@@ -1,32 +1,22 @@
 package forj
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
 
-const devComposeProbeTimeout = 2 * time.Second
-
-// devComposeAvailability records which installed frontend can execute Compose commands.
-type devComposeAvailability struct {
-	legacy bool
-	plugin bool
-}
-
 // effectiveDevPreTasks starts owner-selected Compose profiles even when generation had no active local service.
 func effectiveDevPreTasks(config *project.Config) []project.DevTask {
-	return effectiveDevPreTasksWithAvailability(config, installedDevComposeAvailability())
+	return effectiveDevPreTasksWithLegacy(config, installedDevComposeUsesLegacy())
 }
 
-// effectiveDevPreTasksWithAvailability resolves generated lifecycle commands against one stable frontend snapshot.
-func effectiveDevPreTasksWithAvailability(config *project.Config, availability devComposeAvailability) []project.DevTask {
+// effectiveDevPreTasksWithLegacy resolves Compose commands against one stable frontend choice.
+func effectiveDevPreTasksWithLegacy(config *project.Config, useLegacy bool) []project.DevTask {
 	tasks := append([]project.DevTask(nil), config.Dev.Pre...)
 	if !config.Render.Components.Docker {
 		return tasks
@@ -59,75 +49,49 @@ func effectiveDevPreTasksWithAvailability(config *project.Config, availability d
 	if composeNeeded && !hasComposeTask {
 		filtered = append(filtered, project.DevTask{Name: "Run Docker Compose", Cmd: dockerComposeUpDevCommand(config.Render.Components)})
 	}
-	return resolveDevComposeTasks(filtered, availability)
+	return resolveDevComposeTasks(filtered, useLegacy)
 }
 
 // effectiveDevDownTasks keeps teardown independent from the profile value that happens to be active later.
 func effectiveDevDownTasks(config *project.Config) []project.DevTask {
-	return effectiveDevDownTasksWithAvailability(config, installedDevComposeAvailability())
+	return effectiveDevDownTasksWithLegacy(config, installedDevComposeUsesLegacy())
 }
 
-// effectiveDevDownTasksWithAvailability resolves teardown commands against one stable frontend snapshot.
-func effectiveDevDownTasksWithAvailability(config *project.Config, availability devComposeAvailability) []project.DevTask {
+// effectiveDevDownTasksWithLegacy resolves teardown commands against one stable frontend choice.
+func effectiveDevDownTasksWithLegacy(config *project.Config, useLegacy bool) []project.DevTask {
 	tasks := append([]project.DevTask(nil), config.Dev.Down...)
 	if !config.Render.Components.Docker {
 		return tasks
 	}
 	if hasDockerComposeDownTask(tasks) {
 		normalizeDockerComposeDownTask(&tasks)
-		return resolveDevComposeTasks(tasks, availability)
+		return resolveDevComposeTasks(tasks, useLegacy)
 	}
-	return resolveDevComposeTasks(append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}), availability)
+	return resolveDevComposeTasks(append(tasks, project.DevTask{Name: "Docker Compose Down", Cmd: dockerComposeDownDevCommand()}), useLegacy)
 }
 
-// resolveDevComposeTasks selects an installed Compose frontend without changing owner-supplied arguments.
-func resolveDevComposeTasks(tasks []project.DevTask, availability devComposeAvailability) []project.DevTask {
+// resolveDevComposeTasks selects one Compose frontend without changing command arguments.
+func resolveDevComposeTasks(tasks []project.DevTask, useLegacy bool) []project.DevTask {
 	resolved := append([]project.DevTask(nil), tasks...)
 	for index := range resolved {
-		resolved[index].Cmd = resolveDevComposeCommand(resolved[index].Cmd, availability.legacy, availability.plugin)
+		resolved[index].Cmd = resolveDevComposeCommand(resolved[index].Cmd, useLegacy)
 	}
 	return resolved
 }
 
-// installedDevComposeAvailability verifies executable frontends instead of assuming the Docker CLI includes its Compose plugin.
-func installedDevComposeAvailability() devComposeAvailability {
-	return detectDevComposeAvailability(exec.LookPath, probeDockerComposePlugin)
+// installedDevComposeUsesLegacy prefers the standalone frontend when it is installed.
+func installedDevComposeUsesLegacy() bool {
+	_, err := exec.LookPath("docker-compose")
+	return err == nil
 }
 
-// detectDevComposeAvailability isolates executable discovery and plugin verification for deterministic tests.
-func detectDevComposeAvailability(
-	lookPath func(string) (string, error),
-	probePlugin func(string) error,
-) devComposeAvailability {
-	availability := devComposeAvailability{}
-	if _, err := lookPath("docker-compose"); err == nil {
-		availability.legacy = true
-	}
-	dockerPath, err := lookPath("docker")
-	if err == nil && probePlugin(dockerPath) == nil {
-		availability.plugin = true
-	}
-	return availability
-}
-
-// probeDockerComposePlugin bounds capability discovery without contacting the Docker daemon.
-func probeDockerComposePlugin(dockerPath string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), devComposeProbeTimeout)
-	defer cancel()
-	return exec.CommandContext(ctx, dockerPath, "compose", "version").Run()
-}
-
-// resolveDevComposeCommand changes only the executable spelling when the configured frontend is unavailable.
-func resolveDevComposeCommand(command string, legacyAvailable bool, pluginAvailable bool) string {
+// resolveDevComposeCommand upgrades legacy syntax only when the standalone frontend is unavailable.
+func resolveDevComposeCommand(command string, useLegacy bool) string {
 	trimmed := strings.TrimSpace(command)
-	switch {
-	case strings.HasPrefix(trimmed, "docker-compose ") && !legacyAvailable && pluginAvailable:
+	if strings.HasPrefix(trimmed, "docker-compose ") && !useLegacy {
 		return "docker compose " + strings.TrimPrefix(trimmed, "docker-compose ")
-	case strings.HasPrefix(trimmed, "docker compose ") && !pluginAvailable && legacyAvailable:
-		return "docker-compose " + strings.TrimPrefix(trimmed, "docker compose ")
-	default:
-		return command
 	}
+	return command
 }
 
 // composeProfilesEnabled follows Compose's process-over-dotenv precedence and reports whether indirect dotenv syntax was resolved reliably.

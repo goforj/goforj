@@ -14,6 +14,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/build"
+	"github.com/goforj/goforj/internal/launcher"
 )
 
 // TestInsertBuildPassthroughBoundaryPreservesGoFlags verifies raw Go syntax reaches the build command intact.
@@ -598,18 +599,20 @@ func TestLauncherEnvironmentExcludesCLIDefaults(t *testing.T) {
 		cliDefaultedEnv = previousDefaults
 		restoreEnv("APP_NAME", previousAppName, hadAppName)
 		restoreEnv("APP_ENV", previousAppEnv, hadAppEnv)
+		launcher.Capture()
 	}()
 
 	cliDefaultedEnv = map[string]bool{}
 	_ = os.Unsetenv("APP_NAME")
 	_ = os.Unsetenv("APP_ENV")
-	launcher := launcherEnvironment()
+	launcher.Capture()
+	captured := launcher.Snapshot()
 	setCLIDefaultEnv("APP_NAME", "GoForj")
 	setCLIDefaultEnv("APP_ENV", "local")
-	if _, ok := launcher["APP_NAME"]; ok {
+	if _, ok := captured["APP_NAME"]; ok {
 		t.Fatal("APP_NAME default was captured as launcher environment")
 	}
-	if _, ok := launcher["APP_ENV"]; ok {
+	if _, ok := captured["APP_ENV"]; ok {
 		t.Fatal("APP_ENV default was captured as launcher environment")
 	}
 }

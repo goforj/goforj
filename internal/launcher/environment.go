@@ -7,37 +7,31 @@ import (
 	"sync"
 )
 
-// Environment stores a launcher environment snapshot without exposing its mutable backing map.
-type Environment struct {
-	mutex  sync.RWMutex
-	values map[string]string
+var (
+	environmentMutex  sync.RWMutex
+	environmentValues = captureProcessEnvironment()
+)
+
+// Capture replaces the launcher environment with the current process values.
+func Capture() {
+	set(captureProcessEnvironment())
 }
 
-// sharedEnvironment is the single launcher snapshot shared by CLI initialization and Wire.
-var sharedEnvironment = &Environment{
-	values: captureProcessEnvironment(),
+// set replaces the launcher environment with a defensive copy.
+func set(values map[string]string) {
+	environmentMutex.Lock()
+	defer environmentMutex.Unlock()
+	environmentValues = copyValues(values)
 }
 
-// Provide returns the shared launcher environment dependency for application wiring.
-func Provide() *Environment {
-	return sharedEnvironment
+// Snapshot returns a defensive copy of the environment captured at the CLI boundary.
+func Snapshot() map[string]string {
+	environmentMutex.RLock()
+	defer environmentMutex.RUnlock()
+	return copyValues(environmentValues)
 }
 
-// Set replaces the stored environment with a defensive copy of values.
-func (environment *Environment) Set(values map[string]string) {
-	environment.mutex.Lock()
-	defer environment.mutex.Unlock()
-	environment.values = copyValues(values)
-}
-
-// Snapshot returns a defensive copy of the launcher environment captured at initialization.
-func (environment *Environment) Snapshot() map[string]string {
-	environment.mutex.RLock()
-	defer environment.mutex.RUnlock()
-	return copyValues(environment.values)
-}
-
-// captureProcessEnvironment seeds compatibility callers that initialize Wire outside the CLI entry point.
+// captureProcessEnvironment seeds callers that execute runtime commands outside the CLI entry point.
 func captureProcessEnvironment() map[string]string {
 	values := make(map[string]string)
 	for _, entry := range os.Environ() {

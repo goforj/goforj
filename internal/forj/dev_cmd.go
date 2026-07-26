@@ -34,9 +34,7 @@ import (
 var errDevInterrupted = errors.New("dev interrupted")
 
 // DevCmd runs the project development lifecycle from durable project configuration.
-type DevCmd struct {
-	launcherEnvironment *launcher.Environment
-}
+type DevCmd struct{}
 
 type devRuntimeState struct {
 	restartCh      chan struct{}
@@ -127,7 +125,7 @@ func loadDevEnvironment(reload bool, inheritedEnv processEnvironment) error {
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
-	inheritedEnv := c.inheritedEnvironment()
+	inheritedEnv := inheritedLauncherEnvironment()
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
@@ -258,13 +256,9 @@ func (c *DevCmd) Run() error {
 	return fmt.Errorf("dev watchers exited unexpectedly")
 }
 
-// inheritedEnvironment returns a private copy of the environment captured at the CLI launcher boundary.
-func (c *DevCmd) inheritedEnvironment() processEnvironment {
-	launcherEnvironment := c.launcherEnvironment
-	if launcherEnvironment == nil {
-		launcherEnvironment = launcher.Provide()
-	}
-	return processEnvironment(launcherEnvironment.Snapshot())
+// inheritedLauncherEnvironment returns a private copy of the environment captured at the CLI boundary.
+func inheritedLauncherEnvironment() processEnvironment {
+	return processEnvironment(launcher.Snapshot())
 }
 
 // loadDevProjectConfig turns an absent project into guidance while preserving real configuration failures.
@@ -496,8 +490,7 @@ func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Wri
 
 // devComposeCommand uses the installed Compose frontend for framework-owned direct invocations.
 func devComposeCommand(arguments ...string) *execx.Cmd {
-	availability := installedDevComposeAvailability()
-	if availability.legacy {
+	if installedDevComposeUsesLegacy() {
 		return execx.Command("docker-compose", arguments...)
 	}
 	return execx.Command("docker", append([]string{"compose"}, arguments...)...)
@@ -1399,11 +1392,6 @@ func (session *devWatchSession) reloadProjectConfig() error {
 // snapshotProcessEnv splits only well-formed process entries while preserving values that contain equals signs.
 func snapshotProcessEnv() map[string]string {
 	return processEnvironmentMap(os.Environ())
-}
-
-// captureProcessEnvironment snapshots the process values supplied before dotenv loading.
-func captureProcessEnvironment() processEnvironment {
-	return processEnvironment(snapshotProcessEnv())
 }
 
 // prepareDevEnvironmentSelectors removes CLI defaults that were absent at the launcher boundary.
