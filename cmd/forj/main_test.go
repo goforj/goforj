@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/build"
@@ -306,26 +308,23 @@ func TestConventionalAppHelpSkipsNonGeneratedProjects(t *testing.T) {
 	}
 }
 
-func TestRunAppHelpForAppShellsThroughRootBinary(t *testing.T) {
+func TestRunAppHelpForAppUsesExistingBinary(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	scriptPath, err := filepath.Abs("fake-forj")
-	if err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
+	scriptPath := filepath.Join("bin", "billing")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$1|$2|$FORJ_APP\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previousArg0 := os.Args[0]
-	defer func() { os.Args[0] = previousArg0 }()
-	os.Args[0] = scriptPath
 
 	output, err := runAppHelpForApp("billing", true)
 	if err != nil {
 		t.Fatalf("run app help: %v\n%s", err, output)
 	}
-	if output != "billing|--help|billing\n" {
+	if output != "--help||billing\n" {
 		t.Fatalf("unexpected help command output: %q", output)
 	}
 }
@@ -334,16 +333,13 @@ func TestRunAppHelpForAppMarksMultiAppHelp(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	scriptPath, err := filepath.Abs("fake-forj")
-	if err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
+	scriptPath := filepath.Join("bin", "app")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"$FORJ_MULTI_APP_HELP\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previousArg0 := os.Args[0]
-	defer func() { os.Args[0] = previousArg0 }()
-	os.Args[0] = scriptPath
 
 	output, err := runAppHelpForApp("app", true)
 	if err != nil {
@@ -354,33 +350,54 @@ func TestRunAppHelpForAppMarksMultiAppHelp(t *testing.T) {
 	}
 }
 
+func TestRunAppHelpForAppSkipsMissingBinaryWithoutBuildingSource(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeSourceApp(t, "billing")
+
+	_, err := runAppHelpForApp("billing", true)
+	if !errors.Is(err, errAppBinaryNotFound) {
+		t.Fatalf("missing binary error = %v, want app binary not found", err)
+	}
+}
+
+func TestRunAppHelpForAppBoundsUnresponsiveBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join("bin", "billing")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	_, err := runAppHelpForApp("billing", true)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unresponsive binary error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("unresponsive binary elapsed = %s, want bounded help probe", elapsed)
+	}
+}
+
 func TestPrintGeneratedAppHelpIgnoresUnavailableAppHelp(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	scriptPath, err := filepath.Abs("fake-forj")
-	if err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := `#!/bin/sh
-case "$1" in
-  app)
-    printf '%s\n\n%s\n  %s\n' 'test · app' 'app' 'about    Show environment'
-    exit 0
-    ;;
-  ship-smoke)
-    echo 'custom binary has no framework help' >&2
-    exit 1
-    ;;
-esac
-exit 1
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+	appScript := "#!/bin/sh\nprintf '%s\\n\\n%s\\n  %s\\n' 'test · app' 'app' 'about    Show environment'\n"
+	if err := os.WriteFile(filepath.Join("bin", "app"), []byte(appScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previousArg0 := os.Args[0]
-	defer func() { os.Args[0] = previousArg0 }()
-	os.Args[0] = scriptPath
+	customScript := "#!/bin/sh\necho 'custom binary has no framework help' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join("bin", "ship-smoke"), []byte(customScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	output := captureStdout(t, func() {
 		if err := printGeneratedAppHelp([]string{"app", "ship-smoke"}); err != nil {
