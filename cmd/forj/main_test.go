@@ -43,12 +43,13 @@ func TestInsertBuildPassthroughBoundaryPreservesGoFlags(t *testing.T) {
 // TestBuildPassthroughBoundarySurvivesKong verifies parser behavior rather than only the pre-parser transformation.
 func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantGoArgs []string
-		wantStrict bool
-		wantRoot   string
-		wantDev    bool
+		name             string
+		args             []string
+		wantGoArgs       []string
+		wantStrict       bool
+		wantRoot         string
+		wantDev          bool
+		wantEnvOverrides string
 	}{
 		{name: "tags", args: []string{"build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}},
 		{name: "root flag before build", args: []string{"--dev", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
@@ -62,6 +63,7 @@ func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 		{name: "output", args: []string{"build", "-o", "./bin/app"}, wantGoArgs: []string{"-o", "./bin/app"}},
 		{name: "inline output", args: []string{"build", "-o=./bin/app"}, wantGoArgs: []string{"-o=./bin/app"}},
 		{name: "linker flags", args: []string{"build", "-ldflags", "-X example.com/app.Value=dev"}, wantGoArgs: []string{"-ldflags", "-X example.com/app.Value=dev"}},
+		{name: "environment overrides", args: []string{"build", "--env-overrides", "FEATURE_A=true"}, wantEnvOverrides: "FEATURE_A=true"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -88,6 +90,9 @@ func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 			}
 			if test.wantRoot != "" && root.BuildCmd.Root != test.wantRoot {
 				t.Fatalf("root = %q, want %q", root.BuildCmd.Root, test.wantRoot)
+			}
+			if root.BuildCmd.EnvOverrides != test.wantEnvOverrides {
+				t.Fatalf("environment overrides = %q, want %q", root.BuildCmd.EnvOverrides, test.wantEnvOverrides)
 			}
 		})
 	}

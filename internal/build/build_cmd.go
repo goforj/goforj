@@ -24,7 +24,7 @@ type Cmd struct {
 	// APIIndexStrict fails the build when API indexing reports warnings or errors.
 	APIIndexStrict bool   `name:"api-index-strict" help:"Fail when API indexing reports warnings or errors"`
 	EnvDefaults    string `help:"Compile unset-only environment defaults as comma-separated KEY=value pairs"`
-	EnvOverrides   string `env:"FORJ_BUILD_ENV_OVERRIDES" help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
+	EnvOverrides   string `help:"Compile forced environment overrides as comma-separated KEY=value pairs"`
 
 	// Profile flags.
 	Profile bool `help:"Profile compile time for this build"`

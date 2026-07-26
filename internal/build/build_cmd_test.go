@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/web/webindex"
@@ -975,65 +974,6 @@ func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
 	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
 	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvOverridesBase64="+wantPayload) {
 		t.Fatalf("expected compiled env override ldflags in build args, got %v", args)
-	}
-}
-
-// TestCmdEnvOverridesFromEnvironment verifies inherited build environments compile forced overrides.
-func TestCmdEnvOverridesFromEnvironment(t *testing.T) {
-	t.Setenv("FORJ_BUILD_ENV_OVERRIDES", "FEATURE_A=true,FEATURE_B=false")
-	command := &Cmd{}
-	parser, err := kong.New(command)
-	if err != nil {
-		t.Fatalf("create parser: %v", err)
-	}
-	if _, err := parser.Parse(nil); err != nil {
-		t.Fatalf("parse environment overrides: %v", err)
-	}
-	if command.EnvOverrides != "FEATURE_A=true,FEATURE_B=false" {
-		t.Fatalf("environment overrides = %q", command.EnvOverrides)
-	}
-
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	command.Root = root
-	args := requireBuildArgs(t, command)
-	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
-	if got := strings.Join(args, " "); !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvOverridesBase64="+wantPayload) {
-		t.Fatalf("expected compiled env override ldflags in build args, got %v", args)
-	}
-}
-
-// TestCmdEnvOverridesFlagTakesPrecedence verifies explicit invocations override inherited settings.
-func TestCmdEnvOverridesFlagTakesPrecedence(t *testing.T) {
-	t.Setenv("FORJ_BUILD_ENV_OVERRIDES", "FEATURE_A=environment")
-	command := &Cmd{}
-	parser, err := kong.New(command)
-	if err != nil {
-		t.Fatalf("create parser: %v", err)
-	}
-	if _, err := parser.Parse([]string{"--env-overrides=FEATURE_A=flag"}); err != nil {
-		t.Fatalf("parse explicit environment overrides: %v", err)
-	}
-	if command.EnvOverrides != "FEATURE_A=flag" {
-		t.Fatalf("environment overrides = %q, want explicit flag value", command.EnvOverrides)
-	}
-}
-
-// TestCmdEnvOverridesFromEnvironmentRejectsMalformedInput verifies inherited values use the existing validation contract.
-func TestCmdEnvOverridesFromEnvironmentRejectsMalformedInput(t *testing.T) {
-	t.Setenv("FORJ_BUILD_ENV_OVERRIDES", "BROKEN")
-	command := &Cmd{}
-	parser, err := kong.New(command)
-	if err != nil {
-		t.Fatalf("create parser: %v", err)
-	}
-	if _, err := parser.Parse(nil); err != nil {
-		t.Fatalf("parse malformed environment overrides: %v", err)
-	}
-	if err := command.validateCompiledEnv(command.Root); err == nil {
-		t.Fatal("expected malformed environment overrides to fail")
 	}
 }
 
