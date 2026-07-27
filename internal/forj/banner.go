@@ -10,11 +10,12 @@ import (
 )
 
 var (
-	bannerGradientStart = [3]int{198, 229, 255}
-	bannerGradientMid   = [3]int{188, 238, 120}
-	bannerGradientEnd   = [3]int{255, 223, 120}
+	// The Temper display ramp keeps CLI wordmarks visually aligned with the docs without assigning them an action or navigation color.
+	bannerGradientStart = [3]int{255, 198, 133}
+	bannerGradientEnd   = [3]int{255, 138, 61}
 )
 
+// printNewProjectBanner gives the interactive project flow a recognizable entry point before Bubble Tea takes over.
 func printNewProjectBanner() {
 	fmt.Println("")
 	lines := []string{
@@ -31,6 +32,7 @@ func printNewProjectBanner() {
 	fmt.Println("")
 }
 
+// colorizeBannerLine preserves a readable bold fallback when true-color output is unavailable.
 func colorizeBannerLine(line string) string {
 	if !bannerColorsEnabled() {
 		return console.Colorize(console.ColorBoldWhite, line)
@@ -39,6 +41,7 @@ func colorizeBannerLine(line string) string {
 	return colorizeGradientLine(line, true)
 }
 
+// colorizeGradientLine keeps ASCII wordmarks on one shared brand ramp without coupling CLI rendering to web CSS.
 func colorizeGradientLine(line string, bold bool) string {
 	if !bannerColorsEnabled() {
 		return line
@@ -66,12 +69,7 @@ func colorizeGradientLine(line string, bold bool) string {
 			continue
 		}
 		t := float64(index) / float64(maxInt(1, paintable-1))
-		var c [3]int
-		if t < 0.5 {
-			c = lerpRGB(bannerGradientStart, bannerGradientMid, t/0.5)
-		} else {
-			c = lerpRGB(bannerGradientMid, bannerGradientEnd, (t-0.5)/0.5)
-		}
+		c := lerpRGB(bannerGradientStart, bannerGradientEnd, t)
 		b.WriteString(fmt.Sprintf("\033[38;2;%d;%d;%dm", c[0], c[1], c[2]))
 		b.WriteRune(r)
 		index++
@@ -80,6 +78,7 @@ func colorizeGradientLine(line string, bold bool) string {
 	return b.String()
 }
 
+// lerpRGB makes the terminal ramp continuous across glyphs instead of rendering visible color bands.
 func lerpRGB(a, b [3]int, t float64) [3]int {
 	return [3]int{
 		int(float64(a[0]) + (float64(b[0])-float64(a[0]))*t),
@@ -88,6 +87,7 @@ func lerpRGB(a, b [3]int, t float64) [3]int {
 	}
 }
 
+// bannerColorsEnabled honors established terminal color controls so banners remain script-friendly.
 func bannerColorsEnabled() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
@@ -98,6 +98,7 @@ func bannerColorsEnabled() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
+// maxInt prevents single-glyph gradients from dividing by zero.
 func maxInt(a, b int) int {
 	if a > b {
 		return a
