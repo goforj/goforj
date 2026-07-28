@@ -32,7 +32,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/events/eventscore":                 "v0.2.0",
 	"github.com/goforj/events/eventsfake":                 "v0.2.0",
 	"github.com/goforj/events/eventstest":                 "v0.2.0",
-	"github.com/goforj/execx":                             "v1.1.3",
+	"github.com/goforj/execx":                             "v1.1.4",
 	"github.com/goforj/godump":                            "v1.9.1",
 	"github.com/goforj/httpx":                             "v1.1.0",
 	"github.com/goforj/mail":                              "v0.3.1",

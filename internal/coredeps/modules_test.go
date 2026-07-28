@@ -114,7 +114,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/cache/driver/sqlitecache", version: "v0.4.0"},
 		{module: "github.com/goforj/mail", version: "v0.3.1"},
 		{module: "github.com/goforj/mail/mailses", version: "v0.3.1"},
-		{module: "github.com/goforj/execx", version: "v1.1.3"},
+		{module: "github.com/goforj/execx", version: "v1.1.4"},
 		{module: "github.com/goforj/godump", version: "v1.9.1"},
 		{module: "github.com/goforj/httpx", version: "v1.1.0"},
 		{module: "github.com/goforj/web", version: "v0.6.2"},
