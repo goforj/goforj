@@ -391,7 +391,7 @@ func appRolePortEnvKeys(role metricsTargetRole, app observabilityApp) []string {
 	}
 }
 
-// observabilityAppEnvKeys prevents named apps from consuming default app globals.
+// observabilityAppEnvKeys prevents additional apps from consuming default-app globals.
 func observabilityAppEnvKeys(app observabilityApp, suffixes ...string) []string {
 	if app.Name == project.DefaultAppName || app.EnvPrefix == "" {
 		return suffixes

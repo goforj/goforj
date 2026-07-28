@@ -213,7 +213,7 @@ func removeGeneratedAppCacheDriverDefault(source []byte, appName string) ([]byte
 	return []byte(strings.Join(filtered, "\n")), true
 }
 
-// removeDisabledAppCacheDriverDefaults reconciles only named Apps whose prospective contract omits Cache.
+// removeDisabledAppCacheDriverDefaults reconciles only additional apps whose prospective contract omits Cache.
 func removeDisabledAppCacheDriverDefaults(source []byte, config *project.Config, apps []project.App) ([]byte, bool) {
 	updated := source
 	changed := false

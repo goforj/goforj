@@ -39,10 +39,10 @@ func TestActiveAppPaths(t *testing.T) {
 
 	t.Setenv("FORJ_APP", "reporting")
 	if got := activeAppFile("commands.go"); got != filepath.Join("app", "reporting", "commands.go") {
-		t.Fatalf("named app file = %q, want app/reporting/commands.go", got)
+		t.Fatalf("additional app file = %q, want app/reporting/commands.go", got)
 	}
 	if got := activeAppWireFile("inject_cmd_app.go"); got != filepath.Join("app", "reporting", "wire", "inject_cmd_app.go") {
-		t.Fatalf("named app wire file = %q, want app/reporting/wire/inject_cmd_app.go", got)
+		t.Fatalf("additional app wire file = %q, want app/reporting/wire/inject_cmd_app.go", got)
 	}
 
 	t.Setenv("FORJ_APP", "../reporting")

@@ -140,7 +140,8 @@ func TestDatabaseDiscoveryKeepsMultiwordNamedConnections(t *testing.T) {
 }
 
 {{- if gt (len .RuntimeApps) 1 }}
-func TestNamedAppIgnoresDefaultAppPortOverrides(t *testing.T) {
+// TestAdditionalAppIgnoresDefaultAppPortOverrides verifies additional apps keep their deterministic port block.
+func TestAdditionalAppIgnoresDefaultAppPortOverrides(t *testing.T) {
 	t.Setenv("PORT", "3100")
 	t.Setenv("API_HTTP_PORT", "3200")
 	t.Setenv("METRICS_PORT", "11000")
@@ -149,10 +150,10 @@ func TestNamedAppIgnoresDefaultAppPortOverrides(t *testing.T) {
 	wantHTTP := "3001"
 	wantMetrics := "10010"
 	if got := HTTPPortForApp(app); got != wantHTTP {
-		t.Fatalf("named app HTTP port = %q, want %q", got, wantHTTP)
+		t.Fatalf("additional app HTTP port = %q, want %q", got, wantHTTP)
 	}
 	if got := MetricsPortForApp(app); got != wantMetrics {
-		t.Fatalf("named app metrics port = %q, want %q", got, wantMetrics)
+		t.Fatalf("additional app metrics port = %q, want %q", got, wantMetrics)
 	}
 }
 {{- end }}

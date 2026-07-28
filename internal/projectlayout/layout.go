@@ -20,7 +20,7 @@ func NormalizeApp(app project.App) project.App {
 	if strings.TrimSpace(app.Name) == "" {
 		return project.DefaultApp()
 	}
-	defaults := project.DefaultNamedApp(app.Name)
+	defaults := project.AppForName(app.Name)
 	if app.Entrypoint == "" {
 		app.Entrypoint = defaults.Entrypoint
 	}
@@ -89,7 +89,7 @@ func Discover(root string) (Discovery, error) {
 		if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
 			continue
 		}
-		apps = append(apps, project.DefaultNamedApp(name))
+		apps = append(apps, project.AppForName(name))
 	}
 	sort.Slice(apps, func(i int, j int) bool {
 		return apps[i].Name < apps[j].Name
@@ -118,7 +118,7 @@ func (d Discovery) RuntimeApps(config *project.Config, pending ...project.App) [
 		}
 		sort.Strings(configuredNames)
 		for _, name := range configuredNames {
-			candidates = append(candidates, project.DefaultNamedApp(name))
+			candidates = append(candidates, project.AppForName(name))
 		}
 	}
 	candidates = append(candidates, pending...)

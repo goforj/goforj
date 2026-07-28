@@ -2,7 +2,7 @@ package project
 
 import "strings"
 
-// AppEnvironmentPrefix converts a named App into the canonical prefix used by environment overlays.
+// AppEnvironmentPrefix converts an app name into the canonical prefix used by per-app environment overrides.
 func AppEnvironmentPrefix(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" || name == DefaultAppName {

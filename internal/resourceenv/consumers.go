@@ -165,7 +165,7 @@ type resourceAppPrefix struct {
 	prefix string
 }
 
-// configuredResourceAppNames returns deterministic named Apps whose runtime overlays must participate in discovery.
+// configuredResourceAppNames returns deterministic additional apps whose runtime overlays must participate in discovery.
 func configuredResourceAppNames(config *project.Config) []string {
 	if config == nil {
 		return nil

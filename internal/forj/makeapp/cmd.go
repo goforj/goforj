@@ -278,7 +278,7 @@ func (c *Cmd) app() (project.App, error) {
 	if project.IsNativeFrameworkCommandName(name) {
 		return project.App{}, fmt.Errorf("app name %q conflicts with a native forj command", name)
 	}
-	return project.DefaultNamedApp(name), nil
+	return project.AppForName(name), nil
 }
 
 // ensureAppDoesNotExist prevents make:app from overwriting an app owner-created app.

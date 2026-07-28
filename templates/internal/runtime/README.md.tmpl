@@ -72,8 +72,8 @@ It compiles the app list into the binary so production runtime defaults do not d
 
 App indexes are deterministic:
 
-- `app` is always index `0`.
-- named apps are sorted alphabetically starting at index `1`.
+- the default app is always index `0`.
+- additional apps are sorted alphabetically starting at index `1`.
 
 Default ports are derived from the app index:
 
@@ -101,7 +101,7 @@ Example generated apps:
 | `backstage` | `2` | `3002` | `10020` | `10021` |
 {{ end -}}
 
-Bundled local development tools avoid the app HTTP range. For example, Grafana defaults to `13001`, leaving `3001` available for the first named app.
+Bundled local development tools avoid the app HTTP range. For example, Grafana defaults to `13001`, leaving `3001` available for the first additional app.
 
 Use the runtime helpers when framework or app code needs the current app's defaults:
 
@@ -124,16 +124,16 @@ runtime.MetricsPortForApp("backstage")
 Environment variables remain the override path:
 
 - default app: `PORT`, `API_HTTP_PORT`, `METRICS_PORT`, `API_METRICS_PORT`, `METRICS_API_PORT`, `SCHEDULER_METRICS_PORT`, and `METRICS_SCHEDULER_PORT`
-- named apps: `<APP>_PORT`, `<APP>_API_HTTP_PORT`, `<APP>_METRICS_PORT`, `<APP>_API_METRICS_PORT`, `<APP>_METRICS_API_PORT`, `<APP>_SCHEDULER_METRICS_PORT`, and `<APP>_METRICS_SCHEDULER_PORT`
+- additional apps: `<APP>_PORT`, `<APP>_API_HTTP_PORT`, `<APP>_METRICS_PORT`, `<APP>_API_METRICS_PORT`, `<APP>_METRICS_API_PORT`, `<APP>_SCHEDULER_METRICS_PORT`, and `<APP>_METRICS_SCHEDULER_PORT`
 {{ if .ProjectComponents.Jobs }}
-- Jobs metrics: `WORKER_METRICS_PORT`, `JOBS_METRICS_PORT`, and `METRICS_JOBS_PORT`, with the same `<APP>_` prefix for named apps
+- Jobs metrics: `WORKER_METRICS_PORT`, `JOBS_METRICS_PORT`, and `METRICS_JOBS_PORT`, with the same `<APP>_` prefix for additional apps
 {{ end }}
 
-Named app prefixes use uppercase snake case. For example, `marketplace` uses `MARKETPLACE_PORT`.
+Additional app prefixes use uppercase snake case. For example, `marketplace` uses `MARKETPLACE_PORT`.
 
-Named app metrics env vars are not generated into `.env`. The compiled app manifest already provides non-conflicting deterministic ports, so add metrics env vars only when you need to override one app.
+Additional-app metrics env vars are not generated into `.env`. The compiled app manifest already provides non-conflicting deterministic ports, so add metrics env vars only when you need to override one app.
 
-Named apps intentionally do not consume default-app globals such as `API_HTTP_PORT=3000`; otherwise existing single-app `.env` files would make every app try to bind the same listeners.
+Additional apps intentionally do not consume default-app globals such as `API_HTTP_PORT=3000`; otherwise existing single-app `.env` files would make every app try to bind the same listeners.
 
 {{ if .ProjectComponents.Jobs }}
 ## Apps and Queue Names
@@ -146,7 +146,7 @@ The default `app` app keeps existing queue names unchanged:
 - `reports`
 - `emails`
 
-Named apps add the app name as a deterministic prefix:
+Additional apps add the app name as a deterministic prefix:
 
 - `billing` + `default` -> `billing_default`
 - `billing` + `reports` -> `billing_reports`
@@ -168,7 +168,7 @@ Each agent reports:
 - `group_key`: the logical runtime group
 - `instance_key`: the concrete process instance
 
-The default app keeps compact group keys named after each source. Named apps use `<app>/<source>`, such as `billing/http`.
+The default app keeps compact group keys named after each source. Additional apps use `<app>/<source>`, such as `billing/http`.
 
 Instance keys are resolved in this order:
 

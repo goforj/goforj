@@ -849,7 +849,7 @@ func (t *devWatcherTask) runCommand() {
 	}
 	success := err == nil && exit.OK()
 	if success && t.spec.Kind == devWatcherAppBuild {
-		err = publishDevBuildReadyStamp(project.DefaultNamedApp(t.spec.App))
+		err = publishDevBuildReadyStamp(project.AppForName(t.spec.App))
 		if err != nil {
 			_, _ = fmt.Fprintf(t.controller.errWriter, "forj dev: %v\n", err)
 		}

@@ -54,7 +54,7 @@ type DevConfig struct {
 	appsConfigured bool
 }
 
-// DefaultAppName is the conventional app name used when no named app is selected.
+// DefaultAppName is the conventional name of every Project's default app.
 const DefaultAppName = "app"
 
 // App describes one executable app in the project.
@@ -65,13 +65,13 @@ type App struct {
 	WireDir    string `yaml:"wire_dir" json:"wire_dir"`
 }
 
-// DefaultApp returns the conventional single-app project app.
+// DefaultApp returns the conventional default app.
 func DefaultApp() App {
-	return DefaultNamedApp(DefaultAppName)
+	return AppForName(DefaultAppName)
 }
 
-// DefaultNamedApp returns conventional paths for a generated app name.
-func DefaultNamedApp(name string) App {
+// AppForName returns the conventional paths for an app name.
+func AppForName(name string) App {
 	if name == "" || name == DefaultAppName {
 		return App{
 			Name:       DefaultAppName,
@@ -86,6 +86,13 @@ func DefaultNamedApp(name string) App {
 		AppDir:     filepath.Join("app", name),
 		WireDir:    filepath.Join("app", name, "wire"),
 	}
+}
+
+// DefaultNamedApp returns the conventional paths for an app name.
+//
+// Deprecated: use AppForName.
+func DefaultNamedApp(name string) App {
+	return AppForName(name)
 }
 
 // IsSafeAppName reports whether name is a lowercase app slug safe for app-owned paths.

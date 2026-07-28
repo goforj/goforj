@@ -161,12 +161,20 @@ render:
 	}
 }
 
-func TestDefaultNamedAppUsesConvention(t *testing.T) {
-	app := DefaultNamedApp("reporting")
+// TestAppForNameUsesConvention verifies app names map to the established project layout.
+func TestAppForNameUsesConvention(t *testing.T) {
+	app := AppForName("reporting")
 	if app.Entrypoint != filepath.Join("cmd", "reporting", "main.go") ||
 		app.AppDir != filepath.Join("app", "reporting") ||
 		app.WireDir != filepath.Join("app", "reporting", "wire") {
 		t.Fatalf("expected conventional reporting paths, got %#v", app)
+	}
+}
+
+// TestDefaultNamedAppPreservesCompatibility verifies the retired spelling remains a source-compatible alias.
+func TestDefaultNamedAppPreservesCompatibility(t *testing.T) {
+	if got, want := DefaultNamedApp("reporting"), AppForName("reporting"); got != want {
+		t.Fatalf("DefaultNamedApp() = %#v, want %#v", got, want)
 	}
 }
 

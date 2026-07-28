@@ -50,7 +50,7 @@ func (p *ProjectRenderer) cacheOwnerDependencySearch(excludedApps []project.App,
 	}
 }
 
-// cacheOwnerExcludedPaths keeps sibling Apps outside a named App search without hiding named Apps beneath the default app directory.
+// cacheOwnerExcludedPaths keeps sibling apps outside an additional-app search without hiding additional apps beneath the default app directory.
 func cacheOwnerExcludedPaths(apps []project.App) []cacheOwnerExcludedPath {
 	paths := make([]cacheOwnerExcludedPath, 0, len(apps)*3)
 	for _, app := range apps {

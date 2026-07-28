@@ -359,7 +359,7 @@ func legacyComponentMappingRenderCombo() renderCombo {
 	}
 }
 
-// namedComponentRenderCombo keeps the default App lean while compiling one component through a named App.
+// namedComponentRenderCombo keeps the default app lean while compiling one component through an additional app.
 func namedComponentRenderCombo(defaultComponents project.Components, id string, appName string, key project.ComponentKey) renderCombo {
 	namedComponents := project.Components{CLI: true}
 	namedComponents.SetEnabled(key, true)
