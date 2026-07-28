@@ -20,7 +20,7 @@ require (
 	github.com/goforj/console v0.1.1
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.6.0
-	github.com/goforj/execx v1.1.3
+	github.com/goforj/execx v1.1.4
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1
 	github.com/goforj/storage v0.5.0
