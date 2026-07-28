@@ -91,14 +91,14 @@ Example generated apps:
 | App | Index | HTTP | Metrics | Scheduler metrics | Worker metrics |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `app` | `0` | `3000` | `10000` | `10001` | `10002` |
-| `marketplace` | `1` | `3001` | `10010` | `10011` | `10012` |
-| `backstage` | `2` | `3002` | `10020` | `10021` | `10022` |
+| `admin` | `1` | `3001` | `10010` | `10011` | `10012` |
+| `statuspage` | `2` | `3002` | `10020` | `10021` | `10022` |
 {{ else -}}
 | App | Index | HTTP | Metrics | Scheduler metrics |
 | --- | ---: | ---: | ---: | ---: |
 | `app` | `0` | `3000` | `10000` | `10001` |
-| `marketplace` | `1` | `3001` | `10010` | `10011` |
-| `backstage` | `2` | `3002` | `10020` | `10021` |
+| `admin` | `1` | `3001` | `10010` | `10011` |
+| `statuspage` | `2` | `3002` | `10020` | `10021` |
 {{ end -}}
 
 Bundled local development tools avoid the app HTTP range. For example, Grafana defaults to `13001`, leaving `3001` available for the first additional app.
@@ -117,8 +117,8 @@ runtime.WorkerMetricsPort()
 Use `ForApp` helpers only when tooling needs to inspect another app:
 
 ```go
-runtime.HTTPPortForApp("marketplace")
-runtime.MetricsPortForApp("backstage")
+runtime.HTTPPortForApp("admin")
+runtime.MetricsPortForApp("statuspage")
 ```
 
 Environment variables remain the override path:
@@ -129,7 +129,7 @@ Environment variables remain the override path:
 - Jobs metrics: `WORKER_METRICS_PORT`, `JOBS_METRICS_PORT`, and `METRICS_JOBS_PORT`, with the same `<APP>_` prefix for additional apps
 {{ end }}
 
-Additional app prefixes use uppercase snake case. For example, `marketplace` uses `MARKETPLACE_PORT`.
+Additional app prefixes use uppercase snake case. For example, `admin` uses `ADMIN_PORT`.
 
 Additional-app metrics env vars are not generated into `.env`. The compiled app manifest already provides non-conflicting deterministic ports, so add metrics env vars only when you need to override one app.
 
@@ -150,7 +150,7 @@ Additional apps add the app name as a deterministic prefix:
 
 - `billing` + `default` -> `billing_default`
 - `billing` + `reports` -> `billing_reports`
-- `customer-portal` + `emails` -> `customer-portal_emails`
+- `admin` + `reports` -> `admin_reports`
 
 App code should continue to use logical queue names such as `default`, `reports`, or `emails`. GoForj applies the app prefix at the queue boundary so multiple apps can share the same Redis, RabbitMQ, NATS, SQS, or SQL queue backend without workers consuming each other's jobs.
 
@@ -163,7 +163,7 @@ Lighthouse uses runtime app metadata to identify each connected process without 
 
 Each agent reports:
 
-- `app`: the App, such as `app`, `billing`, or `customer-portal`
+- `app`: the App, such as `app`, `admin`, or `statuspage`
 - `source`: the logical runtime surface
 - `group_key`: the logical runtime group
 - `instance_key`: the concrete process instance

@@ -242,10 +242,10 @@ For an additional App:
 ```yaml
 build:
   apps:
-    marketplace:
+    admin:
       assets:
         frontend:
-          path: ./cmd/marketplace/frontend
+          path: ./cmd/admin/frontend
           prepare:
             exec: npm ci --no-audit --no-fund --loglevel=error
             inputs: [package.json, package-lock.json]
@@ -255,7 +255,7 @@ build:
             inputs: ["**/*"]
             ignore: [_data, node_modules, dist, .git, .goforj, "**/*.tsbuildinfo"]
             outputs: [dist]
-            environment: [APP_ENV, MARKETPLACE_APP_ENV, APP_URL, MARKETPLACE_APP_URL, FRONTEND_*, VITE_*, NODE_ENV, MARKETPLACE_FRONTEND_*]
+            environment: [APP_ENV, ADMIN_APP_ENV, APP_URL, ADMIN_APP_URL, FRONTEND_*, VITE_*, NODE_ENV, ADMIN_FRONTEND_*]
 ```
 
 The first implementation should support a scalar shorthand:
@@ -319,10 +319,10 @@ forj build
 Builds the default App and prepares its stale or missing assets.
 
 ```bash
-forj marketplace build
+forj admin build
 ```
 
-Builds only the `marketplace` App and its assets.
+Builds only the staff-facing `admin` App and its assets.
 
 ### Asset mode
 

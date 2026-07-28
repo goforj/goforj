@@ -65,7 +65,7 @@ type Cmd struct {
 	logger   *logger.AppLogger
 	renderer Renderer
 
-	Name       string `arg:"" optional:"" help:"App name, such as billing or customer-portal"`
+	Name       string `arg:"" optional:"" help:"App name, such as admin or statuspage"`
 	Components string `name:"components" help:"Comma-separated app components, such as web-api,jobs"`
 	Without    string `name:"without" help:"Comma-separated app components to remove from the default app selection"`
 	StarterKit string `name:"starter-kit" help:"Frontend starter kit for apps with Web UI"`
@@ -89,11 +89,11 @@ func NewCmd(logger *logger.AppLogger, renderer Renderer) *Cmd {
 func (*Cmd) Help() string {
 	return strings.Join([]string{
 		"Examples:",
-		"  forj make:app billing",
-		"  forj make:app billing --components web-api,jobs",
-		"  forj make:app portal --components web-api,web-ui --starter-kit vue",
-		"  forj make:app customer-portal --without web-ui --skip-wire",
-		"  forj make:app billing --remove",
+		"  forj make:app admin",
+		"  forj make:app admin --components web-api,jobs",
+		"  forj make:app statuspage --components web-api,web-ui --starter-kit vue",
+		"  forj make:app statuspage --without jobs --skip-wire",
+		"  forj make:app admin --remove",
 		"",
 	}, "\n")
 }
@@ -270,7 +270,7 @@ func (c *Cmd) app() (project.App, error) {
 		return project.App{}, fmt.Errorf("app %q already exists as the default app", name)
 	}
 	if !project.IsSafeAppName(name) {
-		return project.App{}, fmt.Errorf("invalid app name %q; use a lowercase kebab-case slug such as marketplace or customer-portal", name)
+		return project.App{}, fmt.Errorf("invalid app name %q; use a lowercase kebab-case slug such as admin or statuspage", name)
 	}
 	if project.IsReservedAppName(name) {
 		return project.App{}, fmt.Errorf("app name %q is reserved by the app layout", name)

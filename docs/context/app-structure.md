@@ -62,7 +62,7 @@ app/<app>/
 app/<app>/wire/
 ```
 
-Every Project starts with the default app, `app`. Add another app when the Project needs an additional runnable boundary, such as `admin`, `marketplace`, or `backstage`.
+Every Project starts with the default app, `app`. Add another app when the Project needs an additional runnable boundary, such as a staff-facing `admin` app. A separately deployed `statuspage` is another useful boundary when it must remain available independently of the primary app.
 
 ## Command Routing
 
@@ -77,9 +77,9 @@ forj build
 Prefixed commands target an additional app:
 
 ```bash
-forj marketplace make:controller checkout
-forj marketplace route:list
-forj marketplace build
+forj admin make:controller reports
+forj admin route:list
+forj admin build
 ```
 
 The prefix should route generated code into that app's registration and Wire files.

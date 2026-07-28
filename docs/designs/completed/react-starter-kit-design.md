@@ -384,7 +384,7 @@ npm run build
 For named apps:
 
 ```bash
-cd cmd/marketplace/frontend
+cd cmd/admin/frontend
 npm install
 npm run dev
 npm run build

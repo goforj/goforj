@@ -337,7 +337,7 @@ goforj-go-package-design
   make-command names map to package boundaries. It should also teach that
   package-scoped implementation code still registers through the selected app
   composition files. Example workflows should include forj make:command
-  billing:reports:sync and forj marketplace make:command billing:reports:sync.
+  billing:reports:sync and forj admin make:command reports:reconcile.
 
 goforj-migrations
   Teaches raw DDL migration conventions, app-scoped migration paths, connection
@@ -473,7 +473,7 @@ Tools should accept an `app` argument where app selection matters:
 
 ```json
 {
-  "app": "marketplace"
+  "app": "admin"
 }
 ```
 
@@ -523,7 +523,7 @@ Example shape:
       "runtimes": ["http", "jobs", "scheduler"]
     },
     {
-      "name": "marketplace",
+      "name": "admin",
       "default": false,
       "runtimes": ["http", "jobs"]
     }
@@ -613,10 +613,10 @@ docs sections.
 
 Examples:
 
-- `forj marketplace make:controller checkout`
-- `app/marketplace/routes.go`
-- `cmd/marketplace/main.go`
-- `migrations/marketplace/default`
+- `forj admin make:controller reports`
+- `app/admin/routes.go`
+- `cmd/admin/main.go`
+- `migrations/admin/default`
 
 This should return a small set of doc paths and headings, not long prose.
 
@@ -663,7 +663,7 @@ This should mirror the app-aware behavior users get from:
 
 ```bash
 forj route:list
-forj marketplace route:list
+forj admin route:list
 ```
 
 ### schedule-list
@@ -782,7 +782,7 @@ Suggested shape:
     "goforj-migrations"
   ],
   "last_discovered": {
-    "apps": ["app", "marketplace"],
+    "apps": ["app", "admin"],
     "components": ["web-api", "jobs", "observability", "vue"]
   }
 }
@@ -813,7 +813,7 @@ The agent can then ask:
 {
   "tool": "route-list",
   "arguments": {
-    "app": "marketplace"
+    "app": "admin"
   }
 }
 ```
@@ -942,7 +942,7 @@ I/O.
 Create a small evaluation set:
 
 ```text
-query: "make controller for marketplace app"
+query: "make reports controller for admin app"
 expected:
   - app registration docs
   - make command docs
@@ -959,7 +959,7 @@ expected:
   - Go package design docs
   - app architecture docs
 
-query: "where does cmd marketplace main go"
+query: "where does cmd admin main go"
 expected:
   - app architecture docs
   - cmd/<app>/main.go docs
@@ -1010,10 +1010,10 @@ when credentials or local tooling are available.
 
 Example prompts:
 
-- "Add a checkout controller to the marketplace app."
-- "Create a billing reports sync command inside the marketplace app."
-- "Create a nightly cleanup schedule for backstage."
-- "Explain where the marketplace app's binary entrypoint lives."
+- "Add a reports controller to the admin app."
+- "Create a user audit command inside the admin app."
+- "Create an incident refresh schedule for the statuspage app."
+- "Explain where the admin app's binary entrypoint lives."
 - "Find the docs for read-only database inspection."
 
 Score:
