@@ -97,7 +97,7 @@ func compileStructuredDevApps(config *project.Config) ([]devCompiledWatcher, err
 	apps := selectedStructuredDevApps(config)
 	compiled := make([]devCompiledWatcher, 0, len(apps)*2)
 	for _, selected := range apps {
-		app := project.DefaultNamedApp(selected.name)
+		app := project.AppForName(selected.name)
 		build, err := compileStructuredAppBuild(config, app, selected.config)
 		if err != nil {
 			return nil, err

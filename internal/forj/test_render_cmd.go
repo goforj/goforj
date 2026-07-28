@@ -237,7 +237,7 @@ func assertRenderedAPIIndexArtifacts(root string, appName string) error {
 	return nil
 }
 
-// renderedAPIIndexArtifactPaths mirrors the public default/named App layout asserted by the build runner.
+// renderedAPIIndexArtifactPaths mirrors the public default/additional-app layout asserted by the build runner.
 func renderedAPIIndexArtifactPaths(root string, appName string) []string {
 	buildRoot := filepath.Join(root, "build")
 	if appName != "" && appName != project.DefaultAppName {
@@ -250,7 +250,7 @@ func renderedAPIIndexArtifactPaths(root string, appName string) []string {
 	}
 }
 
-// writeConventionalAppMarker makes named-App selection exercise the same cmd/<name> convention used by real rendered projects.
+// writeConventionalAppMarker makes additional-app selection exercise the same cmd/<name> convention used by real rendered projects.
 func writeConventionalAppMarker(root string, name string) error {
 	mainPath := filepath.Join(root, "cmd", name, "main.go")
 	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {

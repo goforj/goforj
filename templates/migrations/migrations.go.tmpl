@@ -381,7 +381,7 @@ func knownMigrationStreams() []migrationStream {
 	return streams
 }
 
-// hasMultiAppMigrationLayout reports whether any migration stream belongs to a named app.
+// hasMultiAppMigrationLayout reports whether any migration stream belongs to an additional app.
 func hasMultiAppMigrationLayout() bool {
 	for _, stream := range knownMigrationStreams() {
 		if stream.App != "app" {

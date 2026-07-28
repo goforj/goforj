@@ -257,7 +257,7 @@ func (contract renderedPrimitiveContract) validateApp(root string, app project.A
 	return violations
 }
 
-// validateAppEnvironment checks the generated driver overlay for one named App without confusing shared root defaults with default-App ownership.
+// validateAppEnvironment checks the generated driver overlay for one additional app without confusing shared root defaults with default-app ownership.
 func (contract renderedPrimitiveContract) validateAppEnvironment(app project.App, enabled bool, environments map[string]map[string]bool) []string {
 	prefix := project.AppEnvironmentPrefix(app.Name)
 	if prefix == "" {
@@ -283,7 +283,7 @@ func (contract renderedPrimitiveContract) validateAppEnvironment(app project.App
 	return violations
 }
 
-// ownsEnvironmentKey recognizes framework-owned root, metrics, and named-App driver assignments for one primitive.
+// ownsEnvironmentKey recognizes framework-owned root, metrics, and additional-app driver assignments for one primitive.
 func (contract renderedPrimitiveContract) ownsEnvironmentKey(key string) bool {
 	prefix := contract.environmentPrefix + "_"
 	if strings.HasPrefix(key, prefix) || strings.Contains(key, "_"+prefix) {
@@ -297,7 +297,7 @@ func (contract renderedPrimitiveContract) ownsEnvironmentKey(key string) bool {
 	return false
 }
 
-// renderedAppComponents resolves named Apps against the same stable default capability set used by the renderer.
+// renderedAppComponents resolves additional apps against the same stable default capability set used by the renderer.
 func renderedAppComponents(config *project.Config, app project.App) project.Components {
 	if app.Name == project.DefaultAppName {
 		return config.Render.Components.WithResolvedDependencies()

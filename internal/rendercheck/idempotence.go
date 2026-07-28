@@ -193,11 +193,11 @@ func (snapshot renderIdempotenceSnapshot) validateSelection(expected renderIdemp
 		return fmt.Errorf("default App components = %#v, want %#v", snapshot.components, expected.components)
 	}
 	if len(snapshot.apps) != len(expected.apps) {
-		return fmt.Errorf("named App selection count = %d, want %d", len(snapshot.apps), len(expected.apps))
+		return fmt.Errorf("additional app selection count = %d, want %d", len(snapshot.apps), len(expected.apps))
 	}
 	for index := range snapshot.apps {
 		if snapshot.apps[index] != expected.apps[index] {
-			return fmt.Errorf("named App selection = %#v, want %#v", snapshot.apps[index], expected.apps[index])
+			return fmt.Errorf("additional app selection = %#v, want %#v", snapshot.apps[index], expected.apps[index])
 		}
 	}
 	return nil

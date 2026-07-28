@@ -324,7 +324,7 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 	return driver
 }
 
-// appPrefixedActiveDrivers resolves root and named App overlays with the same blank-driver fallbacks used at runtime.
+// appPrefixedActiveDrivers resolves root and additional-app overlays with the same blank-driver fallbacks used at runtime.
 func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defaultDriver string, inheritRootDriver bool) []generationActiveDriver {
 	resourcePrefix = str.Of(resourcePrefix).ToUpper().Trim().String()
 	if resourcePrefix == "" {

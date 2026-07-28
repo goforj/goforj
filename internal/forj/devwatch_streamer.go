@@ -825,7 +825,7 @@ func decorateDevAppLogAppColumn(line string, appName string, width int, enabled 
 	return line[:match[3]] + column + line[match[5]:]
 }
 
-// colorizeDevAppColumn keeps the default app quiet and gives named apps stable accents.
+// colorizeDevAppColumn keeps the default app quiet and gives additional apps stable accents.
 func colorizeDevAppColumn(column string, appName string) string {
 	if appName == project.DefaultAppName {
 		return console.Colorize(devDefaultAppColor, column)

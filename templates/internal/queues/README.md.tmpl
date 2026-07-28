@@ -47,7 +47,7 @@ _, err := app.Queues().Dispatch(queue.NewJob("reports:generate").OnQueue("critic
 
 Queue names in app code and `.env` are logical names.
 
-The default `app` app keeps those names unchanged. Named Apps automatically prefix the physical backend queue name with the app name:
+The default app keeps those names unchanged. Additional apps automatically prefix the physical backend queue name with the app name:
 
 - `default` in the `billing` app becomes `billing_default`
 - `reports` in the `billing` app becomes `billing_reports`

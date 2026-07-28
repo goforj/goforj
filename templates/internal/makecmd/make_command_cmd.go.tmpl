@@ -302,7 +302,7 @@ func commandWireSetDeclaration(path string) string {
 	return "var AppCommandSet = wire.NewSet("
 }
 
-// isAppCommandsPath detects command registration files for both default and named apps.
+// isAppCommandsPath detects command registration files for the default app and additional apps.
 func isAppCommandsPath(path string) bool {
 	normalized := filepath.ToSlash(path)
 	return strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/commands.go")

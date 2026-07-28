@@ -65,7 +65,7 @@ This package exposes two classes of health probes for deployment tooling:
 
 - `GET /swagger/doc.json`
   - serves the active App's OpenAPI JSON
-  - defaults to `build/openapi.json` for `app` and `build/<app>/openapi.json` for a named App
+  - defaults to `build/openapi.json` for the default app and `build/<app>/openapi.json` for an additional app
   - accepts only a conventional lowercase App slug from `FORJ_APP`; unsafe path-like values fall back to `app`
   - can be overridden with `OPENAPI_SPEC_PATH`
   - returns a JSON `404` with the exact indexing command when the artifact is missing
@@ -129,7 +129,7 @@ Checks that are not active for current runtime configuration are treated as pass
 
 1. Generate the OpenAPI artifact directly when you do not otherwise need to build or run:
    - default App: `forj build:api-index`
-   - named App: `forj <app> build:api-index`
+   - additional app: `forj <app> build:api-index`
 2. Alternatively, use `forj build` or `forj run`; both index the active App and publish the artifact only after their final build or process-start boundary succeeds.
 3. Start the server if it is not already running.
 4. Open:

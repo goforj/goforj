@@ -772,7 +772,7 @@ func componentsForApp(config *project.Config, appName string) (project.Component
 	return project.NormalizeAppComponents(config.Render.Components, config.Render.Components), true
 }
 
-// openAPITitle keeps the default App concise while making named App documents unmistakable.
+// openAPITitle keeps the default app concise while making additional-app documents unmistakable.
 func openAPITitle(projectName string, appName string) string {
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {

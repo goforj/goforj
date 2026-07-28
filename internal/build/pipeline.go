@@ -478,7 +478,7 @@ func loadWirePaths(root string) []string {
 		if !project.IsSafeAppName(targetName) {
 			return defaultWirePaths(root)
 		}
-		target := project.DefaultNamedApp(targetName)
+		target := project.AppForName(targetName)
 		wireDir := filepath.Join(root, target.WireDir)
 		if hasDir(wireDir) {
 			return []string{wireDir}

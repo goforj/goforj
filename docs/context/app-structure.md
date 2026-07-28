@@ -1,10 +1,8 @@
 # App Structure
 
-This document is the quick orientation for GoForj's current app layout.
+This document is the quick orientation for GoForj's app layout. A Project starts with one default app and can add more apps when it needs separate runnable boundaries.
 
-## Default Single-App Shape
-
-Most projects are still single-app projects.
+## Default App
 
 The default app uses:
 
@@ -33,10 +31,7 @@ cmd/app/main.go
 
 Keep this entrypoint thin. Runtime behavior, commands, routes, schedules, and lifecycle hooks should be composed through `app/` and `app/wire/`.
 
-When the generated App has Web API, Web UI, Scheduler, or Jobs capability,
-launching its binary without arguments starts the combined `run` host. A
-CLI-only App keeps no-argument help behavior. Explicit commands, including
-`run` and `--help`, always remain available.
+When the generated app has Web API, Web UI, Scheduler, or Jobs capability, launching its binary without arguments starts the combined `run` host. A CLI-only app keeps no-argument help behavior. Explicit commands, including `run` and `--help`, always remain available.
 
 ## App Composition Points
 
@@ -57,9 +52,9 @@ Common default-app composition files:
 
 When adding generated behavior, prefer the matching `forj make:*` command so the right composition and Wire files are updated together.
 
-## Named Apps
+## Additional Apps
 
-Named apps use the same shape with an app name:
+An additional app uses the same shape with its app name:
 
 ```text
 cmd/<app>/main.go
@@ -67,7 +62,7 @@ app/<app>/
 app/<app>/wire/
 ```
 
-The default app is still `app`; named apps are additional runnable boundaries such as `admin`, `marketplace`, or `backstage`.
+Every Project starts with the default app, `app`. Add another app when the Project needs an additional runnable boundary, such as `admin`, `marketplace`, or `backstage`.
 
 ## Command Routing
 
@@ -79,7 +74,7 @@ forj route:list
 forj build
 ```
 
-Prefixed commands target the named app:
+Prefixed commands target an additional app:
 
 ```bash
 forj marketplace make:controller checkout
@@ -91,7 +86,7 @@ The prefix should route generated code into that app's registration and Wire fil
 
 ## Migrations
 
-Single-app projects keep the simple migration layout until a named app exists.
+Single-app Projects keep the simple migration layout until an additional app exists.
 
 Multi-app projects use app-scoped migration ownership:
 
@@ -107,7 +102,7 @@ For beta projects created before this layout, use the root migration note:
 
 - [`../../migration.md`](../../migration.md)
 
-Treat that as a single-app structure migration. It is not a requirement to create named apps.
+Treat that as a single-app structure migration. It is not a requirement to create additional apps.
 
 ## Deep Design
 

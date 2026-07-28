@@ -95,7 +95,7 @@ func hasDevFrontendInstallTask(tasks []project.DevTask, app project.App) bool {
 	return false
 }
 
-// migrateGeneratedDevFrontendInstallTasks upgrades framework tasks for the default App and every configured named App.
+// migrateGeneratedDevFrontendInstallTasks upgrades framework tasks for the default app and every configured additional app.
 func migrateGeneratedDevFrontendInstallTasks(config *project.Config) bool {
 	if config == nil {
 		return false
@@ -108,7 +108,7 @@ func migrateGeneratedDevFrontendInstallTasks(config *project.Config) bool {
 			return
 		}
 		seen[name] = true
-		apps = append(apps, project.DefaultNamedApp(name))
+		apps = append(apps, project.AppForName(name))
 	}
 	for name := range config.Apps {
 		add(name)

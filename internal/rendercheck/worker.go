@@ -231,12 +231,12 @@ func renderComboApps(combo renderCombo) ([]project.App, error) {
 	sort.Strings(names)
 	apps := []project.App{project.DefaultApp()}
 	for _, name := range names {
-		apps = append(apps, project.DefaultNamedApp(name))
+		apps = append(apps, project.AppForName(name))
 	}
 	return apps, nil
 }
 
-// seedRenderComboApps makes configured named Apps discoverable before the first clean render replaces their markers.
+// seedRenderComboApps makes configured additional apps discoverable before the first clean render replaces their markers.
 func seedRenderComboApps(root string, apps []project.App) error {
 	for _, app := range apps {
 		if app.Name == project.DefaultAppName {

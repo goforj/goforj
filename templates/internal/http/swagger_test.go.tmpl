@@ -48,7 +48,7 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "/wrong-app")
 }
 
-// TestSwaggerSpecUsesAppDefaultPath verifies a named App cannot silently serve the default App document.
+// TestSwaggerSpecUsesAppDefaultPath verifies an additional app cannot silently serve the default app document.
 func TestSwaggerSpecUsesAppDefaultPath(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "true")
 	t.Setenv("FORJ_APP", "customer-portal")
@@ -77,7 +77,7 @@ func TestSwaggerSpecPreservesPathOverride(t *testing.T) {
 	overridePath := filepath.Join(root, "custom", "selected-openapi.json")
 	t.Setenv("OPENAPI_SPEC_PATH", overridePath)
 	writeSwaggerTestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
-	writeSwaggerTestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-named":{}}}`)
+	writeSwaggerTestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-selected":{}}}`)
 	writeSwaggerTestSpec(t, overridePath, `{"openapi":"3.0.3","paths":{"/override":{}}}`)
 	useSwaggerTestWorkingDirectory(t, root)
 	e := bootstrapSwaggerTestServer(t)
@@ -88,10 +88,10 @@ func TestSwaggerSpecPreservesPathOverride(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/override":{}}}`, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "/wrong-default")
-	assert.NotContains(t, rec.Body.String(), "/wrong-named")
+	assert.NotContains(t, rec.Body.String(), "/wrong-selected")
 }
 
-// TestSwaggerSpecMissingDoesNotFallBack verifies a stale default artifact cannot masquerade as a named App document.
+// TestSwaggerSpecMissingDoesNotFallBack verifies a stale default artifact cannot masquerade as the selected app document.
 func TestSwaggerSpecMissingDoesNotFallBack(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "true")
 	t.Setenv("FORJ_APP", "customer-portal")

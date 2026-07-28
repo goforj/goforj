@@ -56,7 +56,7 @@ render:
   goforj_version: 0.18.0
 ```
 
-Do not add `apps:` unless you are creating additional named apps.
+Do not add `apps:` unless you are creating additional apps.
 
 Then validate:
 
@@ -77,7 +77,7 @@ forj make:controller users
 forj build
 ```
 
-Only create named apps later if the project actually needs another runnable boundary:
+Only create an additional app later if the Project actually needs another runnable boundary:
 
 ```bash
 forj make:app admin

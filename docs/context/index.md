@@ -170,8 +170,8 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
   - scheduler/runtime boundaries
 - [App Structure](app-structure.md)
   - current `cmd/app`, `app/`, `app/wire`, and `internal/` ownership
-  - default app vs named app shape
-  - command prefix routing for named apps
+  - default app vs additional app shape
+  - command prefix routing for additional apps
 - [Generated App Extension Points](generated-app-extension-points.md)
   - where app-level customizations should go
 - [Generated Database README](../../templates/internal/database/README.md)

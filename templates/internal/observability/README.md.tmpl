@@ -49,7 +49,7 @@ Use this stack when you want a local production-style view of the generated app 
 - standalone host mode scrapes each app's HTTP port when the HTTP source is present, and falls back to that app's shared metrics port otherwise.
 - `local-single` target generation emits one scrape target per app.
 - `local-multi` target generation emits one scrape target per app and source role.
-- named app metrics env vars are optional overrides; otherwise the generated app runtime block supplies deterministic non-conflicting ports.
+- additional-app metrics env vars are optional overrides; otherwise the generated app runtime block supplies deterministic non-conflicting ports.
 
 Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
 
@@ -80,8 +80,8 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
     - one generated target per app
     - intended for standalone host mode
     - default app for `app`: `http://host.docker.internal:3000/metrics` when the HTTP source is present
-    - default app for the first named app: `http://host.docker.internal:3001/metrics` when the HTTP source is present
-    - otherwise defaults to that app's shared metrics port, such as `10000` for `app` or `10010` for the first named app
+    - default for the first additional app: `http://host.docker.internal:3001/metrics` when the HTTP source is present
+    - otherwise defaults to that app's shared metrics port, such as `10000` for the default app or `10010` for the first additional app
     - generated labels: `process=app` and `app=<app>`
   - `local-multi`
     - one host, one target per app and source role
@@ -95,7 +95,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 {{- if .Components.Scheduler }}
       - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:10001/metrics`
 {{- end }}
-    - default apps for the first named app use the next runtime block, such as `10010`, `10011`, and `10012`
+    - the first additional app uses the next runtime block, such as `10010`, `10011`, and `10012`
   - `compose`
     - one target per source role
     - same shared port by default

@@ -1084,7 +1084,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title:   "Named App Rendering",
+			title:   "Additional App Rendering",
 			enabled: input.renderAll,
 			action:  p.renderNamedApps,
 		},
@@ -1181,7 +1181,7 @@ func driverListContains(value string, want string) bool {
 	return false
 }
 
-// RenderAppOnly renders one named app without replaying the full project scaffold.
+// RenderAppOnly renders one additional app without replaying the full project scaffold.
 func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
 	if err := p.beginRenderInvocation("."); err != nil {
 		return err
@@ -1461,7 +1461,7 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 		return false
 	}
 	changed := false
-	if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, project.DefaultNamedApp(name)); removed {
+	if tasks, removed := removeGeneratedDevFrontendInstallTask(p.config.Dev.Pre, project.AppForName(name)); removed {
 		p.config.Dev.Pre = tasks
 		changed = true
 	}
@@ -1563,7 +1563,7 @@ func (p *ProjectRenderer) setAppDevRun(name string, command string) {
 	if p.config.Dev.Run != nil {
 		delete(p.config.Dev.Run, name)
 	}
-	app := project.DefaultNamedApp(name)
+	app := project.AppForName(name)
 	if tasks, migrated := migrateGeneratedDevFrontendInstallTask(p.config.Dev.Pre, app); migrated {
 		p.config.Dev.Pre = tasks
 	}
@@ -1653,7 +1653,7 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 	}
 	envGlobals, envAppDefaults := splitEnvDefaultsByPrefix(envDefaults, prefix)
 	if p.config != nil && p.config.Render.Components.DemoApp {
-		// Demo migrations still exercise SQLite, so a named-App render must not create a MySQL-only build contract before the full renderer runs.
+		// Demo migrations still exercise SQLite, so an additional-app render must not create a MySQL-only build contract before the full renderer runs.
 		if err := p.workspace.upsertEnvDefaults(environmentPath, map[string]string{"DB_SUPPORTED_DRIVERS": "sqlite"}); err != nil {
 			return err
 		}
@@ -1743,7 +1743,7 @@ func (w projectRenderWorkspace) queueDriverDefaultFromEnv(path string) (string, 
 	return w.resourceDriverDefaultFromEnv(path, project.ResourceQueue, "QUEUE", "workerpool")
 }
 
-// resourceDriverDefaultFromEnv validates one owner-controlled root driver before projecting it into a named App overlay.
+// resourceDriverDefaultFromEnv validates one owner-controlled root driver before projecting it into an additional-app overlay.
 func (w projectRenderWorkspace) resourceDriverDefaultFromEnv(path string, resource project.ResourceKey, envPrefix string, fallback string) (string, error) {
 	data, err := w.readFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -1788,7 +1788,7 @@ func (w projectRenderWorkspace) nextAvailableAppHTTPPort(path string, prefix str
 	return preferred
 }
 
-// appHTTPPortsFromEnv reads assigned named-App ports from one project workspace.
+// appHTTPPortsFromEnv reads assigned additional-app ports from one project workspace.
 func (w projectRenderWorkspace) appHTTPPortsFromEnv(path string, currentPrefix string) map[int]struct{} {
 	used := map[int]struct{}{}
 	data, err := w.readFile(path)
@@ -3064,7 +3064,7 @@ func (p *ProjectRenderer) runTemplGenerate() error {
 	return nil
 }
 
-// runWireGenerate refreshes Wire output for the default app and every discovered named app.
+// runWireGenerate refreshes Wire output for the default app and every discovered additional app.
 func (p *ProjectRenderer) runWireGenerate() error {
 	wirePath, err := p.wire.resolve()
 	if err != nil {
@@ -3548,7 +3548,7 @@ func (p *ProjectRenderer) projectRenderComponents() project.Components {
 	return components
 }
 
-// templateDataForApp keeps named-App package paths and capability projections isolated within one project workspace.
+// templateDataForApp keeps additional-app package paths and capability projections isolated within one project workspace.
 func (w projectRenderWorkspace) templateDataForApp(config *project.Config, app project.App) templateRenderConfig {
 	if app.Name == "" {
 		app = project.DefaultApp()

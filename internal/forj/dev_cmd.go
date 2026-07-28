@@ -401,7 +401,7 @@ func normalizeDevComposeExecutable(command string) string {
 	return command
 }
 
-// isFrontendDependencyDevTaskName matches the stable default and named-App task identities emitted by GoForj.
+// isFrontendDependencyDevTaskName matches the stable default-app and additional-app task identities emitted by GoForj.
 func isFrontendDependencyDevTaskName(name string) bool {
 	return name == "Install Frontend Dependencies" ||
 		strings.HasPrefix(name, "Install ") && strings.HasSuffix(name, " Frontend Dependencies")
@@ -444,7 +444,7 @@ func devFrontendInstallTaskApp(name string) (project.App, bool) {
 	if !project.IsSafeAppName(appName) || project.IsReservedAppName(appName) {
 		return project.App{}, false
 	}
-	return project.DefaultNamedApp(appName), true
+	return project.AppForName(appName), true
 }
 
 // ensureDevDatabaseExistsWithWriters provisions only service-backed databases because SQLite needs no external preparation.
@@ -819,7 +819,7 @@ func activeDevApp() project.App {
 	if appName == "" {
 		appName = project.DefaultAppName
 	}
-	return project.DefaultNamedApp(appName)
+	return project.AppForName(appName)
 }
 
 // activeDevAppBinaryPath points dev helpers at the active app binary.
@@ -943,7 +943,7 @@ func copyDevWatches(watches []project.DevWatch) []project.DevWatch {
 // activeDevApps returns one explicit app or every conventional app for all-app dev.
 func activeDevApps() []project.App {
 	if appName := requestedDevAppName(); appName != "" {
-		return []project.App{project.DefaultNamedApp(appName)}
+		return []project.App{project.AppForName(appName)}
 	}
 	apps := projectlayout.ConventionalApps(".")
 	if len(apps) == 0 {
@@ -960,7 +960,7 @@ func activeDevAppsForConfig(config *project.Config) []project.App {
 	selected := selectedStructuredDevApps(config)
 	apps := make([]project.App, 0, len(selected))
 	for _, app := range selected {
-		apps = append(apps, project.DefaultNamedApp(app.name))
+		apps = append(apps, project.AppForName(app.name))
 	}
 	return apps
 }
@@ -1489,7 +1489,7 @@ func runDevFrontendDependencySetup(config *project.Config) error {
 		if len(selected.config.SPAs) == 0 {
 			continue
 		}
-		want := generatedDevFrontendInstallTask(project.DefaultNamedApp(selected.name))
+		want := generatedDevFrontendInstallTask(project.AppForName(selected.name))
 		for _, task := range config.Dev.Pre {
 			if task == want {
 				tasks = append(tasks, task)

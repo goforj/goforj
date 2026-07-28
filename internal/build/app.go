@@ -28,7 +28,7 @@ func requestedAppName() string {
 
 // conventionalApp returns the standard layout paths for an app.
 func conventionalApp(name string) project.App {
-	return project.DefaultNamedApp(name)
+	return project.AppForName(name)
 }
 
 // appPackageFromEntrypoint converts cmd/<app>/main.go into a go command package path.

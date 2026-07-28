@@ -58,7 +58,7 @@ func activeAppName() string {
 	return "app"
 }
 
-// activeAppDir maps the implicit default app to app/ and named apps to app/<app>/.
+// activeAppDir maps the default app to app/ and additional apps to app/<app>/.
 func activeAppDir() string {
 	app := activeAppName()
 	if app == "app" {

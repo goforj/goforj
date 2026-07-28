@@ -131,7 +131,7 @@ func isSafeOpenAPIAppName(name string) bool {
 	return true
 }
 
-// apiIndexBuildCommandForApp gives named Apps a command users can run directly from the project root.
+// apiIndexBuildCommandForApp gives additional apps a command users can run directly from the project root.
 func apiIndexBuildCommandForApp() string {
 	app := activeOpenAPIAppName()
 	if app == "app" {
