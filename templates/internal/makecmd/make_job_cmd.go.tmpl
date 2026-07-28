@@ -50,7 +50,7 @@ func (c *JobCmd) Run() error {
 		return err
 	}
 
-	if err := c.writeJobFile(target.structName, target.outputPath); err != nil {
+	if err := c.writeJobFile(target.structName, target.taskName, target.outputPath); err != nil {
 		return err
 	}
 
@@ -71,6 +71,7 @@ func (c *JobCmd) Run() error {
 type jobTarget struct {
 	outputPath string
 	structName string
+	taskName   string
 }
 
 // target resolves one conventional identity so creation and removal address the same job files.
@@ -95,7 +96,31 @@ func (c *JobCmd) target() jobTarget {
 	fileName := str.Of(structName).Snake().String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
-	return jobTarget{outputPath: outputPath, structName: structName}
+	return jobTarget{
+		outputPath: outputPath,
+		structName: structName,
+		taskName:   generatedJobTypeName(rawName, structName),
+	}
+}
+
+// generatedJobTypeName preserves grouped names as stable operator-facing job identities.
+func generatedJobTypeName(rawName string, structName string) string {
+	parts := str.Of(rawName).Trim().Split(":")
+	if len(parts) < 2 {
+		return str.Of(structName).TrimSuffix("Job").ToLower().String()
+	}
+
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		name := str.Of(part).Trim().Kebab().ToLower().String()
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) < 2 {
+		return str.Of(structName).TrimSuffix("Job").ToLower().String()
+	}
+	return strings.Join(names, ":")
 }
 
 // remove deletes the job and its App registration together so deleted types cannot remain wired.
@@ -112,7 +137,7 @@ func (c *JobCmd) remove(target jobTarget) error {
 var jobTmpl []byte
 
 // writeJobFile renders the job implementation into the jobs package.
-func (c *JobCmd) writeJobFile(structName, outputPath string) error {
+func (c *JobCmd) writeJobFile(structName, taskName, outputPath string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
 		return err
 	}
@@ -127,7 +152,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 	err = tmpl.Execute(&buf, map[string]string{
 		"PackageName": generatedPackageName(c.OutputDir, "jobs"),
 		"StructName":  structName,
-		"TaskName":    str.Of(structName).TrimSuffix("Job").ToLower().String(),
+		"TaskName":    taskName,
 		"ModulePath":  moduleName,
 		"QueueName":   c.queueName(),
 	})

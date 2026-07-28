@@ -30,6 +30,28 @@ func registerJobHandlers(
 }
 `
 
+// TestGeneratedJobTypeName verifies grouped names gain stable identities without changing ungrouped compatibility.
+func TestGeneratedJobTypeName(t *testing.T) {
+	tests := []struct {
+		name       string
+		rawName    string
+		structName string
+		want       string
+	}{
+		{name: "ungrouped compatibility", rawName: "SyncReports", structName: "SyncReportsJob", want: "syncreports"},
+		{name: "grouped", rawName: "Billing:SyncReports", structName: "SyncReportsJob", want: "billing:sync-reports"},
+		{name: "nested group", rawName: "Billing:Reports:SyncDaily", structName: "SyncDailyJob", want: "billing:reports:sync-daily"},
+		{name: "invalid group falls back", rawName: "Billing:", structName: "BillingJob", want: "billing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := generatedJobTypeName(tt.rawName, tt.structName); got != tt.want {
+				t.Fatalf("generatedJobTypeName(%q, %q) = %q, want %q", tt.rawName, tt.structName, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestJobCmdStampsQueueName(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -56,6 +78,9 @@ func TestJobCmdStampsQueueName(t *testing.T) {
 	if !strings.Contains(string(body), `.OnQueue("reports")`) {
 		t.Fatalf("expected generated job to dispatch on reports queue, got:\n%s", string(body))
 	}
+	if !strings.Contains(string(body), `const GenerateReportJobTypeName = "generatereport"`) {
+		t.Fatalf("expected ungrouped job identity to remain compatible, got:\n%s", string(body))
+	}
 	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_jobs_app.go"), []string{
 		"jobsGenerateReportJob *jobs.GenerateReportJob",
 		"queueManager.Register(jobs.GenerateReportJobTypeName, jobsGenerateReportJob.HandleTask)",
@@ -77,6 +102,7 @@ func TestJobCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	outputPath := filepath.Join("internal", "reports", "generate_job.go")
 	assertMakeCmdTestContains(t, outputPath, []string{
 		"package reports",
+		`const GenerateJobTypeName = "reports:generate"`,
 		"type GenerateJob struct",
 		`.OnQueue("reports")`,
 	})

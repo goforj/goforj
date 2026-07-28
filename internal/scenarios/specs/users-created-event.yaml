@@ -77,11 +77,13 @@ markdown:
         - app/lifecycle.go
         - app/wire/inject_services_app.go
   generated_files:
-    intro: "The event generator may update generated event manager files."
+    intro: "The event generator updates manager files, and the rendered App includes the tested concurrent logger implementation."
     files:
       - internal/events/accessors_gen.go
       - internal/events/manager_gen.go
-    note: "Do not edit generated event files by hand."
+      - internal/logger/app.go
+      - internal/logger/dedupe_test.go
+    note: "Do not edit generated event or logger files by hand."
   manual_check: |
     Run the HTTP server:
 

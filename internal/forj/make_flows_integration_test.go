@@ -140,13 +140,13 @@ func TestMakeFlowsIntegration(t *testing.T) {
 	runForj(t, "make:event", "UserRegistered")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "events", "user_registered_event.go"), []string{
 		"package events",
-		"const UserRegisteredEventTopic",
+		`const UserRegisteredEventTopic = "userregistered"`,
 		"type UserRegisteredEvent struct",
 	})
 	runForj(t, "make:event", "Billing:InvoicePaid")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "billing", "invoice_paid_event.go"), []string{
 		"package billing",
-		"const InvoicePaidEventTopic",
+		`const InvoicePaidEventTopic = "billing.invoice-paid"`,
 		"type InvoicePaidEvent struct",
 	})
 	runForj(t, "make:subscriber", "Billing:InvoicePaid")
@@ -222,7 +222,7 @@ func NewCommands(
 	runForj(t, "make:job", "SyncReports", "--queue", "reports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "jobs", "sync_reports_job.go"), []string{
 		"package jobs",
-		"const SyncReportsJobTypeName",
+		`const SyncReportsJobTypeName = "syncreports"`,
 		"type SyncReportsJob struct",
 		`.OnQueue("reports")`,
 	})
@@ -234,7 +234,7 @@ func NewCommands(
 	runForj(t, "make:job", "Billing:SyncReports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "billing", "sync_reports_job.go"), []string{
 		"package billing",
-		"const SyncReportsJobTypeName",
+		`const SyncReportsJobTypeName = "billing:sync-reports"`,
 		"type SyncReportsJob struct",
 	})
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{

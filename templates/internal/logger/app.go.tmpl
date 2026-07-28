@@ -114,6 +114,7 @@ func newAppLoggerWithConfig(config logConfig, debugLevel int) *AppLogger {
 // by legacy raw zerolog writer access such as GetWriter().
 func newAppLoggerWithWriters(config logConfig, debugLevel int, outputWriter io.Writer, pipelineWriter io.Writer) *AppLogger {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
+	writerMu := &sync.Mutex{}
 	appLogger := &AppLogger{
 		debugLevel:   debugLevel,
 		config:       config,
@@ -121,16 +122,16 @@ func newAppLoggerWithWriters(config logConfig, debugLevel int, outputWriter io.W
 		sinkDedupe:   newSinkDedupe(),
 	}
 	if config.format == logFormatJSON {
-		appLogger.outputDebugLogger = newJSONLogger(config, outputWriter, nil, false)
-		appLogger.outputInfoLogger = newJSONLogger(config, outputWriter, nil, false)
-		appLogger.debugLogger = newJSONLogger(config, pipelineWriter, appLogger, true)
-		appLogger.infoLogger = newJSONLogger(config, pipelineWriter, appLogger, true)
+		appLogger.outputDebugLogger = newJSONLogger(config, outputWriter, nil, false, writerMu)
+		appLogger.outputInfoLogger = newJSONLogger(config, outputWriter, nil, false, writerMu)
+		appLogger.debugLogger = newJSONLogger(config, pipelineWriter, appLogger, true, writerMu)
+		appLogger.infoLogger = newJSONLogger(config, pipelineWriter, appLogger, true, writerMu)
 		return appLogger
 	}
-	appLogger.outputDebugLogger = newConsoleLogger(config, outputWriter, nil, false)
-	appLogger.outputInfoLogger = newConsoleLogger(config, outputWriter, nil, false)
-	appLogger.debugLogger = newConsoleLogger(config, pipelineWriter, appLogger, true)
-	appLogger.infoLogger = newConsoleLogger(config, pipelineWriter, appLogger, true)
+	appLogger.outputDebugLogger = newConsoleLogger(config, outputWriter, nil, false, writerMu)
+	appLogger.outputInfoLogger = newConsoleLogger(config, outputWriter, nil, false, writerMu)
+	appLogger.debugLogger = newConsoleLogger(config, pipelineWriter, appLogger, true, writerMu)
+	appLogger.infoLogger = newConsoleLogger(config, pipelineWriter, appLogger, true, writerMu)
 	return appLogger
 }
 
@@ -191,7 +192,7 @@ func envFlagEnabled(key string) bool {
 }
 
 // newConsoleLogger returns a console logger with the GoForj format.
-func newConsoleLogger(config logConfig, out io.Writer, appLogger *AppLogger, dedupeEnabled bool) *zerolog.Logger {
+func newConsoleLogger(config logConfig, out io.Writer, appLogger *AppLogger, dedupeEnabled bool, writerMu *sync.Mutex) *zerolog.Logger {
 	partsOrder := []string{
 		zerolog.LevelFieldName,
 		zerolog.MessageFieldName,
@@ -260,7 +261,7 @@ func newConsoleLogger(config logConfig, out io.Writer, appLogger *AppLogger, ded
 		return fmt.Sprintf("%s%s%s", HighIntensityBlack, formatConsoleTimestamp(i), Reset)
 	}
 
-	var writer io.Writer = newStructuredLevelWriter(output, appLogger, dedupeEnabled)
+	var writer io.Writer = newStructuredLevelWriter(output, appLogger, dedupeEnabled, writerMu)
 	logger := newBaseLogger(writer, config.showTime)
 	return &logger
 }
@@ -295,8 +296,8 @@ func formatConsoleErrorValue(i interface{}) string {
 }
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
-func newJSONLogger(config logConfig, out io.Writer, appLogger *AppLogger, dedupeEnabled bool) *zerolog.Logger {
-	writer := newStructuredLevelWriter(out, appLogger, dedupeEnabled)
+func newJSONLogger(config logConfig, out io.Writer, appLogger *AppLogger, dedupeEnabled bool, writerMu *sync.Mutex) *zerolog.Logger {
+	writer := newStructuredLevelWriter(out, appLogger, dedupeEnabled, writerMu)
 	base := newBaseLogger(writer, config.showTime)
 	ctx := base.With()
 	app, component := splitPrefix(config.prefix)
@@ -749,12 +750,16 @@ type structuredLogLevelWriter struct {
 	out    zerolog.LevelWriter
 	logger *AppLogger
 	dedupe *sinkDedupe
+	outMu  *sync.Mutex
 }
 
-func newStructuredLevelWriter(out io.Writer, logger *AppLogger, dedupeEnabled bool) zerolog.LevelWriter {
+func newStructuredLevelWriter(out io.Writer, logger *AppLogger, dedupeEnabled bool, writerMu *sync.Mutex) zerolog.LevelWriter {
 	lw, ok := out.(zerolog.LevelWriter)
 	if !ok {
 		lw = zerolog.MultiLevelWriter(out)
+	}
+	if writerMu == nil {
+		writerMu = &sync.Mutex{}
 	}
 	var dedupe *sinkDedupe
 	if dedupeEnabled {
@@ -764,6 +769,7 @@ func newStructuredLevelWriter(out io.Writer, logger *AppLogger, dedupeEnabled bo
 		out:    lw,
 		logger: logger,
 		dedupe: dedupe,
+		outMu:  writerMu,
 	}
 }
 
@@ -826,20 +832,20 @@ func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
 }
 
 func (w *structuredLogLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
-	if w == nil || w.out == nil || w.dedupe == nil {
-		if w == nil || w.out == nil {
-			return len(p), nil
-		}
-		return w.out.WriteLevel(level, p)
+	if w == nil || w.out == nil {
+		return len(p), nil
+	}
+	if w.dedupe == nil {
+		return w.writeLevel(level, p)
 	}
 	entry, ok := parseLogEntryPayload(level, p)
 	if !ok {
-		return w.out.WriteLevel(level, p)
+		return w.writeLevel(level, p)
 	}
 	outputEmit, outputSummary := w.dedupe.filter(entry)
 	if outputSummary != nil {
 		if encoded := encodeLogEntry(*outputSummary, level); len(encoded) > 0 {
-			_, _ = w.out.WriteLevel(level, encoded)
+			_, _ = w.writeLevel(level, encoded)
 		}
 	}
 
@@ -865,6 +871,13 @@ func (w *structuredLogLevelWriter) WriteLevel(level zerolog.Level, p []byte) (in
 	if !outputEmit {
 		return len(p), nil
 	}
+	return w.writeLevel(level, p)
+}
+
+// writeLevel serializes writes because zerolog permits concurrent events while common output writers, such as bytes.Buffer, do not.
+func (w *structuredLogLevelWriter) writeLevel(level zerolog.Level, p []byte) (int, error) {
+	w.outMu.Lock()
+	defer w.outMu.Unlock()
 	return w.out.WriteLevel(level, p)
 }
 
@@ -886,7 +899,7 @@ type structuredDedupeLevelWriter struct {
 }
 
 func newStructuredDedupeLevelWriter(out io.Writer) zerolog.LevelWriter {
-	return newStructuredLevelWriter(out, nil, true)
+	return newStructuredLevelWriter(out, nil, true, nil)
 }
 
 func (w *structuredDedupeLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {

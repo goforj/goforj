@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/goforj/str/v2"
@@ -58,7 +59,7 @@ func (c *EventCmd) Run() error {
 	if err := tmpl.Execute(&buf, map[string]string{
 		"PackageName": generatedPackageName(c.OutputDir, "events"),
 		"StructName":  target.structName,
-		"TopicName":   str.Of(target.structName).TrimSuffix("Event").ToLower().String(),
+		"TopicName":   target.topicName,
 	}); err != nil {
 		return err
 	}
@@ -85,8 +86,10 @@ func (c *EventCmd) Run() error {
 type eventTarget struct {
 	outputPath string
 	structName string
+	topicName  string
 }
 
+// target resolves file placement and the event's stable operator-facing topic.
 func (c *EventCmd) target() eventTarget {
 	rawName := str.Of(c.Name).Trim().String()
 	structBase := rawName
@@ -105,7 +108,31 @@ func (c *EventCmd) target() eventTarget {
 	fileName := str.Of(structName).Snake().String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
-	return eventTarget{outputPath: outputPath, structName: structName}
+	return eventTarget{
+		outputPath: outputPath,
+		structName: structName,
+		topicName:  generatedEventTopic(rawName, structName),
+	}
+}
+
+// generatedEventTopic converts grouped generator names into dotted event topics.
+func generatedEventTopic(rawName string, structName string) string {
+	parts := str.Of(rawName).Trim().Split(":")
+	if len(parts) < 2 {
+		return str.Of(structName).TrimSuffix("Event").ToLower().String()
+	}
+
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		name := str.Of(part).Trim().Kebab().ToLower().String()
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) < 2 {
+		return str.Of(structName).TrimSuffix("Event").ToLower().String()
+	}
+	return strings.Join(names, ".")
 }
 
 // ensureEventSuffix appends Event when name does not already use that suffix.

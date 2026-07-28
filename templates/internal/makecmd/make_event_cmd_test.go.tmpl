@@ -25,6 +25,28 @@ func TestSnakeCase(t *testing.T) {
 	}
 }
 
+// TestGeneratedEventTopic verifies grouped names become dotted topics without changing ungrouped compatibility.
+func TestGeneratedEventTopic(t *testing.T) {
+	tests := []struct {
+		name       string
+		rawName    string
+		structName string
+		want       string
+	}{
+		{name: "ungrouped compatibility", rawName: "UserRegistered", structName: "UserRegisteredEvent", want: "userregistered"},
+		{name: "grouped", rawName: "Billing:InvoicePaid", structName: "InvoicePaidEvent", want: "billing.invoice-paid"},
+		{name: "nested group", rawName: "Billing:Invoices:PaymentFailed", structName: "PaymentFailedEvent", want: "billing.invoices.payment-failed"},
+		{name: "invalid group falls back", rawName: "Billing:", structName: "BillingEvent", want: "billing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := generatedEventTopic(tt.rawName, tt.structName); got != tt.want {
+				t.Fatalf("generatedEventTopic(%q, %q) = %q, want %q", tt.rawName, tt.structName, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEventCmdRemoveDeletesGeneratedFile(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -37,6 +59,7 @@ func TestEventCmdRemoveDeletesGeneratedFile(t *testing.T) {
 	outputPath := filepath.Join("internal", "billing", "invoice_paid_event.go")
 	assertMakeCmdTestContains(t, outputPath, []string{
 		"package billing",
+		`const InvoicePaidEventTopic = "billing.invoice-paid"`,
 		"type InvoicePaidEvent struct",
 	})
 
