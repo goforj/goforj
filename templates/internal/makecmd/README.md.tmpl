@@ -17,7 +17,7 @@ forj make:schedule reports:daily --every 24h
 forj make:model users
 ```
 
-Grouped names colocate generated files with their owning package when the command supports file generation.
+Grouped names colocate generated files with their owning package when the command supports file generation. Jobs keep colon-separated operational identities such as `reports:generate`; events convert the same segments to dotted topics, such as `billing:invoice-paid` becoming `billing.invoice-paid`. Ungrouped jobs and events retain their legacy compact identities.
 {{ if .ProjectComponents.Jobs }}
 Resource makers such as `make:queue` update App configuration instead of creating a Go type.
 {{ end }}

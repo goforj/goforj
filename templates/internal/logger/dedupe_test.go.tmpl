@@ -3,6 +3,7 @@ package logger
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"sync"
 	"strings"
 	"testing"
@@ -137,7 +138,8 @@ func TestConcurrentLoggerEmitsDoNotLeakFields(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv(logDedupeEnabledEnv, "false")
 
-	log := newAppLoggerWithWriters(loadLogConfig(), 0, &bytes.Buffer{}, &bytes.Buffer{})
+	output := &bytes.Buffer{}
+	log := newAppLoggerWithWriters(loadLogConfig(), 1, output, &bytes.Buffer{})
 
 	const workers = 16
 	const perWorker = 64
@@ -160,7 +162,11 @@ func TestConcurrentLoggerEmitsDoNotLeakFields(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < perWorker; i++ {
-				log.Info().
+				event := log.Info()
+				if worker%2 == 0 {
+					event = log.Debug()
+				}
+				event.
 					Int("worker", worker).
 					Int("seq", i).
 					Str("message_kind", "concurrent").
@@ -186,6 +192,29 @@ func TestConcurrentLoggerEmitsDoNotLeakFields(t *testing.T) {
 		}
 		if _, ok := fields["seq"]; !ok {
 			t.Fatalf("expected seq field, got %#v", fields)
+		}
+	}
+
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+	if len(lines) != workers*perWorker {
+		t.Fatalf("expected %d output lines, got %d", workers*perWorker, len(lines))
+	}
+	for _, line := range lines {
+		var fields map[string]any
+		if err := json.Unmarshal(line, &fields); err != nil {
+			t.Fatalf("decode concurrent log output: %v\n%s", err, line)
+		}
+		if fields["message"] != "parallel" {
+			t.Fatalf("expected output message parallel, got %#v", fields["message"])
+		}
+		if fields["message_kind"] != "concurrent" {
+			t.Fatalf("expected output message_kind field, got %#v", fields["message_kind"])
+		}
+		if _, ok := fields["worker"]; !ok {
+			t.Fatalf("expected output worker field, got %#v", fields)
+		}
+		if _, ok := fields["seq"]; !ok {
+			t.Fatalf("expected output seq field, got %#v", fields)
 		}
 	}
 }
