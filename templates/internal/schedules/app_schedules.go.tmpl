@@ -30,7 +30,7 @@ func RegisterRecurring(s *Scheduler, schedule AppSchedule) error {
 	return nil
 }
 
-// Register attaches legacy AppSchedules entries to the scheduler.
+// Register attaches the app schedule collection to the scheduler.
 func (s *AppSchedules) Register(scheduler *Scheduler) error {
 	for _, schedule := range s.All() {
 		if err := RegisterRecurring(scheduler, schedule); err != nil {
@@ -40,17 +40,17 @@ func (s *AppSchedules) Register(scheduler *Scheduler) error {
 	return nil
 }
 
-// AppSchedules preserves the older Wire schedule container for render-once migrations.
+// AppSchedules contains application-owned recurring schedule handlers.
 type AppSchedules struct {
 	schedules []AppSchedule
 }
 
-// NewAppSchedules creates a legacy AppSchedules container from application schedule handlers.
+// NewAppSchedules creates an app schedule collection from application schedule handlers.
 func NewAppSchedules(schedules ...AppSchedule) *AppSchedules {
 	return &AppSchedules{schedules: schedules}
 }
 
-// All returns the legacy container schedules.
+// All returns the configured application schedules.
 func (s *AppSchedules) All() []AppSchedule {
 	return append([]AppSchedule(nil), s.schedules...)
 }

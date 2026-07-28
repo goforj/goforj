@@ -570,12 +570,12 @@ func syncLegacyScheduleInjector(content string, moduleName string, appImportPath
 	return dedupeWireSetProviders(updated, "appScheduleSet")
 }
 
-// appendProvideAppSchedules adds the explicit zero-arg provider Wire needs for an empty legacy container.
+// appendProvideAppSchedules adds the explicit zero-arg provider Wire needs for an empty schedule collection.
 func appendProvideAppSchedules(content string) string {
 	content = strings.TrimRight(content, "\n")
 	return content + `
 
-// ProvideAppSchedules creates the legacy AppSchedules container.
+// ProvideAppSchedules collects application-owned schedules.
 func ProvideAppSchedules() *schedules.AppSchedules {
 	return schedules.NewAppSchedules()
 }

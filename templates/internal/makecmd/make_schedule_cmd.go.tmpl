@@ -165,10 +165,9 @@ func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outp
 	return nil
 }
 
-// injectIntoWireFile registers the generated schedule with the app schedule registry.
+// injectIntoWireFile adds the generated schedule to the app schedule collection.
 func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 	injectPath := activeAppWireFile("inject_schedules_app.go", "./wire/inject_schedules_app.go")
-	registryPath := activeAppFile("schedules.go")
 
 	moduleName, err := getScheduleGoModuleName()
 	if err != nil {
@@ -183,14 +182,8 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
 	paramName := str.Of(structName).TrimSuffix("Schedule").Camel().String() + "Schedule"
 	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
-	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
-	assignLine := fmt.Sprintf("\t\t%s: %s,", paramName, paramName)
-	registerBlock := []string{
-		fmt.Sprintf("\tif err := schedules.RegisterRecurring(s, r.%s); err != nil {", paramName),
-		"\t\treturn err",
-		"\t}",
-	}
+	scheduleLine := fmt.Sprintf("\t\t%s,", paramName)
 
 	data, err := os.ReadFile(injectPath)
 	if err != nil {
@@ -214,6 +207,12 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 			break
 		}
 	}
+	if !scheduleContainsFuncParam(lines, "ProvideAppSchedules", paramName, typeRef) {
+		lines = scheduleInsertIntoFuncParams(lines, "ProvideAppSchedules", paramLine)
+	}
+	if !scheduleContainsLine(lines, scheduleLine) {
+		lines = scheduleInsertIntoCall(lines, "return schedules.NewAppSchedules(", scheduleLine)
+	}
 
 	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
 	if err != nil {
@@ -223,29 +222,7 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 		return fmt.Errorf("writing inject_schedules_app.go: %w", err)
 	}
 
-	registryLines, _, err := readGeneratorGoFile(registryPath)
-	if err != nil {
-		return fmt.Errorf("reading app/schedules.go: %w", err)
-	}
-	registryLines = insertImportIfMissing(registryLines, importPath, importAliasForPackageRef(pkgName, pkgRef))
-	if !scheduleContainsLine(registryLines, fieldLine) {
-		registryLines = insertBeforeClosingBrace(registryLines, "type ScheduleRegistry struct {", fieldLine)
-	}
-	if !scheduleContainsFuncParam(registryLines, "NewScheduleRegistry", paramName, typeRef) {
-		registryLines = scheduleInsertIntoFuncParams(registryLines, "NewScheduleRegistry", paramLine)
-	}
-	if !scheduleContainsLine(registryLines, assignLine) {
-		registryLines = insertBeforeClosingBrace(registryLines, "return &ScheduleRegistry{", assignLine)
-	}
-	if !scheduleContainsLine(registryLines, registerBlock[0]) {
-		registryLines = insertScheduleRegisterBlock(registryLines, registerBlock)
-	}
-	if err := writeGeneratorGoLines(registryPath, registryLines); err != nil {
-		return fmt.Errorf("writing app/schedules.go: %w", err)
-	}
-
 	console.Successf("injected into %s: %s", injectPath, constructor)
-	console.Successf("registered in %s: %s", registryPath, paramName)
 	return nil
 }
 
@@ -268,6 +245,7 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 	fieldLine := fmt.Sprintf("\t%s *%s", paramName, typeRef)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
 	assignLine := fmt.Sprintf("\t\t%s: %s,", paramName, paramName)
+	scheduleLine := fmt.Sprintf("\t\t%s,", paramName)
 	registerBlock := []string{
 		fmt.Sprintf("\tif err := schedules.RegisterRecurring(s, r.%s); err != nil {", paramName),
 		"\t\treturn err",
@@ -281,7 +259,9 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 	original := append([]string{}, lines...)
 	var removed bool
 	lines, removedConstructor := removeExactLine(lines, constructorLine)
-	removed = removedConstructor
+	lines, removedParam := removeExactLine(lines, paramLine)
+	lines, removedSchedule := removeExactLine(lines, scheduleLine)
+	removed = removedConstructor || removedParam || removedSchedule
 	lines = removeGoImportIfUnused(lines, importPath, pkgRef+".")
 
 	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
@@ -290,27 +270,27 @@ func (c *ScheduleCmd) removeFromWireFile(structName string) error {
 	}
 	if registryLines, _, err := readGeneratorGoFile(registryPath); err == nil {
 		originalRegistry := append([]string{}, registryLines...)
-		var removedField, removedParam, removedAssign, removedRegistration bool
+		var removedField, removedLegacyParam, removedAssign, removedRegistration bool
 		registryLines, removedField = removeExactLine(registryLines, fieldLine)
-		registryLines, removedParam = removeExactLine(registryLines, paramLine)
+		registryLines, removedLegacyParam = removeExactLine(registryLines, paramLine)
 		registryLines, removedAssign = removeExactLine(registryLines, assignLine)
 		registryLines, removedRegistration = removeExactBlock(registryLines, registerBlock)
 		registryLines = removeGoImportIfUnused(registryLines, importPath, pkgRef+".")
 		if _, err := writeGeneratorGoLinesIfChanged(registryPath, originalRegistry, registryLines, c.DryRun); err != nil {
 			return err
 		}
-		removed = removed || removedField || removedParam || removedAssign || removedRegistration
+		removed = removed || removedField || removedLegacyParam || removedAssign || removedRegistration
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("reading app/schedules.go: %w", err)
 	}
 	if removed {
 		if c.DryRun {
-			console.Infof("Would remove %s schedule wiring from %s and %s", paramName, injectPath, registryPath)
+			console.Infof("Would remove %s schedule wiring from %s", paramName, injectPath)
 		} else {
-			console.Successf("Removed %s schedule wiring from %s and %s", paramName, injectPath, registryPath)
+			console.Successf("Removed %s schedule wiring from %s", paramName, injectPath)
 		}
 	} else if !changed {
-		console.Infof("No matching schedule wiring found in %s or %s", injectPath, registryPath)
+		console.Infof("No matching schedule wiring found in %s", injectPath)
 	}
 	return nil
 }

@@ -4,15 +4,8 @@ package {{ .PackageName }}
 
 import (
 	"context"
-	"fmt"
 	"time"
 )
-
-// {{ .StructName }}Name is the operational name registered with the scheduler.
-const {{ .StructName }}Name = "{{ .ScheduleName }}"
-
-// {{ .StructName }}Interval is the schedule frequency as a Go duration string.
-const {{ .StructName }}Interval = "{{ .Interval }}"
 
 // {{ .StructName }} is a scheduled task.
 type {{ .StructName }} struct{}
@@ -24,16 +17,12 @@ func New{{ .StructName }}() *{{ .StructName }} {
 
 // Name returns the operational schedule name.
 func (s *{{ .StructName }}) Name() string {
-	return {{ .StructName }}Name
+	return "{{ .ScheduleName }}"
 }
 
 // Interval returns how often the schedule should run.
 func (s *{{ .StructName }}) Interval() (time.Duration, error) {
-	interval, err := time.ParseDuration({{ .StructName }}Interval)
-	if err != nil {
-		return 0, fmt.Errorf("parse schedule interval %s: %w", {{ .StructName }}Name, err)
-	}
-	return interval, nil
+	return time.ParseDuration("{{ .Interval }}")
 }
 
 // Handle runs the scheduled task.
