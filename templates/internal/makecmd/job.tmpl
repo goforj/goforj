@@ -8,6 +8,7 @@ import (
 	"github.com/goforj/queue"
 )
 
+// {{ .StructName }}TypeName identifies the job during dispatch and handler registration.
 const {{ .StructName }}TypeName = "{{ .TaskName }}"
 
 // {{ .StructName }}Payload is the payload for the {{ .StructName }} job.
@@ -15,18 +16,18 @@ type {{ .StructName }}Payload struct {
 	// add your payload fields here
 }
 
-// {{ .StructName }} is a struct that represents a queue job.
+// {{ .StructName }} dispatches and handles its queue workflow.
 type {{ .StructName }} struct {
 	queues *queues.Manager
 }
 
-// New{{ .StructName }} creates a new {{ .StructName }} with the given queue manager.
+// New{{ .StructName }} constructs the job with the configured queue manager.
 func New{{ .StructName }}(queues *queues.Manager) *{{ .StructName }} {
 	return &{{ .StructName }}{queues: queues}
 }
 
-// Queue creates a new task and enqueues it to the queue.
-// Add your inputs as args to the function
+// Queue creates a task and dispatches it to the selected queue.
+// Add application inputs as arguments when defining the payload contract.
 func (t *{{ .StructName }}) Queue(ctx context.Context, name string) error {
 	var p {{ .StructName }}Payload
 	// add your payload fields here

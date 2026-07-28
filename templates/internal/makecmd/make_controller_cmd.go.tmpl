@@ -37,11 +37,11 @@ func NewControllerCmd() *ControllerCmd {
 	return &ControllerCmd{}
 }
 
-// Help shows grouped controller examples because package colocation is the default app pattern.
+// Help shows domain-oriented controller examples because one package normally owns one HTTP area.
 func (*ControllerCmd) Help() string {
 	return commandExamples(
 		commandExample("make:controller", "users"),
-		commandExample("make:controller", "billing:reports"),
+		commandExample("make:controller", "reports"),
 	)
 }
 
@@ -160,24 +160,24 @@ import (
 	"net/http"
 )
 
-// Controller anchors starter HTTP routes in this generated package.
+// Controller handles HTTP requests.
 type Controller struct {
 	logger *logger.AppLogger
 }
 
-// NewController receives shared app services through Wire for this controller package.
+// NewController creates a Controller.
 func NewController(logger *logger.AppLogger) *Controller {
 	return &Controller{logger: logger}
 }
 
-// Routes exposes the starter route so the generated package is immediately visible in route:list.
+// Routes returns the HTTP routes handled by Controller.
 func (c *Controller) Routes() []web.Route {
 	return []web.Route{
 		web.NewRoute(http.MethodGet, "{{ "{{" }} .RoutePath {{ "}}" }}", c.Get),
 	}
 }
 
-// Get returns a starter response that can be replaced with package-specific behavior.
+// Get handles the controller's GET route.
 func (c *Controller) Get(r web.Context) error {
 	c.logger.Info().Msg("{{ "{{" }} .LogText {{ "}}" }}")
 	return r.Text(http.StatusOK, "{{ "{{" }} .LogText {{ "}}" }}")
