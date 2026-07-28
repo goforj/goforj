@@ -17,7 +17,7 @@ var appScheduleSet = wire.NewSet(
 	wire.Bind(new(schedules.ScheduleRegistry), new(*{{.AppPackageName}}.ScheduleRegistry)),
 )
 
-// ProvideAppSchedules creates the legacy AppSchedules container.
+// ProvideAppSchedules collects application-owned schedules.
 func ProvideAppSchedules() *schedules.AppSchedules {
 	return schedules.NewAppSchedules()
 }
