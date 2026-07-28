@@ -831,11 +831,11 @@ Reasons:
 For named Apps:
 
 ```bash
-forj marketplace backup:create
-forj marketplace backup:create
+forj admin backup:create
+forj admin backup:create
 ```
 
-should back up the `marketplace` App's configured resources.
+should back up the `admin` App's configured resources.
 
 ## Relation To Resource Shell Commands
 

@@ -122,7 +122,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 - Each generated target includes `service`, `environment`, `process`, and `app` labels.
 - In standalone host mode, `process=app` reflects the single host process.
 - In direct source mode, `process` reflects the direct source command being scraped.
-- Use `app` to filter a single app such as `app`, `billing`, or `customer-portal`.
+- Use `app` to filter a single app such as `app`, `admin`, or `statuspage`.
 - Use `source` labels from the emitted metric families for logical source attribution when available.
 - Framework-owned transport endpoints like `/metrics` itself and Lighthouse source routes are excluded from application HTTP request metrics.
 
@@ -188,7 +188,7 @@ Use Grafana Explore or the VictoriaMetrics query UI to inspect raw metrics. Comm
 
 The most useful query dimensions are:
 
-- `app`: which App composition app emitted the metric, such as `app`, `billing`, or `customer-portal`.
+- `app`: which App composition app emitted the metric, such as `app`, `admin`, or `statuspage`.
 - `source`: which logical source emitted the metric.
 - `process`: which scrape target exposed the metric.
 {{- if .ProjectComponents.Cache }}
