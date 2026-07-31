@@ -119,7 +119,7 @@ markdown:
     forj build
     ```
 
-    Business code does not change. `GenerateJob` still dispatches `reports:generate`, and workers still run with `forj worker` or `./bin/app worker`.
+    Business code does not change. `GenerateJob` still dispatches `reports:generate`. During development, the source-aware worker runs with `forj worker`. In deployment, the process supervisor runs `./bin/app worker`.
   common_mistakes:
     - "Do not use an in-process queue when API and worker run as separate processes."
     - "Do not put report generation logic directly inside the event subscriber."

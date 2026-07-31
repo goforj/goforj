@@ -79,7 +79,7 @@ markdown:
   next_steps:
     - "Next, extend this feature with a repository and named cache resource in [Cached User Profile](/scenarios/cached-user-profile)."
     - "[Controllers](/applications/controllers) explains handler structure."
-    - "[Wiring Recipes](/core/wiring-recipes) shows where providers belong."
+    - "[Wiring Recipes](/developer-tools/wiring-recipes) shows where providers belong."
 steps:
   - title: Scaffold the Controller
     explain: |
