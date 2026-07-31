@@ -38,7 +38,7 @@
           </span>
         </div>
         <div v-if="detailTo" class="mt-auto pt-1">
-          <RouterLink :to="detailTo" class="inline-flex items-center gap-1 text-xs font-medium text-sky-300 transition hover:text-sky-200">
+          <RouterLink :to="detailTo" class="inline-flex items-center gap-1 text-xs font-medium text-chart-1 transition hover:text-primary">
             {{ detailLabel }}
             <ArrowRight class="h-3.5 w-3.5" />
           </RouterLink>
@@ -103,8 +103,8 @@ const summary = computed(() => summarizeRoutes(props.routes));
 }
 
 .dashboard-stat-icon-routes {
-  color: color-mix(in oklab, #c4b5fd 80%, var(--foreground));
-  background: color-mix(in oklab, #8b5cf6 14%, transparent);
+  color: color-mix(in oklab, var(--chart-2) 82%, var(--foreground));
+  background: color-mix(in oklab, var(--chart-2) 14%, transparent);
 }
 
 .dashboard-count-pill {
@@ -140,12 +140,12 @@ const summary = computed(() => summarizeRoutes(props.routes));
   flex: 0 0 auto;
 }
 
-.dashboard-metric-dot-get { background: #7dd3fc; }
-.dashboard-metric-dot-post { background: #86efac; }
-.dashboard-metric-dot-put { background: #fcd34d; }
-.dashboard-metric-dot-patch { background: #f9a8d4; }
-.dashboard-metric-dot-delete { background: #fca5a5; }
-.dashboard-metric-dot-default { background: #cbd5e1; }
+.dashboard-metric-dot-get { background: var(--chart-1); }
+.dashboard-metric-dot-post { background: var(--chart-3); }
+.dashboard-metric-dot-put { background: var(--chart-4); }
+.dashboard-metric-dot-patch { background: var(--chart-2); }
+.dashboard-metric-dot-delete { background: var(--chart-5); }
+.dashboard-metric-dot-default { background: var(--muted-foreground); }
 
 @media (prefers-reduced-motion: reduce) {
   .dashboard-card {
