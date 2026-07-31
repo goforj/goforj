@@ -11,7 +11,9 @@ import NavDocuments from "./NavDocuments.vue";
 import NavMain from "./NavMain.vue";
 import NavSecondary from "./NavSecondary.vue";
 import NavUser from "./NavUser.vue";
-import goforjLighthouseLogo from "../assets/goforj-logo.png";
+import LighthouseMark from "./LighthouseMark.vue";
+import goforjMarkDark from "../assets/goforj-mark-dark.svg";
+import goforjMarkLight from "../assets/goforj-mark-light.svg";
 import { appNavSections } from "../lib/navigation";
 import {
   Sidebar,
@@ -47,13 +49,18 @@ const navSecondary = computed(
 );
 
 const teams = [
-  { name: "GoForj Lighthouse", logoSrc: goforjLighthouseLogo, logoCollapsedSrc: goforjLighthouseLogo, plan: "GoForj Lighthouse" },
+  {
+    name: "GoForj Lighthouse",
+    logo: LighthouseMark,
+    plan: "GoForj Lighthouse",
+  },
 ];
 
 const user = {
   name: "goforj",
   email: "lighthouse",
-  avatar: "",
+  avatarDark: goforjMarkDark,
+  avatarLight: goforjMarkLight,
 };
 
 defineEmits<{

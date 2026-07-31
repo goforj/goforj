@@ -5,10 +5,6 @@ import { useLighthouseStore } from "./stores/lighthouse";
 import "vue-sonner/style.css";
 import "./style.css";
 
-// import "./style-dark-blue.css";
-import "./style-vitepress.css";
-import "./style-discord.css";
-
 
 (async () => {
   const store = useLighthouseStore();

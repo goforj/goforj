@@ -1,70 +1,57 @@
 <template>
   <div class="login-shell">
-    <div class="login-grid">
-      <section class="login-form-pane">
-        <div class="login-form-wrap">
-          <div class="login-form-inner">
-            <div class="login-brand">
-              <img :src="logoMark" alt="GoForj Lighthouse" class="login-brand-mark" />
-              <div class="login-brand-copy">
-                <p class="login-eyebrow">GoForj Lighthouse</p>
-                <h1 class="login-title">Sign in</h1>
-                <p class="login-subtitle">Use the admin username and project password to enter the local platform console.</p>
-              </div>
-            </div>
+    <main class="login-panel">
+      <div class="login-brand">
+        <LighthouseMark class="login-brand-mark" />
+        <span class="sr-only">GoForj Lighthouse</span>
+      </div>
 
-            <form class="login-form-stack" @submit.prevent="submit">
-              <div class="login-form-header">
-                <p class="login-form-kicker">Dev Console</p>
-                <CardDescription class="login-form-description">
-                  Authenticate to open routes, commands, logs, and live agents.
-                </CardDescription>
-              </div>
+      <div class="login-heading">
+        <h1>Log in to Lighthouse</h1>
+        <p>Enter the project admin credentials to open the local development console.</p>
+      </div>
 
-              <div class="login-form-fields">
-                <FormField label="Username">
-                  <Input v-model="username" placeholder="admin" />
-                </FormField>
-                <FormField label="Password">
-                  <div class="relative">
-                    <Input
-                      ref="passwordInput"
-                      v-model="password"
-                      :type="showPassword ? 'text' : 'password'"
-                      placeholder="LIGHTHOUSE_SECRET"
-                      class="pr-16"
-                    />
-                    <button
-                      type="button"
-                      class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
-                      @click="showPassword = !showPassword"
-                    >
-                      {{ showPassword ? "Hide" : "Show" }}
-                    </button>
-                  </div>
-                </FormField>
-              </div>
+      <form class="login-form" @submit.prevent="submit">
+        <FormField label="Username">
+          <Input
+            v-model="username"
+            autocomplete="username"
+            placeholder="admin"
+          />
+        </FormField>
 
-              <div v-if="error" class="text-xs text-red-300">{{ error }}</div>
-
-              <Button type="submit" variant="default" class="w-full">Sign in</Button>
-            </form>
+        <FormField label="Password">
+          <div class="relative">
+            <Input
+              ref="passwordInput"
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              autocomplete="current-password"
+              placeholder="LIGHTHOUSE_SECRET"
+              class="pr-16"
+            />
+            <button
+              type="button"
+              class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
+              @click="showPassword = !showPassword"
+            >
+              {{ showPassword ? "Hide" : "Show" }}
+            </button>
           </div>
-        </div>
-      </section>
+        </FormField>
 
-      <section class="login-cover">
-        <div class="login-cover-overlay">
-          <div class="login-cover-copy">
-            <p class="login-cover-kicker">Local Platform Control</p>
-            <h2 class="login-cover-title">Run routes, queues, schedules, logs, and benchmarks from one console.</h2>
-            <p class="login-cover-text">
-              Bring your generated app sources together in a single operator surface without leaving local development.
-            </p>
-          </div>
-        </div>
-      </section>
-    </div>
+        <p
+          v-if="error"
+          class="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {{ error }}
+        </p>
+
+        <Button type="submit" variant="default" class="mt-2 w-full">
+          Log in
+        </Button>
+      </form>
+    </main>
   </div>
 </template>
 
@@ -73,11 +60,9 @@ import { nextTick, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useLighthouseStore } from "../stores/lighthouse";
 import Button from "../components/ui/button/Button.vue";
-import CardDescription from "../components/ui/card/CardDescription.vue";
-import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/input/Input.vue";
-import logoMark from "../assets/goforj-logo.png";
+import LighthouseMark from "../components/LighthouseMark.vue";
 
 const router = useRouter();
 const store = useLighthouseStore();
@@ -119,207 +104,83 @@ onMounted(() => {
 
 <style scoped>
 .login-shell {
-  width: 100%;
-  min-height: 100%;
-  display: flex;
-  flex: 1;
-  animation: loginFadeDown 420ms ease-out both;
-}
-
-.login-grid {
-  display: grid;
-  min-height: 100%;
-  width: 100%;
-  flex: 1;
-  overflow: hidden;
-  background: color-mix(in oklab, var(--card) 82%, transparent);
-}
-
-.login-form-pane {
-  display: flex;
-  min-width: 0;
   position: relative;
-  isolation: isolate;
-  background: linear-gradient(180deg, rgba(12, 16, 22, 0.92), rgba(10, 12, 18, 0.96));
-}
-
-.login-form-pane::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(8, 10, 16, 0.84), rgba(8, 10, 16, 0.9)),
-    url("../assets/lighthouse-wallpaper.png");
-  background-size: cover;
-  background-position: 18% center;
-  background-repeat: no-repeat;
-  background-blend-mode: normal, screen;
-  opacity: 0.5;
-}
-
-.login-form-wrap {
   display: flex;
+  min-height: 100%;
+  width: 100%;
   flex: 1;
   align-items: center;
   justify-content: center;
-  padding: 2.5rem 3rem 2.75rem;
-  position: relative;
-  z-index: 1;
+  overflow: hidden;
+  padding: 1.5rem;
+  background:
+    linear-gradient(180deg, rgba(12, 10, 14, 0.62), rgba(12, 10, 14, 0.8)),
+    url("../assets/lighthouse-wallpaper.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  animation: loginFadeDown 420ms ease-out both;
 }
 
-.login-form-inner {
-  width: min(100%, 28rem);
-  display: grid;
-  gap: 1.1rem;
-  transform: translateY(3%);
+.login-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 44%, transparent 0 12rem, rgba(12, 10, 14, 0.18) 34rem),
+    linear-gradient(90deg, rgba(12, 10, 14, 0.16), transparent 36%, rgba(12, 10, 14, 0.12));
+}
+
+.login-panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 25rem);
+  border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  border-radius: 1.15rem;
+  padding: 2rem;
+  background: color-mix(in oklab, var(--card) 88%, transparent);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(18px) saturate(0.86);
 }
 
 .login-brand {
   display: flex;
-  align-items: center;
-  gap: 1rem;
+  justify-content: center;
 }
 
 .login-brand-mark {
-  width: 3.5rem;
-  height: 3.5rem;
-  object-fit: contain;
-  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.28));
+  width: 4rem;
+  height: 4rem;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.34));
 }
 
-.login-brand-copy {
-  display: grid;
-  gap: 0.05rem;
+.login-heading {
+  margin-top: 1.1rem;
+  text-align: center;
 }
 
-.login-eyebrow {
-  font-size: 0.72rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: color-mix(in oklab, var(--foreground) 72%, transparent);
-}
-
-.login-title {
-  font-size: clamp(1.85rem, 2.5vw, 2.2rem);
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: -0.04em;
+.login-heading h1 {
+  font-size: 1.45rem;
+  font-weight: 650;
+  letter-spacing: -0.035em;
   color: var(--foreground);
 }
 
-.login-subtitle {
-  font-size: 0.9rem;
-  max-width: 24rem;
-  color: color-mix(in oklab, var(--foreground) 58%, transparent);
+.login-heading p {
+  margin: 0.45rem auto 0;
+  max-width: 21rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--muted-foreground);
 }
 
-.login-form-stack {
+.login-form {
   display: grid;
-  gap: 1rem;
-  border: 1px solid color-mix(in oklab, var(--border) 62%, transparent);
-  border-radius: 1rem;
-  background: color-mix(in oklab, var(--card) 74%, transparent);
-  padding: 1.35rem;
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
-}
-
-.login-form-header {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.login-form-kicker {
-  font-size: 0.72rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: color-mix(in oklab, var(--foreground) 68%, transparent);
-}
-
-.login-form-title {
-  font-size: 1.7rem;
-  line-height: 1.02;
-}
-
-.login-form-description {
-  max-width: 24rem;
-  color: color-mix(in oklab, var(--foreground) 60%, transparent);
-}
-
-.login-form-fields {
-  display: grid;
-  gap: 1rem;
-}
-
-.login-cover {
-  position: relative;
-  display: none;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.login-cover::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(8, 10, 16, 0.42), rgba(8, 10, 16, 0.82)),
-    url("../assets/goforj-wallpaper.webp");
-  background-size: cover;
-  background-position: 54% 44%;
-  background-repeat: no-repeat;
-}
-
-.login-cover-overlay {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  height: 100%;
-  align-items: center;
-  padding: 2.25rem 2.75rem;
-}
-
-.login-cover-copy {
-  max-width: 24rem;
-  display: grid;
-  gap: 0.75rem;
-  transform: translateY(8%);
-}
-
-.login-cover-kicker {
-  font-size: 0.72rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.78);
-}
-
-.login-cover-title {
-  font-size: clamp(1.85rem, 2.85vw, 2.7rem);
-  line-height: 0.96;
-  font-weight: 700;
-  letter-spacing: -0.05em;
-  color: white;
-  text-wrap: balance;
-}
-
-.login-cover-text {
-  max-width: 22rem;
-  font-size: 0.95rem;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, 0.68);
-}
-
-:global(html:not(.dark) .login-brand-copy .login-eyebrow) {
-  color: rgba(255, 255, 255, 0.76);
-}
-
-:global(html:not(.dark) .login-brand-copy .login-title) {
-  color: rgba(255, 255, 255, 0.98);
-}
-
-:global(html:not(.dark) .login-brand-copy .login-subtitle) {
-  color: rgba(255, 255, 255, 0.72);
+  gap: 1.15rem;
+  margin-top: 1.75rem;
 }
 
 @keyframes loginFadeDown {
@@ -333,14 +194,14 @@ onMounted(() => {
   }
 }
 
-@media (min-width: 960px) {
-  .login-grid {
-    grid-template-columns: minmax(420px, 0.92fr) minmax(0, 1.08fr);
+@media (max-width: 520px) {
+  .login-shell {
+    padding: 1rem;
+    background-position: 38% center;
   }
 
-  .login-cover {
-    display: block;
-    border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+  .login-panel {
+    padding: 1.5rem;
   }
 }
 </style>

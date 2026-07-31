@@ -10,8 +10,8 @@ const props = defineProps<{
   teams: {
     name: string;
     logo?: Component;
-    logoSrc?: string;
-    logoCollapsedSrc?: string;
+    logoDarkSrc?: string;
+    logoLightSrc?: string;
     plan: string;
   }[];
 }>();
@@ -28,18 +28,22 @@ const activeTeam = props.teams[0];
       >
         <RouterLink to="/">
           <img
-            v-if="activeTeam.logoSrc"
-            :src="activeTeam.logoSrc"
+            v-if="activeTeam.logoDarkSrc"
+            :src="activeTeam.logoDarkSrc"
             :alt="activeTeam.name"
-            class="h-10 w-auto shrink-0 object-contain group-data-[collapsible=icon]:hidden"
+            class="hidden h-8 w-8 shrink-0 object-contain dark:block"
           />
           <img
-            v-if="activeTeam.logoCollapsedSrc"
-            :src="activeTeam.logoCollapsedSrc"
+            v-if="activeTeam.logoLightSrc"
+            :src="activeTeam.logoLightSrc"
             :alt="activeTeam.name"
-            class="hidden h-6.5 w-6.5 shrink-0 object-contain group-data-[collapsible=icon]:block"
+            class="h-8 w-8 shrink-0 object-contain dark:hidden"
           />
-          <component v-else-if="activeTeam.logo" :is="activeTeam.logo" class="size-4" />
+          <component
+            v-else-if="activeTeam.logo"
+            :is="activeTeam.logo"
+            class="!size-10 shrink-0 group-data-[collapsible=icon]:!size-7"
+          />
           <span class="text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">{{ activeTeam.plan }}</span>
         </RouterLink>
       </SidebarMenuButton>

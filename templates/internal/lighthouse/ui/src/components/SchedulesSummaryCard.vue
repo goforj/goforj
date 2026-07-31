@@ -47,7 +47,7 @@
           </div>
         </div>
         <div v-if="detailTo" class="mt-auto pt-1">
-          <RouterLink :to="detailTo" class="inline-flex items-center gap-1 text-xs font-medium text-amber-300 transition hover:text-amber-200">
+          <RouterLink :to="detailTo" class="inline-flex items-center gap-1 text-xs font-medium text-chart-2 transition hover:text-ring">
             {{ detailLabel }}
             <ArrowRight class="h-3.5 w-3.5" />
           </RouterLink>
@@ -114,8 +114,8 @@ const summary = computed(() => summarizeSchedules(props.schedules));
 }
 
 .dashboard-stat-icon-schedules {
-  color: color-mix(in oklab, #fcd34d 82%, var(--foreground));
-  background: color-mix(in oklab, #f59e0b 14%, transparent);
+  color: color-mix(in oklab, var(--chart-4) 82%, var(--foreground));
+  background: color-mix(in oklab, var(--chart-4) 14%, transparent);
 }
 
 .dashboard-count-pill {

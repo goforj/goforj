@@ -5,7 +5,7 @@
         <CardHeader class="mb-3">
           <template #title>
             <div class="flex items-center gap-2">
-              <Package class="h-4 w-4 text-sky-300" />
+              <Package class="h-4 w-4 text-chart-1" />
               <CardTitle>About</CardTitle>
             </div>
           </template>
@@ -14,7 +14,7 @@
           <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div class="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
               <div class="flex items-start gap-2.5">
-                <Package class="mt-0.5 h-4 w-4 text-sky-300" />
+                <Package class="mt-0.5 h-4 w-4 text-chart-1" />
                 <div>
                   <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Project</p>
                   <p class="mt-0.5 text-sm font-semibold text-foreground">{{ about.environment.app_name || "Unknown" }}</p>
@@ -24,7 +24,7 @@
             </div>
             <div class="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
               <div class="flex items-start gap-2.5">
-                <Cpu class="mt-0.5 h-4 w-4 text-emerald-300" />
+                <Cpu class="mt-0.5 h-4 w-4 text-chart-3" />
                 <div>
                   <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Environment</p>
                   <p class="mt-0.5 text-sm font-semibold text-foreground">{{ about.environment.environment || "Unknown" }}</p>
@@ -34,7 +34,7 @@
             </div>
             <div class="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
               <div class="flex items-start gap-2.5">
-                <Blocks class="mt-0.5 h-4 w-4 text-violet-300" />
+                <Blocks class="mt-0.5 h-4 w-4 text-chart-2" />
                 <div>
                   <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Framework</p>
                   <p class="mt-0.5 text-sm font-semibold text-foreground">{{ about.environment.goforj_version || "Unknown" }}</p>
@@ -44,7 +44,7 @@
             </div>
             <div class="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
               <div class="flex items-start gap-2.5">
-                <Globe class="mt-0.5 h-4 w-4 text-amber-300" />
+                <Globe class="mt-0.5 h-4 w-4 text-chart-4" />
                 <div>
                   <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Runtime</p>
                   <p class="mt-0.5 text-sm font-semibold text-foreground">{{ state.agents.length }} connected agent{{ state.agents.length === 1 ? "" : "s" }}</p>
@@ -79,7 +79,7 @@
             >
               <div class="flex items-center justify-between gap-2.5 border-b border-border/60 px-2 py-1.5">
                 <div class="flex items-center gap-2">
-                  <component :is="sectionIcon(section.title)" class="h-3.5 w-3.5 text-sky-300" />
+                  <component :is="sectionIcon(section.title)" class="h-3.5 w-3.5 text-chart-1" />
                   <h3 class="text-[12px] font-semibold text-foreground">{{ section.title }}</h3>
                 </div>
                 <p class="text-[10px] text-muted">
@@ -98,7 +98,7 @@
                         <span class="text-[12px] font-semibold text-foreground">{{ connection.name }}</span>
                         <span
                           v-if="connection.is_default"
-                          class="rounded-full border border-sky-400/30 bg-sky-400/10 px-1 py-0.5 text-[8px] uppercase tracking-[0.15em] text-sky-200"
+                          class="rounded-full border border-chart-2/35 bg-chart-2/10 px-1 py-0.5 text-[8px] uppercase tracking-[0.15em] text-chart-2"
                         >
                           Default
                         </span>
@@ -152,11 +152,11 @@
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
             <span class="dashboard-metric-chip dashboard-metric-chip-processed">
-              <CheckCircle2 class="h-3.5 w-3.5 text-emerald-300" />
+              <CheckCircle2 class="h-3.5 w-3.5 text-chart-3" />
               Processed {{ jobTotals.processed }}
             </span>
             <span class="dashboard-metric-chip dashboard-metric-chip-failed">
-              <CircleX class="h-3.5 w-3.5 text-rose-300" />
+              <CircleX class="h-3.5 w-3.5 text-chart-5" />
               Failed {{ jobTotals.failed }}
             </span>
           </div>
@@ -320,8 +320,8 @@ watch(
 }
 
 .dashboard-stat-icon-jobs {
-  color: color-mix(in oklab, #7dd3fc 78%, var(--foreground));
-  background: color-mix(in oklab, #38bdf8 16%, transparent);
+  color: color-mix(in oklab, var(--chart-1) 82%, var(--foreground));
+  background: color-mix(in oklab, var(--chart-1) 16%, transparent);
 }
 
 .dashboard-metric-chip {
@@ -345,17 +345,17 @@ watch(
   flex: 0 0 auto;
 }
 
-.dashboard-metric-dot-pending { background: #7dd3fc; }
-.dashboard-metric-dot-active { background: #86efac; }
-.dashboard-metric-dot-scheduled { background: #fcd34d; }
-.dashboard-metric-dot-retry { background: #f9a8d4; }
+.dashboard-metric-dot-pending { background: var(--chart-1); }
+.dashboard-metric-dot-active { background: var(--chart-3); }
+.dashboard-metric-dot-scheduled { background: var(--chart-4); }
+.dashboard-metric-dot-retry { background: var(--chart-2); }
 
 .dashboard-metric-chip-processed {
-  border-color: color-mix(in oklab, #34d399 35%, var(--border));
+  border-color: color-mix(in oklab, var(--chart-3) 35%, var(--border));
 }
 
 .dashboard-metric-chip-failed {
-  border-color: color-mix(in oklab, #fb7185 35%, var(--border));
+  border-color: color-mix(in oklab, var(--chart-5) 35%, var(--border));
 }
 
 @media (prefers-reduced-motion: reduce) {
