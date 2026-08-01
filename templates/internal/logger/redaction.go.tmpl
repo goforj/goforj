@@ -1,0 +1,247 @@
+package logger
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+)
+
+const redactedLogValue = "[REDACTED]"
+
+const (
+	redactKeysEnv            = "APP_LOG_REDACT_KEYS"
+	redactMessagePatternsEnv = "APP_LOG_REDACT_MESSAGE_PATTERNS"
+)
+
+type redactionPolicy struct {
+	keys            map[string]struct{}
+	messagePatterns []*regexp.Regexp
+}
+
+var (
+	redactedAssignmentPattern = regexp.MustCompile(`(?i)\b(password|passwd|secret|token|authorization|cookie|api[_-]?key|client[_-]?secret)\s*[:=]\s*([^\s,;]+)`)
+	redactedBearerPattern     = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/-]+=*`)
+)
+
+// redactLogEntry removes sensitive content before it can reach dedupe state, output, or a sink.
+func redactLogEntry(entry LogEntry) LogEntry {
+	return redactLogEntryWithPolicy(entry, defaultRedactionPolicy())
+}
+
+// redactEntry applies this logger's configured application extensions and mandatory framework policy.
+func (l *AppLogger) redactEntry(entry LogEntry) LogEntry {
+	if l == nil {
+		return redactLogEntry(entry)
+	}
+	return redactLogEntryWithPolicy(entry, l.redaction)
+}
+
+// redactLogEntryWithPolicy removes sensitive content according to the framework and application policy.
+func redactLogEntryWithPolicy(entry LogEntry, policy *redactionPolicy) LogEntry {
+	entry.Message = redactLogMessage(policy, entry.Message)
+	if len(entry.orderedFields) > 0 {
+		fields := make([]eventField, len(entry.orderedFields))
+		for index, field := range entry.orderedFields {
+			fields[index] = eventField{key: field.key, value: redactLogFieldValue(policy, field.key, field.value, 0)}
+		}
+		entry.orderedFields = fields
+	}
+	if entry.Fields != nil {
+		fields := make(map[string]any, len(entry.Fields))
+		for key, value := range entry.Fields {
+			fields[key] = redactLogFieldValue(policy, key, value, 0)
+		}
+		entry.Fields = fields
+	}
+	ensureLogEntryFields(&entry)
+	entry.signature = normalizeLogEntrySignature(entry)
+	return entry
+}
+
+// redactLogMessage removes high-confidence secret assignments from free-form messages.
+func redactLogMessage(policy *redactionPolicy, message string) string {
+	message = redactedAssignmentPattern.ReplaceAllString(message, "$1="+redactedLogValue)
+	message = redactedBearerPattern.ReplaceAllString(message, "Bearer "+redactedLogValue)
+	if policy == nil {
+		return message
+	}
+	for _, pattern := range policy.messagePatterns {
+		message = pattern.ReplaceAllString(message, redactedLogValue)
+	}
+	return message
+}
+
+// redactLogFieldValue traverses structured values with conservative bounds so logging remains safe on malformed payloads.
+func redactLogFieldValue(policy *redactionPolicy, key string, value any, depth int) any {
+	if isSensitiveLogKey(policy, key) {
+		return redactedLogValue
+	}
+	if depth >= 8 {
+		return value
+	}
+	switch typed := value.(type) {
+	case string:
+		return redactLogMessage(policy, typed)
+	case []byte:
+		return []byte(redactLogMessage(policy, string(typed)))
+	case rawJSONField:
+		var decoded any
+		if err := json.Unmarshal(typed, &decoded); err != nil {
+			return rawJSONField([]byte(`"` + redactedLogValue + `"`))
+		}
+		redacted, err := json.Marshal(redactLogFieldValue(policy, "", decoded, depth+1))
+		if err != nil {
+			return rawJSONField([]byte(`"` + redactedLogValue + `"`))
+		}
+		return rawJSONField(redacted)
+	case map[string]any:
+		return redactLogMap(policy, typed, depth+1)
+	case map[string]string:
+		redacted := make(map[string]string, len(typed))
+		for nestedKey, nestedValue := range typed {
+			redacted[nestedKey] = stringifyRedactedLogValue(redactLogFieldValue(policy, nestedKey, nestedValue, depth+1))
+		}
+		return redacted
+	case []any:
+		return redactLogSlice(policy, typed, depth+1)
+	case []string:
+		redacted := make([]string, len(typed))
+		for index, nestedValue := range typed {
+			redacted[index] = stringifyRedactedLogValue(redactLogFieldValue(policy, "", nestedValue, depth+1))
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+// redactLogMap copies a map so a sink cannot mutate another sink's view of an entry.
+func redactLogMap(policy *redactionPolicy, values map[string]any, depth int) map[string]any {
+	redacted := make(map[string]any, len(values))
+	for key, value := range values {
+		redacted[key] = redactLogFieldValue(policy, key, value, depth)
+	}
+	return redacted
+}
+
+// redactLogSlice copies a slice and limits work for deliberately oversized diagnostic payloads.
+func redactLogSlice(policy *redactionPolicy, values []any, depth int) []any {
+	limit := len(values)
+	if limit > 256 {
+		limit = 256
+	}
+	redacted := make([]any, len(values))
+	for index := 0; index < limit; index++ {
+		redacted[index] = redactLogFieldValue(policy, "", values[index], depth)
+	}
+	for index := limit; index < len(values); index++ {
+		redacted[index] = redactedLogValue
+	}
+	return redacted
+}
+
+// stringifyRedactedLogValue preserves map[string]string compatibility after redaction.
+func stringifyRedactedLogValue(value any) string {
+	if stringValue, ok := value.(string); ok {
+		return stringValue
+	}
+	return redactedLogValue
+}
+
+// isSensitiveLogKey identifies framework-required secret fields case-insensitively.
+func isSensitiveLogKey(policy *redactionPolicy, key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return false
+	}
+	for _, fragment := range []string{"password", "passwd", "secret", "token", "authorization", "cookie", "private_key", "privatekey", "credential", "api_key", "apikey", "access_key", "client_secret"} {
+		if strings.Contains(key, fragment) {
+			return true
+		}
+	}
+	if policy == nil {
+		return false
+	}
+	_, ok := policy.keys[key]
+	return ok
+}
+
+// defaultRedactionPolicy returns the mandatory framework policy with no application additions.
+func defaultRedactionPolicy() *redactionPolicy {
+	return &redactionPolicy{}
+}
+
+// loadRedactionPolicy reads application extensions while retaining the framework's mandatory defaults.
+func loadRedactionPolicy() *redactionPolicy {
+	policy := defaultRedactionPolicy()
+	policy.keys = parseRedactionKeys(os.Getenv(redactKeysEnv))
+	policy.messagePatterns = parseRedactionMessagePatterns(os.Getenv(redactMessagePatternsEnv))
+	return policy
+}
+
+// parseRedactionKeys normalizes a comma-separated environment value into case-insensitive field names.
+func parseRedactionKeys(value string) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for _, key := range strings.Split(value, ",") {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key != "" {
+			keys[key] = struct{}{}
+		}
+	}
+	return keys
+}
+
+// parseRedactionMessagePatterns compiles a JSON array so regular expressions may contain commas safely.
+func parseRedactionMessagePatterns(value string) []*regexp.Regexp {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	var sources []string
+	if err := json.Unmarshal([]byte(value), &sources); err != nil {
+		panic(fmt.Sprintf("%s must be a JSON array of regular expressions: %v", redactMessagePatternsEnv, err))
+	}
+	patterns := make([]*regexp.Regexp, 0, len(sources))
+	for _, source := range sources {
+		pattern, err := regexp.Compile(source)
+		if err != nil {
+			panic(fmt.Sprintf("%s contains invalid regular expression %q: %v", redactMessagePatternsEnv, source, err))
+		}
+		patterns = append(patterns, pattern)
+	}
+	return patterns
+}
+
+// cloneLogValue copies the mutable structured values supported by the logger before a sink observes them.
+func cloneLogValue(value any) any {
+	switch typed := value.(type) {
+	case []byte:
+		return append([]byte(nil), typed...)
+	case map[string]any:
+		cloned := make(map[string]any, len(typed))
+		for key, nestedValue := range typed {
+			cloned[key] = cloneLogValue(nestedValue)
+		}
+		return cloned
+	case map[string]string:
+		cloned := make(map[string]string, len(typed))
+		for key, nestedValue := range typed {
+			cloned[key] = nestedValue
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, nestedValue := range typed {
+			cloned[index] = cloneLogValue(nestedValue)
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), typed...)
+	case []int:
+		return append([]int(nil), typed...)
+	default:
+		return value
+	}
+}

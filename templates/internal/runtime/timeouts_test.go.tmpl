@@ -1,0 +1,197 @@
+package runtime
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+// TestNewTimeoutsResolvesConfiguredValues verifies normal execution and shutdown clocks are resolved once at startup.
+func TestNewTimeoutsResolvesConfiguredValues(t *testing.T) {
+	t.Setenv("APP_SHUTDOWN_TIMEOUT", "45s")
+{{- if .ProjectComponents.Jobs }}
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "12s")
+{{- end }}
+	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "8s")
+	t.Setenv("SCHEDULER_COMMAND_TIMEOUT", "2m")
+
+	timeouts := NewTimeouts()
+	if got, want := timeouts.ShutdownTimeout(), 45*time.Second; got != want {
+		t.Fatalf("app shutdown timeout = %s, want %s", got, want)
+	}
+{{- if .ProjectComponents.Jobs }}
+	if got, want := timeouts.QueueShutdownTimeout(), 12*time.Second; got != want {
+		t.Fatalf("queue shutdown timeout = %s, want %s", got, want)
+	}
+{{- end }}
+	if got, want := timeouts.SchedulerSubprocessShutdownTimeout(), 8*time.Second; got != want {
+		t.Fatalf("scheduler subprocess shutdown timeout = %s, want %s", got, want)
+	}
+	if got, want := timeouts.SchedulerCommandTimeout(), 2*time.Minute; got != want {
+		t.Fatalf("scheduler command timeout = %s, want %s", got, want)
+	}
+}
+
+// TestNewTimeoutsInheritsInvalidAndNonPositiveChildValues verifies child budgets cannot outlive the app budget.
+func TestNewTimeoutsInheritsInvalidAndNonPositiveChildValues(t *testing.T) {
+	t.Setenv("APP_SHUTDOWN_TIMEOUT", "30s")
+{{- if .ProjectComponents.Jobs }}
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "0s")
+{{- end }}
+	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "not-a-duration")
+	t.Setenv("SCHEDULER_COMMAND_TIMEOUT", "-1s")
+
+	timeouts := NewTimeouts()
+{{- if .ProjectComponents.Jobs }}
+	if got, want := timeouts.QueueShutdownTimeout(), 30*time.Second; got != want {
+		t.Fatalf("queue shutdown timeout = %s, want inherited %s", got, want)
+	}
+{{- end }}
+	if got, want := timeouts.SchedulerSubprocessShutdownTimeout(), 30*time.Second; got != want {
+		t.Fatalf("scheduler subprocess shutdown timeout = %s, want inherited %s", got, want)
+	}
+	if got, want := timeouts.SchedulerCommandTimeout(), 10*time.Minute; got != want {
+		t.Fatalf("scheduler command timeout = %s, want fallback %s", got, want)
+	}
+}
+
+// TestTimeoutValidationHelpers verifies every fallback and capping branch used during startup resolution.
+func TestTimeoutValidationHelpers(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{name: "valid", got: validTimeout(time.Second, time.Minute), want: time.Second},
+		{name: "zero", got: validTimeout(0, time.Minute), want: time.Minute},
+		{name: "negative", got: validTimeout(-time.Second, time.Minute), want: time.Minute},
+	} {
+		if test.got != test.want {
+			t.Errorf("validTimeout %s = %s, want %s", test.name, test.got, test.want)
+		}
+	}
+
+	for _, test := range []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{name: "shorter child", got: minTimeout(5*time.Second, 30*time.Second), want: 5 * time.Second},
+		{name: "longer child", got: minTimeout(90*time.Second, 30*time.Second), want: 30 * time.Second},
+		{name: "missing child", got: minTimeout(0, 30*time.Second), want: 30 * time.Second},
+		{name: "non-positive child", got: minTimeout(-time.Second, 30*time.Second), want: 30 * time.Second},
+	} {
+		if test.got != test.want {
+			t.Errorf("minTimeout %s = %s, want %s", test.name, test.got, test.want)
+		}
+	}
+}
+
+// TestNewTimeoutsCapsChildrenAtTheAppBudget verifies the rendered former 90-second subprocess value cannot extend a 30-second app shutdown.
+func TestNewTimeoutsCapsChildrenAtTheAppBudget(t *testing.T) {
+	t.Setenv("APP_SHUTDOWN_TIMEOUT", "30s")
+{{- if .ProjectComponents.Jobs }}
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "90s")
+{{- end }}
+	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "90s")
+
+	timeouts := NewTimeouts()
+{{- if .ProjectComponents.Jobs }}
+	if got, want := timeouts.QueueShutdownTimeout(), 30*time.Second; got != want {
+		t.Fatalf("queue shutdown timeout = %s, want capped %s", got, want)
+	}
+{{- end }}
+	if got, want := timeouts.SchedulerSubprocessShutdownTimeout(), 30*time.Second; got != want {
+		t.Fatalf("scheduler subprocess shutdown timeout = %s, want capped %s", got, want)
+	}
+	capped := timeouts.CappedSettings()
+	wantCapped := map[string]bool{"SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT": true}
+{{- if .ProjectComponents.Jobs }}
+	wantCapped["QUEUE_SHUTDOWN_TIMEOUT"] = true
+{{- end }}
+	if len(capped) != len(wantCapped) {
+		t.Fatalf("capped settings = %#v, want %d entries", capped, len(wantCapped))
+	}
+	for _, setting := range capped {
+		if !wantCapped[setting.Name] || setting.Configured != 90*time.Second || setting.Effective != 30*time.Second {
+			t.Fatalf("unexpected capped setting: %#v", setting)
+		}
+	}
+}
+
+// TestAboutTimeoutRowsShowsEffectiveCaps verifies the About Runtime section makes capped settings visible.
+func TestAboutTimeoutRowsShowsEffectiveCaps(t *testing.T) {
+	t.Setenv("APP_SHUTDOWN_TIMEOUT", "30s")
+{{- if .ProjectComponents.Jobs }}
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "90s")
+{{- end }}
+	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "90s")
+	t.Setenv("SCHEDULER_COMMAND_TIMEOUT", "10m")
+
+	rows := aboutTimeoutRows(NewTimeouts(), AppComponents{Jobs: true, Scheduler: true})
+	values := make(map[string]string, len(rows))
+	for _, row := range rows {
+		values[row.Key] = row.Value
+	}
+	if got, want := values["APP_SHUTDOWN_TIMEOUT"], "30s"; got != want {
+		t.Fatalf("app timeout row = %q, want %q", got, want)
+	}
+{{- if .ProjectComponents.Jobs }}
+	if got, want := values["QUEUE_SHUTDOWN_TIMEOUT"], "1m30s (effective 30s)"; got != want {
+		t.Fatalf("queue timeout row = %q, want %q", got, want)
+	}
+{{- end }}
+	if got, want := values["SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT"], "1m30s (effective 30s)"; got != want {
+		t.Fatalf("scheduler subprocess timeout row = %q, want %q", got, want)
+	}
+	if got, want := values["SCHEDULER_COMMAND_TIMEOUT"], "10m0s"; got != want {
+		t.Fatalf("scheduler command timeout row = %q, want %q", got, want)
+	}
+
+	rows = aboutTimeoutRows(NewTimeouts(), AppComponents{})
+	for _, row := range rows {
+		if row.Key != "APP_SHUTDOWN_TIMEOUT" {
+			t.Fatalf("disabled runtime component appeared in About rows: %#v", row)
+		}
+	}
+}
+
+// TestTimeoutsRespectParentDeadline verifies cleanup and command budgets retain a parent's earlier deadline.
+func TestTimeoutsRespectParentDeadline(t *testing.T) {
+	t.Setenv("APP_SHUTDOWN_TIMEOUT", "30s")
+{{- if .ProjectComponents.Jobs }}
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "20s")
+{{- end }}
+	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "20s")
+	t.Setenv("SCHEDULER_COMMAND_TIMEOUT", "10m")
+	timeouts := NewTimeouts()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	assertBoundedTimeout(t, "app", timeouts.ShutdownTimeoutFor(ctx), 40*time.Millisecond)
+{{- if .ProjectComponents.Jobs }}
+	assertBoundedTimeout(t, "queue", timeouts.QueueShutdownTimeoutFor(ctx), 40*time.Millisecond)
+{{- end }}
+	assertBoundedTimeout(t, "subprocess", timeouts.SchedulerSubprocessShutdownTimeoutFor(ctx), 40*time.Millisecond)
+	assertBoundedTimeout(t, "command", timeouts.SchedulerCommandTimeoutFor(ctx), 40*time.Millisecond)
+
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	if got, want := timeouts.SchedulerSubprocessShutdownTimeoutFor(canceled), 20*time.Second; got != want {
+		t.Fatalf("deadline-free canceled context timeout = %s, want %s", got, want)
+	}
+
+	expired, stopExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer stopExpired()
+	if got := timeouts.SchedulerSubprocessShutdownTimeoutFor(expired); got != 0 {
+		t.Fatalf("expired parent timeout = %s, want 0", got)
+	}
+}
+
+// assertBoundedTimeout accepts scheduling jitter while proving an inherited deadline caps cleanup work.
+func assertBoundedTimeout(t *testing.T, name string, got, maximum time.Duration) {
+	t.Helper()
+	if got <= 0 || got > maximum || got < maximum-20*time.Millisecond {
+		t.Fatalf("%s timeout = %s, want a positive value no more than %s", name, got, maximum)
+	}
+}

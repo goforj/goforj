@@ -28,6 +28,17 @@ type primitiveTemplateContract struct {
 	namedEnvironment string
 }
 
+// TestInternalConsoleTemplateRendersSemanticErrors verifies generated projects use an explicit high-contrast error label.
+func TestInternalConsoleTemplateRendersSemanticErrors(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
+	config := &project.Config{GoModuleName: "example.com/console", Render: project.RenderConfig{Components: project.Components{CLI: true}}}
+	source := renderSharedTemplate(t, "internal/console/console.go.tmpl", workspace.templateDataForApp(config, project.DefaultApp()))
+
+	assertFormattedGoTemplate(t, "internal/console/console.go.tmpl", source)
+	assertTemplateMarker(t, "internal/console/console.go.tmpl", source, `errorMarkStyle = "\033[37;41m"`, true)
+	assertTemplateMarker(t, "internal/console/console.go.tmpl", source, `colorMark(errorMarkStyle, "ERROR")`, true)
+}
+
 // TestPrimitiveTemplateProjection covers all-off and both mixed-App directions through one shared projection matrix.
 func TestPrimitiveTemplateProjection(t *testing.T) {
 	workspace := currentProjectRenderWorkspace(t)
@@ -90,6 +101,27 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 	t.Run("Events owner compatibility", testEventCommandProjection)
 	t.Run("Events shared examples", testEventSharedExamples)
 	t.Run("dashboard conditionals", testPrimitiveDashboardProjection)
+}
+
+// TestRuntimeTimeoutTemplatesRenderFormattedGo verifies the centralized timeout policy is valid for the largest runtime composition.
+func TestRuntimeTimeoutTemplatesRenderFormattedGo(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
+	components := primitiveProjectionBaseComponents()
+	components.Jobs = true
+	components.Scheduler = true
+	config := &project.Config{GoModuleName: "example.com/runtime-timeouts", Render: project.RenderConfig{Components: components}}
+	data := workspace.templateDataForApp(config, project.DefaultApp())
+
+	for _, path := range []string{
+		"internal/runtime/about.go.tmpl",
+		"internal/runtime/timeouts.go.tmpl",
+		"internal/runtime/timeouts_test.go.tmpl",
+		"internal/schedules/scheduler.go.tmpl",
+		"wire/app.go.tmpl",
+		"wire/app_test.go.tmpl",
+	} {
+		assertFormattedGoTemplate(t, path, renderSharedTemplate(t, path, data))
+	}
 }
 
 // TestSharedMetricsFollowProjectAndAppProjection verifies named-App-only capabilities still compile while runtime flags remain App-local.

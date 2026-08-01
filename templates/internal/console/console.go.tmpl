@@ -24,6 +24,8 @@ const (
 	ColorRed = "\033[31m"
 	// ColorCyan is a cyan ANSI color.
 	ColorCyan = "\033[36m"
+	// errorMarkStyle keeps failures scannable without relying on the old symbolic mark.
+	errorMarkStyle = "\033[37;41m"
 )
 
 // ActionMark returns the action indicator.
@@ -48,7 +50,7 @@ func WarnMark() string {
 
 // ErrorMark returns the error indicator.
 func ErrorMark() string {
-	return colorMark(ColorRed, "✖")
+	return colorMark(errorMarkStyle, "ERROR")
 }
 
 // DebugMark returns the debug indicator.

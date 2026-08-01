@@ -26,6 +26,8 @@ var generationEnvironmentExactKeys = map[string]bool{
 	"API_METRICS_PORT":       true,
 	"APP_ENV":                true,
 	"APP_NAME":               true,
+	"APP_REVISION":           true,
+	"APP_VERSION":            true,
 	"JOBS_METRICS_PORT":      true,
 	"PORT":                   true,
 	"SCHEDULER_METRICS_PORT": true,

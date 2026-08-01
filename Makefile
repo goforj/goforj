@@ -10,20 +10,7 @@ NODE_CACHE_DIR := $(HOME)/.cache/goforj
 DEMO_NODE_CACHE_DIR := $(NODE_CACHE_DIR)/demo-frontend/node_modules
 LIGHTHOUSE_NODE_CACHE_DIR := $(NODE_CACHE_DIR)/lighthouse-ui/node_modules
 
-HELP_FUN = \
-	%help; \
-	while(<>) { \
-		push @{$$help{$$2 // 'options'}}, [$$1, $$3] if /^([a-zA-Z\-]+)\s*:.*\#\#(?:@([a-zA-Z\-]+))?\s(.*)$$/ }; \
-		print "\n"; \
-		for (sort keys %help) { \
-			print "${WHITE}$$_${RESET \
-		}\n"; \
-		for (@{$$help{$$_}}) { \
-			$$sep = " " x (32 - length $$_->[0]); \
-			print "  ${YELLOW}$$_->[0]${RESET}$$sep${GREEN}$$_->[1]${RESET}\n"; \
-		}; \
-		print ""; \
-	}
+HELP_FUN = %help; while(<>) { if (/^([A-Za-z0-9_-]+)\s*:.*\#\#(?:@([A-Za-z0-9_-]+))?\s(.*)$$/) { push @{$$help{$$2 || "other"}}, [$$1, $$3]; $$width = length($$1) if length($$1) > $$width } } print "\n"; for $$category (sort keys %help) { print "${WHITE}$$category${RESET}\n"; for $$entry (@{$$help{$$category}}) { printf "  ${YELLOW}%-*s${RESET}  ${GREEN}%s${RESET}\n", $$width, $$entry->[0], $$entry->[1] } }
 
 help: ##@other Show this help.
 	@perl -e '$(HELP_FUN)' $(MAKEFILE_LIST)

@@ -19,13 +19,13 @@ import (
 // It captures structured fields before zerolog serializes them so dedupe and
 // sinks can run on the in-memory entry instead of reparsing JSON bytes.
 type Event struct {
-	logger   *AppLogger
-	output   *zerolog.Logger
-	level    zerolog.Level
-	disabled bool
-	caller   bool
-	compact  bool
-	fields   []eventField
+	logger    *AppLogger
+	output    *zerolog.Logger
+	level     zerolog.Level
+	disabled  bool
+	caller    bool
+	compact   bool
+	fields    []eventField
 	unordered bool
 }
 
@@ -298,27 +298,18 @@ func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, 
 	if l == nil || output == nil {
 		return
 	}
+	entry = l.redactEntry(entry)
 	sinks := l.snapshotSinks()
 	outputEmit, outputSummary := l.outputDedupeDecision(entry)
 	if outputSummary != nil {
-		if len(sinks) > 0 {
-			ensureLogEntryFields(outputSummary)
-			for _, sink := range sinks {
-				sink(*outputSummary)
-			}
-		}
 		emitOutputEntry(output, level, caller, l.outputEntry(*outputSummary))
-	}
-	if outputEmit && len(sinks) > 0 {
-		ensureLogEntryFields(&entry)
-		for _, sink := range sinks {
-			sink(entry)
-		}
+		deliverSinks(sinks, *outputSummary)
 	}
 	if !outputEmit {
 		return
 	}
 	emitOutputEntry(output, level, caller, l.outputEntry(entry))
+	deliverSinks(sinks, entry)
 }
 
 // outputEntry prepares the console projection without changing sink or JSON fields.
