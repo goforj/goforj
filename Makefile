@@ -1,4 +1,4 @@
-.PHONY: help install watcher node-deps
+.PHONY: help install watch deps
 LIGHTHOUSE_UI_DIR := templates/internal/lighthouse/ui
 DEMO_UI_DIR := templates/demo/frontend
 NODE_CACHE_DIR := $(HOME)/.cache/goforj
@@ -12,11 +12,11 @@ help: ##@other Show this help.
 
 ##@build
 install: ##@build Build lighthouse assets and install goforj.
-	$(MAKE) node-deps
+	$(MAKE) deps
 	cd $(LIGHTHOUSE_UI_DIR) && npm run build
 	go install ./cmd/forj
 
-node-deps: ##@build Link template node_modules to cache and install UI dependencies.
+deps: ##@build Link template node_modules to cache and install UI dependencies.
 	mkdir -p $(DEMO_NODE_CACHE_DIR)
 	mkdir -p $(LIGHTHOUSE_NODE_CACHE_DIR)
 	rm -rf $(DEMO_UI_DIR)/node_modules
@@ -31,5 +31,5 @@ node-deps: ##@build Link template node_modules to cache and install UI dependenc
 	ln -sfn $(LIGHTHOUSE_NODE_CACHE_DIR) $(LIGHTHOUSE_UI_DIR)/node_modules
 
 ##@dev
-watcher: ##@dev Run wgo go install for the CLI with watchers
+watch: ##@dev Reinstall the CLI when Go files change.
 	wgo go install ./cmd/forj
