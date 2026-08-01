@@ -1,40 +1,21 @@
-GREEN  := $(shell tput -Txterm setaf 2)
-WHITE  := $(shell tput -Txterm setaf 7)
-YELLOW := $(shell tput -Txterm setaf 3)
-RESET  := $(shell tput -Txterm sgr0)
-
-.PHONY: help install watcher node-deps
 LIGHTHOUSE_UI_DIR := templates/internal/lighthouse/ui
 DEMO_UI_DIR := templates/demo/frontend
 NODE_CACHE_DIR := $(HOME)/.cache/goforj
 DEMO_NODE_CACHE_DIR := $(NODE_CACHE_DIR)/demo-frontend/node_modules
 LIGHTHOUSE_NODE_CACHE_DIR := $(NODE_CACHE_DIR)/lighthouse-ui/node_modules
 
-HELP_FUN = \
-	%help; \
-	while(<>) { \
-		push @{$$help{$$2 // 'options'}}, [$$1, $$3] if /^([a-zA-Z\-]+)\s*:.*\#\#(?:@([a-zA-Z\-]+))?\s(.*)$$/ }; \
-		print "\n"; \
-		for (sort keys %help) { \
-			print "${WHITE}$$_${RESET \
-		}\n"; \
-		for (@{$$help{$$_}}) { \
-			$$sep = " " x (32 - length $$_->[0]); \
-			print "  ${YELLOW}$$_->[0]${RESET}$$sep${GREEN}$$_->[1]${RESET}\n"; \
-		}; \
-		print ""; \
-	}
+HELP_FUN = %help; while (<>) { /^([A-Za-z0-9_-]+)\s*:.*\#\#(?:@([A-Za-z0-9_-]+))?\s(.*)$$/ or next; push @{$$help{$$2 || "other"}}, [$$1, $$3]; $$width = length($$1) if length($$1) > $$width } print "\e[1;97m$(or $(HELP_NAME),$(notdir $(CURDIR)))\e[0m\n\n"; for $$category (sort keys %help) { print "\e[1;97m$$category\e[0m\n"; for $$entry (@{$$help{$$category}}) { printf "  \e[1;32m%-*s\e[0m  \e[90m%s\e[0m\n", $$width, $$entry->[0], $$entry->[1] } }
 
 help: ##@other Show this help.
 	@perl -e '$(HELP_FUN)' $(MAKEFILE_LIST)
 
 ##@build
 install: ##@build Build lighthouse assets and install goforj.
-	$(MAKE) node-deps
+	$(MAKE) deps
 	cd $(LIGHTHOUSE_UI_DIR) && npm run build
 	go install ./cmd/forj
 
-node-deps: ##@build Link template node_modules to cache and install UI dependencies.
+deps: ##@build Link template node_modules to cache and install UI dependencies.
 	mkdir -p $(DEMO_NODE_CACHE_DIR)
 	mkdir -p $(LIGHTHOUSE_NODE_CACHE_DIR)
 	rm -rf $(DEMO_UI_DIR)/node_modules
@@ -49,5 +30,5 @@ node-deps: ##@build Link template node_modules to cache and install UI dependenc
 	ln -sfn $(LIGHTHOUSE_NODE_CACHE_DIR) $(LIGHTHOUSE_UI_DIR)/node_modules
 
 ##@dev
-watcher: ##@dev Run wgo go install for the CLI with watchers
+watch: ##@dev Reinstall the CLI when Go files change.
 	wgo go install ./cmd/forj
