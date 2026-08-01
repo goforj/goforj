@@ -411,6 +411,10 @@ func (s *AboutService) sections(report AboutReport, appComponents AppComponents)
 			Title: "Build",
 			Rows:  aboutBuildRows(report.Build),
 		},
+		{
+			Title: "Runtime",
+			Rows:  aboutTimeoutRows(NewTimeouts(), appComponents),
+		},
 	}
 
 	if rows := aboutNetworkRows(report.Network); len(rows) > 0 {
@@ -495,6 +499,25 @@ func aboutNetworkRows(network AboutNetwork) []AboutSectionRow {
 	}
 	if strings.TrimSpace(network.LighthouseURL) != "" {
 		rows = append(rows, AboutSectionRow{Key: "Lighthouse URL", Value: network.LighthouseURL})
+	}
+	return rows
+}
+
+// aboutTimeoutRows reports configured and effective runtime deadlines without exposing unrelated settings.
+func aboutTimeoutRows(timeouts *Timeouts, appComponents AppComponents) []AboutSectionRow {
+	rows := make([]AboutSectionRow, 0, len(timeouts.Settings()))
+	for _, setting := range timeouts.Settings() {
+		if setting.Name == "QUEUE_SHUTDOWN_TIMEOUT" && !appComponents.Jobs {
+			continue
+		}
+		if (setting.Name == "SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT" || setting.Name == "SCHEDULER_COMMAND_TIMEOUT") && !appComponents.Scheduler {
+			continue
+		}
+		value := setting.Configured.String()
+		if setting.Effective != setting.Configured {
+			value += " (effective " + setting.Effective.String() + ")"
+		}
+		rows = append(rows, AboutSectionRow{Key: setting.Name, Value: value})
 	}
 	return rows
 }

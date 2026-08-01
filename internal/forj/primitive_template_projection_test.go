@@ -92,6 +92,27 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 	t.Run("dashboard conditionals", testPrimitiveDashboardProjection)
 }
 
+// TestRuntimeTimeoutTemplatesRenderFormattedGo verifies the centralized timeout policy is valid for the largest runtime composition.
+func TestRuntimeTimeoutTemplatesRenderFormattedGo(t *testing.T) {
+	workspace := currentProjectRenderWorkspace(t)
+	components := primitiveProjectionBaseComponents()
+	components.Jobs = true
+	components.Scheduler = true
+	config := &project.Config{GoModuleName: "example.com/runtime-timeouts", Render: project.RenderConfig{Components: components}}
+	data := workspace.templateDataForApp(config, project.DefaultApp())
+
+	for _, path := range []string{
+		"internal/runtime/about.go.tmpl",
+		"internal/runtime/timeouts.go.tmpl",
+		"internal/runtime/timeouts_test.go.tmpl",
+		"internal/schedules/scheduler.go.tmpl",
+		"wire/app.go.tmpl",
+		"wire/app_test.go.tmpl",
+	} {
+		assertFormattedGoTemplate(t, path, renderSharedTemplate(t, path, data))
+	}
+}
+
 // TestSharedMetricsFollowProjectAndAppProjection verifies named-App-only capabilities still compile while runtime flags remain App-local.
 func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
 	workspace := currentProjectRenderWorkspace(t)

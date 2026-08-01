@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"time"
 
 	"github.com/goforj/env/v2"
@@ -13,46 +14,154 @@ type Timeouts struct {
 	queueShutdownTimeout       time.Duration
 {{- end }}
 	schedulerSubprocessTimeout time.Duration
+	schedulerCommandTimeout    time.Duration
+}
+
+// TimeoutSetting describes one configured timeout alongside its effective bounded value.
+type TimeoutSetting struct {
+	Name       string
+	Configured time.Duration
+	Effective  time.Duration
 }
 
 // NewTimeouts resolves lifecycle timeout policy from env once at boot.
 func NewTimeouts() *Timeouts {
-	appTimeout := env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s")
+	appTimeout := validTimeout(env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s"), 30*time.Second)
 {{- if .ProjectComponents.Jobs }}
-	queueTimeout := env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "10s")
+	queueTimeout := inheritedTimeout(env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "10s"), appTimeout)
 {{- end }}
-	schedulerSubprocessTimeout := env.GetDuration("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", appTimeout.String())
+	schedulerSubprocessTimeout := inheritedTimeout(env.GetDuration("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", ""), appTimeout)
+	schedulerCommandTimeout := validTimeout(env.GetDuration("SCHEDULER_COMMAND_TIMEOUT", "10m"), 10*time.Minute)
 	return &Timeouts{
 		shutdownTimeout:            appTimeout,
 {{- if .ProjectComponents.Jobs }}
 		queueShutdownTimeout:       queueTimeout,
 {{- end }}
 		schedulerSubprocessTimeout: schedulerSubprocessTimeout,
+		schedulerCommandTimeout:    schedulerCommandTimeout,
 	}
 }
 
 // ShutdownTimeout returns the default app shutdown budget.
 func (s *Timeouts) ShutdownTimeout() time.Duration {
-	if s.shutdownTimeout <= 0 {
-		return 30 * time.Second
-	}
-	return s.shutdownTimeout
+	return validTimeout(s.shutdownTimeout, 30*time.Second)
+}
+
+// ShutdownTimeoutFor returns the remaining app shutdown budget within ctx.
+func (s *Timeouts) ShutdownTimeoutFor(ctx context.Context) time.Duration {
+	return timeoutWithinContext(ctx, s.ShutdownTimeout())
 }
 
 {{- if .ProjectComponents.Jobs }}
 // QueueShutdownTimeout returns the queue shutdown budget, falling back to the app budget.
 func (s *Timeouts) QueueShutdownTimeout() time.Duration {
-	if s.queueShutdownTimeout > 0 {
-		return s.queueShutdownTimeout
-	}
-	return s.ShutdownTimeout()
+	return minTimeout(s.queueShutdownTimeout, s.ShutdownTimeout())
+}
+
+// QueueShutdownTimeoutFor returns the remaining queue shutdown budget within ctx.
+func (s *Timeouts) QueueShutdownTimeoutFor(ctx context.Context) time.Duration {
+	return timeoutWithinContext(ctx, s.QueueShutdownTimeout())
 }
 {{- end }}
 
 // SchedulerSubprocessShutdownTimeout returns the shutdown budget for scheduler-owned subprocesses.
 func (s *Timeouts) SchedulerSubprocessShutdownTimeout() time.Duration {
-	if s.schedulerSubprocessTimeout > 0 {
-		return s.schedulerSubprocessTimeout
+	return minTimeout(s.schedulerSubprocessTimeout, s.ShutdownTimeout())
+}
+
+// SchedulerSubprocessShutdownTimeoutFor returns the remaining subprocess shutdown budget within ctx.
+func (s *Timeouts) SchedulerSubprocessShutdownTimeoutFor(ctx context.Context) time.Duration {
+	return timeoutWithinContext(ctx, s.SchedulerSubprocessShutdownTimeout())
+}
+
+// SchedulerCommandTimeout returns the maximum healthy execution time for a scheduler command.
+func (s *Timeouts) SchedulerCommandTimeout() time.Duration {
+	return validTimeout(s.schedulerCommandTimeout, 10*time.Minute)
+}
+
+// SchedulerCommandTimeoutFor returns the command execution budget constrained by ctx.
+func (s *Timeouts) SchedulerCommandTimeoutFor(ctx context.Context) time.Duration {
+	return timeoutWithinContext(ctx, s.SchedulerCommandTimeout())
+}
+
+// Settings returns the startup timeout policy in environment-variable order.
+func (s *Timeouts) Settings() []TimeoutSetting {
+	settings := []TimeoutSetting{
+		{
+			Name:       "APP_SHUTDOWN_TIMEOUT",
+			Configured: s.ShutdownTimeout(),
+			Effective:  s.ShutdownTimeout(),
+		},
+{{- if .ProjectComponents.Jobs }}
+		{
+			Name:       "QUEUE_SHUTDOWN_TIMEOUT",
+			Configured: inheritedTimeout(s.queueShutdownTimeout, s.ShutdownTimeout()),
+			Effective:  s.QueueShutdownTimeout(),
+		},
+{{- end }}
+		{
+			Name:       "SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT",
+			Configured: inheritedTimeout(s.schedulerSubprocessTimeout, s.ShutdownTimeout()),
+			Effective:  s.SchedulerSubprocessShutdownTimeout(),
+		},
+		{
+			Name:       "SCHEDULER_COMMAND_TIMEOUT",
+			Configured: s.SchedulerCommandTimeout(),
+			Effective:  s.SchedulerCommandTimeout(),
+		},
 	}
-	return s.ShutdownTimeout()
+	return settings
+}
+
+// CappedSettings returns configured child budgets that were shortened by their parent shutdown budget.
+func (s *Timeouts) CappedSettings() []TimeoutSetting {
+	settings := s.Settings()
+	capped := make([]TimeoutSetting, 0, len(settings))
+	for _, setting := range settings {
+		if setting.Effective < setting.Configured {
+			capped = append(capped, setting)
+		}
+	}
+	return capped
+}
+
+// validTimeout prevents malformed or non-positive configuration from creating an unusable deadline.
+func validTimeout(timeout, fallback time.Duration) time.Duration {
+	if timeout <= 0 {
+		return fallback
+	}
+	return timeout
+}
+
+// inheritedTimeout treats a missing, malformed, or non-positive child value as its parent budget.
+func inheritedTimeout(timeout, parent time.Duration) time.Duration {
+	if timeout <= 0 {
+		return parent
+	}
+	return timeout
+}
+
+// minTimeout keeps a configured child budget from extending its parent's advertised budget.
+func minTimeout(timeout, parent time.Duration) time.Duration {
+	timeout = inheritedTimeout(timeout, parent)
+	if timeout < parent {
+		return timeout
+	}
+	return parent
+}
+
+// timeoutWithinContext preserves an earlier parent deadline while allowing signal contexts without deadlines.
+func timeoutWithinContext(ctx context.Context, timeout time.Duration) time.Duration {
+	if ctx == nil {
+		return timeout
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return timeout
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 0
+	}
+	return minTimeout(timeout, remaining)
 }

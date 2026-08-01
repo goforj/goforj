@@ -74,7 +74,10 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 	if activeJobs := managedActiveJobs(managed); activeJobs > 0 {
 		s.logger.Info().Int64("active_jobs", activeJobs).Msg("Waiting for queue jobs to complete")
 	}
-	shutdownTimeout := s.appTimeouts.QueueShutdownTimeout()
+	shutdownTimeout := s.appTimeouts.QueueShutdownTimeoutFor(runCtx)
+	if shutdownTimeout <= 0 {
+		return fmt.Errorf("queue shutdown budget expired: %w", context.DeadlineExceeded)
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := shutdownManagedQueues(shutdownCtx, managed); err != nil {

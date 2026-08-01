@@ -530,6 +530,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/runtime/runtime_host.go.tmpl",
 				"internal/runtime/runtime_host_test.go.tmpl",
 				"internal/runtime/timeouts.go.tmpl",
+				"internal/runtime/timeouts_test.go.tmpl",
 				"internal/runtime/README.md.tmpl",
 				"internal/observability/mail_observer.go.tmpl",
 				"internal/console/console.go.tmpl",
