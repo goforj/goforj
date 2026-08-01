@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/scheduler/v2"
 	"github.com/goforj/str/v2"
 	"{{.GoModuleName}}/internal/runtime"
@@ -114,7 +113,7 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	}()
 	select {
 	case err = <-shutdownErr:
-	case <-time.After(s.appTimeouts.ShutdownTimeout()):
+	case <-time.After(s.appTimeouts.ShutdownTimeoutFor(runCtx)):
 		err = errors.New("scheduler shutdown timed out")
 	}
 	if err != nil {
@@ -127,18 +126,18 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 }
 
 // ProvideScheduler creates and configures the underlying scheduler engine.
-func ProvideScheduler() (*scheduler.Scheduler, error) {
+func ProvideScheduler(appTimeouts *runtime.Timeouts) (*scheduler.Scheduler, error) {
 	s, err := scheduler.NewWithError()
 	if err != nil {
 		return nil, err
 	}
-	return ConfigureScheduler(s), nil
+	return ConfigureScheduler(s, appTimeouts), nil
 }
 
 // ConfigureScheduler applies app-level scheduler command execution settings.
-func ConfigureScheduler(s *scheduler.Scheduler) *scheduler.Scheduler {
+func ConfigureScheduler(s *scheduler.Scheduler, appTimeouts *runtime.Timeouts) *scheduler.Scheduler {
 	s.WithCommandRunner(scheduler.CommandRunnerFunc(func(ctx context.Context, exe string, args []string) error {
-		if timeout := schedulerCommandTimeout(); timeout > 0 {
+		if timeout := appTimeouts.SchedulerCommandTimeoutFor(ctx); timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
@@ -175,9 +174,4 @@ func schedulerCommandEnv(base []string) []string {
 	out = append(out, "FORJ_SUBPROCESS=1")
 	out = append(out, "APP_LOG_PREFIX="+app+" › Command")
 	return out
-}
-
-// schedulerCommandTimeout returns the maximum runtime for scheduler command jobs.
-func schedulerCommandTimeout() time.Duration {
-	return env.GetDuration("SCHEDULER_COMMAND_TIMEOUT", "10m")
 }
