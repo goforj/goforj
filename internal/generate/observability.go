@@ -1,10 +1,12 @@
 package generate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,7 +21,10 @@ const (
 	observabilityMetricsModeLocalMulti  = "local-multi"
 	observabilityMetricsModeCompose     = "compose"
 	observabilityMetricsModeDisabled    = "disabled"
+	maxDeploymentMetadataLabelLength    = 128
 )
+
+var deploymentMetadataLabelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:+/@=-]*$`)
 
 // metricsTargetEntry mirrors the VictoriaMetrics file-discovery shape so generation remains schema-specific at the boundary.
 type metricsTargetEntry struct {
@@ -72,8 +77,10 @@ type observabilityEnvironmentMatch struct {
 
 // observabilityTargetIdentity holds the labels shared by every endpoint in one generated target file.
 type observabilityTargetIdentity struct {
-	service string
-	appEnv  string
+	service  string
+	appEnv   string
+	release  string
+	revision string
 }
 
 // observabilityAppTargetPlan carries the shared labels and App layout used by local target builders.
@@ -115,7 +122,7 @@ func generateObservabilityFiles(input generationInput) (int, error) {
 	}
 	content = append(content, '\n')
 
-	changed, err := writeGeneratedSource(
+	changed, err := writeObservabilityTargets(
 		filepath.Join(input.projectDir, "containers", "observability", "vmagent", "metrics-targets.json"),
 		content,
 	)
@@ -126,6 +133,42 @@ func generateObservabilityFiles(input generationInput) (int, error) {
 		return 0, nil
 	}
 	return 1, nil
+}
+
+// writeObservabilityTargets publishes complete discovery documents with rename semantics so vmagent never observes a partially written target file.
+func writeObservabilityTargets(path string, content []byte) (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	existing, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(existing, content) {
+		return false, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".metrics-targets-*")
+	if err != nil {
+		return false, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if _, err := temporary.Write(content); err != nil {
+		temporary.Close()
+		return false, err
+	}
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return false, err
+	}
+	if err := temporary.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // buildMetricsTargets translates project layout and target mode into a deterministic VictoriaMetrics scrape plan.
@@ -159,6 +202,14 @@ func buildMetricsTargets(input generationInput) (observabilityTargetPlan, error)
 	if len(activeRoles) == 0 {
 		return observabilityTargetPlan{Manage: true, Entries: []metricsTargetEntry{}}, nil
 	}
+	release, err := resolver.optionalDeploymentMetadata("APP_VERSION")
+	if err != nil {
+		return observabilityTargetPlan{}, err
+	}
+	revision, err := resolver.optionalDeploymentMetadata("APP_REVISION")
+	if err != nil {
+		return observabilityTargetPlan{}, err
+	}
 	appNames, err := discoverObservabilityApps(input.projectDir, config, activeRoles)
 	if err != nil {
 		return observabilityTargetPlan{}, err
@@ -169,7 +220,7 @@ func buildMetricsTargets(input generationInput) (observabilityTargetPlan, error)
 		return observabilityTargetPlan{}, err
 	}
 	appTargetPlan := observabilityAppTargetPlan{
-		identity:     observabilityTargetIdentity{service: service, appEnv: environment},
+		identity:     observabilityTargetIdentity{service: service, appEnv: environment, release: release, revision: revision},
 		host:         localHost,
 		activeRoles:  activeRoles,
 		applications: appNames,
@@ -492,12 +543,34 @@ func appHasMetricRole(app observabilityApp, role metricsTargetRole) bool {
 
 // observabilityTargetLabels keeps vmagent labels consistent with emitted framework metric labels.
 func observabilityTargetLabels(identity observabilityTargetIdentity, process string, appName string) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		"app":         appName,
 		"environment": identity.appEnv,
 		"process":     process,
 		"service":     identity.service,
 	}
+	if identity.release != "" {
+		labels["release"] = identity.release
+	}
+	if identity.revision != "" {
+		labels["revision"] = identity.revision
+	}
+	return labels
+}
+
+// optionalDeploymentMetadata accepts only bounded, token-safe deployment identity values so target labels cannot become free-form fields.
+func (r observabilityTargetResolver) optionalDeploymentMetadata(key string) (string, error) {
+	value, ok := r.lookupEnvTrimmed(key)
+	if !ok || value == "" {
+		return "", nil
+	}
+	if len(value) > maxDeploymentMetadataLabelLength {
+		return "", fmt.Errorf("invalid %s: value exceeds %d characters", key, maxDeploymentMetadataLabelLength)
+	}
+	if !deploymentMetadataLabelPattern.MatchString(value) {
+		return "", fmt.Errorf("invalid %s %q: use a non-whitespace release or immutable revision token", key, value)
+	}
+	return value, nil
 }
 
 // firstEnvTrimmed returns the winning key as well as the value so validation errors can name it.
