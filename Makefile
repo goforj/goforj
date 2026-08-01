@@ -1,4 +1,3 @@
-.PHONY: help install watch deps
 LIGHTHOUSE_UI_DIR := templates/internal/lighthouse/ui
 DEMO_UI_DIR := templates/demo/frontend
 NODE_CACHE_DIR := $(HOME)/.cache/goforj
