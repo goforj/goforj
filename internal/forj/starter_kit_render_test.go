@@ -17,7 +17,8 @@ func starterKitFrontendDir() string {
 	return projectlayout.FrontendDir(".", project.DefaultApp())
 }
 
-func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
+// TestScaffoldStarterKitPreservesExistingFrontendFiles verifies re-rendering overlays starter assets without clearing the frontend workspace.
+func TestScaffoldStarterKitPreservesExistingFrontendFiles(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)
@@ -29,11 +30,17 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 	frontendDir := starterKitFrontendDir()
-	if err := os.MkdirAll(filepath.Join(frontendDir, "dist"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(frontendDir, "node_modules", "local-package"), 0o755); err != nil {
 		t.Fatalf("mkdir frontend: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(frontendDir, "custom.txt"), []byte("user file"), 0o644); err != nil {
-		t.Fatalf("write custom file: %v", err)
+	preservedFiles := map[string]string{
+		filepath.Join(frontendDir, "custom.txt"):                          "user file",
+		filepath.Join(frontendDir, "node_modules", "local-package", "id"): "installed dependency",
+	}
+	for path, content := range preservedFiles {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write preserved frontend file %s: %v", path, err)
+		}
 	}
 
 	renderer := NewProjectRenderer(logger.NewAppLogger())
@@ -41,8 +48,14 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 		t.Fatalf("scaffold vue starter kit: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(frontendDir, "custom.txt")); !os.IsNotExist(err) {
-		t.Fatalf("expected existing frontend to be overwritten, stat err = %v", err)
+	for path, want := range preservedFiles {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read preserved frontend file %s: %v", path, err)
+		}
+		if string(content) != want {
+			t.Fatalf("preserved frontend file %s = %q, want %q", path, content, want)
+		}
 	}
 	for _, path := range []string{
 		filepath.Join(frontendDir, "package.json"),
@@ -54,9 +67,6 @@ func TestScaffoldStarterKitOverwritesFrontend(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
-	}
-	if _, err := os.Stat(filepath.Join(frontendDir, "node_modules")); !os.IsNotExist(err) {
-		t.Fatalf("expected node_modules to be excluded, stat err = %v", err)
 	}
 	packageJSON, err := os.ReadFile(filepath.Join(frontendDir, "package.json"))
 	if err != nil {

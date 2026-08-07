@@ -3234,18 +3234,13 @@ func (p *ProjectRenderer) scaffoldAppStarterKit(app project.App) error {
 	return p.scaffoldStarterKitForApp(app, starterKit, false)
 }
 
-// scaffoldStarterKitForApp copies the selected shared starter kit into an app frontend directory.
-func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit project.StarterKit, overwrite bool) error {
+// scaffoldStarterKitForApp overlays the selected starter kit without deleting user-owned frontend files.
+func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit project.StarterKit, overwriteGeneratedTemplates bool) error {
 	starterKit = project.NormalizeStarterKit(starterKit)
 	if starterKit == project.StarterKitNone {
 		return nil
 	}
 	frontendDir := projectlayout.FrontendDir(".", app)
-	if overwrite {
-		if err := p.workspace.removeTree(frontendDir); err != nil {
-			return err
-		}
-	}
 	sourceRoot, err := starterKitFrontendSource(starterKit)
 	if err != nil {
 		return err
@@ -3254,7 +3249,7 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 		return err
 	}
 	if starterKit == project.StarterKitTemplHTMX {
-		if err := p.scaffoldTemplHTMXStarterKitForApp(app, overwrite); err != nil {
+		if err := p.scaffoldTemplHTMXStarterKitForApp(app, overwriteGeneratedTemplates); err != nil {
 			return err
 		}
 	}
@@ -3274,7 +3269,8 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 	return nil
 }
 
-func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, overwrite bool) error {
+// scaffoldTemplHTMXStarterKitForApp keeps server-rendered templates aligned when the frontend starter is refreshed.
+func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, overwriteGeneratedTemplates bool) error {
 	mappings := []templateMapping{
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/controller.go.tmpl", "internal/starterui/controller.go"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/controller_test.go.tmpl", "internal/starterui/controller_test.go"),
@@ -3292,7 +3288,7 @@ func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, ove
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/ui.templ.tmpl", "internal/starterui/ui.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/views.templ.tmpl", "internal/starterui/views.templ"),
 	}
-	if overwrite {
+	if overwriteGeneratedTemplates {
 		return p.writeTemplateMappingsForApp(app, mappings)
 	}
 	return p.writeTemplateMappingsOnceForApp(app, mappings)
