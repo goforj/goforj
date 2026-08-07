@@ -31,19 +31,19 @@ cmd/app/main.go
 
 Keep this entrypoint thin. Runtime behavior, commands, routes, schedules, and lifecycle hooks should be composed through `app/` and `app/wire/`.
 
-For a Web UI App, the entrypoint keeps the App-specific frontend registration visible and delegates the shared process boot sequence:
+For a Web UI App, the framework-owned entrypoint keeps the required frontend registration visible and delegates the shared process boot sequence:
 
 ```go
 func main() {
 	// Register the embedded frontend before Wire assembles the HTTP server.
 	http.RegisterSpa("/*", "frontend/dist", &spa)
 
-	// Launch the App after entrypoint-owned registrations are complete.
+	// Launch the App after its required generated registrations are complete.
 	wire.LaunchApplication()
 }
 ```
 
-`wire.LaunchApplication` supplies the App-specific root command and runtime capability to the shared launch sequence. Environment and timezone setup, preboot command dispatch, default runtime selection, and process exit behavior remain framework-owned. Wire constructs the dependency graph only after preboot commands have had a chance to complete without booting the full App.
+`wire.LaunchApplication` supplies the App-specific root command and runtime capability to the shared launch sequence. Environment and timezone setup, preboot command dispatch, default runtime selection, and process exit behavior remain framework-owned. Wire constructs the dependency graph only after preboot commands have had a chance to complete without booting the full App. Because rendering refreshes `main.go`, application-owned routes, commands, schedules, lifecycle hooks, and providers still belong under `app/` and `app/wire/`.
 
 When the generated app has Web API, Web UI, Scheduler, or Jobs capability, launching its binary without arguments starts the combined `run` host. A CLI-only app keeps no-argument help behavior. Explicit commands, including `run` and `--help`, always remain available.
 

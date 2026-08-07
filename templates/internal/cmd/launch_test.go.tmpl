@@ -6,16 +6,19 @@ import (
 	"errors"
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 )
+
+// runLaunchForTest bypasses process-wide environment and timezone setup covered by their focused tests.
+func runLaunchForTest(args []string, config LaunchConfig) error {
+	return runLaunchWithSetup(args, config, func() error { return nil }, func() error { return nil })
+}
 
 // TestRunLaunchDefaultsRuntimeApps verifies process launch applies the runtime default before invoking the App.
 func TestRunLaunchDefaultsRuntimeApps(t *testing.T) {
 	t.Setenv("FORJ_APP", "")
-	t.Setenv("TZ", "UTC")
 	var got []string
-	err := runLaunch(nil, LaunchConfig{
+	err := runLaunchForTest(nil, LaunchConfig{
 		AppName:     "admin",
 		HasRuntime:  true,
 		RootCommand: &struct{}{},
@@ -37,9 +40,8 @@ func TestRunLaunchDefaultsRuntimeApps(t *testing.T) {
 
 // TestRunLaunchPreservesCLIOnlyNoArgLaunches verifies command-only Apps retain their no-argument behavior.
 func TestRunLaunchPreservesCLIOnlyNoArgLaunches(t *testing.T) {
-	t.Setenv("TZ", "UTC")
 	called := false
-	err := runLaunch(nil, LaunchConfig{
+	err := runLaunchForTest(nil, LaunchConfig{
 		AppName:     "app",
 		HasRuntime:  false,
 		RootCommand: &struct{}{},
@@ -61,10 +63,9 @@ func TestRunLaunchPreservesCLIOnlyNoArgLaunches(t *testing.T) {
 
 // TestRunLaunchPreservesExplicitArguments verifies launch forwards an explicitly selected command unchanged.
 func TestRunLaunchPreservesExplicitArguments(t *testing.T) {
-	t.Setenv("TZ", "UTC")
 	want := []string{"about", "--json"}
 	var got []string
-	err := runLaunch(want, LaunchConfig{
+	err := runLaunchForTest(want, LaunchConfig{
 		AppName:     "app",
 		HasRuntime:  true,
 		RootCommand: &struct{}{},
@@ -83,9 +84,8 @@ func TestRunLaunchPreservesExplicitArguments(t *testing.T) {
 
 // TestRunLaunchReturnsAppErrors verifies launch leaves command error classification to the process boundary.
 func TestRunLaunchReturnsAppErrors(t *testing.T) {
-	t.Setenv("TZ", "UTC")
 	want := errors.New("run failed")
-	err := runLaunch([]string{"about"}, LaunchConfig{
+	err := runLaunchForTest([]string{"about"}, LaunchConfig{
 		AppName:     "app",
 		RootCommand: &struct{}{},
 		Run: func([]string) error {
@@ -99,9 +99,8 @@ func TestRunLaunchReturnsAppErrors(t *testing.T) {
 
 // TestRunLaunchStopsAfterPrebootHelp verifies help can complete without constructing the wired App.
 func TestRunLaunchStopsAfterPrebootHelp(t *testing.T) {
-	t.Setenv("TZ", "UTC")
 	called := false
-	err := runLaunch([]string{"--help"}, LaunchConfig{
+	err := runLaunchForTest([]string{"--help"}, LaunchConfig{
 		AppName:     "app",
 		RootCommand: &struct{}{},
 		Run: func([]string) error {
@@ -119,13 +118,13 @@ func TestRunLaunchStopsAfterPrebootHelp(t *testing.T) {
 
 // TestRunLaunchAddsTimezoneContext verifies setup failures remain identifiable at the process boundary.
 func TestRunLaunchAddsTimezoneContext(t *testing.T) {
-	t.Setenv("TZ", "Invalid/GoForj-Timezone")
-	err := runLaunch([]string{"about"}, LaunchConfig{
+	want := errors.New("invalid timezone")
+	err := runLaunchWithSetup([]string{"about"}, LaunchConfig{
 		AppName:     "app",
 		RootCommand: &struct{}{},
 		Run:         func([]string) error { return nil },
-	})
-	if err == nil || !strings.Contains(err.Error(), "configuring timezone") {
+	}, func() error { return nil }, func() error { return want })
+	if !errors.Is(err, want) {
 		t.Fatalf("runLaunch() error = %v, want timezone context", err)
 	}
 }

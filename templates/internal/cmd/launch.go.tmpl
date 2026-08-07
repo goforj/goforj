@@ -26,13 +26,18 @@ func Launch(config LaunchConfig) {
 
 // runLaunch keeps the launch sequence testable without crossing the process exit boundary.
 func runLaunch(args []string, config LaunchConfig) error {
+	return runLaunchWithSetup(args, config, LoadEnv, ConfigureTimezone)
+}
+
+// runLaunchWithSetup isolates process-wide setup so launch behavior can be tested without mutating the test process.
+func runLaunchWithSetup(args []string, config LaunchConfig, loadEnv func() error, configureTimezone func() error) error {
 	args = EffectiveLaunchArgs(args, config.HasRuntime)
 	ApplyLaunchApp(config.AppName)
 
-	if err := LoadEnv(); err != nil {
+	if err := loadEnv(); err != nil {
 		return fmt.Errorf("loading env: %w", err)
 	}
-	if err := ConfigureTimezone(); err != nil {
+	if err := configureTimezone(); err != nil {
 		return fmt.Errorf("configuring timezone: %w", err)
 	}
 

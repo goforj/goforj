@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/goforj/console"
 {{- if .Components.Cache }}
 	"github.com/goforj/cache"
 {{- end }}
@@ -290,7 +291,7 @@ func LaunchApplication() {
 func runApplication(args []string) error {
 	application, err := InitializeApplication()
 	if err != nil {
-		return fmt.Errorf("initializing application: %w", err)
+		console.Fatalf("initializing application: %v", err)
 	}
 	return application.Run(nil, args)
 }
