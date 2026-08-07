@@ -20,6 +20,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/cache/driver/rediscache":           "v0.4.0",
 	"github.com/goforj/cache/driver/sqlcore":              "v0.4.0",
 	"github.com/goforj/cache/driver/sqlitecache":          "v0.4.0",
+	"github.com/goforj/console":                           "v0.1.1",
 	"github.com/goforj/crypt":                             "v1.2.0",
 	"github.com/goforj/env/v2":                            "v2.6.0",
 	"github.com/goforj/events":                            "v0.2.0",
@@ -69,6 +70,7 @@ var pinnedModuleVersions = map[string]string{
 }
 
 var rendererSyncModules = []string{
+	"github.com/goforj/console",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
 	"github.com/goforj/godump",

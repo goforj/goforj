@@ -21,7 +21,7 @@ import (
 		"github.com/goforj/null/v6"
 		{{- end }}
 	"github.com/goforj/str/v2"
-	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/models"
 	{{- end }}

@@ -26,6 +26,7 @@ func TestRenderwarmUsesCurrentTemplateDependencies(t *testing.T) {
 	}
 	for _, want := range []string{
 		`github.com/goforj/cache/driver/rediscache`,
+		`github.com/goforj/console`,
 		`github.com/goforj/scheduler/v2`,
 		`github.com/klauspost/compress/zstd`,
 	} {
@@ -40,6 +41,7 @@ func TestRenderwarmUsesCurrentTemplateDependencies(t *testing.T) {
 		t.Fatalf("renderwarm should pin the current Redis cache driver release:\n%s", goMod)
 	}
 	for _, want := range []string{
+		"github.com/goforj/console v0.1.1",
 		"github.com/goforj/str v1.3.0",
 		"github.com/goforj/str/v2 v2.0.1",
 	} {

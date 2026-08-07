@@ -12,6 +12,7 @@ import (
 	_ "github.com/goforj/cache"
 	_ "github.com/goforj/cache/cachecore"
 	_ "github.com/goforj/cache/driver/rediscache"
+	_ "github.com/goforj/console"
 	_ "github.com/goforj/crypt"
 	_ "github.com/goforj/env/v2"
 	_ "github.com/goforj/events"
