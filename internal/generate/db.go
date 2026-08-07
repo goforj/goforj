@@ -140,7 +140,7 @@ func dbHelperConnectionName(name string) bool {
 	}
 }
 
-// renderDBAccessors keeps retained compatibility implementations separate from the authoritative compiled manifest.
+// renderDBAccessors emits the validated database implementations and compiled manifest together.
 func renderDBAccessors(names []string, driverPlan dbDriverPlan) ([]byte, error) {
 	data := dbTemplateData{
 		CompiledDrivers: driverPlan.compiled,
@@ -173,7 +173,7 @@ func renderDBAccessors(names []string, driverPlan dbDriverPlan) ([]byte, error) 
 // discoverDBDrivers validates every active connection against the explicit build contract before source is emitted.
 func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, error) {
 	drivers := map[string]dbDriverSpec{}
-	compiled := map[string]struct{}{}
+	compiled := map[string]struct{}{"sqlite": {}}
 	recordDBDriver(drivers, "sqlite")
 	rootDriver := str.Of(input.environment.Get("DB_DRIVER", "sqlite")).Trim().ToLower().String()
 	if rootDriver == "" {
@@ -199,6 +199,7 @@ func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, err
 	activeDrivers = append(activeDrivers, appPrefixedActiveDrivers(input, "DB", "sqlite", true)...)
 	rawSupported := str.Of(input.environment.Get("DB_SUPPORTED_DRIVERS", "")).Trim().ToLower().String()
 	if rawSupported != "" {
+		supportedCount := 0
 		for _, part := range strings.Split(rawSupported, ",") {
 			driver := str.Of(part).Trim().ToLower().String()
 			if driver == "" {
@@ -207,9 +208,10 @@ func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, err
 			if !recordDBDriver(drivers, driver) {
 				return dbDriverPlan{}, fmt.Errorf("DB_SUPPORTED_DRIVERS includes unsupported driver %q", driver)
 			}
+			supportedCount++
 			compiled[canonicalDBDriver(driver)] = struct{}{}
 		}
-		if len(compiled) == 0 {
+		if supportedCount == 0 {
 			return dbDriverPlan{}, fmt.Errorf("DB_SUPPORTED_DRIVERS must include at least one driver")
 		}
 		for _, active := range activeDrivers {

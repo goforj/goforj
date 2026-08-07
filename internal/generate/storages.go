@@ -213,6 +213,9 @@ var storageDriverKeys = map[string]map[string]struct{}{
 	"rclone":  makeSet("REMOTE", "RCLONE_CONFIG_PATH", "RCLONE_CONFIG_DATA"),
 }
 
+// storageLocalDrivers excludes memory because its optional driver module is not in the generated dependency baseline.
+var storageLocalDrivers = []string{"local"}
+
 // GenerateStorageFiles writes disk accessors whose selectable backends are fixed by the generation snapshot.
 func GenerateStorageFiles(projectDir string) (int, error) {
 	return generateStorageFiles(ambientGenerationInput(projectDir))
@@ -223,6 +226,7 @@ func generateStorageFiles(input generationInput) (int, error) {
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "STORAGE",
 		DefaultDriver: "local",
+		LocalDrivers:  storageLocalDrivers,
 		RootKeys:      storageRootKeys,
 		CommonKeys:    storageCommonKeys,
 		DriverKeys:    storageDriverKeys,
@@ -370,7 +374,7 @@ func renderStorageAccessors(names []string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// renderStorageConfig retains the native local backend without widening the authoritative compiled manifest.
+// renderStorageConfig keeps local backends in every generated build.
 func renderStorageConfig(input generationInput) ([]byte, error) {
 	names := discoverStorageDiskNames(input)
 	driverSet := map[string]struct{}{}
@@ -398,14 +402,12 @@ func renderStorageConfig(input generationInput) ([]byte, error) {
 	for _, active := range appPrefixedActiveDrivers(input, "STORAGE", "local", false) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers(input.environment, "STORAGE", storageDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "STORAGE", storageDriverKeys, sortStrings(driverSet), storageLocalDrivers)
 	if err != nil {
 		return nil, err
 	}
-	compiledDrivers := slices.Clone(drivers)
-	drivers = appendMissingString(drivers, "local")
 	data := storageConfigTemplateData{
-		CompiledDrivers: compiledDrivers,
+		CompiledDrivers: drivers,
 		Drivers:         make([]storageDriverSpec, 0, len(drivers)),
 		Names:           make([]storageAccessorName, 0, len(names)),
 	}
@@ -879,7 +881,8 @@ func storageDriverNameFromScope(scope env.Scope) string {
 }
 
 // buildDiskConfig rejects backends outside the generated manifest before endpoint configuration is constructed.
-// The manifest comes from STORAGE_SUPPORTED_DRIVERS, falling back to active root and named Storage scopes when that list is unset.
+// The local driver is always compiled; optional drivers come from STORAGE_SUPPORTED_DRIVERS,
+// falling back to active root and named Storage scopes when that list is unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).Trim().ToLower().String()
 	if driver == "" {

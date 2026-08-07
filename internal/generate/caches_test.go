@@ -366,8 +366,8 @@ func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
 	}
 }
 
-// TestGeneratedCacheManifestRejectsOmittedNativeFallback proves runtime environment changes cannot expand one generated artifact.
-func TestGeneratedCacheManifestRejectsOmittedNativeFallback(t *testing.T) {
+// TestGeneratedCacheManifestIncludesLocalFallbacks proves runtime changes can select local drivers but cannot add external ones.
+func TestGeneratedCacheManifestIncludesLocalFallbacks(t *testing.T) {
 	t.Parallel()
 	environment := map[string]string{
 		"CACHE_DRIVER":            "redis",
@@ -399,17 +399,23 @@ import (
 	"testing"
 )
 
-// TestRuntimeManifestAuthority verifies runtime environment cannot expand the embedded driver manifest.
+// TestRuntimeManifestAuthority verifies local drivers remain available while runtime environment cannot add external drivers.
 func TestRuntimeManifestAuthority(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SUPPORTED_DRIVERS", "memory,redis")
 	_, err := NewManager()
+	if err != nil {
+		t.Fatalf("build manager with local memory driver: %v", err)
+	}
+
+	t.Setenv("CACHE_DRIVER", "memcached")
+	_, err = NewManager()
 	if err == nil {
-		t.Fatal("expected omitted memory driver to be rejected")
+		t.Fatal("expected omitted external memcached driver to be rejected")
 	}
 	for _, expected := range []string{
-		"active driver \"memory\"",
-		"compiled choices: redis",
+		"active driver \"memcached\"",
+		"compiled choices: file, memory, null, redis",
 		"forj generate --cache",
 	} {
 		if !strings.Contains(err.Error(), expected) {

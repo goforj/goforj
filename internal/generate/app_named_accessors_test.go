@@ -71,19 +71,13 @@ func TestGenerateResourceFilesRejectsUnknownAppNamedKeys(t *testing.T) {
 	}
 }
 
-// TestGenerateResourceFilesRejectsImplicitAppNamedFallbackOutsideManifest keeps config-only scopes from selecting an uncompiled native driver.
-func TestGenerateResourceFilesRejectsImplicitAppNamedFallbackOutsideManifest(t *testing.T) {
+// TestGenerateResourceFilesAllowsImplicitAppNamedLocalFallback keeps config-only scopes usable without listing local drivers.
+func TestGenerateResourceFilesAllowsImplicitAppNamedLocalFallback(t *testing.T) {
 	configKeys := map[string]string{
 		"cache":   "BILLING_CACHE_ARCHIVE_PREFIX",
 		"events":  "BILLING_EVENTS_ARCHIVE_REDIS_CHANNEL_PREFIX",
 		"mail":    "BILLING_MAIL_ARCHIVE_FROM_ADDRESS",
 		"storage": "BILLING_STORAGE_ARCHIVE_PREFIX",
-	}
-	fallbacks := map[string]string{
-		"cache":   "memory",
-		"events":  "inproc",
-		"mail":    "log",
-		"storage": "local",
 	}
 	for _, tt := range resourceAppDriverManifestTests() {
 		configKey, relevant := configKeys[tt.name]
@@ -100,14 +94,8 @@ func TestGenerateResourceFilesRejectsImplicitAppNamedFallbackOutsideManifest(t *
 			t.Setenv("BILLING_"+tt.activeKey, tt.appDriver)
 			t.Setenv(configKey, "configured")
 
-			if _, err := tt.generate(root); err == nil {
-				t.Fatalf("generate %s with omitted named fallback unexpectedly succeeded", tt.name)
-			} else {
-				for _, expected := range []string{"BILLING_" + resourcePrefix + "_ARCHIVE_DRIVER", fallbacks[tt.name], tt.supportedKey} {
-					if !strings.Contains(err.Error(), expected) {
-						t.Fatalf("generation error %q does not contain %q", err, expected)
-					}
-				}
+			if _, err := tt.generate(root); err != nil {
+				t.Fatalf("generate %s with implicit named local fallback: %v", tt.name, err)
 			}
 		})
 	}
