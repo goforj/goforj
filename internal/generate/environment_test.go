@@ -55,6 +55,27 @@ func TestGenerateProjectFilesPrefersEnvironmentFile(t *testing.T) {
 	}
 }
 
+// TestLoadProjectGenerationInputRetainsDeploymentMetadata verifies observability generation receives the project-owned release identity instead of ambient values.
+func TestLoadProjectGenerationInputRetainsDeploymentMetadata(t *testing.T) {
+	root := newGenerationCacheProject(t)
+	writeGenerationEnvironmentFile(t, root, ".env", "APP_VERSION=v1.24.0\nAPP_REVISION=sha256:0123456789abcdef\n")
+	t.Setenv("APP_VERSION", "ambient-release")
+	t.Setenv("APP_REVISION", "ambient-revision")
+
+	input, err := loadProjectGenerationInput(root)
+	if err != nil {
+		t.Fatalf("loadProjectGenerationInput returned error: %v", err)
+	}
+	for key, want := range map[string]string{
+		"APP_VERSION":  "v1.24.0",
+		"APP_REVISION": "sha256:0123456789abcdef",
+	} {
+		if got, ok := input.environment.Lookup(key); !ok || got != want {
+			t.Errorf("project %s = %q, %t; want %q, true", key, got, ok, want)
+		}
+	}
+}
+
 // TestGenerateProjectFilesIsolatesConcurrentProjectEnvironments verifies simultaneous projects cannot exchange driver manifests.
 func TestGenerateProjectFilesIsolatesConcurrentProjectEnvironments(t *testing.T) {
 	unsetGenerationEnvironment(t, "CACHE_DRIVER", "CACHE_SUPPORTED_DRIVERS")

@@ -235,6 +235,57 @@ func TestGenerateObservabilityFilesWritesComposeTargetsUsingSharedPort(t *testin
 	assertMetricsTargets(t, targets, "Observability Test App", "prod", want)
 }
 
+// TestGenerateObservabilityFilesAddsOptionalDeploymentMetadata verifies every target from one generated plan receives the same bounded deployment identity.
+func TestGenerateObservabilityFilesAddsOptionalDeploymentMetadata(t *testing.T) {
+	projectDir := observabilityTestProjectDir(t, "http", "jobs")
+
+	t.Setenv("APP_NAME", "Observability Test App")
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("APP_VERSION", " v1.24.0 ")
+	t.Setenv("APP_REVISION", " sha256:0123456789abcdef ")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "compose")
+	t.Setenv("OBSERVABILITY_API_METRICS_HOST", "api")
+	t.Setenv("OBSERVABILITY_JOBS_METRICS_HOST", "jobs")
+
+	if _, err := GenerateObservabilityFiles(projectDir); err != nil {
+		t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
+	}
+
+	for _, target := range readMetricsTargets(t, projectDir) {
+		if got := target.Labels["release"]; got != "v1.24.0" {
+			t.Errorf("release label = %q, want %q", got, "v1.24.0")
+		}
+		if got := target.Labels["revision"]; got != "sha256:0123456789abcdef" {
+			t.Errorf("revision label = %q, want %q", got, "sha256:0123456789abcdef")
+		}
+	}
+}
+
+// TestGenerateObservabilityFilesRejectsInvalidDeploymentMetadata prevents free-form metadata from expanding scrape-target cardinality.
+func TestGenerateObservabilityFilesRejectsInvalidDeploymentMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "release whitespace", key: "APP_VERSION", value: "release candidate"},
+		{name: "revision whitespace", key: "APP_REVISION", value: "abc 123"},
+		{name: "oversized release", key: "APP_VERSION", value: strings.Repeat("a", maxDeploymentMetadataLabelLength+1)},
+		{name: "oversized revision", key: "APP_REVISION", value: strings.Repeat("a", maxDeploymentMetadataLabelLength+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projectDir := observabilityTestProjectDir(t, "http")
+			t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "metrics.internal")
+			t.Setenv(test.key, test.value)
+
+			_, err := GenerateObservabilityFiles(projectDir)
+			if err == nil || !strings.Contains(err.Error(), test.key) {
+				t.Fatalf("GenerateObservabilityFiles error = %v, want %s validation error", err, test.key)
+			}
+		})
+	}
+}
+
 // TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled verifies stale worker packages cannot restore a Jobs metrics target.
 func TestGenerateObservabilityFilesIgnoresStaleJobsRoleWhenDisabled(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs")
@@ -554,6 +605,12 @@ func assertMetricsTargets(t *testing.T, targets []metricsTargetEntry, service st
 		}
 		if entry.Labels["app"] != wantApp {
 			t.Fatalf("app label = %q, want %q", entry.Labels["app"], wantApp)
+		}
+		if _, ok := entry.Labels["release"]; ok {
+			t.Fatalf("release label = %q, want omitted without APP_VERSION", entry.Labels["release"])
+		}
+		if _, ok := entry.Labels["revision"]; ok {
+			t.Fatalf("revision label = %q, want omitted without APP_REVISION", entry.Labels["revision"])
 		}
 	}
 }

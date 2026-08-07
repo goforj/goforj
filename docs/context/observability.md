@@ -329,6 +329,7 @@ The current direction is:
 - `forj generate` owns vmagent metrics target generation
 - vmagent should consume generated target files through `file_sd_configs`
 - topology awareness belongs in generated target entries, not hand-maintained CSV env vars
+- deployment identity belongs on the scrape target: `APP_VERSION` becomes optional `release`, and `APP_REVISION` becomes optional `revision`
 
 That means target generation should be thought of as a deployment-shape problem, not as "guess a port range."
 
@@ -338,6 +339,8 @@ Current practical rules:
 - same port across multiple local host processes is not
 - host and port must both be part of target generation logic
 - the generated target file is the scrape contract for local/dev observability
+
+`release` and `revision` are trimmed, token-safe labels with a 128-character limit. Leave either source variable blank to omit its label; do not use branch names, rollout IDs, timestamps, or other free-form deployment fields. Set the two values in the deployment environment and publish the target file atomically with the deployment.
 
 If observability target generation is disabled intentionally, that should be treated as an escape hatch for custom operator-managed config, not the default posture.
 

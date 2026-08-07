@@ -120,6 +120,8 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
   - set `OBSERVABILITY_METRICS_TARGET_MODE=disabled` to fully opt out of target generation
   - or set `OBSERVABILITY_METRICS_TARGET_HOST=` empty in local modes to leave the existing `metrics-targets.json` untouched
 - Each generated target includes `service`, `environment`, `process`, and `app` labels.
+- Set `APP_VERSION` to add a bounded `release` label and `APP_REVISION` to add a bounded immutable `revision` label. Values are trimmed, must be token-safe (no whitespace), and are limited to 128 characters; blank values omit their labels.
+- Release tooling should publish `metrics-targets.json` atomically after setting those values. Do not use branch names, rollout IDs, timestamps, or other free-form deployment fields as target labels.
 - In standalone host mode, `process=app` reflects the single host process.
 - In direct source mode, `process` reflects the direct source command being scraped.
 - Use `app` to filter a single app such as `app`, `admin`, or `statuspage`.
@@ -191,6 +193,8 @@ The most useful query dimensions are:
 - `app`: which App composition app emitted the metric, such as `app`, `admin`, or `statuspage`.
 - `source`: which logical source emitted the metric.
 - `process`: which scrape target exposed the metric.
+- `release`: the optional operator-facing release version attached by the scrape target.
+- `revision`: the optional immutable source or artifact revision attached by the scrape target.
 {{- if .ProjectComponents.Cache }}
 - `cache`: which named cache handled the work.
 {{- end }}
