@@ -535,6 +535,40 @@ func TestNextStepsUseQuietFrontendInstallCommand(t *testing.T) {
 	}
 }
 
+// TestRenderWebUIKeepsFrontendInsideTheDefaultApp prevents template-relative paths from creating a second project-root frontend.
+func TestRenderWebUIKeepsFrontendInsideTheDefaultApp(t *testing.T) {
+	root := t.TempDir()
+	config := &project.Config{
+		ProjectName:  "FrontendLayout",
+		GoModuleName: "example.com/frontend-layout",
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:    true,
+				WebAPI: true,
+				WebUI:  true,
+			},
+		},
+	}
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), data, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	renderer := unitProjectRenderer(t)
+	if err := renderer.Render(ComponentRenderInput{renderAll: true, root: root}); err != nil {
+		t.Fatalf("render Web UI project: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "frontend")); !os.IsNotExist(err) {
+		t.Fatalf("project-root frontend exists after render: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cmd", "app", "frontend", "dist", "index.html")); err != nil {
+		t.Fatalf("default App frontend placeholder missing: %v", err)
+	}
+}
+
 func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
 	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: &project.Config{
 		Render: project.RenderConfig{

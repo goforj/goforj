@@ -748,12 +748,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title:     "Web UI Components Rendering",
-			enabled:   p.config.Render.Components.WebUI,
-			templates: []string{},
-			renderOnceTemplates: []string{
-				"frontend/dist/index.html.tmpl",
-			},
+			title:   "Web UI Components Rendering",
+			enabled: p.config.Render.Components.WebUI,
 			action: func() error {
 				if input.renderAll {
 					return nil
