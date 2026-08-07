@@ -817,8 +817,15 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
-		`"example.com/test/app/customer-portal"`,
 		`"example.com/test/app/customer-portal/wire"`,
+		`wire.LaunchApplication()`,
+	)
+	assertProjectRendererFileNotContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
+		`"example.com/test/app/customer-portal"`,
+		`&customerportalapp.RootCmd{}`,
+	)
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "wire", "app.go"),
+		`"example.com/test/app/customer-portal"`,
 		`&customerportalapp.RootCmd{}`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportalapp")
