@@ -622,6 +622,18 @@ func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 	}
 	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "test", "./internal/cmd")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	var generatedTestOut bytes.Buffer
+	cmd.Stdout = &generatedTestOut
+	cmd.Stderr = &generatedTestOut
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("generated launch tests failed: %v\n%s", err, generatedTestOut.String())
+	}
+
 	originalWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)

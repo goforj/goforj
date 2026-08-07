@@ -138,6 +138,24 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func CommandExitCode(err error) (int, bool)`,
 			`errors.As(err, &exitErr)`,
 		},
+		filepath.Join(base, "launch.go.tmpl"): {
+			`type LaunchConfig struct {`,
+			`func Launch(config LaunchConfig)`,
+			`func runLaunch(args []string, config LaunchConfig) error`,
+			`args = EffectiveLaunchArgs(args, config.HasRuntime)`,
+			`ApplyLaunchApp(config.AppName)`,
+			`DispatchPrebootCommand(args, config.RootCommand)`,
+			`return config.Run(args)`,
+			`func exitLaunchError(err error)`,
+		},
+		filepath.Join(base, "launch_test.go.tmpl"): {
+			`func TestRunLaunchDefaultsRuntimeApps(`,
+			`func TestRunLaunchPreservesCLIOnlyNoArgLaunches(`,
+			`func TestRunLaunchPreservesExplicitArguments(`,
+			`func TestRunLaunchReturnsAppErrors(`,
+			`func TestRunLaunchStopsAfterPrebootHelp(`,
+			`func TestRunLaunchAddsTimezoneContext(`,
+		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutTerminalWidth() int`,
 			`term.GetSize`,
@@ -569,6 +587,9 @@ func TestSourcePropagationTemplates(t *testing.T) {
 		filepath.Join(root, "wire", "app.go.tmpl"): {
 			`ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
 			`parseCtx.BindTo(ctx, (*context.Context)(nil))`,
+			`func RunApplication(args []string) error`,
+			`application, err := InitializeApplication()`,
+			`return application.Run(nil, args)`,
 		},
 		filepath.Join(root, "internal", "http", "server.go.tmpl"): {
 			`router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))`,
@@ -600,7 +621,7 @@ func TestSourcePropagationTemplates(t *testing.T) {
 	}
 }
 
-func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
+func TestMainTemplateUsesSharedLaunch(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to resolve current file path")
@@ -613,30 +634,42 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`args := cmd.EffectiveLaunchArgs(os.Args[1:], {{.Components.HasRuntime}})`,
-		`cmd.ApplyLaunchApp("{{.App.Name}}")`,
+		`cmd.Launch(cmd.LaunchConfig{`,
+		`AppName:     "{{.App.Name}}"`,
+		`HasRuntime:  {{.Components.HasRuntime}}`,
+		`RootCommand: &{{.AppPackageName}}.RootCmd{}`,
+		`Run:         wire.RunApplication`,
 		`"{{.GoModuleName}}/{{.AppImportPath}}"`,
 		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
-		`"github.com/goforj/console"`,
-		`if err := cmd.LoadEnv(); err != nil {`,
-		`if err := cmd.ConfigureTimezone(); err != nil {`,
-		`console.Fatalf("configuring timezone: %v", err)`,
-		`console.Fatalf("%v", err)`,
-		`handleCommandError(err)`,
-		`cmd.CommandExitCode(err)`,
-		`handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})`,
-		`application, err := wire.InitializeApplication()`,
-		`application.Run(nil, args)`,
+		`Apply process defaults, handle preboot commands, and start the wired App.`,
+		`Register the embedded frontend before Wire assembles the HTTP server.`,
+		`http.RegisterSpa("/*", "frontend/dist", &spa)`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected main template to contain %q", snippet)
 		}
 	}
 
-	loadEnvIndex := strings.Index(source, `if err := cmd.LoadEnv(); err != nil {`)
-	configureTimezoneIndex := strings.Index(source, `if err := cmd.ConfigureTimezone(); err != nil {`)
-	if configureTimezoneIndex < loadEnvIndex {
-		t.Fatal("expected timezone configuration to be applied after environment loading")
+	for _, snippet := range []string{
+		`cmd.EffectiveLaunchArgs`,
+		`cmd.ApplyLaunchApp`,
+		`cmd.LoadEnv`,
+		`cmd.ConfigureTimezone`,
+		`cmd.DispatchPrebootCommand`,
+		`wire.InitializeApplication`,
+		`handleCommandError`,
+		`github.com/goforj/console`,
+		`"os"`,
+	} {
+		if strings.Contains(source, snippet) {
+			t.Fatalf("expected main template to delegate %q to the shared launch boundary", snippet)
+		}
+	}
+
+	registerSPAIndex := strings.Index(source, `http.RegisterSpa("/*", "frontend/dist", &spa)`)
+	launchIndex := strings.Index(source, `cmd.Launch(cmd.LaunchConfig{`)
+	if registerSPAIndex == -1 || launchIndex == -1 || registerSPAIndex > launchIndex {
+		t.Fatal("expected SPA registration to remain visible before the shared launch boundary")
 	}
 }
 
@@ -709,8 +742,8 @@ func TestMainTemplateRendersRuntimeCapabilityPerEntrypoint(t *testing.T) {
 		components project.Components
 		want       string
 	}{
-		{name: "runtime app", components: project.Components{Jobs: true}, want: `cmd.EffectiveLaunchArgs(os.Args[1:], true)`},
-		{name: "cli app", components: project.Components{CLI: true}, want: `cmd.EffectiveLaunchArgs(os.Args[1:], false)`},
+		{name: "runtime app", components: project.Components{Jobs: true}, want: `HasRuntime:  true`},
+		{name: "cli app", components: project.Components{CLI: true}, want: `HasRuntime:  false`},
 	}
 
 	for _, test := range tests {

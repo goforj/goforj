@@ -57,7 +57,7 @@ func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 	}
 
 	mainSrc := readMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"))
-	if !strings.Contains(mainSrc, `cmd.ApplyLaunchApp("billing")`) {
+	if !strings.Contains(mainSrc, `AppName:     "billing"`) {
 		t.Fatalf("expected billing app identity in cmd/billing/main.go")
 	}
 	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))

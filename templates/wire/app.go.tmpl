@@ -276,6 +276,15 @@ func (a *App) DB() *database.Connections {
 }
 {{- end }}
 
+// RunApplication initializes the App and runs the selected command.
+func RunApplication(args []string) error {
+	application, err := InitializeApplication()
+	if err != nil {
+		return fmt.Errorf("initializing application: %w", err)
+	}
+	return application.Run(nil, args)
+}
+
 // NewApplication creates a new App instance
 func NewApplication(
 	{{- if .Components.HasDatabase }}

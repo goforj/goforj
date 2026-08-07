@@ -556,6 +556,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/resources_cmd.go.tmpl",
 				"internal/cmd/command_exit_code.go.tmpl",
 				"internal/cmd/command_exit_code_test.go.tmpl",
+				"internal/cmd/launch.go.tmpl",
+				"internal/cmd/launch_test.go.tmpl",
 				"internal/monitoring/seed_cmd.go.tmpl",
 				"internal/monitoring/reset_cmd.go.tmpl",
 				"internal/monitoring/retention_cmd.go.tmpl",

@@ -5,9 +5,7 @@ import (
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/{{.WireImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
-	"github.com/goforj/console"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
-	"os"
 )
 
 {{if .Components.WebUI}}
@@ -16,41 +14,15 @@ var spa embed.FS
 
 {{end}}
 func main() {
-	args := cmd.EffectiveLaunchArgs(os.Args[1:], {{.Components.HasRuntime}})
-	cmd.ApplyLaunchApp("{{.App.Name}}")
-
-	if err := cmd.LoadEnv(); err != nil {
-		console.Fatalf("loading env: %v", err)
-	}
-	if err := cmd.ConfigureTimezone(); err != nil {
-		console.Fatalf("configuring timezone: %v", err)
-	}
-
-	handled, err := cmd.DispatchPrebootCommand(args, &{{.AppPackageName}}.RootCmd{})
-	if err != nil {
-		handleCommandError(err)
-	} else if handled {
-		return
-	}
 {{- if .Components.WebUI}}
-
+	// Register the embedded frontend before Wire assembles the HTTP server.
 	http.RegisterSpa("/*", "frontend/dist", &spa)
 {{end}}
-	application, err := wire.InitializeApplication()
-	if err != nil {
-		console.Fatalf("initializing application: %v", err)
-	}
-
-	if err := application.Run(nil, args); err != nil {
-		handleCommandError(err)
-	}
-}
-
-// handleCommandError preserves child process statuses while retaining the App's normal fatal error handling.
-func handleCommandError(err error) {
-	if code, ok := cmd.CommandExitCode(err); ok {
-		console.Errorf("%v", err)
-		os.Exit(code)
-	}
-	console.Fatalf("%v", err)
+	// Apply process defaults, handle preboot commands, and start the wired App.
+	cmd.Launch(cmd.LaunchConfig{
+		AppName:     "{{.App.Name}}",
+		HasRuntime:  {{.Components.HasRuntime}},
+		RootCommand: &{{.AppPackageName}}.RootCmd{},
+		Run:         wire.RunApplication,
+	})
 }

@@ -1310,7 +1310,7 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 	}
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "app", "main.go"),
-		`cmd.EffectiveLaunchArgs(os.Args[1:], true)`,
+		`HasRuntime:  true`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "root_cmd.go"),
 		`cmd.RunCmd`,
@@ -1320,7 +1320,7 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 	)
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "ship", "main.go"),
-		`cmd.EffectiveLaunchArgs(os.Args[1:], false)`,
+		`HasRuntime:  false`,
 	)
 	assertProjectRendererFileNotContains(t, filepath.Join("app", "ship", "root_cmd.go"),
 		`cmd.RunCmd`,
