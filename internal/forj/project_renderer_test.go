@@ -1309,7 +1309,7 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 		t.Fatalf("render CLI-only app: %v", err)
 	}
 
-	assertProjectRendererFileContains(t, filepath.Join("cmd", "app", "main.go"),
+	assertProjectRendererFileContains(t, filepath.Join("app", "wire", "app.go"),
 		`HasRuntime:  true`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "root_cmd.go"),
@@ -1319,7 +1319,7 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 		`provideRunCmd,`,
 	)
 
-	assertProjectRendererFileContains(t, filepath.Join("cmd", "ship", "main.go"),
+	assertProjectRendererFileContains(t, filepath.Join("app", "ship", "wire", "app.go"),
 		`HasRuntime:  false`,
 	)
 	assertProjectRendererFileNotContains(t, filepath.Join("app", "ship", "root_cmd.go"),

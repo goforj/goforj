@@ -587,7 +587,13 @@ func TestSourcePropagationTemplates(t *testing.T) {
 		filepath.Join(root, "wire", "app.go.tmpl"): {
 			`ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
 			`parseCtx.BindTo(ctx, (*context.Context)(nil))`,
-			`func RunApplication(args []string) error`,
+			`func LaunchApplication()`,
+			`cmd.Launch(cmd.LaunchConfig{`,
+			`AppName:     "{{.App.Name}}"`,
+			`HasRuntime:  {{.Components.HasRuntime}}`,
+			`RootCommand: &{{.AppPackageName}}.RootCmd{}`,
+			`Run:         runApplication`,
+			`func runApplication(args []string) error`,
 			`application, err := InitializeApplication()`,
 			`return application.Run(nil, args)`,
 		},
@@ -634,14 +640,9 @@ func TestMainTemplateUsesSharedLaunch(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`cmd.Launch(cmd.LaunchConfig{`,
-		`AppName:     "{{.App.Name}}"`,
-		`HasRuntime:  {{.Components.HasRuntime}}`,
-		`RootCommand: &{{.AppPackageName}}.RootCmd{}`,
-		`Run:         wire.RunApplication`,
-		`"{{.GoModuleName}}/{{.AppImportPath}}"`,
+		`wire.LaunchApplication()`,
 		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
-		`Apply process defaults, handle preboot commands, and start the wired App.`,
+		`Launch the App after entrypoint-owned registrations are complete.`,
 		`Register the embedded frontend before Wire assembles the HTTP server.`,
 		`http.RegisterSpa("/*", "frontend/dist", &spa)`,
 	} {
@@ -657,8 +658,12 @@ func TestMainTemplateUsesSharedLaunch(t *testing.T) {
 		`cmd.ConfigureTimezone`,
 		`cmd.DispatchPrebootCommand`,
 		`wire.InitializeApplication`,
+		`cmd.Launch`,
+		`cmd.LaunchConfig`,
 		`handleCommandError`,
 		`github.com/goforj/console`,
+		`"{{.GoModuleName}}/{{.AppImportPath}}"`,
+		`"{{.GoModuleName}}/internal/cmd"`,
 		`"os"`,
 	} {
 		if strings.Contains(source, snippet) {
@@ -667,7 +672,7 @@ func TestMainTemplateUsesSharedLaunch(t *testing.T) {
 	}
 
 	registerSPAIndex := strings.Index(source, `http.RegisterSpa("/*", "frontend/dist", &spa)`)
-	launchIndex := strings.Index(source, `cmd.Launch(cmd.LaunchConfig{`)
+	launchIndex := strings.Index(source, `wire.LaunchApplication()`)
 	if registerSPAIndex == -1 || launchIndex == -1 || registerSPAIndex > launchIndex {
 		t.Fatal("expected SPA registration to remain visible before the shared launch boundary")
 	}
@@ -721,18 +726,18 @@ func TestDefaultLaunchTemplateDoesNotDependOnBuildState(t *testing.T) {
 	}
 }
 
-// TestMainTemplateRendersRuntimeCapabilityPerEntrypoint verifies mixed projects cannot leak one app's launch behavior into another.
-func TestMainTemplateRendersRuntimeCapabilityPerEntrypoint(t *testing.T) {
+// TestWireTemplateRendersRuntimeCapabilityPerApp verifies mixed projects cannot leak one App's launch behavior into another.
+func TestWireTemplateRendersRuntimeCapabilityPerApp(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to resolve current file path")
 	}
-	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "cmd", "app", "main.go.tmpl")
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "wire", "app.go.tmpl")
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("read main.go template: %v", err)
 	}
-	mainTemplate, err := template.New("main.go").Parse(string(content))
+	wireTemplate, err := template.New("app.go").Parse(string(content))
 	if err != nil {
 		t.Fatalf("parse main.go template: %v", err)
 	}
@@ -757,8 +762,8 @@ func TestMainTemplateRendersRuntimeCapabilityPerEntrypoint(t *testing.T) {
 				AppImportPath:  "app",
 				WireImportPath: "app/wire",
 			}
-			if err := mainTemplate.Execute(&rendered, data); err != nil {
-				t.Fatalf("render main.go template: %v", err)
+			if err := wireTemplate.Execute(&rendered, data); err != nil {
+				t.Fatalf("render wire app template: %v", err)
 			}
 			if !strings.Contains(rendered.String(), test.want) {
 				t.Fatalf("expected rendered entrypoint to contain %q, got:\n%s", test.want, rendered.String())

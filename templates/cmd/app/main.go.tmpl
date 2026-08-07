@@ -2,9 +2,7 @@ package main
 
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
-	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/{{.WireImportPath}}"
-	"{{.GoModuleName}}/internal/cmd"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 )
 
@@ -18,11 +16,6 @@ func main() {
 	// Register the embedded frontend before Wire assembles the HTTP server.
 	http.RegisterSpa("/*", "frontend/dist", &spa)
 {{end}}
-	// Apply process defaults, handle preboot commands, and start the wired App.
-	cmd.Launch(cmd.LaunchConfig{
-		AppName:     "{{.App.Name}}",
-		HasRuntime:  {{.Components.HasRuntime}},
-		RootCommand: &{{.AppPackageName}}.RootCmd{},
-		Run:         wire.RunApplication,
-	})
+	// Launch the App after entrypoint-owned registrations are complete.
+	wire.LaunchApplication()
 }

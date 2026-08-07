@@ -38,17 +38,12 @@ func main() {
 	// Register the embedded frontend before Wire assembles the HTTP server.
 	http.RegisterSpa("/*", "frontend/dist", &spa)
 
-	// Apply process defaults, handle preboot commands, and start the wired App.
-	cmd.Launch(cmd.LaunchConfig{
-		AppName:     "app",
-		HasRuntime:  true,
-		RootCommand: &app.RootCmd{},
-		Run:         wire.RunApplication,
-	})
+	// Launch the App after entrypoint-owned registrations are complete.
+	wire.LaunchApplication()
 }
 ```
 
-`cmd.Launch` owns environment and timezone setup, preboot command dispatch, default runtime selection, and process exit behavior. `wire.RunApplication` constructs the dependency graph only after preboot commands have had a chance to complete without booting the full App.
+`wire.LaunchApplication` supplies the App-specific root command and runtime capability to the shared launch sequence. Environment and timezone setup, preboot command dispatch, default runtime selection, and process exit behavior remain framework-owned. Wire constructs the dependency graph only after preboot commands have had a chance to complete without booting the full App.
 
 When the generated app has Web API, Web UI, Scheduler, or Jobs capability, launching its binary without arguments starts the combined `run` host. A CLI-only app keeps no-argument help behavior. Explicit commands, including `run` and `--help`, always remain available.
 
