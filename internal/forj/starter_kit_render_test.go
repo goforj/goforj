@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -15,6 +16,43 @@ import (
 // starterKitFrontendDir keeps starter-kit assertions on the canonical default-App layout.
 func starterKitFrontendDir() string {
 	return projectlayout.FrontendDir(".", project.DefaultApp())
+}
+
+func TestFrontendEnvironmentHelpersDocumentGeneratedContract(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatesRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+	files := []string{
+		filepath.Join(templatesRoot, "starter-kits", "react", "frontend", "goforj.env.ts"),
+		filepath.Join(templatesRoot, "starter-kits", "vue", "frontend", "goforj.env.ts"),
+		filepath.Join(templatesRoot, "demo", "frontend", "goforj.env.ts"),
+	}
+	comments := []string{
+		"// defaultApp ",
+		"// resolveGoForjFrontendEnv ",
+		"// resolveApp ",
+		"// collectFrontendDefines ",
+		"// resolveBackendTarget ",
+		"// frontendEnvValue ",
+		"// targetHTTPPort ",
+		"// discoverApps ",
+		"// defineMissing ",
+		"// envPrefix ",
+	}
+
+	for _, path := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read frontend environment helper %s: %v", path, err)
+		}
+		for _, comment := range comments {
+			if !strings.Contains(string(content), comment) {
+				t.Errorf("frontend environment helper %s is missing %q", path, comment)
+			}
+		}
+	}
 }
 
 // TestScaffoldStarterKitPreservesExistingFrontendFiles verifies re-rendering overlays starter assets without clearing the frontend workspace.
