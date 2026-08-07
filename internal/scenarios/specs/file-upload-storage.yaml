@@ -28,7 +28,7 @@ markdown:
   prerequisites: |
     Start from the App used in the previous scenarios.
 
-    The generated App should have HTTP and storage support enabled.
+    Your App should have HTTP and storage support enabled.
   before: |
     the App can read user profiles through a service, repository, and named cache.
   after: |
@@ -118,7 +118,7 @@ markdown:
 steps:
   - title: Add a Named Storage Disk
     explain: |
-      Add a named `uploads` disk to `.env`, then run the build pipeline so the generated App exposes `app.Storage().Uploads()`.
+      Add a named `uploads` disk to `.env`, then run the build pipeline so your App exposes `app.Storage().Uploads()`.
     replace:
       path: .env
       language: dotenv

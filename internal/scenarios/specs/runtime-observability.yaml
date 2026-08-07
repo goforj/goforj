@@ -144,7 +144,7 @@ markdown:
         source="scheduler"
         ```
 
-        Scheduler metrics use the bounded `job_name` label for the registered schedule name. Metric names can evolve with the metrics package and generated App version, but the label discipline must remain stable: bounded operational names, not user-controlled data.
+        Scheduler metrics use the bounded `job_name` label for the registered schedule name. Metric names can evolve with the metrics package and App version, but the label discipline must remain stable: bounded operational names, not user-controlled data.
     - title: Check Inspects
       content: |
         Open Lighthouse and inspect recent executions.

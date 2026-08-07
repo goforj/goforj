@@ -23,7 +23,8 @@ markdown:
     The schedule decides when daily report work should begin. The queue still owns execution, retries, worker lifecycle, and failure visibility.
   what_you_build:
     - "`internal/reports/daily.go` selects users that need daily reports."
-    - "`app/schedules.go` registers a named `reports:daily` schedule."
+    - "`internal/reports/daily_schedule.go` keeps the schedule's name, interval, and handler together."
+    - "`forj make:schedule` adds the schedule constructor to the App schedule collection without replacing `app/schedules.go`."
     - "The schedule calls a domain-owned method instead of putting report logic in scheduler bootstrap."
     - "The method dispatches `reports:generate` jobs, so workers continue to process report generation."
   diagrams:
@@ -38,7 +39,7 @@ markdown:
   prerequisites: |
     Complete [Reports Generate Job](/scenarios/reports-generate-job) first.
 
-    The generated App should have scheduler and jobs enabled. Verify these generated packages exist:
+    Your App should have scheduler and jobs enabled. Verify these generated packages exist:
 
     ```text
     internal/schedules
@@ -51,10 +52,11 @@ markdown:
     `reports:daily` can start the same report workflow on a recurring schedule. The schedule decides when work begins; the queue and workers still own execution.
   files:
     - internal/reports/daily.go
+    - internal/reports/daily_schedule.go
     - internal/reports/daily_test.go
     - internal/users/repository.go
-    - app/schedules.go
     - app/wire/inject_services_app.go
+    - app/wire/inject_schedules_app.go
   file_groups:
     - title: Reports feature
       files:
@@ -65,18 +67,19 @@ markdown:
         - internal/users/repository.go
     - title: Scheduler
       files:
-        - app/schedules.go
+        - internal/reports/daily_schedule.go
+        - app/wire/inject_schedules_app.go
     - title: App wiring
       files:
         - app/wire/inject_services_app.go
   manual_check_title: Verify the Schedule
   manual_check: |
-    For a fast local check, first edit `app/schedules.go` to use a short interval:
+    For a fast local check, first edit `DailySchedule.Interval` in `internal/reports/daily_schedule.go` to use a short interval:
 
     ```go
-    s.Every(30).Seconds().
-      Name("reports:daily").
-      Do(s.InspectTask("reports:daily", r.dailyReports.Run))
+    func (s *DailySchedule) Interval() (time.Duration, error) {
+      return 30 * time.Second, nil
+    }
     ```
 
     Rebuild after changing the schedule:
@@ -91,7 +94,7 @@ markdown:
     forj app
     ```
 
-    After the check, restore `DailyAt("04:00")` in `app/schedules.go` and rebuild again:
+    After the check, restore `24 * time.Hour` in `internal/reports/daily_schedule.go` and rebuild again:
 
     ```bash
     forj build
@@ -244,67 +247,51 @@ steps:
         	return targets, nil
         }
 
-  - title: Import Reports into the Schedule Registry
+  - title: Scaffold the Daily Schedule
     explain: |
-      Add the daily runner package to the app-owned schedule registry.
-    replace:
-      path: app/schedules.go
-      language: go
-      old: |
-                "{{module}}/internal/schedules"
-      new: |
-                "{{module}}/internal/reports"
-                "{{module}}/internal/schedules"
+      Use the App-owned generator so the schedule enters the existing `AppSchedules` collection without replacing the App registry or any schedules already registered there.
+    run:
+      run: ["forj", "make:schedule", "reports:daily", "--every", "24h", "--no-open"]
 
-  - title: Add Schedule Registry Field
+  - title: Connect the Schedule to the Runner
     explain: |
-      Store the injected runner on the app schedule registry.
-    replace:
-      path: app/schedules.go
+      Replace the new App-owned schedule scaffold with its real dependency and handler. Its constructor is already present in `app/wire/inject_schedules_app.go`, so Wire supplies `DailyRunner` when it builds the schedule collection.
+    write:
+      path: internal/reports/daily_schedule.go
       language: go
-      old: |
-                type ScheduleRegistry struct {
-      new: |
-                type ScheduleRegistry struct {
-                        dailyReports *reports.DailyRunner
+      content: |
+        // Package reports owns report generation and its recurring dispatch boundary.
+        package reports
 
-  - title: Add Schedule Registry Constructor Parameter
-    explain: |
-      Wire can now provide the runner to the app schedule registry.
-    replace:
-      path: app/schedules.go
-      language: go
-      old: |
-                func NewScheduleRegistry(
-      new: |
-                func NewScheduleRegistry(
-                        dailyReports *reports.DailyRunner,
+        import (
+                "context"
+                "time"
+        )
 
-  - title: Assign Schedule Registry Runner
-    explain: |
-      Preserve generated schedule wiring and add the new field assignment.
-    replace:
-      path: app/schedules.go
-      language: go
-      old: |
-                return &ScheduleRegistry{
-      new: |
-                return &ScheduleRegistry{
-                        dailyReports: dailyReports,
+        // DailySchedule dispatches the daily report workflow on its configured interval.
+        type DailySchedule struct {
+                runner *DailyRunner
+        }
 
-  - title: Register the Schedule
-    explain: |
-      Keep the registry declarative. The registry names the schedule and points to the domain-owned method.
-    replace:
-      path: app/schedules.go
-      language: go
-      old: |
-                func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
-      new: |
-                func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
-                        s.DailyAt("04:00").
-                                Name("reports:daily").
-                                Do(s.InspectTask("reports:daily", r.dailyReports.Run))
+        // NewDailySchedule requires the workflow that this schedule triggers.
+        func NewDailySchedule(runner *DailyRunner) *DailySchedule {
+                return &DailySchedule{runner: runner}
+        }
+
+        // Name returns the operational schedule name.
+        func (s *DailySchedule) Name() string {
+                return "reports:daily"
+        }
+
+        // Interval returns how often the schedule should run.
+        func (s *DailySchedule) Interval() (time.Duration, error) {
+                return 24 * time.Hour, nil
+        }
+
+        // Handle dispatches eligible report work when the schedule is due.
+        func (s *DailySchedule) Handle(ctx context.Context) error {
+                return s.runner.Run(ctx)
+        }
 
   - title: Wire the Runner
     explain: |

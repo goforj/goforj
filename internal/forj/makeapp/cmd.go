@@ -145,7 +145,7 @@ func (c *Cmd) Run() error {
 	console.Infof("Entrypoint: %s", app.Entrypoint)
 	console.Infof("Composition: %s", app.AppDir)
 	if c.SkipWire {
-		console.Infof("Run forj render or wire after reviewing the generated app.")
+		console.Infof("Review the new App, then run forj render or wire.")
 	}
 	return nil
 }

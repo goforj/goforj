@@ -616,10 +616,12 @@ func writeScenarioVerification(b *strings.Builder, spec ScenarioSpec) {
 			b.WriteString("\n```\n\n")
 			if len(command.Contains) > 0 {
 				b.WriteString("Expected output includes:\n\n")
+				b.WriteString("```text\n")
 				for _, item := range command.Contains {
-					fmt.Fprintf(b, "- `%s`\n", item)
+					b.WriteString(item)
+					b.WriteString("\n")
 				}
-				b.WriteString("\n")
+				b.WriteString("```\n\n")
 			}
 		}
 	}

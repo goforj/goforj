@@ -278,6 +278,10 @@ func TestRenderScenarioMarkdownIncludesVerificationBanner(t *testing.T) {
 			t.Fatalf("generated markdown missing %q\n%s", token, body)
 		}
 	}
+	wantVerification := "```bash\nforj route:list\n```\n\nExpected output includes:\n\n```text\n/api/v1/users/:id\n```"
+	if !strings.Contains(body, wantVerification) {
+		t.Fatalf("generated markdown does not keep readable expected output beside its command\n%s", body)
+	}
 }
 
 // TestRenderScenarioMarkdownQuotesFrontMatter keeps punctuation and line breaks from changing YAML structure.

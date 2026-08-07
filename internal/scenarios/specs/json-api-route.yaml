@@ -11,7 +11,7 @@ markdown:
   path_total: 7
   estimated_minutes: 15
   intro: |
-    This scenario adds a `GET /api/v1/users/:id` endpoint to a generated GoForj App.
+    This scenario adds a `GET /api/v1/users/:id` endpoint to a GoForj App.
 
     The endpoint is intentionally small. It establishes the normal shape for application features: start from the make command, keep the controller thin, put behavior behind a service, register providers explicitly, and verify the route through the generated runtime.
   what_you_build:
@@ -21,7 +21,7 @@ markdown:
     - "`appSet` in `app/wire` provides the service."
     - "`forj route:list` shows the registered endpoint."
   prerequisites: |
-    Start from a generated GoForj App with HTTP enabled.
+    Start from a GoForj App with HTTP enabled.
   before: |
     the App has the generated HTTP runtime but no application-owned user feature.
   after: |
