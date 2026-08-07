@@ -378,7 +378,8 @@ func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
 	commandLog := installNewProjectCommandProbe(t)
 	m := initialModel()
 	m.targetPath = target
-	m.atlasMode = atlasModeSkip
+	m.atlasMode = atlasModeRecommended
+	m.atlasRecommendations = []string{"codex"}
 	m.config.ProjectName = "Rooted App"
 	m.config.GoModuleName = "example.com/rooted"
 	m.config.Render.Components = project.Components{CLI: true, WebAPI: true, WebUI: true}
@@ -405,6 +406,29 @@ func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
 		}
 	}
 	assertNewProjectCommandsRootedAt(t, commandLog, target)
+	for _, path := range []string{
+		"AGENTS.md",
+		filepath.Join(".agents", "skills"),
+		filepath.Join(".codex", "config.toml"),
+	} {
+		if _, err := os.Stat(filepath.Join(target, path)); err != nil {
+			t.Fatalf("selected Codex projection %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{
+		"CLAUDE.md",
+		"GEMINI.md",
+		".claude",
+		".gemini",
+		".vscode",
+		filepath.Join(".github", "copilot-instructions.md"),
+		filepath.Join(".github", "instructions"),
+		filepath.Join(".github", "prompts"),
+	} {
+		if _, err := os.Stat(filepath.Join(target, path)); !os.IsNotExist(err) {
+			t.Fatalf("unselected agent projection %s was rendered: %v", path, err)
+		}
+	}
 
 	config, err := project.LoadProjectConfigAt(target)
 	if err != nil {

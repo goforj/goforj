@@ -13,33 +13,28 @@ type AgentOption struct {
 	Detected    bool
 }
 
-// AgentOptions returns supported agents with project/system detection state.
-func AgentOptions(ctx context.Context, root string) []AgentOption {
-	root = firstNonEmpty(root, ".")
+// AgentOptions returns supported agents with machine-local installation state.
+func AgentOptions(ctx context.Context, _ string) []AgentOption {
 	options := []AgentOption{}
 	for _, agent := range agents.Builtins() {
 		options = append(options, AgentOption{
 			Name:        agent.Name(),
 			DisplayName: agent.DisplayName(),
-			Detected:    agent.DetectProject(root) || agent.DetectSystem(ctx),
+			Detected:    agent.DetectSystem(ctx),
 		})
 	}
 	return options
 }
 
-// RecommendedAgents returns detected agents or Codex when none are detected.
+// RecommendedAgents returns one preferred installed agent or Codex when none are detected.
 func RecommendedAgents(ctx context.Context, root string) []string {
 	options := AgentOptions(ctx, root)
-	names := []string{}
 	for _, option := range options {
 		if option.Detected {
-			names = append(names, option.Name)
+			return []string{option.Name}
 		}
 	}
-	if len(names) == 0 {
-		return []string{"codex"}
-	}
-	return names
+	return []string{"codex"}
 }
 
 // DisplayName returns the user-facing name for a supported agent.
