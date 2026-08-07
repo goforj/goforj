@@ -642,7 +642,7 @@ func TestMainTemplateUsesSharedLaunch(t *testing.T) {
 	for _, snippet := range []string{
 		`wire.LaunchApplication()`,
 		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
-		`Launch the App after entrypoint-owned registrations are complete.`,
+		`Launch the App after its required generated registrations are complete.`,
 		`Register the embedded frontend before Wire assembles the HTTP server.`,
 		`http.RegisterSpa("/*", "frontend/dist", &spa)`,
 	} {
