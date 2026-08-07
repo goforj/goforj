@@ -224,6 +224,8 @@ func NewCommands(
 		"package jobs",
 		`const SyncReportsJobTypeName = "syncreports"`,
 		"type SyncReportsJob struct",
+		"Queue(ctx context.Context, payload SyncReportsJobPayload) error",
+		"json.Marshal(payload)",
 		`.OnQueue("reports")`,
 	})
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
@@ -236,6 +238,7 @@ func NewCommands(
 		"package billing",
 		`const SyncReportsJobTypeName = "billing:sync-reports"`,
 		"type SyncReportsJob struct",
+		"Queue(ctx context.Context, payload SyncReportsJobPayload) error",
 	})
 	assertFileContains(t, filepath.Join(projectDir, "app", "wire", "inject_jobs_app.go"), []string{
 		`"example.com/testapp/internal/billing"`,

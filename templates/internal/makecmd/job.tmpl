@@ -26,20 +26,15 @@ func New{{ .StructName }}(queues *queues.Manager) *{{ .StructName }} {
 	return &{{ .StructName }}{queues: queues}
 }
 
-// Queue creates a task and dispatches it to the selected queue.
-// Add application inputs as arguments when defining the payload contract.
-func (t *{{ .StructName }}) Queue(ctx context.Context, name string) error {
-	var p {{ .StructName }}Payload
-	// add your payload fields here
-	// p.User = name
-
-	payload, err := json.Marshal(p)
+// Queue dispatches the typed payload to the selected queue.
+func (t *{{ .StructName }}) Queue(ctx context.Context, payload {{ .StructName }}Payload) error {
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 	_, err = t.queues.WithContext(ctx).Dispatch(
-		queue.NewJob({{ .StructName }}TypeName).Payload(payload).OnQueue({{ printf "%q" .QueueName }}),
-		// queue.NewJob({{ .StructName }}TypeName).Payload(payload).OnQueue({{ printf "%q" .QueueName }}).Timeout(1*time.Minute), // uncomment if you want to set a timeout
+		queue.NewJob({{ .StructName }}TypeName).Payload(data).OnQueue({{ printf "%q" .QueueName }}),
+		// queue.NewJob({{ .StructName }}TypeName).Payload(data).OnQueue({{ printf "%q" .QueueName }}).Timeout(1*time.Minute), // uncomment if you want to set a timeout
 	)
 	return err
 }
