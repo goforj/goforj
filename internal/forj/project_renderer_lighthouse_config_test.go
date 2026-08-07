@@ -9,9 +9,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestSyncLegacyGeneratedTemplatesRestoresProjectConfigOwnership verifies an
-// upgraded render replaces Lighthouse's persisted model with the project package.
-func TestSyncLegacyGeneratedTemplatesRestoresProjectConfigOwnership(t *testing.T) {
+// TestSyncLegacyGeneratedTemplatesUsesSharedProjectConfig verifies an upgraded render removes the duplicated model and imports the canonical package.
+func TestSyncLegacyGeneratedTemplatesUsesSharedProjectConfig(t *testing.T) {
 	originalWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get working directory: %v", err)
@@ -35,6 +34,17 @@ func TestSyncLegacyGeneratedTemplatesRestoresProjectConfigOwnership(t *testing.T
 	if err := os.WriteFile(serverPath, []byte(legacyServer), 0o644); err != nil {
 		t.Fatalf("write legacy Lighthouse server: %v", err)
 	}
+	projectDir := "project"
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create generated project package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "config.go"), []byte("package project\n"), 0o644); err != nil {
+		t.Fatalf("write generated project config: %v", err)
+	}
+	generatedTestPath := filepath.Join(lighthouseDir, "project_config_test.go")
+	if err := os.WriteFile(generatedTestPath, []byte("package lighthouse\n"), 0o644); err != nil {
+		t.Fatalf("write generated project config tests: %v", err)
+	}
 
 	renderer := unitProjectRenderer(t)
 	renderer.config = &project.Config{
@@ -47,23 +57,23 @@ func TestSyncLegacyGeneratedTemplatesRestoresProjectConfigOwnership(t *testing.T
 		t.Fatalf("sync legacy templates: %v", err)
 	}
 
-	for _, path := range []string{
-		filepath.Join("project", "config.go"),
-		filepath.Join(lighthouseDir, "project_config_patch.go"),
-	} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("expected restored config file %s: %v", path, err)
-		}
+	if _, err := os.Stat(filepath.Join(lighthouseDir, "project_config_patch.go")); err != nil {
+		t.Fatalf("expected restored Lighthouse config patch: %v", err)
 	}
 	if _, err := os.Stat(obsoletePath); !os.IsNotExist(err) {
 		t.Fatalf("obsolete Lighthouse config remains, stat error = %v", err)
+	}
+	for _, path := range []string{projectDir, generatedTestPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("duplicated generated config artifact remains at %s: %v", path, err)
+		}
 	}
 	server, err := os.ReadFile(serverPath)
 	if err != nil {
 		t.Fatalf("read migrated Lighthouse server: %v", err)
 	}
 	for _, expected := range []string{
-		`"example.com/testapp/project"`,
+		`"github.com/goforj/goforj/project"`,
 		"func loadProjectConfig() (*project.Config, error)",
 	} {
 		if !strings.Contains(string(server), expected) {

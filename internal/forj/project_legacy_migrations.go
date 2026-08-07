@@ -311,6 +311,9 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		requires []string
 	}
 
+	if err := p.removeDuplicatedProjectConfig(); err != nil {
+		return err
+	}
 	if err := p.workspace.validateLegacyAppServiceInjectorOwnership(project.DefaultApp()); err != nil {
 		return err
 	}
@@ -330,7 +333,7 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 			requires: []string{
 				`"/auth/dev-session"`,
 				`group.GET("/*"`,
-				p.config.GoModuleName + "/project",
+				"github.com/goforj/goforj/project",
 			},
 		},
 		{
@@ -378,14 +381,7 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		}
 	}
 
-	if err := p.renderTemplateIfMissing(
-		filepath.Join("project", "config.go"),
-		"project/config.go.tmpl",
-		p.config,
-	); err != nil {
-		return err
-	}
-	if err := p.renderTemplateIfMissing(
+	if err := p.renderTemplateFile(
 		filepath.Join("internal", "lighthouse", "project_config_patch.go"),
 		"internal/lighthouse/project_config_patch.go.tmpl",
 		p.config,
@@ -397,6 +393,20 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	}
 
 	return nil
+}
+
+// removeDuplicatedProjectConfig retires framework-owned copies now provided by the shared project package.
+func (p *ProjectRenderer) removeDuplicatedProjectConfig() error {
+	for _, path := range []string{
+		filepath.Join("project", "config.go"),
+		filepath.Join("internal", "lighthouse", "project_config_test.go"),
+	} {
+		if _, err := p.workspace.removeFileIfExists(path); err != nil {
+			return err
+		}
+	}
+	_, err := p.workspace.removeEmptyDir("project")
+	return err
 }
 
 // syncAppOwnedWireSetNames updates preserved app-owned injectors to the current set naming contract.

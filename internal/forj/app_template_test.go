@@ -12,53 +12,29 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig verifies that
-// generated settings saves retain lifecycle fields older UIs do not expose.
-func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
+// TestLighthouseProjectConfigTemplatesUseSharedProjectModel verifies generated settings code depends on the canonical configuration package.
+func TestLighthouseProjectConfigTemplatesUseSharedProjectModel(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to resolve current file path")
 	}
 	templatesRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
 	files := map[string][]string{
-		filepath.Join("project", "config.go.tmpl"): {
-			`package project`,
-			`legacyComponentContractVersion`,
-			`Watch    any`,
-			`Root     string`,
-			`Roots    []string`,
-			`Files    DevWatchMatchers`,
-			`Dirs     DevWatchMatchers`,
-			`Apps              map[string]any`,
-			`Extra`,
-			`ModuleReplaces`,
-			`Observability`,
-			`Cache`,
-			`Events`,
-			`Storage`,
-			`func (c *ProjectConfig) UnmarshalYAML(`,
-			`func normalizeAppComponents(`,
-			`func (c *DevConfig) SetApps(`,
-		},
 		filepath.Join("internal", "lighthouse", "project_config_patch.go.tmpl"): {
-			`import "{{.GoModuleName}}/project"`,
+			`import "github.com/goforj/goforj/project"`,
 			`*[]project.DevWatch`,
+			`*map[string]project.DevApp`,
 			`func applyDevConfigUpdate(`,
 			`func mergeLighthouseDevWatches(`,
-			`if _, scalar := existing.Watch.(string); scalar`,
+			`if existing.IsLegacy()`,
 		},
 		filepath.Join("internal", "lighthouse", "server.go.tmpl"): {
-			`"{{.GoModuleName}}/project"`,
+			`"github.com/goforj/goforj/project"`,
 			`Dev          *devConfigUpdate`,
 			`Components   *project.Components`,
 			`applyDevConfigUpdate(&current.Dev, *payload.Dev)`,
+			`current.Render.Components = *payload.Components`,
 			`func loadProjectConfig() (*project.Config, error)`,
-		},
-	}
-	forbiddenSnippets := map[string][]string{
-		filepath.Join("project", "config.go.tmpl"): {
-			`CurrentComponentContractVersion`,
-			`ComponentContractVersion int`,
 		},
 	}
 	for name, snippets := range files {
@@ -69,11 +45,6 @@ func TestLighthouseProjectConfigTemplatesPreserveNativeDevConfig(t *testing.T) {
 		for _, snippet := range snippets {
 			if !strings.Contains(string(content), snippet) {
 				t.Fatalf("expected Lighthouse template %s to contain %q", name, snippet)
-			}
-		}
-		for _, snippet := range forbiddenSnippets[name] {
-			if strings.Contains(string(content), snippet) {
-				t.Fatalf("expected Lighthouse template %s to omit retired API %q", name, snippet)
 			}
 		}
 	}
