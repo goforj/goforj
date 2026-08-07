@@ -480,7 +480,7 @@ render:
 
 	assertFileContains(t, "GEMINI.md", "GoForj Atlas")
 	assertFileContains(t, filepath.Join(".gemini", "settings.json"), "atlas:mcp")
-	assertFileContains(t, filepath.Join(".gemini", "skills", "goforj-make-commands", "GEMINI.md"), "forj <app> make:*")
+	assertFileContains(t, filepath.Join(".gemini", "skills", "goforj-make-commands", "SKILL.md"), "forj <app> make:*")
 	assertFileContains(t, filepath.Join(".goforj", "atlas.json"), `"gemini"`)
 }
 

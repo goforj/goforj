@@ -10,6 +10,7 @@ import (
 type UpdateCmd struct {
 	Agent         []string `help:"Agent to update. Repeatable. Supported: codex, claude, copilot, gemini"`
 	AllAgents     bool     `help:"Update all supported agents"`
+	Discover      bool     `help:"Re-detect the preferred local agent and update the committed selection"`
 	Guidelines    bool     `help:"Update generated guideline files"`
 	Skills        bool     `help:"Update generated skill or instruction files"`
 	MCP           bool     `help:"Update MCP configuration"`
@@ -34,6 +35,7 @@ func (c *UpdateCmd) Run() error {
 		Project:       Project("."),
 		Agents:        c.Agent,
 		AllAgents:     c.AllAgents,
+		Discover:      c.Discover,
 		Guidelines:    c.Guidelines,
 		Skills:        c.Skills,
 		MCP:           c.MCP,
