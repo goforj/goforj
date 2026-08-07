@@ -18,6 +18,26 @@ import (
 
 type composeEnvironmentValues []string
 
+var developmentServiceComposeOverrideKeys = []string{
+	"DEV_SERVICE_IP_ADDRESS",
+	"RUSTFS_API_PORT", "RUSTFS_CONSOLE_PORT", "RUSTFS_ACCESS_KEY", "RUSTFS_SECRET_KEY",
+	"OPENSEARCH_HTTP_PORT", "OPENSEARCH_ANALYZER_PORT", "OPENSEARCH_DASHBOARDS_PORT", "OPENSEARCH_INITIAL_ADMIN_PASSWORD",
+	"NATS_CLIENT_PORT", "NATS_MONITORING_PORT", "NATS_USERNAME", "NATS_PASSWORD",
+	"RABBITMQ_AMQP_PORT", "RABBITMQ_MANAGEMENT_PORT", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD",
+	"REDPANDA_ADVERTISED_HOST", "REDPANDA_SCHEMA_REGISTRY_PORT", "REDPANDA_PANDAPROXY_PORT",
+	"REDPANDA_KAFKA_PORT", "REDPANDA_ADMIN_PORT", "REDPANDA_CONSOLE_PORT",
+	"DYNAMODB_PORT", "ELASTICMQ_PORT", "ELASTICMQ_UI_PORT", "PUBSUB_PORT",
+	"MEMCACHED_PORT", "MEMCACHED_MEMORY_MB",
+	"SFTPGO_SFTP_PORT", "SFTPGO_HTTP_PORT", "SFTPGO_ADMIN_USERNAME", "SFTPGO_ADMIN_PASSWORD",
+	"ADMINER_PORT", "JAEGER_UI_PORT", "JAEGER_OTLP_GRPC_PORT", "JAEGER_OTLP_HTTP_PORT",
+	"QDRANT_HTTP_PORT", "QDRANT_GRPC_PORT", "TEMPORAL_GRPC_PORT", "TEMPORAL_UI_PORT",
+	"KEYCLOAK_HTTP_PORT", "KEYCLOAK_MEMORY_LIMIT", "KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME", "KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
+	"MOCKSERVER_PORT", "MOCKSERVER_MEMORY_LIMIT", "MOCKSERVER_LOG_LEVEL",
+	"TOXIPROXY_API_PORT", "TOXIPROXY_PROXY_PORT", "TOXIPROXY_LOG_LEVEL",
+	"CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_NATIVE_PORT", "CLICKHOUSE_DATABASE", "CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD",
+	"MEILISEARCH_PORT",
+}
+
 // UnmarshalYAML normalizes both Compose environment syntaxes so catalog-wide assertions stay schema-neutral.
 func (values *composeEnvironmentValues) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
@@ -290,7 +310,7 @@ func TestDeveloperServiceProfilesFollowExplicitProviderIntent(t *testing.T) {
 	}
 }
 
-// TestDeveloperServiceRuntimeContracts locks pinned images, readiness probes, safe binds, and example redaction.
+// TestDeveloperServiceRuntimeContracts locks pinned images, readiness probes, safe binds, and compact environment output.
 func TestDeveloperServiceRuntimeContracts(t *testing.T) {
 	components := project.DefaultSelectedComponents()
 	plan := defaultResourcePlanForTest(t, components)
@@ -324,31 +344,10 @@ func TestDeveloperServiceRuntimeContracts(t *testing.T) {
 		}
 	}
 
-	exampleLines := strings.Split(string(envfile.RedactExample([]byte(environment))), "\n")
-	for _, key := range []string{
-		"RUSTFS_ACCESS_KEY",
-		"RUSTFS_SECRET_KEY",
-		"OPENSEARCH_INITIAL_ADMIN_PASSWORD",
-		"NATS_PASSWORD",
-		"RABBITMQ_PASSWORD",
-		"SFTPGO_ADMIN_PASSWORD",
-		"KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
-		"CLICKHOUSE_PASSWORD",
-	} {
-		value, set := envfile.Lookup(exampleLines, key)
-		if !set || value != "" {
-			t.Fatalf("redacted example %s = %q, set=%t; want an empty committed credential", key, value, set)
-		}
-	}
-	for key, want := range map[string]string{
-		"DEV_SERVICE_IP_ADDRESS":     "127.0.0.1",
-		"RUSTFS_API_PORT":            "9000",
-		"OPENSEARCH_HTTP_PORT":       "9200",
-		"OPENSEARCH_DASHBOARDS_PORT": "5601",
-	} {
-		value, set := envfile.Lookup(exampleLines, key)
-		if !set || value != want {
-			t.Fatalf("redacted example %s = %q, set=%t; want %q", key, value, set, want)
+	environmentLines := strings.Split(environment, "\n")
+	for _, key := range developmentServiceComposeOverrideKeys {
+		if value, set := envfile.Lookup(environmentLines, key); set {
+			t.Fatalf("default environment includes Compose override %s=%q:\n%s", key, value, environment)
 		}
 	}
 }
@@ -438,25 +437,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 		"EVENTS_DRIVER", "EVENTS_SUPPORTED_DRIVERS",
 		"QUEUE_DRIVER", "QUEUE_SUPPORTED_DRIVERS", "QUEUE_WORKERS", "QUEUE_SHUTDOWN_TIMEOUT",
 		"SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT",
-		"COMPOSE_PROFILES", "DEV_SERVICE_IP_ADDRESS",
-		"RUSTFS_API_PORT", "RUSTFS_CONSOLE_PORT", "RUSTFS_ACCESS_KEY", "RUSTFS_SECRET_KEY",
-		"OPENSEARCH_HTTP_PORT", "OPENSEARCH_ANALYZER_PORT", "OPENSEARCH_DASHBOARDS_PORT",
-		"OPENSEARCH_INITIAL_ADMIN_PASSWORD",
-		"NATS_CLIENT_PORT", "NATS_MONITORING_PORT", "NATS_USERNAME", "NATS_PASSWORD",
-		"RABBITMQ_AMQP_PORT", "RABBITMQ_MANAGEMENT_PORT", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD",
-		"REDPANDA_ADVERTISED_HOST", "REDPANDA_SCHEMA_REGISTRY_PORT", "REDPANDA_PANDAPROXY_PORT",
-		"REDPANDA_KAFKA_PORT", "REDPANDA_ADMIN_PORT", "REDPANDA_CONSOLE_PORT",
-		"DYNAMODB_PORT", "ELASTICMQ_PORT", "ELASTICMQ_UI_PORT", "PUBSUB_PORT",
-		"MEMCACHED_PORT", "MEMCACHED_MEMORY_MB",
-		"SFTPGO_SFTP_PORT", "SFTPGO_HTTP_PORT", "SFTPGO_ADMIN_USERNAME", "SFTPGO_ADMIN_PASSWORD",
-		"ADMINER_PORT", "JAEGER_UI_PORT", "JAEGER_OTLP_GRPC_PORT", "JAEGER_OTLP_HTTP_PORT",
-		"QDRANT_HTTP_PORT", "QDRANT_GRPC_PORT", "TEMPORAL_GRPC_PORT", "TEMPORAL_UI_PORT",
-		"KEYCLOAK_HTTP_PORT", "KEYCLOAK_MEMORY_LIMIT", "KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME",
-		"KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
-		"MOCKSERVER_PORT", "MOCKSERVER_MEMORY_LIMIT", "MOCKSERVER_LOG_LEVEL",
-		"TOXIPROXY_API_PORT", "TOXIPROXY_PROXY_PORT", "TOXIPROXY_LOG_LEVEL",
-		"CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_NATIVE_PORT", "CLICKHOUSE_DATABASE",
-		"CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD", "MEILISEARCH_PORT",
+		"COMPOSE_PROFILES",
 		"IP_ADDRESS",
 	}
 	if strings.Join(keys, "\n") != strings.Join(wantKeys, "\n") {
@@ -484,6 +465,9 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 	}
 	if !strings.Contains(environment, "IP_ADDRESS=0.0.0.0\n") {
 		t.Fatalf("default environment omitted the Docker bind-address default:\n%s", environment)
+	}
+	if !strings.Contains(environment, "## Compose settings: https://goforj.dev/reference/env-vars#development-service-compose-settings\n") {
+		t.Fatalf("default environment omitted the development-service settings reference:\n%s", environment)
 	}
 	if !strings.Contains(environment, "APP_ENV=local\nTZ=UTC\nAPP_DEBUG=0\n") {
 		t.Fatalf("default environment omitted the UTC application default:\n%s", environment)
