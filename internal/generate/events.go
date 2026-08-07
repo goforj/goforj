@@ -169,6 +169,8 @@ var eventDriverKeys = map[string]map[string]struct{}{
 	"sns":           makeSet("REGION", "ENDPOINT", "TOPIC_NAME_PREFIX", "QUEUE_NAME_PREFIX", "WAIT_TIME_SECONDS", "VISIBILITY_TIMEOUT_SECONDS"),
 }
 
+var eventLocalDrivers = []string{"inproc", "null"}
+
 // GenerateEventFiles writes event accessors whose runtime choices are bounded by the generated manifest.
 func GenerateEventFiles(projectDir string) (int, error) {
 	return generateEventFiles(ambientGenerationInput(projectDir))
@@ -179,6 +181,7 @@ func generateEventFiles(input generationInput) (int, error) {
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "EVENTS",
 		DefaultDriver: "inproc",
+		LocalDrivers:  eventLocalDrivers,
 		RootKeys:      eventRootKeys,
 		CommonKeys:    eventCommonKeys,
 		DriverKeys:    eventDriverKeys,
@@ -323,7 +326,7 @@ func uniqueEventDrivers(input generationInput) ([]string, error) {
 	for _, active := range appPrefixedActiveDrivers(input, "EVENTS", "inproc", false) {
 		seen[active.driver] = struct{}{}
 	}
-	return supportedDrivers(input.environment, "EVENTS", eventDriverKeys, sortStrings(seen))
+	return supportedDrivers(input.environment, "EVENTS", eventDriverKeys, sortStrings(seen), eventLocalDrivers)
 }
 
 // discoverEventNames includes event buses declared only through a configured App overlay.

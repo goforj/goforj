@@ -192,6 +192,8 @@ var cacheDriverKeys = map[string]map[string]struct{}{
 	"nats":      makeSet("URL", "BUCKET", "BUCKET_TTL", "BUCKET_TTL_SECONDS", "DESCRIPTION", "HISTORY", "MAX_BYTES", "MAX_VALUE_SIZE", "REPLICAS", "STORAGE", "COMPRESSED"),
 }
 
+var cacheLocalDrivers = []string{"file", "memory", "null"}
+
 // GenerateCacheFiles writes cache accessors whose imports and manifest reflect the project-owned build contract.
 func GenerateCacheFiles(projectDir string) (int, error) {
 	return generateCacheFiles(ambientGenerationInput(projectDir))
@@ -202,6 +204,7 @@ func generateCacheFiles(input generationInput) (int, error) {
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "CACHE",
 		DefaultDriver: "memory",
+		LocalDrivers:  cacheLocalDrivers,
 		RootKeys:      cacheRootKeys,
 		CommonKeys:    cacheCommonKeys,
 		DriverKeys:    cacheDriverKeys,
@@ -310,7 +313,7 @@ func renderCacheConfig(input generationInput) ([]byte, error) {
 	for _, active := range appPrefixedActiveDrivers(input, "CACHE", "memory", false) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers(input.environment, "CACHE", cacheDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "CACHE", cacheDriverKeys, sortStrings(driverSet), cacheLocalDrivers)
 	if err != nil {
 		return nil, err
 	}
@@ -646,7 +649,7 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 }
 
 // buildStore is generated from the cache stores currently defined in env.
-// The supported driver cases and imports in this file are derived from
+// Local drivers are always compiled; optional driver cases and imports come from
 // CACHE_SUPPORTED_DRIVERS, or from active CACHE_* and CACHE_<NAME>_* values when unset.
 func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
 	driver := str.Of(scope.Get("DRIVER", driverMemory)).Trim().ToLower().String()
