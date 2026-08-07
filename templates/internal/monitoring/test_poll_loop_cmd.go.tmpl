@@ -6,7 +6,7 @@ import (
 	"time"
 	{{- end }}
 
-	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	"github.com/goforj/env/v2"
 	{{- end }}

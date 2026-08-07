@@ -5,7 +5,7 @@ import (
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/{{.WireImportPath}}"
 	"{{.GoModuleName}}/internal/cmd"
-	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/console"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"os"
 )
