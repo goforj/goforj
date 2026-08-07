@@ -34,6 +34,11 @@ func TestSyncLegacyGeneratedTemplatesUsesSharedProjectConfig(t *testing.T) {
 	if err := os.WriteFile(serverPath, []byte(legacyServer), 0o644); err != nil {
 		t.Fatalf("write legacy Lighthouse server: %v", err)
 	}
+	patchPath := filepath.Join(lighthouseDir, "project_config_patch.go")
+	legacyPatch := "package lighthouse\n\nimport \"example.com/testapp/project\"\n"
+	if err := os.WriteFile(patchPath, []byte(legacyPatch), 0o644); err != nil {
+		t.Fatalf("write legacy Lighthouse config patch: %v", err)
+	}
 	projectDir := "project"
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("create generated project package: %v", err)
@@ -57,8 +62,15 @@ func TestSyncLegacyGeneratedTemplatesUsesSharedProjectConfig(t *testing.T) {
 		t.Fatalf("sync legacy templates: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(lighthouseDir, "project_config_patch.go")); err != nil {
-		t.Fatalf("expected restored Lighthouse config patch: %v", err)
+	patch, err := os.ReadFile(patchPath)
+	if err != nil {
+		t.Fatalf("read migrated Lighthouse config patch: %v", err)
+	}
+	if !strings.Contains(string(patch), `"github.com/goforj/goforj/project"`) {
+		t.Fatalf("migrated Lighthouse config patch omitted shared project import:\n%s", patch)
+	}
+	if strings.Contains(string(patch), `"example.com/testapp/project"`) {
+		t.Fatalf("migrated Lighthouse config patch retained local project import:\n%s", patch)
 	}
 	if _, err := os.Stat(obsoletePath); !os.IsNotExist(err) {
 		t.Fatalf("obsolete Lighthouse config remains, stat error = %v", err)

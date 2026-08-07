@@ -320,6 +320,13 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 
 	syncs := []templateSync{
 		{
+			dest: filepath.Join("internal", "lighthouse", "project_config_patch.go"),
+			tmpl: "internal/lighthouse/project_config_patch.go.tmpl",
+			matches: []string{
+				p.config.GoModuleName + "/project",
+			},
+		},
+		{
 			dest: "internal/lighthouse/server.go",
 			tmpl: "internal/lighthouse/server.go.tmpl",
 			matches: []string{
@@ -381,7 +388,7 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 		}
 	}
 
-	if err := p.renderTemplateFile(
+	if err := p.renderTemplateIfMissing(
 		filepath.Join("internal", "lighthouse", "project_config_patch.go"),
 		"internal/lighthouse/project_config_patch.go.tmpl",
 		p.config,
