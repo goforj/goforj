@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://goforj.dev">
-    <img src="https://raw.githubusercontent.com/goforj/docs/main/docs/public/assets/goforj-v7.png" width="220" alt="GoForj">
+    <img src="https://raw.githubusercontent.com/goforj/docs/e30f1e86e3aafb17c180bd1db33d688e10ca3e44/docs/public/twitter-banner.png" width="100%" alt="GoForj - The composable stack for building with Go">
   </a>
 </p>
 
