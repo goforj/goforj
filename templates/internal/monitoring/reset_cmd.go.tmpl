@@ -5,7 +5,7 @@ import (
 	"fmt"
 	{{- end }}
 
-	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/models"
 	{{- end }}

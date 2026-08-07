@@ -7,7 +7,7 @@ import (
 	{{- end }}
 
 	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
-	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/console"
 	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	"{{.GoModuleName}}/internal/logger"

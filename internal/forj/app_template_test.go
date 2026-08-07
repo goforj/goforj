@@ -617,7 +617,7 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 		`cmd.ApplyLaunchApp("{{.App.Name}}")`,
 		`"{{.GoModuleName}}/{{.AppImportPath}}"`,
 		`"{{.GoModuleName}}/{{.WireImportPath}}"`,
-		`"{{.GoModuleName}}/internal/console"`,
+		`"github.com/goforj/console"`,
 		`if err := cmd.LoadEnv(); err != nil {`,
 		`if err := cmd.ConfigureTimezone(); err != nil {`,
 		`console.Fatalf("configuring timezone: %v", err)`,
@@ -637,6 +637,38 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	configureTimezoneIndex := strings.Index(source, `if err := cmd.ConfigureTimezone(); err != nil {`)
 	if configureTimezoneIndex < loadEnvIndex {
 		t.Fatal("expected timezone configuration to be applied after environment loading")
+	}
+}
+
+func TestTemplatesUseSharedConsolePackage(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatesRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+	localImport := `"{{.GoModuleName}}/internal/console"`
+
+	err := filepath.WalkDir(templatesRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".tmpl" {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(content), localImport) {
+			t.Errorf("template %s imports the rendered console package", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk templates: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(templatesRoot, "internal", "console", "console.go.tmpl")); !os.IsNotExist(err) {
+		t.Fatalf("expected rendered console template to be absent, stat error: %v", err)
 	}
 }
 
