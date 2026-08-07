@@ -483,6 +483,7 @@ type startedGCSServer struct {
 	bucket   string
 }
 
+// startRedisContainer centralizes start redis container behavior so callers follow the same contract.
 func startRedisContainer(t *testing.T, ctx context.Context) startedContainer {
 	t.Helper()
 	return startSharedContainer(t, ctx, "redis", testcontainers.ContainerRequest{
@@ -492,6 +493,7 @@ func startRedisContainer(t *testing.T, ctx context.Context) startedContainer {
 	}, "6379/tcp")
 }
 
+// waitForMySQLReady centralizes wait for my sqlready behavior so callers follow the same contract.
 func waitForMySQLReady(t *testing.T, dsn string) {
 	t.Helper()
 
@@ -609,6 +611,7 @@ func terminateContainerGroup(containers []startedContainer) []string {
 	return failures
 }
 
+// startSharedContainer centralizes start shared container behavior so callers follow the same contract.
 func startSharedContainer(t *testing.T, ctx context.Context, key string, req testcontainers.ContainerRequest, port string) startedContainer {
 	t.Helper()
 
@@ -631,6 +634,7 @@ func startSharedContainer(t *testing.T, ctx context.Context, key string, req tes
 	return started
 }
 
+// startGenericContainerWithoutCleanup centralizes start generic container without cleanup behavior so callers follow the same contract.
 func startGenericContainerWithoutCleanup(t *testing.T, ctx context.Context, req testcontainers.ContainerRequest, port string) startedContainer {
 	t.Helper()
 	started, err := startGenericContainerResult(ctx, req, port)
@@ -640,6 +644,7 @@ func startGenericContainerWithoutCleanup(t *testing.T, ctx context.Context, req 
 	return started
 }
 
+// terminateSharedContainers centralizes terminate shared containers behavior so callers follow the same contract.
 func terminateSharedContainers() {
 	sharedContainersMu.Lock()
 	defer sharedContainersMu.Unlock()
@@ -651,6 +656,7 @@ func terminateSharedContainers() {
 	}
 }
 
+// startEmbeddedFTPServer centralizes start embedded ftpserver behavior so callers follow the same contract.
 func startEmbeddedFTPServer(t *testing.T) startedFTPServer {
 	t.Helper()
 	root := t.TempDir()
@@ -678,6 +684,7 @@ func startEmbeddedFTPServer(t *testing.T) startedFTPServer {
 	}
 }
 
+// startEmbeddedSFTPServer centralizes start embedded sftpserver behavior so callers follow the same contract.
 func startEmbeddedSFTPServer(t *testing.T) startedSFTPServer {
 	t.Helper()
 	root := t.TempDir()
@@ -712,6 +719,7 @@ func startEmbeddedSFTPServer(t *testing.T) startedSFTPServer {
 	}
 }
 
+// startFakeS3Server centralizes start fake s3server behavior so callers follow the same contract.
 func startFakeS3Server(t *testing.T) startedS3Server {
 	t.Helper()
 	fake := gofakes3.New(s3mem.New())
@@ -733,6 +741,7 @@ func startFakeS3Server(t *testing.T) startedS3Server {
 	}
 }
 
+// startFakeGCSServer centralizes start fake gcsserver behavior so callers follow the same contract.
 func startFakeGCSServer(t *testing.T) startedGCSServer {
 	t.Helper()
 	host := "127.0.0.1"
@@ -757,6 +766,7 @@ func startFakeGCSServer(t *testing.T) startedGCSServer {
 	}
 }
 
+// ensureS3Bucket centralizes ensure s3bucket behavior so callers follow the same contract.
 func ensureS3Bucket(t *testing.T, endpoint, bucket string) {
 	t.Helper()
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
@@ -777,6 +787,7 @@ func ensureS3Bucket(t *testing.T, endpoint, bucket string) {
 	}
 }
 
+// acceptSFTPConnections centralizes accept sftpconnections behavior so callers follow the same contract.
 func acceptSFTPConnections(t *testing.T, listener net.Listener, cfg *ssh.ServerConfig, root string) {
 	t.Helper()
 	for {
@@ -796,6 +807,7 @@ func acceptSFTPConnections(t *testing.T, listener net.Listener, cfg *ssh.ServerC
 	}
 }
 
+// handleSFTPChannels centralizes handle sftpchannels behavior so callers follow the same contract.
 func handleSFTPChannels(t *testing.T, chans <-chan ssh.NewChannel, root string) {
 	t.Helper()
 	for newChannel := range chans {
@@ -834,6 +846,7 @@ func handleSFTPChannels(t *testing.T, chans <-chan ssh.NewChannel, root string) 
 	}
 }
 
+// generateSigner centralizes generate signer behavior so callers follow the same contract.
 func generateSigner() (ssh.Signer, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -846,6 +859,7 @@ type ftpDriverFactory struct {
 	root string
 }
 
+// NewDriver constructs the driver with its required dependencies.
 func (f *ftpDriverFactory) NewDriver() (server.Driver, error) {
 	return &ftpMemDriver{root: f.root, perm: server.NewSimplePerm("user", "group")}, nil
 }
@@ -855,8 +869,10 @@ type ftpMemDriver struct {
 	perm server.Perm
 }
 
+// Init prepares the receiver for use by its caller.
 func (d *ftpMemDriver) Init(*server.Conn) {}
 
+// Stat centralizes stat behavior so callers follow the same contract.
 func (d *ftpMemDriver) Stat(p string) (server.FileInfo, error) {
 	info, err := os.Stat(d.abs(p))
 	if err != nil {
@@ -865,6 +881,7 @@ func (d *ftpMemDriver) Stat(p string) (server.FileInfo, error) {
 	return ftpFileInfo{FileInfo: info}, nil
 }
 
+// ChangeDir centralizes change dir behavior so callers follow the same contract.
 func (d *ftpMemDriver) ChangeDir(p string) error {
 	info, err := os.Stat(d.abs(p))
 	if err != nil {
@@ -876,6 +893,7 @@ func (d *ftpMemDriver) ChangeDir(p string) error {
 	return nil
 }
 
+// ListDir centralizes list dir behavior so callers follow the same contract.
 func (d *ftpMemDriver) ListDir(p string, cb func(server.FileInfo) error) error {
 	entries, err := os.ReadDir(d.abs(p))
 	if err != nil {
@@ -893,22 +911,27 @@ func (d *ftpMemDriver) ListDir(p string, cb func(server.FileInfo) error) error {
 	return nil
 }
 
+// DeleteDir centralizes delete dir behavior so callers follow the same contract.
 func (d *ftpMemDriver) DeleteDir(p string) error {
 	return os.RemoveAll(d.abs(p))
 }
 
+// DeleteFile centralizes delete file behavior so callers follow the same contract.
 func (d *ftpMemDriver) DeleteFile(p string) error {
 	return os.Remove(d.abs(p))
 }
 
+// Rename centralizes rename behavior so callers follow the same contract.
 func (d *ftpMemDriver) Rename(from, to string) error {
 	return os.Rename(d.abs(from), d.abs(to))
 }
 
+// MakeDir centralizes make dir behavior so callers follow the same contract.
 func (d *ftpMemDriver) MakeDir(p string) error {
 	return os.MkdirAll(d.abs(p), 0o755)
 }
 
+// GetFile centralizes get file behavior so callers follow the same contract.
 func (d *ftpMemDriver) GetFile(p string, _ int64) (int64, io.ReadCloser, error) {
 	file, err := os.Open(d.abs(p))
 	if err != nil {
@@ -918,6 +941,7 @@ func (d *ftpMemDriver) GetFile(p string, _ int64) (int64, io.ReadCloser, error) 
 	return info.Size(), file, nil
 }
 
+// PutFile centralizes put file behavior so callers follow the same contract.
 func (d *ftpMemDriver) PutFile(p string, r io.Reader, _ bool) (int64, error) {
 	full := d.abs(p)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -931,6 +955,7 @@ func (d *ftpMemDriver) PutFile(p string, r io.Reader, _ bool) (int64, error) {
 	return io.Copy(file, r)
 }
 
+// abs centralizes abs behavior so callers follow the same contract.
 func (d *ftpMemDriver) abs(p string) string {
 	if p == "" || p == "." {
 		return d.root
@@ -942,9 +967,13 @@ type ftpFileInfo struct {
 	os.FileInfo
 }
 
+// Owner centralizes owner behavior so callers follow the same contract.
 func (f ftpFileInfo) Owner() string { return "user" }
+
+// Group centralizes group behavior so callers follow the same contract.
 func (f ftpFileInfo) Group() string { return "group" }
 
+// pickPort centralizes pick port behavior so callers follow the same contract.
 func pickPort(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -955,6 +984,7 @@ func pickPort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
+// setEnv centralizes set env behavior so callers follow the same contract.
 func setEnv(t *testing.T, envs map[string]string) {
 	t.Helper()
 	for key, value := range envs {
@@ -962,6 +992,7 @@ func setEnv(t *testing.T, envs map[string]string) {
 	}
 }
 
+// newTempModule centralizes new temp module behavior so callers follow the same contract.
 func newTempModule(t *testing.T, pattern string) string {
 	t.Helper()
 	root, err := os.MkdirTemp("", pattern)
@@ -974,6 +1005,7 @@ func newTempModule(t *testing.T, pattern string) string {
 	return root
 }
 
+// mkdirAll centralizes mkdir all behavior so callers follow the same contract.
 func mkdirAll(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -981,6 +1013,7 @@ func mkdirAll(t *testing.T, path string) {
 	}
 }
 
+// writeFile centralizes write file persistence for the surrounding workflow.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -988,6 +1021,7 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// runGoCommand centralizes run go command behavior so callers follow the same contract.
 func runGoCommand(t *testing.T, dir string, envs map[string]string, args ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1037,6 +1071,7 @@ func runGoCommand(t *testing.T, dir string, envs map[string]string, args ...stri
 	}
 }
 
+// cacheEnvOrDefault centralizes cache env or default behavior so callers follow the same contract.
 func cacheEnvOrDefault(key, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -1045,6 +1080,7 @@ func cacheEnvOrDefault(key, fallback string) string {
 	return value
 }
 
+// loadCacheManagerFixture centralizes load cache manager fixture lookup for the surrounding workflow.
 func loadCacheManagerFixture(t *testing.T) []byte {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
@@ -1059,6 +1095,7 @@ func loadCacheManagerFixture(t *testing.T) []byte {
 	return content
 }
 
+// loadStorageManagerFixture centralizes load storage manager fixture lookup for the surrounding workflow.
 func loadStorageManagerFixture(t *testing.T) []byte {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)

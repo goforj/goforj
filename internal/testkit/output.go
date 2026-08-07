@@ -7,6 +7,7 @@ import (
 	"github.com/goforj/console"
 )
 
+// ConsoleLogf centralizes console logf behavior so callers follow the same contract.
 func ConsoleLogf(silent bool) Logf {
 	if silent {
 		return nil
@@ -14,6 +15,7 @@ func ConsoleLogf(silent bool) Logf {
 	return console.Infof
 }
 
+// PrintSection centralizes print section behavior so callers follow the same contract.
 func PrintSection(title string) {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -22,6 +24,7 @@ func PrintSection(title string) {
 	fmt.Printf("\n%s %s\n", console.Colorize(console.ColorCyan, "◇"), console.Colorize(console.ColorBoldWhite, title))
 }
 
+// PrintSubsection centralizes print subsection behavior so callers follow the same contract.
 func PrintSubsection(title string) {
 	title = strings.TrimSpace(title)
 	if title == "" {

@@ -12,6 +12,7 @@ import (
 
 const devSectionSeparatorRuleWidth = 5
 
+// buildDevFooterSeparatorLine keeps the build dev footer separator line representation consistent.
 func buildDevFooterSeparatorLine() string {
 	return buildDevSectionSeparatorLine("")
 }
@@ -22,16 +23,19 @@ func buildDevWatcherStopSeparatorLine() string {
 	return lipgloss.NewStyle().Foreground(borderColor).Render(strings.Repeat("─", devSectionSeparatorRuleWidth*2))
 }
 
+// buildDevStartupSeparatorLine keeps the build dev startup separator line representation consistent.
 func buildDevStartupSeparatorLine() string {
 	success := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	return buildDevSectionSeparatorLine(success.Render(console.SuccessMark() + " Startup"))
 }
 
+// buildDevShutdownSeparatorLine keeps the build dev shutdown separator line representation consistent.
 func buildDevShutdownSeparatorLine() string {
 	transition := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F59E0B"})
 	return buildDevSectionSeparatorLine(transition.Render("•") + " Shutdown")
 }
 
+// buildDevSectionSeparatorLine keeps the build dev section separator line representation consistent.
 func buildDevSectionSeparatorLine(label string) string {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
@@ -66,16 +70,19 @@ func buildDevSectionSeparatorLineAtWidth(label string, width int) string {
 	return rule + centerText + rule
 }
 
+// buildDevFooterLine keeps the build dev footer line representation consistent.
 func buildDevFooterLine(env map[string]string) string {
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
 	return buildDevFooterLineWithState(resolveAPIURL(env), resolveLighthouseUIURL(env), dbQueryLogging, appDebug)
 }
 
+// buildDevFooterLineWithURLs keeps the build dev footer line with urls representation consistent.
 func buildDevFooterLineWithURLs(apiURL, lighthouseURL string) string {
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
 	return buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
 }
 
+// buildDevFooterLineWithState keeps the build dev footer line with state representation consistent.
 func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bool, appDebug string) string {
 	if apiURL == "" && lighthouseURL == "" {
 		return ""
@@ -118,12 +125,14 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 	return leftText + strings.Repeat(" ", width-leftWidth-rightWidth) + rightText
 }
 
+// renderDevFooterDivider keeps the render dev footer divider representation consistent.
 func renderDevFooterDivider() string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#3F3F46"}).
 		Render("  |  ")
 }
 
+// renderDevFooterStatus keeps the render dev footer status representation consistent.
 func renderDevFooterStatus(label, state string, active bool) string {
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
 	stateColor := lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#A1A1AA"}
@@ -141,6 +150,7 @@ func renderDevFooterStatus(label, state string, active bool) string {
 	)
 }
 
+// renderDevFooterShortcut keeps the render dev footer shortcut representation consistent.
 func renderDevFooterShortcut(key, label string) string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#A1A1AA"})
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"})
@@ -154,11 +164,13 @@ type devOverlaySpec struct {
 	MinWidth int
 }
 
+// buildDevOverlayRowsBox keeps the build dev overlay rows box representation consistent.
 func buildDevOverlayRowsBox(spec devOverlaySpec, rows []string) string {
 	spec.Body = strings.Join(rows, "\n")
 	return buildDevOverlayBox(spec)
 }
 
+// buildDevResourceHeaderLine keeps the build dev resource header line representation consistent.
 func buildDevResourceHeaderLine(tools []devToolLink) string {
 	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"}).Bold(true)
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
@@ -184,6 +196,7 @@ func buildDevResourceHeaderLine(tools []devToolLink) string {
 	return strings.Join(items, "   ")
 }
 
+// buildDevHotkeyPanel keeps the build dev hotkey panel representation consistent.
 func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug string) []string {
 	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
@@ -283,6 +296,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 	return strings.Split(box, "\n")
 }
 
+// buildDevOverlayBox keeps the build dev overlay box representation consistent.
 func buildDevOverlayBox(spec devOverlaySpec) string {
 	content := spec.Body
 	if strings.TrimSpace(spec.Title) != "" {
@@ -308,6 +322,7 @@ func buildDevOverlayBox(spec devOverlaySpec) string {
 	return lipgloss.JoinVertical(lipgloss.Center, box, "", hintStyle.Render(spec.Hint))
 }
 
+// buildDevFilterModalBox keeps the build dev filter modal box representation consistent.
 func buildDevFilterModalBox(shown map[string]bool) string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	onStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
@@ -348,6 +363,7 @@ func buildDevFilterModalBox(shown map[string]bool) string {
 	}, lines)
 }
 
+// buildDevHotkeyModalBox keeps the build dev hotkey modal box representation consistent.
 func buildDevHotkeyModalBox(tools []devToolLink, dbQueryLogging bool, appDebug string) string {
 	panel := strings.Join(buildDevHotkeyPanel(tools, dbQueryLogging, appDebug), "\n")
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"})
@@ -359,6 +375,7 @@ func buildDevHotkeyModalBox(tools []devToolLink, dbQueryLogging bool, appDebug s
 	)
 }
 
+// buildDevCommandModalBox keeps the build dev command modal box representation consistent.
 func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args string, argsFocused bool, loadError string) string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#F4F4F5"})
@@ -442,6 +459,7 @@ func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args 
 	}, lines)
 }
 
+// commandModalHint centralizes command modal hint behavior so callers follow the same contract.
 func commandModalHint(selectedAcceptsArgs bool, argsFocused bool) string {
 	if selectedAcceptsArgs {
 		if argsFocused {
@@ -452,6 +470,7 @@ func commandModalHint(selectedAcceptsArgs bool, argsFocused bool) string {
 	return "Use ↑/↓ to select, type to jump, Enter to run"
 }
 
+// truncateDevOverlayText centralizes truncate dev overlay text behavior so callers follow the same contract.
 func truncateDevOverlayText(s string, limit int) string {
 	if limit <= 0 {
 		return ""
@@ -466,6 +485,7 @@ func truncateDevOverlayText(s string, limit int) string {
 	return string(runes[:limit-1]) + "…"
 }
 
+// renderDevHotkeyPanelItem keeps the render dev hotkey panel item representation consistent.
 func renderDevHotkeyPanelItem(keyStyle, labelStyle lipgloss.Style, keyWidth int, key, label string) string {
 	if strings.TrimSpace(key) == "" && strings.TrimSpace(label) == "" {
 		return ""

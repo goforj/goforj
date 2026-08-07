@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// ProvideAppLogger supplies one logger instance to the dependency graph.
 func ProvideAppLogger() *AppLogger {
 	l := NewAppLogger()
 

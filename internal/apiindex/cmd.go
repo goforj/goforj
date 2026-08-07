@@ -9,6 +9,7 @@ import (
 
 // defaultRunner captures the immediate-publication operation used by the standalone command.
 type defaultRunner interface {
+	// RunDefault defines the run default behavior required from implementations.
 	RunDefault(options Options) (string, error)
 }
 

@@ -78,6 +78,7 @@ func TestLocalStorageBackupAndRestore(t *testing.T) {
 	}
 }
 
+// seedBackupSQLite centralizes seed backup sqlite behavior so callers follow the same contract.
 func seedBackupSQLite(t *testing.T, path string) {
 	t.Helper()
 	seedBackupSQLiteSchema(t, path)
@@ -91,6 +92,7 @@ func seedBackupSQLite(t *testing.T, path string) {
 	}
 }
 
+// seedBackupSQLiteSchema centralizes seed backup sqlite schema behavior so callers follow the same contract.
 func seedBackupSQLiteSchema(t *testing.T, path string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)

@@ -316,7 +316,6 @@ func TestDevProcessSupervisorReportsUnexpectedRuntimeExit(t *testing.T) {
 	}
 }
 
-// TestDevProcessSupervisorExitDeliveryQueuesWithoutLoss protects runtime failures behind slow observers.
 func TestDevProcessSupervisorExitDeliveryQueuesWithoutLoss(t *testing.T) {
 	t.Parallel()
 	supervisor := NewSupervisor(SupervisorOptions{ExitBuffer: 1})

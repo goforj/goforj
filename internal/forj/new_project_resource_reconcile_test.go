@@ -163,7 +163,6 @@ func TestPrepareNewProjectTargetResourcesRejectsInvalidOwnerContract(t *testing.
 	}
 }
 
-// TestPrepareNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback protects explicit-plan precedence during migration.
 func TestPrepareNewProjectTargetResourcesUsesLegacyQueueOnlyAsFallback(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Jobs: true}
 	proposed := defaultResourcePlanForTest(t, components)

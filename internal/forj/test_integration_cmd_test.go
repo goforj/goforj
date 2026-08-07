@@ -11,7 +11,6 @@ import (
 	"github.com/goforj/goforj/internal/testkit"
 )
 
-// TestRunFrameworkTestListCommandSeparatesDiagnostics protects structured discovery from Go download messages.
 func TestRunFrameworkTestListCommandSeparatesDiagnostics(t *testing.T) {
 	t.Setenv("GOFORJ_FRAMEWORK_TEST_LIST_HELPER", "success")
 	command := exec.Command(os.Args[0], "-test.run=^TestFrameworkTestListCommandHelper$")

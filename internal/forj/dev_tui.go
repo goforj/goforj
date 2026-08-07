@@ -11,12 +11,19 @@ import (
 
 // devOutputController exposes TUI-only controls while allowing plain writers to remain valid session output.
 type devOutputController interface {
+	// DisableFooter defines the disable footer behavior required from implementations.
 	DisableFooter()
+	// EnableFooter defines the enable footer behavior required from implementations.
 	EnableFooter()
+	// ResetFooterLine defines the reset footer line behavior required from implementations.
 	ResetFooterLine()
+	// SetStatusLine defines the set status line behavior required from implementations.
 	SetStatusLine(string)
+	// MarkStatusDone defines the mark status done behavior required from implementations.
 	MarkStatusDone()
+	// ClearStatusLine defines the clear status line behavior required from implementations.
 	ClearStatusLine()
+	// HasStatusLine defines the has status line behavior required from implementations.
 	HasStatusLine() bool
 }
 
@@ -73,42 +80,49 @@ func devConfigUsesWatcherStdin(config *project.Config) bool {
 	return false
 }
 
+// disableDevFooter centralizes disable dev footer behavior so callers follow the same contract.
 func disableDevFooter(writer io.Writer) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.DisableFooter()
 	}
 }
 
+// enableDevFooter centralizes enable dev footer behavior so callers follow the same contract.
 func enableDevFooter(writer io.Writer) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.EnableFooter()
 	}
 }
 
+// resetDevFooterLine centralizes reset dev footer line behavior so callers follow the same contract.
 func resetDevFooterLine(writer io.Writer) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.ResetFooterLine()
 	}
 }
 
+// setDevStatusLine centralizes set dev status line behavior so callers follow the same contract.
 func setDevStatusLine(writer io.Writer, line string) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.SetStatusLine(line)
 	}
 }
 
+// markDevStatusDone centralizes mark dev status done behavior so callers follow the same contract.
 func markDevStatusDone(writer io.Writer) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.MarkStatusDone()
 	}
 }
 
+// clearDevStatusLine centralizes clear dev status line behavior so callers follow the same contract.
 func clearDevStatusLine(writer io.Writer) {
 	if controller := asDevOutputController(writer); controller != nil {
 		controller.ClearStatusLine()
 	}
 }
 
+// hasDevStatusLine centralizes the has dev status line decision for its callers.
 func hasDevStatusLine(writer io.Writer) bool {
 	if controller := asDevOutputController(writer); controller != nil {
 		return controller.HasStatusLine()
@@ -116,6 +130,7 @@ func hasDevStatusLine(writer io.Writer) bool {
 	return false
 }
 
+// asDevOutputController centralizes as dev output controller behavior so callers follow the same contract.
 func asDevOutputController(writer io.Writer) devOutputController {
 	controller, _ := writer.(devOutputController)
 	return controller

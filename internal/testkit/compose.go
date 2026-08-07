@@ -28,6 +28,7 @@ var (
 	renderedComposePortSeed  atomic.Uint64
 )
 
+// RenderedComposeStack tracks the services started for one rendered-project test.
 type RenderedComposeStack struct {
 	projectDir string
 	services   map[string]*StartedContainer
@@ -59,6 +60,7 @@ type composeResolvedPort struct {
 
 type composeEnvEntries map[string]string
 
+// UnmarshalYAML centralizes unmarshal yaml behavior so callers follow the same contract.
 func (e *composeEnvEntries) UnmarshalYAML(value *yaml.Node) error {
 	if value == nil {
 		*e = nil
@@ -95,6 +97,7 @@ func (e *composeEnvEntries) UnmarshalYAML(value *yaml.Node) error {
 
 type composeKeyValues map[string]string
 
+// UnmarshalYAML centralizes unmarshal yaml behavior so callers follow the same contract.
 func (kv *composeKeyValues) UnmarshalYAML(value *yaml.Node) error {
 	if value == nil {
 		*kv = nil
@@ -129,6 +132,7 @@ func (kv *composeKeyValues) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
+// StartRenderedComposeServices centralizes start rendered compose services behavior so callers follow the same contract.
 func StartRenderedComposeServices(projectDir string, logf Logf) (*RenderedComposeStack, error) {
 	if err := prepareRenderedComposeTestEnv(projectDir); err != nil {
 		return nil, err
@@ -166,6 +170,7 @@ func StartRenderedComposeServices(projectDir string, logf Logf) (*RenderedCompos
 	return stack, nil
 }
 
+// Stop centralizes stop behavior so callers follow the same contract.
 func (s *RenderedComposeStack) Stop() {
 	if s == nil {
 		return
@@ -182,6 +187,7 @@ func (s *RenderedComposeStack) Stop() {
 	}
 }
 
+// Service centralizes service behavior so callers follow the same contract.
 func (s *RenderedComposeStack) Service(name string) (*StartedContainer, bool) {
 	if s == nil {
 		return nil, false
@@ -190,6 +196,7 @@ func (s *RenderedComposeStack) Service(name string) (*StartedContainer, bool) {
 	return started, ok
 }
 
+// EnvOverrides centralizes env overrides behavior so callers follow the same contract.
 func (s *RenderedComposeStack) EnvOverrides() map[string]string {
 	overrides := map[string]string{}
 	if mysql, ok := s.Service("mysql"); ok {
@@ -214,6 +221,7 @@ func (s *RenderedComposeStack) EnvOverrides() map[string]string {
 	return overrides
 }
 
+// normalizeIntegrationHost keeps normalize integration host handling consistent across callers.
 func normalizeIntegrationHost(host string) string {
 	switch str.Of(host).ToLower().Trim().String() {
 	case "":
@@ -223,6 +231,7 @@ func normalizeIntegrationHost(host string) string {
 	}
 }
 
+// ApplyHostEnvOverrides centralizes apply host env overrides behavior so callers follow the same contract.
 func (s *RenderedComposeStack) ApplyHostEnvOverrides(paths []string) error {
 	if s == nil || len(paths) == 0 {
 		return nil
@@ -234,6 +243,7 @@ func (s *RenderedComposeStack) ApplyHostEnvOverrides(paths []string) error {
 	return ReplaceOrAppendEnvValues(paths, overrides)
 }
 
+// loadRenderedCompose centralizes load rendered compose lookup for the surrounding workflow.
 func loadRenderedCompose(projectDir string) (*composeFile, error) {
 	model, env, err := readActiveComposeModel(projectDir)
 	if err != nil {
@@ -245,6 +255,7 @@ func loadRenderedCompose(projectDir string) (*composeFile, error) {
 	return model, nil
 }
 
+// interpolateComposeService centralizes interpolate compose service behavior so callers follow the same contract.
 func interpolateComposeService(service composeService, env map[string]string) composeService {
 	service.Image = interpolateComposeValue(service.Image, env)
 	for i := range service.Ports {
@@ -271,10 +282,12 @@ func interpolateComposeService(service composeService, env map[string]string) co
 	return service
 }
 
+// interpolateComposeValue centralizes interpolate compose value behavior so callers follow the same contract.
 func interpolateComposeValue(input string, env map[string]string) string {
 	return interpolateComposeValueDepth(input, env, 0)
 }
 
+// interpolateComposeValueDepth centralizes interpolate compose value depth behavior so callers follow the same contract.
 func interpolateComposeValueDepth(input string, env map[string]string, depth int) string {
 	if input == "" {
 		return ""
@@ -308,6 +321,7 @@ func interpolateComposeValueDepth(input string, env map[string]string, depth int
 	return resolved
 }
 
+// startComposeService centralizes start compose service behavior so callers follow the same contract.
 func startComposeService(logf Logf, projectDir, name string, service composeService) (*StartedContainer, error) {
 	resolvedPort, err := composeServiceContainerPort(service)
 	if err != nil {
@@ -335,6 +349,7 @@ func startComposeService(logf Logf, projectDir, name string, service composeServ
 	return StartTestcontainer(logf, request, string(resolvedPort.Container), 60*time.Second, readyLabel)
 }
 
+// composeServiceContainerPort centralizes compose service container port behavior so callers follow the same contract.
 func composeServiceContainerPort(service composeService) (composeResolvedPort, error) {
 	if len(service.Ports) == 0 {
 		return composeResolvedPort{}, fmt.Errorf("service does not expose any ports")
@@ -353,6 +368,7 @@ func composeServiceContainerPort(service composeService) (composeResolvedPort, e
 	}, nil
 }
 
+// composeServiceWaitStrategy centralizes compose service wait strategy behavior so callers follow the same contract.
 func composeServiceWaitStrategy(name, containerPort string) wait.Strategy {
 	port := nat.Port(containerPort)
 	switch name {
@@ -373,6 +389,7 @@ func composeServiceWaitStrategy(name, containerPort string) wait.Strategy {
 	}
 }
 
+// stringifyBuildArgs centralizes stringify build args behavior so callers follow the same contract.
 func stringifyBuildArgs(args map[string]string) map[string]*string {
 	if len(args) == 0 {
 		return nil
@@ -385,6 +402,7 @@ func stringifyBuildArgs(args map[string]string) map[string]*string {
 	return converted
 }
 
+// cloneMap centralizes clone map behavior so callers follow the same contract.
 func cloneMap(source map[string]string) map[string]string {
 	if len(source) == 0 {
 		return nil
@@ -401,6 +419,7 @@ func composeServiceEnabledForRenderedTests(service composeService) bool {
 	return service.RenderedTest == nil || *service.RenderedTest
 }
 
+// prepareRenderedComposeTestEnv centralizes prepare rendered compose test env behavior so callers follow the same contract.
 func prepareRenderedComposeTestEnv(projectDir string) error {
 	_ = os.Remove(filepath.Join(projectDir, ".env.host"))
 	model, _, err := readActiveComposeModel(projectDir)
@@ -461,6 +480,7 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 	return ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, overrides)
 }
 
+// readComposeModel centralizes read compose model lookup for the surrounding workflow.
 func readComposeModel(projectDir string) (*composeFile, error) {
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	body, err := os.ReadFile(composePath)
@@ -527,6 +547,7 @@ func composeServiceProfileEnabled(service composeService, activeProfiles map[str
 	return false
 }
 
+// findOpenPortInRange centralizes find open port in range behavior so callers follow the same contract.
 func findOpenPortInRange() (int, error) {
 	start, end := renderedComposePortRange()
 	width := end - start + 1
@@ -562,10 +583,12 @@ func renderedComposePortRange() (int, int) {
 	return start, end
 }
 
+// init centralizes init behavior so callers follow the same contract.
 func init() {
 	renderedComposePortSeed.Store(uint64(time.Now().UnixNano() + int64(rand.Intn(1024))))
 }
 
+// parsePortRangeValue keeps parse port range value handling consistent across callers.
 func parsePortRangeValue(key string, fallback int) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {

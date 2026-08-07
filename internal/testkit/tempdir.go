@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// TempRoot centralizes temp root behavior so callers follow the same contract.
 func TempRoot(envKey string) (string, error) {
 	if override := strings.TrimSpace(os.Getenv(envKey)); override != "" {
 		if err := os.MkdirAll(override, 0o755); err != nil {

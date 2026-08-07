@@ -243,7 +243,6 @@ func TestValidateRenderedComponentContractsReportsMissingEnabledSurface(t *testi
 	}
 }
 
-// TestRenderedDirectModuleRequirementsIgnoresIndirectModules protects disabled checks from transitive module graph noise.
 func TestRenderedDirectModuleRequirementsIgnoresIndirectModules(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go.mod")
 	writeRenderedContractFile(t, filepath.Dir(path), filepath.Base(path), `module example.com/render

@@ -787,6 +787,7 @@ type keyValue struct {
 	value string
 }
 
+// renderKeyValueTable keeps the render key value table representation consistent.
 func renderKeyValueTable(rows []keyValue) string {
 	longestKey := 0
 	for _, row := range rows {
@@ -829,6 +830,7 @@ func wizardFooter(actions []string, termWidth int) string {
 	return wizardMutedStyle.Render(strings.Join(actions, " · "))
 }
 
+// maxInt centralizes max int behavior so callers follow the same contract.
 func maxInt(a int, b int) int {
 	if a > b {
 		return a

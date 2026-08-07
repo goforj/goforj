@@ -30,8 +30,11 @@ type Connection struct {
 
 // Strategy creates and restores one native database artifact.
 type Strategy interface {
+	// Name defines the name behavior required from implementations.
 	Name() string
+	// Backup defines the backup behavior required from implementations.
 	Backup(context.Context, Connection, string) error
+	// Restore defines the restore behavior required from implementations.
 	Restore(context.Context, Connection, string) error
 }
 

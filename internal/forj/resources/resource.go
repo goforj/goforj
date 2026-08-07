@@ -27,6 +27,7 @@ type Resource struct {
 
 // Resolver supplies resources to a registry.
 type Resolver interface {
+	// Resolve defines the resolve behavior required from implementations.
 	Resolve(context.Context) ([]Resource, error)
 }
 

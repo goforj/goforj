@@ -5,7 +5,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 )
 
-// RenderCmd is the command to run the scaffolder
+// RenderCmd is the command used to run the scaffolder.
 type RenderCmd struct {
 	logger   *logger.AppLogger
 	renderer *ProjectRenderer
@@ -14,11 +14,12 @@ type RenderCmd struct {
 	Timings    bool     `help:"Print render phase timings"`
 }
 
+// Signature returns the command-line contract used for registration.
 func (*RenderCmd) Signature() string {
 	return `name:"render" help:"Run the project renderer" hidden:""`
 }
 
-// NewCmd creates a new RenderCmd
+// NewCmd creates a new RenderCmd.
 func NewCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *RenderCmd {
 	return &RenderCmd{
 		logger:   logger,

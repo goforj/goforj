@@ -88,12 +88,14 @@ func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh
 	}
 }
 
+// Close releases resources owned by the receiver.
 func (r *devRuntimeState) Close() {
 	if r.streamer != nil {
 		r.streamer.Close()
 	}
 }
 
+// Sync centralizes sync behavior so callers follow the same contract.
 func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
 	firstLoad := r.firstLoad
 	r.firstLoad = false
@@ -602,6 +604,7 @@ func postgresCreateDatabasesScript(names []string) string {
 	return `until pg_isready -h "postgres" -p 5432; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$db\";"; done`
 }
 
+// runDevTasks centralizes run dev tasks behavior so callers follow the same contract.
 func runDevTasks(heading string, tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
@@ -889,6 +892,7 @@ func devRunCommandForApp(config *project.Config, app project.App) (string, bool)
 	return command, true
 }
 
+// normalizeDevWatchesForRuntime keeps normalize dev watches for runtime handling consistent across callers.
 func normalizeDevWatchesForRuntime(config *project.Config, watches []project.DevWatch) []project.DevWatch {
 	usesTempl := configUsesTemplHTMX(config)
 	normalized := copyDevWatches(watches)
@@ -1150,6 +1154,7 @@ func prefixForjBuildCommandForApp(command string, appName string) string {
 	return strings.Replace(command, "forj build", "forj "+appName+" build", 1)
 }
 
+// shouldRunAfterMigrate centralizes the should run after migrate decision for its callers.
 func shouldRunAfterMigrate(task project.DevTask) bool {
 	name := str.Of(task.Name)
 	cmd := str.Of(task.Cmd)
@@ -1841,6 +1846,7 @@ func runDevSubprocess(run devSubprocessRun) error {
 	return nil
 }
 
+// runDevTranscriptCommand centralizes run dev transcript command behavior so callers follow the same contract.
 func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
 	writeDevCommandLine(outWriter, heading)
 	setDevStatusLine(outWriter, heading)
@@ -1857,6 +1863,7 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	return nil
 }
 
+// runDevTerminalCommand centralizes run dev terminal command behavior so callers follow the same contract.
 func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
 	if _, ok := outWriter.(*devBubbleWriter); ok {
 		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
@@ -1892,6 +1899,7 @@ func writeDevTimingLine(out io.Writer, message string) {
 	_, _ = io.WriteString(out, line+"\n")
 }
 
+// formatDevElapsed keeps the format dev elapsed representation consistent.
 func formatDevElapsed(elapsed time.Duration) string {
 	if elapsed < time.Second {
 		return elapsed.Round(time.Millisecond).String()
@@ -1936,6 +1944,7 @@ func writeDevCommandBoundary(out io.Writer) {
 	_, _ = io.WriteString(out, buildDevFooterSeparatorLine()+"\n")
 }
 
+// printDevReadySummary centralizes print dev ready summary behavior so callers follow the same contract.
 func printDevReadySummary(out io.Writer, config *project.Config, env map[string]string) {
 	for _, line := range buildDevReadySummaryLines(config, env) {
 		_, _ = io.WriteString(out, line+"\n")
@@ -1948,6 +1957,7 @@ type devToolLink struct {
 	Detail string
 }
 
+// buildDevReadySummaryLines keeps the build dev ready summary lines representation consistent.
 func buildDevReadySummaryLines(config *project.Config, env map[string]string) []string {
 	tools := collectDevToolLinks(config, env)
 	if len(tools) == 0 {
@@ -2012,6 +2022,7 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 	return tools
 }
 
+// resolveAPIURL centralizes resolve apiurl lookup for the surrounding workflow.
 func resolveAPIURL(env map[string]string) string {
 	if raw := strings.TrimSpace(envValue(env, "APP_URL")); raw != "" {
 		return raw
@@ -2019,6 +2030,7 @@ func resolveAPIURL(env map[string]string) string {
 	return "http://localhost:3000"
 }
 
+// resolveSwaggerUIURL centralizes resolve swagger uiurl lookup for the surrounding workflow.
 func resolveSwaggerUIURL(env map[string]string) string {
 	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
 	if enabled == "" {
@@ -2035,6 +2047,7 @@ func resolveSwaggerUIURL(env map[string]string) string {
 	return strings.TrimRight(apiURL, "/") + "/swagger"
 }
 
+// resolveLighthouseUIURL centralizes resolve lighthouse uiurl lookup for the surrounding workflow.
 func resolveLighthouseUIURL(env map[string]string) string {
 	enabled := str.Of(envValue(env, "LIGHTHOUSE_ENABLED")).Trim().ToLower().String()
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
@@ -2064,6 +2077,7 @@ func resolveLighthouseUIURL(env map[string]string) string {
 	return u.String()
 }
 
+// resolveURLWithPort centralizes resolve urlwith port lookup for the surrounding workflow.
 func resolveURLWithPort(env map[string]string, scheme, host, portKey, fallbackPort string) string {
 	port := strings.TrimSpace(envValue(env, portKey))
 	if port == "" {
@@ -2072,6 +2086,7 @@ func resolveURLWithPort(env map[string]string, scheme, host, portKey, fallbackPo
 	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
 
+// envValue centralizes env value behavior so callers follow the same contract.
 func envValue(env map[string]string, key string) string {
 	if env != nil {
 		return env[key]
@@ -2345,6 +2360,7 @@ func drainRestartSignals(ch chan struct{}) {
 	}
 }
 
+// drainRenderSignals centralizes drain render signals behavior so callers follow the same contract.
 func drainRenderSignals(ch chan struct{}) {
 	for {
 		select {
@@ -2355,6 +2371,7 @@ func drainRenderSignals(ch chan struct{}) {
 	}
 }
 
+// drainBuildSignals centralizes drain build signals behavior so callers follow the same contract.
 func drainBuildSignals(ch chan struct{}) {
 	for {
 		select {
@@ -2446,6 +2463,7 @@ func splitWatcherEnvAssignments(execCmd string) (map[string]string, string) {
 	return env, rest
 }
 
+// shellSplitArgs centralizes shell split args behavior so callers follow the same contract.
 func shellSplitArgs(value string) ([]string, error) {
 	var (
 		args        []string
@@ -2494,6 +2512,7 @@ func shellSplitArgs(value string) ([]string, error) {
 	return args, nil
 }
 
+// isShellEnvName centralizes the is shell env name decision for its callers.
 func isShellEnvName(name string) bool {
 	for i, r := range name {
 		switch {
@@ -2654,6 +2673,7 @@ func playRecoverySound() {
 	_ = execx.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()
 }
 
+// emitWatcherLifecycleLine centralizes emit watcher lifecycle line behavior so callers follow the same contract.
 func emitWatcherLifecycleLine(out io.Writer, streamer *devwatchStreamer, watcher string, state watcherLifecycleState) {
 	line := formatWatcherLifecycleLine(watcher, state)
 	if line == "" {
@@ -2678,6 +2698,7 @@ func emitWatcherLifecycleLine(out io.Writer, streamer *devwatchStreamer, watcher
 	_, _ = io.WriteString(out, "\n")
 }
 
+// emitWatcherLifecycleSummary centralizes emit watcher lifecycle summary behavior so callers follow the same contract.
 func emitWatcherLifecycleSummary(out io.Writer, streamer *devwatchStreamer, watchers []string, state watcherLifecycleState) {
 	line := formatWatcherLifecycleSummary(watchers, state)
 	if line == "" {
@@ -2701,6 +2722,7 @@ func emitWatcherLifecycleSummary(out io.Writer, streamer *devwatchStreamer, watc
 	_, _ = io.WriteString(out, "\n")
 }
 
+// formatWatcherLifecycleLine keeps the format watcher lifecycle line representation consistent.
 func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) string {
 	watcher = str.Of(watcher).Trim().String()
 	if watcher == "" {
@@ -2729,6 +2751,7 @@ func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) str
 	)
 }
 
+// formatWatcherLifecycleSummary keeps the format watcher lifecycle summary representation consistent.
 func formatWatcherLifecycleSummary(watchers []string, state watcherLifecycleState) string {
 	names := make([]string, 0, len(watchers))
 	for _, watcher := range watchers {

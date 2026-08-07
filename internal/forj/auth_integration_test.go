@@ -107,6 +107,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 	}
 }
 
+// assertRenderedMailComponent centralizes assert rendered mail component behavior so callers follow the same contract.
 func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) {
 	t.Helper()
 
@@ -140,6 +141,7 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 	}
 }
 
+// assertRenderedOAuthComponent centralizes assert rendered oauth component behavior so callers follow the same contract.
 func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabled bool) {
 	t.Helper()
 
@@ -233,6 +235,7 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 	}
 }
 
+// assertRenderedAuthSchedulerCleanup centralizes assert rendered auth scheduler cleanup behavior so callers follow the same contract.
 func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	t.Helper()
 
@@ -267,6 +270,7 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	}
 }
 
+// renderAuthIntegrationApp keeps the render auth integration app representation consistent.
 func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) string {
 	t.Helper()
 
@@ -303,6 +307,7 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 	return projectDir
 }
 
+// runRenderedAuthPackageTests centralizes run rendered auth package tests behavior so callers follow the same contract.
 func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, envOverrides map[string]string) {
 	t.Helper()
 	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1", "-run", "^$"}
@@ -323,6 +328,7 @@ func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, envOve
 	)
 }
 
+// startRenderedAuthApp centralizes start rendered auth app behavior so callers follow the same contract.
 func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string) {
 	t.Helper()
 
@@ -370,6 +376,7 @@ func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string)
 	return nil, ""
 }
 
+// runRenderedAuthAppAssertions centralizes run rendered auth app assertions behavior so callers follow the same contract.
 func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	t.Helper()
 
@@ -543,6 +550,7 @@ func waitForRenderedAuthAccessRotation(t *testing.T, client *renderedAuthHTTPCli
 	}
 }
 
+// runRenderedAuthCommand centralizes run rendered auth command behavior so callers follow the same contract.
 func runRenderedAuthCommand(t *testing.T, projectDir, name string, args []string, env []string) {
 	t.Helper()
 
@@ -561,6 +569,7 @@ func runRenderedAuthCommand(t *testing.T, projectDir, name string, args []string
 	}
 }
 
+// setupRenderedAuthEnv centralizes setup rendered auth env behavior so callers follow the same contract.
 func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 	t.Helper()
 	for _, kv := range []struct {
@@ -590,6 +599,7 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 	}
 }
 
+// startRenderedAuthDependencies centralizes start rendered auth dependencies behavior so callers follow the same contract.
 func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.RenderedComposeStack {
 	t.Helper()
 
@@ -616,6 +626,7 @@ func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.Ren
 	return stack
 }
 
+// configureRenderedAuthDatabase centralizes configure rendered auth database behavior so callers follow the same contract.
 func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stack *testkit.RenderedComposeStack) map[string]string {
 	t.Helper()
 
@@ -674,6 +685,7 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 	}
 }
 
+// setRenderedAuthDatabaseEnv centralizes set rendered auth database env behavior so callers follow the same contract.
 func setRenderedAuthDatabaseEnv(t *testing.T, setEnv func(string, string), driver, host, port, database, username, password string) {
 	t.Helper()
 
@@ -686,6 +698,7 @@ func setRenderedAuthDatabaseEnv(t *testing.T, setEnv func(string, string), drive
 	setEnv("DB_PASSWORD", password)
 }
 
+// resetRenderedMySQLAuthDatabase centralizes reset rendered my sqlauth database behavior so callers follow the same contract.
 func resetRenderedMySQLAuthDatabase(t *testing.T, started *testkit.StartedContainer) {
 	t.Helper()
 
@@ -701,6 +714,7 @@ func resetRenderedMySQLAuthDatabase(t *testing.T, started *testkit.StartedContai
 	}
 }
 
+// resetRenderedPostgresAuthDatabase centralizes reset rendered postgres auth database behavior so callers follow the same contract.
 func resetRenderedPostgresAuthDatabase(t *testing.T, started *testkit.StartedContainer) {
 	t.Helper()
 
@@ -769,6 +783,7 @@ type renderedAuthHTTPClient struct {
 	jar    http.CookieJar
 }
 
+// newRenderedAuthHTTPClient centralizes new rendered auth httpclient behavior so callers follow the same contract.
 func newRenderedAuthHTTPClient(t *testing.T, baseURL string) *renderedAuthHTTPClient {
 	t.Helper()
 
@@ -787,6 +802,7 @@ func newRenderedAuthHTTPClient(t *testing.T, baseURL string) *renderedAuthHTTPCl
 	}
 }
 
+// login centralizes login behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) login(input authLoginRequest) authUserResponse {
 	c.t.Helper()
 
@@ -800,6 +816,7 @@ func (c *renderedAuthHTTPClient) login(input authLoginRequest) authUserResponse 
 	return resp
 }
 
+// me centralizes me behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) me() authUserResponse {
 	c.t.Helper()
 
@@ -813,6 +830,7 @@ func (c *renderedAuthHTTPClient) me() authUserResponse {
 	return resp
 }
 
+// sessions centralizes sessions behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) sessions() authSessionsResponse {
 	c.t.Helper()
 
@@ -826,6 +844,7 @@ func (c *renderedAuthHTTPClient) sessions() authSessionsResponse {
 	return resp
 }
 
+// logout centralizes logout behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) logout() {
 	c.t.Helper()
 
@@ -838,6 +857,7 @@ func (c *renderedAuthHTTPClient) logout() {
 	}
 }
 
+// logoutAll centralizes logout all behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) logoutAll() {
 	c.t.Helper()
 
@@ -850,6 +870,7 @@ func (c *renderedAuthHTTPClient) logoutAll() {
 	}
 }
 
+// changePassword centralizes change password behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) changePassword(currentPassword, newPassword string) {
 	c.t.Helper()
 
@@ -865,6 +886,7 @@ func (c *renderedAuthHTTPClient) changePassword(currentPassword, newPassword str
 	}
 }
 
+// revokeSession centralizes revoke session behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) revokeSession(id string) {
 	c.t.Helper()
 
@@ -877,6 +899,7 @@ func (c *renderedAuthHTTPClient) revokeSession(id string) {
 	}
 }
 
+// requestPasswordReset centralizes request password reset behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) requestPasswordReset(login string) string {
 	c.t.Helper()
 
@@ -895,6 +918,7 @@ func (c *renderedAuthHTTPClient) requestPasswordReset(login string) string {
 	return resp.ResetToken
 }
 
+// confirmPasswordReset centralizes confirm password reset behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) confirmPasswordReset(token, newPassword string) {
 	c.t.Helper()
 
@@ -910,6 +934,7 @@ func (c *renderedAuthHTTPClient) confirmPasswordReset(token, newPassword string)
 	}
 }
 
+// requestEmailVerification centralizes request email verification behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) requestEmailVerification() string {
 	c.t.Helper()
 
@@ -926,6 +951,7 @@ func (c *renderedAuthHTTPClient) requestEmailVerification() string {
 	return resp.VerificationToken
 }
 
+// confirmEmailVerification centralizes confirm email verification behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) confirmEmailVerification(token string) {
 	c.t.Helper()
 
@@ -943,6 +969,7 @@ func (c *renderedAuthHTTPClient) confirmEmailVerification(token string) {
 	}
 }
 
+// getText centralizes get text behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) getText(path string) string {
 	c.t.Helper()
 
@@ -953,6 +980,7 @@ func (c *renderedAuthHTTPClient) getText(path string) string {
 	return resp
 }
 
+// assertStatus centralizes assert status behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) assertStatus(method, path string, body any, want int) string {
 	c.t.Helper()
 
@@ -963,6 +991,7 @@ func (c *renderedAuthHTTPClient) assertStatus(method, path string, body any, wan
 	return responseBody
 }
 
+// do centralizes do behavior so callers follow the same contract.
 func (c *renderedAuthHTTPClient) do(method, path string, body any) (*req.Response, string) {
 	c.t.Helper()
 
@@ -995,6 +1024,7 @@ func (c *renderedAuthHTTPClient) do(method, path string, body any) (*req.Respons
 	return resp, out.String()
 }
 
+// authCookieValue centralizes auth cookie value behavior so callers follow the same contract.
 func authCookieValue(t *testing.T, jar http.CookieJar, baseURL, name string) string {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, baseURL, nil)
@@ -1009,6 +1039,7 @@ func authCookieValue(t *testing.T, jar http.CookieJar, baseURL, name string) str
 	return ""
 }
 
+// waitForAuthProbeEndpointReady centralizes wait for auth probe endpoint ready behavior so callers follow the same contract.
 func waitForAuthProbeEndpointReady(proc *procHandle, url string, wantStatus int, timeout time.Duration) error {
 	client := &http.Client{Timeout: 300 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
@@ -1033,6 +1064,7 @@ func waitForAuthProbeEndpointReady(proc *procHandle, url string, wantStatus int,
 	return fmt.Errorf("probe %s did not return status %d before timeout", url, wantStatus)
 }
 
+// isTransientMySQLStartupError centralizes the is transient my sqlstartup error decision for its callers.
 func isTransientMySQLStartupError(err error) bool {
 	if err == nil {
 		return false

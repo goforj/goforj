@@ -6,9 +6,13 @@ import "fmt"
 type StarterKit string
 
 const (
-	StarterKitNone      StarterKit = "none"
-	StarterKitVue       StarterKit = "vue"
-	StarterKitReact     StarterKit = "react"
+	// StarterKitNone disables application frontend scaffolding.
+	StarterKitNone StarterKit = "none"
+	// StarterKitVue selects the Vue frontend scaffold.
+	StarterKitVue StarterKit = "vue"
+	// StarterKitReact selects the React frontend scaffold.
+	StarterKitReact StarterKit = "react"
+	// StarterKitTemplHTMX selects the server-rendered templ and htmx scaffold.
 	StarterKitTemplHTMX StarterKit = "templ_htmx"
 )
 

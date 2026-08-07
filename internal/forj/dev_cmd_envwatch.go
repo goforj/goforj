@@ -21,10 +21,12 @@ type devAppFingerprint struct {
 
 var suppressedDevEnvTriggerCount atomic.Int32
 
+// suppressNextDevEnvTrigger centralizes suppress next dev env trigger behavior so callers follow the same contract.
 func suppressNextDevEnvTrigger() {
 	suppressedDevEnvTriggerCount.Add(1)
 }
 
+// consumeSuppressedDevEnvTrigger centralizes consume suppressed dev env trigger behavior so callers follow the same contract.
 func consumeSuppressedDevEnvTrigger() bool {
 	for {
 		current := suppressedDevEnvTriggerCount.Load()
@@ -119,6 +121,7 @@ func startDevAppWatcher(ctx context.Context, trigger func(), interval time.Durat
 	}
 }
 
+// snapshotDevEnvFiles centralizes snapshot dev env files behavior so callers follow the same contract.
 func snapshotDevEnvFiles() (map[string]devEnvFileFingerprint, error) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -143,6 +146,7 @@ func snapshotDevEnvFiles() (map[string]devEnvFileFingerprint, error) {
 	return out, nil
 }
 
+// devEnvFilesChanged centralizes dev env files changed behavior so callers follow the same contract.
 func devEnvFilesChanged(prev, current map[string]devEnvFileFingerprint) bool {
 	if len(prev) != len(current) {
 		return true
@@ -168,10 +172,12 @@ func devEnvFilesChanged(prev, current map[string]devEnvFileFingerprint) bool {
 	return false
 }
 
+// snapshotDevApps centralizes snapshot dev apps behavior so callers follow the same contract.
 func snapshotDevApps() devAppFingerprint {
 	return devAppFingerprint{names: devAppBuildNames(activeDevApps())}
 }
 
+// devAppsChanged centralizes dev apps changed behavior so callers follow the same contract.
 func devAppsChanged(prev, current devAppFingerprint) bool {
 	return !slices.Equal(prev.names, current.names)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// writeQueueRuntimeFixture centralizes write queue runtime fixture persistence for the surrounding workflow.
 func writeQueueRuntimeFixture(t *testing.T, root string) {
 	t.Helper()
 	runtimeDir := filepath.Join(root, "internal", "runtime")
@@ -82,6 +83,7 @@ func (m *Manager) Finish(context.Context, string, error) {}
 	}
 }
 
+// writeQueueFixtureModule centralizes write queue fixture module persistence for the surrounding workflow.
 func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []string, replaces []fixtureReplace) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {

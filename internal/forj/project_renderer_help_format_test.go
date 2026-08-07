@@ -60,7 +60,6 @@ func TestTemplateDataForAppPreservesExternalCLIHelpFormatterWithOtherComponents(
 	}
 }
 
-// TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope protects named-App capability isolation.
 func TestTemplateDataForAppSeparatesAppSelectionFromProjectEnvelope(t *testing.T) {
 	workspace := currentProjectRenderWorkspace(t)
 	config := &project.Config{

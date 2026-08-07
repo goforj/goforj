@@ -299,7 +299,6 @@ services:
 	}
 }
 
-// TestRenderedComposeDefaultPortRangeAvoidsEphemeralPorts protects explicit bindings from Docker's automatic host-port allocator.
 func TestRenderedComposeDefaultPortRangeAvoidsEphemeralPorts(t *testing.T) {
 	t.Setenv("FORJ_INTEGRATION_PORT_RANGE_START", "")
 	t.Setenv("FORJ_INTEGRATION_PORT_RANGE_END", "")

@@ -66,13 +66,20 @@ func NewSilentLogger() *AppLogger {
 }
 
 const (
-	BoldWhite          = "\033[1;37m"
+	// BoldWhite formats emphasized console text in white.
+	BoldWhite = "\033[1;37m"
+	// HighIntensityBlack formats subdued console text in bright black.
 	HighIntensityBlack = "\033[90m"
+	// HighIntensityGreen formats successful console text in bright green.
 	HighIntensityGreen = "\033[92m"
-	BoldRed            = "\033[1;31m"
-	Red                = "\033[31m"
-	White              = "\033[97m"
-	Reset              = "\033[0m"
+	// BoldRed formats emphasized error text in red.
+	BoldRed = "\033[1;31m"
+	// Red formats console text in red.
+	Red = "\033[31m"
+	// White formats console text in white.
+	White = "\033[97m"
+	// Reset restores the terminal's default formatting.
+	Reset = "\033[0m"
 )
 
 var wrappedBuildErrorPattern = regexp.MustCompile(`^(.*exit status \d+) \(# [^\n]+\n([\s\S]*)\)$`)
@@ -149,6 +156,7 @@ func newConsoleLogger(config logConfig) *zerolog.Logger {
 	return &logger
 }
 
+// formatConsoleErrorValue keeps the format console error value representation consistent.
 func formatConsoleErrorValue(i interface{}) string {
 	raw := fmt.Sprintf("%s", i)
 	if unquoted, err := strconv.Unquote(raw); err == nil {
@@ -170,6 +178,7 @@ func formatConsoleErrorValue(i interface{}) string {
 	return strings.Join(lines, "\n")
 }
 
+// normalizeWrappedBuildError keeps normalize wrapped build error handling consistent across callers.
 func normalizeWrappedBuildError(raw string) string {
 	matches := wrappedBuildErrorPattern.FindStringSubmatch(raw)
 	if len(matches) != 3 {
@@ -206,8 +215,8 @@ func newJSONLogger(config logConfig) *zerolog.Logger {
 	return &logger
 }
 
-// getCallerMeta returns the caller type and package
-// Example: QuestHotReloadWatcher (eqemuserver) ›
+// getCallerMeta returns the caller type and package.
+// Example: QuestHotReloadWatcher (eqemuserver) ›.
 func getCallerMeta() string {
 	pc := make([]uintptr, 20) // adjust the number of frames to retrieve
 	n := runtime.Callers(0, pc)
@@ -288,32 +297,32 @@ func splitPrefix(value string) (string, string) {
 	return app, component
 }
 
-// GetWriter returns the zerolog.Logger writer interface
+// GetWriter returns the zerolog.Logger writer interface.
 func (l *AppLogger) GetWriter() zerolog.Logger {
 	return l.infoLogger.With().Caller().Logger()
 }
 
-// Info is the default log event type
+// Info is the default log event type.
 func (l *AppLogger) Info() *zerolog.Event {
 	return l.infoLogger.Info()
 }
 
-// Error logs an error
+// Error logs an error.
 func (l *AppLogger) Error() *zerolog.Event {
 	return l.infoLogger.Error()
 }
 
-// Fatal logs a fatal error
+// Fatal logs a fatal error.
 func (l *AppLogger) Fatal() *zerolog.Event {
 	return l.infoLogger.Fatal()
 }
 
-// Warn logs a warning
+// Warn logs a warning.
 func (l *AppLogger) Warn() *zerolog.Event {
 	return l.infoLogger.Warn()
 }
 
-// Debug is -v level logging
+// Debug is -v level logging.
 func (l *AppLogger) Debug() *zerolog.Event {
 	if l.debugLevel >= 1 {
 		return l.debugLogger.Debug()
@@ -321,7 +330,7 @@ func (l *AppLogger) Debug() *zerolog.Event {
 	return nil
 }
 
-// DebugVv is -vv level logging
+// DebugVv is -vv level logging.
 func (l *AppLogger) DebugVv() *zerolog.Event {
 	if l.debugLevel >= 2 {
 		return l.debugLogger.Debug()
@@ -329,7 +338,7 @@ func (l *AppLogger) DebugVv() *zerolog.Event {
 	return nil
 }
 
-// DebugVvv is -vvv level logging
+// DebugVvv is -vvv level logging.
 func (l *AppLogger) DebugVvv() *zerolog.Event {
 	if l.debugLevel >= 3 {
 		return l.debugLogger.Debug()
@@ -337,7 +346,7 @@ func (l *AppLogger) DebugVvv() *zerolog.Event {
 	return nil
 }
 
-// SetDebugLevel sets the debug level (passed in from -v flags)
+// SetDebugLevel sets the debug level passed in from -v flags.
 func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
 }

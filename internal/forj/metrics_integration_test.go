@@ -282,6 +282,7 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 	}
 }
 
+// newRenderedMonitoringHTTPClient centralizes new rendered monitoring httpclient behavior so callers follow the same contract.
 func newRenderedMonitoringHTTPClient(t *testing.T) *http.Client {
 	t.Helper()
 
@@ -292,6 +293,7 @@ func newRenderedMonitoringHTTPClient(t *testing.T) *http.Client {
 	return &http.Client{Jar: jar}
 }
 
+// loginRenderedMonitoringClient centralizes login rendered monitoring client behavior so callers follow the same contract.
 func loginRenderedMonitoringClient(t *testing.T, client *http.Client, baseURL string) {
 	t.Helper()
 	if client == nil {
@@ -479,6 +481,7 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 	}
 }
 
+// renderMetricsTestApp keeps the render metrics test app representation consistent.
 func renderMetricsTestApp(t *testing.T, dir string) {
 	t.Helper()
 
@@ -498,6 +501,7 @@ func renderMetricsTestApp(t *testing.T, dir string) {
 	})
 }
 
+// waitForMetricsMatch centralizes wait for metrics match behavior so callers follow the same contract.
 func waitForMetricsMatch(t *testing.T, url string, pattern *regexp.Regexp, timeout time.Duration) bool {
 	t.Helper()
 
@@ -512,6 +516,7 @@ func waitForMetricsMatch(t *testing.T, url string, pattern *regexp.Regexp, timeo
 	return false
 }
 
+// fetchMetricsText centralizes fetch metrics text behavior so callers follow the same contract.
 func fetchMetricsText(t *testing.T, url string) string {
 	t.Helper()
 
@@ -527,6 +532,7 @@ func fetchMetricsText(t *testing.T, url string) string {
 	return string(body)
 }
 
+// waitForOutputContains centralizes wait for output contains behavior so callers follow the same contract.
 func waitForOutputContains(proc *procHandle, tokens []string, timeout time.Duration) bool {
 	if proc == nil {
 		return false
@@ -549,6 +555,7 @@ func waitForOutputContains(proc *procHandle, tokens []string, timeout time.Durat
 	return false
 }
 
+// mergeEnv centralizes merge env behavior so callers follow the same contract.
 func mergeEnv(base map[string]string, extra map[string]string) map[string]string {
 	merged := make(map[string]string, len(base)+len(extra))
 	for key, value := range base {
@@ -560,6 +567,7 @@ func mergeEnv(base map[string]string, extra map[string]string) map[string]string
 	return merged
 }
 
+// runCommandSuccess centralizes run command success behavior so callers follow the same contract.
 func runCommandSuccess(t *testing.T, projectDir, binPath string, envOverrides map[string]string, args ...string) []byte {
 	t.Helper()
 

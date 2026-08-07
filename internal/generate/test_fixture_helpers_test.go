@@ -42,6 +42,7 @@ func fixtureGenerationInput(projectDir string, values map[string]string) generat
 	}
 }
 
+// writeFixtureGoMod centralizes write fixture go mod persistence for the surrounding workflow.
 func writeFixtureGoMod(t *testing.T, root string, spec fixtureGoModSpec) {
 	t.Helper()
 
@@ -69,6 +70,7 @@ func writeFixtureGoMod(t *testing.T, root string, spec fixtureGoModSpec) {
 	}
 }
 
+// fixtureModuleVersion centralizes fixture module version behavior so callers follow the same contract.
 func fixtureModuleVersion(t *testing.T, module string) string {
 	t.Helper()
 
@@ -79,6 +81,7 @@ func fixtureModuleVersion(t *testing.T, module string) string {
 	return version
 }
 
+// fixtureRequireList centralizes fixture require list behavior so callers follow the same contract.
 func fixtureRequireList(t *testing.T, required []string, pinned []string) []string {
 	t.Helper()
 
@@ -104,6 +107,7 @@ func fixtureRequireList(t *testing.T, required []string, pinned []string) []stri
 	return combined
 }
 
+// addFixtureReplaceIfPresent centralizes add fixture replace if present behavior so callers follow the same contract.
 func addFixtureReplaceIfPresent(t *testing.T, root string, replace fixtureReplace) {
 	t.Helper()
 
@@ -158,6 +162,7 @@ func TestFixtureGoEnvPreservesCallerCaches(t *testing.T) {
 	}
 }
 
+// runFixtureGoModTidy centralizes run fixture go mod tidy behavior so callers follow the same contract.
 func runFixtureGoModTidy(t *testing.T, root string, extra map[string]string) {
 	t.Helper()
 	release := acquireFixtureGoCommand()
@@ -172,6 +177,7 @@ func runFixtureGoModTidy(t *testing.T, root string, extra map[string]string) {
 	}
 }
 
+// runFixtureGoTest centralizes run fixture go test behavior so callers follow the same contract.
 func runFixtureGoTest(t *testing.T, root, pkg, run string, extra map[string]string) string {
 	t.Helper()
 	release := acquireFixtureGoCommand()
@@ -197,6 +203,7 @@ func acquireFixtureGoCommand() func() {
 	return func() { <-fixtureGoCommands }
 }
 
+// assertFixtureGoModContains centralizes assert fixture go mod contains behavior so callers follow the same contract.
 func assertFixtureGoModContains(t *testing.T, root string, modules ...string) {
 	t.Helper()
 
@@ -229,6 +236,7 @@ func assertFixtureGoModPins(t *testing.T, root string, modules ...string) {
 	}
 }
 
+// queueLocalReplaces centralizes queue local replaces behavior so callers follow the same contract.
 func queueLocalReplaces(t *testing.T) []fixtureReplace {
 	t.Helper()
 
@@ -239,6 +247,7 @@ func queueLocalReplaces(t *testing.T) []fixtureReplace {
 	}
 }
 
+// cacheLocalReplaces centralizes cache local replaces behavior so callers follow the same contract.
 func cacheLocalReplaces(t *testing.T) []fixtureReplace {
 	t.Helper()
 
@@ -259,6 +268,7 @@ func cacheLocalReplaces(t *testing.T) []fixtureReplace {
 	}
 }
 
+// eventsLocalReplaces centralizes events local replaces behavior so callers follow the same contract.
 func eventsLocalReplaces(t *testing.T) []fixtureReplace {
 	t.Helper()
 
@@ -270,6 +280,7 @@ func eventsLocalReplaces(t *testing.T) []fixtureReplace {
 	}
 }
 
+// mailLocalReplaces centralizes mail local replaces behavior so callers follow the same contract.
 func mailLocalReplaces(t *testing.T) []fixtureReplace {
 	t.Helper()
 
@@ -296,6 +307,7 @@ func mustTempGeneratedModuleRoot(t *testing.T, pattern, packageDir string) strin
 	return root
 }
 
+// fixtureModuleSpec centralizes fixture module spec behavior so callers follow the same contract.
 func fixtureModuleSpec(module string, required []string, pinned []string, replaces []fixtureReplace) fixtureGoModSpec {
 	return fixtureGoModSpec{
 		module:   module,

@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// TestLoadAggregatesAndSorts protects the package ranking contract consumed by the CLI report.
 func TestLoadAggregatesAndSorts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compile.log")
 	if err := Record(path, "example.com/a", 120*time.Millisecond); err != nil {
@@ -121,7 +120,6 @@ func TestRecordNoPathIsNoop(t *testing.T) {
 	}
 }
 
-// TestRecordWritesFile protects the append-only protocol shared by the compiler tool and report loader.
 func TestRecordWritesFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compile.log")
 	if err := Record(path, "example.com/a", 5*time.Millisecond); err != nil {

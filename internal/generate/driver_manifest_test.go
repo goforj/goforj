@@ -428,7 +428,6 @@ func TestGenerateResourceFilesCompileAppPrefixedDriversWithoutSupportedManifest(
 	}
 }
 
-// TestAppPrefixedActiveDriversDoNotClassifyResourceFirstScopes protects ordinary named resources from overlay inference.
 func TestAppPrefixedActiveDriversDoNotClassifyResourceFirstScopes(t *testing.T) {
 	t.Setenv("CACHE_REPORTS_DRIVER", "redis")
 	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "memcached")

@@ -202,7 +202,6 @@ func TestProjectRendererRejectsQueueContractBeforeLegacyCleanup(t *testing.T) {
 	}
 }
 
-// TestProjectRendererRetainsLegacyQueueDriverWhenEnvWriteFails protects the only recoverable migration source.
 func TestProjectRendererRetainsLegacyQueueDriverWhenEnvWriteFails(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

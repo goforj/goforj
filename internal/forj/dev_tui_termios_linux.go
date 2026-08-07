@@ -4,6 +4,7 @@ package forj
 
 import "golang.org/x/sys/unix"
 
+// setTTYSingleKeyMode centralizes set ttysingle key mode behavior so callers follow the same contract.
 func setTTYSingleKeyMode(fd int) (func(), error) {
 	orig, err := unix.IoctlGetTermios(fd, unix.TCGETS)
 	if err != nil {
@@ -21,6 +22,7 @@ func setTTYSingleKeyMode(fd int) (func(), error) {
 	}, nil
 }
 
+// drainTTYInput centralizes drain ttyinput behavior so callers follow the same contract.
 func drainTTYInput(fd int) {
 	if err := unix.SetNonblock(fd, true); err != nil {
 		return

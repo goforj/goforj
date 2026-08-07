@@ -240,7 +240,6 @@ func TestResolveServicePlanRejectsUnknownIntentService(t *testing.T) {
 	}
 }
 
-// TestServicePlanRequirementReturnsDefensiveCopy protects derived plans from confirmation-layer mutations.
 func TestServicePlanRequirementReturnsDefensiveCopy(t *testing.T) {
 	components := Components{Cache: true, DatabaseSQLite: true, Docker: true}
 	resourcePlan, err := DefaultResourcePlan(components)

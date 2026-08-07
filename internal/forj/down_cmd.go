@@ -10,14 +10,17 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// DownCmd runs a project's configured development teardown tasks.
 type DownCmd struct {
 	logger *logger.AppLogger
 }
 
+// Signature returns the command-line contract used for registration.
 func (*DownCmd) Signature() string {
 	return `name:"down" help:"Bring down development resources"`
 }
 
+// NewDownCmd constructs the down cmd with its required dependencies.
 func NewDownCmd(logger *logger.AppLogger) *DownCmd {
 	return &DownCmd{logger: logger}
 }

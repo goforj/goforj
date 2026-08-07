@@ -399,7 +399,6 @@ func TestCompileNativeDevWatcherControls(t *testing.T) {
 	}
 }
 
-// TestCompileLegacyDevWatcherFullFlagSurface protects all supported historical wgo controls.
 func TestCompileLegacyDevWatcherFullFlagSurface(t *testing.T) {
 	watcher, err := compileLegacyDevWatcher(project.DevWatch{
 		Name: "Legacy",

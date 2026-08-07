@@ -120,6 +120,7 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 	}
 }
 
+// renderReadinessTestApp keeps the render readiness test app representation consistent.
 func renderReadinessTestApp(t *testing.T, dir string) {
 	t.Helper()
 
@@ -147,6 +148,7 @@ func renderReadinessTestApp(t *testing.T, dir string) {
 	})
 }
 
+// writeReadinessTestEnv centralizes write readiness test env persistence for the surrounding workflow.
 func writeReadinessTestEnv(t *testing.T, projectDir, dbPort string) {
 	t.Helper()
 
@@ -182,6 +184,7 @@ func writeReadinessTestEnv(t *testing.T, projectDir, dbPort string) {
 	}
 }
 
+// waitForProbeEndpoint centralizes wait for probe endpoint behavior so callers follow the same contract.
 func waitForProbeEndpoint(t *testing.T, url string, wantStatus int) {
 	t.Helper()
 

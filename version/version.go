@@ -20,6 +20,7 @@ var (
 // want recorded in project config.
 const GoForjConfigVersion = "0.19.0"
 
+// init fills release metadata from Go build information when linker values are unavailable.
 func init() {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if info.Main.Version != "" {
@@ -66,10 +67,12 @@ var releaseVersionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
 // Semver returns the configured scaffold/config semantic version.
 func Semver() string { return GoForjConfigVersion }
 
+// isCleanReleaseVersion centralizes the is clean release version decision for its callers.
 func isCleanReleaseVersion(raw string) bool {
 	return releaseVersionPattern.MatchString(strings.TrimSpace(raw))
 }
 
+// shortCommit keeps development version strings readable while retaining a useful revision prefix.
 func shortCommit(raw string) string {
 	commit := strings.TrimSpace(raw)
 	if len(commit) > 7 {
@@ -78,6 +81,7 @@ func shortCommit(raw string) string {
 	return commit
 }
 
+// normalizeSemver keeps normalize semver handling consistent across callers.
 func normalizeSemver(raw string) string {
 	value := strings.TrimSpace(raw)
 	switch value {

@@ -38,6 +38,7 @@ func Project(root string) atlasproject.Project {
 	return discovered.WithDiscoveredDefaults()
 }
 
+// loadProjectConfig centralizes load project config lookup for the surrounding workflow.
 func loadProjectConfig(root string) (*project.Config, error) {
 	content, err := os.ReadFile(filepath.Join(root, ".goforj.yml"))
 	if err != nil {
@@ -50,6 +51,7 @@ func loadProjectConfig(root string) (*project.Config, error) {
 	return &cfg, nil
 }
 
+// componentNames centralizes component names behavior so callers follow the same contract.
 func componentNames(components project.Components) []string {
 	names := []string{}
 	for _, definition := range project.ComponentCatalog() {
@@ -60,6 +62,7 @@ func componentNames(components project.Components) []string {
 	return names
 }
 
+// firstNonEmpty centralizes first non empty behavior so callers follow the same contract.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {

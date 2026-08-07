@@ -9,7 +9,6 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestProjectRendererMigratesComponentsWithoutPersistingResolvedDependencies protects the public render path's raw/effective split.
 func TestProjectRendererMigratesComponentsWithoutPersistingResolvedDependencies(t *testing.T) {
 	root := useProjectRendererComponentMigrationRoot(t)
 	configPath := filepath.Join(root, ".goforj.yml")

@@ -71,6 +71,7 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	return newDevwatchStreamer(rawURL, token)
 }
 
+// resolveLighthouseSecret centralizes resolve lighthouse secret lookup for the surrounding workflow.
 func resolveLighthouseSecret(env map[string]string) string {
 	if env != nil {
 		if value := strings.TrimSpace(env["LIGHTHOUSE_SECRET"]); value != "" {
@@ -80,6 +81,7 @@ func resolveLighthouseSecret(env map[string]string) string {
 	return strings.TrimSpace(getEnv("LIGHTHOUSE_SECRET"))
 }
 
+// newDevwatchStreamer centralizes new devwatch streamer behavior so callers follow the same contract.
 func newDevwatchStreamer(rawURL string, token string) *devwatchStreamer {
 	token = str.Of(token).Trim().String()
 	if token == "" {
@@ -105,6 +107,7 @@ func newDevwatchStreamer(rawURL string, token string) *devwatchStreamer {
 	return streamer
 }
 
+// normalizeDevwatchWSURL keeps normalize devwatch wsurl handling consistent across callers.
 func normalizeDevwatchWSURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err == nil && parsed != nil {
@@ -300,6 +303,7 @@ func (s *devwatchStreamer) closeConn() {
 	s.lastPing = time.Time{}
 }
 
+// closeConnIfCurrent centralizes close conn if current behavior so callers follow the same contract.
 func (s *devwatchStreamer) closeConnIfCurrent(conn *websocket.Conn) {
 	s.mu.Lock()
 	if s.conn != conn {
@@ -400,6 +404,7 @@ func (s *devwatchStreamer) readLoop() {
 	}
 }
 
+// reconnectLoop centralizes reconnect loop behavior so callers follow the same contract.
 func (s *devwatchStreamer) reconnectLoop() {
 	console.Debugf("devwatch reconnect loop started")
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -456,6 +461,7 @@ func (s *devwatchStreamer) reconnectLoop() {
 	}
 }
 
+// checkServerReady centralizes check server ready behavior so callers follow the same contract.
 func (s *devwatchStreamer) checkServerReady() bool {
 	raw := s.url
 	parsed, err := url.Parse(raw)
@@ -569,6 +575,7 @@ type devwatchLifecycleState struct {
 	restartShutdown bool
 }
 
+// newDevwatchLifecycleState centralizes new devwatch lifecycle state behavior so callers follow the same contract.
 func newDevwatchLifecycleState(startupExpected int, restartWatches []string) *devwatchLifecycleState {
 	restartExpected := make(map[string]struct{}, len(restartWatches))
 	for _, watch := range restartWatches {
@@ -583,6 +590,7 @@ func newDevwatchLifecycleState(startupExpected int, restartWatches []string) *de
 	}
 }
 
+// noteStartupTrigger centralizes note startup trigger behavior so callers follow the same contract.
 func (s *devwatchLifecycleState) noteStartupTrigger() bool {
 	if s == nil {
 		return false
@@ -602,6 +610,7 @@ func (s *devwatchLifecycleState) noteStartupTrigger() bool {
 	return true
 }
 
+// startupEmittedAlready centralizes startup emitted already behavior so callers follow the same contract.
 func (s *devwatchLifecycleState) startupEmittedAlready() bool {
 	if s == nil {
 		return false
@@ -611,6 +620,7 @@ func (s *devwatchLifecycleState) startupEmittedAlready() bool {
 	return s.startupEmitted
 }
 
+// noteRestartShutdown centralizes note restart shutdown behavior so callers follow the same contract.
 func (s *devwatchLifecycleState) noteRestartShutdown(watcher string, line string) bool {
 	if s == nil {
 		return false
@@ -627,6 +637,7 @@ func (s *devwatchLifecycleState) noteRestartShutdown(watcher string, line string
 	return true
 }
 
+// noteRestartTrigger centralizes note restart trigger behavior so callers follow the same contract.
 func (s *devwatchLifecycleState) noteRestartTrigger(watcher string) string {
 	if s == nil {
 		return ""
@@ -652,6 +663,7 @@ func (s *devwatchLifecycleState) noteRestartTrigger(watcher string) string {
 	return label
 }
 
+// legacyRestartExpected centralizes legacy restart expected behavior so callers follow the same contract.
 func legacyRestartExpected(watches []string) map[string]struct{} {
 	expected := make(map[string]struct{}, len(watches))
 	for _, watch := range watches {
@@ -862,6 +874,7 @@ func truncateDevApp(appName string, width int) string {
 	return appName[:width-1] + "~"
 }
 
+// decorateWatcherLine centralizes decorate watcher line behavior so callers follow the same contract.
 func decorateWatcherLine(line, watcher string, command string) string {
 	if watcher == "" {
 		return line
@@ -885,11 +898,13 @@ func decorateWatcherLine(line, watcher string, command string) string {
 	return line
 }
 
+// isWatcherTriggerLine centralizes the is watcher trigger line decision for its callers.
 func isWatcherTriggerLine(line string) bool {
 	line = normalizeDevwatchProtocolLine(line)
 	return line == watcherTriggerMarker || strings.Contains(line, watcherTriggerMarker)
 }
 
+// handleBuildProgressLine centralizes handle build progress line behavior so callers follow the same contract.
 func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
 	if !isDevBuildWatcher(watcher) {
 		return false
@@ -920,6 +935,7 @@ func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
 	return true
 }
 
+// normalizeDevwatchProtocolLine keeps normalize devwatch protocol line handling consistent across callers.
 func normalizeDevwatchProtocolLine(line string) string {
 	line = ansiCSI.ReplaceAllString(line, "")
 	if index := strings.LastIndex(line, "\r"); index >= 0 {
@@ -928,12 +944,14 @@ func normalizeDevwatchProtocolLine(line string) string {
 	return str.Of(line).Trim().String()
 }
 
+// formatBuildProgressStatus keeps the format build progress status representation consistent.
 func formatBuildProgressStatus(stepNumber string, stepName string) string {
 	stepLabel := console.Colorize(console.ColorBoldWhite, strings.TrimSpace(stepName))
 	stepCount := console.Colorize(console.ColorGray, strings.TrimSpace(stepNumber))
 	return fmt.Sprintf("%s %s", stepCount, stepLabel)
 }
 
+// isRuntimeShutdownLine centralizes the is runtime shutdown line decision for its callers.
 func isRuntimeShutdownLine(line string) bool {
 	line = str.Of(strings.ReplaceAll(line, "\r", "")).Trim().String()
 	if line == "" {
@@ -958,6 +976,7 @@ func isRuntimeShutdownLine(line string) bool {
 	return false
 }
 
+// writeDevwatchSeparator centralizes write devwatch separator persistence for the surrounding workflow.
 func writeDevwatchSeparator(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, timestamp time.Time, separator string) error {
 	if streamer != nil {
 		streamer.Send(devwatchLine{
@@ -977,6 +996,7 @@ func writeDevwatchSeparator(out io.Writer, streamer *devwatchStreamer, stream st
 	return nil
 }
 
+// getEnv centralizes get env behavior so callers follow the same contract.
 func getEnv(key string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value

@@ -23,6 +23,7 @@ func initialModel() model {
 	return initialModelWithOptions(newProjectModelOptions{})
 }
 
+// setComponentSelectedByKey centralizes set component selected by key behavior so callers follow the same contract.
 func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
 	t.Helper()
 	for idx, item := range m.componentList.Items() {
@@ -37,6 +38,7 @@ func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey,
 	t.Fatalf("component %q not found", key)
 }
 
+// selectComponentRowByKey centralizes select component row by key behavior so callers follow the same contract.
 func selectComponentRowByKey(t *testing.T, m *model, key project.ComponentKey) {
 	t.Helper()
 	for idx, item := range m.componentList.Items() {
@@ -50,6 +52,7 @@ func selectComponentRowByKey(t *testing.T, m *model, key project.ComponentKey) {
 	t.Fatalf("component %q not found", key)
 }
 
+// componentSelectedByKey centralizes component selected by key behavior so callers follow the same contract.
 func componentSelectedByKey(t *testing.T, m model, key project.ComponentKey) bool {
 	t.Helper()
 	for _, item := range m.componentList.Items() {
@@ -62,6 +65,7 @@ func componentSelectedByKey(t *testing.T, m model, key project.ComponentKey) boo
 	return false
 }
 
+// selectStarterKitRow centralizes select starter kit row behavior so callers follow the same contract.
 func selectStarterKitRow(t *testing.T, m *model, key project.StarterKit) {
 	t.Helper()
 	for idx, item := range m.starterKitList.Items() {
@@ -75,6 +79,7 @@ func selectStarterKitRow(t *testing.T, m *model, key project.StarterKit) {
 	t.Fatalf("starter kit %q not found", key)
 }
 
+// selectAtlasModeRow centralizes select atlas mode row behavior so callers follow the same contract.
 func selectAtlasModeRow(t *testing.T, m *model, mode atlasMode) {
 	t.Helper()
 	for idx, item := range m.atlasModeList.Items() {
@@ -229,7 +234,6 @@ func TestValidatePathInputRejectsNonEmptyDirectoryByDefault(t *testing.T) {
 	}
 }
 
-// TestValidatePathInputAllowsNonEmptyDirectoryWithFlag protects the explicit opt-in escape hatch.
 func TestValidatePathInputAllowsNonEmptyDirectoryWithFlag(t *testing.T) {
 	temp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(temp, "README.md"), []byte("# existing\n"), 0644); err != nil {
@@ -1202,7 +1206,6 @@ func TestDemoExtrasExplainsTemporaryMySQLConstraint(t *testing.T) {
 	}
 }
 
-// TestFinalizeConfigKeepsResourceTopologyOutOfProjectYAML protects the boundary between durable capabilities and deployment-owned choices.
 func TestFinalizeConfigKeepsResourceTopologyOutOfProjectYAML(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.Jobs = true

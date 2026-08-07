@@ -15,9 +15,13 @@ import (
 
 // BackupRepository stores complete manifest-backed backup directories.
 type BackupRepository interface {
+	// Upload defines the upload behavior required from implementations.
 	Upload(context.Context, string, string) error
+	// Download defines the download behavior required from implementations.
 	Download(context.Context, string, string) error
+	// List defines the list behavior required from implementations.
 	List(context.Context, string) ([]string, error)
+	// Delete defines the delete behavior required from implementations.
 	Delete(context.Context, string) error
 }
 
@@ -161,7 +165,7 @@ func (r StorageRepository) bound(ctx context.Context, name string) (repositoryBi
 	return repositoryBinding{disk: r.Disk.WithContext(ctx), prefix: prefix}, nil
 }
 
-// safeExtractPath prevents a repository object from escaping a local destination.
+// safeRepositoryExtractPath prevents a repository object from escaping a local destination.
 func safeRepositoryExtractPath(root string, name string) (string, error) {
 	if strings.TrimSpace(name) == "" || filepath.IsAbs(name) {
 		return "", fmt.Errorf("invalid repository object path %q", name)

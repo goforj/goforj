@@ -267,6 +267,7 @@ type devWatchBackendStart struct {
 
 // devWatchBackend abstracts physical event delivery so all logical watchers share one subscription layer.
 type devWatchBackend interface {
+	// start defines the start behavior required from implementations.
 	start(context.Context, []string, func(string) bool) (devWatchBackendStart, error)
 }
 

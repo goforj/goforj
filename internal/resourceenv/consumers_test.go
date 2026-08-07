@@ -410,7 +410,6 @@ func TestResourceAppPrefixesRequireTopologyEvidence(t *testing.T) {
 	}
 }
 
-// TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference protects names containing another resource marker.
 func TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference(t *testing.T) {
 	components := project.Components{DatabaseSQLite: true, Docker: true, Cache: true}
 	plan := defaultResourcePlanForTest(t, components)

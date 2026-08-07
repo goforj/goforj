@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// loadDevAppCommands centralizes load dev app commands lookup for the surrounding workflow.
 func loadDevAppCommands() ([]devAppCommandOption, string) {
 	output, err := runDevAppHelp("--help")
 	if err != nil {
@@ -21,6 +22,7 @@ func loadDevAppCommands() ([]devAppCommandOption, string) {
 	return commands, ""
 }
 
+// loadDevAppCommandAcceptsArgs centralizes load dev app command accepts args lookup for the surrounding workflow.
 func loadDevAppCommandAcceptsArgs(name string) bool {
 	if strings.TrimSpace(name) == "" {
 		return false
@@ -32,6 +34,7 @@ func loadDevAppCommandAcceptsArgs(name string) bool {
 	return parseDevAppCommandAcceptsArgs(output)
 }
 
+// runDevAppHelp centralizes run dev app help behavior so callers follow the same contract.
 func runDevAppHelp(args ...string) (string, error) {
 	cmd := exec.Command(activeDevAppBinaryPath(), args...)
 	cmd.Env = os.Environ()

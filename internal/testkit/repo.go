@@ -7,6 +7,7 @@ import (
 	"runtime"
 )
 
+// RepoRoot centralizes repo root behavior so callers follow the same contract.
 func RepoRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -23,6 +24,7 @@ func RepoRoot() (string, error) {
 	return "", fmt.Errorf("resolve repo root from %q", wd)
 }
 
+// findRepoRoot centralizes find repo root behavior so callers follow the same contract.
 func findRepoRoot(start string) (string, bool) {
 	dir := start
 	for {
@@ -38,6 +40,7 @@ func findRepoRoot(start string) (string, bool) {
 	return "", false
 }
 
+// isRepoRoot centralizes the is repo root decision for its callers.
 func isRepoRoot(dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return false

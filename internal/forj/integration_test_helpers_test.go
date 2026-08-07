@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// Output centralizes output behavior so callers follow the same contract.
 func (p *procHandle) Output() string {
 	if p == nil {
 		return ""
@@ -51,6 +52,7 @@ func (p *procHandle) Output() string {
 	return fmt.Sprintf("stdout:\n%s\nstderr:\n%s", p.stdout.String(), p.stderr.String())
 }
 
+// Start centralizes start behavior so callers follow the same contract.
 func (p *procHandle) Start() error {
 	if p == nil || p.cmd == nil {
 		return fmt.Errorf("invalid process")
@@ -65,6 +67,7 @@ func (p *procHandle) Start() error {
 	return nil
 }
 
+// Stop centralizes stop behavior so callers follow the same contract.
 func (p *procHandle) Stop() {
 	if p == nil {
 		return
@@ -89,6 +92,7 @@ func (p *procHandle) Stop() {
 	}
 }
 
+// ExitError centralizes exit error behavior so callers follow the same contract.
 func (p *procHandle) ExitError() error {
 	if p == nil || p.done == nil {
 		return nil
@@ -104,6 +108,7 @@ func (p *procHandle) ExitError() error {
 	}
 }
 
+// stopProcAsync centralizes stop proc async behavior so callers follow the same contract.
 func stopProcAsync(t *testing.T, label string, proc *procHandle, timeout time.Duration) {
 	t.Helper()
 	if proc == nil {
@@ -121,6 +126,7 @@ func stopProcAsync(t *testing.T, label string, proc *procHandle, timeout time.Du
 	}
 }
 
+// waitForTCP centralizes wait for tcp behavior so callers follow the same contract.
 func waitForTCP(t *testing.T, addr string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -135,6 +141,7 @@ func waitForTCP(t *testing.T, addr string, timeout time.Duration) bool {
 	return false
 }
 
+// findFreeAddr centralizes find free addr behavior so callers follow the same contract.
 func findFreeAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -146,6 +153,7 @@ func findFreeAddr(t *testing.T) string {
 	return addr
 }
 
+// renderAppAtDir keeps the render app at dir representation consistent.
 func renderAppAtDir(t *testing.T, dir string) {
 	t.Helper()
 	testkit.RenderProjectWithForj(t, dir, testkit.RenderProjectRequest{
@@ -168,6 +176,7 @@ func renderAppAtDir(t *testing.T, dir string) {
 	})
 }
 
+// buildRenderedDefaultApp keeps the build rendered default app representation consistent.
 func buildRenderedDefaultApp(t *testing.T, projectDir string, env map[string]string, label string) string {
 	t.Helper()
 	binPath := filepath.Join(t.TempDir(), "app")
@@ -175,6 +184,7 @@ func buildRenderedDefaultApp(t *testing.T, projectDir string, env map[string]str
 	return binPath
 }
 
+// buildRenderedDefaultAppTo keeps the build rendered default app to representation consistent.
 func buildRenderedDefaultAppTo(t *testing.T, projectDir string, binPath string, env map[string]string, label string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {

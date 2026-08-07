@@ -146,6 +146,7 @@ type renderStats struct {
 	skipped []string
 }
 
+// recordCreated centralizes record created behavior so callers follow the same contract.
 func (s *renderStats) recordCreated(path string) {
 	if path == "" {
 		return
@@ -155,6 +156,7 @@ func (s *renderStats) recordCreated(path string) {
 	s.created = append(s.created, path)
 }
 
+// recordSkipped centralizes record skipped behavior so callers follow the same contract.
 func (s *renderStats) recordSkipped(path string) {
 	if path == "" {
 		return
@@ -204,6 +206,7 @@ type templateMapping struct {
 	dest string
 }
 
+// mapTemplate centralizes map template behavior so callers follow the same contract.
 func mapTemplate(tmpl string) templateMapping {
 	return templateMapping{
 		tmpl: tmpl,
@@ -211,6 +214,7 @@ func mapTemplate(tmpl string) templateMapping {
 	}
 }
 
+// mapTemplateTo centralizes map template to behavior so callers follow the same contract.
 func mapTemplateTo(tmpl, dest string) templateMapping {
 	return templateMapping{
 		tmpl: tmpl,
@@ -218,6 +222,7 @@ func mapTemplateTo(tmpl, dest string) templateMapping {
 	}
 }
 
+// counts centralizes counts behavior so callers follow the same contract.
 func (s *renderStats) counts() renderCounts {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -227,6 +232,7 @@ func (s *renderStats) counts() renderCounts {
 	}
 }
 
+// renderCountsLine keeps the render counts line representation consistent.
 func renderCountsLine(title string, created, skipped int, unit string) string {
 	label := fmt.Sprintf("%-32s", title)
 	line := fmt.Sprintf("%s %s %s %d", markStep, label, markCreate, created)
@@ -239,15 +245,18 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 	return line
 }
 
+// renderCountsLineWithTiming keeps the render counts line with timing representation consistent.
 func renderCountsLineWithTiming(title string, created, skipped int, unit string, elapsed time.Duration) string {
 	line := renderCountsLine(title, created, skipped, unit)
 	return appendRenderTiming(line, elapsed)
 }
 
+// formatRenderElapsed keeps the format render elapsed representation consistent.
 func formatRenderElapsed(elapsed time.Duration) string {
 	return formatDevElapsed(elapsed)
 }
 
+// appendRenderTiming centralizes append render timing behavior so callers follow the same contract.
 func appendRenderTiming(line string, elapsed time.Duration) string {
 	if elapsed <= 0 {
 		return line
@@ -255,6 +264,7 @@ func appendRenderTiming(line string, elapsed time.Duration) string {
 	return line + " " + markSkip + " " + timingStyle.Render(formatRenderElapsed(elapsed))
 }
 
+// maybeFormatGoSource centralizes maybe format go source behavior so callers follow the same contract.
 func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
 	if !strings.HasSuffix(destPath, ".go") {
 		return content, nil
@@ -266,21 +276,25 @@ func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
 	return formatted, nil
 }
 
+// generateLighthouseSecret centralizes generate lighthouse secret behavior so callers follow the same contract.
 func generateLighthouseSecret() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	return generateRandomToken(charset, 32)
 }
 
+// generateJWTSecretKey centralizes generate jwtsecret key behavior so callers follow the same contract.
 func generateJWTSecretKey() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	return generateRandomToken(charset, 48)
 }
 
+// generateAppDiagToken centralizes generate app diag token behavior so callers follow the same contract.
 func generateAppDiagToken() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	return generateRandomToken(charset, 32)
 }
 
+// generateRandomToken centralizes generate random token behavior so callers follow the same contract.
 func generateRandomToken(charset string, length int) (string, error) {
 	if length <= 0 {
 		return "", nil
@@ -1809,6 +1823,7 @@ func (w projectRenderWorkspace) appHTTPPortsFromEnv(path string, currentPrefix s
 	return used
 }
 
+// isNamedAppHTTPPortKey centralizes the is named app httpport key decision for its callers.
 func isNamedAppHTTPPortKey(key string, currentPrefix string) bool {
 	key = strings.TrimSpace(key)
 	if key == "" || currentPrefix == "" {
@@ -2140,6 +2155,7 @@ func (p *ProjectRenderer) SetTimings(enabled bool) {
 	p.timings = enabled
 }
 
+// timeRenderStage centralizes time render stage behavior so callers follow the same contract.
 func (p *ProjectRenderer) timeRenderStage(name string, fn func() error) error {
 	timingEnabled := p.renderTimingEnabled()
 	if !timingEnabled {
@@ -2161,6 +2177,7 @@ func (p *ProjectRenderer) timeRenderStage(name string, fn func() error) error {
 	return err
 }
 
+// renderTimingEnabled keeps the render timing enabled representation consistent.
 func (p *ProjectRenderer) renderTimingEnabled() bool {
 	if p != nil && p.timings {
 		return true
@@ -2174,15 +2191,18 @@ func (p *ProjectRenderer) renderTimingEnabled() bool {
 	return false
 }
 
+// streamRenderTimings centralizes stream render timings behavior so callers follow the same contract.
 func (p *ProjectRenderer) streamRenderTimings() bool {
 	return runningInsideDevCommand() && p.renderTimingEnabled()
 }
 
+// appendRenderLine centralizes append render line behavior so callers follow the same contract.
 func (p *ProjectRenderer) appendRenderLine(line string) {
 	p.lines = append(p.lines, line)
 	p.flushRenderLines(len(p.lines) - 1)
 }
 
+// flushRenderLines centralizes flush render lines behavior so callers follow the same contract.
 func (p *ProjectRenderer) flushRenderLines(start int) {
 	if !p.streamRenderTimings() || start >= len(p.lines) {
 		return
@@ -2193,6 +2213,7 @@ func (p *ProjectRenderer) flushRenderLines(start int) {
 	p.lines = p.lines[:start]
 }
 
+// renderDebugEnabled keeps the render debug enabled representation consistent.
 func renderDebugEnabled() bool {
 	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(key))
@@ -2312,6 +2333,7 @@ func ensureGitignoreEnvironmentRules(path string) error {
 	return writeFileAtomically(path, []byte(updated), 0o644)
 }
 
+// dockerComposeUpDevCommand centralizes docker compose up dev command behavior so callers follow the same contract.
 func dockerComposeUpDevCommand(components project.Components) string {
 	return "docker-compose up -d"
 }
@@ -2321,6 +2343,7 @@ func dockerComposeDownDevCommand() string {
 	return `docker-compose --profile "*" down`
 }
 
+// normalizeDockerComposeUpTask keeps normalize docker compose up task handling consistent across callers.
 func normalizeDockerComposeUpTask(tasks *[]project.DevTask, components project.Components) bool {
 	changed := false
 	want := dockerComposeUpDevCommand(components)
@@ -2356,6 +2379,7 @@ func normalizeDockerComposeDownTask(tasks *[]project.DevTask) bool {
 	return changed
 }
 
+// removeGrafanaSeedTask centralizes remove grafana seed task behavior so callers follow the same contract.
 func removeGrafanaSeedTask(tasks *[]project.DevTask) bool {
 	changed := false
 	out := (*tasks)[:0]
@@ -2387,10 +2411,12 @@ func normalizeFrontendNPMWatchExclusions(watch string) string {
 	return appendMissingWatchArgs(normalized, []string{"-xdir node_modules", "-xdir dist"})
 }
 
+// normalizeTemplBuildWatchExclusions keeps normalize templ build watch exclusions handling consistent across callers.
 func normalizeTemplBuildWatchExclusions(watch string) string {
 	return appendMissingWatchArgs(watch, []string{"-xfile '.*_templ\\.go$'"})
 }
 
+// appendMissingWatchArgs centralizes append missing watch args behavior so callers follow the same contract.
 func appendMissingWatchArgs(watch string, args []string) string {
 	normalized := strings.TrimSpace(watch)
 	for _, arg := range args {
@@ -3047,6 +3073,7 @@ func stripGoModLineComment(line string) string {
 	return before
 }
 
+// runTemplGenerate centralizes run templ generate behavior so callers follow the same contract.
 func (p *ProjectRenderer) runTemplGenerate() error {
 	cmd := exec.Command("go", "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
 	cmd.Dir = p.workspace.path()
@@ -3122,6 +3149,7 @@ func (p *ProjectRenderer) runWireGenerateDir(wirePath string, wireDir string) er
 	}
 }
 
+// firstWireGenerateError centralizes first wire generate error behavior so callers follow the same contract.
 func firstWireGenerateError(errs []error) error {
 	for _, err := range errs {
 		if err != nil {
@@ -3199,6 +3227,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	return nil
 }
 
+// scaffoldDemoFrontend centralizes scaffold demo frontend behavior so callers follow the same contract.
 func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 	frontendDir := projectlayout.FrontendDir(".", project.DefaultApp())
 	if err := p.copyRawPathToDest("demo/frontend", frontendDir); err != nil {
@@ -3214,6 +3243,7 @@ func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 	return nil
 }
 
+// scaffoldDefaultStarterKit centralizes scaffold default starter kit behavior so callers follow the same contract.
 func (p *ProjectRenderer) scaffoldDefaultStarterKit() error {
 	return p.scaffoldStarterKitForApp(project.DefaultApp(), p.config.Render.StarterKit, true)
 }
@@ -3294,6 +3324,7 @@ func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, ove
 	return p.writeTemplateMappingsOnceForApp(app, mappings)
 }
 
+// starterKitFrontendSource centralizes starter kit frontend source behavior so callers follow the same contract.
 func starterKitFrontendSource(starterKit project.StarterKit) (string, error) {
 	switch project.NormalizeStarterKit(starterKit) {
 	case project.StarterKitVue:
@@ -3312,6 +3343,7 @@ func skipFrontendDependencyDirectory(rel string, entry fs.DirEntry) bool {
 	return entry.IsDir() && filepath.Base(rel) == "node_modules"
 }
 
+// ensureFrontendDistPlaceholder centralizes ensure frontend dist placeholder behavior so callers follow the same contract.
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
 	content := defaultFrontendDistPlaceholderContent()
 	paths := make([]string, 0)
@@ -3672,6 +3704,7 @@ func (w projectRenderWorkspace) runtimeAppMetadataForConfiguredApp(config *proje
 	return metadata
 }
 
+// runtimeAppMetadataForAppFromApps centralizes runtime app metadata for app from apps behavior so callers follow the same contract.
 func runtimeAppMetadataForAppFromApps(app project.App, apps []project.App) runtimeAppMetadata {
 	app = projectlayout.NormalizeApp(app)
 	seen := map[string]project.App{}
@@ -3785,6 +3818,7 @@ func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 	return nil
 }
 
+// copyRawPath centralizes copy raw path behavior so callers follow the same contract.
 func (p *ProjectRenderer) copyRawPath(path string) error {
 	if _, err := fs.ReadDir(templatesFS, path); err == nil {
 		return fs.WalkDir(templatesFS, path, func(entry string, d fs.DirEntry, err error) error {
@@ -3800,10 +3834,12 @@ func (p *ProjectRenderer) copyRawPath(path string) error {
 	return p.copyRawFile(path)
 }
 
+// copyRawPathToDest centralizes copy raw path to dest behavior so callers follow the same contract.
 func (p *ProjectRenderer) copyRawPathToDest(path, destRoot string) error {
 	return p.copyRawPathToDestFiltered(path, destRoot, nil)
 }
 
+// copyRawPathToDestFiltered centralizes copy raw path to dest filtered behavior so callers follow the same contract.
 func (p *ProjectRenderer) copyRawPathToDestFiltered(path, destRoot string, skip func(rel string, d fs.DirEntry) bool) error {
 	if _, err := fs.ReadDir(templatesFS, path); err == nil {
 		return fs.WalkDir(templatesFS, path, func(entry string, d fs.DirEntry, err error) error {
@@ -3830,10 +3866,12 @@ func (p *ProjectRenderer) copyRawPathToDestFiltered(path, destRoot string, skip 
 	return p.copyRawFileToDest(path, filepath.Join(destRoot, base))
 }
 
+// copyRawFile centralizes copy raw file behavior so callers follow the same contract.
 func (p *ProjectRenderer) copyRawFile(path string) error {
 	return p.copyRawFileToDest(path, path)
 }
 
+// copyRawFileToDest centralizes copy raw file to dest behavior so callers follow the same contract.
 func (p *ProjectRenderer) copyRawFileToDest(path, dest string) error {
 	content, err := templatesFS.ReadFile(path)
 	if err != nil {
@@ -3907,6 +3945,7 @@ func (p *ProjectRenderer) writeTemplateMappingsOnceForApp(app project.App, mappi
 	return nil
 }
 
+// countTidyModules centralizes count tidy modules behavior so callers follow the same contract.
 func countTidyModules(stdout, stderr string) int {
 	combined := strings.Split(strings.TrimSpace(stdout+"\n"+stderr), "\n")
 	count := 0
@@ -3921,6 +3960,7 @@ func countTidyModules(stdout, stderr string) int {
 	return count
 }
 
+// printStepSummary centralizes print step summary behavior so callers follow the same contract.
 func (p *ProjectRenderer) printStepSummary(title string, before renderCounts, elapsed time.Duration) {
 	after := p.stats.counts()
 	created := after.created - before.created
@@ -3932,6 +3972,7 @@ func (p *ProjectRenderer) printStepSummary(title string, before renderCounts, el
 	p.appendRenderLine(renderCountsLine(title, created, skipped, "files"))
 }
 
+// renderBox keeps the render box representation consistent.
 func renderBox(title string, lines []string) string {
 	if len(lines) == 0 {
 		return ""
@@ -3970,6 +4011,7 @@ func renderBox(title string, lines []string) string {
 	return lipgloss.NewStyle().MarginLeft(1).Render(box)
 }
 
+// printRenderDetails centralizes print render details behavior so callers follow the same contract.
 func (p *ProjectRenderer) printRenderDetails() {
 	if len(p.lines) == 0 {
 		return
@@ -3984,6 +4026,7 @@ func (p *ProjectRenderer) printRenderDetails() {
 	fmt.Printf("%s\n", renderBox(title, p.lines))
 }
 
+// printOverallSummary centralizes print overall summary behavior so callers follow the same contract.
 func (p *ProjectRenderer) printOverallSummary() {
 	total := p.stats.counts()
 	if runningInsideDevCommand() {
@@ -4005,6 +4048,7 @@ func (p *ProjectRenderer) printOverallSummary() {
 	fmt.Printf("\n%s\n", renderBox(title, lines))
 }
 
+// nextSteps centralizes next steps behavior so callers follow the same contract.
 func (p *ProjectRenderer) nextSteps() []string {
 	var steps []string
 
@@ -4043,6 +4087,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 	return steps
 }
 
+// runningInsideDevCommand centralizes running inside dev command behavior so callers follow the same contract.
 func runningInsideDevCommand() bool {
 	return strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == "dev_command"
 }

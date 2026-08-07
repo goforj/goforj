@@ -185,7 +185,6 @@ func TestRemoveGeneratedAssignmentsIncludesAppLocalCache(t *testing.T) {
 	}
 }
 
-// TestResolveServiceIntentUsesExactCatalogProfiles protects provider placement from neighboring tokens.
 func TestResolveServiceIntentUsesExactCatalogProfiles(t *testing.T) {
 	fallback := project.LocalServiceIntent{}.
 		WithMode(project.ServiceRedis, project.LocalServiceModeLocal).
