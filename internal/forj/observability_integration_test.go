@@ -564,6 +564,7 @@ func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
 	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
 }
 
+// freeTCPPort centralizes free tcpport behavior so callers follow the same contract.
 func freeTCPPort(t *testing.T) string {
 	t.Helper()
 	addr := findFreeAddr(t)
@@ -574,6 +575,7 @@ func freeTCPPort(t *testing.T) string {
 	return port
 }
 
+// runDockerCompose centralizes run docker compose behavior so callers follow the same contract.
 func runDockerCompose(t *testing.T, projectDir string, projectName string, timeout time.Duration, args ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -587,6 +589,7 @@ func runDockerCompose(t *testing.T, projectDir string, projectName string, timeo
 	}
 }
 
+// runDockerComposeBestEffort centralizes run docker compose best effort behavior so callers follow the same contract.
 func runDockerComposeBestEffort(t *testing.T, projectDir string, projectName string, args ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -599,6 +602,7 @@ func runDockerComposeBestEffort(t *testing.T, projectDir string, projectName str
 	}
 }
 
+// dockerComposeOutput centralizes docker compose output behavior so callers follow the same contract.
 func dockerComposeOutput(t *testing.T, projectDir string, projectName string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -613,6 +617,7 @@ func dockerComposeOutput(t *testing.T, projectDir string, projectName string, ar
 	return string(output)
 }
 
+// assertGrafanaComposeAPIStatus centralizes assert grafana compose apistatus behavior so callers follow the same contract.
 func assertGrafanaComposeAPIStatus(t *testing.T, projectDir string, projectName string, path string, want int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
@@ -689,6 +694,7 @@ func assertGrafanaHomeDashboard(t *testing.T, projectDir string, projectName str
 	t.Fatalf("Grafana home dashboard UID did not become %q\nlast response: %s\nlogs:\n%s", want, output, dockerComposeOutput(t, projectDir, projectName, "logs", "grafana-seed"))
 }
 
+// readRenderedFile centralizes read rendered file lookup for the surrounding workflow.
 func readRenderedFile(t *testing.T, root string, rel string) string {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(root, rel))
@@ -709,6 +715,7 @@ type renderedMetricsTargetEntry struct {
 	Labels  map[string]string `json:"labels"`
 }
 
+// readRenderedMetricsTargets centralizes read rendered metrics targets lookup for the surrounding workflow.
 func readRenderedMetricsTargets(t *testing.T, root string) []renderedMetricsTargetEntry {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(root, "containers", "observability", "vmagent", "metrics-targets.json"))
@@ -722,6 +729,7 @@ func readRenderedMetricsTargets(t *testing.T, root string) []renderedMetricsTarg
 	return entries
 }
 
+// assertRenderedMetricsTargets centralizes assert rendered metrics targets behavior so callers follow the same contract.
 func assertRenderedMetricsTargets(t *testing.T, entries []renderedMetricsTargetEntry, service string, environment string, want []renderedMetricsTarget) {
 	t.Helper()
 	if len(entries) != len(want) {

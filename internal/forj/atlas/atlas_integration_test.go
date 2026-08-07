@@ -109,6 +109,7 @@ EVENTS_AUDIT_DRIVER=inproc
 	}
 }
 
+// appendFile centralizes append file behavior so callers follow the same contract.
 func appendFile(t *testing.T, path string, content string) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)

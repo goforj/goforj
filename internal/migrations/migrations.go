@@ -10,19 +10,22 @@ import (
 // registry holds all registered migrations
 var registry []Migration
 
-// Migration interface defines the methods that a migration must implement
+// Migration defines the methods that a migration must implement.
 type Migration interface {
+	// Name defines the name behavior required from implementations.
 	Name() string
+	// Up defines the up behavior required from implementations.
 	Up(dbConn *gorm.DB) error
+	// Down defines the down behavior required from implementations.
 	Down(dbConn *gorm.DB) error
 }
 
-// RegisterMigration registers a new migration
+// RegisterMigration registers a new migration.
 func RegisterMigration(m Migration) {
 	registry = append(registry, m)
 }
 
-// GetMigrations returns all registered migrations
+// GetMigrations returns all registered migrations.
 func GetMigrations() []Migration {
 	return registry
 }
@@ -30,7 +33,7 @@ func GetMigrations() []Migration {
 //go:embed *
 var files embed.FS
 
-// init function is called when the package is imported
+// init registers embedded migrations when the package is imported.
 func init() {
 	// Register all SQL migrations found in the embedded file system
 	if err := AutoRegisterMigrations(); err != nil {
@@ -38,7 +41,7 @@ func init() {
 	}
 }
 
-// AutoRegisterMigrations automatically registers all SQL migrations
+// AutoRegisterMigrations automatically registers all SQL migrations.
 func AutoRegisterMigrations() error {
 	entries, err := files.ReadDir(".")
 	if err != nil {
@@ -73,7 +76,7 @@ func AutoRegisterMigrations() error {
 	return nil
 }
 
-// GetMigrationSQL reads the SQL file from the embedded file system
+// GetMigrationSQL reads the SQL file from the embedded file system.
 func GetMigrationSQL(filename string) (string, error) {
 	data, err := files.ReadFile(filename)
 	if err != nil {
@@ -82,22 +85,22 @@ func GetMigrationSQL(filename string) (string, error) {
 	return string(data), nil
 }
 
-// registerSQLMigration registers a SQL migration with the given base name
+// registerSQLMigration registers a SQL migration with the given base name.
 func registerSQLMigration(base string) {
 	RegisterMigration(&migration{name: base})
 }
 
-// migration represents a SQL migration
+// migration represents a SQL migration.
 type migration struct {
 	name string
 }
 
-// Name returns the name of the migration
+// Name returns the name of the migration.
 func (m *migration) Name() string {
 	return m.name
 }
 
-// Up executes the Up migration SQL
+// Up executes the Up migration SQL.
 func (m *migration) Up(dbConn *gorm.DB) error {
 	sql, err := GetMigrationSQL(m.name + ".up.sql")
 	if err != nil {
@@ -106,7 +109,7 @@ func (m *migration) Up(dbConn *gorm.DB) error {
 	return dbConn.Exec(sql).Error
 }
 
-// Down executes the Down migration SQL
+// Down executes the Down migration SQL.
 func (m *migration) Down(dbConn *gorm.DB) error {
 	sql, err := GetMigrationSQL(m.name + ".down.sql")
 	if err != nil {

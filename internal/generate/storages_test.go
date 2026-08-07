@@ -649,6 +649,7 @@ func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 	runFixtureGoTest(t, root, "./internal/storages", "TestDoesNotExist", nil)
 }
 
+// repoRoot centralizes repo root behavior so callers follow the same contract.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)

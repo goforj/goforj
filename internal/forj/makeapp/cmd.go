@@ -22,6 +22,7 @@ type appExistsError struct {
 	path string
 }
 
+// Error returns the command failure in a user-facing form.
 func (e appExistsError) Error() string {
 	return fmt.Sprintf("app %q already has files at %s", e.app.Name, e.path)
 }
@@ -56,7 +57,9 @@ func (r RemoveResult) Changed() bool {
 
 // Renderer is the small project renderer surface needed by make:app.
 type Renderer interface {
+	// RenderAppOnly defines the render app only behavior required from implementations.
 	RenderAppOnly(project.App, RenderOptions) error
+	// RemoveApp defines the remove app behavior required from implementations.
 	RemoveApp(project.App) (RemoveResult, error)
 }
 

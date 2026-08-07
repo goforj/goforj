@@ -469,6 +469,7 @@ templ stale() {
 	}
 }
 
+// readStarterUITemplSurface centralizes read starter uitempl surface lookup for the surrounding workflow.
 func readStarterUITemplSurface(t *testing.T) string {
 	t.Helper()
 

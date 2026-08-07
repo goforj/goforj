@@ -39,6 +39,7 @@ type encryptedWSMessage struct {
 	Data  string `json:"data"`
 }
 
+// configureWebsocketDialer centralizes configure websocket dialer behavior so callers follow the same contract.
 func configureWebsocketDialer(t *testing.T) {
 	t.Helper()
 	origHandshake := websocket.DefaultDialer.HandshakeTimeout
@@ -54,6 +55,7 @@ func configureWebsocketDialer(t *testing.T) {
 	})
 }
 
+// startAppServer centralizes start app server behavior so callers follow the same contract.
 func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*procHandle, string) {
 	t.Helper()
 
@@ -90,6 +92,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 	return handle, baseURL
 }
 
+// buildAgentEnv keeps the build agent env representation consistent.
 func buildAgentEnv(t *testing.T, baseURL, token string) []string {
 	t.Helper()
 	agentURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/lighthouse/ws/agent"
@@ -104,6 +107,7 @@ func buildAgentEnv(t *testing.T, baseURL, token string) []string {
 	)
 }
 
+// startProcess centralizes start process behavior so callers follow the same contract.
 func startProcess(t *testing.T, name, projectDir, binPath string, env []string, args ...string) *procHandle {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,6 +128,7 @@ func startProcess(t *testing.T, name, projectDir, binPath string, env []string, 
 	return handle
 }
 
+// sendConsoleCommand centralizes send console command behavior so callers follow the same contract.
 func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string, params map[string]any, timeout time.Duration) (map[string]any, error) {
 	t.Helper()
 	id := fmt.Sprintf("cmd-%d", time.Now().UnixNano())
@@ -169,6 +174,7 @@ func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string,
 	return nil, fmt.Errorf("response timeout for %s", name)
 }
 
+// waitForConsoleCommand centralizes wait for console command behavior so callers follow the same contract.
 func waitForConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string, params map[string]any, timeout time.Duration) (map[string]any, error) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -187,6 +193,7 @@ func waitForConsoleCommand(t *testing.T, conn *websocket.Conn, target, name stri
 	return nil, fmt.Errorf("response timeout for %s", name)
 }
 
+// findQueueSnapshot centralizes find queue snapshot behavior so callers follow the same contract.
 func findQueueSnapshot(t *testing.T, resp map[string]any, queueName string) map[string]any {
 	t.Helper()
 	queues, ok := resp["queues"].([]interface{})
@@ -206,6 +213,7 @@ func findQueueSnapshot(t *testing.T, resp map[string]any, queueName string) map[
 	return nil
 }
 
+// optionalQueueSnapshot centralizes optional queue snapshot behavior so callers follow the same contract.
 func optionalQueueSnapshot(resp map[string]any, queueName string) map[string]any {
 	queues, ok := resp["queues"].([]interface{})
 	if !ok {
@@ -234,6 +242,7 @@ type testLighthouseServer struct {
 	agentConnSources map[*websocket.Conn]string
 }
 
+// newTestLighthouseServer centralizes new test lighthouse server behavior so callers follow the same contract.
 func newTestLighthouseServer(t *testing.T, addr, token string) *testLighthouseServer {
 	t.Helper()
 
@@ -263,6 +272,7 @@ func newTestLighthouseServer(t *testing.T, addr, token string) *testLighthouseSe
 	return s
 }
 
+// listenWithRetry centralizes listen with retry behavior so callers follow the same contract.
 func listenWithRetry(addr string, attempts int, delay time.Duration) (net.Listener, error) {
 	var lastErr error
 	for i := 0; i < attempts; i++ {
@@ -279,6 +289,7 @@ func listenWithRetry(addr string, attempts int, delay time.Duration) (net.Listen
 	return nil, lastErr
 }
 
+// isAddrInUse centralizes the is addr in use decision for its callers.
 func isAddrInUse(err error) bool {
 	if err == nil {
 		return false
@@ -286,6 +297,7 @@ func isAddrInUse(err error) bool {
 	return strings.Contains(err.Error(), "address already in use")
 }
 
+// dialWS centralizes dial ws behavior so callers follow the same contract.
 func dialWS(t *testing.T, baseURL, path, token string) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + path
@@ -300,6 +312,7 @@ func dialWS(t *testing.T, baseURL, path, token string) *websocket.Conn {
 	return conn
 }
 
+// writeEncryptedAgentJSON centralizes write encrypted agent json persistence for the surrounding workflow.
 func writeEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, payload any) {
 	t.Helper()
 	raw, err := json.Marshal(payload)
@@ -315,6 +328,7 @@ func writeEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, 
 	}
 }
 
+// readEncryptedAgentJSON centralizes read encrypted agent json lookup for the surrounding workflow.
 func readEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, target any) {
 	t.Helper()
 	var envelope encryptedWSMessage
@@ -330,6 +344,7 @@ func readEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, t
 	}
 }
 
+// encryptWSWithSecret centralizes encrypt wswith secret behavior so callers follow the same contract.
 func encryptWSWithSecret(secret string, payload []byte) (string, string, error) {
 	if strings.TrimSpace(secret) == "" {
 		return "", "", errors.New("missing lighthouse secret")
@@ -351,6 +366,7 @@ func encryptWSWithSecret(secret string, payload []byte) (string, string, error) 
 	return base64.StdEncoding.EncodeToString(nonce), base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
+// decryptWSWithSecret centralizes decrypt wswith secret behavior so callers follow the same contract.
 func decryptWSWithSecret(secret, nonceB64, ciphertextB64 string) ([]byte, error) {
 	if strings.TrimSpace(secret) == "" {
 		return nil, errors.New("missing lighthouse secret")
@@ -375,6 +391,7 @@ func decryptWSWithSecret(secret, nonceB64, ciphertextB64 string) ([]byte, error)
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
+// waitForAgentMissing centralizes wait for agent missing behavior so callers follow the same contract.
 func waitForAgentMissing(ctx context.Context, baseURL, token, source string, timeout time.Duration) error {
 	client := &http.Client{Timeout: 200 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
@@ -408,6 +425,7 @@ func waitForAgentMissing(ctx context.Context, baseURL, token, source string, tim
 	return fmt.Errorf("agent %s still present after %s", source, timeout)
 }
 
+// Close releases resources owned by the receiver.
 func (s *testLighthouseServer) Close() {
 	if s == nil || s.server == nil {
 		return
@@ -423,10 +441,12 @@ func (s *testLighthouseServer) Close() {
 	_ = s.server.Close()
 }
 
+// Addr centralizes addr behavior so callers follow the same contract.
 func (s *testLighthouseServer) Addr() string {
 	return s.ln.Addr().String()
 }
 
+// handleAgents centralizes handle agents behavior so callers follow the same contract.
 func (s *testLighthouseServer) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer "+s.token {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -441,6 +461,7 @@ func (s *testLighthouseServer) handleAgents(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(list)
 }
 
+// handleDevwatch centralizes handle devwatch behavior so callers follow the same contract.
 func (s *testLighthouseServer) handleDevwatch(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer "+s.token {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -482,6 +503,7 @@ func (s *testLighthouseServer) handleDevwatch(w http.ResponseWriter, r *http.Req
 	}()
 }
 
+// handleAgent centralizes handle agent behavior so callers follow the same contract.
 func (s *testLighthouseServer) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer "+s.token {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -530,6 +552,7 @@ func (s *testLighthouseServer) handleAgent(w http.ResponseWriter, r *http.Reques
 	}()
 }
 
+// waitForDevAgent centralizes wait for dev agent behavior so callers follow the same contract.
 func waitForDevAgent(ctx context.Context, baseURL, token string, timeout time.Duration) error {
 	client := &http.Client{Timeout: 200 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
@@ -558,6 +581,7 @@ func waitForDevAgent(ctx context.Context, baseURL, token string, timeout time.Du
 	return fmt.Errorf("dev agent not observed within %s", timeout)
 }
 
+// waitForServerReady centralizes wait for server ready behavior so callers follow the same contract.
 func waitForServerReady(ctx context.Context, baseURL, token string, timeout time.Duration) error {
 	client := &http.Client{Timeout: 200 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
@@ -582,6 +606,7 @@ func waitForServerReady(ctx context.Context, baseURL, token string, timeout time
 	return fmt.Errorf("server not ready within %s", timeout)
 }
 
+// waitForAgents centralizes wait for agents behavior so callers follow the same contract.
 func waitForAgents(ctx context.Context, baseURL, token string, sources []string, timeout time.Duration) error {
 	if len(sources) == 0 {
 		return nil
@@ -626,6 +651,7 @@ func waitForAgents(ctx context.Context, baseURL, token string, sources []string,
 	return fmt.Errorf("agents not observed within %s: %v", timeout, sources)
 }
 
+// getSharedApp centralizes get shared app behavior so callers follow the same contract.
 func getSharedApp(t *testing.T) (string, string) {
 	t.Helper()
 	sharedAppOnce.Do(func() {
@@ -670,6 +696,7 @@ func getSharedApp(t *testing.T) (string, string) {
 	return sharedProjectDir, sharedBinPath
 }
 
+// verifyBinaryHasCommand centralizes verify binary has command behavior so callers follow the same contract.
 func verifyBinaryHasCommand(t *testing.T, projectDir, binPath, command string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
@@ -686,6 +713,7 @@ func verifyBinaryHasCommand(t *testing.T, projectDir, binPath, command string) {
 	}
 }
 
+// writeLighthouseEnv centralizes write lighthouse env persistence for the surrounding workflow.
 func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 	t.Helper()
 	updates := []struct {
@@ -719,6 +747,7 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 	}
 }
 
+// startRealProcesses centralizes start real processes behavior so callers follow the same contract.
 func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {
 	t.Helper()
 
@@ -743,6 +772,7 @@ func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string
 	return procs, sources
 }
 
+// forceReconnect centralizes force reconnect behavior so callers follow the same contract.
 func forceReconnect(streamer *devwatchStreamer, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -766,6 +796,7 @@ func forceReconnect(streamer *devwatchStreamer, timeout time.Duration) error {
 	return fmt.Errorf("force reconnect timed out after %s", timeout)
 }
 
+// streamerConnected centralizes streamer connected behavior so callers follow the same contract.
 func streamerConnected(streamer *devwatchStreamer) bool {
 	streamer.mu.Lock()
 	defer streamer.mu.Unlock()

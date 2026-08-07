@@ -13,6 +13,7 @@ import (
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
+// stripANSI centralizes strip ansi behavior so callers follow the same contract.
 func stripANSI(s string) string {
 	return ansiCode.ReplaceAllString(s, "")
 }
@@ -58,7 +59,6 @@ func TestDevConfigUsesWatcherStdinKeepsInteractiveChildrenOffTheTUI(t *testing.T
 	}
 }
 
-// TestFinishDevOutputSessionRestoresTerminalExactlyOnce protects the handoff from adding duplicate reset newlines after the TUI exits.
 func TestFinishDevOutputSessionRestoresTerminalExactlyOnce(t *testing.T) {
 	tests := []struct {
 		name                    string

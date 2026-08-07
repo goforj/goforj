@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// GoCachePaths centralizes go cache paths behavior so callers follow the same contract.
 func GoCachePaths() (string, string) {
 	modCache := os.Getenv("GOMODCACHE")
 	buildCache := os.Getenv("GOCACHE")
@@ -37,6 +38,7 @@ func GoCachePaths() (string, string) {
 	return modCache, buildCache
 }
 
+// goEnv centralizes go env behavior so callers follow the same contract.
 func goEnv(key string) string {
 	cmd := exec.Command("go", "env", key)
 	output, err := cmd.Output()

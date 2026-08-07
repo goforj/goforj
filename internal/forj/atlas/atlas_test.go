@@ -543,6 +543,7 @@ func TestListSkillsCmdIncludesProjectSkills(t *testing.T) {
 	}
 }
 
+// captureStdout centralizes capture stdout behavior so callers follow the same contract.
 func captureStdout(t *testing.T, run func()) string {
 	t.Helper()
 	previous := os.Stdout
@@ -566,6 +567,7 @@ func captureStdout(t *testing.T, run func()) string {
 	return string(content)
 }
 
+// withWorkingDir centralizes with working dir behavior so callers follow the same contract.
 func withWorkingDir(t *testing.T, dir string) {
 	t.Helper()
 	previous, err := os.Getwd()
@@ -582,6 +584,7 @@ func withWorkingDir(t *testing.T, dir string) {
 	})
 }
 
+// writeFile centralizes write file persistence for the surrounding workflow.
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	dir := filepath.Dir(path)
@@ -595,6 +598,7 @@ func writeFile(t *testing.T, path string, content string) {
 	}
 }
 
+// assertFileContains centralizes assert file contains behavior so callers follow the same contract.
 func assertFileContains(t *testing.T, path string, want string) {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -606,6 +610,7 @@ func assertFileContains(t *testing.T, path string, want string) {
 	}
 }
 
+// containsString centralizes contains string behavior so callers follow the same contract.
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -615,6 +620,7 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+// containsApp centralizes contains app behavior so callers follow the same contract.
 func containsApp(values []atlasproject.App, want string) bool {
 	for _, value := range values {
 		if value.Name == want {
@@ -624,6 +630,7 @@ func containsApp(values []atlasproject.App, want string) bool {
 	return false
 }
 
+// resourceLinkByID centralizes resource link by id behavior so callers follow the same contract.
 func resourceLinkByID(resources []workflows.ResourceLink, id string) (workflows.ResourceLink, bool) {
 	for _, resource := range resources {
 		if resource.ID == id {

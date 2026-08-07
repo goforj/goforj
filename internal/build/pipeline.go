@@ -35,21 +35,28 @@ type Pipeline struct {
 const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
 
 type buildProgressReporter interface {
+	// Step defines the step behavior required from implementations.
 	Step(index int, total int, step string)
+	// State defines the state behavior required from implementations.
 	State(state string)
 }
 
 type buildProgressNoop struct{}
 
+// Step centralizes step behavior so callers follow the same contract.
 func (buildProgressNoop) Step(int, int, string) {}
-func (buildProgressNoop) State(string)          {}
+
+// State centralizes state behavior so callers follow the same contract.
+func (buildProgressNoop) State(string) {}
 
 type buildProgressMarkerReporter struct{}
 
+// Step centralizes step behavior so callers follow the same contract.
 func (buildProgressMarkerReporter) Step(index int, total int, step string) {
 	fmt.Fprintf(os.Stderr, "%s step %d/%d %s\n", buildProgressMarker, index, total, strings.TrimSpace(step))
 }
 
+// State centralizes state behavior so callers follow the same contract.
 func (buildProgressMarkerReporter) State(state string) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", buildProgressMarker, strings.TrimSpace(state))
 }
@@ -272,6 +279,7 @@ func (p Pipeline) prepareAPIIndex(root string, strict bool, buildTags ...string)
 	return preparation, nil
 }
 
+// buildProgressEnabled keeps the build progress enabled representation consistent.
 func buildProgressEnabled() bool {
 	value := strings.TrimSpace(os.Getenv("FORJ_BUILD_PROGRESS"))
 	return value != "" && value != "0" && !strings.EqualFold(value, "false")
@@ -296,6 +304,7 @@ func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter
 	}
 }
 
+// printStepTiming centralizes print step timing behavior so callers follow the same contract.
 func printStepTiming(kind string, stepName string, duration time.Duration, status string) {
 	timing := duration.Round(time.Millisecond)
 	if strings.TrimSpace(status) != "" {
@@ -516,6 +525,7 @@ func hasDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+// debugEnabled centralizes debug enabled behavior so callers follow the same contract.
 func debugEnabled() bool {
 	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(key))

@@ -22,6 +22,7 @@ type ObjectInfo struct {
 
 // ObjectLister provides the minimal remote storage surface needed for an inventory backup.
 type ObjectLister interface {
+	// ListObjects defines the list objects behavior required from implementations.
 	ListObjects(context.Context, string) ([]ObjectInfo, error)
 }
 

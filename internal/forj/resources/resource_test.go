@@ -475,6 +475,7 @@ func TestRegistryOrdersAndFiltersResources(t *testing.T) {
 	}
 }
 
+// resourceByID centralizes resource by id behavior so callers follow the same contract.
 func resourceByID(resources []Resource, id string) (Resource, bool) {
 	for _, resource := range resources {
 		if resource.ID == id {
@@ -484,6 +485,7 @@ func resourceByID(resources []Resource, id string) (Resource, bool) {
 	return Resource{}, false
 }
 
+// resourceIDs centralizes resource ids behavior so callers follow the same contract.
 func resourceIDs(resources []Resource) []string {
 	ids := make([]string, 0, len(resources))
 	for _, resource := range resources {
@@ -492,6 +494,7 @@ func resourceIDs(resources []Resource) []string {
 	return ids
 }
 
+// equalStrings centralizes equal strings behavior so callers follow the same contract.
 func equalStrings(left []string, right []string) bool {
 	if len(left) != len(right) {
 		return false

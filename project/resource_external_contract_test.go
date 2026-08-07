@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// TestResourceCatalogExternalDriversDeclareOperationalMetadata protects the Advanced inventory from silent infrastructure requirements.
 func TestResourceCatalogExternalDriversDeclareOperationalMetadata(t *testing.T) {
 	for _, resource := range ResourceCatalog() {
 		for _, driver := range resource.Drivers {

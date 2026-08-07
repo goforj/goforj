@@ -150,7 +150,6 @@ func TestRunDevBuildJobWithLoaderAnimatesBootstrapBuild(t *testing.T) {
 	}
 }
 
-// TestRunDevBuildJobWithLoaderKeepsRedirectedOutputStable protects CI logs from spinner frames and carriage-return redraws.
 func TestRunDevBuildJobWithLoaderKeepsRedirectedOutputStable(t *testing.T) {
 	previous := console.Default()
 	t.Cleanup(func() {

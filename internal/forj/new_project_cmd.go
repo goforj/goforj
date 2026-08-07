@@ -594,6 +594,7 @@ func (m model) selectedResourcePreparation() (newProjectResourcePreparation, err
 	return resolveNewProjectResourcePreparation(plan, m.config.Render.Components, project.LocalServiceIntent{}, nil)
 }
 
+// applyAtlasModeSelection centralizes apply atlas mode selection behavior so callers follow the same contract.
 func (m *model) applyAtlasModeSelection() {
 	index := m.atlasModeList.Index()
 	if index < 0 || index >= len(m.atlasModeList.Items()) {
@@ -608,6 +609,7 @@ func (m *model) applyAtlasModeSelection() {
 	m.atlasMode = item.Mode
 }
 
+// atlasInstallOptions centralizes atlas install options behavior so callers follow the same contract.
 func (m model) atlasInstallOptions(root string) atlas.InstallOptions {
 	surfaces := m.selectedAtlasSurfaces()
 	return atlas.InstallOptions{
@@ -620,10 +622,12 @@ func (m model) atlasInstallOptions(root string) atlas.InstallOptions {
 	}
 }
 
+// atlasInstallEnabled centralizes atlas install enabled behavior so callers follow the same contract.
 func (m model) atlasInstallEnabled() bool {
 	return m.atlasMode != atlasModeSkip
 }
 
+// selectedAtlasAgents centralizes selected atlas agents behavior so callers follow the same contract.
 func (m model) selectedAtlasAgents() []string {
 	if m.atlasMode == atlasModeSkip {
 		return nil
@@ -634,6 +638,7 @@ func (m model) selectedAtlasAgents() []string {
 	return m.selectedCustomAtlasAgents()
 }
 
+// selectedCustomAtlasAgents centralizes selected custom atlas agents behavior so callers follow the same contract.
 func (m model) selectedCustomAtlasAgents() []string {
 	names := []string{}
 	for _, listItem := range m.atlasAgentList.Items() {
@@ -651,10 +656,12 @@ type atlasSurfaceSelection struct {
 	mcp        bool
 }
 
+// any centralizes any behavior so callers follow the same contract.
 func (s atlasSurfaceSelection) any() bool {
 	return s.guidelines || s.skills || s.mcp
 }
 
+// selectedAtlasSurfaces centralizes selected atlas surfaces behavior so callers follow the same contract.
 func (m model) selectedAtlasSurfaces() atlasSurfaceSelection {
 	switch m.atlasMode {
 	case atlasModeSkip:
@@ -682,6 +689,7 @@ func (m model) selectedAtlasSurfaces() atlasSurfaceSelection {
 	return selection
 }
 
+// toggleAtlasAgentSelection centralizes toggle atlas agent selection behavior so callers follow the same contract.
 func (m *model) toggleAtlasAgentSelection() {
 	index := m.atlasAgentList.Index()
 	if index < 0 || index >= len(m.atlasAgentList.Items()) {
@@ -695,6 +703,7 @@ func (m *model) toggleAtlasAgentSelection() {
 	m.atlasAgentList.SetItem(index, item)
 }
 
+// toggleAtlasSurfaceSelection centralizes toggle atlas surface selection behavior so callers follow the same contract.
 func (m *model) toggleAtlasSurfaceSelection() {
 	index := m.atlasSurfaceList.Index()
 	if index < 0 || index >= len(m.atlasSurfaceList.Items()) {
@@ -1276,14 +1285,17 @@ func (m model) View() string {
 	return view + "\n"
 }
 
+// panelWithTitle centralizes panel with title behavior so callers follow the same contract.
 func (m model) panelWithTitle(title, content string, termWidth int, active bool) string {
 	return m.panelWithTitleWithPadding(title, content, termWidth, active, 1, 1)
 }
 
+// panelWithTitleWidth centralizes panel with title width behavior so callers follow the same contract.
 func (m model) panelWithTitleWidth(title, content string, width int, active bool) string {
 	return m.panelWithTitleWithPadding(title, content, width, active, 1, 1)
 }
 
+// panelWithTitleWithPadding centralizes panel with title with padding behavior so callers follow the same contract.
 func (m model) panelWithTitleWithPadding(title, content string, termWidth int, active bool, leftPad, rightPad int) string {
 	if content == "" {
 		content = " "
@@ -1350,6 +1362,7 @@ func (m model) panelWithTitleWithPadding(title, content string, termWidth int, a
 	return lipgloss.NewStyle().MarginLeft(1).Render(box)
 }
 
+// renderComponentList keeps the render component list representation consistent.
 func (m model) renderComponentList(termWidth int) string {
 	items := m.componentList.Items()
 	if len(items) == 0 {
@@ -1402,6 +1415,7 @@ func (m model) renderComponentList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// renderStarterKitList keeps the render starter kit list representation consistent.
 func (m model) renderStarterKitList(termWidth int) string {
 	items := m.starterKitList.Items()
 	if len(items) == 0 {
@@ -1442,6 +1456,7 @@ func (m model) renderStarterKitList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// renderAtlasModeList keeps the render atlas mode list representation consistent.
 func (m model) renderAtlasModeList(termWidth int) string {
 	items := m.atlasModeList.Items()
 	if len(items) == 0 {
@@ -1477,6 +1492,7 @@ func (m model) renderAtlasModeList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// renderAtlasAgentList keeps the render atlas agent list representation consistent.
 func (m model) renderAtlasAgentList(termWidth int) string {
 	items := m.atlasAgentList.Items()
 	if len(items) == 0 {
@@ -1521,6 +1537,7 @@ func (m model) renderAtlasAgentList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// renderAtlasSurfaceList keeps the render atlas surface list representation consistent.
 func (m model) renderAtlasSurfaceList(termWidth int) string {
 	items := m.atlasSurfaceList.Items()
 	if len(items) == 0 {
@@ -1653,6 +1670,7 @@ func renderHelpPreview(format project.HelpFormat, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// selectedStarterKitSummary centralizes selected starter kit summary behavior so callers follow the same contract.
 func (m model) selectedStarterKitSummary() string {
 	if !m.config.Render.Components.WebUI || m.config.Render.Components.DemoApp {
 		return "None"
@@ -1672,6 +1690,7 @@ func (m model) selectedStarterKitSummary() string {
 	return "None"
 }
 
+// renderAtlasDetectedSummary keeps the render atlas detected summary representation consistent.
 func (m model) renderAtlasDetectedSummary() string {
 	detected := []string{}
 	for _, listItem := range m.atlasAgentList.Items() {
@@ -1686,6 +1705,7 @@ func (m model) renderAtlasDetectedSummary() string {
 	return labelKeyStyle.Render("Detected") + " " + labelSepStyle.Render("»") + " " + normalStyle.Render(strings.Join(detected, ", "))
 }
 
+// renderAtlasInstallSummary keeps the render atlas install summary representation consistent.
 func (m model) renderAtlasInstallSummary() string {
 	if m.previewAtlasMode() == atlasModeSkip {
 		return labelKeyStyle.Render("Will install") + " " + labelSepStyle.Render("»") + " " + normalStyle.Render("Nothing")
@@ -1702,6 +1722,7 @@ func (m model) renderAtlasInstallSummary() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// atlasSummary centralizes atlas summary behavior so callers follow the same contract.
 func (m model) atlasSummary() string {
 	if m.atlasMode == atlasModeSkip {
 		return "Skip"
@@ -1718,6 +1739,7 @@ func (m model) atlasSummary() string {
 	return strings.Join(display, ", ") + " · " + strings.Join(surfaces, ", ")
 }
 
+// previewAtlasMode centralizes preview atlas mode behavior so callers follow the same contract.
 func (m model) previewAtlasMode() atlasMode {
 	index := m.atlasModeList.Index()
 	if index < 0 || index >= len(m.atlasModeList.Items()) {
@@ -1730,6 +1752,7 @@ func (m model) previewAtlasMode() atlasMode {
 	return item.Mode
 }
 
+// previewAtlasAgents centralizes preview atlas agents behavior so callers follow the same contract.
 func (m model) previewAtlasAgents() []string {
 	mode := m.previewAtlasMode()
 	if mode == atlasModeSkip {
@@ -1741,6 +1764,7 @@ func (m model) previewAtlasAgents() []string {
 	return m.selectedCustomAtlasAgents()
 }
 
+// previewAtlasSurfaceNames centralizes preview atlas surface names behavior so callers follow the same contract.
 func (m model) previewAtlasSurfaceNames() []string {
 	switch m.previewAtlasMode() {
 	case atlasModeSkip:
@@ -1754,6 +1778,7 @@ func (m model) previewAtlasSurfaceNames() []string {
 	}
 }
 
+// selectedAtlasSurfaceNames centralizes selected atlas surface names behavior so callers follow the same contract.
 func (m model) selectedAtlasSurfaceNames() []string {
 	selection := m.selectedAtlasSurfaces()
 	names := []string{}
@@ -1782,6 +1807,7 @@ func (m model) selectedComponentNames() []string {
 	return comps
 }
 
+// renderInputLine keeps the render input line representation consistent.
 func renderInputLine(input textinput.Model) string {
 	view := input.View()
 	width := input.Width
@@ -1795,6 +1821,7 @@ func renderInputLine(input textinput.Model) string {
 	return view + padding
 }
 
+// indentBlock centralizes indent block behavior so callers follow the same contract.
 func indentBlock(content string, padLeft int) string {
 	if padLeft <= 0 {
 		return content
@@ -1812,6 +1839,7 @@ type keyValue struct {
 	value string
 }
 
+// renderKeyValueTable keeps the render key value table representation consistent.
 func renderKeyValueTable(rows []keyValue) string {
 	if len(rows) == 0 {
 		return ""
@@ -1847,6 +1875,7 @@ func renderKeyValueTable(rows []keyValue) string {
 	return table
 }
 
+// styledTextInput centralizes styled text input behavior so callers follow the same contract.
 func styledTextInput() textinput.Model {
 	base := lipgloss.NewStyle().Foreground(primaryText)
 	ti := textinput.New()
@@ -1972,6 +2001,7 @@ func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
 	}
 }
 
+// deselectExclusiveComponents centralizes deselect exclusive components behavior so callers follow the same contract.
 func (m *model) deselectExclusiveComponents(selectedKey project.ComponentKey, group string) {
 	for _, definition := range project.ComponentCatalog() {
 		if definition.Key == selectedKey || definition.ExclusiveGroup != group {
@@ -2112,6 +2142,7 @@ func (m *model) normalizeComponentSelections() {
 	}
 }
 
+// projectSlug centralizes project slug behavior so callers follow the same contract.
 func (m model) projectSlug() string {
 	name := strings.TrimSpace(m.projectInput.Value())
 	if name == "" {
@@ -2123,6 +2154,7 @@ func (m model) projectSlug() string {
 	return slug
 }
 
+// modulePreview centralizes module preview behavior so callers follow the same contract.
 func (m model) modulePreview() string {
 	if val := strings.TrimSpace(m.moduleInput.Value()); val != "" {
 		return val
@@ -2134,6 +2166,7 @@ func (m model) modulePreview() string {
 	return "github.com/you/" + slug
 }
 
+// defaultTargetPath centralizes default target path behavior so callers follow the same contract.
 func (m model) defaultTargetPath() string {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -2150,6 +2183,7 @@ func (m model) defaultTargetPath() string {
 	return filepath.Join(wd, slug)
 }
 
+// projectPath centralizes project path behavior so callers follow the same contract.
 func (m model) projectPath() string {
 	input := strings.TrimSpace(m.pathInput.Value())
 	if input == "" {
@@ -2200,6 +2234,7 @@ func (m model) validateBeforeConfirm() error {
 	return nil
 }
 
+// validatePathInput centralizes validate path input behavior so callers follow the same contract.
 func (m model) validatePathInput() error {
 	target := m.projectPath()
 	info, err := os.Stat(target)
@@ -2225,6 +2260,7 @@ func (m model) validatePathInput() error {
 	return nil
 }
 
+// pathStatus centralizes path status behavior so callers follow the same contract.
 func (m model) pathStatus() (string, bool) {
 	target := m.projectPath()
 	info, err := os.Stat(target)
@@ -2292,6 +2328,7 @@ func newProjectDevelopmentToolsSummary(components project.Components) string {
 	return strings.Join(tools, " · ")
 }
 
+// renderAtlasPanelBanner keeps the render atlas panel banner representation consistent.
 func renderAtlasPanelBanner() string {
 	lines := []string{
 		"   _  _____ _      _   ___ ",

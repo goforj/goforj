@@ -949,6 +949,7 @@ func hasDevTask(tasks []project.DevTask, want project.DevTask) bool {
 	return false
 }
 
+// readMakeAppTestFile centralizes read make app test file lookup for the surrounding workflow.
 func readMakeAppTestFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -958,6 +959,7 @@ func readMakeAppTestFile(t *testing.T, path string) string {
 	return string(data)
 }
 
+// writeMakeAppTestFile centralizes write make app test file persistence for the surrounding workflow.
 func writeMakeAppTestFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

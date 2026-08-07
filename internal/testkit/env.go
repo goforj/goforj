@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// cacheEnv centralizes cache env behavior so callers follow the same contract.
 func cacheEnv() map[string]string {
 	modCache, buildCache := GoCachePaths()
 	return map[string]string{
@@ -15,11 +16,13 @@ func cacheEnv() map[string]string {
 	}
 }
 
+// BuildEnv centralizes build env behavior so callers follow the same contract.
 func BuildEnv() []string {
 	env := append([]string{}, os.Environ()...)
 	return WithEnvOverrides(env, cacheEnv())
 }
 
+// ProcessEnv centralizes process env behavior so callers follow the same contract.
 func ProcessEnv(toolsDir string, overrides map[string]string) []string {
 	base := []string{}
 	for _, key := range []string{
@@ -44,6 +47,7 @@ func ProcessEnv(toolsDir string, overrides map[string]string) []string {
 	return WithEnvOverrides(base, overrides)
 }
 
+// ProcessGoEnv centralizes process go env behavior so callers follow the same contract.
 func ProcessGoEnv(toolsDir string, overrides map[string]string) []string {
 	merged := map[string]string{}
 	for key, value := range cacheEnv() {
@@ -55,6 +59,7 @@ func ProcessGoEnv(toolsDir string, overrides map[string]string) []string {
 	return ProcessEnv(toolsDir, merged)
 }
 
+// WithEnvOverrides centralizes with env overrides behavior so callers follow the same contract.
 func WithEnvOverrides(base []string, overrides map[string]string) []string {
 	if len(overrides) == 0 {
 		return append([]string{}, base...)

@@ -536,6 +536,7 @@ func TestWithAppEnvOverridesExistingAppIdentity(t *testing.T) {
 	}
 }
 
+// captureStdout centralizes capture stdout behavior so callers follow the same contract.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -675,6 +676,7 @@ func TestShouldForceDelegatedAppColor(t *testing.T) {
 	}
 }
 
+// chdirTemp centralizes chdir temp behavior so callers follow the same contract.
 func chdirTemp(t *testing.T) func() {
 	t.Helper()
 
@@ -694,6 +696,7 @@ func chdirTemp(t *testing.T) func() {
 	}
 }
 
+// writeSourceApp centralizes write source app persistence for the surrounding workflow.
 func writeSourceApp(t *testing.T, appName string) {
 	t.Helper()
 
@@ -706,6 +709,7 @@ func writeSourceApp(t *testing.T, appName string) {
 	}
 }
 
+// writeGeneratedAppMarker centralizes write generated app marker persistence for the surrounding workflow.
 func writeGeneratedAppMarker(t *testing.T) {
 	t.Helper()
 
@@ -717,6 +721,7 @@ func writeGeneratedAppMarker(t *testing.T) {
 	}
 }
 
+// restoreEnv centralizes restore env behavior so callers follow the same contract.
 func restoreEnv(key, value string, existed bool) {
 	if !existed {
 		_ = os.Unsetenv(key)
@@ -725,6 +730,7 @@ func restoreEnv(key, value string, existed bool) {
 	_ = os.Setenv(key, value)
 }
 
+// envHasEntry centralizes env has entry behavior so callers follow the same contract.
 func envHasEntry(env []string, want string) bool {
 	for _, entry := range env {
 		if entry == want {
