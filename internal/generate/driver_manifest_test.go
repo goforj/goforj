@@ -8,105 +8,98 @@ import (
 	"testing"
 )
 
-// TestGeneratedResourceManagersEmbedExactDriverManifests verifies generation records build choices independently of native fallback implementations.
-func TestGeneratedResourceManagersEmbedExactDriverManifests(t *testing.T) {
+// TestGeneratedResourceManagersEmbedLocalDrivers verifies local implementations remain available beside selected external drivers.
+func TestGeneratedResourceManagersEmbedLocalDrivers(t *testing.T) {
 	tests := []struct {
-		name              string
-		activeKey         string
-		activeDriver      string
-		supportedKey      string
-		compiledDriver    string
-		omittedFallback   string
-		fallbackCase      string
-		manifestName      string
-		regenerateCommand string
-		managerPath       string
-		prepare           func(*testing.T, string)
-		generate          func(string) (int, error)
+		name           string
+		activeKey      string
+		activeDriver   string
+		supportedKey   string
+		compiledDriver string
+		localDrivers   []string
+		fallbackCase   string
+		manifestName   string
+		managerPath    string
+		prepare        func(*testing.T, string)
+		generate       func(string) (int, error)
 	}{
 		{
-			name:              "cache",
-			activeKey:         "CACHE_DRIVER",
-			activeDriver:      "redis",
-			supportedKey:      "CACHE_SUPPORTED_DRIVERS",
-			compiledDriver:    "redis",
-			omittedFallback:   "memory",
-			fallbackCase:      "case driverMemory:",
-			manifestName:      "compiledCacheDrivers",
-			regenerateCommand: "forj generate --cache",
-			managerPath:       filepath.Join("internal", "caches", "manager_gen.go"),
-			prepare:           prepareManifestPackage(filepath.Join("internal", "caches"), false),
-			generate:          GenerateCacheFiles,
+			name:           "cache",
+			activeKey:      "CACHE_DRIVER",
+			activeDriver:   "redis",
+			supportedKey:   "CACHE_SUPPORTED_DRIVERS",
+			compiledDriver: "redis",
+			localDrivers:   []string{"file", "memory", "null"},
+			fallbackCase:   "case driverMemory:",
+			manifestName:   "compiledCacheDrivers",
+			managerPath:    filepath.Join("internal", "caches", "manager_gen.go"),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "caches"), false),
+			generate:       GenerateCacheFiles,
 		},
 		{
-			name:              "queue",
-			activeKey:         "QUEUE_DRIVER",
-			activeDriver:      "redis",
-			supportedKey:      "QUEUE_SUPPORTED_DRIVERS",
-			compiledDriver:    "redis",
-			omittedFallback:   "workerpool",
-			fallbackCase:      "case driverWorkerpool:",
-			manifestName:      "compiledQueueDrivers",
-			regenerateCommand: "forj generate --queue",
-			managerPath:       filepath.Join("internal", "queues", "manager_gen.go"),
-			prepare:           prepareManifestPackage(filepath.Join("internal", "queues"), true),
-			generate:          GenerateQueueFiles,
+			name:           "queue",
+			activeKey:      "QUEUE_DRIVER",
+			activeDriver:   "redis",
+			supportedKey:   "QUEUE_SUPPORTED_DRIVERS",
+			compiledDriver: "redis",
+			localDrivers:   []string{"null", "sync", "workerpool"},
+			fallbackCase:   "case driverWorkerpool:",
+			manifestName:   "compiledQueueDrivers",
+			managerPath:    filepath.Join("internal", "queues", "manager_gen.go"),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "queues"), true),
+			generate:       GenerateQueueFiles,
 		},
 		{
-			name:              "events",
-			activeKey:         "EVENTS_DRIVER",
-			activeDriver:      "redis",
-			supportedKey:      "EVENTS_SUPPORTED_DRIVERS",
-			compiledDriver:    "redis",
-			omittedFallback:   "inproc",
-			fallbackCase:      "activeDriverForScope(scope) == DriverInproc",
-			manifestName:      "compiledEventDrivers",
-			regenerateCommand: "forj generate --events",
-			managerPath:       filepath.Join("internal", "events", "manager_gen.go"),
-			prepare:           prepareManifestPackage(filepath.Join("internal", "events"), false),
-			generate:          GenerateEventFiles,
+			name:           "events",
+			activeKey:      "EVENTS_DRIVER",
+			activeDriver:   "redis",
+			supportedKey:   "EVENTS_SUPPORTED_DRIVERS",
+			compiledDriver: "redis",
+			localDrivers:   []string{"inproc", "null"},
+			fallbackCase:   "activeDriverForScope(scope) == DriverInproc",
+			manifestName:   "compiledEventDrivers",
+			managerPath:    filepath.Join("internal", "events", "manager_gen.go"),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "events"), false),
+			generate:       GenerateEventFiles,
 		},
 		{
-			name:              "storage",
-			activeKey:         "STORAGE_DRIVER",
-			activeDriver:      "s3",
-			supportedKey:      "STORAGE_SUPPORTED_DRIVERS",
-			compiledDriver:    "s3",
-			omittedFallback:   "local",
-			fallbackCase:      "case driverLocal:",
-			manifestName:      "compiledStorageDrivers",
-			regenerateCommand: "forj generate --storage",
-			managerPath:       filepath.Join("internal", "storages", "manager_gen.go"),
-			prepare:           prepareManifestPackage(filepath.Join("internal", "storages"), false),
-			generate:          GenerateStorageFiles,
+			name:           "storage",
+			activeKey:      "STORAGE_DRIVER",
+			activeDriver:   "s3",
+			supportedKey:   "STORAGE_SUPPORTED_DRIVERS",
+			compiledDriver: "s3",
+			localDrivers:   []string{"local"},
+			fallbackCase:   "case driverLocal:",
+			manifestName:   "compiledStorageDrivers",
+			managerPath:    filepath.Join("internal", "storages", "manager_gen.go"),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "storages"), false),
+			generate:       GenerateStorageFiles,
 		},
 		{
-			name:              "mail",
-			activeKey:         "MAIL_DRIVER",
-			activeDriver:      "resend",
-			supportedKey:      "MAIL_SUPPORTED_DRIVERS",
-			compiledDriver:    "resend",
-			omittedFallback:   "log",
-			fallbackCase:      "case driverLog:",
-			manifestName:      "compiledMailDrivers",
-			regenerateCommand: "forj generate --mail",
-			managerPath:       filepath.Join("internal", "mail", "manager_gen.go"),
-			prepare:           prepareManifestPackage(filepath.Join("internal", "mail"), false),
-			generate:          GenerateMailFiles,
+			name:           "mail",
+			activeKey:      "MAIL_DRIVER",
+			activeDriver:   "resend",
+			supportedKey:   "MAIL_SUPPORTED_DRIVERS",
+			compiledDriver: "resend",
+			localDrivers:   []string{"log"},
+			fallbackCase:   "case driverLog:",
+			manifestName:   "compiledMailDrivers",
+			managerPath:    filepath.Join("internal", "mail", "manager_gen.go"),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "mail"), false),
+			generate:       GenerateMailFiles,
 		},
 		{
-			name:              "database",
-			activeKey:         "DB_DRIVER",
-			activeDriver:      "mysql",
-			supportedKey:      "DB_SUPPORTED_DRIVERS",
-			compiledDriver:    "mysql",
-			omittedFallback:   "sqlite",
-			fallbackCase:      `case "sqlite", "sqlite3":`,
-			manifestName:      "compiledDatabaseDrivers",
-			regenerateCommand: "forj generate --db",
-			managerPath:       filepath.Join("internal", "database", "connections_gen.go"),
-			prepare:           prepareManifestPackage(filepath.Join("internal", "database"), false),
-			generate:          GenerateDBFiles,
+			name:           "database",
+			activeKey:      "DB_DRIVER",
+			activeDriver:   "mysql",
+			supportedKey:   "DB_SUPPORTED_DRIVERS",
+			compiledDriver: "mysql",
+			localDrivers:   []string{"sqlite"},
+			fallbackCase:   `case "sqlite", "sqlite3":`,
+			manifestName:   "compiledDatabaseDrivers",
+			managerPath:    filepath.Join("internal", "database", "connections_gen.go"),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "database"), false),
+			generate:       GenerateDBFiles,
 		},
 	}
 
@@ -125,9 +118,30 @@ func TestGeneratedResourceManagersEmbedExactDriverManifests(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read generated manager: %v", err)
 			}
-			assertGeneratedDriverManifest(t, string(before), tt.manifestName, tt.compiledDriver, tt.omittedFallback, tt.fallbackCase, tt.regenerateCommand)
+			manifest := generatedDriverManifest(t, string(before), tt.manifestName)
+			assertManifestIncludes(t, manifest, append([]string{tt.compiledDriver}, tt.localDrivers...)...)
+			if !strings.Contains(string(before), tt.fallbackCase) {
+				t.Fatalf("generated source does not retain local implementation %q", tt.fallbackCase)
+			}
+			for _, localDriver := range tt.localDrivers {
+				t.Setenv(tt.activeKey, localDriver)
+				if _, err := tt.generate(root); err != nil {
+					t.Fatalf("regenerate with local driver %q outside explicit manifest: %v", localDriver, err)
+				}
+				localSource, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("read manager generated for local driver %q: %v", localDriver, err)
+				}
+				if !bytes.Equal(before, localSource) {
+					t.Fatalf("selecting already-compiled local driver %q changed generated source", localDriver)
+				}
+			}
 
-			t.Setenv(tt.supportedKey, strings.Join([]string{tt.compiledDriver, tt.omittedFallback}, ","))
+			t.Setenv(tt.activeKey, tt.activeDriver)
+			t.Setenv(tt.supportedKey, strings.Join(append([]string{tt.compiledDriver}, tt.localDrivers...), ","))
+			if _, err := tt.generate(root); err != nil {
+				t.Fatalf("regenerate with explicit local drivers: %v", err)
+			}
 			after, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("reread generated manager: %v", err)
@@ -139,15 +153,17 @@ func TestGeneratedResourceManagersEmbedExactDriverManifests(t *testing.T) {
 	}
 }
 
-// TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers verifies omission cannot bypass the build contract.
-func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t *testing.T) {
+// TestGeneratePrimitiveFilesAllowsLocalDefaultsOutsideSupportedDrivers verifies external manifests do not disable local drivers.
+func TestGeneratePrimitiveFilesAllowsLocalDefaultsOutsideSupportedDrivers(t *testing.T) {
 	tests := []struct {
 		name            string
 		activeKey       string
 		defaultDriver   string
 		supportedKey    string
 		supportedDriver string
+		manifestName    string
 		managerPath     string
+		prepare         func(*testing.T, string)
 		generate        func(string) (int, error)
 	}{
 		{
@@ -156,7 +172,9 @@ func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t 
 			defaultDriver:   "memory",
 			supportedKey:    "CACHE_SUPPORTED_DRIVERS",
 			supportedDriver: "redis",
+			manifestName:    "compiledCacheDrivers",
 			managerPath:     filepath.Join("internal", "caches", "manager_gen.go"),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "caches"), false),
 			generate:        GenerateCacheFiles,
 		},
 		{
@@ -165,7 +183,9 @@ func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t 
 			defaultDriver:   "workerpool",
 			supportedKey:    "QUEUE_SUPPORTED_DRIVERS",
 			supportedDriver: "redis",
+			manifestName:    "compiledQueueDrivers",
 			managerPath:     filepath.Join("internal", "queues", "manager_gen.go"),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "queues"), true),
 			generate:        GenerateQueueFiles,
 		},
 		{
@@ -174,7 +194,9 @@ func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t 
 			defaultDriver:   "inproc",
 			supportedKey:    "EVENTS_SUPPORTED_DRIVERS",
 			supportedDriver: "redis",
+			manifestName:    "compiledEventDrivers",
 			managerPath:     filepath.Join("internal", "events", "manager_gen.go"),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "events"), false),
 			generate:        GenerateEventFiles,
 		},
 		{
@@ -183,7 +205,9 @@ func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t 
 			defaultDriver:   "local",
 			supportedKey:    "STORAGE_SUPPORTED_DRIVERS",
 			supportedDriver: "s3",
+			manifestName:    "compiledStorageDrivers",
 			managerPath:     filepath.Join("internal", "storages", "manager_gen.go"),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "storages"), false),
 			generate:        GenerateStorageFiles,
 		},
 		{
@@ -192,8 +216,21 @@ func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t 
 			defaultDriver:   "log",
 			supportedKey:    "MAIL_SUPPORTED_DRIVERS",
 			supportedDriver: "resend",
+			manifestName:    "compiledMailDrivers",
 			managerPath:     filepath.Join("internal", "mail", "manager_gen.go"),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "mail"), false),
 			generate:        GenerateMailFiles,
+		},
+		{
+			name:            "database",
+			activeKey:       "DB_DRIVER",
+			defaultDriver:   "sqlite",
+			supportedKey:    "DB_SUPPORTED_DRIVERS",
+			supportedDriver: "mysql",
+			manifestName:    "compiledDatabaseDrivers",
+			managerPath:     filepath.Join("internal", "database", "connections_gen.go"),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "database"), false),
+			generate:        GenerateDBFiles,
 		},
 	}
 
@@ -207,19 +244,17 @@ func TestGeneratePrimitiveFilesRejectsImplicitDefaultsOutsideSupportedDrivers(t 
 				}
 				t.Setenv(tt.supportedKey, tt.supportedDriver)
 				root := t.TempDir()
+				tt.prepare(t, root)
 
-				if _, err := tt.generate(root); err == nil {
-					t.Fatalf("generate %s with %s root driver unexpectedly succeeded", tt.name, activeValue)
-				} else {
-					for _, expected := range []string{tt.activeKey, tt.defaultDriver, tt.supportedKey} {
-						if !strings.Contains(err.Error(), expected) {
-							t.Fatalf("generation error %q does not contain %q", err, expected)
-						}
-					}
+				if _, err := tt.generate(root); err != nil {
+					t.Fatalf("generate %s with %s local root driver: %v", tt.name, activeValue, err)
 				}
-				if _, err := os.Stat(filepath.Join(root, tt.managerPath)); !os.IsNotExist(err) {
-					t.Fatalf("manager artifact exists after rejected generation: %v", err)
+				source, err := os.ReadFile(filepath.Join(root, tt.managerPath))
+				if err != nil {
+					t.Fatalf("read generated %s manager: %v", tt.name, err)
 				}
+				manifest := generatedDriverManifest(t, string(source), tt.manifestName)
+				assertManifestIncludes(t, manifest, tt.defaultDriver, tt.supportedDriver)
 			})
 		}
 	}
@@ -495,6 +530,16 @@ func generatedDriverManifest(t *testing.T, source string, manifestName string) s
 	return remainder[:end]
 }
 
+// assertManifestIncludes reports every driver missing from a generated manifest.
+func assertManifestIncludes(t *testing.T, manifest string, drivers ...string) {
+	t.Helper()
+	for _, driver := range drivers {
+		if !strings.Contains(manifest, `"`+driver+`"`) {
+			t.Errorf("compiled manifest does not include %q", driver)
+		}
+	}
+}
+
 // prepareManifestPackage creates the minimum package layout needed for source-only generation.
 func prepareManifestPackage(packageDir string, needsModule bool) func(*testing.T, string) {
 	return func(t *testing.T, root string) {
@@ -512,7 +557,7 @@ func prepareManifestPackage(packageDir string, needsModule bool) func(*testing.T
 }
 
 // assertGeneratedDriverManifest checks the embedded authority without confusing it with retained fallback implementation code.
-func assertGeneratedDriverManifest(t *testing.T, source, manifestName, compiledDriver, omittedFallback, fallbackCase, regenerateCommand string) {
+func assertGeneratedDriverManifest(t *testing.T, source, manifestName, compiledDriver, omittedDriver, fallbackCase, regenerateCommand string) {
 	t.Helper()
 	declaration := "var " + manifestName + " = []string{"
 	start := strings.Index(source, declaration)
@@ -528,8 +573,8 @@ func assertGeneratedDriverManifest(t *testing.T, source, manifestName, compiledD
 	if !strings.Contains(manifest, `"`+compiledDriver+`"`) {
 		t.Fatalf("compiled manifest %s does not include %q", manifestName, compiledDriver)
 	}
-	if strings.Contains(manifest, `"`+omittedFallback+`"`) {
-		t.Fatalf("compiled manifest %s unexpectedly includes native fallback %q", manifestName, omittedFallback)
+	if strings.Contains(manifest, `"`+omittedDriver+`"`) {
+		t.Fatalf("compiled manifest %s unexpectedly includes driver %q", manifestName, omittedDriver)
 	}
 	if !strings.Contains(source, fallbackCase) {
 		t.Fatalf("generated source does not retain native fallback implementation %q", fallbackCase)

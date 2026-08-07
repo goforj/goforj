@@ -74,8 +74,10 @@ func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, r
 
 // primitiveEnvContract keeps every generator's accepted environment shape explicit and driver-aware.
 type primitiveEnvContract struct {
-	Prefix                string
-	DefaultDriver         string
+	Prefix        string
+	DefaultDriver string
+	// LocalDrivers are already present in the generated project's dependency baseline.
+	LocalDrivers          []string
 	RootKeys              []string
 	CommonKeys            map[string]struct{}
 	DriverKeys            map[string]map[string]struct{}
@@ -99,7 +101,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 	rootKeySet := makeSet(contract.RootKeys...)
 	childNames := contract.ChildNames(input.environment)
 	knownChildren := makeSet(childNames...)
-	supportedDrivers, err := parseSupportedDrivers(input.environment, contract.Prefix, contract.DriverKeys)
+	supportedDrivers, err := parseSupportedDrivers(input.environment, contract.Prefix, contract.DriverKeys, contract.LocalDrivers)
 	if err != nil {
 		return err
 	}
@@ -616,8 +618,8 @@ func makeSet(values ...string) map[string]struct{} {
 	return set
 }
 
-// parseSupportedDrivers distinguishes an omitted build manifest from an explicit, validated driver set.
-func parseSupportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}) (map[string]struct{}, error) {
+// parseSupportedDrivers keeps local drivers available while validating the optional external-driver manifest.
+func parseSupportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}, localDrivers []string) (map[string]struct{}, error) {
 	raw := str.Of(environment.Get(prefix+"_SUPPORTED_DRIVERS", "")).Trim().ToLower().String()
 	if raw == "" {
 		return nil, nil
@@ -636,12 +638,18 @@ func parseSupportedDrivers(environment generationEnvironment, prefix string, kno
 	if len(set) == 0 {
 		return nil, nil
 	}
+	for _, driver := range localDrivers {
+		driver = str.Of(driver).Trim().ToLower().String()
+		if _, ok := knownDrivers[driver]; ok {
+			set[driver] = struct{}{}
+		}
+	}
 	return set, nil
 }
 
-// supportedDrivers uses catalog fallbacks only when the owner environment has not declared a build manifest.
-func supportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}, fallback []string) ([]string, error) {
-	set, err := parseSupportedDrivers(environment, prefix, knownDrivers)
+// supportedDrivers always includes local drivers and uses active-driver fallbacks when no external manifest is declared.
+func supportedDrivers(environment generationEnvironment, prefix string, knownDrivers map[string]map[string]struct{}, fallback, localDrivers []string) ([]string, error) {
+	set, err := parseSupportedDrivers(environment, prefix, knownDrivers, localDrivers)
 	if err != nil {
 		return nil, err
 	}
@@ -659,6 +667,12 @@ func supportedDrivers(environment generationEnvironment, prefix string, knownDri
 			continue
 		}
 		out[driver] = struct{}{}
+	}
+	for _, driver := range localDrivers {
+		driver = str.Of(driver).Trim().ToLower().String()
+		if _, ok := knownDrivers[driver]; ok {
+			out[driver] = struct{}{}
+		}
 	}
 	return sortStrings(out), nil
 }

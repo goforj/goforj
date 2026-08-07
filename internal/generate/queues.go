@@ -6,7 +6,6 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -204,6 +203,8 @@ var queueDriverKeys = map[string]map[string]struct{}{
 	"mysql":      makeSet("DSN", "PROCESSING_RECOVERY_GRACE_SECONDS", "PROCESSING_LEASE_NO_TIMEOUT_SECONDS"),
 }
 
+var queueLocalDrivers = []string{"null", "sync", "workerpool"}
+
 // GenerateQueueFiles writes queue accessors whose selectable transports are fixed by the generation snapshot.
 func GenerateQueueFiles(projectDir string) (int, error) {
 	return generateQueueFiles(ambientGenerationInput(projectDir))
@@ -214,6 +215,7 @@ func generateQueueFiles(input generationInput) (int, error) {
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix:        "QUEUE",
 		DefaultDriver: "workerpool",
+		LocalDrivers:  queueLocalDrivers,
 		RootKeys:      queueRootKeys,
 		CommonKeys:    queueCommonKeys,
 		DriverKeys:    queueDriverKeys,
@@ -320,18 +322,14 @@ func readModuleName(projectDir string) (string, error) {
 	return "", fmt.Errorf("module name not found in go.mod")
 }
 
-// renderQueueConfig retains native worker execution code without widening the authoritative compiled manifest.
+// renderQueueConfig keeps local worker implementations in every generated build.
 func renderQueueConfig(input generationInput) ([]byte, error) {
 	names := discoverQueueNames(input)
 	moduleName, err := readModuleName(input.projectDir)
 	if err != nil {
 		return nil, err
 	}
-	driverSet := map[string]struct{}{
-		"null":       {},
-		"sync":       {},
-		"workerpool": {},
-	}
+	driverSet := makeSet(queueLocalDrivers...)
 	defaultDriver := effectivePrimitiveDriver(input.environment.Get("QUEUE_DRIVER", "workerpool"), "workerpool")
 	driverSet[defaultDriver] = struct{}{}
 	for _, child := range exactScopedChildNames(input.environment, "QUEUE", queueRootKeys) {
@@ -343,15 +341,12 @@ func renderQueueConfig(input generationInput) ([]byte, error) {
 	for _, active := range appPrefixedActiveDrivers(input, "QUEUE", "workerpool", true) {
 		driverSet[active.driver] = struct{}{}
 	}
-	drivers, err := supportedDrivers(input.environment, "QUEUE", queueDriverKeys, sortStrings(driverSet))
+	drivers, err := supportedDrivers(input.environment, "QUEUE", queueDriverKeys, sortStrings(driverSet), queueLocalDrivers)
 	if err != nil {
 		return nil, err
 	}
-	compiledDrivers := slices.Clone(drivers)
-	drivers = appendMissingString(drivers, "workerpool")
-
 	data := queueConfigTemplateData{
-		CompiledDrivers: compiledDrivers,
+		CompiledDrivers: drivers,
 		GoModuleName:    moduleName,
 		Drivers:         make([]queueDriverSpec, 0, len(drivers)),
 		Names:           make([]queueAccessorName, 0, len(names)),
