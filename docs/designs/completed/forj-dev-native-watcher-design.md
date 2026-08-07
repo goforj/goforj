@@ -733,7 +733,7 @@ Implemented phases:
 - Preserve Lighthouse round trips for `dev.apps`, native watcher controls, and
   scalar legacy watcher strings even though the current form edits only the
   legacy scalar surface.
-- Keep the rendered top-level `project.Config` as the durable project model;
+- Keep `github.com/goforj/goforj/project.Config` as the durable project model;
   Lighthouse owns only its partial-update transport and merge policy.
 
 ## Implementation Layout
@@ -746,7 +746,8 @@ Implemented phases:
   integration
 - `internal/forj/project_dev_config.go`: generated defaults and conservative
   render migration
-- `templates/project/config.go.tmpl`: rendered, lossless project configuration
+- `project/config.go` and `project/config_dev.go`: shared, lossless project
+  configuration
 - generated Lighthouse patch/server: partial settings updates against the
   shared top-level project model
 

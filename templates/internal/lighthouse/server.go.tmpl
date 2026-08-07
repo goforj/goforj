@@ -21,7 +21,7 @@ import (
 	"time"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/runtime"
-	"{{.GoModuleName}}/project"
+	"github.com/goforj/goforj/project"
 )
 
 // ServerConfig configures the dev console server.
@@ -303,7 +303,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			applyDevConfigUpdate(&current.Dev, *payload.Dev)
 		}
 		if payload.Components != nil {
-			current.Render.Components = mergeLighthouseComponents(current.Render.Components, *payload.Components)
+			current.Render.Components = *payload.Components
 		}
 		if err := saveProjectConfig(current); err != nil {
 			return r.NoContent(http.StatusInternalServerError)

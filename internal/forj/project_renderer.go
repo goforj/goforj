@@ -593,9 +593,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/store_test.go.tmpl",
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
-				"project/config.go.tmpl",
 				"internal/lighthouse/project_config_patch.go.tmpl",
-				"internal/lighthouse/project_config_test.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",

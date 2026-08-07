@@ -1,6 +1,6 @@
 package lighthouse
 
-import "{{.GoModuleName}}/project"
+import "github.com/goforj/goforj/project"
 
 // devConfigUpdate represents the fields a Lighthouse client explicitly sends
 // so omitted framework lifecycle configuration survives settings saves.
@@ -13,7 +13,7 @@ type devConfigUpdate struct {
 	SoundOnWatchError *bool               `json:"sound_on_watch_error"`
 	WirePaths         *[]string           `json:"wire_paths"`
 	Watches           *[]project.DevWatch `json:"watches"`
-	Apps              *map[string]any     `json:"apps"`
+	Apps              *map[string]project.DevApp `json:"apps"`
 }
 
 // applyDevConfigUpdate applies an explicit Lighthouse patch without replacing
@@ -47,7 +47,7 @@ func applyDevConfigUpdate(current *project.DevConfig, update devConfigUpdate) {
 		current.Watches = mergeLighthouseDevWatches(current.Watches, *update.Watches)
 	}
 	if update.Apps != nil {
-		current.SetApps(*update.Apps)
+		current.Apps = *update.Apps
 	}
 }
 
@@ -73,8 +73,9 @@ func mergeLighthouseDevWatches(current []project.DevWatch, updates []project.Dev
 		existing := current[currentIndex]
 		existing.Name = update.Name
 		existing.Exec = update.Exec
-		if _, scalar := existing.Watch.(string); scalar {
+		if existing.IsLegacy() {
 			existing.Watch = update.Watch
+			existing.Legacy = update.Legacy
 		}
 		merged = append(merged, existing)
 	}
@@ -95,11 +96,4 @@ func matchingLighthouseDevWatch(current []project.DevWatch, used map[int]bool, n
 		matched = index
 	}
 	return matched
-}
-
-// mergeLighthouseComponents applies editable component switches while retaining
-// extension fields that are intentionally hidden from Lighthouse's JSON API.
-func mergeLighthouseComponents(current project.Components, update project.Components) project.Components {
-	update.Extra = current.Extra
-	return update
 }
