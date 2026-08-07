@@ -11,7 +11,6 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestSortedKeysReturnsAlphabeticalNamespaces protects deterministic framework help grouping.
 func TestSortedKeysReturnsAlphabeticalNamespaces(t *testing.T) {
 	sections := map[string][]*kong.Node{
 		"make":      nil,
@@ -28,7 +27,6 @@ func TestSortedKeysReturnsAlphabeticalNamespaces(t *testing.T) {
 	}
 }
 
-// TestCommandVisibleInHelp protects the hidden-command policy for user and maintainer help.
 func TestCommandVisibleInHelp(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -198,7 +196,6 @@ func TestFrameworkFormatterRendersSelectedCommandHelp(t *testing.T) {
 	}
 }
 
-// TestExternalCLIFormatterRendersSelectedCommandArgumentsAndFlags protects the public CLI command detail layout.
 func TestExternalCLIFormatterRendersSelectedCommandArgumentsAndFlags(t *testing.T) {
 	output := renderTestHelp(t, project.HelpFormatExternalCLI, []string{"add", "Review PR"})
 	for _, want := range []string{
@@ -221,7 +218,6 @@ func TestExternalCLIFormatterRendersSelectedCommandArgumentsAndFlags(t *testing.
 	}
 }
 
-// TestGuidedFormatterRendersSelectedCommandExamplesArgumentsAndFlags protects the examples-first command detail layout.
 func TestGuidedFormatterRendersSelectedCommandExamplesArgumentsAndFlags(t *testing.T) {
 	output := renderTestHelp(t, project.HelpFormatGuided, []string{"add", "Review PR"})
 	for _, want := range []string{

@@ -720,6 +720,7 @@ func TestWizardPanelHeaderMatchesPanelWidth(t *testing.T) {
 	}
 }
 
+// stubInteractiveTerminal centralizes stub interactive terminal behavior so callers follow the same contract.
 func stubInteractiveTerminal(t *testing.T, interactive bool) func() {
 	t.Helper()
 	original := isInteractiveTerminal
@@ -729,6 +730,7 @@ func stubInteractiveTerminal(t *testing.T, interactive bool) func() {
 	}
 }
 
+// stubAppWizardRunner centralizes stub app wizard runner behavior so callers follow the same contract.
 func stubAppWizardRunner(t *testing.T, runner func(string, *project.Config) (RenderOptions, error)) func() {
 	t.Helper()
 	original := appWizardRunner

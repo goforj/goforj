@@ -203,10 +203,12 @@ func TestMakeCommandIntegration(t *testing.T) {
 	})
 }
 
+// normalizeWhitespace keeps normalize whitespace handling consistent across callers.
 func normalizeWhitespace(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
+// assertFileContains centralizes assert file contains behavior so callers follow the same contract.
 func assertFileContains(t *testing.T, path string, required []string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -221,6 +223,7 @@ func assertFileContains(t *testing.T, path string, required []string) {
 	}
 }
 
+// assertImportBlock centralizes assert import block behavior so callers follow the same contract.
 func assertImportBlock(t *testing.T, path string, required []string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

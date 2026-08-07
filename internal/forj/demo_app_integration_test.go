@@ -242,6 +242,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 	}
 }
 
+// setQueueDriverInEnvFiles centralizes set queue driver in env files behavior so callers follow the same contract.
 func setQueueDriverInEnvFiles(projectDir, driver string) error {
 	for _, name := range []string{".env", ".env.host"} {
 		path := filepath.Join(projectDir, name)

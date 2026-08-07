@@ -175,7 +175,6 @@ func TestRemoveLastCacheAppReconcilesSharedSurface(t *testing.T) {
 	}
 }
 
-// TestRemoveLegacyCacheShellCommandSourceMigratesOnlyTheGeneratedShape protects customized owner code during the command ownership move.
 func TestRemoveLegacyCacheShellCommandSourceMigratesOnlyTheGeneratedShape(t *testing.T) {
 	generated := `package app
 

@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// writeTestSQLFiles centralizes write test sqlfiles persistence for the surrounding workflow.
 func writeTestSQLFiles(t *testing.T, dir string) {
 	up := `CREATE TABLE test_table (id INTEGER PRIMARY KEY);`
 	down := `DROP TABLE test_table;`
@@ -26,6 +27,7 @@ func writeTestSQLFiles(t *testing.T, dir string) {
 	}
 }
 
+// loadTestMigrations centralizes load test migrations lookup for the surrounding workflow.
 func loadTestMigrations(t *testing.T, f fs.FS) []Migration {
 	entries, err := fs.ReadDir(f, ".")
 	if err != nil {

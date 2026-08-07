@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// captureStderr centralizes capture stderr behavior so callers follow the same contract.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -39,6 +40,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	return output.String()
 }
 
+// stripANSI centralizes strip ansi behavior so callers follow the same contract.
 func stripANSI(value string) string {
 	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	return re.ReplaceAllString(value, "")
@@ -68,6 +70,7 @@ func TestAppLoggerConsoleInfoIncludesPrefix(t *testing.T) {
 
 type callerProbe struct{}
 
+// Emit centralizes emit behavior so callers follow the same contract.
 func (p *callerProbe) Emit(appLogger *logger.AppLogger) {
 	appLogger.Info().Msg("Caller")
 }

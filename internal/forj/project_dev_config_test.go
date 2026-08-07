@@ -38,7 +38,6 @@ func TestMigrateGeneratedDevFrontendInstallTasksUpdatesExactLegacyTasks(t *testi
 	}
 }
 
-// TestMigrateGeneratedDevFrontendInstallTasksPreservesCustomizedTasks protects owner-authored npm behavior.
 func TestMigrateGeneratedDevFrontendInstallTasksPreservesCustomizedTasks(t *testing.T) {
 	custom := []project.DevTask{
 		{Name: "Install Frontend Dependencies", Cmd: "cd cmd/app/frontend && npm install --ignore-scripts"},

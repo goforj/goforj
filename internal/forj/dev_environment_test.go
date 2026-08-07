@@ -18,7 +18,6 @@ const (
 	devEnvironmentWatcherHelperKey = "GO_WANT_DEV_ENVIRONMENT_WATCHER_HELPER"
 )
 
-// TestDevEnvironmentPreservesInheritedValuesAcrossLoadReloadAndChildren protects process-level overrides from dotenv layers.
 func TestDevEnvironmentPreservesInheritedValuesAcrossLoadReloadAndChildren(t *testing.T) {
 	if os.Getenv(devEnvironmentWatcherHelperKey) == "1" {
 		if _, err := fmt.Fprintf(os.Stdout, "%s|%s", os.Getenv("INHERITED_TOKEN"), os.Getenv("DOTENV_ONLY")); err != nil {

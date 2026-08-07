@@ -164,6 +164,7 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	t.Fatalf("recent trace list missing GET /api/v1/hello http trace\nsummaries=%+v\n%s", summaries, handle.Output())
 }
 
+// dialRenderedConsoleWS centralizes dial rendered console ws behavior so callers follow the same contract.
 func dialRenderedConsoleWS(t *testing.T, baseURL, token string) *websocket.Conn {
 	t.Helper()
 
@@ -177,6 +178,7 @@ func dialRenderedConsoleWS(t *testing.T, baseURL, token string) *websocket.Conn 
 	return conn
 }
 
+// findRenderedTraceEvent centralizes find rendered trace event behavior so callers follow the same contract.
 func findRenderedTraceEvent(events []renderedTraceEvent, kind, name string) *renderedTraceEvent {
 	for i := range events {
 		if events[i].Kind == kind && events[i].Name == name {
@@ -186,6 +188,7 @@ func findRenderedTraceEvent(events []renderedTraceEvent, kind, name string) *ren
 	return nil
 }
 
+// fetchRenderedTraceSummaries centralizes fetch rendered trace summaries behavior so callers follow the same contract.
 func fetchRenderedTraceSummaries(t *testing.T, baseURL, token string) []renderedTraceSummary {
 	t.Helper()
 
@@ -212,6 +215,7 @@ func fetchRenderedTraceSummaries(t *testing.T, baseURL, token string) []rendered
 	return payload.Inspects
 }
 
+// fetchRenderedTraceRecord centralizes fetch rendered trace record behavior so callers follow the same contract.
 func fetchRenderedTraceRecord(t *testing.T, baseURL, token, traceID string) renderedTraceRecord {
 	t.Helper()
 
@@ -236,6 +240,7 @@ func fetchRenderedTraceRecord(t *testing.T, baseURL, token, traceID string) rend
 	return record
 }
 
+// waitForRenderedAgents centralizes wait for rendered agents behavior so callers follow the same contract.
 func waitForRenderedAgents(ctx context.Context, baseURL, token string, sources []string, timeout time.Duration) error {
 	if len(sources) == 0 {
 		return nil
@@ -280,6 +285,7 @@ func waitForRenderedAgents(ctx context.Context, baseURL, token string, sources [
 	return context.DeadlineExceeded
 }
 
+// renderedEnvValue keeps the rendered env value representation consistent.
 func renderedEnvValue(t *testing.T, root, key string) string {
 	t.Helper()
 
@@ -293,6 +299,7 @@ func renderedEnvValue(t *testing.T, root, key string) string {
 	return ""
 }
 
+// setRenderedEnvValue centralizes set rendered env value behavior so callers follow the same contract.
 func setRenderedEnvValue(t *testing.T, root, key, value string) {
 	t.Helper()
 	for _, envFile := range []string{".env", ".env.host", ".env.local"} {

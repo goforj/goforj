@@ -97,6 +97,7 @@ func Diagnostics(root string) diagnostics.Provider {
 	}
 }
 
+// atlasAppsFromConfig centralizes atlas apps from config behavior so callers follow the same contract.
 func atlasAppsFromConfig(root string, cfg *project.Config, discovered []atlasproject.App) []atlasproject.App {
 	if cfg == nil {
 		return discovered
@@ -136,6 +137,7 @@ func atlasAppsFromConfig(root string, cfg *project.Config, discovered []atlaspro
 	return apps
 }
 
+// appComponents centralizes app components behavior so callers follow the same contract.
 func appComponents(cfg *project.Config, appName string) project.Components {
 	if cfg == nil {
 		return project.Components{}
@@ -148,6 +150,7 @@ func appComponents(cfg *project.Config, appName string) project.Components {
 	return cfg.Render.Components.WithResolvedDependencies()
 }
 
+// runtimeNames centralizes runtime names behavior so callers follow the same contract.
 func runtimeNames(components project.Components) []string {
 	runtimes := []string{}
 	if components.WebAPI || components.WebUI {
@@ -168,6 +171,7 @@ func runtimeNames(components project.Components) []string {
 	return runtimes
 }
 
+// appExists centralizes app exists behavior so callers follow the same contract.
 func appExists(root string, name string) bool {
 	if name == "" || name == project.DefaultAppName {
 		return true
@@ -177,6 +181,7 @@ func appExists(root string, name string) bool {
 	return cmdErr == nil && appErr == nil
 }
 
+// loadAtlasEnv centralizes load atlas env lookup for the surrounding workflow.
 func loadAtlasEnv(root string) map[string]string {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
@@ -191,6 +196,7 @@ func loadAtlasEnv(root string) map[string]string {
 	return env
 }
 
+// loadEnvFile centralizes load env file lookup for the surrounding workflow.
 func loadEnvFile(path string, env map[string]string) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -221,6 +227,7 @@ func loadEnvFile(path string, env map[string]string) {
 	}
 }
 
+// discoverAppSymbols centralizes discover app symbols lookup for the surrounding workflow.
 func discoverAppSymbols(root string, apps []atlasproject.App, filename string, pattern *regexp.Regexp, label func(string) string) map[string][]string {
 	out := map[string][]string{}
 	for _, app := range apps {
@@ -249,6 +256,7 @@ func discoverAppSymbols(root string, apps []atlasproject.App, filename string, p
 	return out
 }
 
+// appDir centralizes app dir behavior so callers follow the same contract.
 func appDir(name string) string {
 	if name == "" || name == project.DefaultAppName {
 		return "app"
@@ -256,6 +264,7 @@ func appDir(name string) string {
 	return filepath.Join("app", name)
 }
 
+// routeLabel centralizes route label behavior so callers follow the same contract.
 func routeLabel(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "group /"
@@ -263,10 +272,12 @@ func routeLabel(value string) string {
 	return "group " + strings.TrimSpace(value)
 }
 
+// identityLabel centralizes identity label behavior so callers follow the same contract.
 func identityLabel(value string) string {
 	return strings.TrimSpace(value)
 }
 
+// resourceNames centralizes resource names behavior so callers follow the same contract.
 func resourceNames(env map[string]string, prefix string, rootKeys []string) []string {
 	names := []string{"default"}
 	keySet := map[string]struct{}{}
@@ -294,6 +305,7 @@ func resourceNames(env map[string]string, prefix string, rootKeys []string) []st
 	return uniqueSorted(names)
 }
 
+// databaseConnections centralizes database connections behavior so callers follow the same contract.
 func databaseConnections(apps []atlasproject.App, cfg *project.Config, env map[string]string) []diagnostics.DatabaseConnection {
 	connections := []diagnostics.DatabaseConnection{}
 	for _, app := range apps {
@@ -315,6 +327,7 @@ func databaseConnections(apps []atlasproject.App, cfg *project.Config, env map[s
 	return connections
 }
 
+// projectName centralizes project name behavior so callers follow the same contract.
 func projectName(cfg *project.Config) string {
 	if cfg == nil {
 		return ""
@@ -322,6 +335,7 @@ func projectName(cfg *project.Config) string {
 	return cfg.ProjectName
 }
 
+// appBaseURLs centralizes app base urls behavior so callers follow the same contract.
 func appBaseURLs(apps []atlasproject.App, cfg *project.Config, env map[string]string) map[string]string {
 	baseURLs := map[string]string{}
 	for _, app := range apps {
@@ -346,6 +360,7 @@ func appBaseURLs(apps []atlasproject.App, cfg *project.Config, env map[string]st
 	return baseURLs
 }
 
+// metricsMetadata centralizes metrics metadata behavior so callers follow the same contract.
 func metricsMetadata(apps []atlasproject.App, cfg *project.Config, env map[string]string) map[string]diagnostics.MetricsMetadata {
 	metadata := map[string]diagnostics.MetricsMetadata{}
 	for _, app := range apps {
@@ -387,6 +402,7 @@ func metricsCounters(components project.Components) []string {
 	return counters
 }
 
+// metricsTarget centralizes metrics target behavior so callers follow the same contract.
 func metricsTarget(appName string, runtime string, env map[string]string) string {
 	envKey := map[string]string{
 		"http":      "METRICS_API_PORT",
@@ -400,6 +416,7 @@ func metricsTarget(appName string, runtime string, env map[string]string) string
 	return "http://localhost:" + port + "/metrics"
 }
 
+// resourceLinks centralizes resource links behavior so callers follow the same contract.
 func resourceLinks(cfg *project.Config, env map[string]string) []workflows.ResourceLink {
 	registryResources, err := resources.RegistryForProject(cfg, env).List(context.Background())
 	if err != nil && len(registryResources) == 0 {
@@ -434,6 +451,7 @@ func resourceLinkLabels(links []workflows.ResourceLink, category string) []strin
 	return uniqueSorted(labels)
 }
 
+// appScopedKey centralizes app scoped key behavior so callers follow the same contract.
 func appScopedKey(appName string, key string) string {
 	if appName == "" || appName == project.DefaultAppName {
 		return key
@@ -442,6 +460,7 @@ func appScopedKey(appName string, key string) string {
 	return prefix + "_" + key
 }
 
+// uniqueSorted centralizes unique sorted behavior so callers follow the same contract.
 func uniqueSorted(values []string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(values))

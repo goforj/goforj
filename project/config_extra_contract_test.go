@@ -2,7 +2,6 @@ package project
 
 import "testing"
 
-// TestDevWatchMatchersEmptyTreatsUnknownFieldsAsConfiguration protects newer matcher controls from legacy migration.
 func TestDevWatchMatchersEmptyTreatsUnknownFieldsAsConfiguration(t *testing.T) {
 	if !(DevWatchMatchers{}).Empty() {
 		t.Fatal("zero matcher should be empty")

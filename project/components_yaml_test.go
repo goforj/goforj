@@ -8,7 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestComponentYAMLKeysCoverCatalog protects persisted config when the render catalog gains a component.
 func TestComponentYAMLKeysCoverCatalog(t *testing.T) {
 	want := map[ComponentKey]struct{}{ComponentDemoApp: {}}
 	for _, definition := range ComponentCatalog() {
@@ -326,7 +325,6 @@ func TestComponentsYAMLRejectsInvalidSequenceEntries(t *testing.T) {
 	}
 }
 
-// TestComponentsJSONRemainsBooleanObject protects Lighthouse and other JSON consumers from the YAML migration shape.
 func TestComponentsJSONRemainsBooleanObject(t *testing.T) {
 	original := Components{CLI: true, DemoApp: true, WebAPI: true, Jobs: true}
 	encoded, err := json.Marshal(original)

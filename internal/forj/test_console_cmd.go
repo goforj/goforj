@@ -9,6 +9,7 @@ import (
 // TestConsoleCmd prints semantic console output samples.
 type TestConsoleCmd struct{}
 
+// Signature returns the command-line contract used for registration.
 func (*TestConsoleCmd) Signature() string {
 	return `name:"test:console" help:"Print semantic console output samples" hidden:""`
 }

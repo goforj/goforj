@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// ParseEnvFiles centralizes parse env files behavior so callers follow the same contract.
 func ParseEnvFiles(paths ...string) (map[string]string, error) {
 	values := map[string]string{}
 	for _, path := range paths {
@@ -42,6 +43,7 @@ func ParseEnvFiles(paths ...string) (map[string]string, error) {
 	return values, nil
 }
 
+// ReplaceOrAppendEnvValue centralizes replace or append env value behavior so callers follow the same contract.
 func ReplaceOrAppendEnvValue(path, key, value string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -62,6 +64,7 @@ func ReplaceOrAppendEnvValue(path, key, value string) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
+// ReplaceOrAppendEnvValues centralizes replace or append env values behavior so callers follow the same contract.
 func ReplaceOrAppendEnvValues(paths []string, values map[string]string) error {
 	for _, path := range paths {
 		for key, value := range values {

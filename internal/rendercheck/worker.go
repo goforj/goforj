@@ -17,7 +17,9 @@ import (
 
 // renderWorkspaceFS isolates the destructive preparation checks that workers must report rather than ignore.
 type renderWorkspaceFS interface {
+	// removeAll defines the remove all behavior required from implementations.
 	removeAll(string) error
+	// stat defines the stat behavior required from implementations.
 	stat(string) (fs.FileInfo, error)
 }
 

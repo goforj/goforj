@@ -6,7 +6,6 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestDeveloperServiceEndpointsRequireExactGeneratedIdentities protects external endpoints from profile capture.
 func TestDeveloperServiceEndpointsRequireExactGeneratedIdentities(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -178,6 +178,7 @@ func hasGoBuildPackageArg(args []string) bool {
 	return false
 }
 
+// outputArgIndex centralizes output arg index behavior so callers follow the same contract.
 func outputArgIndex(args []string) int {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-o" {
@@ -192,6 +193,7 @@ func outputArgIndex(args []string) int {
 	return -1
 }
 
+// outputPath centralizes output path behavior so callers follow the same contract.
 func outputPath(arg string) string {
 	if strings.HasPrefix(arg, "-o=") {
 		return strings.TrimPrefix(arg, "-o=")
@@ -216,6 +218,7 @@ func (c *Cmd) validateCompiledEnv(root string) error {
 	return nil
 }
 
+// encodedEnvDefaults keeps encoded env defaults handling consistent across callers.
 func (c *Cmd) encodedEnvDefaults() string {
 	pairs, err := parseEnvAssignments(c.EnvDefaults, "--env-defaults")
 	if err != nil || len(pairs) == 0 {
@@ -228,6 +231,7 @@ func (c *Cmd) encodedEnvDefaults() string {
 	return base64.StdEncoding.EncodeToString([]byte(strings.Join(raw, ",")))
 }
 
+// encodedEnvOverrides keeps encoded env overrides handling consistent across callers.
 func (c *Cmd) encodedEnvOverrides() string {
 	pairs, err := parseEnvAssignments(c.EnvOverrides, "--env-overrides")
 	if err != nil || len(pairs) == 0 {
@@ -240,14 +244,17 @@ func (c *Cmd) encodedEnvOverrides() string {
 	return base64.StdEncoding.EncodeToString([]byte(strings.Join(raw, ",")))
 }
 
+// envDefaultsLdflags centralizes env defaults ldflags behavior so callers follow the same contract.
 func (c *Cmd) envDefaultsLdflags(modulePath, encoded string) string {
 	return fmt.Sprintf("-X %s/internal/cmd.CompiledEnvDefaultsBase64=%s", modulePath, encoded)
 }
 
+// envOverridesLdflags centralizes env overrides ldflags behavior so callers follow the same contract.
 func (c *Cmd) envOverridesLdflags(modulePath, encoded string) string {
 	return fmt.Sprintf("-X %s/internal/cmd.CompiledEnvOverridesBase64=%s", modulePath, encoded)
 }
 
+// withExtraLdflags centralizes with extra ldflags behavior so callers follow the same contract.
 func (c *Cmd) withExtraLdflags(args []string, extras ...string) []string {
 	ldflagsValue := strings.Join(extras, " ")
 	for i := 0; i < len(args)-1; i++ {
@@ -271,6 +278,7 @@ type envDefaultPair struct {
 	value string
 }
 
+// parseEnvAssignments keeps parse env assignments handling consistent across callers.
 func parseEnvAssignments(raw string, flagName string) ([]envDefaultPair, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

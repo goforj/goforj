@@ -209,7 +209,6 @@ func TestResourcePlanNormalizationCanonicalizesDatabaseAliases(t *testing.T) {
 	assertResourceSelection(t, normalized, ResourceDatabase, "postgres", []string{"sqlite", "postgres"})
 }
 
-// TestResourcePlanNamedRequirementsLockRootSupport protects generated named-resource portability.
 func TestResourcePlanNamedRequirementsLockRootSupport(t *testing.T) {
 	components := Components{DatabaseMySQL: true, Auth: true, Cache: true, Storage: true}
 	plan, err := DefaultResourcePlan(components)

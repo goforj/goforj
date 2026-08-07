@@ -811,7 +811,6 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 }
 
-// TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController protects the templ starter's HTTP ownership boundary.
 func TestRenderAppTemplAuthUsesStarterUIInsteadOfAuthAPIController(t *testing.T) {
 	root := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -1594,6 +1593,7 @@ func TestRenderAppWritesDefaultAppShape(t *testing.T) {
 	}
 }
 
+// writeProjectRendererTestFile centralizes write project renderer test file persistence for the surrounding workflow.
 func writeProjectRendererTestFile(t *testing.T, path string, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1604,6 +1604,7 @@ func writeProjectRendererTestFile(t *testing.T, path string, body string) {
 	}
 }
 
+// assertProjectRendererTestFile centralizes assert project renderer test file behavior so callers follow the same contract.
 func assertProjectRendererTestFile(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {
@@ -1611,6 +1612,7 @@ func assertProjectRendererTestFile(t *testing.T, path string) {
 	}
 }
 
+// assertProjectRendererTestFileMissing centralizes assert project renderer test file missing behavior so callers follow the same contract.
 func assertProjectRendererTestFileMissing(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err == nil {
@@ -1620,6 +1622,7 @@ func assertProjectRendererTestFileMissing(t *testing.T, path string) {
 	}
 }
 
+// assertProjectRendererFileContains centralizes assert project renderer file contains behavior so callers follow the same contract.
 func assertProjectRendererFileContains(t *testing.T, path string, snippets ...string) {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -1634,6 +1637,7 @@ func assertProjectRendererFileContains(t *testing.T, path string, snippets ...st
 	}
 }
 
+// assertProjectRendererFileNotContains centralizes assert project renderer file not contains behavior so callers follow the same contract.
 func assertProjectRendererFileNotContains(t *testing.T, path string, snippets ...string) {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -1648,6 +1652,7 @@ func assertProjectRendererFileNotContains(t *testing.T, path string, snippets ..
 	}
 }
 
+// styledFrontendPlaceholderWithoutLogo centralizes styled frontend placeholder without logo behavior so callers follow the same contract.
 func styledFrontendPlaceholderWithoutLogo(title string) string {
 	return fmt.Sprintf(`<!doctype html>
 <html lang="en">
@@ -1670,6 +1675,7 @@ func styledFrontendPlaceholderWithoutLogo(title string) string {
 `, title, title, oldStyledFrontendPlaceholderCopy())
 }
 
+// styledFrontendPlaceholderWithLogo centralizes styled frontend placeholder with logo behavior so callers follow the same contract.
 func styledFrontendPlaceholderWithLogo(title string, logo string) string {
 	return fmt.Sprintf(`<!doctype html>
 <html lang="en">
@@ -1692,10 +1698,12 @@ func styledFrontendPlaceholderWithLogo(title string, logo string) string {
 `, title, logo, title, oldStyledFrontendPlaceholderCopy())
 }
 
+// oldStyledFrontendPlaceholderCopy centralizes old styled frontend placeholder copy behavior so callers follow the same contract.
 func oldStyledFrontendPlaceholderCopy() string {
 	return "This app is running, but no frontend build has been deployed yet."
 }
 
+// assertProjectRendererLogoCopied centralizes assert project renderer logo copied behavior so callers follow the same contract.
 func assertProjectRendererLogoCopied(t *testing.T, path string) {
 	t.Helper()
 	got, err := os.ReadFile(path)

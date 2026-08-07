@@ -14,8 +14,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// Logf records formatted test diagnostics without coupling helpers to testing.T.
 type Logf func(format string, args ...any)
 
+// StartedContainer exposes a test container's reachable endpoint and lifecycle handle.
 type StartedContainer struct {
 	Host      string
 	Port      string
@@ -25,18 +27,22 @@ type StartedContainer struct {
 
 type quietTestcontainersLogger struct{}
 
+// Printf intentionally suppresses noisy testcontainers framework logs.
 func (quietTestcontainersLogger) Printf(string, ...any) {}
 
+// init installs the quiet logger before any shared test container starts.
 func init() {
 	tclog.SetDefault(quietTestcontainersLogger{})
 }
 
+// Stop releases the container once while tolerating an empty test handle.
 func (c *StartedContainer) Stop() {
 	if c != nil && c.stop != nil {
 		c.stop()
 	}
 }
 
+// StartTestcontainer centralizes start testcontainer behavior so callers follow the same contract.
 func StartTestcontainer(
 	logf Logf,
 	request testcontainers.ContainerRequest,
@@ -85,6 +91,7 @@ func StartTestcontainer(
 	}, nil
 }
 
+// StartMySQLTestcontainer centralizes start my sqltestcontainer behavior so callers follow the same contract.
 func StartMySQLTestcontainer(logf Logf, testEnv map[string]string) (func(), error) {
 	started, err := StartTestcontainer(
 		logf,
@@ -127,6 +134,7 @@ func StartMySQLTestcontainer(logf Logf, testEnv map[string]string) (func(), erro
 	return started.Stop, nil
 }
 
+// StartPostgresTestcontainer centralizes start postgres testcontainer behavior so callers follow the same contract.
 func StartPostgresTestcontainer(logf Logf, testEnv map[string]string) (func(), error) {
 	started, err := StartTestcontainer(
 		logf,
@@ -157,6 +165,7 @@ func StartPostgresTestcontainer(logf Logf, testEnv map[string]string) (func(), e
 	return started.Stop, nil
 }
 
+// StartRedisTestcontainer centralizes start redis testcontainer behavior so callers follow the same contract.
 func StartRedisTestcontainer(logf Logf, testEnv map[string]string) (func(), error) {
 	started, err := StartTestcontainer(
 		logf,
@@ -182,6 +191,7 @@ func StartRedisTestcontainer(logf Logf, testEnv map[string]string) (func(), erro
 	return started.Stop, nil
 }
 
+// WaitForTCPReadyAddress centralizes wait for tcpready address behavior so callers follow the same contract.
 func WaitForTCPReadyAddress(host, port string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	address := net.JoinHostPort(host, port)
@@ -201,6 +211,7 @@ func WaitForTCPReadyAddress(host, port string, timeout time.Duration) error {
 	return fmt.Errorf("tcp endpoint %s not ready", address)
 }
 
+// WaitForContainerExecSuccess centralizes wait for container exec success behavior so callers follow the same contract.
 func WaitForContainerExecSuccess(container testcontainers.Container, cmd []string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
@@ -234,6 +245,7 @@ func WaitForContainerExecSuccess(container testcontainers.Container, cmd []strin
 	return fmt.Errorf("container command did not succeed before timeout")
 }
 
+// mappedContainerEndpoint centralizes mapped container endpoint behavior so callers follow the same contract.
 func mappedContainerEndpoint(ctx context.Context, container testcontainers.Container, portSpec string) (string, string, error) {
 	host, err := container.Host(ctx)
 	if err != nil {

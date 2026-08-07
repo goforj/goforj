@@ -15,6 +15,7 @@ type BuildBinaryCmd struct {
 	logger *logger.AppLogger
 }
 
+// Signature returns the command-line contract used for registration.
 func (*BuildBinaryCmd) Signature() string {
 	return `name:"build:binary" help:"Build the GoForj binary" hidden:""`
 }

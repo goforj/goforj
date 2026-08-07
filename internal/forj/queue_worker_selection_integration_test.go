@@ -64,6 +64,7 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 	}
 }
 
+// buildRenderedQueueSelectionApp keeps the build rendered queue selection app representation consistent.
 func buildRenderedQueueSelectionApp(t *testing.T, projectDir string, env map[string]string) string {
 	t.Helper()
 	binPath := filepath.Join(projectDir, "bin", "app")
@@ -71,6 +72,7 @@ func buildRenderedQueueSelectionApp(t *testing.T, projectDir string, env map[str
 	return binPath
 }
 
+// runRenderedWorkerUntilStarted centralizes run rendered worker until started behavior so callers follow the same contract.
 func runRenderedWorkerUntilStarted(t *testing.T, projectDir, binPath string, env map[string]string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -103,6 +105,7 @@ func runRenderedWorkerUntilStarted(t *testing.T, projectDir, binPath string, env
 	return out.String()
 }
 
+// runRenderedWorkerToExit centralizes run rendered worker to exit behavior so callers follow the same contract.
 func runRenderedWorkerToExit(t *testing.T, projectDir, binPath string, env map[string]string, args ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -117,6 +120,7 @@ func runRenderedWorkerToExit(t *testing.T, projectDir, binPath string, env map[s
 	return out.String(), err
 }
 
+// assertWorkerOutputContainsQueues centralizes assert worker output contains queues behavior so callers follow the same contract.
 func assertWorkerOutputContainsQueues(t *testing.T, output string, names ...string) {
 	t.Helper()
 	for _, name := range names {

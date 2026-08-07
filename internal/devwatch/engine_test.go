@@ -382,7 +382,6 @@ func TestDevWatchEngineRejectsInvalidPhysicalRoots(t *testing.T) {
 	}
 }
 
-// TestDevWatchEngineDirectoryPruningUsesAllSubscribers protects shared-root exclusion behavior.
 func TestDevWatchEngineDirectoryPruningUsesAllSubscribers(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -919,7 +918,6 @@ func TestDevWatchPollPathErrorDistinguishesRootLoss(t *testing.T) {
 	}
 }
 
-// TestDevWatchFSNotifyBackendDiscoversMissingNestedRoot protects explicit roots that restore an excluded subtree.
 func TestDevWatchFSNotifyBackendDiscoversMissingNestedRoot(t *testing.T) {
 	outerRoot := t.TempDir()
 	nestedRoot := filepath.Join(outerRoot, "generated", "client")

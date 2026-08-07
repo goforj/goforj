@@ -185,7 +185,6 @@ func assertDatabaseShellRenderedSurface(t *testing.T, app project.App, enabled b
 	assertTemplateMarker(t, injectPath, readPrimitiveRendererFile(t, injectPath), "cmd.NewDBShellCmd", enabled)
 }
 
-// TestRemoveLegacyDBShellCommandSourceMigratesOnlyGeneratedShape protects customized owner code during the command ownership move.
 func TestRemoveLegacyDBShellCommandSourceMigratesOnlyGeneratedShape(t *testing.T) {
 	generated := legacyDBShellCommandOwnerSource("app")
 	formattedGenerated, err := format.Source([]byte(generated))

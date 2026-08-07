@@ -890,10 +890,12 @@ func TestRunDevBuildRunsAppsInParallel(t *testing.T) {
 	}
 }
 
+// shellQuote centralizes shell quote behavior so callers follow the same contract.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
+// captureStdout centralizes capture stdout behavior so callers follow the same contract.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -1078,6 +1080,7 @@ func TestDefaultDevAppColorDiffersFromTimestampGray(t *testing.T) {
 	}
 }
 
+// withConventionalApp centralizes with conventional app behavior so callers follow the same contract.
 func withConventionalApp(t *testing.T, name string) {
 	t.Helper()
 	root := t.TempDir()
@@ -1160,7 +1163,6 @@ func TestShellSplitArgsPreservesQuotedFragments(t *testing.T) {
 	}
 }
 
-// TestCopyDevWatchesClonesEnvironment protects configured watchers from mutations made during per-App expansion.
 func TestCopyDevWatchesClonesEnvironment(t *testing.T) {
 	original := []project.DevWatch{{Env: map[string]string{"FOO": "bar"}}}
 	copied := copyDevWatches(original)
@@ -2018,4 +2020,5 @@ func TestRunDevFrontendDependencySetupIncludesNamedApps(t *testing.T) {
 	}
 }
 
+// contains centralizes contains behavior so callers follow the same contract.
 func contains(s, sub string) bool { return strings.Contains(s, sub) }

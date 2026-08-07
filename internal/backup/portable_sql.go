@@ -12,15 +12,21 @@ import (
 
 // SQLDialect contains only the SQL syntax needed by portable row transfer.
 type SQLDialect interface {
+	// QuoteIdentifier defines the quote identifier behavior required from implementations.
 	QuoteIdentifier(string) string
+	// Placeholder defines the placeholder behavior required from implementations.
 	Placeholder(int) string
+	// ListTables defines the list tables behavior required from implementations.
 	ListTables(context.Context, *sql.DB) ([]string, error)
+	// IdentityColumns defines the identity columns behavior required from implementations.
 	IdentityColumns(context.Context, SQLQueryer, string, []string) (map[string]bool, error)
+	// RestoreIdentity defines the restore identity behavior required from implementations.
 	RestoreIdentity(context.Context, *sql.Tx, string, string, int64) error
 }
 
 // SQLQueryer is the shared query surface implemented by sql.DB and sql.Tx.
 type SQLQueryer interface {
+	// QueryContext defines the query context behavior required from implementations.
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 

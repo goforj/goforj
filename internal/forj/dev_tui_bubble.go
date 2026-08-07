@@ -126,6 +126,7 @@ type devBubbleRuntimeState struct {
 	footerLine    string
 }
 
+// newDevBubbleWriter centralizes new dev bubble writer behavior so callers follow the same contract.
 func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) *devBubbleWriter {
 	state := loadDevBubbleRuntimeState(config)
 	inputState, outputState := captureDevTerminalState()
@@ -162,6 +163,7 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 	}
 }
 
+// Write accepts output through Go's standard writer contract.
 func (w *devBubbleWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -185,6 +187,7 @@ func (w *devBubbleWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Close releases resources owned by the receiver.
 func (w *devBubbleWriter) Close() error {
 	w.mu.Lock()
 	if w.closed {
@@ -260,6 +263,7 @@ func runDevTTYSttySane(tty *os.File) {
 // devTerminalModeResetSequence releases terminal modes without advancing past Bubble Tea's restored cursor row.
 const devTerminalModeResetSequence = "\x1b[>u\x1b[<u\x1b[?1004l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\r\x1b[2K"
 
+// scheduleFlushLocked centralizes schedule flush locked behavior so callers follow the same contract.
 func (w *devBubbleWriter) scheduleFlushLocked() {
 	if len(w.pending) == 0 {
 		return
@@ -271,6 +275,7 @@ func (w *devBubbleWriter) scheduleFlushLocked() {
 	w.flushTimer.Reset(devBubbleFlushDelay)
 }
 
+// stopFlushTimerLocked centralizes stop flush timer locked behavior so callers follow the same contract.
 func (w *devBubbleWriter) stopFlushTimerLocked() {
 	if w.flushTimer == nil {
 		return
@@ -279,12 +284,14 @@ func (w *devBubbleWriter) stopFlushTimerLocked() {
 	w.flushTimer = nil
 }
 
+// flushPending centralizes flush pending behavior so callers follow the same contract.
 func (w *devBubbleWriter) flushPending() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.flushPendingLocked()
 }
 
+// flushPendingLocked centralizes flush pending locked behavior so callers follow the same contract.
 func (w *devBubbleWriter) flushPendingLocked() {
 	if len(w.pending) == 0 {
 		return
@@ -298,6 +305,7 @@ func (w *devBubbleWriter) flushPendingLocked() {
 	w.program.Send(devAppendLinesMsg{lines: payload})
 }
 
+// DisableFooter centralizes disable footer behavior so callers follow the same contract.
 func (w *devBubbleWriter) DisableFooter() {
 	w.mu.Lock()
 	w.disabled = true
@@ -305,6 +313,7 @@ func (w *devBubbleWriter) DisableFooter() {
 	w.program.Send(devSetFooterEnabledMsg{enabled: false})
 }
 
+// EnableFooter centralizes enable footer behavior so callers follow the same contract.
 func (w *devBubbleWriter) EnableFooter() {
 	w.mu.Lock()
 	w.disabled = false
@@ -321,6 +330,7 @@ func (w *devBubbleWriter) ResetFooterLine() {
 	w.program.Send(devResetFooterMsg{line: line})
 }
 
+// SetStatusLine centralizes set status line behavior so callers follow the same contract.
 func (w *devBubbleWriter) SetStatusLine(line string) {
 	w.mu.Lock()
 	w.statusLine = line
@@ -328,6 +338,7 @@ func (w *devBubbleWriter) SetStatusLine(line string) {
 	w.program.Send(devSetStatusMsg{line: line})
 }
 
+// MarkStatusDone centralizes mark status done behavior so callers follow the same contract.
 func (w *devBubbleWriter) MarkStatusDone() {
 	w.mu.Lock()
 	line := strings.TrimSpace(w.statusLine)
@@ -339,6 +350,7 @@ func (w *devBubbleWriter) MarkStatusDone() {
 	w.program.Send(devMarkStatusDoneMsg{})
 }
 
+// ClearStatusLine centralizes clear status line behavior so callers follow the same contract.
 func (w *devBubbleWriter) ClearStatusLine() {
 	w.mu.Lock()
 	w.statusLine = ""
@@ -346,12 +358,14 @@ func (w *devBubbleWriter) ClearStatusLine() {
 	w.program.Send(devClearStatusMsg{})
 }
 
+// HasStatusLine centralizes has status line behavior so callers follow the same contract.
 func (w *devBubbleWriter) HasStatusLine() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return strings.TrimSpace(w.statusLine) != ""
 }
 
+// RefreshEnv centralizes refresh env behavior so callers follow the same contract.
 func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
 	state := loadDevBubbleRuntimeState(config)
 	w.mu.Lock()
@@ -369,6 +383,7 @@ func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
 	})
 }
 
+// loadDevBubbleRuntimeState centralizes load dev bubble runtime state lookup for the surrounding workflow.
 func loadDevBubbleRuntimeState(config *project.Config) devBubbleRuntimeState {
 	apiURL := resolveAPIURL(nil)
 	lighthouseURL := resolveLighthouseUIURL(nil)
@@ -387,6 +402,7 @@ func loadDevBubbleRuntimeState(config *project.Config) devBubbleRuntimeState {
 	}
 }
 
+// Init prepares the receiver for use by its caller.
 func (m devBubbleModel) Init() tea.Cmd { return nil }
 
 // Update serializes terminal events through Bubble Tea so transcript and control state stay synchronized.
@@ -653,6 +669,7 @@ func devForwardInterruptCmdWith(signalInterrupt func() error) tea.Cmd {
 	}
 }
 
+// View renders the receiver's current terminal state.
 func (m devBubbleModel) View() string {
 	width := m.width
 	if width <= 0 {
@@ -724,6 +741,7 @@ func (m devBubbleModel) View() string {
 	return renderDevBubbleOverlay(base, overlay, width, height)
 }
 
+// currentOverlay centralizes current overlay behavior so callers follow the same contract.
 func (m devBubbleModel) currentOverlay() string {
 	switch {
 	case m.commandVisible:
@@ -737,6 +755,7 @@ func (m devBubbleModel) currentOverlay() string {
 	}
 }
 
+// bodyHeight centralizes body height behavior so callers follow the same contract.
 func (m *devBubbleModel) bodyHeight() int {
 	width := m.width
 	if width <= 0 {
@@ -770,6 +789,7 @@ func (m *devBubbleModel) applyRuntimeSettingChange(successLine string) {
 	m.lines = append(m.lines, successLine)
 }
 
+// visibleTranscriptLines centralizes visible transcript lines behavior so callers follow the same contract.
 func (m *devBubbleModel) visibleTranscriptLines() []string {
 	width := m.width
 	if width <= 0 {
@@ -788,6 +808,7 @@ func (m *devBubbleModel) visibleTranscriptLines() []string {
 	return lines
 }
 
+// invalidateVisibleTranscriptCache centralizes invalidate visible transcript cache behavior so callers follow the same contract.
 func (m *devBubbleModel) invalidateVisibleTranscriptCache() {
 	m.cachedLines = nil
 	m.cacheWidth = 0
@@ -795,6 +816,7 @@ func (m *devBubbleModel) invalidateVisibleTranscriptCache() {
 	m.cacheValid = false
 }
 
+// viewportLines centralizes viewport lines behavior so callers follow the same contract.
 func (m *devBubbleModel) viewportLines(lines []string, bodyHeight int) ([]string, int) {
 	if len(lines) <= bodyHeight {
 		m.viewportTop = 0
@@ -817,6 +839,7 @@ func (m *devBubbleModel) viewportLines(lines []string, bodyHeight int) ([]string
 	return lines[m.viewportTop : m.viewportTop+bodyHeight], m.viewportTop
 }
 
+// scrollUp centralizes scroll up behavior so callers follow the same contract.
 func (m *devBubbleModel) scrollUp(n int) {
 	lines := m.visibleTranscriptLines()
 	bodyHeight := m.bodyHeight()
@@ -837,6 +860,7 @@ func (m *devBubbleModel) scrollUp(n int) {
 	}
 }
 
+// scrollDown centralizes scroll down behavior so callers follow the same contract.
 func (m *devBubbleModel) scrollDown(n int) {
 	lines := m.visibleTranscriptLines()
 	bodyHeight := m.bodyHeight()
@@ -857,17 +881,20 @@ func (m *devBubbleModel) scrollDown(n int) {
 	}
 }
 
+// scrollToTop centralizes scroll to top behavior so callers follow the same contract.
 func (m *devBubbleModel) scrollToTop() {
 	m.followMode = false
 	m.viewportTop = 0
 }
 
+// scrollToBottom centralizes scroll to bottom behavior so callers follow the same contract.
 func (m *devBubbleModel) scrollToBottom() {
 	m.followMode = true
 	m.viewportTop = 0
 	m.unreadCount = 0
 }
 
+// updateSearchMatches centralizes update search matches behavior so callers follow the same contract.
 func (m *devBubbleModel) updateSearchMatches() {
 	if strings.TrimSpace(m.searchQuery) == "" {
 		m.searchMatches = nil
@@ -892,6 +919,7 @@ func (m *devBubbleModel) updateSearchMatches() {
 	}
 }
 
+// jumpSearch centralizes jump search behavior so callers follow the same contract.
 func (m *devBubbleModel) jumpSearch(delta int) {
 	if len(m.searchMatches) == 0 {
 		return
@@ -904,6 +932,7 @@ func (m *devBubbleModel) jumpSearch(delta int) {
 	m.jumpToCurrentSearchMatch()
 }
 
+// jumpToCurrentSearchMatch centralizes jump to current search match behavior so callers follow the same contract.
 func (m *devBubbleModel) jumpToCurrentSearchMatch() {
 	if len(m.searchMatches) == 0 || m.searchIndex < 0 || m.searchIndex >= len(m.searchMatches) {
 		return
@@ -925,6 +954,7 @@ func (m *devBubbleModel) jumpToCurrentSearchMatch() {
 	}
 }
 
+// contextStatusLine centralizes context status line behavior so callers follow the same contract.
 func (m devBubbleModel) contextStatusLine() string {
 	if strings.TrimSpace(m.statusLine) != "" {
 		return m.statusLine
@@ -956,6 +986,7 @@ func (m devBubbleModel) contextStatusLine() string {
 	return strings.Join(parts, "  |  ")
 }
 
+// moveCommandSelection centralizes move command selection behavior so callers follow the same contract.
 func (m *devBubbleModel) moveCommandSelection(delta int) {
 	if len(m.commands) == 0 {
 		m.commandIndex = 0
@@ -967,6 +998,7 @@ func (m *devBubbleModel) moveCommandSelection(delta int) {
 	m.commandJump = ""
 }
 
+// handleCommandTextInput centralizes handle command text input behavior so callers follow the same contract.
 func (m *devBubbleModel) handleCommandTextInput(text string) {
 	if text == "" {
 		return
@@ -984,6 +1016,7 @@ func (m *devBubbleModel) handleCommandTextInput(text string) {
 	m.jumpCommandSelection(m.commandJump)
 }
 
+// jumpCommandSelection centralizes jump command selection behavior so callers follow the same contract.
 func (m *devBubbleModel) jumpCommandSelection(prefix string) {
 	if prefix == "" || len(m.commands) == 0 {
 		return
@@ -1000,6 +1033,7 @@ func (m *devBubbleModel) jumpCommandSelection(prefix string) {
 	}
 }
 
+// selectedCommandAcceptsArgs centralizes selected command accepts args behavior so callers follow the same contract.
 func (m devBubbleModel) selectedCommandAcceptsArgs() bool {
 	if len(m.commands) == 0 || m.commandIndex < 0 || m.commandIndex >= len(m.commands) {
 		return false
@@ -1007,6 +1041,7 @@ func (m devBubbleModel) selectedCommandAcceptsArgs() bool {
 	return m.commands[m.commandIndex].AcceptsArgs
 }
 
+// selectedCommandRequest centralizes selected command request behavior so callers follow the same contract.
 func (m devBubbleModel) selectedCommandRequest() devShellCommandRequest {
 	if len(m.commands) == 0 || m.commandIndex < 0 || m.commandIndex >= len(m.commands) {
 		return devShellCommandRequest{}
@@ -1026,6 +1061,7 @@ func (m devBubbleModel) selectedCommandRequest() devShellCommandRequest {
 	}
 }
 
+// defaultDevComponentShown centralizes default dev component shown behavior so callers follow the same contract.
 func defaultDevComponentShown() map[string]bool {
 	shown := make(map[string]bool, len(devComponentFilterOrder))
 	for _, component := range devComponentFilterOrder {
@@ -1034,6 +1070,7 @@ func defaultDevComponentShown() map[string]bool {
 	return shown
 }
 
+// countDevVisibleLines centralizes count dev visible lines behavior so callers follow the same contract.
 func countDevVisibleLines(lines []string, shown map[string]bool) int {
 	count := 0
 	for _, line := range lines {
@@ -1044,6 +1081,7 @@ func countDevVisibleLines(lines []string, shown map[string]bool) int {
 	return count
 }
 
+// filterDevTranscriptLines centralizes filter dev transcript lines behavior so callers follow the same contract.
 func filterDevTranscriptLines(lines []string, shown map[string]bool) []string {
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -1054,6 +1092,7 @@ func filterDevTranscriptLines(lines []string, shown map[string]bool) []string {
 	return filtered
 }
 
+// devTranscriptLineVisible centralizes dev transcript line visible behavior so callers follow the same contract.
 func devTranscriptLineVisible(line string, shown map[string]bool) bool {
 	component := devTranscriptComponent(line)
 	if component == "" {
@@ -1066,6 +1105,7 @@ func devTranscriptLineVisible(line string, shown map[string]bool) bool {
 	return visible
 }
 
+// devTranscriptComponent centralizes dev transcript component behavior so callers follow the same contract.
 func devTranscriptComponent(line string) string {
 	plain := stripANSIForSearch(line)
 	matches := devTranscriptComponentPattern.FindStringSubmatch(plain)
@@ -1075,6 +1115,7 @@ func devTranscriptComponent(line string) string {
 	return matches[1]
 }
 
+// activeDevComponentFilters centralizes active dev component filters behavior so callers follow the same contract.
 func activeDevComponentFilters(shown map[string]bool) []string {
 	active := make([]string, 0, len(shown))
 	for _, component := range devComponentFilterOrder {
@@ -1088,10 +1129,12 @@ func activeDevComponentFilters(shown map[string]bool) []string {
 	return active
 }
 
+// stripANSIForSearch centralizes strip ansifor search behavior so callers follow the same contract.
 func stripANSIForSearch(s string) string {
 	return ansiCSI.ReplaceAllString(s, "")
 }
 
+// renderDevBubbleOverlay keeps the render dev bubble overlay representation consistent.
 func renderDevBubbleOverlay(base, overlay string, width, height int) string {
 	lines := strings.Split(overlay, "\n")
 	panelWidth := 0
@@ -1126,6 +1169,7 @@ func renderDevBubbleOverlay(base, overlay string, width, height int) string {
 	return strings.Join(baseLines, "\n")
 }
 
+// overlayDevBubbleLine centralizes overlay dev bubble line behavior so callers follow the same contract.
 func overlayDevBubbleLine(base, overlay string, left, overlayWidth int) string {
 	if left < 0 {
 		left = 0
@@ -1150,6 +1194,7 @@ func overlayDevBubbleLine(base, overlay string, left, overlayWidth int) string {
 	return leftSegment + strings.Repeat(" ", leftPad) + overlay + strings.Repeat(" ", overlayPad) + rightSegment
 }
 
+// decorateDevSearchMatches centralizes decorate dev search matches behavior so callers follow the same contract.
 func decorateDevSearchMatches(lines []string, viewportStart int, matches []int, currentMatch int) []string {
 	if len(lines) == 0 || len(matches) == 0 {
 		return lines
@@ -1182,14 +1227,17 @@ func decorateDevSearchMatches(lines []string, viewportStart int, matches []int, 
 	return highlighted
 }
 
+// renderDevSearchMatch keeps the render dev search match representation consistent.
 func renderDevSearchMatch(line string) string {
 	return applyDevLineHighlight(line, "\x1b[48;5;236m")
 }
 
+// renderDevCurrentSearchMatch keeps the render dev current search match representation consistent.
 func renderDevCurrentSearchMatch(line string) string {
 	return applyDevLineHighlight(line, "\x1b[48;5;24m\x1b[1m")
 }
 
+// applyDevLineHighlight centralizes apply dev line highlight behavior so callers follow the same contract.
 func applyDevLineHighlight(line, prefix string) string {
 	if line == "" {
 		return prefix + "\x1b[0m"
@@ -1198,6 +1246,7 @@ func applyDevLineHighlight(line, prefix string) string {
 	return prefix + reapplied + "\x1b[0m"
 }
 
+// wrapDevTranscriptLines centralizes wrap dev transcript lines behavior so callers follow the same contract.
 func wrapDevTranscriptLines(lines []string, width int) []string {
 	if width <= 0 || len(lines) == 0 {
 		return lines
@@ -1213,6 +1262,7 @@ func wrapDevTranscriptLines(lines []string, width int) []string {
 	return wrapped
 }
 
+// wrapDevTranscriptLine centralizes wrap dev transcript line behavior so callers follow the same contract.
 func wrapDevTranscriptLine(line string, width int) []string {
 	const continuationPrefix = "  · "
 	const fieldSeparator = " · "
@@ -1240,6 +1290,7 @@ func wrapDevTranscriptLine(line string, width int) []string {
 	return strings.Split(charmansi.Wrap(line, width, ""), "\n")
 }
 
+// wrapDevMetadataFields centralizes wrap dev metadata fields behavior so callers follow the same contract.
 func wrapDevMetadataFields(firstPrefix string, firstWidth int, continuationPrefix string, continuationWidth int, metadata string) []string {
 	const fieldSeparator = " · "
 
@@ -1309,6 +1360,7 @@ func wrapDevMetadataFields(firstPrefix string, firstWidth int, continuationPrefi
 	return lines
 }
 
+// splitDevMetadataFields centralizes split dev metadata fields behavior so callers follow the same contract.
 func splitDevMetadataFields(metadata string) []string {
 	const fieldSeparator = " · "
 
@@ -1332,6 +1384,7 @@ func splitDevMetadataFields(metadata string) []string {
 	return fields
 }
 
+// splitDevTranscriptMetadataBoundary centralizes split dev transcript metadata boundary behavior so callers follow the same contract.
 func splitDevTranscriptMetadataBoundary(line string) (string, string, bool) {
 	idx := strings.IndexRune(line, '→')
 	if idx < 0 {
@@ -1357,6 +1410,7 @@ func splitDevTranscriptMetadataBoundary(line string) (string, string, bool) {
 	return line, "", true
 }
 
+// normalizeDevTranscriptLines keeps normalize dev transcript lines handling consistent across callers.
 func normalizeDevTranscriptLines(lines []string, hasHeader bool) []string {
 	start := 0
 	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
@@ -1373,6 +1427,7 @@ func normalizeDevTranscriptLines(lines []string, hasHeader bool) []string {
 	return lines
 }
 
+// parseDevAppHelpCommands keeps parse dev app help commands handling consistent across callers.
 func parseDevAppHelpCommands(help string) []devAppCommandOption {
 	plain := stripANSIForSearch(help)
 	lines := strings.Split(plain, "\n")
@@ -1396,6 +1451,7 @@ func parseDevAppHelpCommands(help string) []devAppCommandOption {
 	return commands
 }
 
+// parseDevAppCommandAcceptsArgs keeps parse dev app command accepts args handling consistent across callers.
 func parseDevAppCommandAcceptsArgs(help string) bool {
 	plain := stripANSIForSearch(help)
 	for _, line := range strings.Split(plain, "\n") {
