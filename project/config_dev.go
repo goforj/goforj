@@ -25,12 +25,6 @@ func (c DevConfig) UsesStructuredApps() bool {
 	return c.appsConfigured || c.Apps != nil
 }
 
-// SetApps replaces the native App allowlist while retaining explicit empty-map presence.
-func (c *DevConfig) SetApps(apps map[string]DevApp) {
-	c.Apps = apps
-	c.appsConfigured = len(apps) == 0
-}
-
 // UnmarshalYAML preserves the distinction between an absent legacy app model and an explicit empty allowlist.
 func (c *DevConfig) UnmarshalYAML(value *yaml.Node) error {
 	type devConfigFields DevConfig

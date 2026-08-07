@@ -25,6 +25,7 @@ func TestLighthouseProjectConfigTemplatesUseSharedProjectModel(t *testing.T) {
 			`*[]project.DevWatch`,
 			`*map[string]project.DevApp`,
 			`func applyDevConfigUpdate(`,
+			`current.Apps = *update.Apps`,
 			`func mergeLighthouseDevWatches(`,
 			`if existing.IsLegacy()`,
 		},

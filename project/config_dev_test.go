@@ -369,22 +369,6 @@ func TestDevAppsYAMLPreservesEmptyAllowlistPresence(t *testing.T) {
 	}
 }
 
-// TestDevConfigSetAppsPreservesEmptyAllowlistPresence verifies API callers can disable legacy App discovery explicitly.
-func TestDevConfigSetAppsPreservesEmptyAllowlistPresence(t *testing.T) {
-	var config DevConfig
-	config.SetApps(map[string]DevApp{})
-	if !config.UsesStructuredApps() {
-		t.Fatal("SetApps did not retain explicit empty App configuration")
-	}
-	encoded, err := yaml.Marshal(config)
-	if err != nil {
-		t.Fatalf("marshal config: %v", err)
-	}
-	if !strings.Contains(string(encoded), "apps: {}") {
-		t.Fatalf("SetApps empty allowlist was erased:\n%s", encoded)
-	}
-}
-
 // TestDevRunYAMLPreservesEmptyAllowlistPresence keeps explicit legacy exclusion distinct from the pre-allowlist model.
 func TestDevRunYAMLPreservesEmptyAllowlistPresence(t *testing.T) {
 	t.Parallel()

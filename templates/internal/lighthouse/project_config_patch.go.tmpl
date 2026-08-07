@@ -47,7 +47,7 @@ func applyDevConfigUpdate(current *project.DevConfig, update devConfigUpdate) {
 		current.Watches = mergeLighthouseDevWatches(current.Watches, *update.Watches)
 	}
 	if update.Apps != nil {
-		current.SetApps(*update.Apps)
+		current.Apps = *update.Apps
 	}
 }
 
