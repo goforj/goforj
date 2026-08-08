@@ -1,23 +1,17 @@
 <template>
   <section class="grid gap-6">
-    <Card class="border-border/60">
-      <CardHeader>
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge>Components</Badge>
-          <Badge variant="outline">Data</Badge>
-        </div>
-        <CardTitle class="text-3xl">Tables, pagination, and dates</CardTitle>
-        <CardDescription class="max-w-3xl">
-          Reference patterns for resource indexes, operational reporting, scheduling, and review workflows.
-        </CardDescription>
-      </CardHeader>
-    </Card>
+    <PageHeader
+      eyebrow="Components"
+      section="Data"
+      title="Tables, pagination, and dates"
+      description="Reference patterns for resource indexes, operational reporting, scheduling, and review workflows."
+    />
 
-    <div class="grid gap-4 md:grid-cols-3">
+    <div class="grid gap-6 md:grid-cols-3">
       <Card v-for="metric in metrics" :key="metric.label">
         <CardHeader class="gap-1">
           <CardDescription>{{ metric.label }}</CardDescription>
-          <CardTitle class="text-3xl">{{ metric.value }}</CardTitle>
+          <CardTitle class="text-2xl font-semibold tracking-tight">{{ metric.value }}</CardTitle>
         </CardHeader>
         <CardContent>
           <p class="text-sm text-muted-foreground">{{ metric.copy }}</p>
@@ -25,255 +19,234 @@
       </Card>
     </div>
 
-    <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-      <div class="grid gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Table variations</CardTitle>
-            <CardDescription>shadcn-vue tables are low-level primitives, so this section shows several common product treatments in one place.</CardDescription>
-          </CardHeader>
-          <CardContent class="grid gap-6">
-            <div class="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
-              <InputGroup>
-                <InputGroupAddon>
-                  <Search class="size-4" />
-                </InputGroupAddon>
-                <InputGroupInput v-model="searchQuery" placeholder="Search resources..." />
-              </InputGroup>
+    <Specimen
+      name="Table"
+      description="A low-level primitive with no opinion on chrome. These are three product treatments built from the same parts: an admin index, a dense event stream, and a financial summary."
+      :also="['Badge', 'Button', 'InputGroup', 'Select']"
+    >
+      <div class="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
+        <InputGroup>
+          <InputGroupAddon>
+            <Search class="size-4" />
+          </InputGroupAddon>
+          <InputGroupInput v-model="searchQuery" placeholder="Search resources..." />
+        </InputGroup>
 
-              <Select v-model="statusFilter">
-                <SelectTrigger class="min-w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="ready">Ready</SelectItem>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="blocked">Blocked</SelectItem>
-                </SelectContent>
-              </Select>
+        <Select v-model="statusFilter">
+          <SelectTrigger class="min-w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="ready">Ready</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="blocked">Blocked</SelectItem>
+          </SelectContent>
+        </Select>
 
-              <Button variant="outline" @click="exportResources">Export CSV</Button>
-            </div>
-
-            <div class="rounded-xl border">
-              <div class="flex items-center justify-between border-b px-4 py-3">
-                <div>
-                  <p class="font-medium">Resource index</p>
-                  <p class="text-sm text-muted-foreground">A standard admin listing with filters, ownership, and route-level context.</p>
-                </div>
-                <Badge variant="outline">{{ filteredRows.length }} visible</Badge>
-              </div>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Resource</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Owner</TableHead>
-                    <TableHead>Route</TableHead>
-                    <TableHead class="text-right">Updated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-for="row in filteredRows" :key="row.name">
-                    <TableCell class="font-medium">{{ row.name }}</TableCell>
-                    <TableCell>
-                      <Badge :variant="row.statusVariant">{{ row.status }}</Badge>
-                    </TableCell>
-                    <TableCell>{{ row.owner }}</TableCell>
-                    <TableCell class="font-mono text-xs text-muted-foreground">{{ row.route }}</TableCell>
-                    <TableCell class="text-right text-muted-foreground">{{ row.updated }}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-
-            <div class="rounded-xl border p-4">
-              <div class="mb-3 flex items-center justify-between">
-                <p class="font-medium">Pagination</p>
-                <p class="text-sm text-muted-foreground">Page {{ currentPage }} of 10</p>
-              </div>
-              <Pagination v-model:page="currentPage" :items-per-page="10" :total="100">
-                <PaginationContent v-slot="{ items }">
-                  <PaginationPrevious />
-                  <template v-for="(item, index) in items" :key="index">
-                    <PaginationItem
-                      v-if="item.type === 'page'"
-                      :value="item.value"
-                      :is-active="item.value === currentPage"
-                    >
-                      {{ item.value }}
-                    </PaginationItem>
-                    <PaginationEllipsis v-else :index="index" />
-                  </template>
-                  <PaginationNext />
-                </PaginationContent>
-              </Pagination>
-            </div>
-
-            <div class="grid gap-4">
-              <div class="rounded-xl border">
-                <div class="flex items-center justify-between border-b px-4 py-3">
-                  <div>
-                    <p class="font-medium">Audit log</p>
-                    <p class="text-sm text-muted-foreground">A dense event stream with subdued chrome and clear status emphasis.</p>
-                  </div>
-                  <Badge variant="outline">Realtime</Badge>
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Event</TableHead>
-                      <TableHead>Actor</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead class="text-right">Time</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow v-for="entry in auditRows" :key="entry.event" class="hover:bg-muted/40">
-                      <TableCell class="font-medium">{{ entry.event }}</TableCell>
-                      <TableCell class="text-muted-foreground">{{ entry.actor }}</TableCell>
-                      <TableCell>
-                        <Badge :variant="entry.variant">{{ entry.status }}</Badge>
-                      </TableCell>
-                      <TableCell class="text-right text-xs text-muted-foreground">{{ entry.time }}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div class="rounded-xl border">
-                <div class="flex items-center justify-between border-b px-4 py-3">
-                  <div>
-                    <p class="font-medium">Invoice summary</p>
-                    <p class="text-sm text-muted-foreground">A financial table with stronger row separation and right-aligned values.</p>
-                  </div>
-                  <Button variant="outline" size="sm">Download all</Button>
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Invoice</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>State</TableHead>
-                      <TableHead class="text-right">Amount</TableHead>
-                      <TableHead class="text-right">Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow v-for="invoice in invoiceRows" :key="invoice.number" class="border-b border-border/60">
-                      <TableCell>
-                        <div class="grid gap-0.5">
-                          <span class="font-medium">{{ invoice.number }}</span>
-                          <span class="text-xs text-muted-foreground">{{ invoice.period }}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{{ invoice.customer }}</TableCell>
-                      <TableCell>
-                        <Badge :variant="invoice.variant">{{ invoice.state }}</Badge>
-                      </TableCell>
-                      <TableCell class="text-right font-medium">{{ invoice.amount }}</TableCell>
-                      <TableCell class="text-right">
-                        <Button variant="ghost" size="sm">View</Button>
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <Button variant="outline" @click="exportResources">Export CSV</Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Scheduling and dates</CardTitle>
-          <CardDescription>Calendar primitives work well for launch planning, booking flows, reporting windows, and release coordination.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="grid justify-items-center gap-3">
-            <div class="grid justify-items-center gap-2 text-center">
-              <p class="text-sm font-medium">Single date</p>
-              <Input :model-value="formattedSingleDate" readonly class="h-8 w-[11.5rem] text-center text-sm" />
-            </div>
-            <Calendar v-model="singleDate" class="w-full max-w-[54rem] rounded-xl border p-3" />
+      <div class="overflow-hidden rounded-lg border">
+        <div class="flex items-center justify-between gap-4 border-b bg-muted/40 px-4 py-3">
+          <div class="grid gap-0.5">
+            <p class="text-sm font-medium leading-none">Resource index</p>
+            <p class="text-sm text-muted-foreground">A standard admin listing with filters, ownership, and route-level context.</p>
           </div>
+          <Badge variant="outline">{{ filteredRows.length }} visible</Badge>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Resource</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Owner</TableHead>
+              <TableHead>Route</TableHead>
+              <TableHead class="text-right">Updated</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="row in filteredRows" :key="row.name">
+              <TableCell class="font-medium">{{ row.name }}</TableCell>
+              <TableCell>
+                <Badge :variant="row.statusVariant">{{ row.status }}</Badge>
+              </TableCell>
+              <TableCell>{{ row.owner }}</TableCell>
+              <TableCell class="font-mono text-xs text-muted-foreground">{{ row.route }}</TableCell>
+              <TableCell class="text-right text-muted-foreground">{{ row.updated }}</TableCell>
+            </TableRow>
+            <TableRow v-if="!filteredRows.length">
+              <TableCell colspan="5" class="py-8 text-center text-sm text-muted-foreground">
+                No resources match that search.
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
 
-          <div class="grid justify-items-center gap-3">
-            <div class="grid justify-items-center gap-2 text-center">
-              <p class="text-sm font-medium">Date range</p>
-              <div class="flex flex-wrap justify-center gap-2">
-                <Input :model-value="formattedRangeStart" readonly class="h-8 w-[11.5rem] text-center text-sm" />
-                <Input :model-value="formattedRangeEnd" readonly class="h-8 w-[11.5rem] text-center text-sm" />
-              </div>
-            </div>
-            <RangeCalendar v-model="dateRange" class="w-full max-w-[54rem] rounded-xl border p-3" />
+      <div class="overflow-hidden rounded-lg border">
+        <div class="flex items-center justify-between gap-4 border-b bg-muted/40 px-4 py-3">
+          <div class="grid gap-0.5">
+            <p class="text-sm font-medium leading-none">Audit log</p>
+            <p class="text-sm text-muted-foreground">A dense event stream with subdued chrome and clear status emphasis.</p>
           </div>
+          <Badge variant="outline">Realtime</Badge>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Event</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead class="text-right">Time</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="entry in auditRows" :key="entry.event" class="hover:bg-muted/40">
+              <TableCell class="font-medium">{{ entry.event }}</TableCell>
+              <TableCell class="text-muted-foreground">{{ entry.actor }}</TableCell>
+              <TableCell>
+                <Badge :variant="entry.variant">{{ entry.status }}</Badge>
+              </TableCell>
+              <TableCell class="text-right text-xs text-muted-foreground">{{ entry.time }}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
 
-          <div class="rounded-xl border p-4">
-            <div class="mb-3 flex items-center justify-between">
-              <p class="font-medium">Upcoming windows</p>
-              <Badge variant="outline">3 scheduled</Badge>
-            </div>
-            <div class="grid gap-3">
-              <Item v-for="window in releaseWindows" :key="window.title" size="sm" variant="outline">
-                <ItemContent>
-                  <ItemTitle>{{ window.title }}</ItemTitle>
-                  <ItemDescription>{{ window.description }}</ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <Badge :variant="window.variant">{{ window.status }}</Badge>
-                </ItemActions>
-              </Item>
-            </div>
+      <div class="overflow-hidden rounded-lg border">
+        <div class="flex items-center justify-between gap-4 border-b bg-muted/40 px-4 py-3">
+          <div class="grid gap-0.5">
+            <p class="text-sm font-medium leading-none">Invoice summary</p>
+            <p class="text-sm text-muted-foreground">A financial table with stronger row separation and right-aligned values.</p>
           </div>
-        </CardContent>
-      </Card>
+          <Button variant="outline" size="sm">Download all</Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Invoice</TableHead>
+              <TableHead>Customer</TableHead>
+              <TableHead>State</TableHead>
+              <TableHead class="text-right">Amount</TableHead>
+              <TableHead class="text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="invoice in invoiceRows" :key="invoice.number">
+              <TableCell>
+                <div class="grid gap-0.5">
+                  <span class="font-medium">{{ invoice.number }}</span>
+                  <span class="text-xs text-muted-foreground">{{ invoice.period }}</span>
+                </div>
+              </TableCell>
+              <TableCell>{{ invoice.customer }}</TableCell>
+              <TableCell>
+                <Badge :variant="invoice.variant">{{ invoice.state }}</Badge>
+              </TableCell>
+              <TableCell class="text-right font-medium">{{ invoice.amount }}</TableCell>
+              <TableCell class="text-right">
+                <Button variant="ghost" size="sm">View</Button>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </Specimen>
+
+    <Specimen
+      name="Pagination"
+      description="Page controls with ellipsis collapsing. Drives the page number through v-model:page."
+    >
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-muted-foreground">Page {{ currentPage }} of 10</p>
+        <Pagination v-model:page="currentPage" :items-per-page="10" :total="100">
+          <PaginationContent v-slot="{ items }">
+            <PaginationPrevious />
+            <template v-for="(item, index) in items" :key="index">
+              <PaginationItem
+                v-if="item.type === 'page'"
+                :value="item.value"
+                :is-active="item.value === currentPage"
+              >
+                {{ item.value }}
+              </PaginationItem>
+              <PaginationEllipsis v-else :index="index" />
+            </template>
+            <PaginationNext />
+          </PaginationContent>
+        </Pagination>
+      </div>
+    </Specimen>
+
+    <div class="grid gap-6 xl:grid-cols-2">
+      <Specimen
+        name="Calendar"
+        description="Single date selection for launch planning and reporting windows."
+        :also="['Input']"
+      >
+        <div class="grid justify-items-center gap-3">
+          <Input :model-value="formattedSingleDate" readonly class="h-8 w-44 text-center text-sm" />
+          <Calendar v-model="singleDate" class="rounded-lg border p-3" />
+        </div>
+      </Specimen>
+
+      <Specimen
+        name="RangeCalendar"
+        description="Start and end selection for booking flows and release coordination."
+        :also="['Input']"
+      >
+        <div class="grid justify-items-center gap-3">
+          <div class="flex flex-wrap justify-center gap-2">
+            <Input :model-value="formattedRangeStart" readonly class="h-8 w-44 text-center text-sm" />
+            <Input :model-value="formattedRangeEnd" readonly class="h-8 w-44 text-center text-sm" />
+          </div>
+          <RangeCalendar v-model="dateRange" class="rounded-lg border p-3" />
+        </div>
+      </Specimen>
     </div>
 
-    <div class="grid gap-4 xl:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Reporting snapshots</CardTitle>
-          <CardDescription>Small summary cards help table and calendar sections feel like a dashboard instead of isolated widgets.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-3 md:grid-cols-3">
-          <div class="rounded-xl border p-4">
-            <p class="text-sm text-muted-foreground">Daily events</p>
-            <p class="mt-2 text-2xl font-semibold">18.4k</p>
-            <p class="mt-1 text-sm text-muted-foreground">Across API, auth, and renderer flows.</p>
-          </div>
-          <div class="rounded-xl border p-4">
-            <p class="text-sm text-muted-foreground">Failed jobs</p>
-            <p class="mt-2 text-2xl font-semibold">12</p>
-            <p class="mt-1 text-sm text-muted-foreground">Down from 31 after the last deploy.</p>
-          </div>
-          <div class="rounded-xl border p-4">
-            <p class="text-sm text-muted-foreground">Median latency</p>
-            <p class="mt-2 text-2xl font-semibold">84ms</p>
-            <p class="mt-1 text-sm text-muted-foreground">Healthy for the current load profile.</p>
-          </div>
-        </CardContent>
-      </Card>
+    <Specimen
+      name="Item"
+      description="A compact row with content and trailing actions. Use for queues, scheduled windows, and other operational lists."
+      :also="['Badge']"
+    >
+      <ShowcaseRow label="Upcoming windows">
+        <Item v-for="window in releaseWindows" :key="window.title" size="sm" variant="outline">
+          <ItemContent>
+            <ItemTitle>{{ window.title }}</ItemTitle>
+            <ItemDescription>{{ window.description }}</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Badge :variant="window.variant">{{ window.status }}</Badge>
+          </ItemActions>
+        </Item>
+      </ShowcaseRow>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Queue and dataset states</CardTitle>
-          <CardDescription>Data-heavy pages usually need one more block for queues, exports, or stateful operational messaging.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-3">
-          <Item v-for="job in jobs" :key="job.title" variant="outline" size="sm">
-            <ItemContent>
-              <ItemTitle>{{ job.title }}</ItemTitle>
-              <ItemDescription>{{ job.description }}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Badge :variant="job.variant">{{ job.status }}</Badge>
-            </ItemActions>
-          </Item>
-        </CardContent>
-      </Card>
-    </div>
+      <ShowcaseRow label="Queue and dataset states">
+        <Item v-for="job in jobs" :key="job.title" variant="outline" size="sm">
+          <ItemContent>
+            <ItemTitle>{{ job.title }}</ItemTitle>
+            <ItemDescription>{{ job.description }}</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Badge :variant="job.variant">{{ job.status }}</Badge>
+          </ItemActions>
+        </Item>
+      </ShowcaseRow>
+    </Specimen>
+
+    <Showcase
+      title="Reporting snapshots"
+      description="Small summary blocks help table and calendar sections read as a dashboard instead of isolated widgets."
+      content-class="md:grid-cols-3"
+    >
+      <ShowcaseRow v-for="snapshot in snapshots" :key="snapshot.label" class="gap-1">
+        <p class="text-sm text-muted-foreground">{{ snapshot.label }}</p>
+        <p class="text-2xl font-semibold tracking-tight">{{ snapshot.value }}</p>
+        <p class="text-sm text-muted-foreground">{{ snapshot.copy }}</p>
+      </ShowcaseRow>
+    </Showcase>
   </section>
 </template>
 
@@ -284,6 +257,7 @@ import { Search } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
+import { PageHeader, Showcase, ShowcaseRow, Specimen } from '@/components/showcase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
@@ -335,10 +309,17 @@ const jobs = [
   { title: 'Sync usage analytics', description: 'Blocked until the metrics query logger lands.', status: 'Blocked', variant: 'destructive' as const },
 ]
 
+const snapshots = [
+  { label: 'Daily events', value: '18.4k', copy: 'Across API, auth, and renderer flows.' },
+  { label: 'Failed jobs', value: '12', copy: 'Down from 31 after the last deploy.' },
+  { label: 'Median latency', value: '84ms', copy: 'Healthy for the current load profile.' },
+]
+
 const auditRows = [
   { event: 'Starter rendered', actor: 'forj cli', status: 'Success', variant: 'default' as const, time: '00:37:07' },
   { event: 'Auth me bootstrap', actor: 'frontend app', status: 'Success', variant: 'default' as const, time: '00:37:12' },
-  { event: 'Lighthouse WS request', actor: 'browser', status: 'Unauthorized', variant: 'destructive' as const, time: '00:37:15' },
+  { event: 'Migration applied', actor: 'forj cli', status: 'Success', variant: 'default' as const, time: '00:37:15' },
+  { event: 'Queue worker connect', actor: 'worker', status: 'Failed', variant: 'destructive' as const, time: '00:37:19' },
 ]
 
 const invoiceRows = [
