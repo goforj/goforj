@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/goforj/console"
+	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/project"
 )
 
@@ -147,6 +148,84 @@ func TestRunDevBuildJobWithLoaderAnimatesBootstrapBuild(t *testing.T) {
 	}
 	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 2 {
 		t.Fatalf("loader clear writes = %d, want at least 2: %q", got, output.String())
+	}
+}
+
+// TestRunDevSPABuildWithLoaderMakesFrontendWorkVisible verifies the longest default frontend phase uses shared loader policy.
+func TestRunDevSPABuildWithLoaderMakesFrontendWorkVisible(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+	root := t.TempDir()
+
+	output := &consoleLoaderWriter{}
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            output,
+		Stderr:            output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		LoaderInterval:    time.Hour,
+		IsTerminal:        func(int) bool { return true },
+	}))
+
+	err := runDevSPABuildWithLoader(output, output, "Building app frontend", devCompiledWatcher{
+		Command: devwatch.Command{
+			Shell: "printf 'frontend assets ready\\n'",
+			Dir:   root,
+		},
+	})
+	if err != nil {
+		t.Fatalf("runDevSPABuildWithLoader() error = %v", err)
+	}
+	for _, expected := range []string{"Building app frontend", "frontend assets ready"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("frontend loader omitted %q: %q", expected, output.String())
+		}
+	}
+	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 2 {
+		t.Fatalf("frontend loader clear writes = %d, want at least 2: %q", got, output.String())
+	}
+}
+
+// TestRunDevSPABuildWithLoaderReplaysFailureDiagnostics verifies quiet frontend progress never hides Vite output.
+func TestRunDevSPABuildWithLoaderReplaysFailureDiagnostics(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+
+	output := &consoleLoaderWriter{}
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            output,
+		Stderr:            output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		LoaderInterval:    time.Hour,
+		IsTerminal:        func(int) bool { return true },
+	}))
+
+	err := runDevSPABuildWithLoader(output, output, "Building app frontend", devCompiledWatcher{
+		Command: devwatch.Command{Shell: "printf 'Vite could not resolve ./src/missing\\n' >&2; exit 7"},
+	})
+	if err == nil {
+		t.Fatal("expected frontend build failure")
+	}
+	if !strings.Contains(output.String(), "Vite could not resolve ./src/missing") {
+		t.Fatalf("frontend failure diagnostic was hidden: %q", output.String())
+	}
+	lastClear := strings.LastIndex(output.String(), "\r\x1b[2K")
+	diagnostic := strings.Index(output.String(), "Vite could not resolve")
+	if lastClear < 0 || diagnostic < lastClear {
+		t.Fatalf("frontend diagnostic was written before loader cleanup: %q", output.String())
 	}
 }
 
