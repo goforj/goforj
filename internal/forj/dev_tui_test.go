@@ -2,6 +2,7 @@ package forj
 
 import (
 	"bytes"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,6 +13,44 @@ import (
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+type devOutputControllerRecorder struct {
+	bytes.Buffer
+	clearCalls int
+	resetCalls int
+	disabled   bool
+}
+
+// DisableFooter records an unexpected destructive footer transition.
+func (r *devOutputControllerRecorder) DisableFooter() {
+	r.disabled = true
+}
+
+// EnableFooter records the inverse footer transition for the output contract.
+func (r *devOutputControllerRecorder) EnableFooter() {
+	r.disabled = false
+}
+
+// ResetFooterLine records restoration of the persistent footer contents.
+func (r *devOutputControllerRecorder) ResetFooterLine() {
+	r.resetCalls++
+}
+
+// SetStatusLine satisfies the output controller contract without retaining irrelevant test state.
+func (r *devOutputControllerRecorder) SetStatusLine(string) {}
+
+// MarkStatusDone satisfies the output controller contract without retaining irrelevant test state.
+func (r *devOutputControllerRecorder) MarkStatusDone() {}
+
+// ClearStatusLine records removal of transient content from the reserved header row.
+func (r *devOutputControllerRecorder) ClearStatusLine() {
+	r.clearCalls++
+}
+
+// HasStatusLine reports no retained status because this recorder only verifies recovery transitions.
+func (r *devOutputControllerRecorder) HasStatusLine() bool {
+	return false
+}
 
 // stripANSI centralizes strip ansi behavior so callers follow the same contract.
 func stripANSI(s string) string {
@@ -178,6 +217,25 @@ func TestDevBubbleModelResetFooterLine(t *testing.T) {
 
 	if got := next.(devBubbleModel).footerLine; got != "default" {
 		t.Fatalf("reset footer line = %q, want %q", got, "default")
+	}
+}
+
+// TestWriteDevRecoverableFailurePreservesTUIChrome verifies recoverable failures do not tear down reserved header or footer rows.
+func TestWriteDevRecoverableFailurePreservesTUIChrome(t *testing.T) {
+	var output devOutputControllerRecorder
+
+	writeDevRecoverableFailure(&output, &output, "Development build failed", errors.New("Vite could not resolve ./src/missing"))
+
+	if output.disabled {
+		t.Fatal("recoverable reconciliation failure disabled the TUI footer")
+	}
+	if output.clearCalls != 2 || output.resetCalls != 2 {
+		t.Fatalf("TUI recovery calls = clear %d reset %d, want 2 of each", output.clearCalls, output.resetCalls)
+	}
+	for _, want := range []string{"Development build failed", "Vite could not resolve", "fix the error to retry"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("recovery output omitted %q: %q", want, output.String())
+		}
 	}
 }
 

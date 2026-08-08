@@ -3,8 +3,10 @@ package forj
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -13,8 +15,10 @@ import (
 	"time"
 
 	"github.com/goforj/console"
+	"github.com/goforj/goforj/internal/apiindex"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/devwatch"
+	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
@@ -1740,6 +1744,35 @@ func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
 	}
 }
 
+// TestDevWatchSessionReloadPreservesSPAFailureDiagnostics verifies config refreshes cannot restore GoForj's obsolete silent build command.
+func TestDevWatchSessionReloadPreservesSPAFailureDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	config := &project.Config{
+		ProjectName:  "reload-diagnostics",
+		GoModuleName: "example.com/reload-diagnostics",
+		Dev: project.DevConfig{Apps: map[string]project.DevApp{
+			project.DefaultAppName: {
+				SPAs: map[string]project.DevSPA{
+					generatedFrontendSPAName: {Path: "cmd/app/frontend", Build: legacyFrontendSPABuildCommand},
+				},
+			},
+		}},
+	}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	session := &devWatchSession{}
+	if err := session.reloadProjectConfig(); err != nil {
+		t.Fatalf("reloadProjectConfig() error = %v", err)
+	}
+	got := session.config.Dev.Apps[project.DefaultAppName].SPAs[generatedFrontendSPAName].Build
+	if got != generatedFrontendSPABuildCommand {
+		t.Fatalf("reloaded SPA build = %q, want %q", got, generatedFrontendSPABuildCommand)
+	}
+}
+
 // TestDevPlanInitialTasksUsesFastPathForConventionalSetup verifies existing generated task identities need no new config phase.
 func TestDevPlanInitialTasksUsesFastPathForConventionalSetup(t *testing.T) {
 	pre := []project.DevTask{
@@ -1932,6 +1965,121 @@ func main() {
 		t.Fatalf("real Go build did not create App binary: %v", err)
 	}
 	assertDevLifecycleTestLines(t, buildCountPath, []string{"build"})
+}
+
+// TestDevBuildWavePublishesFreshEmbeddedSPAAndAPIIndex exercises the production index and Go compiler against one stabilized frontend snapshot.
+func TestDevBuildWavePublishesFreshEmbeddedSPAAndAPIIndex(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": `module example.com/dev-wave
+
+go 1.25.0
+
+require github.com/goforj/web v0.0.0
+
+replace github.com/goforj/web => ./webstub
+`,
+		"webstub/go.mod": "module github.com/goforj/web\n\ngo 1.25.0\n",
+		"webstub/web.go": `package web
+type Route struct{}
+type RouteGroup struct{}
+func NewRoute(method string, path string, handler any, middleware ...any) Route { return Route{} }
+func NewRouteGroup(prefix string, routes []any, middleware ...any) RouteGroup { return RouteGroup{} }
+`,
+		"internal/hello/controller.go": `package hello
+import (
+	"net/http"
+	"github.com/goforj/web"
+)
+type Controller struct{}
+func (c *Controller) Routes() []any {
+	return []any{web.NewRoute(http.MethodGet, "/hello", c.Hello)}
+}
+func (c *Controller) Hello(ctx any) error { return nil }
+`,
+		"app/routes.go": `package app
+import (
+	"github.com/goforj/web"
+	"example.com/dev-wave/internal/hello"
+)
+func ProvideRoutes(controller *hello.Controller) []web.RouteGroup {
+	return []web.RouteGroup{web.NewRouteGroup("/api", controller.Routes())}
+}
+`,
+		"cmd/app/main.go": `package main
+import "embed"
+//go:embed all:frontend/dist/*
+var frontend embed.FS
+func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
+`,
+	}
+	for path, contents := range files {
+		absolute := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+			t.Fatalf("create fixture directory %s: %v", path, err)
+		}
+		if err := os.WriteFile(absolute, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+	frontendRoot := filepath.Join(root, "cmd", "app", "frontend")
+	if err := os.MkdirAll(frontendRoot, 0o755); err != nil {
+		t.Fatalf("create frontend root: %v", err)
+	}
+	config := &project.Config{Dev: project.DevConfig{Apps: map[string]project.DevApp{
+		project.DefaultAppName: {
+			SPAs: map[string]project.DevSPA{
+				"frontend": {Path: frontendRoot, Build: "mkdir -p dist && printf '%s\\n' '<main>fresh</main>' > dist/index.html"},
+			},
+		},
+	}}}
+	if _, err := runDevInitialSPABuilds(config, io.Discard, io.Discard); err != nil {
+		t.Fatalf("build fresh SPA: %v", err)
+	}
+
+	runner := apiindex.NewRunner(func() project.App { return project.DefaultApp() })
+	pipeline := build.NewPipeline(logger.NewSilentLogger(), runner)
+	job := devBuildJob{app: project.DefaultApp(), phased: true}
+	results := runDevBuildWave([]devBuildJob{job}, func(job devBuildJob, phase string, _ bool) devBuildResult {
+		result := devBuildResult{job: job}
+		if phase == build.DevBuildPhasePrepare {
+			return result
+		}
+		result.err = pipeline.Run(root, "build", build.Step{Name: "go build", Run: func(stepRoot string) (string, error) {
+			binary := filepath.Join(stepRoot, "bin", "app")
+			if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+				return "", err
+			}
+			command := exec.Command("go", "build", "-o", binary, "./cmd/app")
+			command.Dir = stepRoot
+			command.Env = append(os.Environ(), "GOCACHE=/tmp/gocache", "GOMODCACHE=/tmp/gomodcache")
+			output, err := command.CombinedOutput()
+			if err != nil {
+				return "", fmt.Errorf("go build: %w\n%s", err, output)
+			}
+			return "compiled", nil
+		}}, build.RunOptions{SkipPreparation: true, SkipWire: true})
+		return result
+	})
+	if len(results) != 1 || results[0].err != nil {
+		t.Fatalf("coordinated embedded-SPA build = %#v", results)
+	}
+	for _, path := range []string{
+		filepath.Join(root, "bin", "app"),
+		filepath.Join(root, "build", "api_index.json"),
+		filepath.Join(frontendRoot, "dist", "index.html"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("coordinated build omitted %s: %v", path, err)
+		}
+	}
+	index, err := os.ReadFile(filepath.Join(root, "build", "api_index.json"))
+	if err != nil {
+		t.Fatalf("read API index: %v", err)
+	}
+	if !bytes.Contains(index, []byte("/hello")) {
+		t.Fatalf("API index omitted stabilized route:\n%s", index)
+	}
 }
 
 // devInitialLifecycleTestConfig returns one structured app whose commands record their execution order.

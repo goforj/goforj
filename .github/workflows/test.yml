@@ -108,6 +108,9 @@ jobs:
       - name: run dev command tests
         run: go test -count=1 ./internal/forj -run '^TestDev'
 
+      - name: run portable build-herd stress test
+        run: go test -tags=watcherstress -count=1 -timeout=5m ./internal/forj -run '^TestDevWatcherBuildThunderingHerd$'
+
   watcher-stress:
     name: watcher churn (race)
     runs-on: ubuntu-latest
@@ -162,6 +165,9 @@ jobs:
           go test -race -tags=watcherstress ./internal/forj \
             -run "$test_pattern" \
             -count=1 -timeout=15m -v
+
+      - name: record watcher coordination benchmarks
+        run: go test ./internal/forj -run '^$' -bench '^BenchmarkDevWatcherBuildGate' -benchmem -count=3
 
   renders:
     needs: renders-cache

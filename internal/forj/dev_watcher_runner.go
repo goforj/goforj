@@ -726,9 +726,31 @@ func (c *devWatcherController) resumeBuilds() {
 	}
 }
 
-// finishReconciliation releases buffered source events and publishes runtimes only after the barrier succeeds.
+// finishReconciliation releases the gated graph after the barrier settles while publishing runtimes only on success.
 func (c *devWatcherController) finishReconciliation(success bool) {
 	if !success {
+		c.mu.Lock()
+		pending := make([]*devWatcherTask, 0)
+		c.reconcileSPAs = make(map[string]map[string]bool)
+		c.reconcileAppBuild = make(map[string]string)
+		for _, name := range c.order {
+			task := c.tasks[name]
+			if task.spec.Legacy {
+				continue
+			}
+			task.mu.Lock()
+			wasPending := task.pending
+			task.pending = false
+			task.paused = false
+			task.mu.Unlock()
+			if wasPending && (task.spec.Kind == devWatcherAppBuild || task.spec.Kind == devWatcherSPABuild) {
+				pending = append(pending, task)
+			}
+		}
+		c.mu.Unlock()
+		for _, task := range pending {
+			task.request()
+		}
 		return
 	}
 	c.mu.Lock()

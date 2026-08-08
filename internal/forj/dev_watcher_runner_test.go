@@ -159,6 +159,34 @@ func TestDevWatcherProjectBuildLockPreservesPhaseOrder(t *testing.T) {
 	}
 }
 
+// TestDevWatcherBuildGateUncontendedAllocationBudget keeps coordination bookkeeping negligible beside an actual build.
+func TestDevWatcherBuildGateUncontendedAllocationBudget(t *testing.T) {
+	gate := newDevWatcherBuildGate()
+	allocations := testing.AllocsPerRun(1000, func() {
+		gate.acquire(devWatcherBuildPhaseApp)
+		gate.release(devWatcherBuildPhaseApp)
+	})
+	if allocations > 2 {
+		t.Fatalf("uncontended build gate allocations = %.2f, want at most 2", allocations)
+	}
+}
+
+// TestDevWatcherControllerRepeatedShutdownDoesNotLeakWorkers exercises the controller lifecycle beyond one clean stop.
+func TestDevWatcherControllerRepeatedShutdownDoesNotLeakWorkers(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	for range 100 {
+		controller := newDevWatcherRunnerTestController(t, []devCompiledWatcher{{
+			ID: "idle", Name: "Idle", Kind: devWatcherCustom, Postpone: true,
+			Command: devwatch.Command{Shell: "exit 0"},
+		}})
+		controller.stop(time.Second)
+	}
+	runtime.GC()
+	waitForDevWatcherRunnerCondition(t, "controller workers to exit", func() bool {
+		return runtime.NumGoroutine() <= baseline+8
+	})
+}
+
 // TestDevWatcherControllerRunsManagedAppBuildInTwoPhases verifies publication follows preparation and compilation.
 func TestDevWatcherControllerRunsManagedAppBuildInTwoPhases(t *testing.T) {
 	requireDevWatcherRunnerTestPlatform(t)
@@ -233,6 +261,54 @@ func TestDevWatcherControllerStopsManagedAppBuildAfterPreparationFailure(t *test
 	}
 	if runtimes := countDevWatcherRunnerLines(lines, "runtime-start:"); runtimes != 0 {
 		t.Fatalf("preparation failure unexpectedly published the runtime: %v", lines)
+	}
+}
+
+// TestDevWatcherControllerShutdownCancelsEveryBuildPhase verifies shutdown prevents queued work from escaping prepare, compile, or SPA publication.
+func TestDevWatcherControllerShutdownCancelsEveryBuildPhase(t *testing.T) {
+	requireDevWatcherRunnerTestPlatform(t)
+	tests := []struct {
+		name          string
+		kind          devWatcherKind
+		phased        bool
+		blockedIndex  int
+		startedPhases int
+	}{
+		{name: "prepare", kind: devWatcherAppBuild, phased: true, blockedIndex: 1, startedPhases: 1},
+		{name: "compile", kind: devWatcherAppBuild, phased: true, blockedIndex: 2, startedPhases: 2},
+		{name: "SPA", kind: devWatcherSPABuild, blockedIndex: 1, startedPhases: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			logPath := filepath.Join(directory, "events.log")
+			releasePath := filepath.Join(directory, "never-release")
+			command := devWatcherRunnerHelperCommand("build", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG":         logPath,
+				"GOFORJ_DEV_WATCHER_COUNTER":     filepath.Join(directory, "build-count"),
+				"GOFORJ_DEV_WATCHER_RELEASE":     releasePath,
+				"GOFORJ_DEV_WATCHER_BLOCK_INDEX": strconv.Itoa(test.blockedIndex),
+			})
+			controller := newDevWatcherRunnerTestController(t, []devCompiledWatcher{{
+				ID: "blocked", Name: "Blocked build", Kind: test.kind, App: "app",
+				Command: command, PhasedBuild: test.phased, Postpone: true,
+			}})
+
+			controller.tasks["blocked"].request()
+			waitForDevWatcherRunnerLog(t, logPath, func(lines []string) bool {
+				return countDevWatcherRunnerLines(lines, fmt.Sprintf("build-start:%d:", test.blockedIndex)) == 1
+			})
+			controller.tasks["blocked"].request()
+			controller.stop(2 * time.Second)
+
+			lines := readDevWatcherRunnerLog(t, logPath)
+			if starts := countDevWatcherRunnerLines(lines, "build-start:"); starts != test.startedPhases {
+				t.Fatalf("shutdown started %d phases, want %d: %v", starts, test.startedPhases, lines)
+			}
+			if successes := countDevWatcherRunnerLines(lines, fmt.Sprintf("build-success:%d:", test.blockedIndex)); successes != 0 {
+				t.Fatalf("blocked phase reported success after shutdown: %v", lines)
+			}
+		})
 	}
 }
 
@@ -1272,12 +1348,20 @@ func TestDevWatcherControllerSteadySPARetrySupersedesFailure(t *testing.T) {
 	}
 }
 
-// TestDevWatcherControllerFailedReconciliationKeepsGraphGated verifies no downstream event can bypass a failed barrier.
-func TestDevWatcherControllerFailedReconciliationKeepsGraphGated(t *testing.T) {
+// TestDevWatcherControllerFailedReconciliationReopensGraph verifies a repair can rebuild without publishing stale runtime state.
+func TestDevWatcherControllerFailedReconciliationReopensGraph(t *testing.T) {
 	requireDevWatcherRunnerTestPlatform(t)
 	directory := t.TempDir()
 	logPath := filepath.Join(directory, "events.log")
 	compiled := []devCompiledWatcher{
+		{
+			Name: "Build SPA", Kind: devWatcherSPABuild, App: "app",
+			Command: devWatcherRunnerHelperCommand("build", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG":     logPath,
+				"GOFORJ_DEV_WATCHER_COUNTER": filepath.Join(directory, "spa-count"),
+			}),
+			Postpone: true, OnSuccess: []string{"Build App"},
+		},
 		{
 			Name: "Build App", Kind: devWatcherAppBuild, App: "app",
 			Command: devWatcherRunnerHelperCommand("build", map[string]string{
@@ -1307,19 +1391,21 @@ func TestDevWatcherControllerFailedReconciliationKeepsGraphGated(t *testing.T) {
 	}
 	defer controller.stop(time.Second)
 
+	controller.tasks["Build SPA"].request()
 	controller.finishReconciliation(false)
-	time.Sleep(100 * time.Millisecond)
-	if lines := readDevWatcherRunnerLog(t, logPath); countDevWatcherRunnerLines(lines, "runtime-start:") != 0 {
-		t.Fatalf("failed reconciliation started structured runtime: %v", lines)
+	lines := waitForDevWatcherRunnerLog(t, logPath, func(lines []string) bool {
+		return countDevWatcherRunnerLines(lines, "runtime-start:") == 1
+	})
+	if builds := countDevWatcherRunnerLines(lines, "build-start:"); builds != 2 {
+		t.Fatalf("SPA repair started %d build phases, want 2: %v", builds, lines)
 	}
-	controller.tasks["Build App"].request()
-	time.Sleep(100 * time.Millisecond)
-	lines := readDevWatcherRunnerLog(t, logPath)
-	if builds := countDevWatcherRunnerLines(lines, "build-start:"); builds != 0 {
-		t.Fatalf("failed reconciliation released the build graph: %v", lines)
+	if runtimes := countDevWatcherRunnerLines(lines, "runtime-start:"); runtimes != 1 {
+		t.Fatalf("successful repair started %d runtimes, want 1: %v", runtimes, lines)
 	}
-	if runtimes := countDevWatcherRunnerLines(lines, "runtime-start:"); runtimes != 0 {
-		t.Fatalf("failed reconciliation published a runtime: %v", lines)
+	runtimeStarted := indexDevWatcherRunnerLine(lines, "runtime-start:", 1)
+	lastBuildSucceeded := indexDevWatcherRunnerLine(lines, "build-success:", 2)
+	if runtimeStarted < lastBuildSucceeded {
+		t.Fatalf("repair published runtime before both SPA and App builds succeeded: %v", lines)
 	}
 }
 
@@ -1490,7 +1576,15 @@ func runDevWatcherRunnerBuildHelper() {
 	appendDevWatcherRunnerLog(fmt.Sprintf("build-start:%d:%d", index, os.Getpid()))
 	appendDevWatcherRunnerLog(fmt.Sprintf("build-phase:%d:%s", index, os.Getenv(build.DevBuildPhaseEnvironment)))
 	appendDevWatcherRunnerLog(fmt.Sprintf("build-origin:%d:%s", index, os.Getenv("FORJ_COMMAND_ORIGIN")))
-	if releasePath := os.Getenv("GOFORJ_DEV_WATCHER_RELEASE"); releasePath != "" && index == 1 {
+	blockIndex := 1
+	if value := os.Getenv("GOFORJ_DEV_WATCHER_BLOCK_INDEX"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			os.Exit(20)
+		}
+		blockIndex = parsed
+	}
+	if releasePath := os.Getenv("GOFORJ_DEV_WATCHER_RELEASE"); releasePath != "" && index == blockIndex {
 		for {
 			if _, err := os.Stat(releasePath); err == nil {
 				break
