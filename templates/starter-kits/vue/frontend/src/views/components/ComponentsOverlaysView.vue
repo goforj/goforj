@@ -148,6 +148,18 @@
       </Specimen>
 
       <Specimen
+        name="Sonner"
+        description="Non-blocking confirmation after save, sync, or authentication actions."
+        :also="['Button']"
+        content-class="justify-items-start"
+      >
+        <div class="flex flex-wrap gap-2">
+          <Button variant="outline" @click="notifyPreview">Show success toast</Button>
+          <Button variant="secondary" @click="notifySignedOut">Show signed-out toast</Button>
+        </div>
+      </Specimen>
+
+      <Specimen
         name="Drawer"
         description="A bottom-anchored action sheet. Often a better fit than a centered modal for small-screen action clusters."
         :also="['Button']"
@@ -193,18 +205,6 @@
         content-class="justify-items-start"
       >
         <Button @click="commandOpen = true">Open command menu</Button>
-      </Specimen>
-
-      <Specimen
-        name="Sonner"
-        description="Non-blocking confirmation after save, sync, or authentication actions."
-        :also="['Button']"
-        content-class="justify-items-start"
-      >
-        <div class="flex flex-wrap gap-2">
-          <Button variant="outline" @click="notifyPreview">Show success toast</Button>
-          <Button variant="secondary" @click="notifySignedOut">Show signed-out toast</Button>
-        </div>
       </Specimen>
     </div>
 
