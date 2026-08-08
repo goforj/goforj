@@ -1,54 +1,30 @@
 <template>
-  <div class="flex min-h-full flex-1 items-center justify-center bg-background p-6 md:p-10">
-    <div class="w-full max-w-sm">
-      <div class="flex flex-col gap-8">
-        <div class="flex flex-col items-center gap-4">
-          <RouterLink to="/" class="flex flex-col items-center gap-2 font-medium">
-            <img :src="logoMark" :alt="appName" class="h-12 w-12 object-contain" />
-            <span class="sr-only">{{ appName }}</span>
-          </RouterLink>
+  <AuthLayout title="Verify email" description="Confirm your email address to continue">
+    <!-- A form rather than a bare button, so Enter submits like every other auth screen. -->
+    <form class="grid gap-6" @submit.prevent="submit">
+      <AuthMessage v-if="successMessage" variant="success">{{ successMessage }}</AuthMessage>
+      <AuthMessage v-if="errorMessage">{{ errorMessage }}</AuthMessage>
 
-          <div class="space-y-2 text-center">
-            <h1 class="text-xl font-medium">Verify email</h1>
-            <p class="text-sm text-muted-foreground">Confirm your email address to continue</p>
-          </div>
-        </div>
+      <Button type="submit" class="w-full" :disabled="submitting || success">
+        <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
+        {{ submitting ? 'Verifying email...' : success ? 'Email verified' : 'Verify email' }}
+      </Button>
+    </form>
 
-        <div class="grid gap-6">
-          <p v-if="successMessage" class="text-center text-sm font-medium text-green-600">
-            {{ successMessage }}
-          </p>
-
-          <p
-            v-if="errorMessage"
-            class="rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive"
-          >
-            {{ errorMessage }}
-          </p>
-
-          <Button type="button" class="w-full" :disabled="submitting || success" @click="submit">
-            <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
-            {{ submitting ? 'Verifying email...' : success ? 'Email verified' : 'Verify email' }}
-          </Button>
-        </div>
-
-        <div class="text-center text-sm text-muted-foreground">
-          Back to
-          <RouterLink to="/login" class="underline underline-offset-4 hover:text-foreground">log in</RouterLink>
-        </div>
-      </div>
-    </div>
-  </div>
+    <template #footer>
+      Back to
+      <RouterLink to="/login" class="underline underline-offset-4 hover:text-foreground">log in</RouterLink>
+    </template>
+  </AuthLayout>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { LoaderCircle } from '@lucide/vue'
+import { AuthLayout, AuthMessage } from '@/components/auth'
+import { Button } from '@/components/ui/button'
 import { verifyEmail } from '@/lib/auth'
-import { appName } from '@/lib/app'
-import logoMark from '@/assets/goforj-logo.png'
-import Button from '@/components/ui/button/Button.vue'
 
 const route = useRoute()
 const router = useRouter()

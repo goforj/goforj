@@ -1,84 +1,53 @@
 <template>
-  <div class="flex min-h-full flex-1 items-center justify-center bg-background p-6 md:p-10">
-    <div class="w-full max-w-sm">
-      <div class="flex flex-col gap-8">
-        <div class="flex flex-col items-center gap-4">
-          <RouterLink to="/" class="flex flex-col items-center gap-2 font-medium">
-            <img :src="logoMark" :alt="appName" class="h-12 w-12 object-contain" />
-            <span class="sr-only">{{ appName }}</span>
-          </RouterLink>
-
-          <div class="space-y-2 text-center">
-            <h1 class="text-xl font-medium">Forgot password</h1>
-            <p class="text-sm text-muted-foreground">Enter your email to receive a password reset link</p>
-          </div>
-        </div>
-
-        <form class="flex flex-col gap-6" @submit.prevent="submit">
-          <div class="grid gap-6">
-            <div class="grid gap-2">
-              <Label for="login">Email address</Label>
-              <Input
-                id="login"
-                v-model="login"
-                type="email"
-                autocomplete="off"
-                placeholder="email@example.com"
-                autofocus
-                :disabled="submitting || submitted"
-              />
-            </div>
-
-            <p
-              v-if="successMessage"
-              class="text-center text-sm font-medium text-green-600"
-            >
-              {{ successMessage }}
-            </p>
-
-            <div
-              v-if="showLocalResetLink"
-              class="rounded-lg border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground"
-            >
-              <p class="font-medium text-foreground">Local development shortcut</p>
-              <a :href="resetLink" class="mt-2 inline-flex text-sm text-foreground underline underline-offset-4">
-                Open reset password page
-              </a>
-            </div>
-
-            <p
-              v-if="errorMessage"
-              class="rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive"
-            >
-              {{ errorMessage }}
-            </p>
-
-            <Button type="submit" class="w-full" :disabled="submitting || submitted">
-              <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
-              {{ submitting ? 'Sending reset link...' : submitted ? 'Instructions sent' : 'Email password reset link' }}
-            </Button>
-          </div>
-        </form>
-
-        <div class="text-center text-sm text-muted-foreground">
-          Or, return to
-          <RouterLink to="/login" class="underline underline-offset-4 hover:text-foreground">log in</RouterLink>
-        </div>
+  <AuthLayout title="Forgot password" description="Enter your email to receive a password reset link">
+    <form class="grid gap-6" @submit.prevent="submit">
+      <div class="grid gap-2">
+        <Label for="login">Email address</Label>
+        <Input
+          id="login"
+          v-model="login"
+          type="email"
+          autocomplete="off"
+          placeholder="email@example.com"
+          autofocus
+          :disabled="submitting || submitted"
+        />
       </div>
-    </div>
-  </div>
+
+      <AuthMessage v-if="successMessage" variant="success">{{ successMessage }}</AuthMessage>
+
+      <div
+        v-if="showLocalResetLink"
+        class="grid gap-2 rounded-lg border bg-muted/20 px-3 py-3 text-sm text-muted-foreground"
+      >
+        <p class="font-medium text-foreground">Local development shortcut</p>
+        <a :href="resetLink" class="text-sm text-foreground underline underline-offset-4">Open reset password page</a>
+      </div>
+
+      <AuthMessage v-if="errorMessage">{{ errorMessage }}</AuthMessage>
+
+      <Button type="submit" class="w-full" :disabled="submitting || submitted">
+        <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
+        {{ submitting ? 'Sending reset link...' : submitted ? 'Instructions sent' : 'Email password reset link' }}
+      </Button>
+    </form>
+
+    <template #footer>
+      Or, return to
+      <RouterLink to="/login" class="underline underline-offset-4 hover:text-foreground">log in</RouterLink>
+    </template>
+  </AuthLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { LoaderCircle } from '@lucide/vue'
+import { AuthLayout, AuthMessage } from '@/components/auth'
 import { requestPasswordReset } from '@/lib/auth'
-import { appName } from '@/lib/app'
-import logoMark from '@/assets/goforj-logo.png'
-import Button from '@/components/ui/button/Button.vue'
-import Input from '@/components/ui/input/Input.vue'
-import Label from '@/components/ui/label/Label.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 const login = ref('')
 const submitting = ref(false)
