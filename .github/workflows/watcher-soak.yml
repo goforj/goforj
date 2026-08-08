@@ -31,6 +31,8 @@ jobs:
             echo "watcher soak seed: $seed"
             GOFORJ_WATCHER_SOAK_SEED="$seed" go test -race -tags=watcherstress ./internal/forj \
               -run '^TestDevWatcherBuildThunderingHerd$' -count=3 -timeout=10m -v
+            GOFORJ_WATCHER_SOAK_SEED="$seed" go test -race -tags=watcherstress ./internal/forj \
+              -run '^TestDevWatcherChurnIntegration$' -count=1 -timeout=10m -v
           done
 
       - name: record coordination benchmarks
