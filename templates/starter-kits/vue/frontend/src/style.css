@@ -106,8 +106,8 @@
   --chart-5: hsl(340 75% 55%);
   --sidebar-background: hsl(0 0% 7%);
   --sidebar-foreground: hsl(0 0% 95.9%);
-  --sidebar-primary: hsl(360 100% 100%);
-  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-primary: hsl(0 0% 92.2%);
+  --sidebar-primary-foreground: hsl(0 0% 20.5%);
   --sidebar-accent: hsl(0 0% 15.9%);
   --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
   --sidebar-border: hsl(0 0% 15.9%);
@@ -165,7 +165,7 @@
   z-index: -2;
   border-top: 10px solid transparent;
   border-bottom: 10px solid transparent;
-  border-right: 10px solid hsl(var(--border));
+  border-right: 10px solid var(--border);
 }
 
 .sidebar-collapsed-tooltip::after {
@@ -173,7 +173,7 @@
   z-index: -1;
   border-top: 8px solid transparent;
   border-bottom: 8px solid transparent;
-  border-right: 8px solid hsl(var(--card));
+  border-right: 8px solid var(--card);
 }
 
 .main-surface-login {
