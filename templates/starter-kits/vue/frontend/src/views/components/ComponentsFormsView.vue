@@ -15,7 +15,7 @@
       <CheckoutFormExample />
     </Showcase>
 
-    <div class="grid gap-6 xl:grid-cols-2">
+    <div class="grid items-start gap-6 xl:grid-cols-2">
       <Specimen
         name="Form"
         description="Validation wired through vee-validate and zod, with messages attached to the field that produced them."
