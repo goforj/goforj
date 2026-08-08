@@ -24,12 +24,11 @@
         <Input id="confirm-password" v-model="confirmPassword" type="password" autocomplete="new-password" placeholder="Confirm password" />
       </div>
 
-      <p v-if="errorMessage" class="text-sm text-destructive">
-        {{ errorMessage }}
-      </p>
+      <StatusMessage v-if="errorMessage">{{ errorMessage }}</StatusMessage>
 
       <div class="flex items-center gap-4">
         <Button :disabled="saving">
+          <LoaderCircle v-if="saving" class="size-4 animate-spin" />
           {{ saving ? 'Saving…' : 'Save password' }}
         </Button>
       </div>
@@ -40,6 +39,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
+import { LoaderCircle } from '@lucide/vue'
+import StatusMessage from '@/components/StatusMessage.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
