@@ -49,6 +49,8 @@ func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 		filepath.Join("app", "billing", "wire", "wire.go"),
 		filepath.Join("app", "billing", "wire", "inject_cmd.go"),
 		filepath.Join("app", "billing", "wire", "inject_http_controllers_app.go"),
+		filepath.Join("internal", "cmd", "launch.go"),
+		filepath.Join("internal", "cmd", "launch_test.go"),
 		filepath.Join("internal", "runtime", "apps.go"),
 	} {
 		if _, err := os.Stat(path); err != nil {

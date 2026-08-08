@@ -1285,6 +1285,8 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		return err
 	}
 	if err := p.writeTemplates([]string{
+		"internal/cmd/launch.go.tmpl",
+		"internal/cmd/launch_test.go.tmpl",
 		"internal/runtime/apps.go.tmpl",
 		"internal/runtime/apps_test.go.tmpl",
 	}); err != nil {
