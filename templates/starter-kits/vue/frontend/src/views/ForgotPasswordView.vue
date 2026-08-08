@@ -4,8 +4,8 @@
       <div class="flex flex-col gap-8">
         <div class="flex flex-col items-center gap-4">
           <RouterLink to="/" class="flex flex-col items-center gap-2 font-medium">
-            <img :src="logoMark" alt="GoForj Starter Kit" class="h-12 w-12 object-contain" />
-            <span class="sr-only">GoForj Starter Kit</span>
+            <img :src="logoMark" :alt="appName" class="h-12 w-12 object-contain" />
+            <span class="sr-only">{{ appName }}</span>
           </RouterLink>
 
           <div class="space-y-2 text-center">
@@ -74,6 +74,7 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { LoaderCircle } from '@lucide/vue'
 import { requestPasswordReset } from '@/lib/auth'
+import { appName } from '@/lib/app'
 import logoMark from '@/assets/goforj-logo.png'
 import Button from '@/components/ui/button/Button.vue'
 import Input from '@/components/ui/input/Input.vue'

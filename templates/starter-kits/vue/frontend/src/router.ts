@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { appName } from '@/lib/app'
 import { authState, loadCurrentUser } from '@/lib/auth'
 
 const DashboardView = () => import('@/views/DashboardView.vue')
@@ -70,7 +71,7 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   const title = typeof to.meta.title === 'string' ? to.meta.title : 'App'
-  document.title = `${title} · GoForj`
+  document.title = `${title} · ${appName}`
 })
 
 export default router

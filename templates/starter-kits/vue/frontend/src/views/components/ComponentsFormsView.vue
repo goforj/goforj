@@ -209,7 +209,7 @@
                 <FormItem>
                   <FormLabel>Project name</FormLabel>
                   <FormControl>
-                    <Input v-bind="componentField" placeholder="GoForj Admin" />
+                    <Input v-bind="componentField" placeholder="Acme Admin" />
                   </FormControl>
                   <FormDescription>Validation messages are wired through the local form helpers.</FormDescription>
                   <FormMessage />
@@ -902,7 +902,7 @@ const componentSchema = toTypedSchema(z.object({
 const { handleSubmit } = useForm({
   validationSchema: componentSchema,
   initialValues: {
-    name: 'GoForj Starter Kit',
+    name: 'Acme Admin',
     ownerEmail: 'team@example.com',
   },
 })

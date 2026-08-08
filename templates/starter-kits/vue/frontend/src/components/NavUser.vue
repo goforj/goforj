@@ -20,15 +20,17 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
   useSidebar,
 } from "@/components/ui/sidebar";
 
 const props = defineProps<{
+  // Null while the session is still resolving.
   user: {
     name: string;
     email: string;
     avatar?: string;
-  };
+  } | null;
 }>();
 
 const emit = defineEmits<{
@@ -47,7 +49,10 @@ async function handleLogout() {
 
 <template>
   <SidebarMenu>
-    <SidebarMenuItem>
+    <SidebarMenuItem v-if="!user">
+      <SidebarMenuSkeleton show-icon />
+    </SidebarMenuItem>
+    <SidebarMenuItem v-else>
       <DropdownMenu v-model:open="open" :modal="false">
         <DropdownMenuTrigger as-child>
           <SidebarMenuButton

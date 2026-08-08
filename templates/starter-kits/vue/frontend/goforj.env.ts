@@ -25,6 +25,7 @@ export function resolveGoForjFrontendEnv(options: FrontendEnvOptions): FrontendE
   const define = collectFrontendDefines(options.env, targetPrefix)
 
   defineMissing(define, 'VITE_APP_ENV', options.env[`${targetPrefix}_APP_ENV`] || options.env.APP_ENV || 'local')
+  defineMissing(define, 'VITE_APP_NAME', options.env[`${targetPrefix}_APP_NAME`] || options.env.APP_NAME || titleCase(appName))
 
   return {
     appName,
@@ -111,6 +112,15 @@ function defineMissing(define: Record<string, string>, key: string, value: strin
   if (!(envKey in define)) {
     define[envKey] = JSON.stringify(value)
   }
+}
+
+// titleCase turns an App directory name such as "billing-api" into the display name the shell shows before a product supplies its own.
+function titleCase(value: string): string {
+  return value
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ') || 'App'
 }
 
 // envPrefix converts an App name to the same environment prefix used by GoForj's backend configuration.
