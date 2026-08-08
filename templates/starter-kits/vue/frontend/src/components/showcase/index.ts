@@ -2,6 +2,7 @@ export { default as ComponentTag } from './ComponentTag.vue'
 export { default as Showcase } from './Showcase.vue'
 export { default as ShowcaseRow } from './ShowcaseRow.vue'
 export { default as Specimen } from './Specimen.vue'
+export { default as SpecimenSource } from './SpecimenSource.vue'
 
 /** "Checkout and billing fields" -> "checkout-and-billing-fields" */
 export function slugify(value: string): string {

@@ -40,6 +40,11 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-code-tag: var(--code-tag);
+  --color-code-attr: var(--code-attr);
+  --color-code-string: var(--code-string);
+  --color-code-keyword: var(--code-keyword);
+  --color-code-comment: var(--code-comment);
 }
 
 :root {
@@ -77,6 +82,11 @@
   --sidebar-border: hsl(0 0% 91%);
   --sidebar-ring: hsl(217.2 91.2% 59.8%);
   --sidebar: hsl(0 0% 98%);
+  --code-tag: hsl(340 55% 42%);
+  --code-attr: hsl(35 75% 35%);
+  --code-string: hsl(150 45% 30%);
+  --code-keyword: hsl(265 45% 48%);
+  --code-comment: hsl(0 0% 55%);
 }
 
 .dark {
@@ -113,6 +123,11 @@
   --sidebar-border: hsl(0 0% 15.9%);
   --sidebar-ring: hsl(217.2 91.2% 59.8%);
   --sidebar: hsl(240 5.9% 10%);
+  --code-tag: hsl(340 60% 70%);
+  --code-attr: hsl(35 80% 66%);
+  --code-string: hsl(150 45% 62%);
+  --code-keyword: hsl(265 60% 76%);
+  --code-comment: hsl(0 0% 50%);
 }
 
 @layer base {
@@ -129,8 +144,13 @@
     min-width: 320px;
   }
 
-  code {
+  /* Inline code only. Inside a pre the pill background repeats per line. */
+  code:not(pre code) {
     @apply rounded-md bg-muted px-1.5 py-0.5 text-sm text-foreground;
+  }
+
+  pre {
+    @apply font-mono text-foreground;
   }
 }
 
