@@ -49,7 +49,45 @@ var (
 	boxBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 )
 
-var templatesFS = templates.FS
+// templateSource is the subset of fs behaviour the renderer needs: fs.FS for
+// fs.ReadDir and fs.WalkDir, plus ReadFile. Both embed.FS and os.DirFS satisfy it.
+type templateSource interface {
+	fs.FS
+	ReadFile(name string) ([]byte, error)
+}
+
+// templatesFS is the embedded snapshot taken when the binary was built.
+//
+// Templates are compiled in, so editing templates/ has no effect on rendering
+// until the binary is rebuilt. That is correct for a released binary and
+// painful while working on a starter kit, where every change needs a
+// go install before it can be seen. Set GOFORJ_TEMPLATES_DIR to read them
+// from disk instead.
+var templatesFS templateSource = templates.FS
+
+const templatesDirEnv = "GOFORJ_TEMPLATES_DIR"
+
+func init() {
+	dir := strings.TrimSpace(os.Getenv(templatesDirEnv))
+	if dir == "" {
+		return
+	}
+
+	// A missing or malformed directory should not silently fall back to the
+	// embedded copy, because the whole point is to render what is on disk.
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "%s is set to %q, which is not a directory; using embedded templates\n", templatesDirEnv, dir)
+		return
+	}
+
+	source, ok := os.DirFS(dir).(templateSource)
+	if !ok {
+		return
+	}
+
+	templatesFS = source
+}
 
 type wireGenerateError struct {
 	dir    string
