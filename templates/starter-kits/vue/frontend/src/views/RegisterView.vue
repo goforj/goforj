@@ -27,8 +27,8 @@
         />
       </div>
 
-      <AuthMessage v-if="successMessage" variant="success">{{ successMessage }}</AuthMessage>
-      <AuthMessage v-if="errorMessage">{{ errorMessage }}</AuthMessage>
+      <StatusMessage v-if="successMessage" variant="success">{{ successMessage }}</StatusMessage>
+      <StatusMessage v-if="errorMessage">{{ errorMessage }}</StatusMessage>
 
       <Button type="submit" class="w-full" :disabled="submitting">
         <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
@@ -47,7 +47,8 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { LoaderCircle } from '@lucide/vue'
-import { AuthLayout, AuthMessage, PasswordInput } from '@/components/auth'
+import StatusMessage from '@/components/StatusMessage.vue'
+import { AuthLayout, PasswordInput } from '@/components/auth'
 import { registerWithPassword } from '@/lib/auth'
 import { passwordRequirementsText } from '@/lib/password-policy'
 import { Button } from '@/components/ui/button'

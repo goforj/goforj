@@ -14,7 +14,7 @@
         />
       </div>
 
-      <AuthMessage v-if="successMessage" variant="success">{{ successMessage }}</AuthMessage>
+      <StatusMessage v-if="successMessage" variant="success">{{ successMessage }}</StatusMessage>
 
       <div
         v-if="showLocalResetLink"
@@ -24,7 +24,7 @@
         <a :href="resetLink" class="text-sm text-foreground underline underline-offset-4">Open reset password page</a>
       </div>
 
-      <AuthMessage v-if="errorMessage">{{ errorMessage }}</AuthMessage>
+      <StatusMessage v-if="errorMessage">{{ errorMessage }}</StatusMessage>
 
       <Button type="submit" class="w-full" :disabled="submitting || submitted">
         <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
@@ -43,7 +43,8 @@
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { LoaderCircle } from '@lucide/vue'
-import { AuthLayout, AuthMessage } from '@/components/auth'
+import StatusMessage from '@/components/StatusMessage.vue'
+import { AuthLayout } from '@/components/auth'
 import { requestPasswordReset } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
