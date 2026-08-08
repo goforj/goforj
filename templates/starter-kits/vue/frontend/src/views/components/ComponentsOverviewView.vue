@@ -59,7 +59,7 @@
       </Card>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-2">
+    <div class="grid gap-6">
       <Specimen
         name="Badge"
         description="Compact status labels. The four variants carry the status vocabulary the rest of the kit uses."
@@ -118,11 +118,13 @@
         name="AspectRatio"
         description="Locks a child to a fixed ratio. Use for media slots, embeds, and thumbnails."
       >
-        <AspectRatio :ratio="16 / 9" class="overflow-hidden rounded-lg border bg-muted">
+        <div class="max-w-sm">
+          <AspectRatio :ratio="16 / 9" class="overflow-hidden rounded-lg border bg-muted">
           <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
             16 / 9 media slot
           </div>
-        </AspectRatio>
+          </AspectRatio>
+        </div>
       </Specimen>
 
       <Specimen
@@ -157,15 +159,16 @@
 
       <Specimen
         name="Empty"
-        description="The zero-state surface: media, title, description, and one action. The dashed border is part of the component."
+        description="The zero-state surface: media, title, description, and one action."
         :also="['Avatar', 'Button']"
+        content-class="md:grid-cols-2"
       >
-        <Empty>
+        <Empty class="border p-6 md:p-6">
           <EmptyHeader>
             <EmptyMedia variant="default" class="mb-2">
               <div class="flex -space-x-2">
                 <Avatar v-for="member in pendingMembers" :key="member" class="ring-background size-8 ring-2">
-                  <AvatarFallback>{{ member }}</AvatarFallback>
+                  <AvatarFallback class="text-xs">{{ member }}</AvatarFallback>
                 </Avatar>
               </div>
             </EmptyMedia>
@@ -182,7 +185,7 @@
           </EmptyContent>
         </Empty>
 
-        <Empty>
+        <Empty class="border p-6 md:p-6">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <LoaderCircle class="size-4 animate-spin" />

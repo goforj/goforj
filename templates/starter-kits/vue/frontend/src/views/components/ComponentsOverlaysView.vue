@@ -7,7 +7,7 @@
       description="Overlay primitives are most useful when they are shown as real workflows: invite dialogs, destructive confirms, drawers, inspectors, and command-driven actions."
     />
 
-    <div class="grid gap-6 xl:grid-cols-2">
+    <div class="grid gap-6">
       <Specimen
         name="Dialog"
         description="A centered modal for focused tasks. Use the same field patterns inside it that the rest of the app uses."
