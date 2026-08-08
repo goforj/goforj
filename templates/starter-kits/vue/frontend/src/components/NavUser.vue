@@ -24,7 +24,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
-const props = defineProps<{
+defineProps<{
   // Null while the session is still resolving.
   user: {
     name: string;
