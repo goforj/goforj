@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/goforj/console"
 {{- if .Components.Cache }}
 	"github.com/goforj/cache"
 {{- end }}
@@ -291,7 +290,8 @@ func LaunchApplication() {
 func runApplication(args []string) error {
 	application, err := InitializeApplication()
 	if err != nil {
-		console.Fatalf("initializing application: %v", err)
+		// Initialization failures stay fatal instead of inheriting an exit status from a provider error.
+		return fmt.Errorf("initializing application: %v", err)
 	}
 	return application.Run(nil, args)
 }

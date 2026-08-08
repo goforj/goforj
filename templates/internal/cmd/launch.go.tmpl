@@ -19,18 +19,13 @@ type LaunchConfig struct {
 
 // Launch applies process defaults, handles preboot commands, and runs the wired App.
 func Launch(config LaunchConfig) {
-	if err := runLaunch(os.Args[1:], config); err != nil {
+	if err := runLaunch(os.Args[1:], config, LoadEnv, ConfigureTimezone); err != nil {
 		exitLaunchError(err)
 	}
 }
 
-// runLaunch keeps the launch sequence testable without crossing the process exit boundary.
-func runLaunch(args []string, config LaunchConfig) error {
-	return runLaunchWithSetup(args, config, LoadEnv, ConfigureTimezone)
-}
-
-// runLaunchWithSetup isolates process-wide setup so launch behavior can be tested without mutating the test process.
-func runLaunchWithSetup(args []string, config LaunchConfig, loadEnv func() error, configureTimezone func() error) error {
+// runLaunch accepts setup functions so tests can avoid mutating process-wide environment and timezone state.
+func runLaunch(args []string, config LaunchConfig, loadEnv func() error, configureTimezone func() error) error {
 	args = EffectiveLaunchArgs(args, config.HasRuntime)
 	ApplyLaunchApp(config.AppName)
 

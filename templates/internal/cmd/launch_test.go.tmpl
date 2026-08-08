@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +14,7 @@ import (
 func runLaunchForTest(t *testing.T, args []string, config LaunchConfig) error {
 	t.Helper()
 	t.Setenv("FORJ_APP", "")
-	return runLaunchWithSetup(args, config, func() error { return nil }, func() error { return nil })
+	return runLaunch(args, config, func() error { return nil }, func() error { return nil })
 }
 
 // TestRunLaunchDefaultsRuntimeApps verifies process launch applies the runtime default before invoking the App.
@@ -117,16 +118,90 @@ func TestRunLaunchStopsAfterPrebootHelp(t *testing.T) {
 	}
 }
 
-// TestRunLaunchAddsTimezoneContext verifies setup failures remain identifiable at the process boundary.
-func TestRunLaunchAddsTimezoneContext(t *testing.T) {
+// TestRunLaunchOrdersSetupBeforeTheApp verifies process defaults are established before App execution.
+func TestRunLaunchOrdersSetupBeforeTheApp(t *testing.T) {
 	t.Setenv("FORJ_APP", "")
-	want := errors.New("invalid timezone")
-	err := runLaunchWithSetup([]string{"about"}, LaunchConfig{
+	var calls []string
+	err := runLaunch([]string{"about"}, LaunchConfig{
 		AppName:     "app",
 		RootCommand: &struct{}{},
-		Run:         func([]string) error { return nil },
-	}, func() error { return nil }, func() error { return want })
-	if !errors.Is(err, want) {
-		t.Fatalf("runLaunch() error = %v, want timezone context", err)
+		Run: func([]string) error {
+			calls = append(calls, "run")
+			return nil
+		},
+	}, func() error {
+		calls = append(calls, "environment")
+		return nil
+	}, func() error {
+		calls = append(calls, "timezone")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runLaunch() error = %v", err)
+	}
+	want := []string{"environment", "timezone", "run"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("runLaunch() calls = %v, want %v", calls, want)
+	}
+}
+
+// TestRunLaunchStopsAfterSetupFailures verifies contextual setup errors prevent App execution.
+func TestRunLaunchStopsAfterSetupFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		wantCalls  []string
+		wantPrefix string
+	}{
+		{
+			name:       "environment",
+			wantCalls:  []string{"environment"},
+			wantPrefix: "loading env: ",
+		},
+		{
+			name:       "timezone",
+			wantCalls:  []string{"environment", "timezone"},
+			wantPrefix: "configuring timezone: ",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FORJ_APP", "")
+			want := errors.New("invalid " + test.name)
+			var calls []string
+			called := false
+			err := runLaunch([]string{"about"}, LaunchConfig{
+				AppName:     "app",
+				RootCommand: &struct{}{},
+				Run: func([]string) error {
+					called = true
+					return nil
+				},
+			}, func() error {
+				calls = append(calls, "environment")
+				if test.name == "environment" {
+					return want
+				}
+				return nil
+			}, func() error {
+				calls = append(calls, "timezone")
+				if test.name == "timezone" {
+					return want
+				}
+				return nil
+			})
+			if err == nil || !strings.HasPrefix(err.Error(), test.wantPrefix) {
+				t.Fatalf("runLaunch() error = %v, want prefix %q", err, test.wantPrefix)
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("runLaunch() error = %v, want cause %q", err, want)
+			}
+			if !reflect.DeepEqual(calls, test.wantCalls) {
+				t.Fatalf("runLaunch() calls = %v, want %v", calls, test.wantCalls)
+			}
+			if called {
+				t.Fatal("runLaunch() invoked the App after setup failure")
+			}
+		})
 	}
 }
