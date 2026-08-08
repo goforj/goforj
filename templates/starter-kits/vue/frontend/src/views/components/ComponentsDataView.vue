@@ -65,17 +65,6 @@
       <ItemListExample />
     </Specimen>
 
-    <Showcase
-      title="Reporting snapshots"
-      description="Small summary blocks help table and calendar sections read as a dashboard instead of isolated widgets."
-      content-class="md:grid-cols-3"
-    >
-      <ShowcaseRow v-for="snapshot in snapshots" :key="snapshot.label" class="gap-1">
-        <p class="text-sm text-muted-foreground">{{ snapshot.label }}</p>
-        <p class="text-2xl font-semibold tracking-tight">{{ snapshot.value }}</p>
-        <p class="text-sm text-muted-foreground">{{ snapshot.copy }}</p>
-      </ShowcaseRow>
-    </Showcase>
   </section>
 </template>
 
@@ -91,7 +80,7 @@ import RangeCalendarExampleSource from './examples/RangeCalendarExample.vue?raw'
 import ItemListExample from './examples/ItemListExample.vue'
 import ItemListExampleSource from './examples/ItemListExample.vue?raw'
 import PageHeader from '@/components/PageHeader.vue'
-import { Showcase, ShowcaseRow, Specimen } from '@/components/showcase'
+import { Specimen } from '@/components/showcase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 const metrics = [
@@ -100,9 +89,4 @@ const metrics = [
   { label: 'Scheduled windows', value: '3', copy: 'Upcoming launches, cutovers, or maintenance windows.' },
 ]
 
-const snapshots = [
-  { label: 'Daily events', value: '18.4k', copy: 'Across API, auth, and renderer flows.' },
-  { label: 'Failed jobs', value: '12', copy: 'Down from 31 after the last deploy.' },
-  { label: 'Median latency', value: '84ms', copy: 'Healthy for the current load profile.' },
-]
 </script>
