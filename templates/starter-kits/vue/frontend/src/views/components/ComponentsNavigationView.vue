@@ -12,8 +12,9 @@
       description="Joins related buttons into a single segmented control. Use for toolbars, pagination, and split actions."
       :also="['Button']"
     >
+      <div class="grid gap-4 lg:grid-cols-2">
       <ShowcaseRow label="Record toolbar">
-        <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-3">
           <ButtonGroup>
             <Button variant="outline" size="icon" aria-label="Go back">
               <ArrowLeft class="size-4" />
@@ -37,7 +38,7 @@
       </ShowcaseRow>
 
       <ShowcaseRow label="Pagination and split actions">
-        <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-3">
           <ButtonGroup>
             <Button variant="outline" size="sm">1</Button>
             <Button variant="outline" size="sm">2</Button>
@@ -66,14 +67,10 @@
           </div>
         </div>
       </ShowcaseRow>
-
-      <label class="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3">
-        <Checkbox v-model="agreedToTerms" />
-        <span class="text-sm font-medium">I agree to the terms and conditions</span>
-      </label>
+      </div>
     </Specimen>
 
-    <div class="grid gap-6">
+    <div class="grid gap-6 xl:grid-cols-2">
       <Specimen
         name="DropdownMenu"
         description="A trigger-anchored menu supporting labels, separators, checkbox items, and radio groups."
@@ -118,6 +115,27 @@
       </Specimen>
 
       <Specimen
+        name="Collapsible"
+        description="One hidden section. Reach for this instead of an accordion when there is only a single disclosure."
+        :also="['Button']"
+      >
+        <Collapsible class="rounded-lg border px-4">
+          <div class="flex items-center justify-between gap-4 py-4">
+            <div class="grid gap-0.5">
+              <p class="text-sm font-medium leading-none">Need a smaller disclosure?</p>
+              <p class="text-sm text-muted-foreground">Use a collapsible block when you need one hidden section rather than a full accordion stack.</p>
+            </div>
+            <CollapsibleTrigger as-child>
+              <Button variant="ghost" size="sm">Toggle</Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent class="pb-4 text-sm text-muted-foreground">
+            This pattern works well for advanced settings, environment details, or inline help that should stay secondary to the main workflow.
+          </CollapsibleContent>
+        </Collapsible>
+      </Specimen>
+
+      <Specimen
         name="ContextMenu"
         description="The same menu vocabulary, opened by right click on a surface rather than a button."
       >
@@ -140,27 +158,6 @@
             </ContextMenuRadioGroup>
           </ContextMenuContent>
         </ContextMenu>
-      </Specimen>
-
-      <Specimen
-        name="Collapsible"
-        description="One hidden section. Reach for this instead of an accordion when there is only a single disclosure."
-        :also="['Button']"
-      >
-        <Collapsible class="rounded-lg border px-4">
-          <div class="flex items-center justify-between gap-4 py-4">
-            <div class="grid gap-0.5">
-              <p class="text-sm font-medium leading-none">Need a smaller disclosure?</p>
-              <p class="text-sm text-muted-foreground">Use a collapsible block when you need one hidden section rather than a full accordion stack.</p>
-            </div>
-            <CollapsibleTrigger as-child>
-              <Button variant="ghost" size="sm">Toggle</Button>
-            </CollapsibleTrigger>
-          </div>
-          <CollapsibleContent class="pb-4 text-sm text-muted-foreground">
-            This pattern works well for advanced settings, environment details, or inline help that should stay secondary to the main workflow.
-          </CollapsibleContent>
-        </Collapsible>
       </Specimen>
 
       <Specimen
@@ -238,7 +235,6 @@ import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { Calendar } from '@/components/ui/calendar'
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   ContextMenu,
@@ -271,7 +267,6 @@ const showSidebar = ref(true)
 const showHints = ref(true)
 const releaseTrack = ref('stable')
 const nativeRegion = ref('iad')
-const agreedToTerms = ref(true)
 
 const activityFeed = [
   { title: 'Starter rendered', description: 'Vue shell copied into the generated frontend folder.' },
