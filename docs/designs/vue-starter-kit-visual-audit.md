@@ -8,8 +8,29 @@
 
 ## Status
 
-**Wave 1 (correctness) — done, verified live.** #1, #2, #3, #4, #12, #20 are fixed. Two corrections to this
-document surfaced during implementation, noted inline below. Waves 2-4 are open.
+**Waves 1–3 are done. Wave 4 is partly done.** What follows is the original audit; corrections found while
+implementing are marked inline. Three findings in it were wrong and are withdrawn — see *Corrections*.
+
+Also fixed, and **not** in the original audit because I did not find them until later:
+
+- `ui/chart/` imported `@unovis/vue` and `ui/table/utils.ts` imported `@tanstack/vue-table`. Neither was in
+  `package.json`. Both modules were unreachable from their barrels, so the build stayed green and the
+  production-graph test could not see them. Both deleted.
+- A generated project introduced itself as GoForj — sidebar, tab title, and all five auth screens. Vite
+  already resolved the app name and discarded it; now exposed as `VITE_APP_NAME`.
+- The base stylesheet applied a pill background to every `<code>`, so any code block drew a box per line.
+- `TeamSwitcher` rendered `plan` as its label, used `name` only as alt text, and switched nothing.
+
+### Corrections
+
+Three findings below described shadcn's own design rather than a defect, and one fix diverged from both
+reference kits. All are annotated where they appear.
+
+- **No font is loaded** — withdrawn. shadcn-vue declares no `--font-*` either; the system stack is the design.
+- **`--card` equals `--background` in light** — withdrawn. shadcn ships exactly this; cards separate by border.
+- **Chart hues differ between themes** — withdrawn. shadcn does the same.
+- **`text-white` on destructive button/badge** — I repointed these at `--destructive-foreground`, then reverted.
+  shadcn removed that token, which is *why* both it and the Laravel kit use `text-white`.
 
 ---
 
