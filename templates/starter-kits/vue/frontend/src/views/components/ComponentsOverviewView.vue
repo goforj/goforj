@@ -63,142 +63,52 @@
       <Specimen
         name="Badge"
         description="Compact status labels. The four variants carry the status vocabulary the rest of the kit uses."
+        :source="BadgeExampleSource"
       >
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge>Ready</Badge>
-          <Badge variant="secondary">Queued</Badge>
-          <Badge variant="outline">Draft</Badge>
-          <Badge variant="destructive">Blocked</Badge>
-        </div>
+        <BadgeExample />
       </Specimen>
 
       <Specimen
         name="Alert"
         description="An inline message with an icon, title, and body. Use for page-level notices rather than transient feedback."
+        :source="AlertExampleSource"
       >
-        <Alert>
-          <CircleCheckBig class="size-4" />
-          <AlertTitle>Everything here ships as local source</AlertTitle>
-          <AlertDescription>
-            The generated app owns these examples, so teams can adapt them directly instead of relying on a remote component catalog.
-          </AlertDescription>
-        </Alert>
+        <AlertExample />
       </Specimen>
 
       <Specimen
         name="Item"
         description="A row with media, content, and trailing actions. The outline and muted variants cover most list surfaces."
         :also="['Button']"
+        :source="ItemExampleSource"
       >
-        <Item variant="outline">
-          <ItemMedia variant="icon">
-            <Layers3 class="size-4" />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>Application shell</ItemTitle>
-            <ItemDescription>Sidebar, app header, auth bootstrap, and local UI source ship together as one coherent starting point.</ItemDescription>
-          </ItemContent>
-          <ItemActions>
-            <Button variant="ghost" size="sm">Open</Button>
-          </ItemActions>
-        </Item>
-
-        <Item variant="muted">
-          <ItemMedia variant="icon">
-            <Sparkles class="size-4" />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>Theme-aware by default</ItemTitle>
-            <ItemDescription>Dark mode follows system preference and the light palette stays readable for day-to-day development.</ItemDescription>
-          </ItemContent>
-        </Item>
+        <ItemExample />
       </Specimen>
 
       <Specimen
         name="AspectRatio"
         description="Locks a child to a fixed ratio. Use for media slots, embeds, and thumbnails."
+        :source="AspectRatioExampleSource"
       >
-        <div class="max-w-sm">
-          <AspectRatio :ratio="16 / 9" class="overflow-hidden rounded-lg border bg-muted">
-          <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
-            16 / 9 media slot
-          </div>
-          </AspectRatio>
-        </div>
+        <AspectRatioExample />
       </Specimen>
 
       <Specimen
         name="Skeleton"
         description="Placeholder blocks that hold layout while content loads."
         :also="['Spinner', 'Badge']"
+        :source="SkeletonExampleSource"
       >
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge>
-            <LoaderCircle class="size-3.5 animate-spin" />
-            Syncing
-          </Badge>
-          <Badge variant="secondary">
-            <LoaderCircle class="size-3.5 animate-spin" />
-            Updating
-          </Badge>
-          <Badge variant="outline">
-            <LoaderCircle class="size-3.5 animate-spin" />
-            Loading
-          </Badge>
-        </div>
-
-        <div class="grid gap-3">
-          <Skeleton class="h-4 w-1/2" />
-          <Skeleton class="h-4 w-3/4" />
-          <div class="flex items-center gap-3">
-            <Spinner class="size-5" />
-            <p class="text-sm text-muted-foreground">Loading primitives fit into any shell.</p>
-          </div>
-        </div>
+        <SkeletonExample />
       </Specimen>
 
       <Specimen
         name="Empty"
         description="The zero-state surface: media, title, description, and one action."
         :also="['Avatar', 'Button']"
-        content-class="md:grid-cols-2"
+        :source="EmptyExampleSource"
       >
-        <Empty class="border p-6 md:p-6">
-          <EmptyHeader>
-            <EmptyMedia variant="default" class="mb-2">
-              <div class="flex -space-x-2">
-                <Avatar v-for="member in pendingMembers" :key="member" class="ring-background size-8 ring-2">
-                  <AvatarFallback class="text-xs">{{ member }}</AvatarFallback>
-                </Avatar>
-              </div>
-            </EmptyMedia>
-            <EmptyTitle>No team members added</EmptyTitle>
-            <EmptyDescription>
-              Invite collaborators when the workspace is ready for shared development.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button size="sm">
-              <Plus class="size-3.5" />
-              Invite collaborators
-            </Button>
-          </EmptyContent>
-        </Empty>
-
-        <Empty class="border p-6 md:p-6">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <LoaderCircle class="size-4 animate-spin" />
-            </EmptyMedia>
-            <EmptyTitle>Processing request</EmptyTitle>
-            <EmptyDescription>
-              Please wait while we process your request. Do not refresh the page.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button variant="outline" size="sm">Cancel</Button>
-          </EmptyContent>
-        </Empty>
+        <EmptyExample />
       </Specimen>
     </div>
   </section>
@@ -206,20 +116,24 @@
 
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
-import { ArrowRight, CircleCheckBig, Database, Layers3, LayoutTemplate, LoaderCircle, MousePointerClick, Plus, Sparkles, Workflow } from '@lucide/vue'
+import { ArrowRight, Database, LayoutTemplate, MousePointerClick, Workflow } from '@lucide/vue'
+import BadgeExample from './examples/BadgeExample.vue'
+import BadgeExampleSource from './examples/BadgeExample.vue?raw'
+import AlertExample from './examples/AlertExample.vue'
+import AlertExampleSource from './examples/AlertExample.vue?raw'
+import ItemExample from './examples/ItemExample.vue'
+import ItemExampleSource from './examples/ItemExample.vue?raw'
+import AspectRatioExample from './examples/AspectRatioExample.vue'
+import AspectRatioExampleSource from './examples/AspectRatioExample.vue?raw'
+import SkeletonExample from './examples/SkeletonExample.vue'
+import SkeletonExampleSource from './examples/SkeletonExample.vue?raw'
+import EmptyExample from './examples/EmptyExample.vue'
+import EmptyExampleSource from './examples/EmptyExample.vue?raw'
 import { Specimen } from '@/components/showcase'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { AspectRatio } from '@/components/ui/aspect-ratio'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/ui/item'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
 
-const pendingMembers = ['AR', 'MK', 'TS']
 
 const sections = [
   {
