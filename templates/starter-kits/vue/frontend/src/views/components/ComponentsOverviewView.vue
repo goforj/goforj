@@ -1,24 +1,24 @@
 <template>
   <section class="grid gap-6">
-    <Card class="overflow-hidden border-border/60 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_96%,white),var(--background))] shadow-xl dark:bg-[linear-gradient(135deg,hsl(0_0%_5%),hsl(0_0%_8%))]">
+    <Card class="border-border/60">
       <CardHeader class="gap-4 p-6 md:p-8">
         <div class="flex flex-wrap items-center gap-2">
           <Badge>Local component reference</Badge>
           <Badge variant="outline">Organized by workflow</Badge>
         </div>
         <div class="grid max-w-3xl gap-3">
-          <CardTitle class="text-3xl font-semibold tracking-tight md:text-5xl dark:text-white">
+          <CardTitle class="text-3xl font-semibold tracking-tight md:text-4xl">
             Review the local shadcn-vue library as a set of focused reference pages.
           </CardTitle>
-          <CardDescription class="max-w-2xl text-base text-muted-foreground dark:text-slate-300">
+          <CardDescription class="max-w-2xl text-base">
             The reference is split into focused routes so teams can review one category at a time and lift patterns from realistic examples instead of a single oversized catalog.
           </CardDescription>
         </div>
       </CardHeader>
     </Card>
 
-    <Card class="border-dashed border-border/70 bg-muted/20">
-      <CardContent class="flex flex-col gap-3 p-6 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
+    <Card class="bg-muted/30">
+      <CardContent class="flex flex-col gap-3 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
         <p>
           These pages focus on local, product-shaped examples. For the full shadcn-vue documentation and component reference, see
           <a href="https://www.shadcn-vue.com/" target="_blank" rel="noreferrer" class="ml-1 font-medium text-foreground underline underline-offset-4">
@@ -34,12 +34,12 @@
       </CardContent>
     </Card>
 
-    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
       <Card v-for="section in sections" :key="section.url" class="h-full">
         <CardHeader>
           <div class="flex items-center gap-2">
             <component :is="section.icon" class="size-4 text-muted-foreground" />
-            <CardTitle class="text-xl">{{ section.title }}</CardTitle>
+            <CardTitle class="text-lg font-semibold tracking-tight">{{ section.title }}</CardTitle>
           </div>
           <CardDescription>{{ section.description }}</CardDescription>
         </CardHeader>
@@ -59,140 +59,144 @@
       </Card>
     </div>
 
-    <div class="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Surface primitives</CardTitle>
-          <CardDescription>Reusable primitives still need a small landing area so teams understand the shell and theme language at a glance.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge>Ready</Badge>
-            <Badge variant="secondary">Queued</Badge>
-            <Badge variant="outline">Draft</Badge>
-            <Badge variant="destructive">Blocked</Badge>
+    <div class="grid gap-6 xl:grid-cols-2">
+      <Specimen
+        name="Badge"
+        description="Compact status labels. The four variants carry the status vocabulary the rest of the kit uses."
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge>Ready</Badge>
+          <Badge variant="secondary">Queued</Badge>
+          <Badge variant="outline">Draft</Badge>
+          <Badge variant="destructive">Blocked</Badge>
+        </div>
+      </Specimen>
+
+      <Specimen
+        name="Alert"
+        description="An inline message with an icon, title, and body. Use for page-level notices rather than transient feedback."
+      >
+        <Alert>
+          <CircleCheckBig class="size-4" />
+          <AlertTitle>Everything here ships as local source</AlertTitle>
+          <AlertDescription>
+            The generated app owns these examples, so teams can adapt them directly instead of relying on a remote component catalog.
+          </AlertDescription>
+        </Alert>
+      </Specimen>
+
+      <Specimen
+        name="Item"
+        description="A row with media, content, and trailing actions. The outline and muted variants cover most list surfaces."
+        :also="['Button']"
+      >
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <Layers3 class="size-4" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Application shell</ItemTitle>
+            <ItemDescription>Sidebar, app header, auth bootstrap, and local UI source ship together as one coherent starting point.</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Button variant="ghost" size="sm">Open</Button>
+          </ItemActions>
+        </Item>
+
+        <Item variant="muted">
+          <ItemMedia variant="icon">
+            <Sparkles class="size-4" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Theme-aware by default</ItemTitle>
+            <ItemDescription>Dark mode follows system preference and the light palette stays readable for day-to-day development.</ItemDescription>
+          </ItemContent>
+        </Item>
+      </Specimen>
+
+      <Specimen
+        name="AspectRatio"
+        description="Locks a child to a fixed ratio. Use for media slots, embeds, and thumbnails."
+      >
+        <AspectRatio :ratio="16 / 9" class="overflow-hidden rounded-lg border bg-muted">
+          <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
+            16 / 9 media slot
           </div>
+        </AspectRatio>
+      </Specimen>
 
-          <Alert>
-            <CircleCheckBig class="size-4" />
-            <AlertTitle>Everything here ships as local source</AlertTitle>
-            <AlertDescription>
-              The generated app owns these examples, so teams can adapt them directly instead of relying on a remote component catalog.
-            </AlertDescription>
-          </Alert>
+      <Specimen
+        name="Skeleton"
+        description="Placeholder blocks that hold layout while content loads."
+        :also="['Spinner', 'Badge']"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge>
+            <LoaderCircle class="size-3.5 animate-spin" />
+            Syncing
+          </Badge>
+          <Badge variant="secondary">
+            <LoaderCircle class="size-3.5 animate-spin" />
+            Updating
+          </Badge>
+          <Badge variant="outline">
+            <LoaderCircle class="size-3.5 animate-spin" />
+            Loading
+          </Badge>
+        </div>
 
-          <AspectRatio :ratio="16 / 9" class="overflow-hidden rounded-xl border bg-muted">
-            <div class="flex h-full items-center justify-center bg-[linear-gradient(135deg,hsl(0_0%_8%),hsl(0_0%_12%))] text-sm font-medium text-white">
-              Product Hero Media
-            </div>
-          </AspectRatio>
-
-          <div class="grid gap-3">
-            <Item variant="outline">
-              <ItemMedia variant="icon">
-                <Layers3 class="size-4" />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>Application shell</ItemTitle>
-                <ItemDescription>Sidebar, app header, auth bootstrap, and local UI source ship together as one coherent starting point.</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Button variant="ghost" size="sm">Open</Button>
-              </ItemActions>
-            </Item>
-
-            <Item variant="muted">
-              <ItemMedia variant="icon">
-                <Sparkles class="size-4" />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>Theme-aware by default</ItemTitle>
-                <ItemDescription>Dark mode follows system preference and the light palette stays readable for day-to-day development.</ItemDescription>
-              </ItemContent>
-            </Item>
+        <div class="grid gap-3">
+          <Skeleton class="h-4 w-1/2" />
+          <Skeleton class="h-4 w-3/4" />
+          <div class="flex items-center gap-3">
+            <Spinner class="size-5" />
+            <p class="text-sm text-muted-foreground">Loading primitives fit into any shell.</p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Specimen>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Loading and empty states</CardTitle>
-          <CardDescription>Keep a few cross-cutting primitives visible here, then move the deeper walkthroughs into the focused child pages.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="grid gap-3">
-            <div class="flex flex-wrap items-center gap-2">
-              <Badge>
-                <LoaderCircle class="size-3.5 animate-spin" />
-                Syncing
-              </Badge>
-              <Badge variant="secondary">
-                <LoaderCircle class="size-3.5 animate-spin" />
-                Updating
-              </Badge>
-              <Badge variant="outline">
-                <LoaderCircle class="size-3.5 animate-spin" />
-                Loading
-              </Badge>
-            </div>
-
-            <div class="grid gap-3">
-              <Skeleton class="h-4 w-1/2" />
-              <Skeleton class="h-4 w-3/4" />
-              <div class="flex items-center gap-3">
-                <Spinner class="size-5" />
-                <p class="text-sm text-muted-foreground">Loading primitives fit into any shell.</p>
+      <Specimen
+        name="Empty"
+        description="The zero-state surface: media, title, description, and one action. The dashed border is part of the component."
+        :also="['Avatar', 'Button']"
+      >
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="default" class="mb-2">
+              <div class="flex -space-x-2">
+                <Avatar v-for="member in pendingMembers" :key="member" class="ring-background size-8 ring-2">
+                  <AvatarFallback>{{ member }}</AvatarFallback>
+                </Avatar>
               </div>
-            </div>
-          </div>
+            </EmptyMedia>
+            <EmptyTitle>No team members added</EmptyTitle>
+            <EmptyDescription>
+              Invite collaborators when the workspace is ready for shared development.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button size="sm">
+              <Plus class="size-3.5" />
+              Invite collaborators
+            </Button>
+          </EmptyContent>
+        </Empty>
 
-          <Empty class="border border-dashed py-10">
-            <EmptyHeader>
-              <EmptyMedia variant="default" class="mb-2">
-                <div class="flex -space-x-2 grayscale">
-                  <Avatar class="ring-background size-8 ring-2">
-                    <AvatarImage src="https://github.com/shadcn.png" alt="@shadcn" />
-                    <AvatarFallback>SH</AvatarFallback>
-                  </Avatar>
-                  <Avatar class="ring-background size-8 ring-2">
-                    <AvatarImage src="https://github.com/maxleiter.png" alt="@maxleiter" />
-                    <AvatarFallback>ML</AvatarFallback>
-                  </Avatar>
-                  <Avatar class="ring-background size-8 ring-2">
-                    <AvatarImage src="https://github.com/evilrabbit.png" alt="@evilrabbit" />
-                    <AvatarFallback>ER</AvatarFallback>
-                  </Avatar>
-                </div>
-              </EmptyMedia>
-              <EmptyTitle>No team members added</EmptyTitle>
-              <EmptyDescription>
-                Invite collaborators when the workspace is ready for shared development.
-              </EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent>
-              <Button size="sm">
-                <Plus class="size-3.5" />
-                Invite collaborators
-              </Button>
-            </EmptyContent>
-          </Empty>
-
-          <Empty class="border border-dashed py-10">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <LoaderCircle class="size-4 animate-spin" />
-              </EmptyMedia>
-              <EmptyTitle>Processing request</EmptyTitle>
-              <EmptyDescription>
-                Please wait while we process your request. Do not refresh the page.
-              </EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent>
-              <Button variant="outline" size="sm">Cancel</Button>
-            </EmptyContent>
-          </Empty>
-        </CardContent>
-      </Card>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <LoaderCircle class="size-4 animate-spin" />
+            </EmptyMedia>
+            <EmptyTitle>Processing request</EmptyTitle>
+            <EmptyDescription>
+              Please wait while we process your request. Do not refresh the page.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button variant="outline" size="sm">Cancel</Button>
+          </EmptyContent>
+        </Empty>
+      </Specimen>
     </div>
   </section>
 </template>
@@ -200,9 +204,10 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import { ArrowRight, CircleCheckBig, Database, Layers3, LayoutTemplate, LoaderCircle, MousePointerClick, Plus, Sparkles, Workflow } from '@lucide/vue'
+import { Specimen } from '@/components/showcase'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { AspectRatio } from '@/components/ui/aspect-ratio'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -210,6 +215,8 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+
+const pendingMembers = ['AR', 'MK', 'TS']
 
 const sections = [
   {
