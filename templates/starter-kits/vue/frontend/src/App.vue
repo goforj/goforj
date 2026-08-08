@@ -31,8 +31,6 @@
                 </template>
               </BreadcrumbList>
             </Breadcrumb>
-
-            <ThemeToggle class="ml-auto" />
           </div>
         </header>
 
@@ -71,7 +69,6 @@ import {
 import { Separator } from './components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
-import ThemeToggle from './components/ThemeToggle.vue'
 
 const route = useRoute()
 const router = useRouter()
