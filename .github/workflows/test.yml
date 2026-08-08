@@ -142,10 +142,11 @@ jobs:
       - name: run forj dev churn integration test
         run: |
           set -euo pipefail
-          test_pattern='^TestDevWatcher(ChurnIntegration|PollingStress|Boundary(RejectedReplacementKeepsHealthyRuntime|PostPreparationStartFailureRetries|RelativeCommandDirectoryLaunchesPreparedSnapshot|ShutdownCancelsBlockedBuild|ChangeDuringRuntimeReplacementConverges)|MultiAppChurnIsolation|OutputBackpressureReapsProcesses|InitialInvalidProjectRecovers)$'
+          test_pattern='^TestDevWatcher(BuildThunderingHerd|ChurnIntegration|PollingStress|Boundary(RejectedReplacementKeepsHealthyRuntime|PostPreparationStartFailureRetries|RelativeCommandDirectoryLaunchesPreparedSnapshot|ShutdownCancelsBlockedBuild|ChangeDuringRuntimeReplacementConverges)|MultiAppChurnIsolation|OutputBackpressureReapsProcesses|InitialInvalidProjectRecovers)$'
           discovered="$(go test -tags=watcherstress ./internal/forj -list "$test_pattern")"
           for test_name in \
             TestDevWatcherChurnIntegration \
+            TestDevWatcherBuildThunderingHerd \
             TestDevWatcherPollingStress \
             TestDevWatcherBoundaryRejectedReplacementKeepsHealthyRuntime \
             TestDevWatcherBoundaryPostPreparationStartFailureRetries \

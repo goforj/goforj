@@ -12,20 +12,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/project"
 )
 
 type devWatcherController struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	supervisor *devwatch.Supervisor
-	tasks      map[string]*devWatcherTask
-	order      []string
-	engines    []*devwatch.Engine
-	exitCh     chan watcherExit
-	outWriter  io.Writer
-	errWriter  io.Writer
+	ctx          context.Context
+	cancel       context.CancelFunc
+	supervisor   *devwatch.Supervisor
+	tasks        map[string]*devWatcherTask
+	order        []string
+	engines      []*devwatch.Engine
+	exitCh       chan watcherExit
+	outWriter    io.Writer
+	errWriter    io.Writer
+	projectBuild *devWatcherBuildGate
 
 	mu                sync.Mutex
 	exited            map[string]bool
@@ -36,6 +38,30 @@ type devWatcherController struct {
 	stopOnce          sync.Once
 	stopDone          chan struct{}
 	wait              sync.WaitGroup
+}
+
+// devWatcherBuildPhase classifies project access so compatible build work can remain concurrent.
+type devWatcherBuildPhase uint8
+
+const (
+	devWatcherBuildPhaseNone devWatcherBuildPhase = iota
+	devWatcherBuildPhasePrepare
+	devWatcherBuildPhaseApp
+	devWatcherBuildPhaseSPA
+)
+
+// devWatcherBuildRequest retains queue identity when several tasks wait for the same compatible phase.
+type devWatcherBuildRequest struct {
+	phase devWatcherBuildPhase
+}
+
+// devWatcherBuildGate allows concurrency within read-only App or independent SPA phases while preparation remains exclusive.
+type devWatcherBuildGate struct {
+	mu          sync.Mutex
+	cond        *sync.Cond
+	active      devWatcherBuildPhase
+	activeCount int
+	waiting     []*devWatcherBuildRequest
 }
 
 // devWatcherSteadySPAWave joins frontend work that must precede one conventional App build.
@@ -216,7 +242,8 @@ func newDevWatcherControllerWithOptions(
 		ctx: ctx, cancel: cancel, supervisor: devwatch.NewSupervisor(devwatch.SupervisorOptions{}),
 		tasks: make(map[string]*devWatcherTask, len(compiled)), exitCh: make(chan watcherExit, len(compiled)),
 		outWriter: outWriter, errWriter: errWriter, exited: make(map[string]bool, len(compiled)),
-		steadySPAWaves: make(map[string]*devWatcherSteadySPAWave), stopDone: make(chan struct{}),
+		projectBuild: newDevWatcherBuildGate(), steadySPAWaves: make(map[string]*devWatcherSteadySPAWave),
+		stopDone: make(chan struct{}),
 	}
 	runtimeApps := compiledDevRuntimeApps(compiled)
 	showAppColumn := len(runtimeApps) > 1
@@ -839,11 +866,16 @@ func (c *devWatcherController) completeSteadySPA(task *devWatcherTask, success b
 func (t *devWatcherTask) runCommand() {
 	defer t.markCommandIdle()
 	t.writeExecLog()
-	runContext, cancel := context.WithCancel(t.controller.ctx)
-	t.setActiveCancel(cancel)
-	exit, err := t.controller.supervisor.Run(runContext, t.spec.ID, t.spec.Command)
-	t.clearActiveCancel(cancel)
-	cancel()
+	var exit devwatch.Exit
+	var err error
+	if t.spec.Kind == devWatcherAppBuild && t.spec.PhasedBuild {
+		exit, err = t.runPhasedAppBuild()
+	} else {
+		if unlock := t.lockProjectBuild(); unlock != nil {
+			defer unlock()
+		}
+		exit, err = t.runSupervisedCommand(t.spec.Command)
+	}
 	if t.controller.ctx.Err() != nil || exit.Intentional() {
 		return
 	}
@@ -886,6 +918,124 @@ func (t *devWatcherTask) runCommand() {
 	if t.spec.Exit {
 		t.controller.publishExit(t.spec.ID, t.spec.Name, &exit, err)
 	}
+}
+
+// runPhasedAppBuild stabilizes generated inputs exclusively before joining concurrent App analysis and compilation.
+func (t *devWatcherTask) runPhasedAppBuild() (devwatch.Exit, error) {
+	t.controller.projectBuild.acquire(devWatcherBuildPhasePrepare)
+	exit, err := t.runSupervisedCommand(devCommandWithBuildPhase(t.spec.Command, build.DevBuildPhasePrepare))
+	t.controller.projectBuild.release(devWatcherBuildPhasePrepare)
+	if err != nil || !exit.OK() || exit.Intentional() || t.controller.ctx.Err() != nil {
+		return exit, err
+	}
+
+	t.controller.projectBuild.acquire(devWatcherBuildPhaseApp)
+	exit, err = t.runSupervisedCommand(devCommandWithBuildPhase(t.spec.Command, build.DevBuildPhaseCompile))
+	t.controller.projectBuild.release(devWatcherBuildPhaseApp)
+	return exit, err
+}
+
+// runSupervisedCommand exposes one cancellable subprocess phase to shutdown and restart bookkeeping.
+func (t *devWatcherTask) runSupervisedCommand(command devwatch.Command) (devwatch.Exit, error) {
+	runContext, cancel := context.WithCancel(t.controller.ctx)
+	t.setActiveCancel(cancel)
+	exit, err := t.controller.supervisor.Run(runContext, t.spec.ID, command)
+	t.clearActiveCancel(cancel)
+	cancel()
+	return exit, err
+}
+
+// devCommandWithBuildPhase clones command environment before assigning the private dev build phase.
+func devCommandWithBuildPhase(command devwatch.Command, phase string) devwatch.Command {
+	command.Env = copyDevWatchEnv(command.Env)
+	command.Env["FORJ_COMMAND_ORIGIN"] = "dev_command"
+	command.Env[build.DevBuildPhaseEnvironment] = phase
+	return command
+}
+
+// lockProjectBuild keeps custom App builds conservative and lets independent SPA builds share their phase.
+func (t *devWatcherTask) lockProjectBuild() func() {
+	switch t.spec.Kind {
+	case devWatcherAppBuild:
+		t.controller.projectBuild.acquire(devWatcherBuildPhasePrepare)
+		return func() { t.controller.projectBuild.release(devWatcherBuildPhasePrepare) }
+	case devWatcherSPABuild:
+		t.controller.projectBuild.acquire(devWatcherBuildPhaseSPA)
+		return func() { t.controller.projectBuild.release(devWatcherBuildPhaseSPA) }
+	default:
+		return nil
+	}
+}
+
+// newDevWatcherBuildGate creates a FIFO phase gate for project preparation, App compilation, and SPA publication.
+func newDevWatcherBuildGate() *devWatcherBuildGate {
+	gate := &devWatcherBuildGate{}
+	gate.cond = sync.NewCond(&gate.mu)
+	return gate
+}
+
+// acquire joins compatible work without jumping ahead of an earlier incompatible phase.
+func (g *devWatcherBuildGate) acquire(phase devWatcherBuildPhase) {
+	g.mu.Lock()
+	request := &devWatcherBuildRequest{phase: phase}
+	g.waiting = append(g.waiting, request)
+	g.cond.Broadcast()
+	for !g.canAcquire(request) {
+		g.cond.Wait()
+	}
+	g.removeWaiting(request)
+	if g.active == devWatcherBuildPhaseNone {
+		g.active = phase
+	}
+	g.activeCount++
+	g.mu.Unlock()
+}
+
+// release advances the waiting phase only after every compatible build has left the current phase.
+func (g *devWatcherBuildGate) release(phase devWatcherBuildPhase) {
+	g.mu.Lock()
+	if g.active != phase || g.activeCount == 0 {
+		g.mu.Unlock()
+		panic("release inactive dev build phase")
+	}
+	g.activeCount--
+	if g.activeCount == 0 {
+		g.active = devWatcherBuildPhaseNone
+		g.cond.Broadcast()
+	}
+	g.mu.Unlock()
+}
+
+// canAcquire preserves phase concurrency while stopping new arrivals when the other phase is waiting.
+func (g *devWatcherBuildGate) canAcquire(request *devWatcherBuildRequest) bool {
+	if g.active != devWatcherBuildPhaseNone && (g.active != request.phase || !request.phase.shareable()) {
+		return false
+	}
+	for _, waiting := range g.waiting {
+		if waiting == request {
+			return true
+		}
+		if waiting.phase != request.phase || !request.phase.shareable() {
+			return false
+		}
+	}
+	return false
+}
+
+// removeWaiting removes the granted request while retaining FIFO order for incompatible phases.
+func (g *devWatcherBuildGate) removeWaiting(request *devWatcherBuildRequest) {
+	for index, waiting := range g.waiting {
+		if waiting != request {
+			continue
+		}
+		g.waiting = append(g.waiting[:index], g.waiting[index+1:]...)
+		return
+	}
+}
+
+// shareable reports whether independent work in one phase may safely overlap.
+func (p devWatcherBuildPhase) shareable() bool {
+	return p == devWatcherBuildPhaseApp || p == devWatcherBuildPhaseSPA
 }
 
 // markCommandIdle closes the trigger-to-process race observed by outer build quiescing.

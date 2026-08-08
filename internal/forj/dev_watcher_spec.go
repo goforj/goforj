@@ -45,6 +45,7 @@ type devCompiledWatcher struct {
 	DisplayCommand       string
 	NativeRuntimeCommand string
 	FullProcessOverride  bool
+	PhasedBuild          bool
 }
 
 // compileDevWatchers turns app lifecycle intent and custom watches into one native execution graph.
@@ -228,6 +229,7 @@ func compileStructuredAppBuild(config *project.Config, app project.App, appConfi
 		Watch: compiledWatch.spec, ID: id, Name: name, Kind: devWatcherAppBuild, App: app.Name,
 		Command:  devwatch.Command{Shell: execCommand, Dir: workDir, Env: commandEnv},
 		Postpone: postpone, WatchChanges: true, PollInterval: compiledWatch.pollInterval,
+		PhasedBuild: isManagedDevBuildCommand(execCommand),
 	}, nil
 }
 
@@ -560,7 +562,7 @@ func compileLegacyDevWatcher(watch project.DevWatch) (devCompiledWatcher, error)
 			DirectoryExcludes: options.excludedDirectories,
 			Debounce:          options.debounce, DebounceSet: true, LegacyDirectoryRegex: true,
 		},
-		Name: watch.Name, Kind: kind, App: appName,
+		Name: watch.Name, Kind: kind, App: appName, PhasedBuild: kind == devWatcherAppBuild && isManagedDevBuildCommand(execCommand),
 		Command: devwatch.Command{
 			Shell: execCommand, Dir: options.workDir, Env: env, Stdin: devWatcherStdin(options.stdin),
 		},
