@@ -1578,7 +1578,15 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 		if watcher.Kind != devWatcherSPABuild {
 			continue
 		}
-		writeDevActionLine(outWriter, "Building "+watcher.App+" frontend")
+		heading := "Building " + watcher.App + " frontend"
+		if usesDevBootstrapConsole(outWriter, errWriter) {
+			if err := runDevSPABuildWithLoader(outWriter, errWriter, heading, watcher); err != nil {
+				return false, fmt.Errorf("initial SPA build %q failed: %w", watcher.Name, err)
+			}
+			built = true
+			continue
+		}
+		writeDevActionLine(outWriter, heading)
 		if err := runDevSubprocess(devSubprocessRun{
 			command:    watcher.Command.Shell,
 			dir:        watcher.Command.Dir,
@@ -1592,6 +1600,28 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 		built = true
 	}
 	return built, nil
+}
+
+// runDevSPABuildWithLoader keeps frontend diagnostics buffered until the bootstrap loader releases the terminal.
+func runDevSPABuildWithLoader(outWriter io.Writer, errWriter io.Writer, heading string, watcher devCompiledWatcher) error {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var buildErr error
+	if err := runWithLoader(heading, func() error {
+		buildErr = runDevSubprocess(devSubprocessRun{
+			command:    watcher.Command.Shell,
+			dir:        watcher.Command.Dir,
+			env:        watcher.Command.Env,
+			stdout:     &stdout,
+			stderr:     &stderr,
+			transcript: true,
+		})
+		return nil
+	}); err != nil {
+		return err
+	}
+	writeDevSubprocessBufferedOutput(outWriter, errWriter, stdout.String(), stderr.String())
+	return buildErr
 }
 
 type devBuildResult struct {
@@ -1773,15 +1803,20 @@ func writeDevBuildFailureOutput(outWriter io.Writer, errWriter io.Writer, result
 
 // writeDevBuildBufferedOutput preserves owner-authored build messages after transient progress has released the terminal.
 func writeDevBuildBufferedOutput(outWriter io.Writer, errWriter io.Writer, result devBuildResult) {
-	if strings.TrimSpace(result.stdout) != "" {
-		_, _ = io.WriteString(outWriter, result.stdout)
-		if !strings.HasSuffix(result.stdout, "\n") {
+	writeDevSubprocessBufferedOutput(outWriter, errWriter, result.stdout, result.stderr)
+}
+
+// writeDevSubprocessBufferedOutput restores owner-authored output after a transient loader releases the terminal.
+func writeDevSubprocessBufferedOutput(outWriter io.Writer, errWriter io.Writer, stdout string, stderr string) {
+	if strings.TrimSpace(stdout) != "" {
+		_, _ = io.WriteString(outWriter, stdout)
+		if !strings.HasSuffix(stdout, "\n") {
 			_, _ = io.WriteString(outWriter, "\n")
 		}
 	}
-	if strings.TrimSpace(result.stderr) != "" {
-		_, _ = io.WriteString(errWriter, result.stderr)
-		if !strings.HasSuffix(result.stderr, "\n") {
+	if strings.TrimSpace(stderr) != "" {
+		_, _ = io.WriteString(errWriter, stderr)
+		if !strings.HasSuffix(stderr, "\n") {
 			_, _ = io.WriteString(errWriter, "\n")
 		}
 	}
