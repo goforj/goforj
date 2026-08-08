@@ -264,6 +264,105 @@ func TestDevWatcherControllerStopsManagedAppBuildAfterPreparationFailure(t *test
 	}
 }
 
+// TestDevWatcherControllerRecoversFromHostBuildFailures proves environmental child failures do not poison later builds.
+func TestDevWatcherControllerRecoversFromHostBuildFailures(t *testing.T) {
+	requireDevWatcherRunnerTestPlatform(t)
+	tests := []struct {
+		name       string
+		failure    string
+		diagnostic string
+	}{
+		{
+			name:       "missing tool",
+			failure:    "missing-tool",
+			diagnostic: "goforj-definitely-missing-build-tool",
+		},
+		{
+			name:       "permission denied",
+			failure:    "permission",
+			diagnostic: "Permission denied",
+		},
+		{
+			name:       "resource exhaustion",
+			failure:    "resource",
+			diagnostic: "resource temporarily unavailable",
+		},
+		{
+			name:       "abrupt termination",
+			failure:    "terminated",
+			diagnostic: "build child terminated unexpectedly",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			logPath := filepath.Join(directory, "events.log")
+			transcriptPath := filepath.Join(directory, "transcript.log")
+			repairPath := filepath.Join(directory, "repaired")
+			buildCommand := devWatcherRunnerHelperCommand("build", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG":          logPath,
+				"GOFORJ_DEV_WATCHER_COUNTER":      filepath.Join(directory, "build-count"),
+				"GOFORJ_DEV_WATCHER_HOST_FAILURE": test.failure,
+				"GOFORJ_DEV_WATCHER_REPAIR":       repairPath,
+			})
+			runtimeCommand := devWatcherRunnerHelperCommand("runtime", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG": logPath,
+			})
+			transcript, err := os.OpenFile(transcriptPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatalf("open watcher transcript: %v", err)
+			}
+			controller, err := newDevWatcherController([]devCompiledWatcher{
+				{
+					ID: "build", Name: "Build App", Kind: devWatcherAppBuild, App: "app", Command: buildCommand,
+					Postpone: true, OnSuccess: []string{"runtime"},
+				},
+				{
+					ID: "runtime", Name: "Run App", Kind: devWatcherAppRun, App: "app", Command: runtimeCommand,
+					Restart: true, Postpone: true,
+				},
+			}, nil, transcript, transcript, false)
+			if err != nil {
+				_ = transcript.Close()
+				t.Fatalf("start dev watcher controller: %v", err)
+			}
+			defer func() {
+				controller.stop(time.Second)
+				_ = transcript.Close()
+			}()
+
+			controller.tasks["build"].request()
+			waitForDevWatcherRunnerCondition(t, "host failure diagnostic", func() bool {
+				data, readErr := os.ReadFile(transcriptPath)
+				return readErr == nil && strings.Contains(strings.ToLower(string(data)), strings.ToLower(test.diagnostic))
+			})
+			waitForDevWatcherRunnerCondition(t, "failed host build to become retryable", func() bool {
+				task := controller.tasks["build"]
+				task.mu.Lock()
+				idle := !task.busy && !task.pending
+				task.mu.Unlock()
+				return idle
+			})
+			select {
+			case exit := <-controller.exitCh:
+				t.Fatalf("host build failure terminated watcher: %+v", exit)
+			default:
+			}
+
+			if err := os.WriteFile(repairPath, []byte("repaired"), 0o600); err != nil {
+				t.Fatalf("repair host build dependency: %v", err)
+			}
+			controller.tasks["build"].request()
+			lines := waitForDevWatcherRunnerLog(t, logPath, func(lines []string) bool {
+				return countDevWatcherRunnerLines(lines, "runtime-start:") == 1
+			})
+			if builds := countDevWatcherRunnerLines(lines, "build-success:1:"); builds != 1 {
+				t.Fatalf("repaired host build did not converge exactly once: %v", lines)
+			}
+		})
+	}
+}
+
 // TestDevWatcherControllerShutdownCancelsEveryBuildPhase verifies shutdown prevents queued work from escaping prepare, compile, or SPA publication.
 func TestDevWatcherControllerShutdownCancelsEveryBuildPhase(t *testing.T) {
 	requireDevWatcherRunnerTestPlatform(t)
@@ -1569,6 +1668,11 @@ func devWatcherRunnerHelperAction(args []string) string {
 
 // runDevWatcherRunnerBuildHelper records one build and optionally blocks or fails it.
 func runDevWatcherRunnerBuildHelper() {
+	if failure := os.Getenv("GOFORJ_DEV_WATCHER_HOST_FAILURE"); failure != "" {
+		if _, err := os.Stat(os.Getenv("GOFORJ_DEV_WATCHER_REPAIR")); err != nil {
+			runDevWatcherRunnerHostFailure(failure)
+		}
+	}
 	index, err := incrementDevWatcherRunnerCounter(os.Getenv("GOFORJ_DEV_WATCHER_COUNTER"))
 	if err != nil {
 		os.Exit(3)
@@ -1606,6 +1710,29 @@ func runDevWatcherRunnerBuildHelper() {
 		}
 	}
 	appendDevWatcherRunnerLog(fmt.Sprintf("build-success:%d:%d", index, os.Getpid()))
+}
+
+// runDevWatcherRunnerHostFailure injects deterministic host-level child failures before the repair retry.
+func runDevWatcherRunnerHostFailure(failure string) {
+	switch failure {
+	case "missing-tool":
+		_, _ = fmt.Fprintln(os.Stderr, "goforj-definitely-missing-build-tool: command not found")
+		os.Exit(127)
+	case "permission":
+		_, _ = fmt.Fprintln(os.Stderr, "build tool: Permission denied")
+		os.Exit(126)
+	case "resource":
+		_, _ = fmt.Fprintln(os.Stderr, "read /dev/ptmx: resource temporarily unavailable")
+		os.Exit(75)
+	case "terminated":
+		_, _ = fmt.Fprintln(os.Stderr, "build child terminated unexpectedly")
+		process, err := os.FindProcess(os.Getpid())
+		if err != nil || process.Kill() != nil {
+			os.Exit(137)
+		}
+	default:
+		os.Exit(2)
+	}
 }
 
 // runDevWatcherRunnerRuntimeHelper records runtime start and graceful termination.
