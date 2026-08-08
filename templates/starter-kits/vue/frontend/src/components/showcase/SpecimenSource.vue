@@ -16,8 +16,8 @@ import { highlightVue } from '@/lib/highlight'
 const props = defineProps<{
   /** Component the source belongs to, used for the panel title. */
   name: string
-  /** Import path of that component. */
-  path: string
+  /** Import path, when the source maps to a single module. */
+  path?: string
   /** Raw file contents. */
   source: string
 }>()
@@ -49,7 +49,8 @@ onBeforeUnmount(() => clearTimeout(timer))
     <SheetContent class="flex w-full flex-col gap-4 p-0 sm:max-w-4xl">
       <SheetHeader class="gap-1 border-b px-6 pb-4 pt-6 pr-14">
         <SheetTitle>{{ name }}</SheetTitle>
-        <SheetDescription class="font-mono text-xs">{{ path }}</SheetDescription>
+        <SheetDescription v-if="path" class="font-mono text-xs">{{ path }}</SheetDescription>
+        <SheetDescription v-else class="text-xs">Composed example</SheetDescription>
       </SheetHeader>
 
       <ScrollArea class="min-h-0 flex-1">
