@@ -21,7 +21,7 @@
 
     <Specimen
       name="Table"
-      description="A low-level primitive with no opinion on chrome. These are three product treatments built from the same parts: an admin index, a dense event stream, and a financial summary."
+      description="A low-level primitive with no opinion on chrome. Filters, a header band, status badges, and an empty state are all yours to assemble."
       :also="['Badge', 'Button', 'InputGroup', 'Select']"
       :source="TableExampleSource"
     >
