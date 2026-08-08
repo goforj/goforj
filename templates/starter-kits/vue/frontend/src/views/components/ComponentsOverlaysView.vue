@@ -7,11 +7,12 @@
       description="Overlay primitives are most useful when they are shown as real workflows: invite dialogs, destructive confirms, drawers, inspectors, and command-driven actions."
     />
 
-    <div class="grid gap-6">
+    <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
       <Specimen
         name="Dialog"
         description="A centered modal for focused tasks. Use the same field patterns inside it that the rest of the app uses."
         :also="['Input', 'Select', 'Label', 'Button']"
+        content-class="justify-items-start"
       >
         <Dialog>
           <DialogTrigger as-child>
@@ -57,6 +58,7 @@
         name="AlertDialog"
         description="A confirm that cannot be dismissed by clicking away. Reserve it for destructive actions rather than routine confirmations."
         :also="['Button']"
+        content-class="justify-items-start"
       >
         <AlertDialog>
           <AlertDialogTrigger as-child>
@@ -81,6 +83,7 @@
         name="Sheet"
         description="An edge-anchored panel for detail views and side-task editors that should not interrupt the page flow."
         :also="['ScrollArea', 'Item', 'Button']"
+        content-class="justify-items-start"
       >
         <Sheet>
           <SheetTrigger as-child>
@@ -148,6 +151,7 @@
         name="Drawer"
         description="A bottom-anchored action sheet. Often a better fit than a centered modal for small-screen action clusters."
         :also="['Button']"
+        content-class="justify-items-start"
       >
         <Button variant="outline" @click="openMobileDrawer">Open mobile drawer</Button>
 
@@ -186,6 +190,7 @@
         name="CommandDialog"
         description="The searchable palette behind the shell shortcut. Same primitives as the sidebar command menu."
         :also="['Button']"
+        content-class="justify-items-start"
       >
         <Button @click="commandOpen = true">Open command menu</Button>
       </Specimen>
@@ -194,6 +199,7 @@
         name="Sonner"
         description="Non-blocking confirmation after save, sync, or authentication actions."
         :also="['Button']"
+        content-class="justify-items-start"
       >
         <div class="flex flex-wrap gap-2">
           <Button variant="outline" @click="notifyPreview">Show success toast</Button>
