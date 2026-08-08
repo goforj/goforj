@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/goforj/console"
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
@@ -863,30 +865,114 @@ func TestRenderTimingLinesStreamInsideDevCommand(t *testing.T) {
 }
 
 func TestRunDevBuildRunsAppsInParallel(t *testing.T) {
-	withConventionalApp(t, "billing")
+	jobs := []devBuildJob{{app: project.AppForName("app")}, {app: project.AppForName("billing")}}
+	entered := make(chan string, len(jobs))
+	release := make(chan struct{})
+	done := make(chan []devBuildResult, 1)
+	go func() {
+		done <- runDevBuildJobsConcurrently(jobs, func(job devBuildJob) devBuildResult {
+			entered <- job.app.Name
+			<-release
+			return devBuildResult{job: job}
+		})
+	}()
 
-	config := &project.Config{
-		Dev: project.DevConfig{
-			Watches: []project.DevWatch{
-				{Name: "Build App", Exec: `bash -c "sleep 0.5; mkdir -p bin; touch ./bin/app"`},
-			},
-		},
+	seen := make(map[string]bool, len(jobs))
+	for range jobs {
+		select {
+		case app := <-entered:
+			seen[app] = true
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("App builds did not enter the concurrent execution phase")
+		}
 	}
+	close(release)
+	results := <-done
+	if !seen["app"] || !seen["billing"] {
+		t.Fatalf("concurrent App builds = %#v, want app and billing", seen)
+	}
+	if results[0].job.app.Name != "app" || results[1].job.app.Name != "billing" {
+		t.Fatalf("result order = %q, %q", results[0].job.app.Name, results[1].job.app.Name)
+	}
+}
 
-	start := time.Now()
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-	if err := runDevBuild(config, &out, &errOut); err != nil {
-		t.Fatalf("runDevBuild returned error: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+// TestRunDevBuildWavePreparesEveryAppBeforeConcurrentCompilation verifies fanout starts from one stable snapshot.
+func TestRunDevBuildWavePreparesEveryAppBeforeConcurrentCompilation(t *testing.T) {
+	jobs := []devBuildJob{
+		{app: project.AppForName("app"), phased: true},
+		{app: project.AppForName("billing"), phased: true},
 	}
-	if elapsed := time.Since(start); elapsed > 900*time.Millisecond {
-		t.Fatalf("expected app builds to run in parallel, elapsed %s", elapsed)
+	var mu sync.Mutex
+	calls := make([]string, 0, len(jobs)*2)
+	compileEntered := make(chan string, len(jobs))
+	releaseCompile := make(chan struct{})
+	done := make(chan []devBuildResult, 1)
+	go func() {
+		done <- runDevBuildWave(jobs, func(job devBuildJob, phase string, _ bool) devBuildResult {
+			mu.Lock()
+			calls = append(calls, phase+":"+job.app.Name)
+			mu.Unlock()
+			if phase == build.DevBuildPhaseCompile {
+				compileEntered <- job.app.Name
+				<-releaseCompile
+			}
+			return devBuildResult{job: job}
+		})
+	}()
+
+	for range jobs {
+		select {
+		case <-compileEntered:
+		case <-time.After(time.Second):
+			close(releaseCompile)
+			t.Fatal("prepared Apps did not enter concurrent compilation")
+		}
 	}
-	if _, err := os.Stat(filepath.Join("bin", "app")); err != nil {
-		t.Fatalf("expected app binary marker: %v", err)
+	close(releaseCompile)
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	wantPreparation := []string{
+		build.DevBuildPhasePrepare + ":app",
+		build.DevBuildPhasePrepare + ":billing",
 	}
-	if _, err := os.Stat(filepath.Join("bin", "billing")); err != nil {
-		t.Fatalf("expected billing binary marker: %v", err)
+	if !reflect.DeepEqual(calls[:len(wantPreparation)], wantPreparation) {
+		t.Fatalf("build wave started before preparation completed: got %q, want prefix %q", calls, wantPreparation)
+	}
+}
+
+// TestRunDevBuildWaveKeepsCustomCommandsSinglePhase avoids guessing whether an arbitrary command mutates project inputs.
+func TestRunDevBuildWaveKeepsCustomCommandsSinglePhase(t *testing.T) {
+	job := devBuildJob{app: project.AppForName("app"), command: "make app", phased: false}
+	calls := 0
+	results := runDevBuildWave([]devBuildJob{job}, func(got devBuildJob, phase string, publish bool) devBuildResult {
+		calls++
+		if phase != "" || !publish {
+			t.Fatalf("custom build phase = %q, publish = %t; want one publishing phase", phase, publish)
+		}
+		return devBuildResult{job: got}
+	})
+	if calls != 1 || len(results) != 1 || results[0].err != nil {
+		t.Fatalf("custom build calls = %d, results = %#v", calls, results)
+	}
+}
+
+// TestIsManagedDevBuildCommand limits the private two-phase protocol to GoForj's conventional build command.
+func TestIsManagedDevBuildCommand(t *testing.T) {
+	t.Parallel()
+	tests := map[string]bool{
+		"forj build -o ./bin/app":           true,
+		"/usr/local/bin/forj admin build":   true,
+		"forj statuspage build --tags prod": true,
+		"make app":                          false,
+		"sh -c 'forj build'":                false,
+		"forj dev":                          false,
+	}
+	for command, want := range tests {
+		if got := isManagedDevBuildCommand(command); got != want {
+			t.Errorf("isManagedDevBuildCommand(%q) = %t, want %t", command, got, want)
+		}
 	}
 }
 

@@ -50,7 +50,7 @@ func TestCompileDevWatchersStructuredDefaultsAndSPAGraph(t *testing.T) {
 	if build.Command.Shell != "forj build -o ./bin/app" {
 		t.Fatalf("build command = %q", build.Command.Shell)
 	}
-	if !build.Postpone || !build.WatchChanges || build.Restart {
+	if !build.Postpone || !build.WatchChanges || build.Restart || !build.PhasedBuild {
 		t.Fatalf("build lifecycle flags = %#v", build)
 	}
 	if got, want := build.OnSuccess, []string{watchers[3].ID}; !reflect.DeepEqual(got, want) {
@@ -526,7 +526,7 @@ func TestCompileLegacyDevWatcherRequiresExactFrameworkIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compileLegacyDevWatcher() framework error = %v", err)
 	}
-	if watcher.Kind != devWatcherAppBuild || watcher.App != "app" || watcher.Command.Env["FORJ_BUILD_PROGRESS"] != "1" {
+	if watcher.Kind != devWatcherAppBuild || watcher.App != "app" || watcher.Command.Env["FORJ_BUILD_PROGRESS"] != "1" || !watcher.PhasedBuild {
 		t.Fatalf("framework watcher identity = %#v", watcher)
 	}
 }

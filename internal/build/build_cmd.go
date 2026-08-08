@@ -15,6 +15,15 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 )
 
+const (
+	// DevBuildPhaseEnvironment carries the private phase selected by the GoForj development coordinator.
+	DevBuildPhaseEnvironment = "FORJ_DEV_BUILD_PHASE"
+	// DevBuildPhasePrepare stabilizes generated source without indexing or compiling an App.
+	DevBuildPhasePrepare = "prepare"
+	// DevBuildPhaseCompile indexes and compiles an App from an already prepared project snapshot.
+	DevBuildPhaseCompile = "compile"
+)
+
 // Cmd runs the forj build pipeline.
 type Cmd struct {
 	logger   *logger.AppLogger
@@ -63,11 +72,23 @@ func (c *Cmd) Run() error {
 	if err != nil {
 		return err
 	}
+	options := RunOptions{Timings: c.Timings, SkipWire: c.SkipWire, APIIndexStrict: c.APIIndexStrict, BuildTags: buildTags}
+	if strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == "dev_command" {
+		switch strings.TrimSpace(os.Getenv(DevBuildPhaseEnvironment)) {
+		case DevBuildPhasePrepare:
+			options.PreparationOnly = true
+		case DevBuildPhaseCompile:
+			options.SkipPreparation = true
+		}
+	}
 	if err := c.pipeline.Run(root, "build", Step{
 		Name: "go build",
 		Run:  c.buildBinary,
-	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire, APIIndexStrict: c.APIIndexStrict, BuildTags: buildTags}); err != nil {
+	}, options); err != nil {
 		return err
+	}
+	if options.PreparationOnly {
+		return nil
 	}
 	if c.Profile {
 		return c.printProfile()

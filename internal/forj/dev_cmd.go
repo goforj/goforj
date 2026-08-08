@@ -23,6 +23,7 @@ import (
 	"github.com/goforj/console"
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/internal/projectlayout"
@@ -1035,6 +1036,7 @@ type devBuildJob struct {
 	command string
 	dir     string
 	env     map[string]string
+	phased  bool
 }
 
 // devBuildJobs resolves app build commands while preserving the app label for compact output.
@@ -1051,10 +1053,22 @@ func devBuildJobs(config *project.Config) []devBuildJob {
 		dir, env := devBuildExecutionForConfigApp(config, app)
 		jobs = append(jobs, devBuildJob{
 			app: app, command: command, dir: dir,
-			env: env,
+			env: env, phased: isManagedDevBuildCommand(command),
 		})
 	}
 	return jobs
+}
+
+// isManagedDevBuildCommand recognizes the conventional build forms whose internal phases GoForj can coordinate safely.
+func isManagedDevBuildCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 || filepath.Base(fields[0]) != "forj" {
+		return false
+	}
+	if fields[1] == "build" {
+		return true
+	}
+	return len(fields) > 2 && project.IsSafeAppName(fields[1]) && fields[2] == "build"
 }
 
 // devBuildExecutionForConfigApp carries structured workdir and environment overrides into every build path.
@@ -1597,15 +1611,7 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 
 	results := make([]devBuildResult, len(jobs))
 	runJobs := func() {
-		var wg sync.WaitGroup
-		for index, job := range jobs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				results[index] = runDevBuildJobBuffered(job)
-			}()
-		}
-		wg.Wait()
+		results = runDevBuildWave(jobs, runDevBuildJobBufferedPhase)
 	}
 	if usesDevBootstrapConsole(outWriter, errWriter) {
 		if err := runWithLoader(heading, func() error {
@@ -1635,20 +1641,81 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	return nil
 }
 
+type devBuildPhaseRunner func(devBuildJob, string, bool) devBuildResult
+
+// runDevBuildWave stabilizes every managed App before compiling those Apps concurrently from one project snapshot.
+func runDevBuildWave(jobs []devBuildJob, run devBuildPhaseRunner) []devBuildResult {
+	results := make([]devBuildResult, len(jobs))
+	compileIndexes := make([]int, 0, len(jobs))
+	for index, job := range jobs {
+		if !job.phased {
+			results[index] = run(job, "", true)
+			continue
+		}
+		results[index] = run(job, build.DevBuildPhasePrepare, false)
+		if results[index].err == nil {
+			compileIndexes = append(compileIndexes, index)
+		}
+	}
+	compileJobs := make([]devBuildJob, 0, len(compileIndexes))
+	for _, index := range compileIndexes {
+		compileJobs = append(compileJobs, jobs[index])
+	}
+	compiled := runDevBuildJobsConcurrently(compileJobs, func(job devBuildJob) devBuildResult {
+		return run(job, build.DevBuildPhaseCompile, true)
+	})
+	for offset, index := range compileIndexes {
+		results[index] = mergeDevBuildPhaseResults(results[index], compiled[offset])
+	}
+	return results
+}
+
+// runDevBuildJobsConcurrently preserves result order while allowing independent Apps to compile together.
+func runDevBuildJobsConcurrently(jobs []devBuildJob, run func(devBuildJob) devBuildResult) []devBuildResult {
+	results := make([]devBuildResult, len(jobs))
+	var wg sync.WaitGroup
+	for index, job := range jobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[index] = run(job)
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
 // runDevBuildJobBuffered keeps concurrent build output grouped by app instead of interleaving lines.
 func runDevBuildJobBuffered(job devBuildJob) devBuildResult {
+	if !job.phased {
+		return runDevBuildJobBufferedPhase(job, "", true)
+	}
+	prepared := runDevBuildJobBufferedPhase(job, build.DevBuildPhasePrepare, false)
+	if prepared.err != nil {
+		return prepared
+	}
+	compiled := runDevBuildJobBufferedPhase(job, build.DevBuildPhaseCompile, true)
+	return mergeDevBuildPhaseResults(prepared, compiled)
+}
+
+// runDevBuildJobBufferedPhase captures one internal build phase without exposing its coordination protocol.
+func runDevBuildJobBufferedPhase(job devBuildJob, phase string, publish bool) devBuildResult {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	start := time.Now()
+	environment := copyDevWatchEnv(job.env)
+	if phase != "" {
+		environment[build.DevBuildPhaseEnvironment] = phase
+	}
 	err := runDevSubprocess(devSubprocessRun{
 		command:    job.command,
 		dir:        job.dir,
-		env:        job.env,
+		env:        environment,
 		stdout:     &stdout,
 		stderr:     &stderr,
 		transcript: true,
 	})
-	if err == nil {
+	if err == nil && publish {
 		err = publishDevBuildReadyStamp(job.app)
 	}
 	return devBuildResult{
@@ -1658,6 +1725,14 @@ func runDevBuildJobBuffered(job devBuildJob) devBuildResult {
 		elapsed: time.Since(start),
 		err:     err,
 	}
+}
+
+// mergeDevBuildPhaseResults retains preparation diagnostics and total elapsed time under one App result.
+func mergeDevBuildPhaseResults(prepared devBuildResult, compiled devBuildResult) devBuildResult {
+	compiled.stdout = prepared.stdout + compiled.stdout
+	compiled.stderr = prepared.stderr + compiled.stderr
+	compiled.elapsed += prepared.elapsed
+	return compiled
 }
 
 // stripBuildProgressMarkerLines keeps the subprocess progress protocol out of replayed build logs.
