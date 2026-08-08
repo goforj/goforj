@@ -2052,6 +2052,11 @@ func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
 			}
 			command := exec.Command("go", "build", "-o", binary, "./cmd/app")
 			command.Dir = stepRoot
+			command.Env = append(
+				os.Environ(),
+				"GOCACHE="+filepath.Join(stepRoot, ".cache", "go-build"),
+				"GOMODCACHE="+filepath.Join(stepRoot, ".cache", "go-mod"),
+			)
 			output, err := command.CombinedOutput()
 			if err != nil {
 				return "", fmt.Errorf("go build: %w\n%s", err, output)
