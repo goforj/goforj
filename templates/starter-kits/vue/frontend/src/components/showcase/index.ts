@@ -1,5 +1,4 @@
 export { default as ComponentTag } from './ComponentTag.vue'
-export { default as PageHeader } from './PageHeader.vue'
 export { default as Showcase } from './Showcase.vue'
 export { default as ShowcaseRow } from './ShowcaseRow.vue'
 export { default as Specimen } from './Specimen.vue'
