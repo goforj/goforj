@@ -1,84 +1,191 @@
 <template>
   <section class="grid gap-6">
-    <Card class="overflow-hidden border-border/60 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_96%,white),var(--background))] text-card-foreground shadow-xl dark:bg-[linear-gradient(135deg,hsl(0_0%_5%),hsl(0_0%_8%))] dark:text-white">
-      <CardHeader class="relative gap-4 p-6 md:p-8">
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge class="border-primary/20 bg-primary/10 text-primary hover:bg-primary/15 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/15">Vue application shell</Badge>
-          <Badge variant="outline" class="border-border/70 text-foreground dark:border-white/20 dark:text-white">Local shadcn-vue source</Badge>
-        </div>
-        <div class="grid max-w-3xl gap-3">
-          <CardTitle class="text-3xl font-semibold tracking-tight md:text-5xl">
-            Start from an application shell that already feels production-ready.
-          </CardTitle>
-          <CardDescription class="max-w-2xl text-base text-muted-foreground dark:text-slate-300">
-            Vue, Vite, Tailwind, and shadcn-vue source files are rendered directly into your app so your team can inspect, adapt, or replace every layer.
-          </CardDescription>
-        </div>
-      </CardHeader>
-    </Card>
+    <PageHeader
+      eyebrow="Application"
+      section="Overview"
+      title="Dashboard"
+      description="A working shell you can point at your own data. Replace these panels with the first workflow your product actually needs."
+    />
 
-    <div class="grid gap-4 md:grid-cols-3">
-      <Card v-for="item in cards" :key="item.title" class="transition-shadow hover:shadow-md">
-        <CardHeader>
-          <div class="mb-2 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <component :is="item.icon" class="size-5" />
-          </div>
-          <CardTitle>{{ item.title }}</CardTitle>
-          <CardDescription>{{ item.description }}</CardDescription>
+    <div class="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+      <Card v-for="metric in metrics" :key="metric.label">
+        <CardHeader class="gap-1">
+          <CardDescription>{{ metric.label }}</CardDescription>
+          <CardTitle class="text-2xl font-semibold tracking-tight">{{ metric.value }}</CardTitle>
         </CardHeader>
+        <CardContent>
+          <p class="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <component :is="metric.trend === 'up' ? ArrowUpRight : ArrowDownRight" class="size-3.5" />
+            {{ metric.change }}
+          </p>
+        </CardContent>
       </Card>
     </div>
 
     <Card>
       <CardHeader>
-        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle>Suggested next steps</CardTitle>
-            <CardDescription>Replace the starter examples with the first workflow your product actually needs.</CardDescription>
-          </div>
-          <Badge variant="secondary">App-owned</Badge>
-        </div>
+        <CardTitle class="text-lg font-semibold tracking-tight">Requests and errors</CardTitle>
+        <CardDescription>Traffic handled by the generated API over the last six months.</CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="grid gap-3 md:grid-cols-3">
-          <div class="rounded-lg border p-4">
-            <p class="font-medium">1. Define a domain route</p>
-            <p class="mt-1 text-sm text-muted-foreground">Create the API surface your first real screen depends on under <code>/api/v1</code>.</p>
-          </div>
-          <div class="rounded-lg border p-4">
-            <p class="font-medium">2. Connect authentication</p>
-            <p class="mt-1 text-sm text-muted-foreground">Wire sign-in, session bootstrap, and logout to the generated cookie-backed auth endpoints.</p>
-          </div>
-          <div class="rounded-lg border p-4">
-            <p class="font-medium">3. Tailor the interface</p>
-            <p class="mt-1 text-sm text-muted-foreground">Replace the starter content with product-specific views and extend the local shadcn-vue library as needed.</p>
-          </div>
-        </div>
+        <ChartContainer :config="chartConfig" class="h-64 w-full">
+          <VisXYContainer :data="chartData">
+            <VisGroupedBar
+              :x="(d: ChartDatum) => d.date"
+              :y="[(d: ChartDatum) => d.requests, (d: ChartDatum) => d.errors]"
+              :color="[chartConfig.requests.color, chartConfig.errors.color]"
+              :rounded-corners="4"
+              bar-padding="0.1"
+              group-padding="0"
+            />
+            <VisAxis
+              type="x"
+              :x="(d: ChartDatum) => d.date"
+              :tick-line="false"
+              :domain-line="false"
+              :grid-line="false"
+              :tick-values="chartData.map(d => d.date)"
+              :tick-format="formatMonth"
+            />
+            <VisAxis
+              type="y"
+              :tick-line="false"
+              :domain-line="false"
+              :grid-line="true"
+              :tick-format="formatCompact"
+            />
+            <ChartTooltip />
+            <ChartCrosshair
+              :template="crosshairTemplate"
+              :color="[chartConfig.requests.color, chartConfig.errors.color]"
+            />
+          </VisXYContainer>
+          <ChartLegendContent />
+        </ChartContainer>
       </CardContent>
     </Card>
+
+    <div class="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+      <Card class="overflow-hidden">
+        <CardHeader>
+          <CardTitle class="text-lg font-semibold tracking-tight">Resources</CardTitle>
+          <CardDescription>Routes and screens tracked by the shell.</CardDescription>
+        </CardHeader>
+        <CardContent class="px-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead class="pl-6">Resource</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Owner</TableHead>
+                <TableHead class="pr-6 text-right">Updated</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="row in resources" :key="row.name">
+                <TableCell class="pl-6 font-medium">{{ row.name }}</TableCell>
+                <TableCell>
+                  <Badge :variant="row.variant">{{ row.status }}</Badge>
+                </TableCell>
+                <TableCell class="text-muted-foreground">{{ row.owner }}</TableCell>
+                <TableCell class="pr-6 text-right text-muted-foreground">{{ row.updated }}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-lg font-semibold tracking-tight">Recent activity</CardTitle>
+          <CardDescription>Events emitted while the app was starting up.</CardDescription>
+        </CardHeader>
+        <CardContent class="grid gap-3">
+          <Item v-for="entry in activity" :key="entry.title" variant="outline" size="sm">
+            <ItemMedia variant="icon">
+              <component :is="entry.icon" class="size-4" />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>{{ entry.title }}</ItemTitle>
+              <ItemDescription>{{ entry.description }}</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <span class="text-xs text-muted-foreground">{{ entry.time }}</span>
+            </ItemActions>
+          </Item>
+        </CardContent>
+      </Card>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Database, Layers3, ShieldCheck } from '@lucide/vue'
+import type { ChartConfig } from '@/components/ui/chart'
+import { VisAxis, VisGroupedBar, VisXYContainer } from '@unovis/vue'
+import { ArrowDownRight, ArrowUpRight, GitFork, ShieldCheck, Sparkles, Workflow } from '@lucide/vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardDescription, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  ChartContainer,
+  ChartCrosshair,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  componentToString,
+} from '@/components/ui/chart'
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/ui/item'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
-const cards = [
-  {
-    title: 'Backend-integrated',
-    description: 'Generated routes and controllers give the frontend a server-owned foundation from the start.',
-    icon: Database,
-  },
-  {
-    title: 'Auth-ready',
-    description: 'Sign-in, session bootstrap, password reset, and account surfaces can be connected without rebuilding the shell.',
-    icon: ShieldCheck,
-  },
-  {
-    title: 'Composable UI foundation',
-    description: 'The copied shadcn-vue components are local source, so your team can evolve them as product code.',
-    icon: Layers3,
-  },
+const metrics = [
+  { label: 'Requests today', value: '18.4k', change: '12% vs last week', trend: 'up' as const },
+  { label: 'Median latency', value: '84ms', change: '9ms faster', trend: 'down' as const },
+  { label: 'Failed jobs', value: '12', change: 'Down from 31', trend: 'down' as const },
+  { label: 'Active sessions', value: '327', change: '4% vs yesterday', trend: 'up' as const },
 ]
+
+const chartData = [
+  { date: new Date('2026-03-01'), requests: 12400, errors: 320 },
+  { date: new Date('2026-04-01'), requests: 15200, errors: 280 },
+  { date: new Date('2026-05-01'), requests: 14100, errors: 410 },
+  { date: new Date('2026-06-01'), requests: 17600, errors: 240 },
+  { date: new Date('2026-07-01'), requests: 16800, errors: 190 },
+  { date: new Date('2026-08-01'), requests: 18400, errors: 120 },
+]
+
+type ChartDatum = typeof chartData[number]
+
+const chartConfig = {
+  requests: { label: 'Requests', color: 'var(--chart-1)' },
+  errors: { label: 'Errors', color: 'var(--chart-2)' },
+} satisfies ChartConfig
+
+const crosshairTemplate = componentToString(chartConfig, ChartTooltipContent, {
+  labelFormatter(d: number) {
+    return new Date(d).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  },
+})
+
+const resources = [
+  { name: 'Dashboard shell', status: 'Ready', variant: 'default' as const, owner: 'Frontend', updated: 'Just now' },
+  { name: 'Auth screens', status: 'Draft', variant: 'secondary' as const, owner: 'Platform', updated: '2h ago' },
+  { name: 'Components gallery', status: 'Ready', variant: 'default' as const, owner: 'Frontend', updated: '15m ago' },
+  { name: 'Settings views', status: 'Draft', variant: 'secondary' as const, owner: 'Platform', updated: '1d ago' },
+  { name: 'Metrics endpoint', status: 'Blocked', variant: 'destructive' as const, owner: 'API', updated: 'Yesterday' },
+]
+
+const activity = [
+  { title: 'Starter rendered', description: 'Vue shell copied into the generated frontend folder.', time: '00:37', icon: Sparkles },
+  { title: 'Session bootstrapped', description: 'The shell resolved the current user from /api/v1/auth/me.', time: '00:37', icon: ShieldCheck },
+  { title: 'Migrations applied', description: 'Schema is current with the generated migration set.', time: '00:38', icon: GitFork },
+  { title: 'Queue worker online', description: 'Background jobs are being consumed.', time: '00:38', icon: Workflow },
+]
+
+function formatMonth(d: number) {
+  return new Date(d).toLocaleDateString('en-US', { month: 'short' })
+}
+
+function formatCompact(d: number) {
+  return Intl.NumberFormat('en-US', { notation: 'compact' }).format(d)
+}
 </script>
