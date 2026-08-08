@@ -162,6 +162,30 @@ func TestDevWatcherChurnIntegration(t *testing.T) {
 	})
 	waitForDevWatcherChurnTaskIdle(t, buildTask)
 	assertDevWatcherChurnBuildCountStable(t, paths.buildLog, 6)
+
+	latest := recovered
+	nextBuild := 7
+	for cycle := range 3 {
+		startsBeforeFailure = countDevWatcherChurnLines(paths.lifecycle, "runtime-start:")
+		writeDevWatcherChurnFile(t, filepath.Join(paths.root, "cmd", "app", "main.go"), "package main\nfunc main() {\n", 0o644)
+		waitForDevWatcherChurnBuildLine(t, paths.buildLog, fmt.Sprintf("build-failed:%d", nextBuild))
+		waitForDevWatcherChurnHeartbeat(t, paths.state, latest)
+		if starts := countDevWatcherChurnLines(paths.lifecycle, "runtime-start:"); starts != startsBeforeFailure {
+			t.Fatalf("repeated failed build %d restarted runtime: starts=%d, want %d", cycle+1, starts, startsBeforeFailure)
+		}
+		nextBuild++
+
+		version := fmt.Sprintf("recovered-%d", cycle+1)
+		mustWriteAdditionalStressSource(t, paths.root, version, cycle%2 == 0)
+		waitForDevWatcherChurnBuildLine(t, paths.buildLog, fmt.Sprintf("build-success:%d", nextBuild))
+		previousPID := latest.pid
+		latest = waitForDevWatcherChurnState(t, paths.state, func(state devWatcherChurnState) bool {
+			return state.version == version && state.pid != previousPID
+		})
+		waitForDevWatcherChurnTaskIdle(t, buildTask)
+		assertDevWatcherChurnBuildCountStable(t, paths.buildLog, nextBuild)
+		nextBuild++
+	}
 	assertDevWatcherChurnLifecycleBounds(t, paths.lifecycle)
 	assertNoDevWatcherChurnExit(t, controller)
 
@@ -170,7 +194,7 @@ func TestDevWatcherChurnIntegration(t *testing.T) {
 	if err := transcript.Close(); err != nil {
 		t.Fatalf("close watcher transcript: %v", err)
 	}
-	assertDevWatcherChurnProcessesStopped(t, paths.lifecycle, recovered)
+	assertDevWatcherChurnProcessesStopped(t, paths.lifecycle, latest)
 	assertDevWatcherChurnTranscript(t, paths.transcript)
 }
 
@@ -441,8 +465,8 @@ func assertDevWatcherChurnBuildCountStable(t *testing.T, path string, expected i
 func assertDevWatcherChurnLifecycleBounds(t *testing.T, path string) {
 	t.Helper()
 	starts := countDevWatcherChurnLines(path, "runtime-start:")
-	if starts < 4 || starts > 5 {
-		t.Fatalf("runtime starts=%d, want 4..5\n%s", starts, readDevWatcherChurnFile(path))
+	if starts < 7 || starts > 8 {
+		t.Fatalf("runtime starts=%d, want 7..8\n%s", starts, readDevWatcherChurnFile(path))
 	}
 }
 
