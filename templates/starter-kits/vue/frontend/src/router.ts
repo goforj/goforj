@@ -16,6 +16,7 @@ const SettingsLayoutView = () => import('@/views/settings/SettingsLayoutView.vue
 const SettingsProfileView = () => import('@/views/settings/SettingsProfileView.vue')
 const SettingsPasswordView = () => import('@/views/settings/SettingsPasswordView.vue')
 const SettingsAppearanceView = () => import('@/views/settings/SettingsAppearanceView.vue')
+const NotFoundView = () => import('@/views/NotFoundView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -49,6 +50,7 @@ const router = createRouter({
         { path: 'appearance', name: 'settings-appearance', component: SettingsAppearanceView, meta: { title: 'Appearance settings' } },
       ],
     },
+    { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: 'Page not found' } },
   ],
 })
 
