@@ -13,9 +13,71 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/launcher"
 )
+
+type cliConsoleTestWriter struct {
+	bytes.Buffer
+}
+
+// Fd exposes a synthetic descriptor for deterministic terminal capability checks.
+func (*cliConsoleTestWriter) Fd() uintptr {
+	return 91
+}
+
+// TestConfigureCLIConsoleEnablesTerminalOwnedLoaderProgress verifies dev bootstrap loaders reach supporting terminal chrome.
+func TestConfigureCLIConsoleEnablesTerminalOwnedLoaderProgress(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+
+	for _, test := range []struct {
+		name     string
+		terminal bool
+		wantOSC  bool
+	}{
+		{name: "supporting terminal", terminal: true, wantOSC: true},
+		{name: "redirected output", wantOSC: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := &cliConsoleTestWriter{}
+			animations := false
+			unicode := false
+			configureCLIConsole(console.Config{
+				Stdout:            output,
+				Stderr:            output,
+				AnimationsEnabled: &animations,
+				UnicodeEnabled:    &unicode,
+				IsTerminal:        func(int) bool { return test.terminal },
+			})
+			loader := console.NewLoader("Building app")
+			if err := loader.Start(); err != nil {
+				t.Fatalf("start loader: %v", err)
+			}
+			loader.Success("App ready")
+
+			hasOSC := strings.Contains(output.String(), "\x1b]9;4;")
+			if hasOSC != test.wantOSC {
+				t.Fatalf("terminal progress present = %t, want %t: %q", hasOSC, test.wantOSC, output.String())
+			}
+			if test.wantOSC {
+				for _, sequence := range []string{"\x1b]9;4;3;0\x07", "\x1b]9;4;0;0\x07"} {
+					if !strings.Contains(output.String(), sequence) {
+						t.Fatalf("loader output omitted terminal lifecycle sequence %q: %q", sequence, output.String())
+					}
+				}
+			}
+			for _, expected := range []string{"Building app", "App ready"} {
+				if !strings.Contains(output.String(), expected) {
+					t.Fatalf("loader output omitted %q: %q", expected, output.String())
+				}
+			}
+		})
+	}
+}
 
 // TestInsertBuildPassthroughBoundaryPreservesGoFlags verifies raw Go syntax reaches the build command intact.
 func TestInsertBuildPassthroughBoundaryPreservesGoFlags(t *testing.T) {

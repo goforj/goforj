@@ -32,6 +32,7 @@ var cliNativeCommandNames []string
 
 // main initializes the framework CLI and delegates unknown App commands when appropriate.
 func main() {
+	configureCLIConsole(console.Config{})
 	if build.HandleProfileTool(os.Args[1:]) {
 		return
 	}
@@ -137,6 +138,13 @@ func main() {
 		}
 		console.Fatalf("%v", err)
 	}
+}
+
+// configureCLIConsole enables terminal-owned progress without changing redirected or unsupported terminal output.
+func configureCLIConsole(config console.Config) {
+	enabled := true
+	config.TerminalProgressEnabled = &enabled
+	console.SetDefault(console.New(config))
 }
 
 // shouldRunFrameworkCommandWithAppEnv keeps framework-owned backup commands in the framework process.

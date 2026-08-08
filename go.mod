@@ -18,7 +18,7 @@ require (
 	github.com/goforj/atlas v0.3.1
 	github.com/goforj/cache v0.4.0
 	github.com/goforj/cache/cachecore v0.4.0
-	github.com/goforj/console v0.1.1
+	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.6.0
 	github.com/goforj/execx v1.1.4

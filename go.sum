@@ -168,8 +168,8 @@ github.com/goforj/cache/cachecore v0.4.0 h1:h5seAIs60q/e+Zbb2DxC0DwGFR4A1jkR2M2f
 github.com/goforj/cache/cachecore v0.4.0/go.mod h1:/f1P+eik1Q59SQsJdOc+PDtJqNMmHu8+WVMQycKlm1M=
 github.com/goforj/cache/cachetest v0.4.0 h1:KXcq2zNEU4MajVf74QeuKpJ+oe3UbrviTjU8uR8SsyY=
 github.com/goforj/cache/cachetest v0.4.0/go.mod h1:S9ATKfQ6p5tklYj4bW98y5LNO/YXzdPBd0P6LTmcjxA=
-github.com/goforj/console v0.1.1 h1:mF75hgiyIOJNuuPBtSZ6jGq2INcqZJVQfS/2zH4h9xA=
-github.com/goforj/console v0.1.1/go.mod h1:mFTOTViwSqhtiJsXw9e51KbOt6XW45yrTvonIbTX+EQ=
+github.com/goforj/console v0.2.0 h1:FC0u/LUBOtxtYDMBd297tleQX3SBP//GcmAwXQAr8C0=
+github.com/goforj/console v0.2.0/go.mod h1:mFTOTViwSqhtiJsXw9e51KbOt6XW45yrTvonIbTX+EQ=
 github.com/goforj/crypt v1.2.0 h1:GlmhdJEx0BX+n5wlUyf5yM0+9vWMqqVn24sSa73tco0=
 github.com/goforj/crypt v1.2.0/go.mod h1:6vGyEnag6Ydk+ZMXUEqd6BPL/PHpYqL3JvLTozoY6no=
 github.com/goforj/env/v2 v2.6.0 h1:mIBLjoa+w8AY6SSd7NEEZRjZ35DoLG7abhxVpVE2evU=
