@@ -46,7 +46,7 @@ import { SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, Sideba
 
 type NavItem = {
   title: string;
-  url: string;
+  url?: string;
   icon: any;
   shortcut?: string;
   action?: "logout" | "command";

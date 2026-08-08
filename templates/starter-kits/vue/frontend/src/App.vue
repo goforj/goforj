@@ -20,15 +20,19 @@
             <Separator orientation="vertical" class="mx-2 data-[orientation=vertical]:h-4" />
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem class="hidden md:block">
-                  <BreadcrumbLink href="#">Application</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator class="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{{ pageTitle }}</BreadcrumbPage>
-                </BreadcrumbItem>
+                <template v-for="(crumb, index) in breadcrumbs" :key="crumb.url ?? crumb.title">
+                  <BreadcrumbItem :class="index < breadcrumbs.length - 1 ? 'hidden md:block' : undefined">
+                    <BreadcrumbLink v-if="crumb.url" as-child>
+                      <RouterLink :to="crumb.url">{{ crumb.title }}</RouterLink>
+                    </BreadcrumbLink>
+                    <BreadcrumbPage v-else>{{ crumb.title }}</BreadcrumbPage>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator v-if="index < breadcrumbs.length - 1" class="hidden md:block" />
+                </template>
               </BreadcrumbList>
             </Breadcrumb>
+
+            <ThemeToggle class="ml-auto" />
           </div>
         </header>
 
@@ -53,6 +57,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import CommandMenu from './components/CommandMenu.vue'
 import { authState, loadCurrentUser, logout } from './lib/auth'
+import { findAppNavItem } from './lib/navigation'
 import { applyTheme, themePreference } from './lib/theme'
 import { toast } from 'vue-sonner'
 import {
@@ -66,12 +71,29 @@ import {
 import { Separator } from './components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import ThemeToggle from './components/ThemeToggle.vue'
 
 const route = useRoute()
 const router = useRouter()
 const isPublicShell = computed(() => Boolean(route.meta.publicShell))
 const showLoginLayout = computed(() => !routeReady.value || isPublicShell.value)
 const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
+
+// Build the trail from the nav definition so a section and its child page read
+// as "Components / Forms" rather than one flattened "Components Forms" label.
+const breadcrumbs = computed<Array<{ title: string, url?: string }>>(() => {
+  const section = findAppNavItem(route.path)
+  if (!section) {
+    return [{ title: pageTitle.value }]
+  }
+
+  const child = section.items?.find(item => route.path.startsWith(item.url))
+  if (child) {
+    return [{ title: section.title, url: section.url }, { title: child.title }]
+  }
+
+  return [{ title: section.title }]
+})
 const commandOpen = ref(false)
 const routeReady = ref(false)
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null
@@ -79,12 +101,17 @@ let focusHandler: (() => void) | null = null
 let visibilityHandler: (() => void) | null = null
 let sessionRecheckInFlight: Promise<void> | null = null
 
+// Null while the session is still resolving. NavUser renders a skeleton for
+// this rather than a row that reads as a user named "Signed out".
 const sidebarUser = computed(() => {
   const user = authState.user
+  if (!user) {
+    return null
+  }
   return {
-    name: user?.display_name || user?.username || 'Signed out',
-    email: user?.email || 'No active session',
-    avatar: user?.avatar_url || '',
+    name: user.display_name || user.username,
+    email: user.email,
+    avatar: user.avatar_url || '',
   }
 })
 

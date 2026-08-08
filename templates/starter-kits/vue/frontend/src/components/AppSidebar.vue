@@ -2,12 +2,13 @@
 import type { SidebarProps } from './ui/sidebar'
 import { computed } from 'vue'
 import { BookOpen, Command, GitFork } from '@lucide/vue'
-import TeamSwitcher from './TeamSwitcher.vue'
+import AppBrand from './AppBrand.vue'
 import NavDocuments from './NavDocuments.vue'
 import NavMain from './NavMain.vue'
 import NavSecondary from './NavSecondary.vue'
 import NavUser from './NavUser.vue'
 import goforjLogo from '../assets/goforj-logo.png'
+import { appName, resourceLinks } from '@/lib/app'
 import { appNavMain } from '@/lib/navigation'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from './ui/sidebar'
 
@@ -16,7 +17,7 @@ const props = withDefaults(defineProps<SidebarProps & {
     name: string
     email: string
     avatar?: string
-  }
+  } | null
 }>(), {
   collapsible: 'icon',
 })
@@ -28,18 +29,22 @@ const sidebarProps = computed<SidebarProps>(() => ({
   class: props.class,
 }))
 
-const navDocuments = [
-  { title: 'Repository', url: 'https://github.com/goforj/goforj', icon: GitFork },
-  { title: 'Documentation', url: 'https://goforj.dev', icon: BookOpen },
-]
+const documentIcons = [GitFork, BookOpen]
+const navDocuments = resourceLinks.map((link, index) => ({ ...link, icon: documentIcons[index] ?? BookOpen }))
+
+// macOS reports the Command key as metaKey; App.vue accepts either.
+const isApple = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
 
 const navSecondary = [
-  { title: 'Command Menu', url: '#', icon: Command, action: 'command' as const, shortcut: 'Ctrl + K' },
+  {
+    title: 'Command Menu',
+    icon: Command,
+    action: 'command' as const,
+    shortcut: isApple ? '⌘ K' : 'Ctrl + K',
+  },
 ]
 
-const teams = [
-  { name: 'GoForj Starter Kit', logoSrc: goforjLogo, logoCollapsedSrc: goforjLogo, plan: 'GoForj Starter Kit' },
-]
+const brand = { name: appName, logoSrc: goforjLogo, logoCollapsedSrc: goforjLogo }
 
 defineEmits<{
   (event: 'logout'): void
@@ -50,7 +55,7 @@ defineEmits<{
 <template>
   <Sidebar v-bind="sidebarProps">
     <SidebarHeader>
-      <TeamSwitcher :teams="teams" />
+      <AppBrand v-bind="brand" />
     </SidebarHeader>
     <SidebarContent>
       <NavMain :items="appNavMain" />

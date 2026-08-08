@@ -17,6 +17,38 @@
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Collapsible
+          v-else-if="item.items?.length"
+          :open="isOpen(item)"
+          @update:open="(value) => toggle(item, value)"
+        >
+          <div class="flex items-center">
+            <SidebarMenuButton as-child :is-active="isRouteActive(item.url)" :tooltip="item.title" class="flex-1">
+              <RouterLink :to="item.url">
+                <component :is="item.icon" v-if="item.icon" />
+                <span>{{ item.title }}</span>
+              </RouterLink>
+            </SidebarMenuButton>
+            <CollapsibleTrigger as-child>
+              <SidebarMenuAction :aria-label="`Toggle ${item.title}`">
+                <ChevronRight class="transition-transform duration-200" :class="isOpen(item) && 'rotate-90'" />
+              </SidebarMenuAction>
+            </CollapsibleTrigger>
+          </div>
+
+          <CollapsibleContent>
+            <SidebarMenuSub>
+              <SidebarMenuSubItem v-for="child in item.items" :key="child.url">
+                <SidebarMenuSubButton as-child :is-active="isRouteActive(child.url)">
+                  <RouterLink :to="child.url">
+                    <span>{{ child.title }}</span>
+                  </RouterLink>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </Collapsible>
+
         <SidebarMenuButton v-else as-child :is-active="isRouteActive(item.url)" :tooltip="item.title">
           <RouterLink :to="item.url">
             <component :is="item.icon" v-if="item.icon" />
@@ -24,15 +56,6 @@
           </RouterLink>
         </SidebarMenuButton>
 
-        <SidebarMenuSub v-if="item.items?.length && isRouteActive(item.url)">
-          <SidebarMenuSubItem v-for="child in item.items" :key="child.url">
-            <SidebarMenuSubButton as-child :is-active="isRouteActive(child.url)">
-              <RouterLink :to="child.url">
-                <span>{{ child.title }}</span>
-              </RouterLink>
-            </SidebarMenuSubButton>
-          </SidebarMenuSubItem>
-        </SidebarMenuSub>
       </SidebarMenuItem>
     </SidebarMenu>
   </SidebarGroup>
@@ -41,6 +64,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import { ChevronRight } from "@lucide/vue";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,6 +77,7 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -84,6 +110,16 @@ onMounted(async () => {
   await router.isReady();
   routerReady.value = true;
 });
+
+// Sections start open when you are inside them, and remember an explicit
+// toggle for the rest of the session.
+const manuallyToggled = ref<Record<string, boolean>>({});
+
+const isOpen = (item: NavItem) => manuallyToggled.value[item.url] ?? isRouteActive(item.url);
+
+const toggle = (item: NavItem, value: boolean) => {
+  manuallyToggled.value = { ...manuallyToggled.value, [item.url]: value };
+};
 
 const isRouteActive = (url: string) => {
   if (!routerReady.value) {
