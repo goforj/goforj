@@ -141,7 +141,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "launch.go.tmpl"): {
 			`type LaunchConfig struct {`,
 			`func Launch(config LaunchConfig)`,
-			`func runLaunch(args []string, config LaunchConfig) error`,
+			`func runLaunch(args []string, config LaunchConfig, loadEnv func() error, configureTimezone func() error) error`,
 			`args = EffectiveLaunchArgs(args, config.HasRuntime)`,
 			`ApplyLaunchApp(config.AppName)`,
 			`DispatchPrebootCommand(args, config.RootCommand)`,
@@ -154,7 +154,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func TestRunLaunchPreservesExplicitArguments(`,
 			`func TestRunLaunchReturnsAppErrors(`,
 			`func TestRunLaunchStopsAfterPrebootHelp(`,
-			`func TestRunLaunchAddsTimezoneContext(`,
+			`func TestRunLaunchOrdersSetupBeforeTheApp(`,
+			`func TestRunLaunchStopsAfterSetupFailures(`,
 		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutTerminalWidth() int`,
