@@ -2052,7 +2052,6 @@ func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
 			}
 			command := exec.Command("go", "build", "-o", binary, "./cmd/app")
 			command.Dir = stepRoot
-			command.Env = append(os.Environ(), "GOCACHE=/tmp/gocache", "GOMODCACHE=/tmp/gomodcache")
 			output, err := command.CombinedOutput()
 			if err != nil {
 				return "", fmt.Errorf("go build: %w\n%s", err, output)
@@ -2061,8 +2060,11 @@ func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
 		}}, build.RunOptions{SkipPreparation: true, SkipWire: true})
 		return result
 	})
-	if len(results) != 1 || results[0].err != nil {
-		t.Fatalf("coordinated embedded-SPA build = %#v", results)
+	if len(results) != 1 {
+		t.Fatalf("coordinated embedded-SPA build results = %#v, want one", results)
+	}
+	if results[0].err != nil {
+		t.Fatalf("coordinated embedded-SPA build error = %v; results = %#v", results[0].err, results)
 	}
 	for _, path := range []string{
 		filepath.Join(root, "bin", "app"),
