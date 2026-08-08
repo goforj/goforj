@@ -1,228 +1,230 @@
 <template>
   <section class="grid gap-6">
-    <Card class="border-border/60">
-      <CardHeader>
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge>Components</Badge>
-          <Badge variant="outline">Navigation</Badge>
-        </div>
-        <CardTitle class="text-3xl">Navigation and layout patterns</CardTitle>
-        <CardDescription class="max-w-3xl">
-          Menus, action bars, resizable panes, and scroll surfaces shown the way they appear in product UI rather than a flat component catalog.
-        </CardDescription>
-      </CardHeader>
-    </Card>
+    <PageHeader
+      eyebrow="Components"
+      section="Navigation"
+      title="Navigation and layout patterns"
+      description="Menus, action bars, resizable panes, and scroll surfaces shown the way they appear in product UI rather than a flat component catalog."
+    />
 
-    <div class="grid gap-4 xl:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Toolbar and action clusters</CardTitle>
-          <CardDescription>Action bars, pagination controls, and utility toggles are easier to evaluate when they are grouped the way a product would use them.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
+    <Specimen
+      name="ButtonGroup"
+      description="Joins related buttons into a single segmented control. Use for toolbars, pagination, and split actions."
+      :also="['Button']"
+    >
+      <ShowcaseRow label="Record toolbar">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <ButtonGroup>
+            <Button variant="outline" size="icon" aria-label="Go back">
+              <ArrowLeft class="size-4" />
+            </Button>
+          </ButtonGroup>
+
+          <div class="flex flex-wrap items-center gap-3">
             <ButtonGroup>
-              <Button variant="outline" size="icon" aria-label="Go back">
+              <Button variant="outline" size="sm">Archive</Button>
+              <Button variant="outline" size="sm">Report</Button>
+            </ButtonGroup>
+
+            <ButtonGroup>
+              <Button variant="outline" size="sm">Snooze</Button>
+              <Button variant="outline" size="sm" class="px-2.5" aria-label="More options">
+                <Ellipsis class="size-4" />
+              </Button>
+            </ButtonGroup>
+          </div>
+        </div>
+      </ShowcaseRow>
+
+      <ShowcaseRow label="Pagination and split actions">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <ButtonGroup>
+            <Button variant="outline" size="sm">1</Button>
+            <Button variant="outline" size="sm">2</Button>
+            <Button variant="outline" size="sm">3</Button>
+          </ButtonGroup>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <ButtonGroup>
+              <Button variant="outline" size="sm" class="px-2.5" aria-label="Previous page">
                 <ArrowLeft class="size-4" />
+              </Button>
+              <Button variant="outline" size="sm" class="px-2.5" aria-label="Next page">
+                <ArrowRight class="size-4" />
               </Button>
             </ButtonGroup>
 
-            <div class="flex flex-wrap items-center gap-3">
-              <ButtonGroup>
-                <Button variant="outline" size="sm">Archive</Button>
-                <Button variant="outline" size="sm">Report</Button>
-              </ButtonGroup>
-
-              <ButtonGroup>
-                <Button variant="outline" size="sm">Snooze</Button>
-                <Button variant="outline" size="sm" class="px-2.5" aria-label="More options">
-                  <Ellipsis class="size-4" />
-                </Button>
-              </ButtonGroup>
-            </div>
-          </div>
-
-          <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
             <ButtonGroup>
-              <Button variant="outline" size="sm">1</Button>
-              <Button variant="outline" size="sm">2</Button>
-              <Button variant="outline" size="sm">3</Button>
+              <Button variant="outline" size="sm">
+                <Bot class="size-4" />
+                Copilot
+              </Button>
+              <Button variant="outline" size="sm" class="px-2.5" aria-label="Copilot options">
+                <ChevronDown class="size-4" />
+              </Button>
             </ButtonGroup>
-
-            <div class="flex flex-wrap items-center gap-3">
-              <ButtonGroup>
-                <Button variant="outline" size="sm" class="px-2.5" aria-label="Previous page">
-                  <ArrowLeft class="size-4" />
-                </Button>
-                <Button variant="outline" size="sm" class="px-2.5" aria-label="Next page">
-                  <ArrowRight class="size-4" />
-                </Button>
-              </ButtonGroup>
-
-              <ButtonGroup>
-                <Button variant="outline" size="sm">
-                  <Bot class="size-4" />
-                  Copilot
-                </Button>
-                <Button variant="outline" size="sm" class="px-2.5" aria-label="Copilot options">
-                  <ChevronDown class="size-4" />
-                </Button>
-              </ButtonGroup>
-            </div>
           </div>
+        </div>
+      </ShowcaseRow>
 
-          <label class="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/8 px-4 py-3">
-            <Checkbox v-model="agreedToTerms" />
-            <span class="text-sm font-medium">I agree to the terms and conditions</span>
-          </label>
-        </CardContent>
-      </Card>
+      <label class="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3">
+        <Checkbox v-model="agreedToTerms" />
+        <span class="text-sm font-medium">I agree to the terms and conditions</span>
+      </label>
+    </Specimen>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Menus and contextual actions</CardTitle>
-          <CardDescription>Dropdowns, context menus, and disclosures should feel like product tools, not isolated demos.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="flex flex-wrap gap-3">
-            <DropdownMenu>
-              <DropdownMenuTrigger as-child>
-                <Button variant="outline">
-                  Project actions
-                  <ChevronsUpDown class="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent class="w-64">
-                <DropdownMenuLabel>Project</DropdownMenuLabel>
-                <DropdownMenuItem inset>Open dashboard</DropdownMenuItem>
-                <DropdownMenuItem inset>View repository</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuCheckboxItem v-model:checked="showSidebar">Show sidebar</DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem v-model:checked="showHints">Show hints</DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>Track</DropdownMenuLabel>
-                <DropdownMenuRadioGroup v-model="releaseTrack">
-                  <DropdownMenuRadioItem value="stable">Stable</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="beta">Beta</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+    <div class="grid gap-6 xl:grid-cols-2">
+      <Specimen
+        name="DropdownMenu"
+        description="A trigger-anchored menu supporting labels, separators, checkbox items, and radio groups."
+        :also="['Button', 'Popover', 'Calendar']"
+      >
+        <div class="flex flex-wrap gap-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline">
+                Project actions
+                <ChevronsUpDown class="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent class="w-64">
+              <DropdownMenuLabel>Project</DropdownMenuLabel>
+              <DropdownMenuItem inset>Open dashboard</DropdownMenuItem>
+              <DropdownMenuItem inset>View repository</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem v-model:checked="showSidebar">Show sidebar</DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem v-model:checked="showHints">Show hints</DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Track</DropdownMenuLabel>
+              <DropdownMenuRadioGroup v-model="releaseTrack">
+                <DropdownMenuRadioItem value="stable">Stable</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="beta">Beta</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-            <Popover>
-              <PopoverTrigger as-child>
-                <Button variant="outline">
-                  Pick launch date
-                  <CalendarIcon class="size-4" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent class="w-auto p-0">
-                <Calendar />
-              </PopoverContent>
-            </Popover>
-          </div>
+          <Popover>
+            <PopoverTrigger as-child>
+              <Button variant="outline">
+                Pick launch date
+                <CalendarIcon class="size-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent class="w-auto p-0">
+              <Calendar />
+            </PopoverContent>
+          </Popover>
+        </div>
+      </Specimen>
 
-          <ContextMenu>
-            <ContextMenuTrigger class="flex min-h-40 items-center justify-center rounded-xl border border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
-              Right click this deployment surface
-            </ContextMenuTrigger>
-            <ContextMenuContent class="w-60">
-              <ContextMenuLabel>Deployment</ContextMenuLabel>
-              <ContextMenuItem inset>Open logs</ContextMenuItem>
-              <ContextMenuItem inset>Restart worker</ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuCheckboxItem v-model:checked="showHints">Show hints</ContextMenuCheckboxItem>
-              <ContextMenuSeparator />
-              <ContextMenuLabel>Region</ContextMenuLabel>
-              <ContextMenuRadioGroup v-model="nativeRegion">
-                <ContextMenuRadioItem value="iad">US East</ContextMenuRadioItem>
-                <ContextMenuRadioItem value="sfo">US West</ContextMenuRadioItem>
-                <ContextMenuRadioItem value="fra">Europe</ContextMenuRadioItem>
-              </ContextMenuRadioGroup>
-            </ContextMenuContent>
-          </ContextMenu>
+      <Specimen
+        name="ContextMenu"
+        description="The same menu vocabulary, opened by right click on a surface rather than a button."
+      >
+        <ContextMenu>
+          <ContextMenuTrigger class="flex min-h-40 items-center justify-center rounded-lg border border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
+            Right click this deployment surface
+          </ContextMenuTrigger>
+          <ContextMenuContent class="w-60">
+            <ContextMenuLabel>Deployment</ContextMenuLabel>
+            <ContextMenuItem inset>Open logs</ContextMenuItem>
+            <ContextMenuItem inset>Restart worker</ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuCheckboxItem v-model:checked="showHints">Show hints</ContextMenuCheckboxItem>
+            <ContextMenuSeparator />
+            <ContextMenuLabel>Region</ContextMenuLabel>
+            <ContextMenuRadioGroup v-model="nativeRegion">
+              <ContextMenuRadioItem value="iad">US East</ContextMenuRadioItem>
+              <ContextMenuRadioItem value="sfo">US West</ContextMenuRadioItem>
+              <ContextMenuRadioItem value="fra">Europe</ContextMenuRadioItem>
+            </ContextMenuRadioGroup>
+          </ContextMenuContent>
+        </ContextMenu>
+      </Specimen>
 
-          <Collapsible class="rounded-xl border px-4">
-            <div class="flex items-center justify-between py-4">
-              <div>
-                <p class="font-medium">Need a smaller disclosure?</p>
-                <p class="text-sm text-muted-foreground">Use a collapsible block when you need one hidden section rather than a full accordion stack.</p>
-              </div>
-              <CollapsibleTrigger as-child>
-                <Button variant="ghost" size="sm">Toggle</Button>
-              </CollapsibleTrigger>
+      <Specimen
+        name="Collapsible"
+        description="One hidden section. Reach for this instead of an accordion when there is only a single disclosure."
+        :also="['Button']"
+      >
+        <Collapsible class="rounded-lg border px-4">
+          <div class="flex items-center justify-between gap-4 py-4">
+            <div class="grid gap-0.5">
+              <p class="text-sm font-medium leading-none">Need a smaller disclosure?</p>
+              <p class="text-sm text-muted-foreground">Use a collapsible block when you need one hidden section rather than a full accordion stack.</p>
             </div>
-            <CollapsibleContent class="pb-4 text-sm text-muted-foreground">
-              This pattern works well for advanced settings, environment details, or inline help that should stay secondary to the main workflow.
-            </CollapsibleContent>
-          </Collapsible>
+            <CollapsibleTrigger as-child>
+              <Button variant="ghost" size="sm">Toggle</Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent class="pb-4 text-sm text-muted-foreground">
+            This pattern works well for advanced settings, environment details, or inline help that should stay secondary to the main workflow.
+          </CollapsibleContent>
+        </Collapsible>
+      </Specimen>
 
-          <Accordion type="single" collapsible class="rounded-xl border px-4">
-            <AccordionItem value="faq-1">
-              <AccordionTrigger>When should a page keep the examples?</AccordionTrigger>
-              <AccordionContent>
-                Keep only the examples that act as a real scaffold for your team. Delete the rest once you have product-specific replacements.
-              </AccordionContent>
-            </AccordionItem>
-            <AccordionItem value="faq-2">
-              <AccordionTrigger>What about the sidebar family?</AccordionTrigger>
-              <AccordionContent>
-                The generated app shell is already a sidebar example, so this page focuses on the supporting navigation families around it.
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </CardContent>
-      </Card>
-
-      <Card class="xl:col-span-2">
-        <CardHeader>
-          <CardTitle>Scrollable and resizable work surfaces</CardTitle>
-          <CardDescription>Dashboards often need split panes and bounded scroll containers for logs, inspectors, and operational activity.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <ResizablePanelGroup direction="horizontal" class="min-h-[430px] rounded-xl border">
-            <ResizablePanel :default-size="46" :min-size="38" class="p-4">
-              <p class="mb-3 font-medium">Activity feed</p>
-              <ScrollArea class="h-[350px] rounded-lg border">
-                <div class="grid gap-2 p-3">
-                  <Item v-for="entry in activityFeed" :key="entry.title" size="sm">
-                    <ItemMedia variant="icon">
-                      <Activity class="size-4" />
-                    </ItemMedia>
-                    <ItemContent>
-                      <ItemTitle>{{ entry.title }}</ItemTitle>
-                      <ItemDescription>{{ entry.description }}</ItemDescription>
-                    </ItemContent>
-                  </Item>
-                </div>
-              </ScrollArea>
-            </ResizablePanel>
-            <ResizableHandle with-handle />
-            <ResizablePanel :default-size="54" :min-size="34" class="p-4">
-              <p class="mb-3 font-medium">Content carousel</p>
-              <Carousel class="w-full">
-                <CarouselContent>
-                  <CarouselItem v-for="slide in carouselSlides" :key="slide.title" class="md:basis-1/2">
-                    <Card class="h-full">
-                      <CardHeader>
-                        <CardTitle class="text-lg">{{ slide.title }}</CardTitle>
-                        <CardDescription>{{ slide.description }}</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div class="rounded-xl border bg-muted/30 p-6 text-sm text-muted-foreground">
-                          {{ slide.copy }}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </CarouselItem>
-                </CarouselContent>
-                <CarouselPrevious />
-                <CarouselNext />
-              </Carousel>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </CardContent>
-      </Card>
+      <Specimen
+        name="Accordion"
+        description="A stack of disclosures where opening one can close the others."
+      >
+        <Accordion type="single" collapsible class="rounded-lg border px-4">
+          <AccordionItem value="faq-1">
+            <AccordionTrigger>When should a page keep the examples?</AccordionTrigger>
+            <AccordionContent>
+              Keep only the examples that act as a real scaffold for your team. Delete the rest once you have product-specific replacements.
+            </AccordionContent>
+          </AccordionItem>
+          <AccordionItem value="faq-2">
+            <AccordionTrigger>What about the sidebar family?</AccordionTrigger>
+            <AccordionContent>
+              The generated app shell is already a sidebar example, so this page focuses on the supporting navigation families around it.
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </Specimen>
     </div>
+
+    <Specimen
+      name="ResizablePanelGroup"
+      description="Draggable split panes for dashboards, inspectors, and log surfaces."
+      :also="['ScrollArea', 'Carousel', 'Item']"
+    >
+      <ResizablePanelGroup direction="horizontal" class="min-h-[430px] rounded-lg border">
+        <ResizablePanel :default-size="46" :min-size="38" class="p-4">
+          <p class="mb-3 text-sm font-medium leading-none">Activity feed</p>
+          <ScrollArea class="h-[350px] rounded-lg border">
+            <div class="grid gap-2 p-3">
+              <Item v-for="entry in activityFeed" :key="entry.title" size="sm">
+                <ItemMedia variant="icon">
+                  <Activity class="size-4" />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{{ entry.title }}</ItemTitle>
+                  <ItemDescription>{{ entry.description }}</ItemDescription>
+                </ItemContent>
+              </Item>
+            </div>
+          </ScrollArea>
+        </ResizablePanel>
+        <ResizableHandle with-handle />
+        <ResizablePanel :default-size="54" :min-size="34" class="p-4">
+          <p class="mb-3 text-sm font-medium leading-none">Content carousel</p>
+          <Carousel class="w-full">
+            <CarouselContent>
+              <CarouselItem v-for="slide in carouselSlides" :key="slide.title" class="md:basis-1/2">
+                <div class="grid h-full gap-2 rounded-lg bg-muted/40 p-4">
+                  <p class="font-medium">{{ slide.title }}</p>
+                  <p class="text-sm text-muted-foreground">{{ slide.description }}</p>
+                  <p class="mt-1 text-sm text-muted-foreground">{{ slide.copy }}</p>
+                </div>
+              </CarouselItem>
+            </CarouselContent>
+            <CarouselPrevious />
+            <CarouselNext />
+          </Carousel>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </Specimen>
   </section>
 </template>
 
@@ -230,11 +232,10 @@
 import { ref } from 'vue'
 import { Activity, ArrowLeft, ArrowRight, Bot, Calendar as CalendarIcon, ChevronDown, ChevronsUpDown, Ellipsis } from '@lucide/vue'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
-import { Badge } from '@/components/ui/badge'
+import { PageHeader, ShowcaseRow, Specimen } from '@/components/showcase'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { Calendar } from '@/components/ui/calendar'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
