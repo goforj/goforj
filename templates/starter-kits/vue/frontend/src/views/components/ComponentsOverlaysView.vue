@@ -246,7 +246,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { PageHeader, Specimen } from '@/components/showcase'
+import PageHeader from '@/components/PageHeader.vue'
+import { Specimen } from '@/components/showcase'
 import { Button } from '@/components/ui/button'
 import {
   CommandDialog,
