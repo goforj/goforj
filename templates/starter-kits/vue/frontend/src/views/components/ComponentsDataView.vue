@@ -179,7 +179,7 @@
       </div>
     </Specimen>
 
-    <div class="grid gap-6 xl:grid-cols-2">
+    <div class="grid items-start gap-6 xl:grid-cols-2">
       <Specimen
         name="Calendar"
         description="Single date selection for launch planning and reporting windows."

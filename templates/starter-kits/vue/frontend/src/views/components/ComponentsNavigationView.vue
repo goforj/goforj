@@ -73,7 +73,7 @@
       </label>
     </Specimen>
 
-    <div class="grid gap-6 xl:grid-cols-2">
+    <div class="grid gap-6">
       <Specimen
         name="DropdownMenu"
         description="A trigger-anchored menu supporting labels, separators, checkbox items, and radio groups."
@@ -189,10 +189,10 @@
       description="Draggable split panes for dashboards, inspectors, and log surfaces."
       :also="['ScrollArea', 'Carousel', 'Item']"
     >
-      <ResizablePanelGroup direction="horizontal" class="min-h-[430px] rounded-lg border">
+      <ResizablePanelGroup direction="horizontal" class="min-h-80 rounded-lg border">
         <ResizablePanel :default-size="46" :min-size="38" class="p-4">
           <p class="mb-3 text-sm font-medium leading-none">Activity feed</p>
-          <ScrollArea class="h-[350px] rounded-lg border">
+          <ScrollArea class="h-56 rounded-lg border">
             <div class="grid gap-2 p-3">
               <Item v-for="entry in activityFeed" :key="entry.title" size="sm">
                 <ItemMedia variant="icon">
