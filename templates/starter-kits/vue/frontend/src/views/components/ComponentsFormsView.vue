@@ -1,28 +1,19 @@
 <template>
   <section class="grid gap-6">
-    <Card class="border-border/60">
-      <CardHeader>
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge>Components</Badge>
-          <Badge variant="outline">Forms</Badge>
-        </div>
-        <CardTitle class="text-3xl">Form and input patterns</CardTitle>
-        <CardDescription class="max-w-3xl">
-          Validation, selection, token entry, and staged setup examples arranged the way account settings, onboarding, and admin forms usually need them.
-        </CardDescription>
-      </CardHeader>
-    </Card>
+    <PageHeader
+      eyebrow="Components"
+      section="Forms"
+      title="Form and input patterns"
+      description="Validation, selection, token entry, and staged setup examples arranged the way account settings, onboarding, and admin forms usually need them."
+    />
 
-    <div class="grid gap-4 xl:grid-cols-2">
-      <Card class="xl:col-span-2">
-        <CardHeader>
-          <CardTitle>Checkout and billing fields</CardTitle>
-          <CardDescription>
-            Lead with a real transactional flow: billing identity, payment details, billing address, and order notes in one surface.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <form class="grid gap-5" @submit.prevent>
+    <div class="grid gap-6">
+      <Showcase
+        title="Checkout and billing fields"
+        description="Lead with a real transactional flow: billing identity, payment details, billing address, and order notes in one surface."
+        content-class="xl:grid-cols-[1.15fr_0.85fr]"
+      >
+          <form class="grid content-start gap-6" @submit.prevent>
             <FieldSet>
               <FieldLegend>Payment Method</FieldLegend>
               <FieldDescription>All transactions are secure and encrypted.</FieldDescription>
@@ -128,10 +119,9 @@
             </div>
           </form>
 
-          <div class="grid gap-4">
-            <div class="rounded-xl border p-4">
-              <p class="text-sm font-medium text-muted-foreground">Order summary</p>
-              <div class="mt-4 grid gap-3">
+          <div class="grid content-start gap-4">
+            <ShowcaseRow label="Order summary">
+              <div class="grid gap-3">
                 <div class="flex items-center justify-between text-sm">
                   <span>Starter Kit License</span>
                   <span>$299</span>
@@ -151,11 +141,10 @@
                   </div>
                 </div>
               </div>
-            </div>
+            </ShowcaseRow>
 
-            <div class="rounded-xl border p-4">
-              <p class="font-medium">Purchase controls</p>
-              <div class="mt-4 grid gap-4">
+            <ShowcaseRow label="Purchase controls" :components="['ToggleGroup', 'NumberField', 'Checkbox']">
+              <div class="grid gap-4">
                 <Field orientation="responsive">
                   <FieldLabel>Billing cadence</FieldLabel>
                   <FieldContent>
@@ -190,23 +179,21 @@
                   <span class="text-sm">Email me receipts and renewal reminders</span>
                 </label>
               </div>
-            </div>
+            </ShowcaseRow>
           </div>
-        </CardContent>
-      </Card>
+      </Showcase>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Account and project settings</CardTitle>
-          <CardDescription>
-            A more realistic settings editor with validation, profile ownership, access controls, and a release summary.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-6">
-          <form class="grid gap-5" @submit.prevent="submitForm">
-            <div class="flex items-start justify-between gap-4 rounded-xl border p-4">
+      <Showcase
+        title="Account and project settings"
+        description="A more realistic settings editor with validation, profile ownership, access controls, and a release summary."
+      >
+          <form class="grid content-start gap-6" @submit.prevent="submitForm">
+            <ShowcaseRow class="grid-flow-col grid-cols-[1fr_auto] items-start">
               <div class="grid gap-1">
-                <p class="font-medium">Project status</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="text-sm font-medium leading-none">Project status</p>
+                  <ComponentTag :names="['Switch']" />
+                </div>
                 <p class="max-w-xl text-sm text-muted-foreground">
                   Use a dedicated settings row for simple on or off preferences instead of forcing a tiny switch into a descriptive field grid.
                 </p>
@@ -215,7 +202,7 @@
                 <span class="text-sm text-muted-foreground">{{ notificationsEnabled ? 'Enabled' : 'Disabled' }}</span>
                 <Switch v-model="notificationsEnabled" />
               </div>
-            </div>
+            </ShowcaseRow>
 
             <div class="grid gap-4 md:grid-cols-2">
               <FormField v-slot="{ componentField }" name="name">
@@ -243,7 +230,10 @@
 
             <div class="grid gap-4 md:grid-cols-2">
               <div class="grid gap-2">
-                <Label>API token</Label>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Label>API token</Label>
+                  <ComponentTag :names="['InputGroup']" />
+                </div>
                 <InputGroup>
                   <InputGroupAddon>API</InputGroupAddon>
                   <InputGroupInput value="token_live_4c4c..." />
@@ -252,7 +242,10 @@
               </div>
 
               <div class="grid gap-2">
-                <Label>Starter profile</Label>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Label>Starter profile</Label>
+                  <ComponentTag :names="['Select']" />
+                </div>
                 <Select v-model="starterProfile">
                   <SelectTrigger class="w-full">
                     <SelectValue placeholder="Choose a profile" />
@@ -266,8 +259,7 @@
               </div>
             </div>
 
-            <FieldSet class="grid gap-3 rounded-xl border p-4">
-              <FieldLegend>Release controls</FieldLegend>
+            <ShowcaseRow label="Release controls" :components="['NativeSelect', 'Combobox']">
               <FieldGroup class="grid gap-3">
                 <Field orientation="responsive">
                   <FieldLabel>Environment</FieldLabel>
@@ -313,9 +305,9 @@
                   </Combobox>
                 </Field>
               </FieldGroup>
-            </FieldSet>
+            </ShowcaseRow>
 
-            <div class="grid gap-4 rounded-xl border p-4">
+            <ShowcaseRow label="Release summary" :components="['Textarea', 'Checkbox', 'RadioGroup']">
               <div class="grid gap-2">
                 <Label>Summary</Label>
                 <Textarea v-model="summary" rows="4" placeholder="Describe the product screen you want to build next." />
@@ -342,24 +334,20 @@
                   <span class="text-sm">Managed deploy</span>
                 </label>
               </RadioGroup>
-            </div>
+            </ShowcaseRow>
 
             <div class="flex flex-wrap gap-2">
               <Button type="submit">Save settings</Button>
               <Button type="button" variant="outline" @click="notifyPreview">Preview toast</Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+      </Showcase>
 
-      <Card>
-          <CardHeader>
-            <CardTitle>Input groups and assistant surfaces</CardTitle>
-            <CardDescription>
-              Search, URL, prompt, and handle-entry patterns tend to rely on `input-group` more than plain text inputs.
-            </CardDescription>
-          </CardHeader>
-          <CardContent class="grid gap-5">
+      <Specimen
+        name="InputGroup"
+        description="Wrap an input with leading or trailing addons — icons, prefixes, buttons, or a whole toolbar. Covers search, URL, token, and prompt entry."
+        :also="['Textarea', 'Button', 'Badge']"
+      >
             <div class="grid gap-4 md:grid-cols-2">
               <div class="grid gap-2 md:col-span-2">
                 <Label>Command bar</Label>
@@ -417,14 +405,11 @@
                 </InputGroup>
               </div>
 
-              <div class="grid gap-2 md:col-span-2 rounded-xl border p-4">
-                <div class="grid gap-1">
-                  <p class="font-medium">Assistant handoff</p>
-                  <p class="text-sm text-muted-foreground">
-                    Compose richer prompts with source scope, mode selection, and a named destination before sending.
-                  </p>
-                </div>
-
+              <ShowcaseRow
+                class="md:col-span-2"
+                label="Assistant handoff"
+                description="Compose richer prompts with source scope, mode selection, and a named destination before sending."
+              >
                 <InputGroup class="h-auto">
                   <InputGroupTextarea placeholder="Describe what the assistant should investigate, change, or summarize." class="min-h-28" />
                   <InputGroupAddon align="block-start" class="w-full justify-start gap-2 border-b pb-2">
@@ -442,7 +427,7 @@
                     </Button>
                   </InputGroupAddon>
                 </InputGroup>
-              </div>
+              </ShowcaseRow>
 
               <div class="grid gap-2">
                 <Label>Secure input</Label>
@@ -480,7 +465,7 @@
               <div class="grid gap-2">
                 <Label>Verified handle</Label>
                 <InputGroup>
-                  <InputGroupInput placeholder="@shadcn" />
+                  <InputGroupInput placeholder="@your-handle" />
                   <InputGroupAddon align="inline-end">
                     <div class="flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
                       <Check class="size-3" />
@@ -489,10 +474,10 @@
                 </InputGroup>
               </div>
 
-              <div class="grid gap-2 md:col-span-2 rounded-xl border p-4">
+              <ShowcaseRow class="md:col-span-2">
                 <div class="grid gap-1 md:grid-cols-[1fr_auto] md:items-start">
                   <div class="grid gap-1">
-                    <p class="font-medium">Domain and callback routing</p>
+                    <p class="text-sm font-medium leading-none">Domain and callback routing</p>
                     <p class="text-sm text-muted-foreground">
                       Configuration screens often mix URL prefixes, callback paths, and verification helpers in one block.
                     </p>
@@ -500,7 +485,7 @@
                   <Button variant="outline" size="sm">Validate</Button>
                 </div>
 
-                <div class="mt-4 grid gap-3">
+                <div class="grid gap-3">
                   <InputGroup>
                     <InputGroupAddon>
                       <InputGroupText>https://</InputGroupText>
@@ -523,97 +508,81 @@
                     </InputGroupAddon>
                   </InputGroup>
                 </div>
-              </div>
+              </ShowcaseRow>
             </div>
-          </CardContent>
-      </Card>
+      </Specimen>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Identity and access verification</CardTitle>
-          <CardDescription>
-            OTP, backup PINs, invite tags, and account-security prompts belong together when the flow is about trust and activation.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="grid gap-3">
-            <Item variant="outline">
-              <ItemContent>
-                <ItemTitle>Two-factor authentication</ItemTitle>
-                <ItemDescription>Verify via email or phone number.</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Button size="sm">Enable</Button>
-              </ItemActions>
-            </Item>
+      <Specimen
+        name="Item"
+        description="A row with media, content, and actions. Use for settings lists, device lists, and account-security prompts."
+      >
+          <Item variant="outline">
+            <ItemContent>
+              <ItemTitle>Two-factor authentication</ItemTitle>
+              <ItemDescription>Verify via email or phone number.</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Button size="sm">Enable</Button>
+            </ItemActions>
+          </Item>
 
-            <Item as="a" href="#" variant="outline" size="sm">
-              <ItemMedia>
-                <BadgeCheck class="size-5" />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>Your profile has been verified.</ItemTitle>
-              </ItemContent>
-              <ItemActions>
-                <ChevronRight class="size-4" />
-              </ItemActions>
-            </Item>
-          </div>
+          <Item as="a" href="#" variant="outline" size="sm">
+            <ItemMedia>
+              <BadgeCheck class="size-5" />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>Your profile has been verified.</ItemTitle>
+            </ItemContent>
+            <ItemActions>
+              <ChevronRight class="size-4" />
+            </ItemActions>
+          </Item>
+      </Specimen>
 
-          <div class="grid gap-4 rounded-xl border p-4">
-            <div class="grid gap-2">
-              <Label>Invite tags</Label>
-              <TagsInput v-model="tags">
-                <TagsInputItem v-for="tag in tags" :key="tag" :value="tag">
-                  <TagsInputItemText />
-                  <TagsInputItemDelete />
-                </TagsInputItem>
-                <TagsInputInput placeholder="Add tag..." />
-              </TagsInput>
-            </div>
+      <div class="grid gap-6 lg:grid-cols-3">
+        <Specimen name="TagsInput" description="Free-form token entry for invites, labels, and filters.">
+          <TagsInput v-model="tags">
+            <TagsInputItem v-for="tag in tags" :key="tag" :value="tag">
+              <TagsInputItemText />
+              <TagsInputItemDelete />
+            </TagsInputItem>
+            <TagsInputInput placeholder="Add tag..." />
+          </TagsInput>
+        </Specimen>
 
-            <div class="grid gap-2">
-              <Label>Email verification</Label>
-              <InputOTP v-model="otpCode" :maxlength="6">
-                <template #default="{ slots }">
-                  <InputOTPGroup>
-                    <InputOTPSlot v-for="(_, index) in slots.slice(0, 3)" :key="index" :index="index" />
-                  </InputOTPGroup>
-                  <InputOTPSeparator />
-                  <InputOTPGroup>
-                    <InputOTPSlot v-for="(_, index) in slots.slice(3, 6)" :key="index + 3" :index="index + 3" />
-                  </InputOTPGroup>
-                </template>
-              </InputOTP>
-            </div>
+        <Specimen name="InputOTP" description="Fixed-length one-time codes with grouped slots.">
+          <InputOTP v-model="otpCode" :maxlength="6">
+            <template #default="{ slots }">
+              <InputOTPGroup>
+                <InputOTPSlot v-for="(_, index) in slots.slice(0, 3)" :key="index" :index="index" />
+              </InputOTPGroup>
+              <InputOTPSeparator />
+              <InputOTPGroup>
+                <InputOTPSlot v-for="(_, index) in slots.slice(3, 6)" :key="index + 3" :index="index + 3" />
+              </InputOTPGroup>
+            </template>
+          </InputOTP>
+        </Specimen>
 
-            <div class="grid gap-2">
-              <Label>Backup PIN</Label>
-              <PinInput v-model="pinCode" class="justify-between">
-                <PinInputGroup class="gap-2">
-                  <PinInputSlot v-for="index in 4" :key="index" :index="index - 1" />
-                </PinInputGroup>
-              </PinInput>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+        <Specimen name="PinInput" description="Short numeric PINs where each digit is its own slot.">
+          <PinInput v-model="pinCode" class="justify-between">
+            <PinInputGroup class="gap-2">
+              <PinInputSlot v-for="index in 4" :key="index" :index="index - 1" />
+            </PinInputGroup>
+          </PinInput>
+        </Specimen>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recovery and session controls</CardTitle>
-          <CardDescription>
-            Keep trusted fallback contacts, recovery routing, and active device actions beside the identity surface instead of burying them inside it.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-5">
-          <div class="rounded-xl border p-4">
-            <div class="grid gap-1">
-              <p class="font-medium">Access recovery</p>
-              <p class="text-sm text-muted-foreground">Security flows usually need trusted fallback contacts and recovery routing.</p>
-            </div>
-
-            <div class="mt-4 grid gap-4">
+      <Showcase
+        title="Recovery and session controls"
+        description="Keep trusted fallback contacts, recovery routing, and active device actions beside the identity surface instead of burying them inside it."
+      >
+          <ShowcaseRow
+            label="Access recovery"
+            description="Security flows usually need trusted fallback contacts and recovery routing."
+            :components="['Input', 'InputGroup', 'RadioGroup']"
+          >
+            <div class="grid gap-4">
               <div class="grid gap-2">
                 <Label>Recovery email</Label>
                 <Input placeholder="security@example.com" />
@@ -646,15 +615,14 @@
                 </RadioGroup>
               </div>
             </div>
-          </div>
+          </ShowcaseRow>
 
-          <div class="rounded-xl border p-4">
-            <div class="grid gap-1">
-              <p class="font-medium">Session and device controls</p>
-              <p class="text-sm text-muted-foreground">Pair switches and device-level actions with account protection surfaces.</p>
-            </div>
-
-            <div class="mt-4 grid gap-3">
+          <ShowcaseRow
+            label="Session and device controls"
+            description="Pair switches and device-level actions with account protection surfaces."
+            :components="['Switch', 'Field', 'Item']"
+          >
+            <div class="grid gap-3">
               <Field orientation="horizontal">
                 <FieldContent>
                   <FieldLabel>Require device approval</FieldLabel>
@@ -685,47 +653,39 @@
                 </ItemActions>
               </Item>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </ShowcaseRow>
+      </Showcase>
 
-      <Card class="xl:col-span-2">
-        <CardHeader>
-          <CardTitle>Environment controls and staged rollout</CardTitle>
-          <CardDescription>
-            Radio cards, quantity controls, segmented selection, and staged setup examples work best when they are tied to an actual launch workflow.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-6 xl:grid-cols-[1fr_0.92fr]">
-          <div class="grid gap-5">
-            <FieldSeparator>Appearance Settings</FieldSeparator>
-
+      <Showcase
+        title="Environment controls and staged rollout"
+        description="Radio cards, quantity controls, segmented selection, and staged setup examples work best when they are tied to an actual launch workflow."
+        content-class="xl:grid-cols-[1fr_0.92fr]"
+      >
+          <div class="grid content-start gap-6">
             <FieldSet>
-              <FieldLegend>Compute Environment</FieldLegend>
-              <FieldDescription>Select the compute environment for your cluster.</FieldDescription>
+              <FieldLegend>Deployment target</FieldLegend>
+              <FieldDescription>Select where this environment should run.</FieldDescription>
               <RadioGroup v-model="computeEnvironment" class="grid gap-2">
-                <label class="flex items-start gap-3 rounded-xl border p-4 transition has-[:checked]:border-primary/30 has-[:checked]:bg-primary/8">
+                <label class="flex items-start gap-3 rounded-lg border p-4 transition has-[:checked]:border-primary/30 has-[:checked]:bg-primary/10">
                   <div class="grid flex-1 gap-1">
-                    <span class="font-medium">Kubernetes</span>
-                    <span class="text-sm text-muted-foreground">Run GPU workloads on a K8s configured cluster. This is the default.</span>
+                    <span class="font-medium">Containers</span>
+                    <span class="text-sm text-muted-foreground">Run the generated app and its services from the local compose stack. This is the default.</span>
                   </div>
                   <RadioGroupItem value="kubernetes" />
                 </label>
-                <label class="flex items-start gap-3 rounded-xl border p-4 transition has-[:checked]:border-primary/30 has-[:checked]:bg-primary/8">
+                <label class="flex items-start gap-3 rounded-lg border p-4 transition has-[:checked]:border-primary/30 has-[:checked]:bg-primary/10">
                   <div class="grid flex-1 gap-1">
-                    <span class="font-medium">Virtual Machine</span>
-                    <span class="text-sm text-muted-foreground">Access a VM configured cluster to run workloads. (Coming soon)</span>
+                    <span class="font-medium">Virtual machine</span>
+                    <span class="text-sm text-muted-foreground">Target a provisioned VM instead of the local container runtime.</span>
                   </div>
                   <RadioGroupItem value="vm" />
                 </label>
               </RadioGroup>
             </FieldSet>
 
-            <FieldSeparator />
-
             <Field orientation="horizontal">
               <FieldContent>
-                <FieldLabel>Number of GPUs</FieldLabel>
+                <FieldLabel>Worker count</FieldLabel>
                 <FieldDescription>You can add more later.</FieldDescription>
               </FieldContent>
               <div class="flex shrink-0 items-center gap-2">
@@ -739,19 +699,17 @@
               </div>
             </Field>
 
-            <FieldSeparator />
-
             <Field orientation="horizontal">
               <FieldContent>
-                <FieldLabel>Wallpaper Tinting</FieldLabel>
-                <FieldDescription>Allow the wallpaper to be tinted.</FieldDescription>
+                <FieldLabel>Run migrations on deploy</FieldLabel>
+                <FieldDescription>Apply pending schema changes as part of each release.</FieldDescription>
               </FieldContent>
               <Switch v-model="wallpaperTinting" />
             </Field>
 
             <FieldSet>
-              <FieldLegend>How did you hear about us?</FieldLegend>
-              <FieldDescription>Select the option that best describes how you heard about us.</FieldDescription>
+              <FieldLegend>Services to provision</FieldLegend>
+              <FieldDescription>Pick the backing services this environment should start with.</FieldDescription>
               <div class="flex flex-wrap gap-2 [--radius:9999px]">
                 <button
                   v-for="option in audienceOptions"
@@ -773,13 +731,12 @@
             </FieldSet>
           </div>
 
-          <div class="grid gap-6">
-            <div class="grid gap-4 rounded-xl border p-4">
-              <div class="grid gap-2">
-                <p class="font-medium">Rollout controls</p>
-                <p class="text-sm text-muted-foreground">Use sliders and segmented controls to tune staged releases and internal launches.</p>
-              </div>
-
+          <div class="grid content-start gap-6">
+            <ShowcaseRow
+              label="Rollout controls"
+              description="Use sliders and segmented controls to tune staged releases and internal launches."
+              :components="['ToggleGroup', 'Slider']"
+            >
               <Field orientation="responsive">
                 <FieldLabel>Release channel</FieldLabel>
                 <FieldContent>
@@ -802,9 +759,9 @@
                   <Slider v-model="density" :max="100" :step="5" />
                 </div>
               </Field>
-            </div>
+            </ShowcaseRow>
 
-            <div class="grid gap-6 rounded-xl border p-4">
+            <ShowcaseRow label="Staged setup" :components="['Stepper', 'Progress', 'Toggle']" class="gap-6">
               <Stepper v-model="activeStep" class="flex-col gap-2">
                 <StepperItem v-for="step in setupSteps" :key="step.step" :step="step.step" class="items-start">
                   <div class="grid w-full gap-2">
@@ -825,7 +782,7 @@
                 </StepperItem>
               </Stepper>
 
-              <div class="grid gap-3 rounded-xl border p-4">
+              <div class="grid gap-3 rounded-lg border bg-background p-4">
                 <div class="flex items-center justify-between text-sm">
                   <span class="text-muted-foreground">Project setup</span>
                   <span class="font-medium">{{ progressValue }}%</span>
@@ -837,10 +794,9 @@
                   <Toggle variant="outline" aria-label="Toggle metrics">Metrics</Toggle>
                 </div>
               </div>
-            </div>
+            </ShowcaseRow>
           </div>
-        </CardContent>
-      </Card>
+      </Showcase>
 
     </div>
   </section>
@@ -853,9 +809,9 @@ import { toTypedSchema } from '@vee-validate/zod'
 import { toast } from 'vue-sonner'
 import { z } from 'zod'
 import { ArrowUp, BadgeCheck, Check, ChevronRight, ChevronsUpDown, CircleCheckBig, Info, Minus, Plus, Search, Star } from '@lucide/vue'
+import { ComponentTag, PageHeader, Showcase, ShowcaseRow, Specimen } from '@/components/showcase'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Combobox,
@@ -907,7 +863,7 @@ const nativeRegion = ref('iad')
 const selectedFramework = ref('Vue')
 const runtimeMode = ref('local')
 const seatCount = ref(8)
-const summary = ref('Use this page as a working reference while you shape your own product surfaces.')
+const summary = ref('')
 const activeStep = ref(2)
 const tags = ref(['admin', 'finance', 'ops'])
 const otpCode = ref('')
@@ -919,7 +875,7 @@ const billingMatchesShipping = ref(true)
 const computeEnvironment = ref('kubernetes')
 const gpuCount = ref(8)
 const wallpaperTinting = ref(true)
-const selectedAudience = ref(['Social Media'])
+const selectedAudience = ref(['Postgres'])
 
 const featureChecks = ref({
   analytics: true,
@@ -929,7 +885,7 @@ const featureChecks = ref({
 const frameworks = ['Vue', 'Nuxt', 'React', 'Svelte', 'Laravel Blade']
 const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
 const years = ['2026', '2027', '2028', '2029', '2030']
-const audienceOptions = ['Social Media', 'Search Engine', 'Referral', 'Other']
+const audienceOptions = ['Postgres', 'Redis', 'Queue worker', 'Object storage']
 
 const setupSteps = [
   { step: 1, title: 'Choose the shell', description: 'Sidebar, navbar, and route structure.' },
