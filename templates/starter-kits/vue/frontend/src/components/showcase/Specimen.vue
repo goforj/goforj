@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { Check, Code2, Copy } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 import { componentImportPath, slugify } from '.'
 
@@ -10,12 +13,34 @@ const props = defineProps<{
   description?: string
   /** Extra component names this specimen also relies on. */
   also?: string[]
+  /**
+   * Source of the rendered example, imported with Vite's `?raw` suffix from
+   * the very same file the default slot renders. Importing one file both
+   * ways is what keeps the listing and the live example from drifting.
+   */
+  source?: string
   class?: string
   contentClass?: string
 }>()
 
 const path = computed(() => componentImportPath(props.name))
 const anchor = computed(() => slugify(props.name))
+
+const showSource = ref(false)
+const copied = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+
+async function copySource() {
+  if (!props.source) {
+    return
+  }
+  await navigator.clipboard.writeText(props.source)
+  copied.value = true
+  clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => (copied.value = false), 1500)
+}
+
+onBeforeUnmount(() => clearTimeout(copyTimer))
 </script>
 
 <template>
@@ -45,6 +70,31 @@ const anchor = computed(() => slugify(props.name))
       <div :class="cn('grid gap-4', props.contentClass)">
         <slot />
       </div>
+
+      <Collapsible v-if="source" v-model:open="showSource" class="grid gap-2">
+        <div class="flex items-center gap-2">
+          <CollapsibleTrigger as-child>
+            <Button variant="ghost" size="sm" class="-ml-2 gap-1.5 text-muted-foreground">
+              <Code2 class="size-3.5" />
+              {{ showSource ? 'Hide code' : 'Show code' }}
+            </Button>
+          </CollapsibleTrigger>
+          <Button
+            v-if="showSource"
+            variant="ghost"
+            size="sm"
+            class="gap-1.5 text-muted-foreground"
+            @click="copySource"
+          >
+            <component :is="copied ? Check : Copy" class="size-3.5" />
+            {{ copied ? 'Copied' : 'Copy' }}
+          </Button>
+        </div>
+
+        <CollapsibleContent>
+          <pre class="max-h-96 overflow-auto rounded-lg bg-muted/40 p-4 text-xs leading-relaxed"><code>{{ source.trim() }}</code></pre>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   </section>
 </template>

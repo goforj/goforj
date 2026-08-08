@@ -13,45 +13,9 @@
         description="A centered modal for focused tasks. Use the same field patterns inside it that the rest of the app uses."
         :also="['Input', 'Select', 'Label', 'Button']"
         content-class="justify-items-start"
+        :source="DialogExampleSource"
       >
-        <Dialog>
-          <DialogTrigger as-child>
-            <Button>Open invite dialog</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Invite a teammate</DialogTitle>
-              <DialogDescription>
-                Use the same field patterns inside dialogs that the rest of the app uses so overlays do not feel like a separate system.
-              </DialogDescription>
-            </DialogHeader>
-            <div class="grid gap-4 py-2">
-              <div class="grid gap-2">
-                <Label>Email address</Label>
-                <Input placeholder="person@example.com" />
-              </div>
-              <div class="grid gap-2">
-                <Label>Role</Label>
-                <Select default-value="admin">
-                  <SelectTrigger class="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Administrator</SelectItem>
-                    <SelectItem value="editor">Editor</SelectItem>
-                    <SelectItem value="viewer">Viewer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter>
-              <DialogClose as-child>
-                <Button variant="outline">Cancel</Button>
-              </DialogClose>
-              <Button>Send invite</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <DialogExample />
       </Specimen>
 
       <Specimen
@@ -59,24 +23,9 @@
         description="A confirm that cannot be dismissed by clicking away. Reserve it for destructive actions rather than routine confirmations."
         :also="['Button']"
         content-class="justify-items-start"
+        :source="AlertDialogExampleSource"
       >
-        <AlertDialog>
-          <AlertDialogTrigger as-child>
-            <Button variant="destructive">Archive project</Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Archive this project?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Reserve alert dialogs for destructive actions rather than routine confirmations.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction>Archive</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <AlertDialogExample />
       </Specimen>
 
       <Specimen
@@ -152,11 +101,9 @@
         description="Non-blocking confirmation after save, sync, or authentication actions."
         :also="['Button']"
         content-class="justify-items-start"
+        :source="SonnerExampleSource"
       >
-        <div class="flex flex-wrap gap-2">
-          <Button variant="outline" @click="notifyPreview">Show success toast</Button>
-          <Button variant="secondary" @click="notifySignedOut">Show signed-out toast</Button>
-        </div>
+        <SonnerExample />
       </Specimen>
 
       <Specimen
@@ -234,18 +181,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { toast } from 'vue-sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+import DialogExample from './examples/DialogExample.vue'
+import DialogExampleSource from './examples/DialogExample.vue?raw'
+import AlertDialogExample from './examples/AlertDialogExample.vue'
+import AlertDialogExampleSource from './examples/AlertDialogExample.vue?raw'
+import SonnerExample from './examples/SonnerExample.vue'
+import SonnerExampleSource from './examples/SonnerExample.vue?raw'
 import PageHeader from '@/components/PageHeader.vue'
 import { Specimen } from '@/components/showcase'
 import { Button } from '@/components/ui/button'
@@ -259,22 +200,9 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
-import { Input } from '@/components/ui/input'
 import { Item, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item'
-import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 
 const commandOpen = ref(false)
@@ -286,17 +214,7 @@ const sheetEvents = [
   { title: 'Audit trail captured', description: 'Configuration changes were recorded for the current deploy group.' },
 ]
 
-function notifyPreview() {
-  toast.success('Starter preview saved', {
-    description: 'This toast is rendered by the local shadcn-vue sonner wrapper.',
-  })
-}
 
-function notifySignedOut() {
-  toast('Signed out', {
-    description: 'Non-blocking notifications are ready for auth and settings flows.',
-  })
-}
 
 function openMobileDrawer() {
   mobileDrawerOpen.value = true
