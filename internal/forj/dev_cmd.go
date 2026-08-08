@@ -135,6 +135,8 @@ func (c *DevCmd) Run() error {
 	if config == nil {
 		return nil
 	}
+	// Projects generated with the silent Vite command need diagnostics before their next render persists the new default.
+	migrateGeneratedDevSPABuildCommands(config)
 
 	// Prevent concurrent dev sessions from clobbering each other.
 	unlock, err := c.acquireLock()

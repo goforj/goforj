@@ -86,7 +86,7 @@ func TestCompileDevWatchersStructuredDefaultsAndSPAGraph(t *testing.T) {
 		if spa.Command.Dir != spaPaths[spaName] {
 			t.Fatalf("%s SPA workdir = %q", spaName, spa.Command.Dir)
 		}
-		if spa.Command.Shell != "npm run build -s -- --logLevel silent" {
+		if spa.Command.Shell != "npm run build -s -- --logLevel error" {
 			t.Fatalf("%s SPA command = %q", spaName, spa.Command.Shell)
 		}
 		if got, want := spa.OnSuccess, []string{build.ID}; !reflect.DeepEqual(got, want) {

@@ -2258,6 +2258,9 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	if migrateGeneratedDevFrontendInstallTasks(p.config) {
 		changed = true
 	}
+	if migrateGeneratedDevSPABuildCommands(p.config) {
+		changed = true
+	}
 	for i := range p.config.Dev.Watches {
 		normalized := p.config.Dev.Watches[i].Watch
 		if isGeneratedLegacyBuildWatcher(p.config.Dev.Watches[i]) {

@@ -130,7 +130,7 @@ dev:
       spas:
         frontend:
           path: ./cmd/app/frontend
-          build: npm run build -s -- --logLevel silent
+          build: npm run build -s -- --logLevel error
 ```
 
 Those fields contain useful path, command, and input information. However, omission from `dev.apps` intentionally means that `forj dev` does not manage that App. It should not also mean that a production build may embed stale assets.
@@ -230,7 +230,7 @@ build:
             inputs: [package.json, package-lock.json]
             outputs: [node_modules]
           build:
-            exec: npm run build -s -- --logLevel silent
+            exec: npm run build -s -- --logLevel error
             inputs: ["**/*"]
             ignore: [_data, node_modules, dist, .git, .goforj, "**/*.tsbuildinfo"]
             outputs: [dist]
@@ -251,7 +251,7 @@ build:
             inputs: [package.json, package-lock.json]
             outputs: [node_modules]
           build:
-            exec: npm run build -s -- --logLevel silent
+            exec: npm run build -s -- --logLevel error
             inputs: ["**/*"]
             ignore: [_data, node_modules, dist, .git, .goforj, "**/*.tsbuildinfo"]
             outputs: [dist]
