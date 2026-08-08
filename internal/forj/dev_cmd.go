@@ -2342,38 +2342,15 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 		writeDevActionLine(outWriter, heading)
 	}
 	setDevStatusLine(outWriter, heading)
-	defer clearDevStatusLine(outWriter)
 
-	_, stdoutIsBubble := outWriter.(*devBubbleWriter)
-	_, stderrIsBubble := errWriter.(*devBubbleWriter)
-	if stdoutIsBubble || stderrIsBubble {
-		if err := runDevSubprocess(devSubprocessRun{
-			command:    job.command,
-			dir:        job.dir,
-			env:        job.env,
-			stdout:     outWriter,
-			stderr:     errWriter,
-			transcript: true,
-		}); err != nil {
-			return err
-		}
-		return publishDevBuildReadyStamp(job.app)
+	result := runDevBuildJobBufferedPhase(job, "", true)
+	clearDevStatusLine(outWriter)
+	if result.err != nil {
+		writeDevBuildFailureOutput(outWriter, errWriter, result)
+		return result.err
 	}
-
-	disableDevFooter(outWriter)
-	disableDevFooter(errWriter)
-	defer enableDevFooter(outWriter)
-	defer enableDevFooter(errWriter)
-	if err := runDevSubprocess(devSubprocessRun{
-		command: job.command,
-		dir:     job.dir,
-		env:     job.env,
-		stdout:  os.Stdout,
-		stderr:  os.Stderr,
-	}); err != nil {
-		return err
-	}
-	return publishDevBuildReadyStamp(job.app)
+	writeDevBuildBufferedOutput(outWriter, errWriter, result)
+	return nil
 }
 
 // runDevBuildJobWithLoader keeps the bootstrap terminal active while deferring child output until the transient loader releases the terminal.
