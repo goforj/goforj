@@ -11,7 +11,9 @@ import (
 const (
 	generatedFrontendSPAName           = "frontend"
 	generatedFrontendNPMInstallCommand = "npm install --no-audit --no-fund --loglevel=error"
+	generatedFrontendSPABuildCommand   = "npm run build -s -- --logLevel error"
 	legacyFrontendNPMInstallCommand    = "npm install"
+	legacyFrontendSPABuildCommand      = "npm run build -s -- --logLevel silent"
 )
 
 // generatedDevFrontendInstallTask keeps dependency setup aligned with each app-owned SPA root.
@@ -129,6 +131,31 @@ func migrateGeneratedDevFrontendInstallTasks(config *project.Config) bool {
 	return changed
 }
 
+// migrateGeneratedDevSPABuildCommands restores diagnostics only for the exact quiet command emitted by GoForj.
+func migrateGeneratedDevSPABuildCommands(config *project.Config) bool {
+	if config == nil {
+		return false
+	}
+	changed := false
+	for appName, app := range config.Dev.Apps {
+		appChanged := false
+		for spaName, spa := range app.SPAs {
+			if strings.TrimSpace(spa.Build) != legacyFrontendSPABuildCommand {
+				continue
+			}
+			spa.Build = generatedFrontendSPABuildCommand
+			app.SPAs[spaName] = spa
+			appChanged = true
+		}
+		if !appChanged {
+			continue
+		}
+		config.Dev.Apps[appName] = app
+		changed = true
+	}
+	return changed
+}
+
 // generatedDevAppConfig snapshots framework-owned lifecycle behavior into readable project configuration.
 func generatedDevAppConfig(config *project.Config, app project.App, runCommand string) project.DevApp {
 	app = projectlayout.NormalizeApp(app)
@@ -182,7 +209,7 @@ func conventionalDevAppRuntimeCommand(app project.App) project.DevAppCommand {
 func conventionalDevSPAConfig(path string) project.DevSPA {
 	return project.DevSPA{
 		Path:   path,
-		Build:  "npm run build -s -- --logLevel silent",
+		Build:  generatedFrontendSPABuildCommand,
 		Watch:  []string{".ts", ".tsx", ".js", ".jsx", ".vue", ".css", ".html", "package.json", "package-lock.json"},
 		Ignore: []string{"_data", "node_modules", "dist"},
 	}

@@ -126,7 +126,7 @@ dev:
       spas:
         frontend:
           path: ./cmd/app/frontend
-          build: npm run build -s -- --logLevel silent
+          build: npm run build -s -- --logLevel error
           watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]
           ignore: [_data, node_modules, dist]
 ```
@@ -255,7 +255,7 @@ rewrite an explicit leaf command into the standalone host.
 For each SPA path, GoForj infers:
 
 ```yaml
-build: npm run build -s -- --logLevel silent
+build: npm run build -s -- --logLevel error
 watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]
 ignore: [_data, node_modules, dist]
 ```
@@ -283,7 +283,7 @@ dev:
       spas:
         portal:
           path: ./cmd/app/frontend
-          build: npm run build -s -- --logLevel silent
+          build: npm run build -s -- --logLevel error
           watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]
           ignore: [_data, node_modules, dist]
 ```
@@ -337,7 +337,7 @@ dev:
         portal: ./cmd/app/frontend
         admin:
           path: ./cmd/app/admin
-          build: npm run build -s -- --logLevel silent
+          build: npm run build -s -- --logLevel error
           watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html]
           ignore: [node_modules, dist]
 ```
@@ -881,7 +881,7 @@ dev:
       spas:
         frontend:
           path: ./cmd/app/frontend
-          build: npm run build -s -- --logLevel silent
+          build: npm run build -s -- --logLevel error
           watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]
           ignore: [_data, node_modules, dist]
 ```

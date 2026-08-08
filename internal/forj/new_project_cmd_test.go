@@ -1362,7 +1362,7 @@ func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
 	}
 	for _, want := range []string{
 		"path: ./cmd/app/frontend",
-		"build: npm run build -s -- --logLevel silent",
+		"build: npm run build -s -- --logLevel error",
 		"watch: [.ts, .tsx, .js, .jsx, .vue, .css, .html, package.json, package-lock.json]",
 		"ignore: [_data, node_modules, dist]",
 	} {
