@@ -7,6 +7,31 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// TestMigrateGeneratedDevSPABuildCommandsRestoresFrameworkDiagnostics upgrades only the generated silent command.
+func TestMigrateGeneratedDevSPABuildCommandsRestoresFrameworkDiagnostics(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{Apps: map[string]project.DevApp{
+		"app": {
+			SPAs: map[string]project.DevSPA{
+				"frontend": {Build: legacyFrontendSPABuildCommand},
+				"custom":   {Build: "make frontend"},
+			},
+		},
+	}}}
+
+	if !migrateGeneratedDevSPABuildCommands(config) {
+		t.Fatal("generated SPA build command was not migrated")
+	}
+	if got := config.Dev.Apps["app"].SPAs["frontend"].Build; got != generatedFrontendSPABuildCommand {
+		t.Fatalf("frontend build = %q, want %q", got, generatedFrontendSPABuildCommand)
+	}
+	if got := config.Dev.Apps["app"].SPAs["custom"].Build; got != "make frontend" {
+		t.Fatalf("custom build = %q, want owner-authored command", got)
+	}
+	if migrateGeneratedDevSPABuildCommands(config) {
+		t.Fatal("current SPA build command migrated twice")
+	}
+}
+
 // TestMigrateGeneratedDevFrontendInstallTasksUpdatesExactLegacyTasks verifies default and named generated tasks migrate once.
 func TestMigrateGeneratedDevFrontendInstallTasksUpdatesExactLegacyTasks(t *testing.T) {
 	defaultApp := project.DefaultApp()
