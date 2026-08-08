@@ -24,7 +24,7 @@
         <span>Remember me</span>
       </Label>
 
-      <AuthMessage v-if="errorMessage">{{ errorMessage }}</AuthMessage>
+      <StatusMessage v-if="errorMessage">{{ errorMessage }}</StatusMessage>
 
       <Button type="submit" class="w-full" :disabled="submitting">
         <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
@@ -43,7 +43,8 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { LoaderCircle } from '@lucide/vue'
-import { AuthLayout, AuthMessage, PasswordInput } from '@/components/auth'
+import StatusMessage from '@/components/StatusMessage.vue'
+import { AuthLayout, PasswordInput } from '@/components/auth'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'

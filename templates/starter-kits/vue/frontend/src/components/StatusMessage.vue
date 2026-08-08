@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { cn } from '@/lib/utils'
 
-// Success and failure get the same treatment so one does not read as more
-// consequential than the other purely because of how it is styled.
+// One treatment for every form result in the app, so success does not read as
+// less consequential than failure purely because of how it is styled.
 const props = defineProps<{
   variant?: 'error' | 'success'
   class?: string
