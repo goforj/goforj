@@ -106,6 +106,10 @@ func (r *buildProgressTTYReporter) State(state string) {
 type RunOptions struct {
 	Timings  bool
 	SkipWire bool
+	// PreparationOnly stops after generation, templ, and Wire have stabilized project inputs.
+	PreparationOnly bool
+	// SkipPreparation starts from API indexing when a dev build wave already stabilized project inputs.
+	SkipPreparation bool
 	// APIIndexStrict fails the pipeline when web indexing reports warnings or errors.
 	APIIndexStrict bool
 	// BuildTags keeps API indexing on the same conditional source surface as the final Go build.
@@ -124,6 +128,9 @@ func NewPipeline(appLogger *logger.AppLogger, apiIndex apiindex.Preparer) Pipeli
 
 // Run executes the configured steps from the project root and publishes API artifacts after the final step succeeds.
 func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) (err error) {
+	if opts.PreparationOnly && opts.SkipPreparation {
+		return fmt.Errorf("pipeline cannot prepare and skip preparation in the same run")
+	}
 	if err := apiindex.ValidateGOFLAGS(os.Getenv("GOFLAGS")); err != nil {
 		return err
 	}
@@ -147,92 +154,52 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) (er
 			}
 		}
 	}()
-	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
 	steps := make([]Step, 0, 4)
-	steps = append(steps, generateStep)
-	if buildUsesTemplHTMX(absRoot) {
-		steps = append(steps, Step{Name: "templ", Run: p.runTemplGenerate})
-	}
-	if !opts.SkipWire {
-		steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
-	}
-	steps = append(steps, Step{Name: "build:api-index", Run: func(root string) (string, error) {
-		preparation, err := p.prepareAPIIndex(root, opts.APIIndexStrict, opts.BuildTags...)
-		if err != nil {
-			return "", err
+	if !opts.SkipPreparation {
+		steps = append(steps, Step{Name: "generate", Run: p.generateProjectFiles})
+		if buildUsesTemplHTMX(absRoot) {
+			steps = append(steps, Step{Name: "templ", Run: p.runTemplGenerate})
 		}
-		pendingAPIIndex = preparation.Candidate
-		return preparation.Status, nil
-	}})
-	steps = append(steps, final)
-	if debug {
-		p.logger.Info().Str("kind", kind).Str("step", generateStep.Name).Msg("Running pipeline step")
+		if !opts.SkipWire {
+			steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
+		}
 	}
-	progress.Step(1, len(steps), generateStep.Name)
-	generateStartedAt := time.Now()
-	generateStatus, err := generateStep.Run(absRoot)
-	if err != nil {
-		progressState = "failed"
-		return err
+	if !opts.PreparationOnly {
+		steps = append(steps, Step{Name: "build:api-index", Run: func(root string) (string, error) {
+			preparation, err := p.prepareAPIIndex(root, opts.APIIndexStrict, opts.BuildTags...)
+			if err != nil {
+				return "", err
+			}
+			pendingAPIIndex = preparation.Candidate
+			return preparation.Status, nil
+		}})
+		steps = append(steps, final)
 	}
-	if opts.Timings {
-		printStepTiming(kind, generateStep.Name, time.Since(generateStartedAt), generateStatus)
-	}
-
-	postGenerateSteps := steps[1 : len(steps)-1]
-
-	stepResults := make(map[string]struct {
-		status   string
-		duration time.Duration
-	}, len(postGenerateSteps))
-	for idx, step := range postGenerateSteps {
+	for index, step := range steps {
 		if debug {
 			p.logger.Info().Str("kind", kind).Str("step", step.Name).Msg("Running pipeline step")
 		}
-		progress.Step(idx+2, len(steps), step.Name)
+		progress.Step(index+1, len(steps), step.Name)
+		if !opts.PreparationOnly && index == len(steps)-1 && opts.ClearProgressBeforeFinal {
+			progress.State("done")
+		}
 		startedAt := time.Now()
-		status, err := step.Run(absRoot)
+		var status string
+		if !opts.PreparationOnly && index == len(steps)-1 {
+			status, err = runFinalAndPublishAPIIndex(absRoot, step, pendingAPIIndex)
+		} else {
+			status, err = step.Run(absRoot)
+		}
 		if err != nil {
 			progressState = "failed"
 			return err
 		}
-		stepResults[step.Name] = struct {
-			status   string
-			duration time.Duration
-		}{
-			status:   status,
-			duration: time.Since(startedAt),
-		}
-	}
-	for _, step := range postGenerateSteps {
 		if opts.Timings {
-			result := stepResults[step.Name]
-			printStepTiming(kind, step.Name, result.duration, result.status)
+			printStepTiming(kind, step.Name, time.Since(startedAt), status)
 		}
 	}
-
 	if debug {
-		p.logger.Info().Str("kind", kind).Str("step", final.Name).Msg("Running pipeline step")
-	}
-	progress.Step(len(steps), len(steps), final.Name)
-	if opts.ClearProgressBeforeFinal {
-		progress.State("done")
-	}
-	finalStartedAt := time.Now()
-	finalStatus, err := runFinalAndPublishAPIIndex(absRoot, final, pendingAPIIndex)
-	if err != nil {
-		progressState = "failed"
-		return err
-	}
-	if opts.Timings {
-		printStepTiming(kind, final.Name, time.Since(finalStartedAt), finalStatus)
-	}
-	if debug {
-		steps := 3
-		if !opts.SkipWire {
-			steps++
-		}
-		p.logger.Info().Str("kind", kind).Int("steps", steps).Msg("Pipeline completed")
+		p.logger.Info().Str("kind", kind).Int("steps", len(steps)).Msg("Pipeline completed")
 	}
 	return nil
 }

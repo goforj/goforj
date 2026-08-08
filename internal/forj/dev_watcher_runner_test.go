@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/project"
 )
@@ -71,6 +72,181 @@ func TestConfigureCompiledDevCommandPreservesFullProcessOverride(t *testing.T) {
 		if strings.Contains(script, rewritten) {
 			t.Fatalf("full process override unexpectedly contained %q: %q", rewritten, script)
 		}
+	}
+}
+
+// TestDevWatcherProjectBuildLock keeps SPA writes exclusive without serializing independent App builds.
+func TestDevWatcherProjectBuildLock(t *testing.T) {
+	gate := newDevWatcherBuildGate()
+	gate.acquire(devWatcherBuildPhaseApp)
+	secondAcquired := make(chan struct{}, 1)
+	go func() {
+		gate.acquire(devWatcherBuildPhaseApp)
+		secondAcquired <- struct{}{}
+	}()
+	select {
+	case <-secondAcquired:
+	case <-time.After(time.Second):
+		gate.release(devWatcherBuildPhaseApp)
+		t.Fatal("independent App builds did not acquire the project concurrently")
+	}
+
+	spaAcquired := make(chan struct{}, 1)
+	go func() {
+		gate.acquire(devWatcherBuildPhaseSPA)
+		spaAcquired <- struct{}{}
+	}()
+	gate.release(devWatcherBuildPhaseApp)
+	select {
+	case <-spaAcquired:
+		gate.release(devWatcherBuildPhaseSPA)
+		t.Fatal("SPA build acquired the project for writing while an App build was active")
+	default:
+	}
+	gate.release(devWatcherBuildPhaseApp)
+
+	select {
+	case <-spaAcquired:
+		gate.release(devWatcherBuildPhaseSPA)
+	case <-time.After(time.Second):
+		t.Fatal("SPA build did not acquire the project after App builds completed")
+	}
+}
+
+// TestDevWatcherProjectBuildLockPreservesPhaseOrder prevents sustained App churn from starving a queued SPA build.
+func TestDevWatcherProjectBuildLockPreservesPhaseOrder(t *testing.T) {
+	gate := newDevWatcherBuildGate()
+	gate.acquire(devWatcherBuildPhaseApp)
+
+	spaAcquired := make(chan struct{}, 1)
+	spaRelease := make(chan struct{})
+	go func() {
+		gate.acquire(devWatcherBuildPhaseSPA)
+		spaAcquired <- struct{}{}
+		<-spaRelease
+		gate.release(devWatcherBuildPhaseSPA)
+	}()
+	waitForDevWatcherBuildPhaseQueued(gate, devWatcherBuildPhaseSPA)
+	appAcquired := make(chan struct{}, 1)
+	go func() {
+		gate.acquire(devWatcherBuildPhaseApp)
+		appAcquired <- struct{}{}
+		gate.release(devWatcherBuildPhaseApp)
+	}()
+	waitForDevWatcherBuildPhaseQueued(gate, devWatcherBuildPhaseApp)
+
+	gate.release(devWatcherBuildPhaseApp)
+	select {
+	case <-spaAcquired:
+	case <-appAcquired:
+		close(spaRelease)
+		t.Fatal("later App build jumped ahead of the queued SPA phase")
+	case <-time.After(time.Second):
+		close(spaRelease)
+		t.Fatal("queued SPA phase did not acquire the project")
+	}
+	select {
+	case <-appAcquired:
+		close(spaRelease)
+		t.Fatal("App build acquired while the earlier SPA phase was active")
+	default:
+	}
+	close(spaRelease)
+	select {
+	case <-appAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("App build did not resume after the SPA phase completed")
+	}
+}
+
+// TestDevWatcherControllerRunsManagedAppBuildInTwoPhases verifies publication follows preparation and compilation.
+func TestDevWatcherControllerRunsManagedAppBuildInTwoPhases(t *testing.T) {
+	requireDevWatcherRunnerTestPlatform(t)
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "events.log")
+	compiled := []devCompiledWatcher{
+		{
+			Name: "Build App", Kind: devWatcherAppBuild, App: "app",
+			Command: devWatcherRunnerHelperCommand("build", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG":     logPath,
+				"GOFORJ_DEV_WATCHER_COUNTER": filepath.Join(directory, "build-count"),
+			}),
+			PhasedBuild: true, Postpone: true, OnSuccess: []string{"Run App"},
+		},
+		{
+			Name: "Run App", Kind: devWatcherAppRun, App: "app",
+			Command: devWatcherRunnerHelperCommand("runtime", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG": logPath,
+			}),
+			Restart: true, Postpone: true,
+		},
+	}
+	controller := newDevWatcherRunnerTestController(t, compiled)
+	defer controller.stop(time.Second)
+
+	controller.tasks["Build App"].request()
+	lines := waitForDevWatcherRunnerLog(t, logPath, func(lines []string) bool {
+		return countDevWatcherRunnerLines(lines, "runtime-start:") == 1
+	})
+	prepare := indexDevWatcherRunnerLine(lines, "build-phase:1:"+build.DevBuildPhasePrepare, 1)
+	compile := indexDevWatcherRunnerLine(lines, "build-phase:2:"+build.DevBuildPhaseCompile, 1)
+	runtimeStarted := indexDevWatcherRunnerLine(lines, "runtime-start:", 1)
+	if prepare < 0 || compile <= prepare || runtimeStarted <= compile {
+		t.Fatalf("managed build did not prepare, compile, then publish in order: %v", lines)
+	}
+	if origins := countDevWatcherRunnerLines(lines, "build-origin:1:dev_command") + countDevWatcherRunnerLines(lines, "build-origin:2:dev_command"); origins != 2 {
+		t.Fatalf("managed build phases did not carry the private command origin: %v", lines)
+	}
+}
+
+// TestDevWatcherControllerStopsManagedAppBuildAfterPreparationFailure keeps failed snapshots out of compilation.
+func TestDevWatcherControllerStopsManagedAppBuildAfterPreparationFailure(t *testing.T) {
+	requireDevWatcherRunnerTestPlatform(t)
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "events.log")
+	compiled := []devCompiledWatcher{
+		{
+			Name: "Build App", Kind: devWatcherAppBuild, App: "app",
+			Command: devWatcherRunnerHelperCommand("build", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG":        logPath,
+				"GOFORJ_DEV_WATCHER_COUNTER":    filepath.Join(directory, "build-count"),
+				"GOFORJ_DEV_WATCHER_FAIL_FIRST": "1",
+			}),
+			PhasedBuild: true, Postpone: true, OnSuccess: []string{"Run App"},
+		},
+		{
+			Name: "Run App", Kind: devWatcherAppRun, App: "app",
+			Command: devWatcherRunnerHelperCommand("runtime", map[string]string{
+				"GOFORJ_DEV_WATCHER_LOG": logPath,
+			}),
+			Restart: true, Postpone: true,
+		},
+	}
+	controller := newDevWatcherRunnerTestController(t, compiled)
+	defer controller.stop(time.Second)
+
+	controller.tasks["Build App"].request()
+	waitForDevWatcherRunnerTaskIdle(t, controller.tasks["Build App"], logPath, "build-failed:1:")
+	lines := readDevWatcherRunnerLog(t, logPath)
+	if starts := countDevWatcherRunnerLines(lines, "build-start:"); starts != 1 {
+		t.Fatalf("preparation failure unexpectedly reached compile phase: %v", lines)
+	}
+	if runtimes := countDevWatcherRunnerLines(lines, "runtime-start:"); runtimes != 0 {
+		t.Fatalf("preparation failure unexpectedly published the runtime: %v", lines)
+	}
+}
+
+// waitForDevWatcherBuildPhaseQueued observes the gate condition instead of relying on scheduler timing.
+func waitForDevWatcherBuildPhaseQueued(gate *devWatcherBuildGate, phase devWatcherBuildPhase) {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	for {
+		for _, waiting := range gate.waiting {
+			if waiting.phase == phase {
+				return
+			}
+		}
+		gate.cond.Wait()
 	}
 }
 
@@ -1312,6 +1488,8 @@ func runDevWatcherRunnerBuildHelper() {
 		os.Exit(3)
 	}
 	appendDevWatcherRunnerLog(fmt.Sprintf("build-start:%d:%d", index, os.Getpid()))
+	appendDevWatcherRunnerLog(fmt.Sprintf("build-phase:%d:%s", index, os.Getenv(build.DevBuildPhaseEnvironment)))
+	appendDevWatcherRunnerLog(fmt.Sprintf("build-origin:%d:%s", index, os.Getenv("FORJ_COMMAND_ORIGIN")))
 	if releasePath := os.Getenv("GOFORJ_DEV_WATCHER_RELEASE"); releasePath != "" && index == 1 {
 		for {
 			if _, err := os.Stat(releasePath); err == nil {

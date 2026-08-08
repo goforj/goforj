@@ -3,7 +3,9 @@ package build
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +69,62 @@ func TestPipelineRunDoesNotChangeProcessWorkingDirectory(t *testing.T) {
 	close(release)
 	if err := awaitPipelineCompletion(t, done); err != nil {
 		t.Fatalf("run pipeline: %v", err)
+	}
+}
+
+// TestPipelinePreparationOnlyStopsBeforeIndexAndFinal verifies dev waves can stabilize writable inputs separately.
+func TestPipelinePreparationOnlyStopsBeforeIndexAndFinal(t *testing.T) {
+	indexed := false
+	finished := false
+	pipeline := NewPipeline(logger.NewSilentLogger(), recordingAPIIndexPreparer{prepare: func(apiindex.Options) (apiindex.Preparation, error) {
+		indexed = true
+		return apiindex.Preparation{}, nil
+	}})
+	err := pipeline.Run(t.TempDir(), "build", Step{Name: "finish", Run: func(string) (string, error) {
+		finished = true
+		return "", nil
+	}}, RunOptions{PreparationOnly: true, SkipWire: true})
+	if err != nil {
+		t.Fatalf("prepare pipeline: %v", err)
+	}
+	if indexed || finished {
+		t.Fatalf("preparation continued into index or final: indexed=%t finished=%t", indexed, finished)
+	}
+}
+
+// TestPipelineSkipPreparationStartsFromStableSnapshot verifies compile phases do not touch generated project inputs.
+func TestPipelineSkipPreparationStartsFromStableSnapshot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("render: [invalid\n"), 0o644); err != nil {
+		t.Fatalf("write invalid project config: %v", err)
+	}
+	indexed := false
+	finished := false
+	pipeline := NewPipeline(logger.NewSilentLogger(), recordingAPIIndexPreparer{prepare: func(apiindex.Options) (apiindex.Preparation, error) {
+		indexed = true
+		return apiindex.Preparation{Status: "indexed"}, nil
+	}})
+	err := pipeline.Run(root, "build", Step{Name: "finish", Run: func(string) (string, error) {
+		finished = true
+		return "", nil
+	}}, RunOptions{SkipPreparation: true})
+	if err != nil {
+		t.Fatalf("compile stable snapshot: %v", err)
+	}
+	if !indexed || !finished {
+		t.Fatalf("stable snapshot skipped index or final: indexed=%t finished=%t", indexed, finished)
+	}
+}
+
+// TestPipelineRejectsConflictingDevPhases covers the coordinator's invalid internal state.
+func TestPipelineRejectsConflictingDevPhases(t *testing.T) {
+	pipeline := NewPipeline(logger.NewSilentLogger(), recordingAPIIndexPreparer{})
+	err := pipeline.Run(t.TempDir(), "build", Step{Name: "finish"}, RunOptions{
+		PreparationOnly: true,
+		SkipPreparation: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot prepare and skip preparation") {
+		t.Fatalf("conflicting phase error = %v", err)
 	}
 }
 
