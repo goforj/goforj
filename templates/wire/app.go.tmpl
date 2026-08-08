@@ -276,6 +276,26 @@ func (a *App) DB() *database.Connections {
 }
 {{- end }}
 
+// LaunchApplication applies this App's process defaults and starts its wired dependency graph.
+func LaunchApplication() {
+	cmd.Launch(cmd.LaunchConfig{
+		AppName:     "{{.App.Name}}",
+		HasRuntime:  {{.Components.HasRuntime}},
+		RootCommand: &{{.AppPackageName}}.RootCmd{},
+		Run:         runApplication,
+	})
+}
+
+// runApplication initializes the App only after preboot commands have been handled.
+func runApplication(args []string) error {
+	application, err := InitializeApplication()
+	if err != nil {
+		// Initialization failures stay fatal instead of inheriting an exit status from a provider error.
+		return fmt.Errorf("initializing application: %v", err)
+	}
+	return application.Run(nil, args)
+}
+
 // NewApplication creates a new App instance
 func NewApplication(
 	{{- if .Components.HasDatabase }}

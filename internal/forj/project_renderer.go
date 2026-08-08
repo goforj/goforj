@@ -556,6 +556,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/resources_cmd.go.tmpl",
 				"internal/cmd/command_exit_code.go.tmpl",
 				"internal/cmd/command_exit_code_test.go.tmpl",
+				"internal/cmd/launch.go.tmpl",
+				"internal/cmd/launch_test.go.tmpl",
 				"internal/monitoring/seed_cmd.go.tmpl",
 				"internal/monitoring/reset_cmd.go.tmpl",
 				"internal/monitoring/retention_cmd.go.tmpl",
@@ -1283,6 +1285,8 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		return err
 	}
 	if err := p.writeTemplates([]string{
+		"internal/cmd/launch.go.tmpl",
+		"internal/cmd/launch_test.go.tmpl",
 		"internal/runtime/apps.go.tmpl",
 		"internal/runtime/apps_test.go.tmpl",
 	}); err != nil {

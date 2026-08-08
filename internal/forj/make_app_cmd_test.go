@@ -49,6 +49,8 @@ func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 		filepath.Join("app", "billing", "wire", "wire.go"),
 		filepath.Join("app", "billing", "wire", "inject_cmd.go"),
 		filepath.Join("app", "billing", "wire", "inject_http_controllers_app.go"),
+		filepath.Join("internal", "cmd", "launch.go"),
+		filepath.Join("internal", "cmd", "launch_test.go"),
 		filepath.Join("internal", "runtime", "apps.go"),
 	} {
 		if _, err := os.Stat(path); err != nil {
@@ -56,9 +58,9 @@ func TestMakeAppCmdCreatesNamedApp(t *testing.T) {
 		}
 	}
 
-	mainSrc := readMakeAppTestFile(t, filepath.Join("cmd", "billing", "main.go"))
-	if !strings.Contains(mainSrc, `cmd.ApplyLaunchApp("billing")`) {
-		t.Fatalf("expected billing app identity in cmd/billing/main.go")
+	wireAppSrc := readMakeAppTestFile(t, filepath.Join("app", "billing", "wire", "app.go"))
+	if !strings.Contains(wireAppSrc, `AppName:     "billing"`) {
+		t.Fatalf("expected billing app identity in app/billing/wire/app.go")
 	}
 	runtimeSrc := readMakeAppTestFile(t, filepath.Join("internal", "runtime", "apps.go"))
 	if !strings.Contains(runtimeSrc, `Name: "billing"`) || !strings.Contains(runtimeSrc, `HTTPPort: 3001`) {

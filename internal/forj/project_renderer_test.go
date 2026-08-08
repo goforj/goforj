@@ -817,8 +817,15 @@ func TestRenderAppWritesNamedAppPackagesAndImports(t *testing.T) {
 	}
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
-		`"example.com/test/app/customer-portal"`,
 		`"example.com/test/app/customer-portal/wire"`,
+		`wire.LaunchApplication()`,
+	)
+	assertProjectRendererFileNotContains(t, filepath.Join("cmd", "customer-portal", "main.go"),
+		`"example.com/test/app/customer-portal"`,
+		`&customerportalapp.RootCmd{}`,
+	)
+	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "wire", "app.go"),
+		`"example.com/test/app/customer-portal"`,
 		`&customerportalapp.RootCmd{}`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "customer-portal", "root_cmd.go"), "package customerportalapp")
@@ -1309,8 +1316,8 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 		t.Fatalf("render CLI-only app: %v", err)
 	}
 
-	assertProjectRendererFileContains(t, filepath.Join("cmd", "app", "main.go"),
-		`cmd.EffectiveLaunchArgs(os.Args[1:], true)`,
+	assertProjectRendererFileContains(t, filepath.Join("app", "wire", "app.go"),
+		`HasRuntime:  true`,
 	)
 	assertProjectRendererFileContains(t, filepath.Join("app", "root_cmd.go"),
 		`cmd.RunCmd`,
@@ -1319,8 +1326,8 @@ func TestRenderAppsDeriveBareBehaviorIndependently(t *testing.T) {
 		`provideRunCmd,`,
 	)
 
-	assertProjectRendererFileContains(t, filepath.Join("cmd", "ship", "main.go"),
-		`cmd.EffectiveLaunchArgs(os.Args[1:], false)`,
+	assertProjectRendererFileContains(t, filepath.Join("app", "ship", "wire", "app.go"),
+		`HasRuntime:  false`,
 	)
 	assertProjectRendererFileNotContains(t, filepath.Join("app", "ship", "root_cmd.go"),
 		`cmd.RunCmd`,

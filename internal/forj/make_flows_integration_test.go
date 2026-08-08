@@ -607,7 +607,25 @@ func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 		return out.String()
 	}
 
+	// Projects rendered before the shared launcher existed must remain upgradeable when a new App reuses existing capabilities.
+	for _, path := range []string{
+		filepath.Join(projectDir, "internal", "cmd", "launch.go"),
+		filepath.Join(projectDir, "internal", "cmd", "launch_test.go"),
+	} {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove shared launch fixture %s: %v", path, err)
+		}
+	}
+
 	runForj(t, "make:app", "billing")
+	for _, path := range []string{
+		filepath.Join(projectDir, "internal", "cmd", "launch.go"),
+		filepath.Join(projectDir, "internal", "cmd", "launch_test.go"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected make:app to restore %s: %v", path, err)
+		}
+	}
 	rootHelp := runForj(t, "--help")
 	for _, want := range []string{"GoForj CLI", "app usage", "forj <app> <command>"} {
 		if !strings.Contains(rootHelp, want) {
@@ -621,6 +639,18 @@ func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 		t.Fatalf("expected root help to omit app labels, got:\n%s", rootHelp)
 	}
 	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "test", "./internal/cmd")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	var generatedTestOut bytes.Buffer
+	cmd.Stdout = &generatedTestOut
+	cmd.Stderr = &generatedTestOut
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("generated launch tests failed: %v\n%s", err, generatedTestOut.String())
+	}
 
 	originalWD, err := os.Getwd()
 	if err != nil {
