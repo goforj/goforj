@@ -539,7 +539,7 @@
           </Item>
       </Specimen>
 
-      <div class="grid gap-6 lg:grid-cols-3">
+      <div class="grid items-start gap-6 lg:grid-cols-3">
         <Specimen name="TagsInput" description="Free-form token entry for invites, labels, and filters.">
           <TagsInput v-model="tags">
             <TagsInputItem v-for="tag in tags" :key="tag" :value="tag">
