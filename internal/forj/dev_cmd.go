@@ -1215,6 +1215,7 @@ watcherLoop:
 		if err != nil {
 			return err
 		}
+		reconciliationSucceeded := true
 		if session.reconcile {
 			reconcileErr := runDevWatcherReconciliation(
 				session.config,
@@ -1225,12 +1226,16 @@ watcherLoop:
 			session.reconcile = false
 			session.reconcileFrontendDeps = false
 			if reconcileErr != nil {
-				runtime.stopAndDrain(true)
-				return fmt.Errorf("dev watcher reconciliation failed: %w", reconcileErr)
+				reconciliationSucceeded = false
+				runtime.controller.finishReconciliation(false)
+				writeDevRecoverableFailure(session.outWriter, session.errWriter, "Development build failed", reconcileErr)
+			} else {
+				runtime.controller.finishReconciliation(true)
 			}
-			runtime.controller.finishReconciliation(true)
 		}
-		printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
+		if reconciliationSucceeded {
+			printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
+		}
 		for {
 			select {
 			case <-session.stopCh:
@@ -1275,11 +1280,7 @@ watcherLoop:
 				}
 				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
 					runtime.controller.resumeBuilds()
-					console.Errorf("forj build failed: %v", err)
-					resetDevFooterLine(session.outWriter)
-					resetDevFooterLine(session.errWriter)
-					clearDevStatusLine(session.outWriter)
-					clearDevStatusLine(session.errWriter)
+					writeDevRecoverableFailure(session.outWriter, session.errWriter, "forj build failed", err)
 					drainBuildSignals(session.buildCh)
 					continue
 				}
@@ -1386,6 +1387,16 @@ watcherLoop:
 	}
 }
 
+// writeDevRecoverableFailure keeps build diagnostics inside the active output session so its reserved rows remain intact.
+func writeDevRecoverableFailure(outWriter io.Writer, errWriter io.Writer, label string, err error) {
+	for _, writer := range []io.Writer{outWriter, errWriter} {
+		clearDevStatusLine(writer)
+		resetDevFooterLine(writer)
+	}
+	_, _ = fmt.Fprintf(errWriter, "%s %s: %v\n", console.ErrorMark(), strings.TrimSpace(label), err)
+	writeDevTimingLine(outWriter, "Watching for changes; fix the error to retry")
+}
+
 // devWatchStopContext makes a session stop interrupt build quiescing without leaking a waiter goroutine.
 func devWatchStopContext(stop <-chan struct{}) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1405,6 +1416,7 @@ func (session *devWatchSession) reloadProjectConfig() error {
 	if err != nil {
 		return err
 	}
+	migrateGeneratedDevSPABuildCommands(config)
 	session.config = config
 	session.baseWatches = normalizeDevWatchesForRuntime(config, copyDevWatches(config.Dev.Watches))
 	return nil

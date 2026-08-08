@@ -1,4 +1,4 @@
-//go:build watcherstress && !windows
+//go:build watcherstress
 
 package forj
 
@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -104,6 +104,8 @@ func TestDevWatcherBuildThunderingHerd(t *testing.T) {
 	})
 
 	start := time.Now()
+	seed := devWatcherBuildHerdSeed(t)
+	t.Logf("build-herd seed: %d", seed)
 	controller.tasks["herd/app/build"].request()
 	controller.tasks["herd/admin/build"].request()
 	waitForDevWatcherBuildHerdCondition(t, "managed Apps to enter concurrent compilation", func() bool {
@@ -116,7 +118,7 @@ func TestDevWatcherBuildThunderingHerd(t *testing.T) {
 		state, err := loadDevWatcherBuildHerdState(statePath)
 		return err == nil && state.SPA >= 2
 	})
-	runDevWatcherBuildHerdTriggers(controller, []string{
+	runDevWatcherBuildHerdTriggers(controller, seed, []string{
 		"herd/app/build", "herd/admin/build", "herd/app/frontend", "herd/app/docs", "herd/admin/frontend", "herd/custom/build",
 	})
 	waitForDevWatcherBuildHerdIdle(t, controller, compiled)
@@ -126,28 +128,63 @@ func TestDevWatcherBuildThunderingHerd(t *testing.T) {
 	if elapsed >= devWatcherBuildHerdTimeout {
 		t.Fatalf("mixed build herd took %s, want less than %s", elapsed, devWatcherBuildHerdTimeout)
 	}
-	assertNoDevWatcherChurnExit(t, controller)
+	assertNoDevWatcherBuildHerdExit(t, controller)
 
 	controller.stop(5 * time.Second)
 	stopped = true
 }
 
+// assertNoDevWatcherBuildHerdExit verifies coordinator pressure did not terminate a logical watcher.
+func assertNoDevWatcherBuildHerdExit(t *testing.T, controller *devWatcherController) {
+	t.Helper()
+	select {
+	case exit := <-controller.exitCh:
+		t.Fatalf("build-herd watcher exited unexpectedly: %+v", exit)
+	default:
+	}
+}
+
 // runDevWatcherBuildHerdTriggers sends deterministic staggered bursts while active tasks coalesce repeated requests.
-func runDevWatcherBuildHerdTriggers(controller *devWatcherController, taskIDs []string) {
+func runDevWatcherBuildHerdTriggers(controller *devWatcherController, seed int64, taskIDs []string) {
 	intervals := []time.Duration{0, 1, 2, 3, 5, 8, 13, 21}
+	random := rand.New(rand.NewSource(seed))
+	tasks := make([]string, 160)
+	delays := make([]time.Duration, len(tasks))
+	for index := range tasks {
+		if index < len(taskIDs) {
+			tasks[index] = taskIDs[index]
+		} else {
+			tasks[index] = taskIDs[random.Intn(len(taskIDs))]
+		}
+		delays[index] = intervals[random.Intn(len(intervals))] * time.Millisecond
+	}
 	var wait sync.WaitGroup
-	for index := range 160 {
+	for index := range tasks {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
-			delay := intervals[index%len(intervals)] * time.Millisecond
-			timer := time.NewTimer(delay)
+			timer := time.NewTimer(delays[index])
 			defer timer.Stop()
 			<-timer.C
-			controller.tasks[taskIDs[index%len(taskIDs)]].request()
+			controller.tasks[tasks[index]].request()
 		}(index)
 	}
 	wait.Wait()
+}
+
+// devWatcherBuildHerdSeed makes failures reproducible while allowing extended CI runs to supply additional schedules.
+func devWatcherBuildHerdSeed(t *testing.T) int64 {
+	t.Helper()
+	const defaultSeed int64 = 8675309
+	value := os.Getenv("GOFORJ_WATCHER_SOAK_SEED")
+	if value == "" {
+		return defaultSeed
+	}
+	seed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		t.Fatalf("parse GOFORJ_WATCHER_SOAK_SEED: %v", err)
+	}
+	return seed
 }
 
 // waitForDevWatcherBuildHerdIdle requires every task to drain its active and coalesced work.
@@ -332,17 +369,18 @@ func leaveDevWatcherBuildHerdPhase(state *devWatcherBuildHerdState, phase string
 	state.Completed++
 }
 
-// updateDevWatcherBuildHerdState serializes one cross-process state transition with an advisory file lock.
+// updateDevWatcherBuildHerdState serializes one cross-process state transition with a portable atomic-directory lock.
 func updateDevWatcherBuildHerdState(path string, update func(*devWatcherBuildHerdState) error) error {
+	unlock, err := acquireDevWatcherBuildHerdStateLock(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 	state, err := decodeDevWatcherBuildHerdState(file)
 	if err != nil {
 		return err
@@ -358,6 +396,25 @@ func updateDevWatcherBuildHerdState(path string, update func(*devWatcherBuildHer
 		return err
 	}
 	return updateErr
+}
+
+// acquireDevWatcherBuildHerdStateLock uses atomic directory creation because the stress helper must run unchanged on every supported OS.
+func acquireDevWatcherBuildHerdStateLock(path string) (func(), error) {
+	deadline := time.Now().Add(devWatcherBuildHerdTimeout)
+	for {
+		err := os.Mkdir(path, 0o700)
+		if err == nil {
+			return func() { _ = os.Remove(path) }, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("acquire build-herd state lock: timed out")
+		}
+		timer := time.NewTimer(time.Millisecond)
+		<-timer.C
+	}
 }
 
 // loadDevWatcherBuildHerdState returns one consistent state snapshot under the same writer lock.

@@ -1,0 +1,44 @@
+name: watcher soak
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  watcher-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: run reproducible watcher schedules
+        run: |
+          set -euo pipefail
+          for seed in 1 42 8675309 2147483647 922337203685477580
+          do
+            echo "watcher soak seed: $seed"
+            GOFORJ_WATCHER_SOAK_SEED="$seed" go test -race -tags=watcherstress ./internal/forj \
+              -run '^TestDevWatcherBuildThunderingHerd$' -count=3 -timeout=10m -v
+          done
+
+      - name: record coordination benchmarks
+        run: go test ./internal/forj -run '^$' -bench '^BenchmarkDevWatcherBuildGate' -benchmem -count=10 | tee watcher-benchmarks.txt
+
+      - name: retain benchmark history
+        uses: actions/upload-artifact@v4
+        with:
+          name: watcher-benchmarks-${{ github.run_id }}
+          path: watcher-benchmarks.txt
+          retention-days: 90
