@@ -46,14 +46,14 @@ onBeforeUnmount(() => clearTimeout(timer))
       </Button>
     </SheetTrigger>
 
-    <SheetContent class="flex w-full flex-col gap-4 p-0 sm:max-w-2xl">
+    <SheetContent class="flex w-full flex-col gap-4 p-0 sm:max-w-4xl">
       <SheetHeader class="gap-1 border-b px-6 pb-4 pt-6 pr-14">
         <SheetTitle>{{ name }}</SheetTitle>
         <SheetDescription class="font-mono text-xs">{{ path }}</SheetDescription>
       </SheetHeader>
 
       <ScrollArea class="min-h-0 flex-1">
-        <pre class="px-6 text-xs leading-relaxed"><code v-html="highlighted" /></pre>
+        <pre class="w-max min-w-full px-6 text-xs leading-relaxed"><code v-html="highlighted" /></pre>
       </ScrollArea>
 
       <div class="border-t px-6 pb-6 pt-4">
