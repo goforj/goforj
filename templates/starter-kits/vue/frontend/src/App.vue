@@ -5,7 +5,6 @@
         '--sidebar-width': 'calc(var(--spacing) * 72)',
         '--header-height': 'calc(var(--spacing) * 16)',
       }"
-      :class="showLoginLayout ? 'app-shell-login' : undefined"
     >
       <AppSidebar v-if="routeReady && !isPublicShell" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
 
@@ -34,7 +33,7 @@
           </div>
         </header>
 
-        <div :class="showLoginLayout ? 'login-content-area flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
+        <div :class="showLoginLayout ? 'flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
           <RouterView />
         </div>
       </SidebarInset>
