@@ -515,61 +515,22 @@
       <Specimen
         name="Item"
         description="A row with media, content, and actions. Use for settings lists, device lists, and account-security prompts."
+        :source="ItemRowExampleSource"
       >
-          <Item variant="outline">
-            <ItemContent>
-              <ItemTitle>Two-factor authentication</ItemTitle>
-              <ItemDescription>Verify via email or phone number.</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Button size="sm">Enable</Button>
-            </ItemActions>
-          </Item>
-
-          <Item as="a" href="#" variant="outline" size="sm">
-            <ItemMedia>
-              <BadgeCheck class="size-5" />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>Your profile has been verified.</ItemTitle>
-            </ItemContent>
-            <ItemActions>
-              <ChevronRight class="size-4" />
-            </ItemActions>
-          </Item>
+          <ItemRowExample />
       </Specimen>
 
       <div class="grid items-start gap-6 lg:grid-cols-3">
-        <Specimen name="TagsInput" description="Free-form token entry for invites, labels, and filters.">
-          <TagsInput v-model="tags">
-            <TagsInputItem v-for="tag in tags" :key="tag" :value="tag">
-              <TagsInputItemText />
-              <TagsInputItemDelete />
-            </TagsInputItem>
-            <TagsInputInput placeholder="Add tag..." />
-          </TagsInput>
+        <Specimen name="TagsInput" description="Free-form token entry for invites, labels, and filters." :source="TagsInputExampleSource">
+          <TagsInputExample />
         </Specimen>
 
-        <Specimen name="InputOTP" description="Fixed-length one-time codes with grouped slots.">
-          <InputOTP v-model="otpCode" :maxlength="6">
-            <template #default="{ slots }">
-              <InputOTPGroup>
-                <InputOTPSlot v-for="(_, index) in slots.slice(0, 3)" :key="index" :index="index" />
-              </InputOTPGroup>
-              <InputOTPSeparator />
-              <InputOTPGroup>
-                <InputOTPSlot v-for="(_, index) in slots.slice(3, 6)" :key="index + 3" :index="index + 3" />
-              </InputOTPGroup>
-            </template>
-          </InputOTP>
+        <Specimen name="InputOTP" description="Fixed-length one-time codes with grouped slots." :source="InputOTPExampleSource">
+          <InputOTPExample />
         </Specimen>
 
-        <Specimen name="PinInput" description="Short numeric PINs where each digit is its own slot.">
-          <PinInput v-model="pinCode" class="justify-between">
-            <PinInputGroup class="gap-2">
-              <PinInputSlot v-for="index in 4" :key="index" :index="index - 1" />
-            </PinInputGroup>
-          </PinInput>
+        <Specimen name="PinInput" description="Short numeric PINs where each digit is its own slot." :source="PinInputExampleSource">
+          <PinInputExample />
         </Specimen>
       </div>
 
@@ -808,7 +769,15 @@ import { useForm } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
 import { toast } from 'vue-sonner'
 import { z } from 'zod'
-import { ArrowUp, BadgeCheck, Check, ChevronRight, ChevronsUpDown, CircleCheckBig, Info, Minus, Plus, Search, Star } from '@lucide/vue'
+import { ArrowUp, Check, ChevronsUpDown, CircleCheckBig, Info, Minus, Plus, Search, Star } from '@lucide/vue'
+import TagsInputExample from './examples/TagsInputExample.vue'
+import TagsInputExampleSource from './examples/TagsInputExample.vue?raw'
+import InputOTPExample from './examples/InputOTPExample.vue'
+import InputOTPExampleSource from './examples/InputOTPExample.vue?raw'
+import PinInputExample from './examples/PinInputExample.vue'
+import PinInputExampleSource from './examples/PinInputExample.vue?raw'
+import ItemRowExample from './examples/ItemRowExample.vue'
+import ItemRowExampleSource from './examples/ItemRowExample.vue?raw'
 import PageHeader from '@/components/PageHeader.vue'
 import { ComponentTag, Showcase, ShowcaseRow, Specimen } from '@/components/showcase'
 import { Badge } from '@/components/ui/badge'
@@ -839,19 +808,16 @@ import {
 import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText, InputGroupTextarea } from '@/components/ui/input-group'
-import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from '@/components/ui/input-otp'
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/ui/item'
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { NumberField, NumberFieldContent, NumberFieldDecrement, NumberFieldIncrement, NumberFieldInput } from '@/components/ui/number-field'
-import { PinInput, PinInputGroup, PinInputSlot } from '@/components/ui/pin-input'
 import { Progress } from '@/components/ui/progress'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Stepper, StepperDescription, StepperIndicator, StepperItem, StepperSeparator, StepperTitle, StepperTrigger } from '@/components/ui/stepper'
 import { Switch } from '@/components/ui/switch'
-import { TagsInput, TagsInputInput, TagsInputItem, TagsInputItemDelete, TagsInputItemText } from '@/components/ui/tags-input'
 import { Textarea } from '@/components/ui/textarea'
 import { Toggle } from '@/components/ui/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -866,9 +832,6 @@ const runtimeMode = ref('local')
 const seatCount = ref(8)
 const summary = ref('')
 const activeStep = ref(2)
-const tags = ref(['admin', 'finance', 'ops'])
-const otpCode = ref('')
-const pinCode = ref(['1', '4', '8', '2'])
 const progressValue = 72
 const expiryMonth = ref('')
 const expiryYear = ref('')
