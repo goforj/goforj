@@ -8,8 +8,29 @@
 
 ## Status
 
-**Waves 1–3 are done. Wave 4 is partly done.** What follows is the original audit; corrections found while
-implementing are marked inline. Three findings in it were wrong and are withdrawn — see *Corrections*.
+**All four waves are done.** What follows is the original audit; corrections found while implementing are
+marked inline. Three findings in it were wrong and are withdrawn — see *Corrections*.
+
+Deliberately **not** done, with reasons:
+
+- **Shadow, type, and spacing scales (#7).** shadcn-vue defines none of these either — only a radius scale.
+  Adding them would diverge from the reference the kit follows. The `gap-5` outliers were normalised by hand
+  instead.
+- **Field-level errors in settings (#28).** Those two screens validate a whole form at once, so a form-level
+  message is the honest shape. Field-level validation is already demonstrated on the forms page through the
+  vendored form primitives and vee-validate.
+- **A brand hue (#8).** The kit stays neutral, matching both shadcn-vue and the Laravel starter kit. Only the
+  focus ring was corrected, since it was near-black in light mode and invisible against a dark fill.
+
+### How the reference pages work now
+
+Each example lives in `views/components/examples/` and is imported twice by the page that shows it: once as a
+component to render, once with Vite's `?raw` suffix to list. One file is both the running example and the
+listing, so they cannot drift. All 28 specimens carry their source.
+
+`Specimen` is for a single component; `Showcase` with `ShowcaseRow` is for a composed flow that uses several.
+Tile specimens across columns when every card in the group is one control, stack them when any card holds a
+composition — otherwise short cards leave voids beneath them.
 
 Also fixed, and **not** in the original audit because I did not find them until later:
 
