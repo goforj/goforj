@@ -1063,6 +1063,33 @@ func TestIsManagedDevBuildCommand(t *testing.T) {
 	}
 }
 
+// TestRunDevBuildReplaysSingleAppFailureOutput keeps compiler diagnostics attached to the durable dev transcript.
+func TestRunDevBuildReplaysSingleAppFailureOutput(t *testing.T) {
+	config := &project.Config{
+		Dev: project.DevConfig{
+			Watches: []project.DevWatch{
+				{Name: "Build App", Exec: `printf 'cmd/app/main.go:12: undefined: missingService\n' >&2; exit 7`},
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := runDevBuild(config, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected runDevBuild to fail")
+	}
+	if !strings.Contains(out.String(), "Build failed for app") {
+		t.Fatalf("failure heading = %q, want default App context", out.String())
+	}
+	if !strings.Contains(errOut.String(), "cmd/app/main.go:12: undefined: missingService") {
+		t.Fatalf("compiler diagnostics = %q, want buffered failure output", errOut.String())
+	}
+	if got := strings.Count(err.Error(), "forj build failed"); got != 1 {
+		t.Fatalf("failure prefix count = %d in %q, want one", got, err)
+	}
+}
+
 // shellQuote centralizes shell quote behavior so callers follow the same contract.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
