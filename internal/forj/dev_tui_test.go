@@ -808,6 +808,25 @@ func TestDevBubbleModelScrollAndFollow(t *testing.T) {
 	}
 }
 
+func TestRenderDevPausedStatusLineUsesCompactControlLanguage(t *testing.T) {
+	line := stripANSI(renderDevPausedStatusLine(3, 120))
+	for _, expected := range []string{"○ Paused · 3 new", "PgUp/PgDn Scroll", "l Live"} {
+		if !strings.Contains(line, expected) {
+			t.Fatalf("paused status omitted %q: %q", expected, line)
+		}
+	}
+	for _, hidden := range []string{"◆", "[", "]", "(b)", "(space)"} {
+		if strings.Contains(line, hidden) {
+			t.Fatalf("paused status retained %q: %q", hidden, line)
+		}
+	}
+
+	narrow := stripANSI(renderDevPausedStatusLine(0, 14))
+	if narrow != "○ Paused" {
+		t.Fatalf("narrow paused status = %q, want semantic state only", narrow)
+	}
+}
+
 func TestDevBubbleModelSearchMatchesAndJump(t *testing.T) {
 	m := devBubbleModel{
 		width:          120,

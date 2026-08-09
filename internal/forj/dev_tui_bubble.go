@@ -1008,6 +1008,8 @@ func (m devBubbleModel) View() string {
 		if strings.TrimSpace(m.statusLine) != "" {
 			frame := devBubbleSpinnerFrames[m.spinnerFrame%len(devBubbleSpinnerFrames)]
 			statusDecorated = console.Colorize(console.ColorGreen, frame) + " " + status
+		} else if m.standalonePauseStatus() {
+			statusDecorated = renderDevPausedStatusLine(m.unreadCount, width)
 		} else {
 			prefix := lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}).
@@ -1347,9 +1349,9 @@ func (m devBubbleModel) contextStatusLine() string {
 		parts = append(parts, fmt.Sprintf("Find %s (%s)  [Tab/Shift+Tab] [Esc]", m.searchQuery, matchState))
 	}
 	if !m.followMode {
-		follow := "Paused  [PgUp(b)/PgDn(space)] [l live]"
+		follow := "Paused     PgUp/PgDn Scroll     l Live"
 		if m.unreadCount > 0 {
-			follow = fmt.Sprintf("%s · %d new", follow, m.unreadCount)
+			follow = fmt.Sprintf("Paused · %d new     PgUp/PgDn Scroll     l Live", m.unreadCount)
 		}
 		parts = append(parts, follow)
 	}
@@ -1357,6 +1359,33 @@ func (m devBubbleModel) contextStatusLine() string {
 		parts = append(parts, "Filters "+strings.Join(active, ","))
 	}
 	return strings.Join(parts, "  |  ")
+}
+
+// standalonePauseStatus identifies the common paused view that can use the compact semantic treatment without obscuring search or filter context.
+func (m devBubbleModel) standalonePauseStatus() bool {
+	return !m.followMode && strings.TrimSpace(m.searchQuery) == "" && len(activeDevComponentFilters(m.componentShown)) == 0
+}
+
+// renderDevPausedStatusLine keeps the paused state useful without restoring the footer's full control inventory.
+func renderDevPausedStatusLine(unread int, width int) string {
+	state := renderDevFooterBooleanStatus("Paused", false)
+	if unread > 0 {
+		state += " " + devMutedForegroundStyle().Render(fmt.Sprintf("· %d new", unread))
+	}
+	actions := []string{
+		renderDevFooterShortcut("PgUp/PgDn", "Scroll"),
+		renderDevFooterShortcut("l", "Live"),
+	}
+	for _, visible := range [][]string{actions, actions[1:], nil} {
+		line := state
+		if len(visible) > 0 {
+			line += "     " + strings.Join(visible, "     ")
+		}
+		if width <= 0 || lipgloss.Width(line) <= width {
+			return line
+		}
+	}
+	return charmansi.Truncate(state, width, "")
 }
 
 // moveCommandSelection centralizes move command selection behavior so callers follow the same contract.
