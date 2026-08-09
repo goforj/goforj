@@ -1395,7 +1395,8 @@ func TestDevWatcherRuntimeStopEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 
 // TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit preserves render work that overlaps controller shutdown.
 func TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit(t *testing.T) {
-	runtime := newDormantDevWatcherRuntime(t, io.Discard, "App")
+	var output devOutputControllerRecorder
+	runtime := newDormantDevWatcherRuntime(t, &output, "App")
 	releaseShutdown := make(chan struct{})
 	runtime.controller.wait.Add(1)
 	go func() {
@@ -1410,12 +1411,18 @@ func TestDevWatcherRuntimeBeginStopReturnsBeforeControllerExit(t *testing.T) {
 	var waitForStop func()
 	select {
 	case waitForStop = <-returned:
+		if len(output.transitions) != 1 {
+			t.Fatalf("active shutdown transitions = %#v, want one", output.transitions)
+		}
 	case <-time.After(2 * time.Second):
 		close(releaseShutdown)
 		t.Fatal("beginStop waited for controller shutdown")
 	}
 	close(releaseShutdown)
 	waitForStop()
+	if len(output.transitions) != 0 || len(output.transitionEnds) != 1 {
+		t.Fatalf("completed shutdown transitions = %#v ends=%#v, want none and one release", output.transitions, output.transitionEnds)
+	}
 	runtime.drainAllExits(true)
 }
 

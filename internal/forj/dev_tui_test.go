@@ -16,9 +16,11 @@ var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 type devOutputControllerRecorder struct {
 	bytes.Buffer
-	clearCalls int
-	resetCalls int
-	disabled   bool
+	clearCalls     int
+	resetCalls     int
+	disabled       bool
+	transitions    map[string]string
+	transitionEnds []string
 }
 
 // DisableFooter records an unexpected destructive footer transition.
@@ -50,6 +52,20 @@ func (r *devOutputControllerRecorder) ClearStatusLine() {
 // HasStatusLine reports no retained status because this recorder only verifies recovery transitions.
 func (r *devOutputControllerRecorder) HasStatusLine() bool {
 	return false
+}
+
+// SetTransition records keyed lifecycle ownership for concurrency-focused assertions.
+func (r *devOutputControllerRecorder) SetTransition(key string, line string) {
+	if r.transitions == nil {
+		r.transitions = make(map[string]string)
+	}
+	r.transitions[key] = line
+}
+
+// ClearTransition records only the lifecycle owner released by the caller.
+func (r *devOutputControllerRecorder) ClearTransition(key string) {
+	delete(r.transitions, key)
+	r.transitionEnds = append(r.transitionEnds, key)
 }
 
 // stripANSI centralizes strip ansi behavior so callers follow the same contract.
@@ -217,6 +233,45 @@ func TestDevBubbleModelResetFooterLine(t *testing.T) {
 
 	if got := next.(devBubbleModel).footerLine; got != "default" {
 		t.Fatalf("reset footer line = %q, want %q", got, "default")
+	}
+}
+
+// TestDevBubbleModelAnimatesOnlyWhileTransitioning verifies steady states stop scheduling terminal redraws.
+func TestDevBubbleModelAnimatesOnlyWhileTransitioning(t *testing.T) {
+	model := devBubbleModel{width: 80, height: 10}
+	next, tick := model.Update(devSetStatusMsg{line: "Starting app"})
+	active := next.(devBubbleModel)
+	if tick == nil || !strings.Contains(stripANSI(active.View()), devBubbleSpinnerFrames[0]+" Starting app") {
+		t.Fatalf("active transition did not render and schedule a spinner: %q", stripANSI(active.View()))
+	}
+
+	next, tick = active.Update(devSpinnerTickMsg{generation: active.spinnerGeneration})
+	active = next.(devBubbleModel)
+	if tick == nil || active.spinnerFrame != 1 {
+		t.Fatalf("spinner frame = %d command=%v, want frame 1 and another tick", active.spinnerFrame, tick)
+	}
+
+	next, _ = active.Update(devClearStatusMsg{})
+	idle := next.(devBubbleModel)
+	next, tick = idle.Update(devSpinnerTickMsg{generation: active.spinnerGeneration})
+	idle = next.(devBubbleModel)
+	if tick != nil || strings.TrimSpace(idle.statusLine) != "" {
+		t.Fatalf("idle transition retained animation: status=%q command=%v", idle.statusLine, tick)
+	}
+}
+
+// TestDevTransitionsPreserveConcurrentOwners verifies one completed build cannot erase another active lifecycle state.
+func TestDevTransitionsPreserveConcurrentOwners(t *testing.T) {
+	var output devOutputControllerRecorder
+	setDevTransition(&output, "spa:app", "Building app frontend")
+	setDevTransition(&output, "app:admin", "Building admin")
+	clearDevTransition(&output, "spa:app")
+
+	if got := output.transitions["app:admin"]; got != "Building admin" {
+		t.Fatalf("remaining transition = %q, want Building admin", got)
+	}
+	if _, exists := output.transitions["spa:app"]; exists {
+		t.Fatal("completed SPA transition still active")
 	}
 }
 

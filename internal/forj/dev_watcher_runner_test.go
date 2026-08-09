@@ -1896,6 +1896,29 @@ func waitForDevWatcherRunnerFile(t *testing.T, path string) {
 	t.Fatalf("timed out waiting for %s", path)
 }
 
+// TestDevWatcherTaskCommandTransitionNamesStructuredWork verifies generated watcher kinds use human lifecycle labels.
+func TestDevWatcherTaskCommandTransitionNamesStructuredWork(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     devCompiledWatcher
+		wantKey  string
+		wantLine string
+	}{
+		{name: "App", spec: devCompiledWatcher{ID: "build-app", App: "app", Kind: devWatcherAppBuild}, wantKey: "watcher:build-app", wantLine: "Building app"},
+		{name: "SPA", spec: devCompiledWatcher{ID: "spa-admin", App: "admin", Kind: devWatcherSPABuild}, wantKey: "watcher:spa-admin", wantLine: "Building admin frontend"},
+		{name: "custom", spec: devCompiledWatcher{ID: "lint", Kind: devWatcherCustom}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			task := devWatcherTask{spec: test.spec}
+			key, line := task.commandTransition()
+			if key != test.wantKey || line != test.wantLine {
+				t.Fatalf("commandTransition() = (%q, %q), want (%q, %q)", key, line, test.wantKey, test.wantLine)
+			}
+		})
+	}
+}
+
 // requireDevWatcherRunnerTestPlatform skips shell integration where the production wrapper is not POSIX-shaped.
 func requireDevWatcherRunnerTestPlatform(t *testing.T) {
 	t.Helper()

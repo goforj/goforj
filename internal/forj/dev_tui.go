@@ -9,6 +9,8 @@ import (
 	"golang.org/x/term"
 )
 
+const devDefaultTransitionKey = "status"
+
 // devOutputController exposes TUI-only controls while allowing plain writers to remain valid session output.
 type devOutputController interface {
 	// DisableFooter defines the disable footer behavior required from implementations.
@@ -25,6 +27,14 @@ type devOutputController interface {
 	ClearStatusLine()
 	// HasStatusLine defines the has status line behavior required from implementations.
 	HasStatusLine() bool
+}
+
+// devTransitionController distinguishes overlapping lifecycle work sharing the TUI's single status row.
+type devTransitionController interface {
+	// SetTransition starts or updates one keyed lifecycle transition.
+	SetTransition(string, string)
+	// ClearTransition completes one keyed lifecycle transition.
+	ClearTransition(string)
 }
 
 // devOutputSession names the terminal streams and lifecycle ownership that must change together when the TUI is enabled.
@@ -130,8 +140,38 @@ func hasDevStatusLine(writer io.Writer) bool {
 	return false
 }
 
+// setDevTransition keeps concurrent lifecycle operations independently owned inside TUI sessions.
+func setDevTransition(writer io.Writer, key string, line string) {
+	if controller := asDevTransitionController(writer); controller != nil {
+		controller.SetTransition(key, line)
+		return
+	}
+	setDevStatusLine(writer, line)
+}
+
+// clearDevTransition releases only the lifecycle operation that previously acquired the status row.
+func clearDevTransition(writer io.Writer, key string) {
+	if controller := asDevTransitionController(writer); controller != nil {
+		controller.ClearTransition(key)
+		return
+	}
+	clearDevStatusLine(writer)
+}
+
 // asDevOutputController centralizes as dev output controller behavior so callers follow the same contract.
 func asDevOutputController(writer io.Writer) devOutputController {
+	if synchronized, ok := writer.(devWatcherSynchronizedWriter); ok {
+		return asDevOutputController(synchronized.writer)
+	}
 	controller, _ := writer.(devOutputController)
+	return controller
+}
+
+// asDevTransitionController unwraps synchronized watcher output while retaining the TUI's lifecycle API.
+func asDevTransitionController(writer io.Writer) devTransitionController {
+	if synchronized, ok := writer.(devWatcherSynchronizedWriter); ok {
+		return asDevTransitionController(synchronized.writer)
+	}
+	controller, _ := writer.(devTransitionController)
 	return controller
 }
