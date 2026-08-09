@@ -231,7 +231,10 @@ func TestDevTaskOutputBlockLabelsLiveOutput(t *testing.T) {
 	})
 
 	stdoutWriter := block.stdoutWriter()
-	if _, err := io.WriteString(stdoutWriter, "[+] up "); err != nil {
+	if _, err := io.WriteString(stdoutWriter, "\r\x1b["); err != nil {
+		t.Fatalf("write split ANSI prefix: %v", err)
+	}
+	if _, err := io.WriteString(stdoutWriter, "2K[+] up "); err != nil {
 		t.Fatalf("write initial stdout fragment: %v", err)
 	}
 	if _, err := io.WriteString(block.stderrWriter(), "compose warning\n"); err != nil {
@@ -242,15 +245,19 @@ func TestDevTaskOutputBlockLabelsLiveOutput(t *testing.T) {
 			t.Fatalf("write stdout fragment: %v", err)
 		}
 	}
+	if _, err := block.finish(true, 125*time.Millisecond); err != nil {
+		t.Fatalf("finish output block: %v", err)
+	}
 
 	if loaderStops != 1 {
 		t.Fatalf("loader stops = %d, want 1", loaderStops)
 	}
 	plainStdout := stripANSI(stdout.String())
 	for _, expected := range []string{
-		"┃ Run Docker Compose\n",
+		"┏ Run Docker Compose\n",
 		"┃ [+] up 2/2\n",
 		"┃ container app running\r┃ container db running\n",
+		"┗ Done  ·  125ms\n",
 	} {
 		if !strings.Contains(plainStdout, expected) {
 			t.Fatalf("stdout omitted %q: %q", expected, plainStdout)
