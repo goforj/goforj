@@ -114,6 +114,55 @@ func TestRunWithLoaderPropagatesErrorsAndReleasesTheTransient(t *testing.T) {
 	}
 }
 
+// TestDevSetupAndTeardownTasksUseCoordinatedLoaders verifies lifecycle commands animate without hiding child output.
+func TestDevSetupAndTeardownTasksUseCoordinatedLoaders(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+
+	output := &consoleLoaderWriter{}
+	colorEnabled := false
+	unicodeEnabled := true
+	animationsEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:            output,
+		Stderr:            output,
+		ColorEnabled:      &colorEnabled,
+		UnicodeEnabled:    &unicodeEnabled,
+		AnimationsEnabled: &animationsEnabled,
+		LoaderInterval:    time.Hour,
+		IsTerminal:        func(int) bool { return true },
+	}))
+
+	if err := runDevTasks("Running pre-dev setup", []project.DevTask{{
+		Name: "Start development services",
+		Cmd:  "printf 'services ready\\n'",
+	}}); err != nil {
+		t.Fatalf("runDevTasks() error = %v", err)
+	}
+	if err := runDevDownTasks([]project.DevTask{{
+		Name: "Stop development services",
+		Cmd:  "printf 'services stopped\\n'",
+	}}); err != nil {
+		t.Fatalf("runDevDownTasks() error = %v", err)
+	}
+
+	for _, expected := range []string{
+		"Start development services",
+		"services ready",
+		"Stop development services",
+		"services stopped",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("lifecycle loader omitted %q: %q", expected, output.String())
+		}
+	}
+	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 4 {
+		t.Fatalf("lifecycle loader clear writes = %d, want at least 4: %q", got, output.String())
+	}
+}
+
 // TestRunDevBuildJobWithLoaderAnimatesBootstrapBuild verifies initial App compilation uses the shared console loader and clears it on success.
 func TestRunDevBuildJobWithLoaderAnimatesBootstrapBuild(t *testing.T) {
 	previous := console.Default()

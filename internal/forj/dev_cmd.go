@@ -619,10 +619,20 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	defer devNull.Close()
 	console.Actionf("%s", heading)
 	for _, task := range tasks {
-		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
 		outputTail := newDevTaskOutputTail(40)
-		cmd := newDevTaskCommand(task, devNull, os.Stdout, os.Stderr, outputTail)
-		res, err := cmd.Run()
+		var res execx.Result
+		err := runWithLoader(task.Name, func() error {
+			cmd := newDevTaskCommand(
+				task,
+				devNull,
+				console.Default().StdoutWriter(),
+				console.Default().StderrWriter(),
+				outputTail,
+			)
+			var runErr error
+			res, runErr = cmd.Run()
+			return runErr
+		})
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -1211,7 +1221,9 @@ watcherLoop:
 			return err
 		}
 		session.config.Dev.Watches = devWatchesForApps(session.config, session.baseWatches)
+		setDevTransition(session.outWriter, "watchers:start", "Starting watchers")
 		runtime, err := startDevWatcherRuntime(session)
+		clearDevTransition(session.outWriter, "watchers:start")
 		if err != nil {
 			return err
 		}
@@ -1239,13 +1251,15 @@ watcherLoop:
 		for {
 			select {
 			case <-session.stopCh:
+				setDevTransition(session.outWriter, "dev:shutdown", "Shutting down")
+				_, _ = fmt.Fprintln(session.outWriter, buildDevWatcherStopSeparatorLine())
 				disableDevFooter(session.outWriter)
 				disableDevFooter(session.errWriter)
-				fmt.Println(buildDevWatcherStopSeparatorLine())
 				runtime.stopAndDrain(true)
 				return errDevInterrupted
 			case <-session.restartCh:
 				writeDevActionLine(session.outWriter, "Restarting dev watchers")
+				setDevTransition(session.outWriter, "watchers:restart", "Restarting watchers")
 				runtime.stopAndDrain(true)
 				drainRestartSignals(session.restartCh)
 				refreshedStreamer, err := session.reloadRuntime()
@@ -1253,6 +1267,7 @@ watcherLoop:
 					return err
 				}
 				session.streamer = refreshedStreamer
+				clearDevTransition(session.outWriter, "watchers:restart")
 				continue watcherLoop
 			case <-session.buildCh:
 				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
@@ -2422,6 +2437,8 @@ func (runtime *devWatcherRuntime) stopAndDrain(collapse bool) {
 
 // beginStop lets render preparation overlap graceful process termination without losing the final wait boundary.
 func (runtime *devWatcherRuntime) beginStop(timeout time.Duration, collapse bool) func() {
+	transitionKey := fmt.Sprintf("watchers:stop:%p", runtime)
+	setDevTransition(runtime.session.outWriter, transitionKey, "Stopping watchers")
 	if collapse {
 		names := make([]string, 0, len(runtime.watchers))
 		for _, watcher := range runtime.watchers {
@@ -2440,6 +2457,7 @@ func (runtime *devWatcherRuntime) beginStop(timeout time.Duration, collapse bool
 	}()
 	return func() {
 		<-stopped
+		clearDevTransition(runtime.session.outWriter, transitionKey)
 	}
 }
 
@@ -2658,12 +2676,19 @@ func runDevDownTasks(tasks []project.DevTask) error {
 	}
 	console.Infof("Bringing down resources")
 	for _, task := range tasks {
-		cmd := execx.Command("bash", "-c", task.Cmd).
-			EnvInherit().
-			StdinReader(os.Stdin).
-			StdoutWriter(os.Stdout).
-			StderrWriter(os.Stderr)
-		res, err := configureDevTaskTTY(cmd, nil).Run()
+		var res execx.Result
+		err := runWithLoader(task.Name, func() error {
+			stdout := console.Default().StdoutWriter()
+			cmd := execx.Command("bash", "-c", task.Cmd).
+				EnvInherit().
+				StdinReader(os.Stdin).
+				StdoutWriter(stdout).
+				StderrWriter(console.Default().StderrWriter())
+			cmd = configureDevTaskTTYWithWriter(cmd, stdout, nil)
+			var runErr error
+			res, runErr = cmd.Run()
+			return runErr
+		})
 		if err != nil {
 			return fmt.Errorf("dev_down task '%s' failed: %v", task.Name, err)
 		}

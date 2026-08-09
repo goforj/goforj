@@ -19,62 +19,71 @@ import (
 	"golang.org/x/term"
 )
 
-const devBubbleFlushDelay = 20 * time.Millisecond
+const (
+	devBubbleFlushDelay      = 20 * time.Millisecond
+	devBubbleSpinnerInterval = 80 * time.Millisecond
+)
+
+var devBubbleSpinnerFrames = console.DefaultMarks().SpinnerFrames
 
 type devBubbleWriter struct {
-	mu          sync.Mutex
-	program     *tea.Program
-	done        chan struct{}
-	partial     string
-	ansiTail    string
-	pending     []string
-	flushTimer  *time.Timer
-	disabled    bool
-	footerLine  string
-	defaultLine string
-	statusLine  string
-	inputState  *term.State
-	outputState *term.State
-	closed      bool
+	mu                 sync.Mutex
+	program            *tea.Program
+	done               chan struct{}
+	partial            string
+	ansiTail           string
+	pending            []string
+	flushTimer         *time.Timer
+	disabled           bool
+	footerLine         string
+	defaultLine        string
+	statusLine         string
+	transitions        map[string]devBubbleTransition
+	transitionSequence uint64
+	inputState         *term.State
+	outputState        *term.State
+	closed             bool
 }
 
 type devBubbleModel struct {
-	width            int
-	height           int
-	lines            []string
-	tools            []devToolLink
-	commands         []devAppCommandOption
-	commandError     string
-	footerLine       string
-	statusLine       string
-	footerEnabled    bool
-	helpVisible      bool
-	apiURL           string
-	lighthouseURL    string
-	dbQuery          bool
-	appDebug         string
-	followMode       bool
-	viewportTop      int
-	unreadCount      int
-	filterVisible    bool
-	commandVisible   bool
-	commandIndex     int
-	commandArgs      string
-	commandArgsFocus bool
-	commandJump      string
-	commandJumpAt    time.Time
-	componentShown   map[string]bool
-	searchMode       bool
-	searchQuery      string
-	searchMatches    []int
-	searchIndex      int
-	cachedLines      []string
-	cacheWidth       int
-	cacheHasHeader   bool
-	cacheValid       bool
-	requestRestart   func()
-	requestRender    func()
-	requestCommand   func(devShellCommandRequest)
+	width             int
+	height            int
+	lines             []string
+	tools             []devToolLink
+	commands          []devAppCommandOption
+	commandError      string
+	footerLine        string
+	statusLine        string
+	spinnerFrame      int
+	spinnerGeneration uint64
+	footerEnabled     bool
+	helpVisible       bool
+	apiURL            string
+	lighthouseURL     string
+	dbQuery           bool
+	appDebug          string
+	followMode        bool
+	viewportTop       int
+	unreadCount       int
+	filterVisible     bool
+	commandVisible    bool
+	commandIndex      int
+	commandArgs       string
+	commandArgsFocus  bool
+	commandJump       string
+	commandJumpAt     time.Time
+	componentShown    map[string]bool
+	searchMode        bool
+	searchQuery       string
+	searchMatches     []int
+	searchIndex       int
+	cachedLines       []string
+	cacheWidth        int
+	cacheHasHeader    bool
+	cacheValid        bool
+	requestRestart    func()
+	requestRender     func()
+	requestCommand    func(devShellCommandRequest)
 }
 
 type devAppendLinesMsg struct{ lines []string }
@@ -84,6 +93,7 @@ type devResetFooterMsg struct{ line string }
 type devSetStatusMsg struct{ line string }
 type devClearStatusMsg struct{}
 type devMarkStatusDoneMsg struct{}
+type devSpinnerTickMsg struct{ generation uint64 }
 type devSetFooterEnabledMsg struct{ enabled bool }
 type devRefreshEnvMsg struct {
 	apiURL        string
@@ -95,6 +105,11 @@ type devRefreshEnvMsg struct {
 	commandError  string
 }
 type devQuitMsg struct{}
+
+type devBubbleTransition struct {
+	line     string
+	sequence uint64
+}
 
 var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+(?:[a-z][a-z0-9_-]*\s+)?([A-Za-z][A-Za-z0-9_-]*)\s+`)
 var devAppCommandLinePattern = regexp.MustCompile(`^\s{2}(\S+)\s{2,}(.+)$`)
@@ -158,6 +173,7 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 		done:        done,
 		footerLine:  state.footerLine,
 		defaultLine: state.footerLine,
+		transitions: make(map[string]devBubbleTransition),
 		inputState:  inputState,
 		outputState: outputState,
 	}
@@ -332,30 +348,31 @@ func (w *devBubbleWriter) ResetFooterLine() {
 
 // SetStatusLine centralizes set status line behavior so callers follow the same contract.
 func (w *devBubbleWriter) SetStatusLine(line string) {
-	w.mu.Lock()
-	w.statusLine = line
-	w.mu.Unlock()
-	w.program.Send(devSetStatusMsg{line: line})
+	w.SetTransition(devDefaultTransitionKey, line)
 }
 
 // MarkStatusDone centralizes mark status done behavior so callers follow the same contract.
 func (w *devBubbleWriter) MarkStatusDone() {
 	w.mu.Lock()
-	line := strings.TrimSpace(w.statusLine)
-	w.statusLine = ""
-	w.mu.Unlock()
+	line := strings.TrimSpace(w.transitions[devDefaultTransitionKey].line)
+	delete(w.transitions, devDefaultTransitionKey)
+	next := w.activeTransitionLineLocked()
+	w.statusLine = next
 	if line != "" {
 		w.program.Send(devAppendLinesMsg{lines: []string{console.SuccessMark() + " " + line}})
 	}
-	w.program.Send(devMarkStatusDoneMsg{})
+	if next == "" {
+		w.program.Send(devMarkStatusDoneMsg{})
+		w.mu.Unlock()
+		return
+	}
+	w.program.Send(devSetStatusMsg{line: next})
+	w.mu.Unlock()
 }
 
 // ClearStatusLine centralizes clear status line behavior so callers follow the same contract.
 func (w *devBubbleWriter) ClearStatusLine() {
-	w.mu.Lock()
-	w.statusLine = ""
-	w.mu.Unlock()
-	w.program.Send(devClearStatusMsg{})
+	w.ClearTransition(devDefaultTransitionKey)
 }
 
 // HasStatusLine centralizes has status line behavior so callers follow the same contract.
@@ -363,6 +380,54 @@ func (w *devBubbleWriter) HasStatusLine() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return strings.TrimSpace(w.statusLine) != ""
+}
+
+// SetTransition publishes keyed lifecycle work so concurrent operations cannot clear each other's status.
+func (w *devBubbleWriter) SetTransition(key string, line string) {
+	key = strings.TrimSpace(key)
+	line = strings.TrimSpace(line)
+	if key == "" || line == "" {
+		return
+	}
+	w.mu.Lock()
+	if w.transitions == nil {
+		w.transitions = make(map[string]devBubbleTransition)
+	}
+	w.transitionSequence++
+	w.transitions[key] = devBubbleTransition{line: line, sequence: w.transitionSequence}
+	w.statusLine = line
+	w.program.Send(devSetStatusMsg{line: line})
+	w.mu.Unlock()
+}
+
+// ClearTransition removes one lifecycle owner while preserving any other active operation.
+func (w *devBubbleWriter) ClearTransition(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	w.mu.Lock()
+	delete(w.transitions, key)
+	next := w.activeTransitionLineLocked()
+	w.statusLine = next
+	if next == "" {
+		w.program.Send(devClearStatusMsg{})
+		w.mu.Unlock()
+		return
+	}
+	w.program.Send(devSetStatusMsg{line: next})
+	w.mu.Unlock()
+}
+
+// activeTransitionLineLocked selects the most recently updated active operation for the single reserved status row.
+func (w *devBubbleWriter) activeTransitionLineLocked() string {
+	var active devBubbleTransition
+	for _, transition := range w.transitions {
+		if transition.sequence > active.sequence {
+			active = transition
+		}
+	}
+	return active.line
 }
 
 // RefreshEnv centralizes refresh env behavior so callers follow the same contract.
@@ -422,9 +487,22 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case devResetFooterMsg:
 		m.footerLine = msg.line
 	case devSetStatusMsg:
+		wasIdle := strings.TrimSpace(m.statusLine) == ""
 		m.statusLine = msg.line
+		if wasIdle && strings.TrimSpace(msg.line) != "" {
+			m.spinnerFrame = 0
+			m.spinnerGeneration++
+			return m, devBubbleSpinnerTick(m.spinnerGeneration)
+		}
 	case devClearStatusMsg, devMarkStatusDoneMsg:
 		m.statusLine = ""
+		m.spinnerGeneration++
+	case devSpinnerTickMsg:
+		if msg.generation != m.spinnerGeneration || strings.TrimSpace(m.statusLine) == "" {
+			return m, nil
+		}
+		m.spinnerFrame = (m.spinnerFrame + 1) % len(devBubbleSpinnerFrames)
+		return m, devBubbleSpinnerTick(msg.generation)
 	case devSetFooterEnabledMsg:
 		m.footerEnabled = msg.enabled
 	case devRefreshEnvMsg:
@@ -694,7 +772,8 @@ func (m devBubbleModel) View() string {
 	statusLines := 0
 	if strings.TrimSpace(status) != "" {
 		if strings.TrimSpace(m.statusLine) != "" {
-			statusDecorated = console.Colorize(console.ColorGreen, "•") + " " + status
+			frame := devBubbleSpinnerFrames[m.spinnerFrame%len(devBubbleSpinnerFrames)]
+			statusDecorated = console.Colorize(console.ColorGreen, frame) + " " + status
 		} else {
 			prefix := lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}).
@@ -739,6 +818,13 @@ func (m devBubbleModel) View() string {
 		return base
 	}
 	return renderDevBubbleOverlay(base, overlay, width, height)
+}
+
+// devBubbleSpinnerTick schedules one TUI-owned animation frame without writing around Bubble Tea.
+func devBubbleSpinnerTick(generation uint64) tea.Cmd {
+	return tea.Tick(devBubbleSpinnerInterval, func(time.Time) tea.Msg {
+		return devSpinnerTickMsg{generation: generation}
+	})
 }
 
 // currentOverlay centralizes current overlay behavior so callers follow the same contract.

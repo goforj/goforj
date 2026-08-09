@@ -887,6 +887,11 @@ func (c *devWatcherController) completeSteadySPA(task *devWatcherTask, success b
 // runCommand executes one build/custom command and follows only successful graph edges.
 func (t *devWatcherTask) runCommand() {
 	defer t.markCommandIdle()
+	transitionKey, transitionLine := t.commandTransition()
+	if transitionLine != "" {
+		setDevTransition(t.controller.outWriter, transitionKey, transitionLine)
+		defer clearDevTransition(t.controller.outWriter, transitionKey)
+	}
 	t.writeExecLog()
 	var exit devwatch.Exit
 	var err error
@@ -939,6 +944,18 @@ func (t *devWatcherTask) runCommand() {
 	}
 	if t.spec.Exit {
 		t.controller.publishExit(t.spec.ID, t.spec.Name, &exit, err)
+	}
+}
+
+// commandTransition gives structured build work a stable TUI owner across concurrent watcher executions.
+func (t *devWatcherTask) commandTransition() (string, string) {
+	switch t.spec.Kind {
+	case devWatcherAppBuild:
+		return "watcher:" + t.spec.ID, "Building " + t.spec.App
+	case devWatcherSPABuild:
+		return "watcher:" + t.spec.ID, "Building " + t.spec.App + " frontend"
+	default:
+		return "", ""
 	}
 }
 
@@ -1073,6 +1090,17 @@ func (t *devWatcherTask) runRuntime() {
 	t.mu.Lock()
 	runtimeLive := t.runtimeLive
 	t.mu.Unlock()
+	appLabel := strings.TrimSpace(t.spec.App)
+	if appLabel == "" {
+		appLabel = t.spec.Name
+	}
+	transitionLine := "Starting " + appLabel
+	if runtimeLive {
+		transitionLine = "Restarting " + appLabel
+	}
+	transitionKey := "runtime:" + t.spec.ID
+	setDevTransition(t.controller.outWriter, transitionKey, transitionLine)
+	defer clearDevTransition(t.controller.outWriter, transitionKey)
 	command, err := prepareNativeRuntimeCommand(t.spec)
 	if err != nil {
 		if runtimeLive {
