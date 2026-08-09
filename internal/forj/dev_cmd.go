@@ -2990,6 +2990,9 @@ func emitWatcherLifecycleLine(out io.Writer, streamer *devwatchStreamer, watcher
 	if out == nil {
 		return
 	}
+	if suppressDevLifecycleOrchestration(out) {
+		return
+	}
 	devwatchOutputMu.Lock()
 	defer devwatchOutputMu.Unlock()
 	_, _ = io.WriteString(out, line)
@@ -3012,6 +3015,9 @@ func emitWatcherLifecycleSummary(out io.Writer, streamer *devwatchStreamer, watc
 		})
 	}
 	if out == nil {
+		return
+	}
+	if suppressDevLifecycleOrchestration(out) {
 		return
 	}
 	devwatchOutputMu.Lock()

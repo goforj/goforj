@@ -776,6 +776,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 				Watcher:   w.watcher,
 			})
 		}
+		suppressTriggerLine := isWatcherTriggerLine(rawLine) && suppressDevLifecycleOrchestration(w.out)
 		devwatchOutputMu.Lock()
 		if shutdownSeparator {
 			separator := buildDevShutdownSeparatorLine()
@@ -791,13 +792,15 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 				return 0, err
 			}
 		}
-		if _, err := io.WriteString(w.out, outLine); err != nil {
-			devwatchOutputMu.Unlock()
-			return 0, err
-		}
-		if _, err := w.out.Write([]byte{'\n'}); err != nil {
-			devwatchOutputMu.Unlock()
-			return 0, err
+		if !suppressTriggerLine {
+			if _, err := io.WriteString(w.out, outLine); err != nil {
+				devwatchOutputMu.Unlock()
+				return 0, err
+			}
+			if _, err := w.out.Write([]byte{'\n'}); err != nil {
+				devwatchOutputMu.Unlock()
+				return 0, err
+			}
 		}
 		if w.lifecycle.separatorsEnabled() && isWatcherTriggerLine(rawLine) && w.lifecycle.noteStartupTrigger() {
 			separator := buildDevStartupSeparatorLine()

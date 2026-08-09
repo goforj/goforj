@@ -398,6 +398,13 @@ func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTran
 	w.mu.Unlock()
 }
 
+// compactLifecycleTransactionActive reports whether typed runner narration is redundant with the active shelf.
+func (w *devBubbleWriter) compactLifecycleTransactionActive() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.lifecycle != nil && !w.lifecycle.transaction.Detailed
+}
+
 // CompleteLifecycleTransaction discards successful infrastructure chatter and retains only its summary.
 func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.Duration, summary devLifecycleTransactionSummary) {
 	w.mu.Lock()
