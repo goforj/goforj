@@ -22,6 +22,8 @@ import (
 const (
 	devBubbleFlushDelay      = 20 * time.Millisecond
 	devBubbleSpinnerInterval = 80 * time.Millisecond
+	devTerminalProgressClear = "\x1b]9;4;0;0\x07"
+	devTerminalProgressBusy  = "\x1b]9;4;3;0\x07"
 )
 
 var devBubbleSpinnerFrames = console.DefaultMarks().SpinnerFrames
@@ -277,7 +279,7 @@ func runDevTTYSttySane(tty *os.File) {
 }
 
 // devTerminalModeResetSequence releases terminal modes without advancing past Bubble Tea's restored cursor row.
-const devTerminalModeResetSequence = "\x1b[>u\x1b[<u\x1b[?1004l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\r\x1b[2K"
+const devTerminalModeResetSequence = devTerminalProgressClear + "\x1b[>u\x1b[<u\x1b[?1004l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\r\x1b[2K"
 
 // scheduleFlushLocked centralizes schedule flush locked behavior so callers follow the same contract.
 func (w *devBubbleWriter) scheduleFlushLocked() {
@@ -815,9 +817,17 @@ func (m devBubbleModel) View() string {
 	base := strings.Join(parts, "\n")
 	overlay := m.currentOverlay()
 	if overlay == "" {
-		return base
+		return m.terminalProgressSequence() + base
 	}
-	return renderDevBubbleOverlay(base, overlay, width, height)
+	return m.terminalProgressSequence() + renderDevBubbleOverlay(base, overlay, width, height)
+}
+
+// terminalProgressSequence keeps terminal-owned progress aligned with the TUI's active lifecycle row.
+func (m devBubbleModel) terminalProgressSequence() string {
+	if strings.TrimSpace(m.statusLine) != "" {
+		return devTerminalProgressBusy
+	}
+	return devTerminalProgressClear
 }
 
 // devBubbleSpinnerTick schedules one TUI-owned animation frame without writing around Bubble Tea.
