@@ -1131,7 +1131,7 @@ func TestRunDevBuildKeepsMultiAppSuccessTranscriptCompact(t *testing.T) {
 	if strings.Contains(text, "Built billing") {
 		t.Fatalf("expected no per-app success timing lines, got stdout %q", text)
 	}
-	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Build · ") {
+	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Build      · ") {
 		t.Fatalf("expected aggregate build timing, got stdout %q", text)
 	}
 	if errOut.Len() != 0 {
@@ -1989,6 +1989,90 @@ func TestDevPhaseSuccessLabelCompletesAppPhaseLanguage(t *testing.T) {
 		if got := devPhaseSuccessLabel(input); got != want {
 			t.Fatalf("devPhaseSuccessLabel(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+// TestDevMigrationTotalExtractsStableCompletionCount verifies compact preparation output uses the command's final result.
+func TestDevMigrationTotalExtractsStableCompletionCount(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   int
+		ok     bool
+	}{
+		{name: "no migrations", output: "✔ migrations complete (0)\n", want: 0, ok: true},
+		{name: "applied migrations", output: "✔ applied create_users\n✔ migrations complete (2)\n", want: 2, ok: true},
+		{name: "colored output", output: "\x1b[32m✔\x1b[0m migrations complete (3)\n", want: 3, ok: true},
+		{name: "unrecognized output", output: "migration command finished\n", ok: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := devMigrationTotal(test.output)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("devMigrationTotal() = (%d, %t), want (%d, %t)", got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
+// TestRunDevAppSetupSummarizesMigrationCommand verifies preparation owns the migration result instead of replaying command prose.
+func TestRunDevAppSetupSummarizesMigrationCommand(t *testing.T) {
+	withConventionalApp(t, project.DefaultAppName)
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	command := "#!/bin/sh\nprintf '✔ applied first\\n✔ applied second\\n✔ migrations complete (2)\\n'\n"
+	if err := os.WriteFile(filepath.Join("bin", project.DefaultAppName), []byte(command), 0o755); err != nil {
+		t.Fatalf("write migration command: %v", err)
+	}
+
+	config := &project.Config{
+		Dev:    project.DevConfig{AutoMigrate: true},
+		Render: project.RenderConfig{Components: project.Components{DatabaseSQLite: true}},
+	}
+	var output bytes.Buffer
+	if err := runDevPhaseOutput("Preparing App", &output, &output, func(phaseOut io.Writer, phaseErr io.Writer) error {
+		return runDevAppSetup(config, phaseOut, phaseErr)
+	}); err != nil {
+		t.Fatalf("run dev app setup: %v", err)
+	}
+	plain := stripANSI(output.String())
+	if !strings.Contains(plain, stripANSI(console.SuccessMark())+" Migrations · 2") {
+		t.Fatalf("preparation output omitted compact migration result: %q", plain)
+	}
+	if strings.Contains(plain, "migrations complete") || strings.Contains(plain, "applied first") {
+		t.Fatalf("preparation output replayed migration command prose: %q", plain)
+	}
+}
+
+// TestRunDevAppSetupReplaysMigrationFailure verifies compact preparation retains captured diagnostics on failure.
+func TestRunDevAppSetupReplaysMigrationFailure(t *testing.T) {
+	withConventionalApp(t, project.DefaultAppName)
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	command := "#!/bin/sh\nprintf 'attempting migration\\n'\nprintf 'migration failed detail\\n' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join("bin", project.DefaultAppName), []byte(command), 0o755); err != nil {
+		t.Fatalf("write migration command: %v", err)
+	}
+
+	config := &project.Config{
+		Dev:    project.DevConfig{AutoMigrate: true},
+		Render: project.RenderConfig{Components: project.Components{DatabaseSQLite: true}},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := runDevPhaseOutput("Preparing App", &stdout, &stderr, func(phaseOut io.Writer, phaseErr io.Writer) error {
+		return runDevAppSetup(config, phaseOut, phaseErr)
+	})
+	if err == nil {
+		t.Fatal("run dev app setup succeeded, want migration failure")
+	}
+	if !strings.Contains(stripANSI(stdout.String()), "attempting migration") {
+		t.Fatalf("preparation stdout omitted captured diagnostics: %q", stdout.String())
+	}
+	if !strings.Contains(stripANSI(stderr.String()), "migration failed detail") {
+		t.Fatalf("preparation stderr omitted captured diagnostics: %q", stderr.String())
 	}
 }
 

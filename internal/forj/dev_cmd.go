@@ -1062,27 +1062,71 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 		writeDevSuccessLine(outWriter, "Databases", formatDevElapsed(time.Since(start)))
 	}
 	start := time.Now()
-	if !isDevPhaseOutput(outWriter) {
+	phaseOutput := isDevPhaseOutput(outWriter)
+	if !phaseOutput {
 		writeDevActionLine(outWriter, "Running auto-migrate")
 	}
-	res, err := execx.Command("bash", "-c", devAutoMigrateShellCommand(config)).
+	command := execx.Command("bash", "-c", devAutoMigrateShellCommand(config)).
 		EnvInherit().
 		Env(devAutoMigrateEnv()).
-		StdinReader(os.Stdin).
-		StdoutWriter(outWriter).
-		StderrWriter(errWriter).
-		Run()
+		StdinReader(os.Stdin)
+	if !phaseOutput {
+		command.StdoutWriter(outWriter).StderrWriter(errWriter)
+	}
+	res, err := command.Run()
 	if err != nil {
+		writeDevMigrationFailureOutput(phaseOutput, res, outWriter, errWriter)
 		return result, fmt.Errorf("auto-migrate failed: %v", err)
 	}
 	if !res.OK() {
+		writeDevMigrationFailureOutput(phaseOutput, res, outWriter, errWriter)
 		return result, fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
 	}
 	result.MigrateElapsed = time.Since(start)
-	if !isDevPhaseOutput(outWriter) {
+	if phaseOutput {
+		if total, ok := devMigrationTotal(res.Stdout); ok {
+			writeDevSuccessLine(outWriter, "Migrations", strconv.Itoa(total))
+		} else if strings.TrimSpace(res.Stdout) != "" {
+			_, _ = io.WriteString(outWriter, res.Stdout)
+		}
+		if strings.TrimSpace(res.Stderr) != "" {
+			_, _ = io.WriteString(errWriter, res.Stderr)
+		}
+	} else {
 		writeDevTimingLine(outWriter, "Auto-migrate  ·  "+formatDevElapsed(result.MigrateElapsed))
 	}
 	return result, nil
+}
+
+// writeDevMigrationFailureOutput restores captured command output when a compact migration phase fails.
+func writeDevMigrationFailureOutput(phaseOutput bool, result execx.Result, outWriter io.Writer, errWriter io.Writer) {
+	if !phaseOutput {
+		return
+	}
+	if result.Stdout != "" {
+		_, _ = io.WriteString(outWriter, result.Stdout)
+	}
+	if result.Stderr != "" {
+		_, _ = io.WriteString(errWriter, result.Stderr)
+	}
+}
+
+// devMigrationTotal extracts the migration command's stable completion total for the compact preparation summary.
+func devMigrationTotal(output string) (int, bool) {
+	const prefix = "migrations complete ("
+	lines := strings.Split(stripANSIForSearch(output), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		start := strings.Index(line, prefix)
+		if start < 0 || !strings.HasSuffix(line, ")") {
+			continue
+		}
+		total, err := strconv.Atoi(strings.TrimSuffix(line[start+len(prefix):], ")"))
+		if err == nil && total >= 0 {
+			return total, true
+		}
+	}
+	return 0, false
 }
 
 // shouldRunDevAutoMigrate checks app-local components, not only the root app selection.
@@ -2462,11 +2506,19 @@ func formatDevSuccessLine(message string, fields ...string) string {
 
 // joinDevPhaseFields keeps compact preparation milestones readable without lifecycle-summary padding.
 func joinDevPhaseFields(label string, fields ...string) string {
-	parts := []string{console.Colorize(console.ColorBoldWhite, strings.TrimSpace(label))}
+	label = strings.TrimSpace(label)
+	visibleFields := make([]string, 0, len(fields))
 	for _, field := range fields {
 		if field = strings.TrimSpace(field); field != "" {
-			parts = append(parts, console.Colorize(console.ColorGray, field))
+			visibleFields = append(visibleFields, field)
 		}
+	}
+	if len(visibleFields) > 0 {
+		label = fmt.Sprintf("%-10s", label)
+	}
+	parts := []string{console.Colorize(console.ColorBoldWhite, label)}
+	for _, field := range visibleFields {
+		parts = append(parts, console.Colorize(console.ColorGray, field))
 	}
 	return strings.Join(parts, " · ")
 }
