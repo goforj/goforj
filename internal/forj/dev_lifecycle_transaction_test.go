@@ -51,10 +51,14 @@ func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing
 		t.Fatal("expected compact transaction to retain lifecycle output")
 	}
 
-	line := stripANSI(transaction.successLine(1034*time.Millisecond, devLifecycleTransactionSummary{
+	lines := buffer.successLines(1034*time.Millisecond, devLifecycleTransactionSummary{
 		BuildElapsed:   380 * time.Millisecond,
 		MigrateElapsed: 340 * time.Millisecond,
-	}))
+	})
+	if len(lines) != 1 {
+		t.Fatalf("restart success lines = %#v, want one summary", lines)
+	}
+	line := stripANSI(lines[0])
 	for _, want := range []string{"Restarted", "build 380ms", "migrate 340ms", "1.03s"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("success summary missing %q: %q", want, line)
@@ -63,6 +67,30 @@ func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing
 	for _, hidden := range buffer.lines {
 		if strings.Contains(line, hidden) {
 			t.Fatalf("success summary leaked retained output %q", hidden)
+		}
+	}
+}
+
+// TestDevStartupTransactionPreservesInitialLifecycleOutput keeps the first App boot visible after readiness.
+func TestDevStartupTransactionPreservesInitialLifecycleOutput(t *testing.T) {
+	transaction := newDevStartupTransaction(&project.Config{}, []string{"Build App", "Run App"}, false)
+	buffer := &devBubbleLifecycleTransaction{transaction: transaction}
+	startupOutput := []string{
+		"01:04:29.753 Jobs Starting queue worker",
+		"01:04:29.755 HTTP Routes registered",
+	}
+	if !buffer.retain(startupOutput) {
+		t.Fatal("expected compact startup transaction to retain lifecycle output")
+	}
+
+	lines := buffer.successLines(66*time.Millisecond, devLifecycleTransactionSummary{})
+	if len(lines) != len(startupOutput)+2 {
+		t.Fatalf("startup success lines = %#v", lines)
+	}
+	plain := stripANSI(strings.Join(lines, "\n"))
+	for _, want := range []string{"┃ Starting", "Build App", "Run App", "Starting queue worker", "Routes registered", "Ready", "66ms"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("startup transcript omitted %q:\n%s", want, plain)
 		}
 	}
 }
