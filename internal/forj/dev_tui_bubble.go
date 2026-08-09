@@ -993,7 +993,7 @@ func (m devBubbleModel) View() string {
 	headerLines := 0
 	footer := ""
 	header := ""
-	header = buildDevResourceHeaderLine(m.tools) + "\n" + buildDevFooterSeparatorLineAtWidth(width)
+	header = buildDevResourceHeaderLineAtWidth(m.tools, width) + "\n" + buildDevFooterSeparatorLineAtWidth(width)
 	headerLines = 2
 	if m.footerEnabled {
 		footer = buildDevFooterSeparatorLineAtWidth(width) + "\n" + m.footerLine
