@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/console"
 	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
@@ -627,26 +628,7 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	console.Actionf("%s", heading)
 	for _, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
-		var res execx.Result
-		loader := console.NewLoader(task.Name)
-		if err := loader.Start(); err != nil {
-			return err
-		}
-		outputBlock := newDevTaskOutputBlock(
-			task.Name,
-			console.Default().StdoutWriter(),
-			console.Default().StderrWriter(),
-			loader.Stop,
-		)
-		cmd := newDevTaskCommand(
-			task,
-			devNull,
-			outputBlock.stdoutWriter(),
-			outputBlock.stderrWriter(),
-			outputTail,
-		)
-		res, err = cmd.Run()
-		loader.Stop()
+		res, _, err := runDevTask(task, devNull, outputTail)
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -666,12 +648,14 @@ type devTaskOutputBlock struct {
 	stderr     io.Writer
 	stopLoader func()
 	started    bool
+	streams    []*devTaskOutputBlockStream
 }
 
 type devTaskOutputBlockStream struct {
 	block       *devTaskOutputBlock
 	destination io.Writer
 	lineStart   bool
+	ansiState   byte
 }
 
 // newDevTaskOutputBlock labels streamed task output only after a command has something useful to show.
@@ -686,12 +670,21 @@ func newDevTaskOutputBlock(name string, stdout io.Writer, stderr io.Writer, stop
 
 // stdoutWriter routes standard output through the shared task boundary.
 func (b *devTaskOutputBlock) stdoutWriter() io.Writer {
-	return &devTaskOutputBlockStream{block: b, destination: b.stdout, lineStart: true}
+	return b.newStream(b.stdout)
 }
 
 // stderrWriter routes standard error through the same task boundary as standard output.
 func (b *devTaskOutputBlock) stderrWriter() io.Writer {
-	return &devTaskOutputBlockStream{block: b, destination: b.stderr, lineStart: true}
+	return b.newStream(b.stderr)
+}
+
+// newStream retains each destination's cursor state so interleaved output receives an independent rail.
+func (b *devTaskOutputBlock) newStream(destination io.Writer) io.Writer {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	stream := &devTaskOutputBlockStream{block: b, destination: destination, lineStart: true}
+	b.streams = append(b.streams, stream)
+	return stream
 }
 
 // Write preserves live child output while prefixing every physical line with its task-owned rail.
@@ -706,23 +699,30 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 		if b.stopLoader != nil {
 			b.stopLoader()
 		}
-		heading := devTaskOutputRail() + " " + console.Colorize(console.ColorBoldWhite, b.name) + "\n"
+		heading := devTaskOutputBoundary("┏") + " " + console.Colorize(console.ColorBoldWhite, b.name) + "\n"
 		if _, err := io.WriteString(b.stdout, heading); err != nil {
 			return 0, err
 		}
 		b.started = true
 	}
 	output := make([]byte, 0, len(value)+len(value)/32+8)
-	for _, char := range value {
-		if w.lineStart && char != '\n' && char != '\r' {
+	remaining := value
+	for len(remaining) > 0 {
+		sequence, width, consumed, state := ansi.DecodeSequence(remaining, w.ansiState, nil)
+		if consumed == 0 {
+			break
+		}
+		w.ansiState = state
+		if w.lineStart && (width > 0 || len(sequence) == 1 && sequence[0] == '\t') {
 			output = append(output, devTaskOutputRail()...)
 			output = append(output, ' ')
 			w.lineStart = false
 		}
-		output = append(output, char)
-		if char == '\n' || char == '\r' {
+		output = append(output, sequence...)
+		if len(sequence) == 1 && (sequence[0] == '\n' || sequence[0] == '\r') {
 			w.lineStart = true
 		}
+		remaining = remaining[consumed:]
 	}
 	written, err := w.destination.Write(output)
 	if err != nil {
@@ -734,9 +734,70 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 	return len(value), nil
 }
 
+// finish closes a task block only when the child produced durable output.
+func (b *devTaskOutputBlock) finish(success bool, elapsed time.Duration) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.started {
+		return false, nil
+	}
+	for _, stream := range b.streams {
+		if stream.lineStart {
+			continue
+		}
+		if _, err := io.WriteString(stream.destination, "\n"); err != nil {
+			return true, err
+		}
+		stream.lineStart = true
+	}
+	status := "Done"
+	if !success {
+		status = "Failed"
+	}
+	footer := devTaskOutputBoundary("┗") + " " + joinDevLifecycleFields(status, formatDevElapsed(elapsed)) + "\n\n"
+	if _, err := io.WriteString(b.stdout, footer); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
 // devTaskOutputRail keeps pre-dev output visually related to the transient lifecycle shelf.
 func devTaskOutputRail() string {
-	return console.Colorize(console.ColorGray, "┃")
+	return devTaskOutputBoundary("┃")
+}
+
+// devTaskOutputBoundary gives streamed setup and teardown output one restrained visual language.
+func devTaskOutputBoundary(value string) string {
+	return console.Colorize(console.ColorGray, value)
+}
+
+// runDevTask keeps loader handoff, live output ownership, and completion boundaries consistent across setup and teardown.
+func runDevTask(task project.DevTask, stdin io.Reader, outputTail *devTaskOutputTail) (execx.Result, bool, error) {
+	loader := console.NewLoader(task.Name)
+	if err := loader.Start(); err != nil {
+		return execx.Result{}, false, err
+	}
+	outputBlock := newDevTaskOutputBlock(
+		task.Name,
+		console.Default().StdoutWriter(),
+		console.Default().StderrWriter(),
+		loader.Stop,
+	)
+	cmd := newDevTaskCommand(
+		task,
+		stdin,
+		outputBlock.stdoutWriter(),
+		outputBlock.stderrWriter(),
+		outputTail,
+	)
+	startedAt := time.Now()
+	result, err := cmd.Run()
+	loader.Stop()
+	hadOutput, finishErr := outputBlock.finish(err == nil && result.OK(), time.Since(startedAt))
+	if err == nil && finishErr != nil {
+		err = finishErr
+	}
+	return result, hadOutput, err
 }
 
 // newDevTaskCommand buffers routine output only for framework-shaped dependency installs so successful setup stays compact without hiding failure details.
@@ -2912,26 +2973,17 @@ func runDevDownTasks(tasks []project.DevTask) error {
 	}
 	console.Infof("Bringing down resources")
 	for _, task := range tasks {
-		var res execx.Result
-		err := runWithLoader(task.Name, func() error {
-			stdout := console.Default().StdoutWriter()
-			cmd := execx.Command("bash", "-c", task.Cmd).
-				EnvInherit().
-				StdinReader(os.Stdin).
-				StdoutWriter(stdout).
-				StderrWriter(console.Default().StderrWriter())
-			cmd = configureDevTaskTTYWithWriter(cmd, stdout, nil)
-			var runErr error
-			res, runErr = cmd.Run()
-			return runErr
-		})
+		outputTail := newDevTaskOutputTail(40)
+		res, hadOutput, err := runDevTask(task, os.Stdin, outputTail)
 		if err != nil {
 			return fmt.Errorf("dev_down task '%s' failed: %v", task.Name, err)
 		}
 		if !res.OK() {
 			return fmt.Errorf("dev_down task '%s' failed with exit code %d", task.Name, res.ExitCode)
 		}
-		console.Successf("%s", task.Name)
+		if !hadOutput {
+			console.Successf("%s", task.Name)
+		}
 	}
 	return nil
 }
