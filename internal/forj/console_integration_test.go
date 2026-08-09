@@ -82,10 +82,11 @@ func TestDevSuccessLineRetainsSemanticColor(t *testing.T) {
 		UnicodeEnabled: &unicodeEnabled,
 	}))
 
-	writeDevSuccessLine(&output, "Built app", "376ms")
+	block := newDevTaskOutputBlock("Preparing App", &output, &output, nil)
+	writeDevSuccessLine(block.stdoutWriter(), "Built app", "376ms")
 	for _, expected := range []string{
 		console.ColorGreen + "✔" + console.ColorReset,
-		console.ColorGreen + "Built app" + console.ColorReset,
+		console.ColorBoldWhite + "Built app" + console.ColorReset,
 		console.ColorGray + "376ms" + console.ColorReset,
 	} {
 		if !strings.Contains(output.String(), expected) {

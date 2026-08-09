@@ -703,6 +703,7 @@ type devTaskOutputBlockStream struct {
 	block       *devTaskOutputBlock
 	destination io.Writer
 	lineStart   bool
+	lineStyle   []byte
 	ansiState   byte
 }
 
@@ -761,13 +762,24 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 			break
 		}
 		w.ansiState = state
+		lineBreak := len(sequence) == 1 && (sequence[0] == '\n' || sequence[0] == '\r')
+		if w.lineStart && isDevTaskANSIStyleSequence(sequence) {
+			w.lineStyle = append(w.lineStyle, sequence...)
+			remaining = remaining[consumed:]
+			continue
+		}
 		if w.lineStart && (width > 0 || len(sequence) == 1 && sequence[0] == '\t') {
 			output = append(output, devTaskOutputRail()...)
 			output = append(output, ' ')
+			output = append(output, w.lineStyle...)
+			w.lineStyle = w.lineStyle[:0]
 			w.lineStart = false
+		} else if w.lineStart && lineBreak && len(w.lineStyle) > 0 {
+			output = append(output, w.lineStyle...)
+			w.lineStyle = w.lineStyle[:0]
 		}
 		output = append(output, sequence...)
-		if len(sequence) == 1 && (sequence[0] == '\n' || sequence[0] == '\r') {
+		if lineBreak {
 			w.lineStart = true
 		}
 		remaining = remaining[consumed:]
@@ -780,6 +792,11 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 		return 0, io.ErrShortWrite
 	}
 	return len(value), nil
+}
+
+// isDevTaskANSIStyleSequence identifies styling that must follow an inserted output rail to remain effective.
+func isDevTaskANSIStyleSequence(sequence []byte) bool {
+	return bytes.HasPrefix(sequence, []byte("\x1b[")) && bytes.HasSuffix(sequence, []byte("m"))
 }
 
 // finish closes a task block only when the child produced durable output.
@@ -2393,13 +2410,7 @@ func writeDevSuccessLine(out io.Writer, message string, fields ...string) {
 
 // formatDevSuccessLine contrasts a completed outcome from its muted timing details.
 func formatDevSuccessLine(message string, fields ...string) string {
-	parts := []string{console.SuccessMark() + " " + console.Colorize(console.ColorGreen, strings.TrimSpace(message))}
-	for _, field := range fields {
-		if field = strings.TrimSpace(field); field != "" {
-			parts = append(parts, console.Colorize(console.ColorGray, field))
-		}
-	}
-	return strings.Join(parts, "  ·  ")
+	return console.SuccessMark() + " " + joinDevLifecycleFields(message, fields...)
 }
 
 // writeDevTimingLine keeps secondary duration details visually quieter than the action they describe.
