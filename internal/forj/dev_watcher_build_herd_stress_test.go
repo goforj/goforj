@@ -110,15 +110,15 @@ func TestDevWatcherBuildThunderingHerd(t *testing.T) {
 	controller.tasks["herd/app/build"].request()
 	controller.tasks["herd/admin/build"].request()
 	waitForDevWatcherBuildHerdCondition(t, "managed Apps to enter concurrent compilation", func() bool {
-		state, err := loadDevWatcherBuildHerdState(statePath)
-		return err == nil && state.App >= 2
+		peers, err := devWatcherBuildHerdReadyPeers(statePath, build.DevBuildPhaseCompile)
+		return err == nil && peers >= 2
 	})
 	controller.tasks["herd/app/frontend"].request()
 	controller.tasks["herd/app/docs"].request()
 	if runtime.GOOS != "windows" {
 		waitForDevWatcherBuildHerdCondition(t, "SPAs to enter concurrent builds", func() bool {
-			state, err := loadDevWatcherBuildHerdState(statePath)
-			return err == nil && state.SPA >= 2
+			peers, err := devWatcherBuildHerdReadyPeers(statePath, "spa")
+			return err == nil && peers >= 2
 		})
 	}
 	runDevWatcherBuildHerdTriggers(controller, seed, []string{
@@ -289,7 +289,7 @@ func runDevWatcherBuildHerdHelper() error {
 	}); err != nil {
 		return err
 	}
-	if err := waitForDevWatcherBuildHerdPeers(statePath, phase); err != nil {
+	if err := waitForDevWatcherBuildHerdPeers(statePath, task, phase); err != nil {
 		return err
 	}
 	timer := time.NewTimer(time.Duration(workMilliseconds) * time.Millisecond)
@@ -340,26 +340,36 @@ func enterDevWatcherBuildHerdPhase(state *devWatcherBuildHerdState, task string,
 }
 
 // waitForDevWatcherBuildHerdPeers forces the first safe App and SPA waves to demonstrate useful concurrency.
-func waitForDevWatcherBuildHerdPeers(statePath string, phase string) error {
+func waitForDevWatcherBuildHerdPeers(statePath string, task string, phase string) error {
 	if phase != build.DevBuildPhaseCompile && phase != "spa" {
 		return nil
 	}
 	if runtime.GOOS == "windows" && phase == "spa" {
 		return nil
 	}
+	marker := statePath + "." + phase + "." + task + ".ready"
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		return fmt.Errorf("publish phase %q readiness: %w", phase, err)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		state, err := loadDevWatcherBuildHerdState(statePath)
+		peers, err := devWatcherBuildHerdReadyPeers(statePath, phase)
 		if err != nil {
-			return err
+			return fmt.Errorf("find phase %q peers: %w", phase, err)
 		}
-		if phase == build.DevBuildPhaseCompile && state.App >= 2 || phase == "spa" && state.SPA >= 2 {
+		if peers >= 2 {
 			return nil
 		}
 		timer := time.NewTimer(time.Millisecond)
 		<-timer.C
 	}
 	return fmt.Errorf("phase %q did not gain a concurrent peer", phase)
+}
+
+// devWatcherBuildHerdReadyPeers counts phase rendezvous markers without contending on the state-transition lock.
+func devWatcherBuildHerdReadyPeers(statePath string, phase string) (int, error) {
+	peers, err := filepath.Glob(statePath + "." + phase + ".*.ready")
+	return len(peers), err
 }
 
 // leaveDevWatcherBuildHerdPhase records clean phase completion after the helper work finishes.
@@ -425,17 +435,17 @@ func acquireDevWatcherBuildHerdStateLock(path string) (func(), error) {
 
 // loadDevWatcherBuildHerdState returns one consistent state snapshot under the same writer lock.
 func loadDevWatcherBuildHerdState(path string) (devWatcherBuildHerdState, error) {
-	var result devWatcherBuildHerdState
-	err := updateDevWatcherBuildHerdState(path, func(state *devWatcherBuildHerdState) error {
-		result = *state
-		result.Entries = make(map[string]int, len(state.Entries))
-		for key, value := range state.Entries {
-			result.Entries[key] = value
-		}
-		result.Violations = append([]string(nil), state.Violations...)
-		return nil
-	})
-	return result, err
+	unlock, err := acquireDevWatcherBuildHerdStateLock(path + ".lock")
+	if err != nil {
+		return devWatcherBuildHerdState{}, err
+	}
+	defer unlock()
+	file, err := os.Open(path)
+	if err != nil {
+		return devWatcherBuildHerdState{}, err
+	}
+	defer file.Close()
+	return decodeDevWatcherBuildHerdState(file)
 }
 
 // decodeDevWatcherBuildHerdState reads an empty or previously persisted helper state.
