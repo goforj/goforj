@@ -371,6 +371,9 @@ func devAppPhaseLabel(config *project.Config, action string) string {
 func runDevPhaseOutput(name string, outWriter io.Writer, errWriter io.Writer, run func(io.Writer, io.Writer) error) error {
 	block := newDevTaskOutputBlock(name, outWriter, errWriter, nil)
 	block.successLabel = devPhaseSuccessLabel(name)
+	if err := block.start(); err != nil {
+		return err
+	}
 	phaseOut := block.stdoutWriter()
 	phaseErr := block.stderrWriter()
 	startedAt := time.Now()
@@ -388,14 +391,13 @@ func devPhaseSuccessLabel(name string) string {
 	if len(fields) < 2 {
 		return "Done"
 	}
-	noun := strings.Join(fields[1:], " ")
 	switch fields[0] {
 	case "Preparing":
-		return noun + " prepared"
+		return "Prepared"
 	case "Building":
-		return noun + " built"
+		return "Built"
 	case "Finalizing":
-		return noun + " finalized"
+		return "Finalized"
 	default:
 		return "Done"
 	}
@@ -736,6 +738,29 @@ func (b *devTaskOutputBlock) newStream(destination io.Writer) io.Writer {
 	return stream
 }
 
+// start opens a framework-owned phase immediately so its heading remains the live progress signal.
+func (b *devTaskOutputBlock) start() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startLocked()
+}
+
+// startLocked writes the block heading once while its caller owns the block mutex.
+func (b *devTaskOutputBlock) startLocked() error {
+	if b.started {
+		return nil
+	}
+	if b.stopLoader != nil {
+		b.stopLoader()
+	}
+	heading := devTaskOutputBoundary("┏") + " " + console.Colorize(console.ColorBoldWhite, b.name) + "\n"
+	if _, err := io.WriteString(b.stdout, heading); err != nil {
+		return err
+	}
+	b.started = true
+	return nil
+}
+
 // Write preserves live child output while prefixing every physical line with its task-owned rail.
 func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 	if w.block == nil || len(value) == 0 {
@@ -744,15 +769,8 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 	b := w.block
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.started {
-		if b.stopLoader != nil {
-			b.stopLoader()
-		}
-		heading := devTaskOutputBoundary("┏") + " " + console.Colorize(console.ColorBoldWhite, b.name) + "\n"
-		if _, err := io.WriteString(b.stdout, heading); err != nil {
-			return 0, err
-		}
-		b.started = true
+	if err := b.startLocked(); err != nil {
+		return 0, err
 	}
 	output := make([]byte, 0, len(value)+len(value)/32+8)
 	remaining := value
@@ -797,6 +815,12 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 // isDevTaskANSIStyleSequence identifies styling that must follow an inserted output rail to remain effective.
 func isDevTaskANSIStyleSequence(sequence []byte) bool {
 	return bytes.HasPrefix(sequence, []byte("\x1b[")) && bytes.HasSuffix(sequence, []byte("m"))
+}
+
+// isDevPhaseOutput identifies framework-owned blocks whose heading already communicates active work.
+func isDevPhaseOutput(writer io.Writer) bool {
+	stream, ok := writer.(*devTaskOutputBlockStream)
+	return ok && stream.block != nil && strings.TrimSpace(stream.block.successLabel) != ""
 }
 
 // finish closes a task block only when the child produced durable output.
@@ -1014,14 +1038,18 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 	}
 	if config.Render.Components.Docker {
 		start := time.Now()
-		writeDevActionLine(outWriter, "Ensuring dev databases")
+		if !isDevPhaseOutput(outWriter) {
+			writeDevActionLine(outWriter, "Ensuring dev databases")
+		}
 		if err := ensureDevDatabaseExistsWithWriters(config, outWriter, errWriter); err != nil {
 			return result, err
 		}
-		writeDevSuccessLine(outWriter, "Dev databases ready", formatDevElapsed(time.Since(start)))
+		writeDevSuccessLine(outWriter, "Databases", formatDevElapsed(time.Since(start)))
 	}
 	start := time.Now()
-	writeDevActionLine(outWriter, "Running auto-migrate")
+	if !isDevPhaseOutput(outWriter) {
+		writeDevActionLine(outWriter, "Running auto-migrate")
+	}
 	res, err := execx.Command("bash", "-c", devAutoMigrateShellCommand(config)).
 		EnvInherit().
 		Env(devAutoMigrateEnv()).
@@ -1036,7 +1064,9 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 		return result, fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
 	}
 	result.MigrateElapsed = time.Since(start)
-	writeDevTimingLine(outWriter, "Auto-migrate  ·  "+formatDevElapsed(result.MigrateElapsed))
+	if !isDevPhaseOutput(outWriter) {
+		writeDevTimingLine(outWriter, "Auto-migrate  ·  "+formatDevElapsed(result.MigrateElapsed))
+	}
 	return result, nil
 }
 
@@ -2030,7 +2060,7 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 		if err := runDevBuildCommand(outWriter, errWriter, jobs[0]); err != nil {
 			return fmt.Errorf("%s: %w", failurePrefix, err)
 		}
-		writeDevSuccessLine(outWriter, "Built "+jobs[0].app.Name, formatDevElapsed(time.Since(start)))
+		writeDevSuccessLine(outWriter, "Build", formatDevElapsed(time.Since(start)))
 		return nil
 	}
 
@@ -2065,7 +2095,7 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	if len(failures) > 0 {
 		return fmt.Errorf("%s: %s", failurePrefix, strings.Join(failures, "; "))
 	}
-	writeDevSuccessLine(outWriter, "Built apps", formatDevElapsed(time.Since(start)))
+	writeDevSuccessLine(outWriter, "Build", formatDevElapsed(time.Since(start)))
 	return nil
 }
 
@@ -2214,7 +2244,9 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 	if usesDevBootstrapConsole(outWriter, errWriter) {
 		return runDevBuildJobWithLoader(outWriter, errWriter, heading, job)
 	}
-	writeDevActionLine(outWriter, heading)
+	if !isDevPhaseOutput(outWriter) {
+		writeDevActionLine(outWriter, heading)
+	}
 	setDevStatusLine(outWriter, heading)
 	defer clearDevStatusLine(outWriter)
 
