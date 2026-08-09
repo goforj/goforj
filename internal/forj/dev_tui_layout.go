@@ -27,7 +27,7 @@ func buildDevFooterSeparatorLineAtWidth(width int) string {
 	if width <= 0 {
 		width = 120
 	}
-	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D4D4D8", Dark: "#27272A"})
+	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#E4E4E7", Dark: "#18181B"})
 	return ruleStyle.Render(strings.Repeat("─", width))
 }
 
