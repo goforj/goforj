@@ -175,13 +175,14 @@ func TestDevTUIWatcherTransitionPTYHelper(t *testing.T) {
 	if releaseFile == "" {
 		t.Fatal("release file is required")
 	}
+	waitForRelease := "while [ ! -f " + shellSingleQuote(releaseFile) + " ]; do sleep 0.01; done"
 	controller, err := newDevWatcherController([]devCompiledWatcher{{
 		ID:       "structured:app:spa:frontend",
 		Name:     "Build app SPA frontend",
 		App:      "app",
 		Kind:     devWatcherSPABuild,
 		Postpone: true,
-		Command:  devwatch.Command{Shell: "while [ ! -f " + shellSingleQuote(releaseFile) + " ]; do sleep 0.01; done"},
+		Command:  devwatch.Command{Shell: "sh -c " + shellSingleQuote(waitForRelease)},
 	}}, nil, writer, writer, false)
 	if err != nil {
 		t.Fatalf("start watcher controller: %v", err)
