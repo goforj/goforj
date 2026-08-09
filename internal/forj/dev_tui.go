@@ -48,6 +48,10 @@ type devLifecycleTransactionController interface {
 	FailLifecycleTransaction(string, time.Duration, error)
 }
 
+type devLifecycleOrchestrationController interface {
+	compactLifecycleTransactionActive() bool
+}
+
 // devOutputSession names the terminal streams and lifecycle ownership that must change together when the TUI is enabled.
 type devOutputSession struct {
 	stdout           io.Writer
@@ -218,4 +222,13 @@ func asDevLifecycleTransactionController(writer io.Writer) devLifecycleTransacti
 	}
 	controller, _ := writer.(devLifecycleTransactionController)
 	return controller
+}
+
+// suppressDevLifecycleOrchestration keeps runner narration out of a compact transaction while preserving plain and detailed output.
+func suppressDevLifecycleOrchestration(writer io.Writer) bool {
+	if synchronized, ok := writer.(devWatcherSynchronizedWriter); ok {
+		return suppressDevLifecycleOrchestration(synchronized.writer)
+	}
+	controller, ok := writer.(devLifecycleOrchestrationController)
+	return ok && controller.compactLifecycleTransactionActive()
 }

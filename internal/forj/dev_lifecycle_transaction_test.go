@@ -20,6 +20,16 @@ type devLifecycleRecordingWriter struct {
 	completed []devLifecycleTransactionSummary
 }
 
+type devLifecycleOrchestrationWriter struct {
+	bytes.Buffer
+	compact bool
+}
+
+// compactLifecycleTransactionActive reports the test writer's configured transaction mode.
+func (w *devLifecycleOrchestrationWriter) compactLifecycleTransactionActive() bool {
+	return w.compact
+}
+
 // BeginLifecycleTransaction records the transaction selected by the runner.
 func (w *devLifecycleRecordingWriter) BeginLifecycleTransaction(transaction devLifecycleTransaction) {
 	w.began = append(w.began, transaction)
@@ -69,6 +79,59 @@ func TestBeginActiveDevRestartTransactionCoversAutomaticRebuilds(t *testing.T) {
 	}
 	if got := stripANSI(writer.began[0].inProgressLine()); !strings.Contains(got, "Restarting") || !strings.Contains(got, "SPA") {
 		t.Fatalf("restart transaction line = %q", got)
+	}
+}
+
+// TestCompactLifecycleTransactionOmitsTypedWatcherNarration verifies the shelf heading replaces redundant runner state.
+func TestCompactLifecycleTransactionOmitsTypedWatcherNarration(t *testing.T) {
+	writer := &devLifecycleOrchestrationWriter{compact: true}
+	streamer := &devwatchStreamer{ch: make(chan devwatchLine, 1)}
+	emitWatcherLifecycleSummary(writer, streamer, []string{"Build App", "Run App"}, watcherStateStopped)
+	if writer.Len() != 0 {
+		t.Fatalf("compact lifecycle wrote watcher narration: %q", writer.String())
+	}
+	select {
+	case line := <-streamer.ch:
+		if !strings.Contains(stripANSI(line.Line), "Watchers stopped") {
+			t.Fatalf("streamed watcher narration = %q", line.Line)
+		}
+	default:
+		t.Fatal("compact lifecycle discarded watcher narration from the diagnostic stream")
+	}
+
+	writer.compact = false
+	emitWatcherLifecycleSummary(writer, nil, []string{"Build App", "Run App"}, watcherStateStopped)
+	if !strings.Contains(stripANSI(writer.String()), "Watchers stopped") {
+		t.Fatalf("detailed lifecycle omitted watcher narration: %q", writer.String())
+	}
+}
+
+// TestCompactLifecycleTransactionOmitsTriggerNarration verifies launch markers still complete startup without entering the shelf.
+func TestCompactLifecycleTransactionOmitsTriggerNarration(t *testing.T) {
+	writer := &devLifecycleOrchestrationWriter{compact: true}
+	triggered := false
+	lifecycle := newDevwatchLifecycleState(1, []string{"Run App"})
+	lifecycle.separators = false
+	watcherWriter := newDevwatchWriterForApp(
+		writer,
+		nil,
+		"stdout",
+		"Run App",
+		"./bin/app",
+		project.DefaultAppName,
+		0,
+		false,
+		lifecycle,
+		func() { triggered = true },
+	)
+	if _, err := watcherWriter.Write([]byte(watcherTriggerMarker + "\n")); err != nil {
+		t.Fatalf("write trigger marker: %v", err)
+	}
+	if !triggered {
+		t.Fatal("suppressed trigger narration did not report process launch")
+	}
+	if writer.Len() != 0 {
+		t.Fatalf("compact lifecycle wrote trigger narration: %q", writer.String())
 	}
 }
 
