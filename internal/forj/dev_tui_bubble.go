@@ -705,6 +705,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.footerLine = buildDevFooterLineWithStateAtWidth(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug, msg.Width)
 		m.invalidateVisibleTranscriptCache()
 	case devAppendLinesMsg:
 		if !m.followMode {
@@ -747,7 +748,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.commands = msg.commands
 		m.commandError = msg.commandError
-		m.footerLine = buildDevFooterLineWithState(msg.apiURL, msg.lighthouseURL, msg.dbQuery, msg.appDebug)
+		m.footerLine = buildDevFooterLineWithStateAtWidth(msg.apiURL, msg.lighthouseURL, msg.dbQuery, msg.appDebug, m.width)
 		m.invalidateVisibleTranscriptCache()
 	case devQuitMsg:
 		return m, tea.Quit
@@ -992,10 +993,10 @@ func (m devBubbleModel) View() string {
 	headerLines := 0
 	footer := ""
 	header := ""
-	header = buildDevResourceHeaderLine(m.tools) + "\n" + buildDevFooterSeparatorLine()
+	header = buildDevResourceHeaderLine(m.tools) + "\n" + buildDevFooterSeparatorLineAtWidth(width)
 	headerLines = 2
 	if m.footerEnabled {
-		footer = buildDevFooterSeparatorLine() + "\n" + m.footerLine
+		footer = buildDevFooterSeparatorLineAtWidth(width) + "\n" + m.footerLine
 		footerLines = 2
 	}
 	status := m.contextStatusLine()
@@ -1156,7 +1157,7 @@ func (m devBubbleModel) visibleLifecycleLines(width int, available int) []string
 // applyRuntimeSettingChange restarts the App so the process and newly persisted footer state agree.
 func (m *devBubbleModel) applyRuntimeSettingChange(successLine string) {
 	m.dbQuery, m.appDebug = loadDevRuntimeSettings()
-	m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
+	m.footerLine = buildDevFooterLineWithStateAtWidth(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug, m.width)
 	m.requestRestart()
 	m.lines = append(m.lines, successLine)
 }
