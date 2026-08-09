@@ -233,7 +233,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			}
 			defer stopProcAsync(t, "queue-worker-"+driver, proc, time.Second)
 
-			tokens := []string{"Queue worker started", "driver=" + strings.ToLower(driver)}
+			tokens := []string{"Queue worker started · default · 30 workers"}
 			if !waitForOutputContains(proc, tokens, 5*time.Second) {
 				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, ansiEscapeRe.ReplaceAllString(proc.Output(), ""))
 			}

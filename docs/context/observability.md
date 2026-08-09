@@ -89,7 +89,7 @@ Instead:
 Current intended message shape:
 
 ```text
-Routes registered; use command route:list for full list
+HTTP server started · :3000 · 23 routes
 ```
 
 ## Degraded Runtime Feedback

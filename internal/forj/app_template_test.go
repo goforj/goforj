@@ -1037,3 +1037,56 @@ func TestWorkerTemplatesSupportNamedQueueSelection(t *testing.T) {
 		}
 	}
 }
+
+func TestLifecycleTemplatesUseConciseStartupSummaries(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templateRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal")
+
+	tests := []struct {
+		path      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			path:     filepath.Join(templateRoot, "http", "server.go.tmpl"),
+			required: []string{`"HTTP server started · %s · %d %s"`},
+			forbidden: []string{
+				`.Any("host", host)`,
+				`.Any("port", port)`,
+				`.Any("addr", addr)`,
+				`route:list for full list`,
+			},
+		},
+		{
+			path:     filepath.Join(templateRoot, "jobs", "worker.go.tmpl"),
+			required: []string{`"Queue worker started · %s · %d %s"`},
+			forbidden: []string{
+				`.Str("driver",`,
+				`.Strs("queues",`,
+				`.Int("workers",`,
+				`.Strs("queue_workers",`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		content, err := os.ReadFile(test.path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", test.path, err)
+		}
+		source := string(content)
+		for _, token := range test.required {
+			if !strings.Contains(source, token) {
+				t.Errorf("expected %s to contain %q", test.path, token)
+			}
+		}
+		for _, token := range test.forbidden {
+			if strings.Contains(source, token) {
+				t.Errorf("expected %s to omit %q", test.path, token)
+			}
+		}
+	}
+}

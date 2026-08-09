@@ -118,17 +118,37 @@ func (s *Server) Serve(ctx context.Context, host string, port string) error {
 		return err
 	}
 
-	// announce server start
-	s.logger.Info().Any("host", host).Any("port", port).Any("addr", addr).Msg("Starting HTTP server")
-	s.logger.Info().
-		Any("count", len(web.BuildRouteEntries(s.groups))).
-		Msg("Routes registered; use command route:list for full list")
+	routeCount := len(web.BuildRouteEntries(s.groups))
+	s.logger.Info().Msg(fmt.Sprintf(
+		"HTTP server started · %s · %d %s",
+		httpListenAddress(host, port),
+		routeCount,
+		pluralizeHTTPRoutes(routeCount),
+	))
 	err = server.Serve(ctx)
 	if err != nil {
 		return err
 	}
 	s.logger.Info().Msg("HTTP server shut down")
 	return nil
+}
+
+// httpListenAddress keeps wildcard listeners concise without hiding a specifically configured interface.
+func httpListenAddress(host string, port string) string {
+	host = strings.TrimSpace(host)
+	port = strings.TrimSpace(port)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return ":" + port
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// pluralizeHTTPRoutes keeps the startup summary grammatical at every route count.
+func pluralizeHTTPRoutes(count int) string {
+	if count == 1 {
+		return "route"
+	}
+	return "routes"
 }
 
 // GetRoutes returns all registered routes in the server.
