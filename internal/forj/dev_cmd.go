@@ -315,29 +315,35 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 		if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
 			return err
 		}
-		writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
-		if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
-			return err
-		}
-		if err := runDevAppSetup(config, outWriter, errWriter); err != nil {
+		if err := runDevPhaseOutput(devAppPhaseLabel(config, "Preparing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
+			writeDevAppBuildLine(phaseOut, activeDevAppsForConfig(config))
+			if err := runDevInitialBuild(config, phaseOut, phaseErr); err != nil {
+				return err
+			}
+			return runDevAppSetup(config, phaseOut, phaseErr)
+		}); err != nil {
 			return err
 		}
 		if err := runDevTasks("Running post-migrate setup", plan.postMigrate); err != nil {
 			return err
 		}
 		if len(plan.postMigrate) > 0 {
-			if err := runDevBuild(config, outWriter, errWriter); err != nil {
+			if err := runDevPhaseOutput(devAppPhaseLabel(config, "Finalizing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
+				return runDevBuild(config, phaseOut, phaseErr)
+			}); err != nil {
 				return fmt.Errorf("post-setup forj build failed: %w", err)
 			}
 		}
 		return nil
 	}
 
-	writeDevAppBuildLine(outWriter, activeDevAppsForConfig(config))
-	if err := runDevInitialBuild(config, outWriter, errWriter); err != nil {
+	if err := runDevPhaseOutput(devAppPhaseLabel(config, "Building"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
+		writeDevAppBuildLine(phaseOut, activeDevAppsForConfig(config))
+		return runDevInitialBuild(config, phaseOut, phaseErr)
+	}); err != nil {
 		return err
 	}
-	rebuildAfterSetup, err := runPreDevSetup(config)
+	rebuildAfterSetup, err := runPreDevSetup(config, outWriter, errWriter)
 	if err != nil {
 		return err
 	}
@@ -346,11 +352,36 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 		return err
 	}
 	if spaBuilt || rebuildAfterSetup {
-		if err := runDevBuild(config, outWriter, errWriter); err != nil {
+		if err := runDevPhaseOutput(devAppPhaseLabel(config, "Finalizing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
+			return runDevBuild(config, phaseOut, phaseErr)
+		}); err != nil {
 			return fmt.Errorf("post-setup forj build failed: %w", err)
 		}
 	}
 	return nil
+}
+
+// devAppPhaseLabel keeps framework preparation language natural for single- and multi-App projects.
+func devAppPhaseLabel(config *project.Config, action string) string {
+	noun := "App"
+	if len(activeDevAppsForConfig(config)) > 1 {
+		noun = "Apps"
+	}
+	return strings.TrimSpace(action) + " " + noun
+}
+
+// runDevPhaseOutput gives framework-owned startup work the same bounded ownership as configured tasks.
+func runDevPhaseOutput(name string, outWriter io.Writer, errWriter io.Writer, run func(io.Writer, io.Writer) error) error {
+	block := newDevTaskOutputBlock(name, outWriter, errWriter, nil)
+	phaseOut := block.stdoutWriter()
+	phaseErr := block.stderrWriter()
+	startedAt := time.Now()
+	runErr := run(phaseOut, phaseErr)
+	_, finishErr := block.finish(runErr == nil, time.Since(startedAt))
+	if runErr != nil {
+		return runErr
+	}
+	return finishErr
 }
 
 // planDevInitialTasks preserves arbitrary pre-task ordering unless every task matches a framework-owned bootstrap convention.
@@ -890,7 +921,7 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 }
 
 // runPreDevSetup orders configured tasks around migration and reports when generated source requires another build.
-func runPreDevSetup(config *project.Config) (bool, error) {
+func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer) (bool, error) {
 	preTasks := effectiveDevPreTasks(config)
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
 	rebuildAfterSetup := false
@@ -913,7 +944,9 @@ func runPreDevSetup(config *project.Config) (bool, error) {
 	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
 		return false, err
 	}
-	if err := runDevAppSetup(config, os.Stdout, os.Stderr); err != nil {
+	if err := runDevPhaseOutput(devAppPhaseLabel(config, "Preparing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
+		return runDevAppSetup(config, phaseOut, phaseErr)
+	}); err != nil {
 		return false, err
 	}
 	if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
