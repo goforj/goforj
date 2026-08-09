@@ -175,7 +175,7 @@ func joinDevLifecycleFields(label string, fields ...string) string {
 			parts = append(parts, console.Colorize(console.ColorGray, field))
 		}
 	}
-	return strings.Join(parts, "  ·  ")
+	return strings.Join(parts, " · ")
 }
 
 // formatDevLifecycleDuration favors readable subsecond values while retaining useful precision for longer restarts.
@@ -232,7 +232,7 @@ func formatDevReadyDetail(config *project.Config, env map[string]string) string 
 		}
 		fields = append(fields, strconv.Itoa(count)+" "+label)
 	}
-	return strings.Join(fields, "  ·  ")
+	return strings.Join(fields, " · ")
 }
 
 // devLifecycleDetailedOutput keeps retained lifecycle diagnostics visible when the developer explicitly asks for runner detail.

@@ -326,7 +326,7 @@ func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
 		width:      100,
 		height:     12,
 		lines:      []string{"01:04:31.442 HTTP GET /foo → 200"},
-		statusLine: "Restarting  ·  Build App · SPA · Run App",
+		statusLine: "Restarting · Build App · SPA · Run App",
 		followMode: true,
 	}
 	next, _ := model.Update(devSetLifecycleLinesMsg{active: true, lines: []string{

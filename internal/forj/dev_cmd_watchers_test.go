@@ -258,7 +258,7 @@ func TestDevTaskOutputBlockLabelsLiveOutput(t *testing.T) {
 		"┏ Run Docker Compose\n",
 		"┃ [+] up 2/2\n",
 		"┃ container app running\r┃ container db running\n",
-		"┗ " + success + " Done  ·  125ms\n",
+		"┗ " + success + " Done · 125ms\n",
 	} {
 		if !strings.Contains(plainStdout, expected) {
 			t.Fatalf("stdout omitted %q: %q", expected, plainStdout)
