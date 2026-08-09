@@ -103,6 +103,9 @@ func TestDevSuccessLineRetainsSemanticColor(t *testing.T) {
 	if strings.Contains(output.String(), console.ColorGreen+"migrations complete") {
 		t.Fatalf("success output colored the child statement: %q", output.String())
 	}
+	if got := stripANSI(output.String()); !strings.Contains(got, "✔ Build · 376ms") {
+		t.Fatalf("success output retained loose lifecycle spacing: %q", got)
+	}
 }
 
 // TestRunWithLoaderPropagatesErrorsAndReleasesTheTransient verifies the extracted loader owns cleanup on every return path.
