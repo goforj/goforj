@@ -1064,6 +1064,7 @@ func TestLifecycleTemplatesUseConciseStartupSummaries(t *testing.T) {
 			path:     filepath.Join(templateRoot, "jobs", "worker.go.tmpl"),
 			required: []string{`"Queue worker started · %s · %d %s"`},
 			forbidden: []string{
+				`Msg("Starting queue worker")`,
 				`.Str("driver",`,
 				`.Strs("queues",`,
 				`.Int("workers",`,

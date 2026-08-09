@@ -1139,6 +1139,35 @@ func TestRunDevBuildKeepsMultiAppSuccessTranscriptCompact(t *testing.T) {
 	}
 }
 
+// TestRunDevPreflightBuildReportsSuccessOnlyOutsideCompactRestarts preserves plain-stream feedback without duplicating a grouped reconciliation result.
+func TestRunDevPreflightBuildReportsSuccessOnlyOutsideCompactRestarts(t *testing.T) {
+	config := &project.Config{Dev: project.DevConfig{Watches: []project.DevWatch{
+		{Name: "Build App", Exec: "true"},
+	}}}
+
+	t.Run("plain output", func(t *testing.T) {
+		withConventionalApp(t, project.DefaultAppName)
+		var output bytes.Buffer
+		if err := runDevPreflightBuild(config, &output, &output); err != nil {
+			t.Fatalf("run preflight build: %v", err)
+		}
+		if !strings.Contains(stripANSI(output.String()), stripANSI(console.SuccessMark())+" Build") {
+			t.Fatalf("plain preflight omitted success: %q", output.String())
+		}
+	})
+
+	t.Run("compact restart", func(t *testing.T) {
+		withConventionalApp(t, project.DefaultAppName)
+		output := &devLifecycleOrchestrationWriter{compact: true}
+		if err := runDevPreflightBuild(config, output, output); err != nil {
+			t.Fatalf("run preflight build: %v", err)
+		}
+		if output.Len() != 0 {
+			t.Fatalf("compact preflight duplicated successful build result: %q", output.String())
+		}
+	})
+}
+
 func TestRunDevBuildDoesNotReplayProgressMarkersOnFailure(t *testing.T) {
 	withConventionalApp(t, "billing")
 
@@ -1803,7 +1832,8 @@ func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
 			},
 		},
 	}}}
-	result, err := runDevWatcherReconciliation(config, io.Discard, io.Discard, false)
+	output := &devLifecycleOrchestrationWriter{compact: true}
+	result, err := runDevWatcherReconciliation(config, output, output, false)
 	if err != nil {
 		t.Fatalf("runDevWatcherReconciliation() error = %v", err)
 	}
@@ -1818,6 +1848,18 @@ func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
 	want := []string{"spa-admin", "spa-portal", "app"}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("reconciliation order = %#v, want %#v", lines, want)
+	}
+	plain := stripANSI(output.String())
+	success := stripANSI(console.SuccessMark())
+	for _, summary := range []string{"SPA", "Build"} {
+		if !strings.Contains(plain, success+" "+summary) {
+			t.Fatalf("compact reconciliation omitted %s result: %q", summary, plain)
+		}
+	}
+	for _, narration := range []string{"Building app frontend", "Building app"} {
+		if strings.Contains(plain, narration) {
+			t.Fatalf("compact reconciliation retained %q narration: %q", narration, plain)
+		}
 	}
 }
 
@@ -2042,6 +2084,36 @@ func TestRunDevAppSetupSummarizesMigrationCommand(t *testing.T) {
 	}
 	if strings.Contains(plain, "migrations complete") || strings.Contains(plain, "applied first") {
 		t.Fatalf("preparation output replayed migration command prose: %q", plain)
+	}
+}
+
+// TestRunDevAppSetupSummarizesCompactRestartMigration verifies restart groups receive one timed migration outcome without command narration.
+func TestRunDevAppSetupSummarizesCompactRestartMigration(t *testing.T) {
+	withConventionalApp(t, project.DefaultAppName)
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	command := "#!/bin/sh\nprintf '✔ applied first\\n✔ migrations complete (1)\\n'\n"
+	if err := os.WriteFile(filepath.Join("bin", project.DefaultAppName), []byte(command), 0o755); err != nil {
+		t.Fatalf("write migration command: %v", err)
+	}
+
+	config := &project.Config{
+		Dev:    project.DevConfig{AutoMigrate: true},
+		Render: project.RenderConfig{Components: project.Components{DatabaseSQLite: true}},
+	}
+	output := &devLifecycleOrchestrationWriter{compact: true}
+	if _, err := runDevAppSetupWithResult(config, output, output); err != nil {
+		t.Fatalf("run dev app setup: %v", err)
+	}
+	plain := stripANSI(output.String())
+	if !strings.Contains(plain, stripANSI(console.SuccessMark())+" Migrations") || !strings.Contains(plain, "· 1 ·") {
+		t.Fatalf("compact restart omitted timed migration result: %q", plain)
+	}
+	for _, narration := range []string{"Running auto-migrate", "migrations complete", "applied first"} {
+		if strings.Contains(plain, narration) {
+			t.Fatalf("compact restart replayed %q narration: %q", narration, plain)
+		}
 	}
 }
 

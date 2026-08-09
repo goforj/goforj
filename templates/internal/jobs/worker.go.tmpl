@@ -52,7 +52,6 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
-	s.logger.Info().Msg("Starting queue worker")
 
 	s.lighthouse.Start(runCtx)
 	managed, err := selectManagedQueues(s.queues, queueNames...)
