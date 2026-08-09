@@ -375,6 +375,42 @@ func TestAppLoggerCompactKeepsStructuredFields(t *testing.T) {
 	}
 }
 
+func TestAppLoggerConsoleStylesSQLQueries(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › Database")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	const query = "SELECT id, email FROM users WHERE id = ?"
+	for _, compact := range []bool{false, true} {
+		name := "structured"
+		if compact {
+			name = "compact"
+		}
+		t.Run(name, func(t *testing.T) {
+			var entries []logger.LogEntry
+			output := captureStderr(t, func() {
+				appLogger := logger.NewAppLogger()
+				appLogger.AddSink(func(entry logger.LogEntry) {
+					entries = append(entries, entry)
+				})
+				event := appLogger.Info()
+				if compact {
+					event = event.Compact()
+				}
+				event.Str("query", query).Msg("SQL query")
+			})
+
+			if !strings.Contains(output, logger.SQLText+query+logger.Reset) {
+				t.Fatalf("expected muted SQL query styling, got %q", output)
+			}
+			if len(entries) != 1 || entries[0].Fields["query"] != query {
+				t.Fatalf("SQL query styling changed structured sink fields: %#v", entries)
+			}
+		})
+	}
+}
+
 func TestAppLoggerEventDedupeRunsBeforeWriterParsing(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
