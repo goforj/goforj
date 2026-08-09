@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	charmansi "github.com/charmbracelet/x/ansi"
+	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
 )
 
@@ -492,30 +493,33 @@ func TestBuildDevHotkeyModalBoxIncludesCloseHint(t *testing.T) {
 	}
 }
 
-func TestWriteDevCommandLineUsesSectionSeparator(t *testing.T) {
-	var buf bytes.Buffer
-	writeDevCommandLine(&buf, "Running ./bin/app about")
-	got := stripANSI(buf.String())
-	if !strings.Contains(got, "Running ./bin/app about") {
-		t.Fatalf("expected command heading in output, got %q", got)
+func TestRunDevTranscriptCommandUsesInsetBlock(t *testing.T) {
+	var output bytes.Buffer
+	if err := runDevTranscriptCommand(&output, &output, "forj render", "printf 'rendered project\\n'"); err != nil {
+		t.Fatalf("run transcript command: %v", err)
 	}
-	if !strings.Contains(got, "─") {
-		t.Fatalf("expected section separator framing, got %q", got)
+	got := stripANSI(output.String())
+	for _, expected := range []string{"┏ forj render", "┃ rendered project", "┗ " + stripANSI(console.SuccessMark()) + " Done"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("inset command output omitted %q: %q", expected, got)
+		}
 	}
-	if strings.Contains(got, "· Running ./bin/app about") {
-		t.Fatalf("expected framed command line instead of action bullet, got %q", got)
+	if strings.Contains(got, "───") {
+		t.Fatalf("inset command retained legacy section separator: %q", got)
 	}
 }
 
-func TestWriteDevCommandBoundaryUsesPlainSeparator(t *testing.T) {
-	var buf bytes.Buffer
-	writeDevCommandBoundary(&buf)
-	got := stripANSI(buf.String())
-	if !strings.Contains(got, "─") {
-		t.Fatalf("expected section separator framing, got %q", got)
+func TestRunDevTranscriptCommandKeepsFailureInsideInsetBlock(t *testing.T) {
+	var output bytes.Buffer
+	err := runDevTranscriptCommand(&output, &output, "forj render", "printf 'render failed detail\\n' >&2; exit 7")
+	if err == nil {
+		t.Fatal("run transcript command error = nil")
 	}
-	if strings.Contains(got, "Running ./bin/app") {
-		t.Fatalf("expected plain separator without repeated command label, got %q", got)
+	got := stripANSI(output.String())
+	for _, expected := range []string{"┏ forj render", "┃ render failed detail", "┗ Failed"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("failed inset command omitted %q: %q", expected, got)
+		}
 	}
 }
 

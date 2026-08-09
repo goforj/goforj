@@ -1949,7 +1949,7 @@ func processEnvironmentMap(entries []string) map[string]string {
 
 // runDevRenderCommand renders generated sources before the reloaded config chooses the build graph.
 func runDevRenderCommand(outWriter io.Writer, errWriter io.Writer) error {
-	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render --timings"); err != nil {
+	if err := runDevTerminalCommand(outWriter, errWriter, "forj render", "forj render --timings"); err != nil {
 		return fmt.Errorf("forj render failed: %w", err)
 	}
 	return nil
@@ -2477,31 +2477,36 @@ func runDevSubprocess(run devSubprocessRun) error {
 
 // runDevTranscriptCommand centralizes run dev transcript command behavior so callers follow the same contract.
 func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	writeDevCommandLine(outWriter, heading)
-	setDevStatusLine(outWriter, heading)
-	defer clearDevStatusLine(outWriter)
-	if err := runDevSubprocess(devSubprocessRun{
-		command:    command,
-		stdout:     outWriter,
-		stderr:     errWriter,
-		transcript: true,
-	}); err != nil {
+	block := newDevTaskOutputBlock(heading, outWriter, errWriter, nil)
+	if err := block.start(); err != nil {
 		return err
 	}
-	writeDevCommandBoundary(outWriter)
-	return nil
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
+	startedAt := time.Now()
+	runErr := runDevSubprocess(devSubprocessRun{
+		command:    command,
+		stdout:     block.stdoutWriter(),
+		stderr:     block.stderrWriter(),
+		transcript: true,
+	})
+	_, finishErr := block.finish(runErr == nil, time.Since(startedAt))
+	if runErr != nil {
+		return runErr
+	}
+	return finishErr
 }
 
 // runDevTerminalCommand centralizes run dev terminal command behavior so callers follow the same contract.
 func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	if _, ok := outWriter.(*devBubbleWriter); ok {
+	if asDevOutputController(outWriter) != nil {
 		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
 	}
-	if _, ok := errWriter.(*devBubbleWriter); ok {
+	if asDevOutputController(errWriter) != nil {
 		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
 	}
 
-	writeDevActionLine(outWriter, heading)
+	writeDevActionLine(outWriter, "Running "+strings.TrimSpace(heading))
 	// Render output should go straight to the terminal so the renderer keeps
 	// its native colors/box drawing and the sticky footer does not get replayed
 	// into the transcript while ad hoc commands are running.
@@ -2589,17 +2594,6 @@ func devAppBuildNames(apps []project.App) []string {
 		names = append(names, app.Name)
 	}
 	return names
-}
-
-// writeDevCommandLine frames ad hoc commands so their output remains distinct in the shared transcript.
-func writeDevCommandLine(out io.Writer, message string) {
-	label := console.Colorize(console.ColorBoldWhite, strings.TrimSpace(message))
-	_, _ = io.WriteString(out, buildDevSectionSeparatorLine(label)+"\n")
-}
-
-// writeDevCommandBoundary restores a clear visual edge before watcher output resumes.
-func writeDevCommandBoundary(out io.Writer) {
-	_, _ = io.WriteString(out, buildDevFooterSeparatorLine()+"\n")
 }
 
 // printDevReadySummary centralizes print dev ready summary behavior so callers follow the same contract.
