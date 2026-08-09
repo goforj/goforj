@@ -63,12 +63,11 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 	}
 
 	workerCount := managedQueueWorkerCount(managed)
-	s.logger.Info().Msg(fmt.Sprintf(
-		"Queue worker started · %s · %d %s",
-		strings.Join(managedQueueNames(managed), ", "),
-		workerCount,
-		pluralizeQueueWorkers(workerCount),
-	))
+	s.logger.Info().
+		Compact().
+		Str("queue", strings.Join(managedQueueNames(managed), ", ")).
+		Str("workers", fmt.Sprintf("%d %s", workerCount, pluralizeQueueWorkers(workerCount))).
+		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
 	if activeJobs := managedActiveJobs(managed); activeJobs > 0 {

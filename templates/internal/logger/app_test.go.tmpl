@@ -345,6 +345,36 @@ func TestAppLoggerHTTPAccessAddsInspectFieldsToSinkEntries(t *testing.T) {
 	}
 }
 
+func TestAppLoggerCompactKeepsStructuredFields(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	var entries []logger.LogEntry
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.AddSink(func(entry logger.LogEntry) {
+			entries = append(entries, entry)
+		})
+		appLogger.Info().
+			Compact().
+			Str("listen", ":3000").
+			Str("routes", "23 routes").
+			Msg("HTTP server started")
+	})
+	output = stripANSI(output)
+	if !strings.Contains(output, "HTTP server started → :3000 · 23 routes") {
+		t.Fatalf("expected compact console fields, got %q", output)
+	}
+	if strings.Contains(output, "listen=") || strings.Contains(output, "routes=") {
+		t.Fatalf("compact console output retained field labels: %q", output)
+	}
+	if len(entries) != 1 || entries[0].Fields["listen"] != ":3000" || entries[0].Fields["routes"] != "23 routes" {
+		t.Fatalf("compact event lost structured sink fields: %#v", entries)
+	}
+}
+
 func TestAppLoggerEventDedupeRunsBeforeWriterParsing(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
