@@ -70,6 +70,12 @@ type devWatchSession struct {
 	reloadRuntime         func() (*devwatchStreamer, error)
 	reconcile             bool
 	reconcileFrontendDeps bool
+	readyAnnounced        bool
+}
+
+type activeDevLifecycleTransaction struct {
+	transaction devLifecycleTransaction
+	startedAt   time.Time
 }
 
 // Signature declares the development command exposed by the root CLI.
@@ -1215,16 +1221,32 @@ const (
 
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
 func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
+	var activeTransaction *activeDevLifecycleTransaction
 watcherLoop:
 	for {
 		if err := session.reloadProjectConfig(); err != nil {
 			return err
 		}
 		session.config.Dev.Watches = devWatchesForApps(session.config, session.baseWatches)
+		if activeTransaction == nil && !session.readyAnnounced {
+			compiled, compileErr := compileDevWatchers(session.config)
+			if compileErr != nil {
+				return compileErr
+			}
+			watchers := make([]string, 0, len(compiled))
+			for _, watcher := range compiled {
+				watchers = append(watchers, watcher.Name)
+			}
+			transaction := newDevStartupTransaction(session.config, watchers, devLifecycleDetailedOutput(compiled))
+			if beginDevLifecycleTransaction(session.outWriter, transaction) {
+				activeTransaction = &activeDevLifecycleTransaction{transaction: transaction, startedAt: time.Now()}
+			}
+		}
 		setDevTransition(session.outWriter, "watchers:start", "Starting watchers")
 		runtime, err := startDevWatcherRuntime(session)
 		clearDevTransition(session.outWriter, "watchers:start")
 		if err != nil {
+			failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 			return err
 		}
 		reconciliationSucceeded := true
@@ -1240,13 +1262,39 @@ watcherLoop:
 			if reconcileErr != nil {
 				reconciliationSucceeded = false
 				runtime.controller.finishReconciliation(false)
-				writeDevRecoverableFailure(session.outWriter, session.errWriter, "Development build failed", reconcileErr)
+				if activeTransaction != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, reconcileErr)
+				} else {
+					writeDevRecoverableFailure(session.outWriter, session.errWriter, "Development build failed", reconcileErr)
+				}
 			} else {
 				runtime.controller.finishReconciliation(true)
 			}
 		}
-		if reconciliationSucceeded {
+		var startupErr error
+		if reconciliationSucceeded && activeTransaction != nil {
+			startupContext, cancelStartup := devWatchStopContext(session.stopCh)
+			startupErr = runtime.controller.waitStartup(startupContext)
+			cancelStartup()
+			if errors.Is(startupErr, context.Canceled) {
+				runtime.stopAndDrain(true)
+				return errDevInterrupted
+			}
+		}
+		if startupErr != nil || !reconciliationSucceeded {
+			if startupErr != nil {
+				if activeTransaction != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, startupErr)
+				} else {
+					writeDevRecoverableFailure(session.outWriter, session.errWriter, "Watcher startup failed", startupErr)
+				}
+			}
+		} else if activeTransaction != nil {
+			completeActiveDevLifecycleTransaction(session.outWriter, &activeTransaction)
+			session.readyAnnounced = true
+		} else if shouldPrintDevReadySummary(session.outWriter, session.readyAnnounced) {
 			printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
+			session.readyAnnounced = true
 		}
 		for {
 			select {
@@ -1258,12 +1306,26 @@ watcherLoop:
 				runtime.stopAndDrain(true)
 				return errDevInterrupted
 			case <-session.restartCh:
-				writeDevActionLine(session.outWriter, "Restarting dev watchers")
-				setDevTransition(session.outWriter, "watchers:restart", "Restarting watchers")
+				watchers := make([]string, 0, len(runtime.watchers))
+				for _, watcher := range runtime.watchers {
+					watchers = append(watchers, watcher.name)
+				}
+				compiled, compileErr := compileDevWatchers(session.config)
+				if compileErr != nil {
+					return compileErr
+				}
+				transaction := newDevRestartTransaction(watchers, devLifecycleDetailedOutput(compiled))
+				if beginDevLifecycleTransaction(session.outWriter, transaction) {
+					activeTransaction = &activeDevLifecycleTransaction{transaction: transaction, startedAt: time.Now()}
+				} else {
+					writeDevActionLine(session.outWriter, "Restarting dev watchers")
+					setDevTransition(session.outWriter, "watchers:restart", "Restarting watchers")
+				}
 				runtime.stopAndDrain(true)
 				drainRestartSignals(session.restartCh)
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 					return err
 				}
 				session.streamer = refreshedStreamer
@@ -1400,6 +1462,31 @@ watcherLoop:
 			}
 		}
 	}
+}
+
+// shouldPrintDevReadySummary keeps plain streams backward compatible while the persistent TUI announces resources once.
+func shouldPrintDevReadySummary(out io.Writer, alreadyAnnounced bool) bool {
+	return !alreadyAnnounced || asDevLifecycleTransactionController(out) == nil
+}
+
+// completeActiveDevLifecycleTransaction closes the matching TUI boundary without leaking state into the next generation.
+func completeActiveDevLifecycleTransaction(out io.Writer, active **activeDevLifecycleTransaction) {
+	if active == nil || *active == nil {
+		return
+	}
+	transaction := *active
+	completeDevLifecycleTransaction(out, transaction.transaction.Key, time.Since(transaction.startedAt))
+	*active = nil
+}
+
+// failActiveDevLifecycleTransaction expands the matching TUI boundary before the outer runner handles the error.
+func failActiveDevLifecycleTransaction(out io.Writer, active **activeDevLifecycleTransaction, err error) {
+	if active == nil || *active == nil {
+		return
+	}
+	transaction := *active
+	failDevLifecycleTransaction(out, transaction.transaction.Key, time.Since(transaction.startedAt), err)
+	*active = nil
 }
 
 // writeDevRecoverableFailure keeps build diagnostics inside the active output session so its reserved rows remain intact.

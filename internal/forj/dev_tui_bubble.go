@@ -22,6 +22,7 @@ import (
 const (
 	devBubbleFlushDelay      = 20 * time.Millisecond
 	devBubbleSpinnerInterval = 80 * time.Millisecond
+	devLifecycleBufferLines  = 400
 	devTerminalProgressClear = "\x1b]9;4;0;0\x07"
 	devTerminalProgressBusy  = "\x1b]9;4;3;0\x07"
 )
@@ -42,6 +43,7 @@ type devBubbleWriter struct {
 	statusLine         string
 	transitions        map[string]devBubbleTransition
 	transitionSequence uint64
+	lifecycle          *devBubbleLifecycleTransaction
 	inputState         *term.State
 	outputState        *term.State
 	closed             bool
@@ -111,6 +113,39 @@ type devQuitMsg struct{}
 type devBubbleTransition struct {
 	line     string
 	sequence uint64
+}
+
+type devBubbleLifecycleTransaction struct {
+	transaction devLifecycleTransaction
+	lines       []string
+}
+
+// retain captures infrastructure output only for the default compact lifecycle view.
+func (t *devBubbleLifecycleTransaction) retain(lines []string) bool {
+	if t == nil || t.transaction.Detailed {
+		return false
+	}
+	t.lines = append(t.lines, lines...)
+	if overflow := len(t.lines) - devLifecycleBufferLines; overflow > 0 {
+		t.lines = append([]string(nil), t.lines[overflow:]...)
+	}
+	return true
+}
+
+// failureLines expands retained output beneath the failed transaction summary.
+func (t *devBubbleLifecycleTransaction) failureLines(elapsed time.Duration, err error) []string {
+	if t == nil {
+		return nil
+	}
+	lines := []string{t.transaction.failureLine(elapsed)}
+	if len(t.lines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, t.lines...)
+	}
+	if detail := formatDevLifecycleFailure(err); detail != "" && !devLifecycleLinesContain(lines, err.Error()) {
+		lines = append(lines, detail)
+	}
+	return lines
 }
 
 var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+(?:[a-z][a-z0-9_-]*\s+)?([A-Za-z][A-Za-z0-9_-]*)\s+`)
@@ -320,7 +355,75 @@ func (w *devBubbleWriter) flushPendingLocked() {
 		w.flushTimer.Stop()
 		w.flushTimer = nil
 	}
+	if w.lifecycle.retain(payload) {
+		return
+	}
 	w.program.Send(devAppendLinesMsg{lines: payload})
+}
+
+// BeginLifecycleTransaction reserves the status row and retains concurrent process output until the outcome is known.
+func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTransaction) {
+	if strings.TrimSpace(transaction.Key) == "" {
+		return
+	}
+	w.mu.Lock()
+	w.flushPendingLocked()
+	if w.partial != "" {
+		w.program.Send(devAppendLinesMsg{lines: []string{w.partial}})
+		w.partial = ""
+	}
+	w.lifecycle = &devBubbleLifecycleTransaction{transaction: transaction}
+	w.setTransitionLocked(transaction.Key, transaction.inProgressLine())
+	w.mu.Unlock()
+}
+
+// CompleteLifecycleTransaction discards successful infrastructure chatter and retains only its summary.
+func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.Duration) {
+	w.mu.Lock()
+	if w.lifecycle == nil || w.lifecycle.transaction.Key != strings.TrimSpace(key) {
+		w.mu.Unlock()
+		return
+	}
+	w.flushPendingLocked()
+	w.partial = ""
+	transaction := w.lifecycle.transaction
+	w.lifecycle = nil
+	w.program.Send(devAppendLinesMsg{lines: []string{transaction.successLine(elapsed)}})
+	w.clearTransitionLocked(key)
+	w.mu.Unlock()
+}
+
+// FailLifecycleTransaction replays retained context because a failed transition must explain itself.
+func (w *devBubbleWriter) FailLifecycleTransaction(key string, elapsed time.Duration, err error) {
+	w.mu.Lock()
+	if w.lifecycle == nil || w.lifecycle.transaction.Key != strings.TrimSpace(key) {
+		w.mu.Unlock()
+		return
+	}
+	w.flushPendingLocked()
+	if w.partial != "" {
+		w.lifecycle.lines = append(w.lifecycle.lines, w.partial)
+		w.partial = ""
+	}
+	lines := w.lifecycle.failureLines(elapsed, err)
+	w.lifecycle = nil
+	w.program.Send(devAppendLinesMsg{lines: lines})
+	w.clearTransitionLocked(key)
+	w.mu.Unlock()
+}
+
+// devLifecycleLinesContain avoids repeating an error already captured from the failing child process.
+func devLifecycleLinesContain(lines []string, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, line := range lines {
+		if strings.Contains(stripANSIForSearch(line), value) {
+			return true
+		}
+	}
+	return false
 }
 
 // DisableFooter centralizes disable footer behavior so callers follow the same contract.
@@ -392,14 +495,19 @@ func (w *devBubbleWriter) SetTransition(key string, line string) {
 		return
 	}
 	w.mu.Lock()
+	w.setTransitionLocked(key, line)
+	w.mu.Unlock()
+}
+
+// setTransitionLocked updates a lifecycle owner while keeping an outer transaction visually dominant.
+func (w *devBubbleWriter) setTransitionLocked(key string, line string) {
 	if w.transitions == nil {
 		w.transitions = make(map[string]devBubbleTransition)
 	}
 	w.transitionSequence++
 	w.transitions[key] = devBubbleTransition{line: line, sequence: w.transitionSequence}
-	w.statusLine = line
-	w.program.Send(devSetStatusMsg{line: line})
-	w.mu.Unlock()
+	w.statusLine = w.activeTransitionLineLocked()
+	w.program.Send(devSetStatusMsg{line: w.statusLine})
 }
 
 // ClearTransition removes one lifecycle owner while preserving any other active operation.
@@ -409,20 +517,29 @@ func (w *devBubbleWriter) ClearTransition(key string) {
 		return
 	}
 	w.mu.Lock()
+	w.clearTransitionLocked(key)
+	w.mu.Unlock()
+}
+
+// clearTransitionLocked releases one status owner without disturbing a surrounding transaction.
+func (w *devBubbleWriter) clearTransitionLocked(key string) {
 	delete(w.transitions, key)
 	next := w.activeTransitionLineLocked()
 	w.statusLine = next
 	if next == "" {
 		w.program.Send(devClearStatusMsg{})
-		w.mu.Unlock()
 		return
 	}
 	w.program.Send(devSetStatusMsg{line: next})
-	w.mu.Unlock()
 }
 
 // activeTransitionLineLocked selects the most recently updated active operation for the single reserved status row.
 func (w *devBubbleWriter) activeTransitionLineLocked() string {
+	if w.lifecycle != nil {
+		if transaction, ok := w.transitions[w.lifecycle.transaction.Key]; ok {
+			return transaction.line
+		}
+	}
 	var active devBubbleTransition
 	for _, transition := range w.transitions {
 		if transition.sequence > active.sequence {
@@ -675,7 +792,6 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpVisible = false
 			}
 			m.requestRestart()
-			m.lines = append(m.lines, console.ActionMark()+" Restart requested")
 		case "ctrl+r":
 			if helpVisible {
 				m.helpVisible = false
