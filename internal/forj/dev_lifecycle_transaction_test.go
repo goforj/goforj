@@ -134,7 +134,7 @@ func TestBeginActiveDevRestartTransactionCoversAutomaticRebuilds(t *testing.T) {
 	}
 }
 
-// TestCompactLifecycleTransactionOmitsTypedWatcherNarration verifies the shelf heading replaces redundant runner state.
+// TestCompactLifecycleTransactionOmitsTypedWatcherNarration verifies the transaction heading replaces redundant runner state.
 func TestCompactLifecycleTransactionOmitsTypedWatcherNarration(t *testing.T) {
 	writer := &devLifecycleOrchestrationWriter{compact: true}
 	streamer := &devwatchStreamer{ch: make(chan devwatchLine, 1)}
@@ -144,17 +144,22 @@ func TestCompactLifecycleTransactionOmitsTypedWatcherNarration(t *testing.T) {
 	}
 	select {
 	case line := <-streamer.ch:
-		if !strings.Contains(stripANSI(line.Line), "Watchers stopped") {
-			t.Fatalf("streamed watcher narration = %q", line.Line)
-		}
+		t.Fatalf("compact lifecycle streamed watcher narration: %q", line.Line)
 	default:
-		t.Fatal("compact lifecycle discarded watcher narration from the diagnostic stream")
 	}
 
 	writer.compact = false
-	emitWatcherLifecycleSummary(writer, nil, []string{"Build App", "Run App"}, watcherStateStopped)
+	emitWatcherLifecycleSummary(writer, streamer, []string{"Build App", "Run App"}, watcherStateStopped)
 	if !strings.Contains(stripANSI(writer.String()), "Watchers stopped") {
 		t.Fatalf("detailed lifecycle omitted watcher narration: %q", writer.String())
+	}
+	select {
+	case line := <-streamer.ch:
+		if !strings.Contains(stripANSI(line.Line), "Watchers stopped") {
+			t.Fatalf("detailed lifecycle streamed watcher narration = %q", line.Line)
+		}
+	default:
+		t.Fatal("detailed lifecycle omitted watcher narration from the stream")
 	}
 }
 

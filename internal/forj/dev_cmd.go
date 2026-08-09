@@ -3331,6 +3331,9 @@ func emitWatcherLifecycleLine(out io.Writer, streamer *devwatchStreamer, watcher
 	if line == "" {
 		return
 	}
+	if suppressDevLifecycleOrchestration(out) {
+		return
+	}
 	timestamp := time.Now()
 	if streamer != nil {
 		streamer.Send(devwatchLine{
@@ -3342,9 +3345,6 @@ func emitWatcherLifecycleLine(out io.Writer, streamer *devwatchStreamer, watcher
 		})
 	}
 	if out == nil {
-		return
-	}
-	if suppressDevLifecycleOrchestration(out) {
 		return
 	}
 	devwatchOutputMu.Lock()
@@ -3359,6 +3359,9 @@ func emitWatcherLifecycleSummary(out io.Writer, streamer *devwatchStreamer, watc
 	if line == "" {
 		return
 	}
+	if suppressDevLifecycleOrchestration(out) {
+		return
+	}
 	timestamp := time.Now()
 	if streamer != nil {
 		streamer.Send(devwatchLine{
@@ -3369,9 +3372,6 @@ func emitWatcherLifecycleSummary(out io.Writer, streamer *devwatchStreamer, watc
 		})
 	}
 	if out == nil {
-		return
-	}
-	if suppressDevLifecycleOrchestration(out) {
 		return
 	}
 	devwatchOutputMu.Lock()
