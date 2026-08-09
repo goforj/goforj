@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/goforj/goforj/project"
 	"golang.org/x/term"
@@ -35,6 +36,16 @@ type devTransitionController interface {
 	SetTransition(string, string)
 	// ClearTransition completes one keyed lifecycle transition.
 	ClearTransition(string)
+}
+
+// devLifecycleTransactionController owns TUI-only lifecycle compression without changing plain output streams.
+type devLifecycleTransactionController interface {
+	// BeginLifecycleTransaction reserves the lifecycle row and starts retaining contextual output.
+	BeginLifecycleTransaction(devLifecycleTransaction)
+	// CompleteLifecycleTransaction replaces a successful transition with one durable summary.
+	CompleteLifecycleTransaction(string, time.Duration)
+	// FailLifecycleTransaction restores retained diagnostics beneath the failed transition.
+	FailLifecycleTransaction(string, time.Duration, error)
 }
 
 // devOutputSession names the terminal streams and lifecycle ownership that must change together when the TUI is enabled.
@@ -158,6 +169,30 @@ func clearDevTransition(writer io.Writer, key string) {
 	clearDevStatusLine(writer)
 }
 
+// beginDevLifecycleTransaction starts compression only when the selected output owns a TUI transaction boundary.
+func beginDevLifecycleTransaction(writer io.Writer, transaction devLifecycleTransaction) bool {
+	controller := asDevLifecycleTransactionController(writer)
+	if controller == nil {
+		return false
+	}
+	controller.BeginLifecycleTransaction(transaction)
+	return true
+}
+
+// completeDevLifecycleTransaction publishes the transaction summary when the output owns the matching boundary.
+func completeDevLifecycleTransaction(writer io.Writer, key string, elapsed time.Duration) {
+	if controller := asDevLifecycleTransactionController(writer); controller != nil {
+		controller.CompleteLifecycleTransaction(key, elapsed)
+	}
+}
+
+// failDevLifecycleTransaction expands retained output before publishing the diagnostic cause.
+func failDevLifecycleTransaction(writer io.Writer, key string, elapsed time.Duration, err error) {
+	if controller := asDevLifecycleTransactionController(writer); controller != nil {
+		controller.FailLifecycleTransaction(key, elapsed, err)
+	}
+}
+
 // asDevOutputController centralizes as dev output controller behavior so callers follow the same contract.
 func asDevOutputController(writer io.Writer) devOutputController {
 	if synchronized, ok := writer.(devWatcherSynchronizedWriter); ok {
@@ -173,5 +208,14 @@ func asDevTransitionController(writer io.Writer) devTransitionController {
 		return asDevTransitionController(synchronized.writer)
 	}
 	controller, _ := writer.(devTransitionController)
+	return controller
+}
+
+// asDevLifecycleTransactionController unwraps synchronized watcher output without enabling transactions for plain writers.
+func asDevLifecycleTransactionController(writer io.Writer) devLifecycleTransactionController {
+	if synchronized, ok := writer.(devWatcherSynchronizedWriter); ok {
+		return asDevLifecycleTransactionController(synchronized.writer)
+	}
+	controller, _ := writer.(devLifecycleTransactionController)
 	return controller
 }

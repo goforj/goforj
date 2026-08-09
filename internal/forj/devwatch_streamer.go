@@ -553,6 +553,7 @@ type devwatchWriter struct {
 	appNameWidth          int
 	showAppColumn         bool
 	lifecycle             *devwatchLifecycleState
+	onTrigger             func()
 	skipBlankAfterTrigger bool
 	buf                   bytes.Buffer
 	streamer              *devwatchStreamer
@@ -573,6 +574,7 @@ type devwatchLifecycleState struct {
 	restartExpected map[string]struct{}
 	restartSeen     map[string]struct{}
 	restartShutdown bool
+	separators      bool
 }
 
 // newDevwatchLifecycleState centralizes new devwatch lifecycle state behavior so callers follow the same contract.
@@ -587,7 +589,13 @@ func newDevwatchLifecycleState(startupExpected int, restartWatches []string) *de
 		startupExpected: startupExpected,
 		restartExpected: restartExpected,
 		restartSeen:     map[string]struct{}{},
+		separators:      true,
 	}
+}
+
+// separatorsEnabled keeps decorative boundaries on legacy streams while the TUI uses lifecycle transactions.
+func (s *devwatchLifecycleState) separatorsEnabled() bool {
+	return s != nil && s.separators
 }
 
 // noteStartupTrigger centralizes note startup trigger behavior so callers follow the same contract.
@@ -679,7 +687,7 @@ var devwatchOutputMu sync.Mutex
 
 // newDevwatchWriter creates a writer that mirrors output to the devwatch websocket while still writing to the original writer.
 func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, lifecycle *devwatchLifecycleState) io.Writer {
-	return newDevwatchWriterForApp(out, streamer, stream, watcher, command, "", 0, false, lifecycle)
+	return newDevwatchWriterForApp(out, streamer, stream, watcher, command, "", 0, false, lifecycle, nil)
 }
 
 // newDevwatchWriterForApp creates a writer that can add dev-only app context to runtime logs.
@@ -693,6 +701,7 @@ func newDevwatchWriterForApp(
 	appNameWidth int,
 	showAppColumn bool,
 	lifecycle *devwatchLifecycleState,
+	onTrigger func(),
 ) io.Writer {
 	if out == nil {
 		return out
@@ -707,6 +716,7 @@ func newDevwatchWriterForApp(
 		appNameWidth:  appNameWidth,
 		showAppColumn: showAppColumn,
 		lifecycle:     lifecycle,
+		onTrigger:     onTrigger,
 	}
 }
 
@@ -720,6 +730,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 	if _, err := w.buf.Write(p); err != nil {
 		return 0, err
 	}
+	triggered := false
 	for {
 		data := w.buf.Bytes()
 		idx := bytes.IndexByte(data, '\n')
@@ -738,6 +749,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		}
 		if isWatcherTriggerLine(rawLine) {
 			w.skipBlankAfterTrigger = true
+			triggered = true
 		}
 		if handled := handleBuildProgressLine(w.out, w.watcher, rawLine); handled {
 			continue
@@ -749,10 +761,10 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		outLine = decorateDevAppLogAppColumn(outLine, w.appName, w.appNameWidth, w.showAppColumn)
 		restartSeparator := ""
 		shutdownSeparator := false
-		if w.lifecycle.startupEmittedAlready() {
+		if w.lifecycle.separatorsEnabled() && w.lifecycle.startupEmittedAlready() {
 			shutdownSeparator = w.lifecycle.noteRestartShutdown(w.watcher, rawLine)
 		}
-		if isWatcherTriggerLine(rawLine) && w.lifecycle.startupEmittedAlready() {
+		if w.lifecycle.separatorsEnabled() && isWatcherTriggerLine(rawLine) && w.lifecycle.startupEmittedAlready() {
 			restartSeparator = w.lifecycle.noteRestartTrigger(w.watcher)
 		}
 		if w.streamer != nil {
@@ -787,7 +799,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			devwatchOutputMu.Unlock()
 			return 0, err
 		}
-		if isWatcherTriggerLine(rawLine) && w.lifecycle.noteStartupTrigger() {
+		if w.lifecycle.separatorsEnabled() && isWatcherTriggerLine(rawLine) && w.lifecycle.noteStartupTrigger() {
 			separator := buildDevStartupSeparatorLine()
 			if w.streamer != nil {
 				w.streamer.Send(devwatchLine{
@@ -808,6 +820,10 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			}
 		}
 		devwatchOutputMu.Unlock()
+	}
+	// Report the launch after the whole pipe read is persisted so adjacent startup output cannot overtake the transaction.
+	if triggered && w.onTrigger != nil {
+		w.onTrigger()
 	}
 	return len(p), nil
 }

@@ -1,0 +1,177 @@
+package forj
+
+import (
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goforj/console"
+	"github.com/goforj/goforj/project"
+)
+
+const (
+	devLifecycleStartupKey = "lifecycle:startup"
+	devLifecycleRestartKey = "lifecycle:restart"
+)
+
+type devLifecycleTransactionKind uint8
+
+const (
+	devLifecycleStartup devLifecycleTransactionKind = iota + 1
+	devLifecycleRestart
+)
+
+type devLifecycleTransaction struct {
+	Key      string
+	Kind     devLifecycleTransactionKind
+	Watchers []string
+	Ready    string
+	Detailed bool
+}
+
+// newDevStartupTransaction describes the first watcher generation without exposing its internal state changes.
+func newDevStartupTransaction(config *project.Config, watchers []string, detailed bool) devLifecycleTransaction {
+	return devLifecycleTransaction{
+		Key:      devLifecycleStartupKey,
+		Kind:     devLifecycleStartup,
+		Watchers: compactDevWatcherNames(watchers),
+		Ready:    formatDevReadyDetail(config, snapshotProcessEnv()),
+		Detailed: detailed,
+	}
+}
+
+// newDevRestartTransaction treats a watcher replacement as one user-visible operation.
+func newDevRestartTransaction(watchers []string, detailed bool) devLifecycleTransaction {
+	return devLifecycleTransaction{
+		Key:      devLifecycleRestartKey,
+		Kind:     devLifecycleRestart,
+		Watchers: compactDevWatcherNames(watchers),
+		Detailed: detailed,
+	}
+}
+
+// inProgressLine renders the single reserved row shown while lifecycle work is active.
+func (t devLifecycleTransaction) inProgressLine() string {
+	verb := "Starting"
+	if t.Kind == devLifecycleRestart {
+		verb = "Restarting"
+	}
+	return joinDevLifecycleFields(verb, t.Watchers...)
+}
+
+// successLine renders the durable result after buffered infrastructure output is discarded.
+func (t devLifecycleTransaction) successLine(elapsed time.Duration) string {
+	verb := "Ready"
+	fields := []string{}
+	if t.Kind == devLifecycleRestart {
+		verb = "Restarted"
+		fields = append(fields, t.Watchers...)
+	} else if strings.TrimSpace(t.Ready) != "" {
+		fields = append(fields, t.Ready)
+	}
+	fields = append(fields, formatDevLifecycleDuration(elapsed))
+	return console.SuccessMark() + " " + joinDevLifecycleFields(verb, fields...)
+}
+
+// failureLine identifies the failed lifecycle boundary before its retained output is replayed.
+func (t devLifecycleTransaction) failureLine(elapsed time.Duration) string {
+	label := "Startup failed"
+	if t.Kind == devLifecycleRestart {
+		label = "Restart failed"
+	}
+	return console.ErrorMark() + " " + joinDevLifecycleFields(label, formatDevLifecycleDuration(elapsed))
+}
+
+// joinDevLifecycleFields keeps lifecycle summaries visually compact without embedding terminal layout concerns in the runner.
+func joinDevLifecycleFields(label string, fields ...string) string {
+	parts := []string{console.Colorize(console.ColorBoldWhite, strings.TrimSpace(label))}
+	for _, field := range fields {
+		if field = strings.TrimSpace(field); field != "" {
+			parts = append(parts, console.Colorize(console.ColorGray, field))
+		}
+	}
+	return strings.Join(parts, "  ·  ")
+}
+
+// formatDevLifecycleDuration favors readable subsecond values while retaining useful precision for longer restarts.
+func formatDevLifecycleDuration(elapsed time.Duration) string {
+	if elapsed < time.Second {
+		return elapsed.Round(time.Millisecond).String()
+	}
+	return elapsed.Round(10 * time.Millisecond).String()
+}
+
+// compactDevWatcherNames translates generated watcher labels into the concepts users configured.
+func compactDevWatcherNames(watchers []string) []string {
+	compact := make([]string, 0, len(watchers))
+	seen := map[string]bool{}
+	for _, watcher := range watchers {
+		watcher = strings.TrimSpace(watcher)
+		label := watcher
+		switch {
+		case strings.HasPrefix(watcher, "Build ") && strings.Contains(watcher, " SPA "):
+			label = "SPA"
+		}
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		compact = append(compact, label)
+	}
+	return compact
+}
+
+// formatDevReadyDetail summarizes resources already available in the persistent TUI header.
+func formatDevReadyDetail(config *project.Config, env map[string]string) string {
+	fields := make([]string, 0, 2)
+	if appURL := resolveAPIURL(env); appURL != "" {
+		if parsed, err := url.Parse(appURL); err == nil {
+			port := parsed.Port()
+			if port == "" {
+				switch parsed.Scheme {
+				case "http":
+					port = "80"
+				case "https":
+					port = "443"
+				}
+			}
+			if port != "" {
+				fields = append(fields, "App :"+port)
+			}
+		}
+	}
+	if count := len(collectDevToolLinks(config, env)); count > 0 {
+		label := "resources"
+		if count == 1 {
+			label = "resource"
+		}
+		fields = append(fields, strconv.Itoa(count)+" "+label)
+	}
+	return strings.Join(fields, "  ·  ")
+}
+
+// devLifecycleDetailedOutput keeps retained lifecycle diagnostics visible when the developer explicitly asks for runner detail.
+func devLifecycleDetailedOutput(watchers []devCompiledWatcher) bool {
+	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	for _, watcher := range watchers {
+		if watcher.Verbose || watcher.ExecLog {
+			return true
+		}
+	}
+	return false
+}
+
+// formatDevLifecycleFailure appends a cause only when buffered child output did not already explain it.
+func formatDevLifecycleFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "  " + err.Error()
+}

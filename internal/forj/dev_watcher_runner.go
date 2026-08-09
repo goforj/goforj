@@ -28,6 +28,7 @@ type devWatcherController struct {
 	outWriter    io.Writer
 	errWriter    io.Writer
 	projectBuild *devWatcherBuildGate
+	startup      *devWatcherStartupTracker
 
 	mu                sync.Mutex
 	exited            map[string]bool
@@ -98,6 +99,128 @@ type devWatcherTask struct {
 	pending             bool
 	busy                bool
 	startAfterReconcile bool
+	startupTracked      bool
+	startupOnce         sync.Once
+}
+
+type devWatcherStartupTracker struct {
+	mu       sync.Mutex
+	pending  map[string]*devWatcherStartupTask
+	done     chan struct{}
+	doneOnce sync.Once
+	err      error
+}
+
+type devWatcherStartupTask struct {
+	triggered bool
+	finished  bool
+}
+
+type devWatcherStartupExpectation struct {
+	ID          string
+	WaitOutcome bool
+}
+
+type devWatcherStartupError struct {
+	Watcher string
+	Command string
+	Err     error
+}
+
+// Error renders the watcher and command boundary before the underlying process failure.
+func (e *devWatcherStartupError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := []string{strings.TrimSpace(e.Watcher)}
+	if command := strings.TrimSpace(e.Command); command != "" {
+		parts = append(parts, "  "+command)
+	}
+	if e.Err != nil {
+		parts = append(parts, "  "+e.Err.Error())
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Unwrap exposes the process error to callers that need structured inspection.
+func (e *devWatcherStartupError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// newDevWatcherStartupTracker waits for explicit command outcomes and wrapper trigger markers from the initial generation.
+func newDevWatcherStartupTracker(expectations []devWatcherStartupExpectation) *devWatcherStartupTracker {
+	tracker := &devWatcherStartupTracker{
+		pending: make(map[string]*devWatcherStartupTask, len(expectations)),
+		done:    make(chan struct{}),
+	}
+	for _, expectation := range expectations {
+		tracker.pending[expectation.ID] = &devWatcherStartupTask{finished: !expectation.WaitOutcome}
+	}
+	if len(tracker.pending) == 0 {
+		tracker.doneOnce.Do(func() { close(tracker.done) })
+	}
+	return tracker
+}
+
+// noteTrigger records that the child wrapper reached process execution rather than inferring readiness from its output text.
+func (t *devWatcherStartupTracker) noteTrigger(id string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	if task := t.pending[id]; task != nil {
+		task.triggered = true
+	}
+	t.completeLocked()
+	t.mu.Unlock()
+}
+
+// noteOutcome records the first command result while retaining the earliest failure for the transaction summary.
+func (t *devWatcherStartupTracker) noteOutcome(id string, err error) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	if task := t.pending[id]; task != nil {
+		task.finished = true
+		if err != nil {
+			// A command can fail before its wrapper emits a launch marker; the failure itself is terminal evidence.
+			task.triggered = true
+			if t.err == nil {
+				t.err = err
+			}
+		}
+	}
+	t.completeLocked()
+	t.mu.Unlock()
+}
+
+// completeLocked closes readiness exactly once after every expected task both launched and settled.
+func (t *devWatcherStartupTracker) completeLocked() {
+	for _, task := range t.pending {
+		if !task.triggered || !task.finished {
+			return
+		}
+	}
+	t.doneOnce.Do(func() { close(t.done) })
+}
+
+// wait blocks until the generation is explicit about readiness or the surrounding dev session stops.
+func (t *devWatcherStartupTracker) wait(ctx context.Context) error {
+	if t == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.done:
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.err
+	}
 }
 
 // devWatcherControllerOptions controls transition-only behavior without changing steady-state watcher specs.
@@ -249,17 +372,25 @@ func newDevWatcherControllerWithOptions(
 	showAppColumn := len(runtimeApps) > 1
 	appNameWidth := devAppColumnWidth(runtimeApps)
 	immediate := 0
+	startupExpectations := make([]devWatcherStartupExpectation, 0)
 	runtimeNames := make([]string, 0)
 	for _, spec := range compiled {
 		gatedRuntime := options.reconcile && !spec.Legacy && spec.Kind == devWatcherAppRun
 		if !spec.Postpone && !gatedRuntime {
 			immediate++
+			startupExpectations = append(startupExpectations, devWatcherStartupExpectation{
+				ID: spec.ID, WaitOutcome: spec.Kind != devWatcherCustom,
+			})
+		} else if gatedRuntime && !spec.Postpone {
+			startupExpectations = append(startupExpectations, devWatcherStartupExpectation{ID: spec.ID, WaitOutcome: true})
 		}
 		if spec.Kind == devWatcherAppRun {
 			runtimeNames = append(runtimeNames, spec.Name)
 		}
 	}
+	controller.startup = newDevWatcherStartupTracker(startupExpectations)
 	lifecycle := newDevwatchLifecycleState(immediate, runtimeNames)
+	lifecycle.separators = asDevOutputController(outWriter) == nil || devLifecycleDetailedOutput(compiled)
 	for _, spec := range compiled {
 		structuredBuild := !spec.Legacy && (spec.Kind == devWatcherAppBuild || spec.Kind == devWatcherSPABuild)
 		structuredRuntime := !spec.Legacy && spec.Kind == devWatcherAppRun
@@ -271,11 +402,11 @@ func newDevWatcherControllerWithOptions(
 		if retainFailureOutput {
 			outputTail = newDevTaskOutputTail(40)
 		}
-		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, appNameWidth, showAppColumn, attachPTY)
+		configureCompiledDevCommand(&spec, streamer, outWriter, errWriter, outputTail, soundOnError, lifecycle, controller.startup, appNameWidth, showAppColumn, attachPTY)
 		controller.tasks[spec.ID] = &devWatcherTask{
 			controller: controller, spec: spec, triggerCh: make(chan struct{}, 1),
 			outputTail: outputTail, paused: options.reconcile && (structuredBuild || structuredRuntime),
-			startAfterReconcile: startAfterReconcile,
+			startAfterReconcile: startAfterReconcile, startupTracked: controller.startup.pending[spec.ID] != nil,
 		}
 		controller.order = append(controller.order, spec.ID)
 	}
@@ -299,6 +430,7 @@ func configureCompiledDevCommand(
 	outputTail *devTaskOutputTail,
 	soundOnError bool,
 	lifecycle *devwatchLifecycleState,
+	startup *devWatcherStartupTracker,
 	appNameWidth int,
 	showAppColumn bool,
 	attachPTY bool,
@@ -310,8 +442,12 @@ func configureCompiledDevCommand(
 		outWriter = io.MultiWriter(outWriter, outputTail)
 		errWriter = io.MultiWriter(errWriter, outputTail)
 	}
-	stdout := newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle)
-	stderr := newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle)
+	var onTrigger func()
+	if startup != nil {
+		onTrigger = func() { startup.noteTrigger(spec.ID) }
+	}
+	stdout := newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger)
+	stderr := newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger)
 	if spec.Kind == devWatcherAppRun && !spec.Legacy && !spec.FullProcessOverride {
 		spec.NativeRuntimeCommand = spec.Command.Shell
 	}
@@ -914,6 +1050,11 @@ func (t *devWatcherTask) runCommand() {
 		}
 	}
 	success = err == nil && exit.OK()
+	if success {
+		t.reportStartup(nil)
+	} else {
+		t.reportStartup(devWatcherCommandFailure(exit, err))
+	}
 	handledSPA := false
 	reconciliationSPA := false
 	buildName := ""
@@ -945,6 +1086,34 @@ func (t *devWatcherTask) runCommand() {
 	if t.spec.Exit {
 		t.controller.publishExit(t.spec.ID, t.spec.Name, &exit, err)
 	}
+}
+
+// reportStartup resolves one task once so later file events cannot alter the generation's initial result.
+func (t *devWatcherTask) reportStartup(err error) {
+	if !t.startupTracked {
+		return
+	}
+	t.startupOnce.Do(func() {
+		if err != nil {
+			err = &devWatcherStartupError{
+				Watcher: t.spec.Name,
+				Command: t.spec.DisplayCommand,
+				Err:     err,
+			}
+		}
+		t.controller.startup.noteOutcome(t.spec.ID, err)
+	})
+}
+
+// devWatcherCommandFailure preserves native start errors and gives nonzero exits an actionable process result.
+func devWatcherCommandFailure(exit devwatch.Exit, err error) error {
+	if err != nil {
+		return err
+	}
+	if !exit.OK() {
+		return fmt.Errorf("exited with code %d", exit.ExitCode)
+	}
+	return nil
 }
 
 // commandTransition gives structured build work a stable TUI owner across concurrent watcher executions.
@@ -1103,6 +1272,7 @@ func (t *devWatcherTask) runRuntime() {
 	defer clearDevTransition(t.controller.outWriter, transitionKey)
 	command, err := prepareNativeRuntimeCommand(t.spec)
 	if err != nil {
+		t.reportStartup(err)
 		if runtimeLive {
 			_, _ = fmt.Fprintf(t.controller.errWriter, "forj dev: replacement for %s is not ready; keeping the current runtime: %v\n", t.spec.Name, err)
 		} else {
@@ -1122,6 +1292,7 @@ func (t *devWatcherTask) runRuntime() {
 		pid, err = t.controller.supervisor.StartRuntime(t.controller.ctx, t.spec.ID, command)
 	}
 	if err != nil {
+		t.reportStartup(err)
 		stillRunning := t.controller.supervisor.RuntimeRunning(t.spec.ID)
 		t.mu.Lock()
 		t.runtimeLive = stillRunning
@@ -1142,6 +1313,12 @@ func (t *devWatcherTask) runRuntime() {
 	t.runtimeLive = true
 	t.runtimePID = pid
 	t.mu.Unlock()
+	t.reportStartup(nil)
+}
+
+// waitStartup waits for explicit wrapper and process results from the generation's initial runnable tasks.
+func (c *devWatcherController) waitStartup(ctx context.Context) error {
+	return c.startup.wait(ctx)
 }
 
 // prepareNativeRuntimeCommand snapshots recognized App binaries before replacement can disturb a healthy runtime.
