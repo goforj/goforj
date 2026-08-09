@@ -221,6 +221,64 @@ func TestRunDevTasksIncludesOutputTailOnFailure(t *testing.T) {
 	}
 }
 
+// TestDevTaskOutputBlockLabelsLiveOutput keeps chatty setup commands visually owned without changing their output.
+func TestDevTaskOutputBlockLabelsLiveOutput(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	loaderStops := 0
+	block := newDevTaskOutputBlock("Run Docker Compose", &stdout, &stderr, func() {
+		loaderStops++
+	})
+
+	stdoutWriter := block.stdoutWriter()
+	if _, err := io.WriteString(stdoutWriter, "[+] up "); err != nil {
+		t.Fatalf("write initial stdout fragment: %v", err)
+	}
+	if _, err := io.WriteString(block.stderrWriter(), "compose warning\n"); err != nil {
+		t.Fatalf("write stderr: %v", err)
+	}
+	for _, fragment := range []string{"2/2\n", "container app running\r", "container db running\n"} {
+		if _, err := io.WriteString(stdoutWriter, fragment); err != nil {
+			t.Fatalf("write stdout fragment: %v", err)
+		}
+	}
+
+	if loaderStops != 1 {
+		t.Fatalf("loader stops = %d, want 1", loaderStops)
+	}
+	plainStdout := stripANSI(stdout.String())
+	for _, expected := range []string{
+		"┃ Run Docker Compose\n",
+		"┃ [+] up 2/2\n",
+		"┃ container app running\r┃ container db running\n",
+	} {
+		if !strings.Contains(plainStdout, expected) {
+			t.Fatalf("stdout omitted %q: %q", expected, plainStdout)
+		}
+	}
+	plainStderr := stripANSI(stderr.String())
+	if !strings.Contains(plainStderr, "┃ compose warning\n") {
+		t.Fatalf("stderr was not inset: %q", plainStderr)
+	}
+}
+
+// TestDevTaskOutputBlockStaysTransientWhenSilent preserves the compact loader experience for quiet setup commands.
+func TestDevTaskOutputBlockStaysTransientWhenSilent(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	loaderStops := 0
+	_ = newDevTaskOutputBlock("Quiet setup", &stdout, &stderr, func() {
+		loaderStops++
+	})
+
+	if loaderStops != 0 {
+		t.Fatalf("loader stops = %d, want 0", loaderStops)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("silent task rendered output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 // TestGeneratedFrontendInstallBuffersRoutineStdout keeps npm's success summary out of the startup transcript without discarding diagnostics.
 func TestGeneratedFrontendInstallBuffersRoutineStdout(t *testing.T) {
 	root := t.TempDir()
