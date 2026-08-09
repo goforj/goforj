@@ -1,6 +1,9 @@
 package forj
 
 import (
+	"context"
+	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -14,6 +17,8 @@ import (
 const (
 	devLifecycleStartupKey = "lifecycle:startup"
 	devLifecycleRestartKey = "lifecycle:restart"
+	devLifecycleReadyPath  = "/-/health"
+	devLifecycleReadyLimit = 10 * time.Second
 )
 
 type devLifecycleTransactionKind uint8
@@ -29,6 +34,79 @@ type devLifecycleTransaction struct {
 	Watchers []string
 	Ready    string
 	Detailed bool
+}
+
+type devLifecycleTransactionSummary struct {
+	BuildElapsed   time.Duration
+	MigrateElapsed time.Duration
+}
+
+// waitDevLifecycleReadiness keeps startup output inside the transaction until a conventional HTTP App is serving.
+func waitDevLifecycleReadiness(ctx context.Context, config *project.Config, controller *devWatcherController) error {
+	if !devLifecycleNeedsHTTPReadiness(config, controller) {
+		return nil
+	}
+	readinessURL, err := devLifecycleReadinessURL(resolveAPIURL(snapshotProcessEnv()))
+	if err != nil {
+		return err
+	}
+	readyContext, cancel := context.WithTimeout(ctx, devLifecycleReadyLimit)
+	defer cancel()
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		request, requestErr := http.NewRequestWithContext(readyContext, http.MethodGet, readinessURL, nil)
+		if requestErr != nil {
+			return fmt.Errorf("prepare App readiness probe: %w", requestErr)
+		}
+		response, requestErr := client.Do(request)
+		if requestErr == nil {
+			_ = response.Body.Close()
+			if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+				return nil
+			}
+		}
+		select {
+		case <-readyContext.Done():
+			return fmt.Errorf("wait for App readiness at %s: %w", readinessURL, readyContext.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// devLifecycleNeedsHTTPReadiness limits probing to the conventional default App whose URL GoForj owns.
+func devLifecycleNeedsHTTPReadiness(config *project.Config, controller *devWatcherController) bool {
+	components := appRenderComponents(config, project.DefaultApp())
+	if !components.WebAPI && !components.WebUI {
+		return false
+	}
+	if controller == nil {
+		return false
+	}
+	for _, task := range controller.tasks {
+		spec := task.spec
+		if spec.Kind == devWatcherAppRun && spec.App == project.DefaultAppName && !spec.Legacy && !spec.FullProcessOverride {
+			return true
+		}
+	}
+	return false
+}
+
+// devLifecycleReadinessURL probes the framework-owned root path even when a public App URL includes a path prefix.
+func devLifecycleReadinessURL(appURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(appURL))
+	if err != nil {
+		return "", fmt.Errorf("parse App URL for readiness: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("parse App URL for readiness: absolute URL required")
+	}
+	parsed.Path = devLifecycleReadyPath
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 // newDevStartupTransaction describes the first watcher generation without exposing its internal state changes.
@@ -62,12 +140,17 @@ func (t devLifecycleTransaction) inProgressLine() string {
 }
 
 // successLine renders the durable result after buffered infrastructure output is discarded.
-func (t devLifecycleTransaction) successLine(elapsed time.Duration) string {
+func (t devLifecycleTransaction) successLine(elapsed time.Duration, summary devLifecycleTransactionSummary) string {
 	verb := "Ready"
 	fields := []string{}
 	if t.Kind == devLifecycleRestart {
 		verb = "Restarted"
-		fields = append(fields, t.Watchers...)
+		if summary.BuildElapsed > 0 {
+			fields = append(fields, "build "+formatDevLifecycleDuration(summary.BuildElapsed))
+		}
+		if summary.MigrateElapsed > 0 {
+			fields = append(fields, "migrate "+formatDevLifecycleDuration(summary.MigrateElapsed))
+		}
 	} else if strings.TrimSpace(t.Ready) != "" {
 		fields = append(fields, t.Ready)
 	}
