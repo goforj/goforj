@@ -3,6 +3,7 @@ package forj
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -83,15 +84,24 @@ func TestDevSuccessLineRetainsSemanticColor(t *testing.T) {
 	}))
 
 	block := newDevTaskOutputBlock("Preparing App", &output, &output, nil)
-	writeDevSuccessLine(block.stdoutWriter(), "Built app", "376ms")
+	block.successLabel = "Prepared"
+	stream := block.stdoutWriter()
+	writeDevSuccessLine(stream, "Build", "376ms")
+	if _, err := io.WriteString(stream, "✔ migrations complete (0)\n"); err != nil {
+		t.Fatalf("write child success: %v", err)
+	}
 	for _, expected := range []string{
 		console.ColorGreen + "✔" + console.ColorReset,
-		console.ColorBoldWhite + "Built app" + console.ColorReset,
+		console.ColorBoldWhite + "Build" + console.ColorReset,
 		console.ColorGray + "376ms" + console.ColorReset,
+		console.ColorGreen + "✔" + console.ColorReset + " migrations complete (0)",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("success output omitted %q: %q", expected, output.String())
 		}
+	}
+	if strings.Contains(output.String(), console.ColorGreen+"migrations complete") {
+		t.Fatalf("success output colored the child statement: %q", output.String())
 	}
 }
 

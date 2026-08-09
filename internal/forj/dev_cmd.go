@@ -787,11 +787,17 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 			continue
 		}
 		if w.lineStart && (width > 0 || len(sequence) == 1 && sequence[0] == '\t') {
+			styleSuccessMark := shouldStyleDevPhaseSuccessMark(w, sequence)
 			output = append(output, devTaskOutputRail()...)
 			output = append(output, ' ')
 			output = append(output, w.lineStyle...)
 			w.lineStyle = w.lineStyle[:0]
 			w.lineStart = false
+			if styleSuccessMark {
+				output = append(output, console.Colorize(console.ColorGreen, string(sequence))...)
+				remaining = remaining[consumed:]
+				continue
+			}
 		} else if w.lineStart && lineBreak && len(w.lineStyle) > 0 {
 			output = append(output, w.lineStyle...)
 			w.lineStyle = w.lineStyle[:0]
@@ -810,6 +816,11 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 		return 0, io.ErrShortWrite
 	}
 	return len(value), nil
+}
+
+// shouldStyleDevPhaseSuccessMark keeps unstyled child milestones consistent with framework-owned phase outcomes.
+func shouldStyleDevPhaseSuccessMark(stream *devTaskOutputBlockStream, sequence []byte) bool {
+	return isDevPhaseOutput(stream) && len(stream.lineStyle) == 0 && string(sequence) == "✔"
 }
 
 // isDevTaskANSIStyleSequence identifies styling that must follow an inserted output rail to remain effective.
