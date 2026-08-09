@@ -92,7 +92,7 @@ func TestDevSuccessLineRetainsSemanticColor(t *testing.T) {
 	}
 	for _, expected := range []string{
 		console.ColorGreen + "✔" + console.ColorReset,
-		console.ColorBoldWhite + "Build" + console.ColorReset,
+		console.ColorBoldWhite + "Build     " + console.ColorReset,
 		console.ColorGray + "376ms" + console.ColorReset,
 		console.ColorGreen + "✔" + console.ColorReset + " migrations complete (0)",
 	} {
@@ -103,7 +103,7 @@ func TestDevSuccessLineRetainsSemanticColor(t *testing.T) {
 	if strings.Contains(output.String(), console.ColorGreen+"migrations complete") {
 		t.Fatalf("success output colored the child statement: %q", output.String())
 	}
-	if got := stripANSI(output.String()); !strings.Contains(got, "✔ Build · 376ms") {
+	if got := stripANSI(output.String()); !strings.Contains(got, "✔ Build      · 376ms") {
 		t.Fatalf("success output retained loose lifecycle spacing: %q", got)
 	}
 }
