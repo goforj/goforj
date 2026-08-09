@@ -200,7 +200,7 @@ func TestPublishDevBuildReadyStampRequiresPublishedBinary(t *testing.T) {
 
 // TestRunDevTasksIncludesOutputTailOnFailure keeps Docker port errors visible after startup exits.
 func TestRunDevTasksIncludesOutputTailOnFailure(t *testing.T) {
-	err := runDevTasks("Test setup", []project.DevTask{
+	err := runDevTasks([]project.DevTask{
 		{
 			Name: "Run Docker Compose",
 			Cmd:  "printf 'docker: Error response from daemon: Ports are not available: bind: address already in use\\n' >&2; exit 1",
@@ -346,7 +346,7 @@ func TestGeneratedFrontendInstallFailureRetainsBufferedStdout(t *testing.T) {
 	}
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := runDevTasks("Test setup", []project.DevTask{generatedDevFrontendInstallTask(project.DefaultApp())})
+	err := runDevTasks([]project.DevTask{generatedDevFrontendInstallTask(project.DefaultApp())})
 	if err == nil {
 		t.Fatal("expected generated frontend install failure")
 	}
