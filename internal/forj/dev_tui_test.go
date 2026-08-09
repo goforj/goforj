@@ -635,24 +635,65 @@ func TestReadEnvKey(t *testing.T) {
 }
 
 func TestBuildDevResourceHeaderLine(t *testing.T) {
-	line := stripANSI(buildDevResourceHeaderLine([]devToolLink{
+	line := stripANSI(buildDevResourceHeaderLineAtWidth([]devToolLink{
 		{Label: "App", URL: "http://localhost:3000"},
 		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
 		{Label: "Mailpit", URL: "http://localhost:8025"},
-	}))
-	for _, want := range []string{"Resources", "[1] App", "[2] Lighthouse", "[3] Mailpit"} {
+	}, 120))
+	for _, want := range []string{"1 App", "2 Lighthouse", "3 Mailpit"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("expected %q in resource header: %q", want, line)
+		}
+	}
+	for _, hidden := range []string{"Resources", "[", "]", "●", "○", "|"} {
+		if strings.Contains(line, hidden) {
+			t.Fatalf("resource header retained %q: %q", hidden, line)
 		}
 	}
 }
 
 func TestBuildDevResourceHeaderLinePlaceholder(t *testing.T) {
 	line := stripANSI(buildDevResourceHeaderLine(nil))
-	for _, want := range []string{"Resources", "loading"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("expected %q in resource header placeholder: %q", want, line)
-		}
+	if !strings.Contains(line, "loading") || strings.Contains(line, "Resources") {
+		t.Fatalf("resource header placeholder = %q", line)
+	}
+}
+
+// TestBuildDevResourceHeaderLineRespondsWithoutWrapping verifies narrow headers retain complete destinations when possible.
+func TestBuildDevResourceHeaderLineRespondsWithoutWrapping(t *testing.T) {
+	tools := []devToolLink{
+		{Label: "App", URL: "http://localhost:3000"},
+		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
+		{Label: "Swagger", URL: "http://localhost:3000/swagger"},
+		{Label: "Mailpit", URL: "http://localhost:8025"},
+	}
+	tests := []struct {
+		width  int
+		want   []string
+		hidden []string
+	}{
+		{width: 60, want: []string{"1 App", "2 Lighthouse", "3 Swagger", "4 Mailpit"}, hidden: []string{"…"}},
+		{width: 35, want: []string{"1 App", "2 Lighthouse", "3 Swagger", "…"}, hidden: []string{"4 Mailpit"}},
+		{width: 25, want: []string{"1 App", "2 Lighthouse", "…"}, hidden: []string{"3 Swagger"}},
+		{width: 10, want: []string{"1 App", "…"}, hidden: []string{"2 Lighthouse"}},
+	}
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("width %d", test.width), func(t *testing.T) {
+			line := stripANSI(buildDevResourceHeaderLineAtWidth(tools, test.width))
+			if lipgloss.Width(line) > test.width || strings.Contains(line, "\n") {
+				t.Fatalf("resource header width = %d, exceeds %d: %q", lipgloss.Width(line), test.width, line)
+			}
+			for _, expected := range test.want {
+				if !strings.Contains(line, expected) {
+					t.Fatalf("resource header omitted %q at width %d: %q", expected, test.width, line)
+				}
+			}
+			for _, hidden := range test.hidden {
+				if strings.Contains(line, hidden) {
+					t.Fatalf("resource header retained %q at width %d: %q", hidden, test.width, line)
+				}
+			}
+		})
 	}
 }
 
