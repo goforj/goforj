@@ -2,6 +2,8 @@ package forj
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -15,10 +17,12 @@ import (
 )
 
 const (
-	devLifecycleStartupKey = "lifecycle:startup"
-	devLifecycleRestartKey = "lifecycle:restart"
-	devLifecycleReadyPath  = "/-/health"
-	devLifecycleReadyLimit = 10 * time.Second
+	devLifecycleStartupKey  = "lifecycle:startup"
+	devLifecycleRestartKey  = "lifecycle:restart"
+	devLifecycleReadyPath   = "/-/health"
+	devLifecycleReadyLimit  = 10 * time.Second
+	devLifecycleReadyEnv    = "GOFORJ_DEV_READINESS_TOKEN"
+	devLifecycleReadyHeader = "X-GoForj-Dev-Readiness"
 )
 
 type devLifecycleTransactionKind uint8
@@ -41,6 +45,25 @@ type devLifecycleTransactionSummary struct {
 	MigrateElapsed time.Duration
 }
 
+// installDevLifecycleReadinessToken lets the App distinguish GoForj's private readiness traffic without granting arbitrary health requests a logging bypass.
+func installDevLifecycleReadinessToken() (func(), error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return nil, fmt.Errorf("generate dev readiness token: %w", err)
+	}
+	previous, existed := os.LookupEnv(devLifecycleReadyEnv)
+	if err := os.Setenv(devLifecycleReadyEnv, hex.EncodeToString(raw[:])); err != nil {
+		return nil, fmt.Errorf("set dev readiness token: %w", err)
+	}
+	return func() {
+		if existed {
+			_ = os.Setenv(devLifecycleReadyEnv, previous)
+			return
+		}
+		_ = os.Unsetenv(devLifecycleReadyEnv)
+	}, nil
+}
+
 // waitDevLifecycleReadiness keeps startup output inside the transaction until a conventional HTTP App is serving.
 func waitDevLifecycleReadiness(ctx context.Context, config *project.Config, controller *devWatcherController) error {
 	if !devLifecycleNeedsHTTPReadiness(config, controller) {
@@ -59,6 +82,9 @@ func waitDevLifecycleReadiness(ctx context.Context, config *project.Config, cont
 		request, requestErr := http.NewRequestWithContext(readyContext, http.MethodGet, readinessURL, nil)
 		if requestErr != nil {
 			return fmt.Errorf("prepare App readiness probe: %w", requestErr)
+		}
+		if token := strings.TrimSpace(os.Getenv(devLifecycleReadyEnv)); token != "" {
+			request.Header.Set(devLifecycleReadyHeader, token)
 		}
 		response, requestErr := client.Do(request)
 		if requestErr == nil {

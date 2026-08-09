@@ -186,7 +186,7 @@ func (t *devBubbleLifecycleTransaction) successLines(elapsed time.Duration, summ
 	}
 	bottom := console.Colorize(console.ColorGray, "┗")
 	if t.streamsGroupedOutput() {
-		return []string{bottom + " " + t.transaction.successLine(elapsed, summary)}
+		return []string{bottom + " " + t.transaction.successLine(elapsed, devLifecycleTransactionSummary{})}
 	}
 	lines := make([]string, 0, len(t.lines)+2)
 	if !t.transaction.Detailed && len(t.lines) > 0 {

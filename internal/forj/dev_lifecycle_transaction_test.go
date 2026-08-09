@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,23 @@ type devLifecycleRecordingWriter struct {
 type devLifecycleOrchestrationWriter struct {
 	bytes.Buffer
 	compact bool
+}
+
+// TestInstallDevLifecycleReadinessTokenRestoresInheritedValue keeps the private handshake scoped to one dev command.
+func TestInstallDevLifecycleReadinessTokenRestoresInheritedValue(t *testing.T) {
+	t.Setenv(devLifecycleReadyEnv, "inherited-token")
+	restore, err := installDevLifecycleReadinessToken()
+	if err != nil {
+		t.Fatalf("install readiness token: %v", err)
+	}
+	generated := os.Getenv(devLifecycleReadyEnv)
+	if generated == "" || generated == "inherited-token" {
+		t.Fatalf("generated readiness token = %q", generated)
+	}
+	restore()
+	if got := os.Getenv(devLifecycleReadyEnv); got != "inherited-token" {
+		t.Fatalf("restored readiness token = %q, want inherited value", got)
+	}
 }
 
 // compactLifecycleTransactionActive reports the test writer's configured transaction mode.
@@ -66,10 +84,14 @@ func TestDevRestartTransactionStreamsSuccessfulInfrastructureOutput(t *testing.T
 		t.Fatalf("restart success lines = %#v, want grouped lifecycle output", lines)
 	}
 	joined := stripANSI(strings.Join(lines, "\n"))
-	for _, want := range []string{"┏ App restart", "Build App", "SPA", "Run App", "Watchers stopping", "HTTP server shut down", "Starting Run App", "┗", "Restarted", "build 380ms", "migrate 340ms", "1.03s"} {
+	for _, want := range []string{"┏ App restart", "Build App", "SPA", "Run App", "Watchers stopping", "HTTP server shut down", "Starting Run App", "┗", "Restarted", "1.03s"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("restart output missing %q:\n%s", want, joined)
 		}
+	}
+	footer := stripANSI(lines[len(lines)-1])
+	if strings.Contains(footer, "build 380ms") || strings.Contains(footer, "migrate 340ms") {
+		t.Fatalf("grouped restart footer repeated child timings: %q", footer)
 	}
 }
 
@@ -210,9 +232,14 @@ func TestCompactLifecycleTransactionOmitsRetainedTriggerNarration(t *testing.T) 
 
 // TestWaitDevLifecycleReadinessUsesTheConventionalAppHealthBoundary verifies framework startup output stays buffered until HTTP is serving.
 func TestWaitDevLifecycleReadinessUsesTheConventionalAppHealthBoundary(t *testing.T) {
-	requested := make(chan string, 1)
+	t.Setenv(devLifecycleReadyEnv, "test-readiness-token")
+	type observedRequest struct {
+		path  string
+		token string
+	}
+	requested := make(chan observedRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requested <- request.URL.Path
+		requested <- observedRequest{path: request.URL.Path, token: request.Header.Get(devLifecycleReadyHeader)}
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -225,8 +252,12 @@ func TestWaitDevLifecycleReadinessUsesTheConventionalAppHealthBoundary(t *testin
 	if err := waitDevLifecycleReadiness(context.Background(), config, controller); err != nil {
 		t.Fatalf("waitDevLifecycleReadiness() error = %v", err)
 	}
-	if path := <-requested; path != devLifecycleReadyPath {
-		t.Fatalf("readiness path = %q, want %q", path, devLifecycleReadyPath)
+	request := <-requested
+	if request.path != devLifecycleReadyPath {
+		t.Fatalf("readiness path = %q, want %q", request.path, devLifecycleReadyPath)
+	}
+	if request.token != "test-readiness-token" {
+		t.Fatalf("readiness token = %q, want private dev token", request.token)
 	}
 }
 
