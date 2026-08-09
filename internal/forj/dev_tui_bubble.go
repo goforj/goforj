@@ -152,17 +152,21 @@ func (t *devBubbleLifecycleTransaction) transientLines() []string {
 	return append([]string(nil), lines...)
 }
 
-// successLines preserves the one-time startup story while keeping routine successful restarts collapsed.
+// successLines preserves successful startup and restart work as one bounded lifecycle block.
 func (t *devBubbleLifecycleTransaction) successLines(elapsed time.Duration, summary devLifecycleTransactionSummary) []string {
 	if t == nil {
 		return nil
 	}
 	lines := make([]string, 0, len(t.lines)+2)
-	if t.transaction.Kind == devLifecycleStartup && !t.transaction.Detailed && len(t.lines) > 0 {
+	if !t.transaction.Detailed && len(t.lines) > 0 {
 		top := console.Colorize(console.ColorGray, "┏")
 		rail := console.Colorize(console.ColorGray, "┃")
 		bottom := console.Colorize(console.ColorGray, "┗")
-		lines = append(lines, top+" "+joinDevLifecycleFields("App startup", t.transaction.Watchers...))
+		heading := "App startup"
+		if t.transaction.Kind == devLifecycleRestart {
+			heading = "App restart"
+		}
+		lines = append(lines, top+" "+joinDevLifecycleFields(heading, t.transaction.Watchers...))
 		for _, line := range t.lines {
 			lines = append(lines, rail+" "+line)
 		}
@@ -430,7 +434,7 @@ func (w *devBubbleWriter) compactLifecycleTransactionActive() bool {
 	return w.lifecycle != nil && !w.lifecycle.transaction.Detailed
 }
 
-// CompleteLifecycleTransaction preserves initial startup context while collapsing routine restarts to their summary.
+// CompleteLifecycleTransaction commits retained lifecycle work as one bounded success block.
 func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.Duration, summary devLifecycleTransactionSummary) {
 	w.mu.Lock()
 	if w.lifecycle == nil || w.lifecycle.transaction.Key != strings.TrimSpace(key) {

@@ -139,7 +139,7 @@ func (t devLifecycleTransaction) inProgressLine() string {
 	return joinDevLifecycleFields(verb, t.Watchers...)
 }
 
-// successLine renders the durable result after buffered infrastructure output is discarded.
+// successLine renders the durable result beneath grouped infrastructure output.
 func (t devLifecycleTransaction) successLine(elapsed time.Duration, summary devLifecycleTransactionSummary) string {
 	verb := "Ready"
 	fields := []string{}
