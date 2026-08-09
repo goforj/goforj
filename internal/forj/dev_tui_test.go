@@ -269,13 +269,13 @@ func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
 		statusLine: "Restarting  ·  Build App · SPA · Run App",
 		followMode: true,
 	}
-	next, _ := model.Update(devSetLifecycleLinesMsg{lines: []string{
+	next, _ := model.Update(devSetLifecycleLinesMsg{active: true, lines: []string{
 		"01:04:34.866 Jobs Shutting down queue worker",
 		"01:04:37.856 HTTP Routes registered",
 	}})
 	active := next.(devBubbleModel)
 	view := stripANSI(active.View())
-	for _, want := range []string{"GET /foo", "Shutting down queue worker", "Routes registered", "Restarting"} {
+	for _, want := range []string{"GET /foo", "┃", "Shutting down queue worker", "Routes registered", "Restarting"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("active lifecycle view missing %q:\n%s", want, view)
 		}
@@ -283,11 +283,20 @@ func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
 	if len(active.lines) != 1 {
 		t.Fatalf("transient lifecycle output entered durable transcript: %#v", active.lines)
 	}
+	if strings.Count(view, "Restarting") != 1 {
+		t.Fatalf("lifecycle heading was rendered outside its shelf:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "GET /foo") && strings.Contains(line, "┃") {
+			t.Fatalf("ordinary App output was rendered inside the lifecycle shelf: %q", line)
+		}
+	}
 
 	next, _ = active.Update(devSetLifecycleLinesMsg{})
+	next, _ = next.(devBubbleModel).Update(devClearStatusMsg{})
 	completed := next.(devBubbleModel)
 	view = stripANSI(completed.View())
-	if strings.Contains(view, "Shutting down queue worker") || strings.Contains(view, "Routes registered") {
+	if strings.Contains(view, "Shutting down queue worker") || strings.Contains(view, "Routes registered") || strings.Contains(view, "Restarting") {
 		t.Fatalf("completed lifecycle retained transient output:\n%s", view)
 	}
 	if !strings.Contains(view, "GET /foo") {
