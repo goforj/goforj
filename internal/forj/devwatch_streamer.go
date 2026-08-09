@@ -546,6 +546,7 @@ func (s *devwatchStreamer) writeLine(line devwatchLine) error {
 // devwatchWriter tees output to the console and devwatch streamer.
 type devwatchWriter struct {
 	out                   io.Writer
+	orchestrationOut      io.Writer
 	stream                string
 	watcher               string
 	command               string
@@ -707,17 +708,26 @@ func newDevwatchWriterForApp(
 		return out
 	}
 	return &devwatchWriter{
-		out:           out,
-		streamer:      streamer,
-		stream:        stream,
-		watcher:       watcher,
-		command:       command,
-		appName:       appName,
-		appNameWidth:  appNameWidth,
-		showAppColumn: showAppColumn,
-		lifecycle:     lifecycle,
-		onTrigger:     onTrigger,
+		out:              out,
+		orchestrationOut: out,
+		streamer:         streamer,
+		stream:           stream,
+		watcher:          watcher,
+		command:          command,
+		appName:          appName,
+		appNameWidth:     appNameWidth,
+		showAppColumn:    showAppColumn,
+		lifecycle:        lifecycle,
+		onTrigger:        onTrigger,
 	}
+}
+
+// setDevwatchOrchestrationOutput preserves lifecycle ownership when diagnostic output is tee'd to a failure tail.
+func setDevwatchOrchestrationOutput(writer io.Writer, orchestrationOut io.Writer) io.Writer {
+	if devWriter, ok := writer.(*devwatchWriter); ok {
+		devWriter.orchestrationOut = orchestrationOut
+	}
+	return writer
 }
 
 // Write streams each complete line to both the wrapped writer and the dev console websocket for buffering/tracking.
@@ -776,7 +786,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 				Watcher:   w.watcher,
 			})
 		}
-		suppressTriggerLine := isWatcherTriggerLine(rawLine) && suppressDevLifecycleOrchestration(w.out)
+		suppressTriggerLine := isWatcherTriggerLine(rawLine) && suppressDevLifecycleOrchestration(w.orchestrationOut)
 		devwatchOutputMu.Lock()
 		if shutdownSeparator {
 			separator := buildDevShutdownSeparatorLine()

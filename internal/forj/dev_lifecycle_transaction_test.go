@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/project"
 )
 
@@ -160,6 +161,49 @@ func TestCompactLifecycleTransactionOmitsTriggerNarration(t *testing.T) {
 	}
 	if writer.Len() != 0 {
 		t.Fatalf("compact lifecycle wrote trigger narration: %q", writer.String())
+	}
+}
+
+// TestCompactLifecycleTransactionOmitsRetainedTriggerNarration keeps failure buffering from hiding TUI ownership.
+func TestCompactLifecycleTransactionOmitsRetainedTriggerNarration(t *testing.T) {
+	writer := &devLifecycleOrchestrationWriter{compact: true}
+	tail := newDevTaskOutputTail(40)
+	lifecycle := newDevwatchLifecycleState(1, []string{"Run App"})
+	lifecycle.separators = false
+	spec := devCompiledWatcher{
+		ID:      "structured:app:run",
+		Name:    "Run App",
+		App:     project.DefaultAppName,
+		Kind:    devWatcherAppRun,
+		Command: devwatch.Command{Shell: "./bin/app"},
+	}
+	configureCompiledDevCommand(
+		&spec,
+		nil,
+		writer,
+		writer,
+		tail,
+		false,
+		lifecycle,
+		nil,
+		0,
+		false,
+		false,
+	)
+	if _, err := spec.Command.Stdout.Write([]byte(watcherTriggerMarker + "\n")); err != nil {
+		t.Fatalf("write retained trigger marker: %v", err)
+	}
+	if writer.Len() != 0 || tail.String() != "" {
+		t.Fatalf("compact lifecycle retained trigger narration: output=%q tail=%q", writer.String(), tail.String())
+	}
+	writer.compact = false
+	if _, err := spec.Command.Stdout.Write([]byte(watcherTriggerMarker + "\n")); err != nil {
+		t.Fatalf("write detailed retained trigger marker: %v", err)
+	}
+	for label, output := range map[string]string{"output": writer.String(), "tail": tail.String()} {
+		if !strings.Contains(output, "Starting Run App") {
+			t.Fatalf("detailed lifecycle omitted trigger narration from %s: %q", label, output)
+		}
 	}
 }
 
