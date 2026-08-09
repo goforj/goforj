@@ -253,11 +253,12 @@ func TestDevTaskOutputBlockLabelsLiveOutput(t *testing.T) {
 		t.Fatalf("loader stops = %d, want 1", loaderStops)
 	}
 	plainStdout := stripANSI(stdout.String())
+	success := stripANSI(console.SuccessMark())
 	for _, expected := range []string{
 		"┏ Run Docker Compose\n",
 		"┃ [+] up 2/2\n",
 		"┃ container app running\r┃ container db running\n",
-		"┗ Done  ·  125ms\n",
+		"┗ " + success + " Done  ·  125ms\n",
 	} {
 		if !strings.Contains(plainStdout, expected) {
 			t.Fatalf("stdout omitted %q: %q", expected, plainStdout)
@@ -1130,7 +1131,7 @@ func TestRunDevBuildKeepsMultiAppSuccessTranscriptCompact(t *testing.T) {
 	if strings.Contains(text, "Built billing") {
 		t.Fatalf("expected no per-app success timing lines, got stdout %q", text)
 	}
-	if !strings.Contains(text, "Built apps in ") {
+	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Built apps  ·  ") {
 		t.Fatalf("expected aggregate build timing, got stdout %q", text)
 	}
 	if errOut.Len() != 0 {
@@ -1962,9 +1963,26 @@ func TestRunDevInitialLifecycleBuildsStructuredAppOnce(t *testing.T) {
 	}
 	assertDevLifecycleTestLines(t, logPath, []string{"pre", "spa", "app"})
 	plain := stripANSI(stdout.String())
-	for _, expected := range []string{"┏ Preparing App", "┃   Built app in", "┗ Done"} {
+	success := stripANSI(console.SuccessMark())
+	for _, expected := range []string{"┏ Preparing App", "┃ " + success + " Built app", "┗ " + success + " App prepared"} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("initial preparation output omitted %q:\n%s", expected, plain)
+		}
+	}
+}
+
+// TestDevPhaseSuccessLabelCompletesAppPhaseLanguage verifies every startup phase closes naturally.
+func TestDevPhaseSuccessLabelCompletesAppPhaseLanguage(t *testing.T) {
+	tests := map[string]string{
+		"Preparing App":  "App prepared",
+		"Preparing Apps": "Apps prepared",
+		"Building App":   "App built",
+		"Finalizing App": "App finalized",
+		"Custom":         "Done",
+	}
+	for input, want := range tests {
+		if got := devPhaseSuccessLabel(input); got != want {
+			t.Fatalf("devPhaseSuccessLabel(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
