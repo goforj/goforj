@@ -2330,7 +2330,8 @@ func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
 			if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
 				return "", err
 			}
-			command := exec.Command("go", "build", "-o", binary, "./cmd/app")
+			// A cold fixture cache can otherwise exhaust the Windows process loader before publication is exercised.
+			command := exec.Command("go", "build", "-p=1", "-o", binary, "./cmd/app")
 			command.Dir = stepRoot
 			command.Env = append(
 				os.Environ(),
