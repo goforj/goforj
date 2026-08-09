@@ -382,7 +382,7 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	}
 	defer stopProcAsync(t, "jobs-worker", worker, time.Second)
 
-	if !waitForOutputContains(worker, []string{"Queue worker started", "driver=redis"}, 5*time.Second) {
+	if !waitForOutputContains(worker, []string{"Queue worker started · default · 30 workers"}, 5*time.Second) {
 		t.Fatalf("jobs worker did not report ready state before timeout\n%s", worker.Output())
 	}
 	if !waitForTCP(t, "127.0.0.1:"+metricsPort, 5*time.Second) {

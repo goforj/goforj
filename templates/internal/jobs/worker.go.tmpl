@@ -63,12 +63,13 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 		return err
 	}
 
-	s.logger.Info().
-		Str("driver", string(s.queues.Default().Driver())).
-		Strs("queues", managedQueueNames(managed)).
-		Int("workers", managedQueueWorkerCount(managed)).
-		Strs("queue_workers", managedQueueWorkerAllocations(managed)).
-		Msg("Queue worker started")
+	workerCount := managedQueueWorkerCount(managed)
+	s.logger.Info().Msg(fmt.Sprintf(
+		"Queue worker started · %s · %d %s",
+		strings.Join(managedQueueNames(managed), ", "),
+		workerCount,
+		pluralizeQueueWorkers(workerCount),
+	))
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
 	if activeJobs := managedActiveJobs(managed); activeJobs > 0 {
@@ -212,18 +213,12 @@ func managedQueueWorkerCount(instances []queues.Instance) int {
 	return total
 }
 
-// managedQueueWorkerAllocations returns stable queue=workers labels for logs.
-func managedQueueWorkerAllocations(instances []queues.Instance) []string {
-	allocations := make([]string, 0, len(instances))
-	for _, instance := range instances {
-		name := normalizeQueueResourceName(instance.Name)
-		if name == "" || instance.Workers <= 0 {
-			continue
-		}
-		allocations = append(allocations, fmt.Sprintf("%s=%d", name, instance.Workers))
+// pluralizeQueueWorkers keeps the startup summary grammatical at every worker count.
+func pluralizeQueueWorkers(count int) string {
+	if count == 1 {
+		return "worker"
 	}
-	sort.Strings(allocations)
-	return allocations
+	return "workers"
 }
 
 // normalizeQueueResourceName applies the same case-insensitive lookup convention as generated accessors.

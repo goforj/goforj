@@ -5,6 +5,7 @@ package forj
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -45,15 +46,15 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 
 	out := runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker")
 	assertWorkerOutputContainsQueues(t, out, "default", "emails", "reports")
-	assertWorkerOutputContainsWorkerConfig(t, out, "workers=33", "default=30", "emails=2", "reports=1")
+	assertWorkerOutputContainsWorkerCount(t, out, 33)
 
 	out = runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker", "--queue", "reports")
 	assertWorkerOutputContainsQueues(t, out, "reports")
-	assertWorkerOutputContainsWorkerConfig(t, out, "workers=1", "reports=1")
+	assertWorkerOutputContainsWorkerCount(t, out, 1)
 
 	out = runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker", "--queue", "emails", "--queue", "reports")
 	assertWorkerOutputContainsQueues(t, out, "emails", "reports")
-	assertWorkerOutputContainsWorkerConfig(t, out, "workers=3", "emails=2", "reports=1")
+	assertWorkerOutputContainsWorkerCount(t, out, 3)
 
 	out, err := runRenderedWorkerToExit(t, projectDir, binPath, queueEnv, "worker", "--queue", "missing")
 	if err == nil {
@@ -130,13 +131,16 @@ func assertWorkerOutputContainsQueues(t *testing.T, output string, names ...stri
 	}
 }
 
-// assertWorkerOutputContainsWorkerConfig verifies worker startup metadata.
-func assertWorkerOutputContainsWorkerConfig(t *testing.T, output string, tokens ...string) {
+// assertWorkerOutputContainsWorkerCount verifies the concise worker startup summary.
+func assertWorkerOutputContainsWorkerCount(t *testing.T, output string, count int) {
 	t.Helper()
 	output = ansiEscapeRe.ReplaceAllString(output, "")
-	for _, token := range tokens {
-		if !strings.Contains(output, token) {
-			t.Fatalf("expected worker output to mention %q, got:\n%s", token, output)
-		}
+	unit := "workers"
+	if count == 1 {
+		unit = "worker"
+	}
+	token := fmt.Sprintf("· %d %s", count, unit)
+	if !strings.Contains(output, token) {
+		t.Fatalf("expected worker output to mention %q, got:\n%s", token, output)
 	}
 }
