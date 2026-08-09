@@ -270,6 +270,23 @@ func TestDevTaskOutputBlockLabelsLiveOutput(t *testing.T) {
 	}
 }
 
+// TestDevTaskOutputBlockRailsBlankLines keeps section spacing inside the command-owned inset.
+func TestDevTaskOutputBlockRailsBlankLines(t *testing.T) {
+	var output bytes.Buffer
+	block := newDevTaskOutputBlock("App about", &output, &output, nil)
+	if _, err := io.WriteString(block.stdoutWriter(), "Wire Generated   ✓ present\n\n♦ Network\n"); err != nil {
+		t.Fatalf("write inset output: %v", err)
+	}
+	if _, err := block.finish(true, 22*time.Millisecond); err != nil {
+		t.Fatalf("finish output block: %v", err)
+	}
+
+	plain := stripANSI(output.String())
+	if !strings.Contains(plain, "┃ Wire Generated   ✓ present\n┃\n┃ ♦ Network\n") {
+		t.Fatalf("blank section line escaped inset rail: %q", plain)
+	}
+}
+
 // TestDevTaskOutputBlockStaysTransientWhenSilent preserves the compact loader experience for quiet setup commands.
 func TestDevTaskOutputBlockStaysTransientWhenSilent(t *testing.T) {
 	var stdout bytes.Buffer

@@ -803,9 +803,14 @@ func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
 				remaining = remaining[consumed:]
 				continue
 			}
-		} else if w.lineStart && lineBreak && len(w.lineStyle) > 0 {
-			output = append(output, w.lineStyle...)
-			w.lineStyle = w.lineStyle[:0]
+		} else if w.lineStart && lineBreak {
+			if sequence[0] == '\n' {
+				output = append(output, devTaskOutputRail()...)
+			}
+			if len(w.lineStyle) > 0 {
+				output = append(output, w.lineStyle...)
+				w.lineStyle = w.lineStyle[:0]
+			}
 		}
 		output = append(output, sequence...)
 		if lineBreak {
