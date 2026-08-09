@@ -1955,10 +1955,18 @@ func TestRunDevInitialLifecycleBuildsStructuredAppOnce(t *testing.T) {
 	config := devInitialLifecycleTestConfig(logPath)
 	config.Dev.Pre = []project.DevTask{generatedDevFrontendInstallTask(project.DefaultApp())}
 
-	if err := runDevInitialLifecycle(config, io.Discard, io.Discard); err != nil {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := runDevInitialLifecycle(config, &stdout, &stderr); err != nil {
 		t.Fatalf("runDevInitialLifecycle() error = %v", err)
 	}
 	assertDevLifecycleTestLines(t, logPath, []string{"pre", "spa", "app"})
+	plain := stripANSI(stdout.String())
+	for _, expected := range []string{"┏ Preparing App", "┃   Built app in", "┗ Done"} {
+		if !strings.Contains(plain, expected) {
+			t.Fatalf("initial preparation output omitted %q:\n%s", expected, plain)
+		}
+	}
 }
 
 // TestRunDevInitialLifecyclePreservesCustomPreCompatibility keeps unknown tasks between a bootstrap build and the SPA-owning rebuild.
