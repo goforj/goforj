@@ -378,7 +378,7 @@ func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTran
 }
 
 // CompleteLifecycleTransaction discards successful infrastructure chatter and retains only its summary.
-func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.Duration) {
+func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.Duration, summary devLifecycleTransactionSummary) {
 	w.mu.Lock()
 	if w.lifecycle == nil || w.lifecycle.transaction.Key != strings.TrimSpace(key) {
 		w.mu.Unlock()
@@ -388,7 +388,7 @@ func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.
 	w.partial = ""
 	transaction := w.lifecycle.transaction
 	w.lifecycle = nil
-	w.program.Send(devAppendLinesMsg{lines: []string{transaction.successLine(elapsed)}})
+	w.program.Send(devAppendLinesMsg{lines: []string{transaction.successLine(elapsed, summary)}})
 	w.clearTransitionLocked(key)
 	w.mu.Unlock()
 }

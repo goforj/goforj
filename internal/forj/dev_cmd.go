@@ -76,6 +76,7 @@ type devWatchSession struct {
 type activeDevLifecycleTransaction struct {
 	transaction devLifecycleTransaction
 	startedAt   time.Time
+	summary     devLifecycleTransactionSummary
 }
 
 // Signature declares the development command exposed by the root CLI.
@@ -775,14 +776,25 @@ func runPreDevSetup(config *project.Config) (bool, error) {
 
 // runDevAppSetup catches databases and migrations up before dev starts or restarts app processes.
 func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	_, err := runDevAppSetupWithResult(config, outWriter, errWriter)
+	return err
+}
+
+type devAppSetupResult struct {
+	MigrateElapsed time.Duration
+}
+
+// runDevAppSetupWithResult retains migration timing without coupling lifecycle summaries to rendered output.
+func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWriter io.Writer) (devAppSetupResult, error) {
+	result := devAppSetupResult{}
 	if !shouldRunDevAutoMigrate(config) {
-		return nil
+		return result, nil
 	}
 	if config.Render.Components.Docker {
 		start := time.Now()
 		writeDevActionLine(outWriter, "Ensuring dev databases")
 		if err := ensureDevDatabaseExistsWithWriters(config, outWriter, errWriter); err != nil {
-			return err
+			return result, err
 		}
 		writeDevTimingLine(outWriter, "Dev databases ready in "+formatDevElapsed(time.Since(start)))
 	}
@@ -796,13 +808,14 @@ func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 		StderrWriter(errWriter).
 		Run()
 	if err != nil {
-		return fmt.Errorf("auto-migrate failed: %v", err)
+		return result, fmt.Errorf("auto-migrate failed: %v", err)
 	}
 	if !res.OK() {
-		return fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
+		return result, fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
 	}
-	writeDevTimingLine(outWriter, "Auto-migrate finished in "+formatDevElapsed(time.Since(start)))
-	return nil
+	result.MigrateElapsed = time.Since(start)
+	writeDevTimingLine(outWriter, "Auto-migrate finished in "+formatDevElapsed(result.MigrateElapsed))
+	return result, nil
 }
 
 // shouldRunDevAutoMigrate checks app-local components, not only the root app selection.
@@ -1251,7 +1264,7 @@ watcherLoop:
 		}
 		reconciliationSucceeded := true
 		if session.reconcile {
-			reconcileErr := runDevWatcherReconciliation(
+			reconcileResult, reconcileErr := runDevWatcherReconciliation(
 				session.config,
 				session.outWriter,
 				session.errWriter,
@@ -1268,6 +1281,10 @@ watcherLoop:
 					writeDevRecoverableFailure(session.outWriter, session.errWriter, "Development build failed", reconcileErr)
 				}
 			} else {
+				if activeTransaction != nil {
+					activeTransaction.summary.BuildElapsed = reconcileResult.BuildElapsed
+					activeTransaction.summary.MigrateElapsed = reconcileResult.MigrateElapsed
+				}
 				runtime.controller.finishReconciliation(true)
 			}
 		}
@@ -1275,6 +1292,9 @@ watcherLoop:
 		if reconciliationSucceeded && activeTransaction != nil {
 			startupContext, cancelStartup := devWatchStopContext(session.stopCh)
 			startupErr = runtime.controller.waitStartup(startupContext)
+			if startupErr == nil {
+				startupErr = waitDevLifecycleReadiness(startupContext, session.config, runtime.controller)
+			}
 			cancelStartup()
 			if errors.Is(startupErr, context.Canceled) {
 				runtime.stopAndDrain(true)
@@ -1310,14 +1330,11 @@ watcherLoop:
 				for _, watcher := range runtime.watchers {
 					watchers = append(watchers, watcher.name)
 				}
-				compiled, compileErr := compileDevWatchers(session.config)
-				if compileErr != nil {
-					return compileErr
+				activeTransaction, err = beginActiveDevRestartTransaction(session.outWriter, session.config, watchers)
+				if err != nil {
+					return err
 				}
-				transaction := newDevRestartTransaction(watchers, devLifecycleDetailedOutput(compiled))
-				if beginDevLifecycleTransaction(session.outWriter, transaction) {
-					activeTransaction = &activeDevLifecycleTransaction{transaction: transaction, startedAt: time.Now()}
-				} else {
+				if activeTransaction == nil {
 					writeDevActionLine(session.outWriter, "Restarting dev watchers")
 					setDevTransition(session.outWriter, "watchers:restart", "Restarting watchers")
 				}
@@ -1332,9 +1349,18 @@ watcherLoop:
 				clearDevTransition(session.outWriter, "watchers:restart")
 				continue watcherLoop
 			case <-session.buildCh:
+				watchers := make([]string, 0, len(runtime.watchers))
+				for _, watcher := range runtime.watchers {
+					watchers = append(watchers, watcher.name)
+				}
+				activeTransaction, err = beginActiveDevRestartTransaction(session.outWriter, session.config, watchers)
+				if err != nil {
+					return err
+				}
 				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
 				spaRootsBeforeBuild := structuredDevSPARoots(session.config)
 				if err := session.reloadProjectConfig(); err != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 					runtime.stopAndDrain(true)
 					return err
 				}
@@ -1345,6 +1371,7 @@ watcherLoop:
 				err := runtime.controller.quiesceBuilds(quiesceContext)
 				cancelQuiesce()
 				if err != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 					runtime.stopAndDrain(true)
 					if errors.Is(err, context.Canceled) {
 						return errDevInterrupted
@@ -1352,12 +1379,17 @@ watcherLoop:
 					return fmt.Errorf("quiesce dev builds: %w", err)
 				}
 				if err := loadDevEnvironment(true, session.inheritedEnv); err != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
 				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
 					runtime.controller.resumeBuilds()
-					writeDevRecoverableFailure(session.outWriter, session.errWriter, "forj build failed", err)
+					if activeTransaction != nil {
+						failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
+					} else {
+						writeDevRecoverableFailure(session.outWriter, session.errWriter, "forj build failed", err)
+					}
 					drainBuildSignals(session.buildCh)
 					continue
 				}
@@ -1365,20 +1397,27 @@ watcherLoop:
 				runtime.stopAndDrain(true)
 				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 					return err
 				}
 				session.streamer = refreshedStreamer
 				if !session.reconcile {
-					if err := runDevAppSetup(session.config, session.outWriter, session.errWriter); err != nil {
+					setupResult, setupErr := runDevAppSetupWithResult(session.config, session.outWriter, session.errWriter)
+					if setupErr != nil {
+						failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, setupErr)
 						disableDevFooter(session.outWriter)
 						disableDevFooter(session.errWriter)
 						fmt.Println(buildDevFooterSeparatorLine())
-						console.Errorf("dev app setup failed: %v", err)
-						return fmt.Errorf("dev app setup failed: %w", err)
+						console.Errorf("dev app setup failed: %v", setupErr)
+						return fmt.Errorf("dev app setup failed: %w", setupErr)
+					}
+					if activeTransaction != nil {
+						activeTransaction.summary.MigrateElapsed = setupResult.MigrateElapsed
 					}
 				}
 				refreshedStreamer, err = session.reloadRuntime()
 				if err != nil {
+					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
 					return err
 				}
 				session.streamer = refreshedStreamer
@@ -1464,6 +1503,19 @@ watcherLoop:
 	}
 }
 
+// beginActiveDevRestartTransaction gives every runner-owned restart path the same buffering boundary.
+func beginActiveDevRestartTransaction(out io.Writer, config *project.Config, watchers []string) (*activeDevLifecycleTransaction, error) {
+	compiled, err := compileDevWatchers(config)
+	if err != nil {
+		return nil, err
+	}
+	transaction := newDevRestartTransaction(watchers, devLifecycleDetailedOutput(compiled))
+	if !beginDevLifecycleTransaction(out, transaction) {
+		return nil, nil
+	}
+	return &activeDevLifecycleTransaction{transaction: transaction, startedAt: time.Now()}, nil
+}
+
 // shouldPrintDevReadySummary keeps plain streams backward compatible while the persistent TUI announces resources once.
 func shouldPrintDevReadySummary(out io.Writer, alreadyAnnounced bool) bool {
 	return !alreadyAnnounced || asDevLifecycleTransactionController(out) == nil
@@ -1475,7 +1527,7 @@ func completeActiveDevLifecycleTransaction(out io.Writer, active **activeDevLife
 		return
 	}
 	transaction := *active
-	completeDevLifecycleTransaction(out, transaction.transaction.Key, time.Since(transaction.startedAt))
+	completeDevLifecycleTransaction(out, transaction.transaction.Key, time.Since(transaction.startedAt), transaction.summary)
 	*active = nil
 }
 
@@ -1593,23 +1645,33 @@ func runDevRender(config *project.Config, outWriter io.Writer, errWriter io.Writ
 	return nil
 }
 
+type devWatcherReconciliationResult struct {
+	BuildElapsed   time.Duration
+	MigrateElapsed time.Duration
+}
+
 // runDevWatcherReconciliation rebuilds frontend assets as a barrier before publishing app runtimes.
-func runDevWatcherReconciliation(config *project.Config, outWriter io.Writer, errWriter io.Writer, installFrontendDeps bool) error {
+func runDevWatcherReconciliation(config *project.Config, outWriter io.Writer, errWriter io.Writer, installFrontendDeps bool) (devWatcherReconciliationResult, error) {
+	result := devWatcherReconciliationResult{}
 	if installFrontendDeps {
 		if err := runDevFrontendDependencySetup(config); err != nil {
-			return fmt.Errorf("install frontend dependencies: %w", err)
+			return result, fmt.Errorf("install frontend dependencies: %w", err)
 		}
 	}
 	if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
-		return err
+		return result, err
 	}
+	buildStartedAt := time.Now()
 	if err := runDevBuild(config, outWriter, errWriter); err != nil {
-		return err
+		return result, err
 	}
-	if err := runDevAppSetup(config, outWriter, errWriter); err != nil {
-		return fmt.Errorf("dev app setup failed: %w", err)
+	result.BuildElapsed = time.Since(buildStartedAt)
+	setupResult, err := runDevAppSetupWithResult(config, outWriter, errWriter)
+	if err != nil {
+		return result, fmt.Errorf("dev app setup failed: %w", err)
 	}
-	return nil
+	result.MigrateElapsed = setupResult.MigrateElapsed
+	return result, nil
 }
 
 // shouldReconcileStructuredDevApps limits the gated handoff to listed native lifecycle graphs.

@@ -43,7 +43,7 @@ type devLifecycleTransactionController interface {
 	// BeginLifecycleTransaction reserves the lifecycle row and starts retaining contextual output.
 	BeginLifecycleTransaction(devLifecycleTransaction)
 	// CompleteLifecycleTransaction replaces a successful transition with one durable summary.
-	CompleteLifecycleTransaction(string, time.Duration)
+	CompleteLifecycleTransaction(string, time.Duration, devLifecycleTransactionSummary)
 	// FailLifecycleTransaction restores retained diagnostics beneath the failed transition.
 	FailLifecycleTransaction(string, time.Duration, error)
 }
@@ -180,9 +180,9 @@ func beginDevLifecycleTransaction(writer io.Writer, transaction devLifecycleTran
 }
 
 // completeDevLifecycleTransaction publishes the transaction summary when the output owns the matching boundary.
-func completeDevLifecycleTransaction(writer io.Writer, key string, elapsed time.Duration) {
+func completeDevLifecycleTransaction(writer io.Writer, key string, elapsed time.Duration, summary devLifecycleTransactionSummary) {
 	if controller := asDevLifecycleTransactionController(writer); controller != nil {
-		controller.CompleteLifecycleTransaction(key, elapsed)
+		controller.CompleteLifecycleTransaction(key, elapsed, summary)
 	}
 }
 

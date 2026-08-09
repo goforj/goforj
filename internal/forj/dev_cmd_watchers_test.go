@@ -1737,8 +1737,12 @@ func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
 			},
 		},
 	}}}
-	if err := runDevWatcherReconciliation(config, io.Discard, io.Discard, false); err != nil {
+	result, err := runDevWatcherReconciliation(config, io.Discard, io.Discard, false)
+	if err != nil {
 		t.Fatalf("runDevWatcherReconciliation() error = %v", err)
+	}
+	if result.BuildElapsed <= 0 || result.MigrateElapsed != 0 {
+		t.Fatalf("reconciliation result = %#v, want one timed build and no migration", result)
 	}
 	data, err := os.ReadFile(logPath)
 	if err != nil {
