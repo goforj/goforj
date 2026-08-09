@@ -159,11 +159,14 @@ func (t *devBubbleLifecycleTransaction) successLines(elapsed time.Duration, summ
 	}
 	lines := make([]string, 0, len(t.lines)+2)
 	if t.transaction.Kind == devLifecycleStartup && !t.transaction.Detailed && len(t.lines) > 0 {
+		top := console.Colorize(console.ColorGray, "┏")
 		rail := console.Colorize(console.ColorGray, "┃")
-		lines = append(lines, rail+" "+t.transaction.inProgressLine())
+		bottom := console.Colorize(console.ColorGray, "┗")
+		lines = append(lines, top+" "+joinDevLifecycleFields("App startup", t.transaction.Watchers...))
 		for _, line := range t.lines {
 			lines = append(lines, rail+" "+line)
 		}
+		return append(lines, bottom+" "+t.transaction.successLine(elapsed, summary))
 	}
 	return append(lines, t.transaction.successLine(elapsed, summary))
 }
