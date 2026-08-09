@@ -76,6 +76,27 @@ func TestConfigureCompiledDevCommandPreservesFullProcessOverride(t *testing.T) {
 	}
 }
 
+// TestFormatDevRuntimeTransitionUsesHumanAppLabels verifies runtime status follows the same default and named App language as watcher labels.
+func TestFormatDevRuntimeTransitionUsesHumanAppLabels(t *testing.T) {
+	tests := []struct {
+		name   string
+		action string
+		spec   devCompiledWatcher
+		want   string
+	}{
+		{name: "default App", action: "Starting", spec: devCompiledWatcher{Name: "Run App", App: project.DefaultAppName}, want: "Starting App"},
+		{name: "named App", action: "Restarting", spec: devCompiledWatcher{Name: "Run admin", App: "admin"}, want: "Restarting admin"},
+		{name: "custom runtime", action: "Starting", spec: devCompiledWatcher{Name: "Worker"}, want: "Starting Worker"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stripANSI(formatDevRuntimeTransition(test.action, test.spec)); got != test.want {
+				t.Fatalf("formatDevRuntimeTransition() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 // TestDevWatcherProjectBuildLock keeps SPA writes exclusive without serializing independent App builds.
 func TestDevWatcherProjectBuildLock(t *testing.T) {
 	gate := newDevWatcherBuildGate()

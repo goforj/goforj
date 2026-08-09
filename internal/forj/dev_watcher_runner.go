@@ -1259,13 +1259,9 @@ func (t *devWatcherTask) runRuntime() {
 	t.mu.Lock()
 	runtimeLive := t.runtimeLive
 	t.mu.Unlock()
-	appLabel := strings.TrimSpace(t.spec.App)
-	if appLabel == "" {
-		appLabel = t.spec.Name
-	}
-	transitionLine := "Starting " + appLabel
+	transitionLine := formatDevRuntimeTransition("Starting", t.spec)
 	if runtimeLive {
-		transitionLine = "Restarting " + appLabel
+		transitionLine = formatDevRuntimeTransition("Restarting", t.spec)
 	}
 	transitionKey := "runtime:" + t.spec.ID
 	setDevTransition(t.controller.outWriter, transitionKey, transitionLine)
@@ -1314,6 +1310,17 @@ func (t *devWatcherTask) runRuntime() {
 	t.runtimePID = pid
 	t.mu.Unlock()
 	t.reportStartup(nil)
+}
+
+// formatDevRuntimeTransition presents conventional App names without leaking the lowercase default identifier.
+func formatDevRuntimeTransition(action string, spec devCompiledWatcher) string {
+	label := strings.TrimSpace(spec.Name)
+	if appName := strings.TrimSpace(spec.App); appName != "" {
+		label = devAppWatcherName(strings.TrimSpace(action), appName)
+	} else {
+		label = strings.TrimSpace(action) + " " + label
+	}
+	return joinDevLifecycleFields(label)
 }
 
 // waitStartup waits for explicit wrapper and process results from the generation's initial runnable tasks.
