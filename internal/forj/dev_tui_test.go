@@ -260,6 +260,22 @@ func TestDevBubbleModelAnimatesOnlyWhileTransitioning(t *testing.T) {
 	}
 }
 
+// TestDevBubbleModelMirrorsTransitionsIntoTerminalProgress verifies supporting terminals retain lifecycle activity outside the TUI frame.
+func TestDevBubbleModelMirrorsTransitionsIntoTerminalProgress(t *testing.T) {
+	active := devBubbleModel{width: 80, height: 10, statusLine: "Building app"}
+	if view := active.View(); !strings.HasPrefix(view, devTerminalProgressBusy) {
+		t.Fatalf("active view omitted terminal progress: %q", view)
+	}
+
+	idle := devBubbleModel{width: 80, height: 10}
+	if view := idle.View(); !strings.HasPrefix(view, devTerminalProgressClear) {
+		t.Fatalf("idle view omitted terminal progress cleanup: %q", view)
+	}
+	if !strings.HasPrefix(devTerminalModeResetSequence, devTerminalProgressClear) {
+		t.Fatalf("terminal reset omitted progress cleanup: %q", devTerminalModeResetSequence)
+	}
+}
+
 // TestDevTransitionsPreserveConcurrentOwners verifies one completed build cannot erase another active lifecycle state.
 func TestDevTransitionsPreserveConcurrentOwners(t *testing.T) {
 	var output devOutputControllerRecorder
