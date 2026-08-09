@@ -628,18 +628,25 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	for _, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
 		var res execx.Result
-		err := runWithLoader(task.Name, func() error {
-			cmd := newDevTaskCommand(
-				task,
-				devNull,
-				console.Default().StdoutWriter(),
-				console.Default().StderrWriter(),
-				outputTail,
-			)
-			var runErr error
-			res, runErr = cmd.Run()
-			return runErr
-		})
+		loader := console.NewLoader(task.Name)
+		if err := loader.Start(); err != nil {
+			return err
+		}
+		outputBlock := newDevTaskOutputBlock(
+			task.Name,
+			console.Default().StdoutWriter(),
+			console.Default().StderrWriter(),
+			loader.Stop,
+		)
+		cmd := newDevTaskCommand(
+			task,
+			devNull,
+			outputBlock.stdoutWriter(),
+			outputBlock.stderrWriter(),
+			outputTail,
+		)
+		res, err = cmd.Run()
+		loader.Stop()
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -650,6 +657,86 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 		}
 	}
 	return nil
+}
+
+type devTaskOutputBlock struct {
+	mu         sync.Mutex
+	name       string
+	stdout     io.Writer
+	stderr     io.Writer
+	stopLoader func()
+	started    bool
+}
+
+type devTaskOutputBlockStream struct {
+	block       *devTaskOutputBlock
+	destination io.Writer
+	lineStart   bool
+}
+
+// newDevTaskOutputBlock labels streamed task output only after a command has something useful to show.
+func newDevTaskOutputBlock(name string, stdout io.Writer, stderr io.Writer, stopLoader func()) *devTaskOutputBlock {
+	return &devTaskOutputBlock{
+		name:       strings.TrimSpace(name),
+		stdout:     stdout,
+		stderr:     stderr,
+		stopLoader: stopLoader,
+	}
+}
+
+// stdoutWriter routes standard output through the shared task boundary.
+func (b *devTaskOutputBlock) stdoutWriter() io.Writer {
+	return &devTaskOutputBlockStream{block: b, destination: b.stdout, lineStart: true}
+}
+
+// stderrWriter routes standard error through the same task boundary as standard output.
+func (b *devTaskOutputBlock) stderrWriter() io.Writer {
+	return &devTaskOutputBlockStream{block: b, destination: b.stderr, lineStart: true}
+}
+
+// Write preserves live child output while prefixing every physical line with its task-owned rail.
+func (w *devTaskOutputBlockStream) Write(value []byte) (int, error) {
+	if w.block == nil || len(value) == 0 {
+		return len(value), nil
+	}
+	b := w.block
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.started {
+		if b.stopLoader != nil {
+			b.stopLoader()
+		}
+		heading := devTaskOutputRail() + " " + console.Colorize(console.ColorBoldWhite, b.name) + "\n"
+		if _, err := io.WriteString(b.stdout, heading); err != nil {
+			return 0, err
+		}
+		b.started = true
+	}
+	output := make([]byte, 0, len(value)+len(value)/32+8)
+	for _, char := range value {
+		if w.lineStart && char != '\n' && char != '\r' {
+			output = append(output, devTaskOutputRail()...)
+			output = append(output, ' ')
+			w.lineStart = false
+		}
+		output = append(output, char)
+		if char == '\n' || char == '\r' {
+			w.lineStart = true
+		}
+	}
+	written, err := w.destination.Write(output)
+	if err != nil {
+		return 0, err
+	}
+	if written != len(output) {
+		return 0, io.ErrShortWrite
+	}
+	return len(value), nil
+}
+
+// devTaskOutputRail keeps pre-dev output visually related to the transient lifecycle shelf.
+func devTaskOutputRail() string {
+	return console.Colorize(console.ColorGray, "┃")
 }
 
 // newDevTaskCommand buffers routine output only for framework-shaped dependency installs so successful setup stays compact without hiding failure details.
