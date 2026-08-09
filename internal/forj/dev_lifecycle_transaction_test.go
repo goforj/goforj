@@ -44,8 +44,8 @@ func (w *devLifecycleRecordingWriter) CompleteLifecycleTransaction(_ string, _ t
 // FailLifecycleTransaction satisfies the lifecycle controller contract for runner boundary tests.
 func (*devLifecycleRecordingWriter) FailLifecycleTransaction(string, time.Duration, error) {}
 
-// TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput verifies success retains one durable high-signal line.
-func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing.T) {
+// TestDevRestartTransactionGroupsSuccessfulInfrastructureOutput verifies success retains one bounded restart story.
+func TestDevRestartTransactionGroupsSuccessfulInfrastructureOutput(t *testing.T) {
 	transaction := newDevRestartTransaction([]string{"Build App", "Build app SPA frontend", "Run App"}, false)
 	buffer := &devBubbleLifecycleTransaction{transaction: transaction}
 	if !buffer.retain([]string{"Watchers stopping", "HTTP server shut down", "Starting Run App"}) {
@@ -56,18 +56,13 @@ func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing
 		BuildElapsed:   380 * time.Millisecond,
 		MigrateElapsed: 340 * time.Millisecond,
 	})
-	if len(lines) != 1 {
-		t.Fatalf("restart success lines = %#v, want one summary", lines)
+	if len(lines) != len(buffer.lines)+2 {
+		t.Fatalf("restart success lines = %#v, want grouped lifecycle output", lines)
 	}
-	line := stripANSI(lines[0])
-	for _, want := range []string{"Restarted", "build 380ms", "migrate 340ms", "1.03s"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("success summary missing %q: %q", want, line)
-		}
-	}
-	for _, hidden := range buffer.lines {
-		if strings.Contains(line, hidden) {
-			t.Fatalf("success summary leaked retained output %q", hidden)
+	output := stripANSI(strings.Join(lines, "\n"))
+	for _, want := range []string{"┏ App restart", "Build App", "SPA", "Run App", "Watchers stopping", "HTTP server shut down", "Starting Run App", "┗", "Restarted", "build 380ms", "migrate 340ms", "1.03s"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("restart output missing %q:\n%s", want, output)
 		}
 	}
 }
