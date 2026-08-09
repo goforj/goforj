@@ -999,7 +999,7 @@ func (m devBubbleModel) View() string {
 		footer = buildDevFooterSeparatorLineAtWidth(width) + "\n" + m.footerLine
 		footerLines = 2
 	}
-	status := m.contextStatusLine()
+	status := m.contextStatusLineAtWidth(width)
 	statusDecorated := ""
 	statusLines := 0
 	contentHeight := height - footerLines - headerLines
@@ -1008,17 +1008,8 @@ func (m devBubbleModel) View() string {
 		if strings.TrimSpace(m.statusLine) != "" {
 			frame := devBubbleSpinnerFrames[m.spinnerFrame%len(devBubbleSpinnerFrames)]
 			statusDecorated = console.Colorize(console.ColorGreen, frame) + " " + status
-		} else if m.standalonePauseStatus() {
-			statusDecorated = renderDevPausedStatusLine(m.unreadCount, width)
 		} else {
-			prefix := lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}).
-				Bold(true).
-				Render("◆")
-			body := lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#CBD5E1"}).
-				Render(status)
-			statusDecorated = prefix + " " + body
+			statusDecorated = status
 		}
 		if !lifecycleShelfActive {
 			statusLines = 1
@@ -1331,39 +1322,85 @@ func (m *devBubbleModel) jumpToCurrentSearchMatch() {
 
 // contextStatusLine centralizes context status line behavior so callers follow the same contract.
 func (m devBubbleModel) contextStatusLine() string {
+	return m.contextStatusLineAtWidth(120)
+}
+
+// contextStatusLineAtWidth renders transient view state with the same responsive control grammar as the persistent footer.
+func (m devBubbleModel) contextStatusLineAtWidth(width int) string {
 	if strings.TrimSpace(m.statusLine) != "" {
 		return m.statusLine
 	}
 	if m.commandVisible {
 		return ""
 	}
-	if m.searchMode {
-		return "Find /" + m.searchQuery + "  [Enter apply] [Esc clear]"
+	if !m.followMode && strings.TrimSpace(m.searchQuery) == "" && len(activeDevComponentFilters(m.componentShown)) == 0 {
+		return renderDevPausedStatusLine(m.unreadCount, width)
 	}
-	parts := make([]string, 0, 4)
-	if strings.TrimSpace(m.searchQuery) != "" {
+	states := make([]string, 0, 3)
+	actions := make([]string, 0, 3)
+	if m.searchMode {
+		states = append(states, renderDevFindState(m.searchQuery, ""))
+		actions = append(actions, renderDevFooterShortcut("Enter", "Apply"), renderDevFooterShortcut("Esc", "Clear"))
+	} else if strings.TrimSpace(m.searchQuery) != "" {
 		matchState := "0/0"
 		if len(m.searchMatches) > 0 && m.searchIndex >= 0 {
 			matchState = fmt.Sprintf("%d/%d", m.searchIndex+1, len(m.searchMatches))
 		}
-		parts = append(parts, fmt.Sprintf("Find %s (%s)  [Tab/Shift+Tab] [Esc]", m.searchQuery, matchState))
+		states = append(states, renderDevFindState(m.searchQuery, matchState))
+		actions = append(actions, renderDevFooterShortcut("Tab/Shift+Tab", "Navigate"), renderDevFooterShortcut("Esc", "Clear"))
 	}
 	if !m.followMode {
-		follow := "Paused     PgUp/PgDn Scroll     l Live"
+		paused := renderDevFooterBooleanStatus("Paused", false)
 		if m.unreadCount > 0 {
-			follow = fmt.Sprintf("Paused · %d new     PgUp/PgDn Scroll     l Live", m.unreadCount)
+			paused += " " + devMutedForegroundStyle().Render(fmt.Sprintf("· %d new", m.unreadCount))
 		}
-		parts = append(parts, follow)
+		states = append(states, paused)
+		if strings.TrimSpace(m.searchQuery) == "" {
+			actions = append(actions, renderDevFooterShortcut("PgUp/PgDn", "Scroll"))
+		}
+		actions = append(actions, renderDevFooterShortcut("l", "Live"))
 	}
 	if active := activeDevComponentFilters(m.componentShown); len(active) > 0 {
-		parts = append(parts, "Filters "+strings.Join(active, ","))
+		states = append(states, renderDevFooterValueStatus("Filters", strings.Join(active, ", ")))
 	}
-	return strings.Join(parts, "  |  ")
+	return layoutDevContextStatus(states, actions, width)
 }
 
-// standalonePauseStatus identifies the common paused view that can use the compact semantic treatment without obscuring search or filter context.
-func (m devBubbleModel) standalonePauseStatus() bool {
-	return !m.followMode && strings.TrimSpace(m.searchQuery) == "" && len(activeDevComponentFilters(m.componentShown)) == 0
+// renderDevFindState presents the query as normal content and its match position as metadata.
+func renderDevFindState(query string, matches string) string {
+	state := renderDevFooterShortcut("/", "Find")
+	if query = strings.TrimSpace(query); query != "" {
+		state += " " + devNormalForegroundStyle().Render(query)
+	}
+	if matches = strings.TrimSpace(matches); matches != "" {
+		state += " " + devMutedForegroundStyle().Render("· "+matches)
+	}
+	return state
+}
+
+// layoutDevContextStatus keeps view state left-aligned and its immediate actions right-aligned without wrapping.
+func layoutDevContextStatus(states []string, actions []string, width int) string {
+	if width <= 0 {
+		width = 120
+	}
+	lastAction := actions
+	if len(lastAction) > 0 {
+		lastAction = lastAction[len(lastAction)-1:]
+	}
+	for _, layout := range []struct {
+		actions []string
+		gap     int
+	}{
+		{actions: actions, gap: 5},
+		{actions: actions, gap: 2},
+		{actions: lastAction, gap: 2},
+		{gap: 2},
+	} {
+		if line, ok := layoutDevFooterGroups(states, layout.actions, layout.gap, width); ok {
+			return line
+		}
+	}
+	return charmansi.Truncate(strings.Join(states, "  "), width, "")
 }
 
 // renderDevPausedStatusLine keeps the paused state useful without restoring the footer's full control inventory.

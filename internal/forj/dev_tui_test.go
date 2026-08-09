@@ -421,10 +421,19 @@ func TestBuildDevHotkeyPanel(t *testing.T) {
 		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
 	}, false, "0"), "\n")
 	panel = stripANSI(panel)
-	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[x]", "Run command", "[r]", "Restart watchers", "[/]", "Find in transcript", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
+	for _, want := range []string{"Help", "TOGGLES", "q", "Query Logs", "Shift+0-3", "Debug level", "ACTIONS", "x", "Run command", "r", "Restart watchers", "/", "Find in transcript", "LINKS", "1", "Open App", "2", "Open Lighthouse", "Esc/?", "Close"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("expected %q in hotkey panel:\n%s", want, panel)
 		}
+	}
+	if strings.Contains(panel, "[") || strings.Contains(panel, "]") {
+		t.Fatalf("hotkey panel retained bracketed shortcuts:\n%s", panel)
+	}
+	if !strings.Contains(panel, "○ Query Logs") || !strings.Contains(panel, "Debug 0") || strings.Contains(panel, "debug:") {
+		t.Fatalf("hotkey panel did not reuse semantic status language:\n%s", panel)
+	}
+	if linksAt, appAt := strings.Index(panel, "LINKS"), strings.Index(panel, "Open App"); linksAt < 0 || appAt < linksAt {
+		t.Fatalf("resource shortcuts escaped the Links section:\n%s", panel)
 	}
 }
 
@@ -488,8 +497,22 @@ func TestBuildDevHotkeyModalBoxIncludesCloseHint(t *testing.T) {
 	box := stripANSI(buildDevHotkeyModalBox([]devToolLink{
 		{Label: "App", URL: "http://localhost:3000"},
 	}, false, "0"))
-	if !strings.Contains(box, "Press Esc or [?] to close") {
+	if !strings.Contains(box, "Esc/?") || !strings.Contains(box, "Close") {
 		t.Fatalf("expected close hint in hotkey modal box:\n%s", box)
+	}
+}
+
+func TestBuildDevFilterModalBoxUsesSemanticStates(t *testing.T) {
+	box := stripANSI(buildDevFilterModalBox(map[string]bool{"HTTP": true}))
+	for _, expected := range []string{"Component Filters", "1", "●", "HTTP", "2", "○", "Jobs", "a", "Show all", "Esc", "Close", "1–7 Toggle components"} {
+		if !strings.Contains(box, expected) {
+			t.Fatalf("filter modal omitted %q:\n%s", expected, box)
+		}
+	}
+	for _, hidden := range []string{"ON", "OFF", "[", "]"} {
+		if strings.Contains(box, hidden) {
+			t.Fatalf("filter modal retained %q:\n%s", hidden, box)
+		}
 	}
 }
 
@@ -542,17 +565,17 @@ func TestBuildDevHotkeyPanelAlignsKeys(t *testing.T) {
 		t.Fatalf("expected grouped panel rows, got %d", len(lines))
 	}
 	labelPos := -1
+	labels := []string{"○ Query Logs", "Debug level", "Restart watchers", "Clear screen", "Open Lighthouse", "Open App", "Close"}
 	for _, line := range lines {
-		idx := strings.Index(line, "]")
-		if idx < 0 {
-			t.Fatalf("expected key block in line %q", line)
+		labelIdx := -1
+		for _, label := range labels {
+			if index := strings.Index(line, label); index >= 0 {
+				labelIdx = index
+				break
+			}
 		}
-		labelIdx := idx + 1
-		for labelIdx < len(line) && line[labelIdx] == ' ' {
-			labelIdx++
-		}
-		if labelIdx-idx < 3 {
-			t.Fatalf("expected readable gap after key block in line %q", line)
+		if labelIdx < 0 {
+			t.Fatalf("expected aligned help label in line %q", line)
 		}
 		if labelPos == -1 {
 			labelPos = labelIdx
@@ -714,7 +737,7 @@ func TestDevBubbleModelCurrentOverlay(t *testing.T) {
 	}
 
 	m.helpVisible = true
-	if got := stripANSI(m.currentOverlay()); !strings.Contains(got, "Hotkeys") {
+	if got := stripANSI(m.currentOverlay()); !strings.Contains(got, "Help") {
 		t.Fatalf("expected hotkey overlay when help is visible, got %q", got)
 	}
 
@@ -859,16 +882,28 @@ func TestDevBubbleModelContextStatusLineShowsFindHints(t *testing.T) {
 	m := devBubbleModel{
 		searchMode:  true,
 		searchQuery: "heartbeat",
+		followMode:  true,
 	}
-	if got := m.contextStatusLine(); !strings.Contains(got, "[Enter apply]") || !strings.Contains(got, "[Esc clear]") {
-		t.Fatalf("expected find entry hints in status line, got %q", got)
+	got := stripANSI(m.contextStatusLine())
+	for _, expected := range []string{"/ Find heartbeat", "Enter Apply", "Esc Clear"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("find entry status omitted %q: %q", expected, got)
+		}
+	}
+	for _, hidden := range []string{"◆", "[", "]", "|"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("find entry status retained %q: %q", hidden, got)
+		}
 	}
 
 	m.searchMode = false
 	m.searchMatches = []int{2, 5, 9}
 	m.searchIndex = 1
-	if got := m.contextStatusLine(); !strings.Contains(got, "[Tab/Shift+Tab]") || !strings.Contains(got, "[Esc]") || !strings.Contains(got, "(2/3)") {
-		t.Fatalf("expected active find hints in status line, got %q", got)
+	got = stripANSI(m.contextStatusLine())
+	for _, expected := range []string{"/ Find heartbeat · 2/3", "Tab/Shift+Tab Navigate", "Esc Clear"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("active find status omitted %q: %q", expected, got)
+		}
 	}
 }
 
