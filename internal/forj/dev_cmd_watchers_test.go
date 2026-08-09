@@ -1131,7 +1131,7 @@ func TestRunDevBuildKeepsMultiAppSuccessTranscriptCompact(t *testing.T) {
 	if strings.Contains(text, "Built billing") {
 		t.Fatalf("expected no per-app success timing lines, got stdout %q", text)
 	}
-	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Built apps  ·  ") {
+	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Build  ·  ") {
 		t.Fatalf("expected aggregate build timing, got stdout %q", text)
 	}
 	if errOut.Len() != 0 {
@@ -1964,9 +1964,14 @@ func TestRunDevInitialLifecycleBuildsStructuredAppOnce(t *testing.T) {
 	assertDevLifecycleTestLines(t, logPath, []string{"pre", "spa", "app"})
 	plain := stripANSI(stdout.String())
 	success := stripANSI(console.SuccessMark())
-	for _, expected := range []string{"┏ Preparing App", "┃ " + success + " Built app", "┗ " + success + " App prepared"} {
+	for _, expected := range []string{"┏ Preparing App", "┃ " + success + " Build", "┗ " + success + " Prepared"} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("initial preparation output omitted %q:\n%s", expected, plain)
+		}
+	}
+	for _, redundant := range []string{"┃ · Building app", "┃   Auto-migrate"} {
+		if strings.Contains(plain, redundant) {
+			t.Fatalf("initial preparation output retained redundant narration %q:\n%s", redundant, plain)
 		}
 	}
 }
@@ -1974,10 +1979,10 @@ func TestRunDevInitialLifecycleBuildsStructuredAppOnce(t *testing.T) {
 // TestDevPhaseSuccessLabelCompletesAppPhaseLanguage verifies every startup phase closes naturally.
 func TestDevPhaseSuccessLabelCompletesAppPhaseLanguage(t *testing.T) {
 	tests := map[string]string{
-		"Preparing App":  "App prepared",
-		"Preparing Apps": "Apps prepared",
-		"Building App":   "App built",
-		"Finalizing App": "App finalized",
+		"Preparing App":  "Prepared",
+		"Preparing Apps": "Prepared",
+		"Building App":   "Built",
+		"Finalizing App": "Finalized",
 		"Custom":         "Done",
 	}
 	for input, want := range tests {
