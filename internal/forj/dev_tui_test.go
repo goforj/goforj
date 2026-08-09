@@ -260,6 +260,41 @@ func TestDevBubbleModelAnimatesOnlyWhileTransitioning(t *testing.T) {
 	}
 }
 
+// TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive keeps useful restart detail visible without retaining successful chatter.
+func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
+	model := devBubbleModel{
+		width:      100,
+		height:     12,
+		lines:      []string{"01:04:31.442 HTTP GET /foo → 200"},
+		statusLine: "Restarting  ·  Build App · SPA · Run App",
+		followMode: true,
+	}
+	next, _ := model.Update(devSetLifecycleLinesMsg{lines: []string{
+		"01:04:34.866 Jobs Shutting down queue worker",
+		"01:04:37.856 HTTP Routes registered",
+	}})
+	active := next.(devBubbleModel)
+	view := stripANSI(active.View())
+	for _, want := range []string{"GET /foo", "Shutting down queue worker", "Routes registered", "Restarting"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("active lifecycle view missing %q:\n%s", want, view)
+		}
+	}
+	if len(active.lines) != 1 {
+		t.Fatalf("transient lifecycle output entered durable transcript: %#v", active.lines)
+	}
+
+	next, _ = active.Update(devSetLifecycleLinesMsg{})
+	completed := next.(devBubbleModel)
+	view = stripANSI(completed.View())
+	if strings.Contains(view, "Shutting down queue worker") || strings.Contains(view, "Routes registered") {
+		t.Fatalf("completed lifecycle retained transient output:\n%s", view)
+	}
+	if !strings.Contains(view, "GET /foo") {
+		t.Fatalf("completed lifecycle erased ordinary App output:\n%s", view)
+	}
+}
+
 // TestDevBubbleModelMirrorsTransitionsIntoTerminalProgress verifies supporting terminals retain lifecycle activity outside the TUI frame.
 func TestDevBubbleModelMirrorsTransitionsIntoTerminalProgress(t *testing.T) {
 	active := devBubbleModel{width: 80, height: 10, statusLine: "Building app"}

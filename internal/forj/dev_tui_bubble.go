@@ -23,6 +23,7 @@ const (
 	devBubbleFlushDelay      = 20 * time.Millisecond
 	devBubbleSpinnerInterval = 80 * time.Millisecond
 	devLifecycleBufferLines  = 400
+	devLifecycleVisibleLines = 8
 	devTerminalProgressClear = "\x1b]9;4;0;0\x07"
 	devTerminalProgressBusy  = "\x1b]9;4;3;0\x07"
 )
@@ -58,6 +59,7 @@ type devBubbleModel struct {
 	commandError      string
 	footerLine        string
 	statusLine        string
+	lifecycleLines    []string
 	spinnerFrame      int
 	spinnerGeneration uint64
 	footerEnabled     bool
@@ -91,6 +93,7 @@ type devBubbleModel struct {
 }
 
 type devAppendLinesMsg struct{ lines []string }
+type devSetLifecycleLinesMsg struct{ lines []string }
 
 // devResetFooterMsg carries the refreshed default into Bubble's independently owned model state.
 type devResetFooterMsg struct{ line string }
@@ -130,6 +133,18 @@ func (t *devBubbleLifecycleTransaction) retain(lines []string) bool {
 		t.lines = append([]string(nil), t.lines[overflow:]...)
 	}
 	return true
+}
+
+// transientLines limits redraw payloads while the complete buffer remains available for failure diagnostics.
+func (t *devBubbleLifecycleTransaction) transientLines() []string {
+	if t == nil || len(t.lines) == 0 {
+		return nil
+	}
+	lines := t.lines
+	if len(lines) > devLifecycleVisibleLines {
+		lines = lines[len(lines)-devLifecycleVisibleLines:]
+	}
+	return append([]string(nil), lines...)
 }
 
 // failureLines expands retained output beneath the failed transaction summary.
@@ -356,6 +371,7 @@ func (w *devBubbleWriter) flushPendingLocked() {
 		w.flushTimer = nil
 	}
 	if w.lifecycle.retain(payload) {
+		w.program.Send(devSetLifecycleLinesMsg{lines: w.lifecycle.transientLines()})
 		return
 	}
 	w.program.Send(devAppendLinesMsg{lines: payload})
@@ -373,6 +389,7 @@ func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTran
 		w.partial = ""
 	}
 	w.lifecycle = &devBubbleLifecycleTransaction{transaction: transaction}
+	w.program.Send(devSetLifecycleLinesMsg{})
 	w.setTransitionLocked(transaction.Key, transaction.inProgressLine())
 	w.mu.Unlock()
 }
@@ -388,6 +405,7 @@ func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.
 	w.partial = ""
 	transaction := w.lifecycle.transaction
 	w.lifecycle = nil
+	w.program.Send(devSetLifecycleLinesMsg{})
 	w.program.Send(devAppendLinesMsg{lines: []string{transaction.successLine(elapsed, summary)}})
 	w.clearTransitionLocked(key)
 	w.mu.Unlock()
@@ -407,6 +425,7 @@ func (w *devBubbleWriter) FailLifecycleTransaction(key string, elapsed time.Dura
 	}
 	lines := w.lifecycle.failureLines(elapsed, err)
 	w.lifecycle = nil
+	w.program.Send(devSetLifecycleLinesMsg{})
 	w.program.Send(devAppendLinesMsg{lines: lines})
 	w.clearTransitionLocked(key)
 	w.mu.Unlock()
@@ -603,6 +622,8 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lines = append(m.lines, msg.lines...)
 		m.invalidateVisibleTranscriptCache()
 		m.updateSearchMatches()
+	case devSetLifecycleLinesMsg:
+		m.lifecycleLines = append([]string(nil), msg.lines...)
 	case devResetFooterMsg:
 		m.footerLine = msg.line
 	case devSetStatusMsg:
@@ -904,10 +925,12 @@ func (m devBubbleModel) View() string {
 		}
 		statusLines = 1
 	}
-	bodyHeight := height - footerLines - statusLines - headerLines
-	if bodyHeight < 1 {
-		bodyHeight = 1
+	availableBodyHeight := height - footerLines - statusLines - headerLines
+	if availableBodyHeight < 1 {
+		availableBodyHeight = 1
 	}
+	lifecycleLines := m.visibleLifecycleLines(width, availableBodyHeight-1)
+	bodyHeight := availableBodyHeight - len(lifecycleLines)
 	lines := m.visibleTranscriptLines()
 	var viewportStart int
 	lines, viewportStart = m.viewportLines(lines, bodyHeight)
@@ -918,6 +941,12 @@ func (m devBubbleModel) View() string {
 			body += "\n"
 		}
 		body += strings.Repeat("\n", pad-1)
+	}
+	if len(lifecycleLines) > 0 {
+		if body != "" {
+			body += "\n"
+		}
+		body += strings.Join(lifecycleLines, "\n")
 	}
 	parts := make([]string, 0, 4)
 	if header != "" {
@@ -990,7 +1019,20 @@ func (m *devBubbleModel) bodyHeight() int {
 	if bodyHeight < 1 {
 		return 1
 	}
-	return bodyHeight
+	return bodyHeight - len(m.visibleLifecycleLines(width, bodyHeight-1))
+}
+
+// visibleLifecycleLines keeps current transaction output visible without adding it to the durable transcript.
+func (m devBubbleModel) visibleLifecycleLines(width int, available int) []string {
+	if available <= 0 || len(m.lifecycleLines) == 0 {
+		return nil
+	}
+	lines := wrapDevTranscriptLines(m.lifecycleLines, width)
+	limit := min(devLifecycleVisibleLines, available)
+	if len(lines) > limit {
+		lines = lines[len(lines)-limit:]
+	}
+	return lines
 }
 
 // applyRuntimeSettingChange restarts the App so the process and newly persisted footer state agree.
