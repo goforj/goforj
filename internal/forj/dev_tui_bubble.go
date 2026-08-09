@@ -59,6 +59,7 @@ type devBubbleModel struct {
 	commandError      string
 	footerLine        string
 	statusLine        string
+	lifecycleActive   bool
 	lifecycleLines    []string
 	spinnerFrame      int
 	spinnerGeneration uint64
@@ -93,7 +94,10 @@ type devBubbleModel struct {
 }
 
 type devAppendLinesMsg struct{ lines []string }
-type devSetLifecycleLinesMsg struct{ lines []string }
+type devSetLifecycleLinesMsg struct {
+	active bool
+	lines  []string
+}
 
 // devResetFooterMsg carries the refreshed default into Bubble's independently owned model state.
 type devResetFooterMsg struct{ line string }
@@ -371,7 +375,7 @@ func (w *devBubbleWriter) flushPendingLocked() {
 		w.flushTimer = nil
 	}
 	if w.lifecycle.retain(payload) {
-		w.program.Send(devSetLifecycleLinesMsg{lines: w.lifecycle.transientLines()})
+		w.program.Send(devSetLifecycleLinesMsg{active: true, lines: w.lifecycle.transientLines()})
 		return
 	}
 	w.program.Send(devAppendLinesMsg{lines: payload})
@@ -389,7 +393,7 @@ func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTran
 		w.partial = ""
 	}
 	w.lifecycle = &devBubbleLifecycleTransaction{transaction: transaction}
-	w.program.Send(devSetLifecycleLinesMsg{})
+	w.program.Send(devSetLifecycleLinesMsg{active: true})
 	w.setTransitionLocked(transaction.Key, transaction.inProgressLine())
 	w.mu.Unlock()
 }
@@ -623,6 +627,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.invalidateVisibleTranscriptCache()
 		m.updateSearchMatches()
 	case devSetLifecycleLinesMsg:
+		m.lifecycleActive = msg.active
 		m.lifecycleLines = append([]string(nil), msg.lines...)
 	case devResetFooterMsg:
 		m.footerLine = msg.line
@@ -909,6 +914,8 @@ func (m devBubbleModel) View() string {
 	status := m.contextStatusLine()
 	statusDecorated := ""
 	statusLines := 0
+	contentHeight := height - footerLines - headerLines
+	lifecycleShelfActive := m.lifecycleShelfActive(contentHeight)
 	if strings.TrimSpace(status) != "" {
 		if strings.TrimSpace(m.statusLine) != "" {
 			frame := devBubbleSpinnerFrames[m.spinnerFrame%len(devBubbleSpinnerFrames)]
@@ -923,14 +930,16 @@ func (m devBubbleModel) View() string {
 				Render(status)
 			statusDecorated = prefix + " " + body
 		}
-		statusLines = 1
+		if !lifecycleShelfActive {
+			statusLines = 1
+		}
 	}
 	availableBodyHeight := height - footerLines - statusLines - headerLines
 	if availableBodyHeight < 1 {
 		availableBodyHeight = 1
 	}
-	lifecycleLines := m.visibleLifecycleLines(width, availableBodyHeight-1)
-	bodyHeight := availableBodyHeight - len(lifecycleLines)
+	lifecycleShelf := m.lifecycleShelfLines(width, availableBodyHeight-1, statusDecorated)
+	bodyHeight := availableBodyHeight - len(lifecycleShelf)
 	lines := m.visibleTranscriptLines()
 	var viewportStart int
 	lines, viewportStart = m.viewportLines(lines, bodyHeight)
@@ -942,18 +951,18 @@ func (m devBubbleModel) View() string {
 		}
 		body += strings.Repeat("\n", pad-1)
 	}
-	if len(lifecycleLines) > 0 {
+	if len(lifecycleShelf) > 0 {
 		if body != "" {
 			body += "\n"
 		}
-		body += strings.Join(lifecycleLines, "\n")
+		body += strings.Join(lifecycleShelf, "\n")
 	}
 	parts := make([]string, 0, 4)
 	if header != "" {
 		parts = append(parts, header)
 	}
 	parts = append(parts, body)
-	if statusDecorated != "" {
+	if statusDecorated != "" && !lifecycleShelfActive {
 		parts = append(parts, statusDecorated)
 	}
 	if footer != "" {
@@ -1012,14 +1021,36 @@ func (m *devBubbleModel) bodyHeight() int {
 		footerLines = 2
 	}
 	statusLines := 0
-	if strings.TrimSpace(m.contextStatusLine()) != "" {
+	contentHeight := height - footerLines - headerLines
+	lifecycleShelfActive := m.lifecycleShelfActive(contentHeight)
+	if strings.TrimSpace(m.contextStatusLine()) != "" && !lifecycleShelfActive {
 		statusLines = 1
 	}
 	bodyHeight := height - footerLines - headerLines - statusLines
 	if bodyHeight < 1 {
 		return 1
 	}
-	return bodyHeight - len(m.visibleLifecycleLines(width, bodyHeight-1))
+	return bodyHeight - len(m.lifecycleShelfLines(width, bodyHeight-1, ""))
+}
+
+// lifecycleShelfActive keeps the transient pane distinct while preserving a status row in extremely short terminals.
+func (m devBubbleModel) lifecycleShelfActive(contentHeight int) bool {
+	return m.lifecycleActive && strings.TrimSpace(m.statusLine) != "" && contentHeight >= 2
+}
+
+// lifecycleShelfLines gives transaction output a visually owned region instead of mixing it into App scrollback.
+func (m devBubbleModel) lifecycleShelfLines(width int, available int, heading string) []string {
+	if !m.lifecycleActive || strings.TrimSpace(m.statusLine) == "" || available <= 0 {
+		return nil
+	}
+	rail := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#64748B"}).
+		Render("┃")
+	lines := []string{rail + " " + heading}
+	for _, line := range m.visibleLifecycleLines(width-2, available-1) {
+		lines = append(lines, rail+" "+line)
+	}
+	return lines
 }
 
 // visibleLifecycleLines keeps current transaction output visible without adding it to the durable transcript.
