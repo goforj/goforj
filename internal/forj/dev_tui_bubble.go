@@ -47,6 +47,7 @@ type devBubbleWriter struct {
 	lifecycle          *devBubbleLifecycleTransaction
 	inputState         *term.State
 	outputState        *term.State
+	startupTranscript  []string
 	closed             bool
 }
 
@@ -289,8 +290,8 @@ func (w *devBubbleWriter) Close() error {
 		w.program.Send(devAppendLinesMsg{lines: []string{w.partial}})
 		w.partial = ""
 	}
+	startupTranscript := append([]string(nil), w.startupTranscript...)
 	w.mu.Unlock()
-	defer restoreDevTerminalState(w.inputState, w.outputState)
 	w.program.Send(devQuitMsg{})
 	select {
 	case <-w.done:
@@ -298,7 +299,12 @@ func (w *devBubbleWriter) Close() error {
 		w.program.Kill()
 		<-w.done
 	}
-	return nil
+	restoreDevTerminalState(w.inputState, w.outputState)
+	if len(startupTranscript) == 0 {
+		return nil
+	}
+	_, err := io.WriteString(os.Stdout, strings.Join(startupTranscript, "\n")+"\n\n")
+	return err
 }
 
 // captureDevTerminalState saves the caller's terminal modes before Bubble Tea mutates them.
@@ -433,7 +439,11 @@ func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.
 	transaction := w.lifecycle
 	w.lifecycle = nil
 	w.program.Send(devSetLifecycleLinesMsg{})
-	w.program.Send(devAppendLinesMsg{lines: transaction.successLines(elapsed, summary)})
+	successLines := transaction.successLines(elapsed, summary)
+	if transaction.transaction.Kind == devLifecycleStartup {
+		w.startupTranscript = append([]string(nil), successLines...)
+	}
+	w.program.Send(devAppendLinesMsg{lines: successLines})
 	w.clearTransitionLocked(key)
 	w.mu.Unlock()
 }
