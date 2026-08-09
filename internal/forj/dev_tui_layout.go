@@ -271,7 +271,6 @@ func buildDevResourceHeaderLineAtWidth(tools []devToolLink, width int) string {
 // buildDevHotkeyPanel keeps the build dev hotkey panel representation consistent.
 func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug string) []string {
 	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
 	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"}).Bold(true)
@@ -287,7 +286,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		{
 			title: "TOGGLES",
 			items: []hotkeyItem{
-				{key: "q", label: "Query Logs"},
+				{key: "q", label: renderDevFooterBooleanStatus("Query Logs", dbQueryLogging)},
 				{key: "Shift+0-3", label: "Debug level"},
 				{key: "f", label: "Component filters"},
 			},
@@ -322,7 +321,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		if i >= 9 {
 			break
 		}
-		sections[2].items = append(sections[2].items, hotkeyItem{
+		sections[3].items = append(sections[3].items, hotkeyItem{
 			key:   fmt.Sprintf("%d", i+1),
 			label: "Open " + tool.Label,
 		})
@@ -332,12 +331,12 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		items []hotkeyItem
 	}{
 		title: "",
-		items: []hotkeyItem{{key: "esc", label: "Close"}},
+		items: []hotkeyItem{{key: "Esc/?", label: "Close"}},
 	})
 	maxKeyWidth := 0
 	for _, section := range sections {
 		for _, item := range section.items {
-			if width := lipgloss.Width("[" + item.key + "]"); width > maxKeyWidth {
+			if width := lipgloss.Width(item.key); width > maxKeyWidth {
 				maxKeyWidth = width
 			}
 		}
@@ -355,8 +354,8 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		}
 	}
 	body := strings.Join(blockLines, "\n")
-	header := titleStyle.Render("Hotkeys")
-	hint := mutedStyle.Render("debug:" + appDebug)
+	header := titleStyle.Render("Help")
+	hint := renderDevFooterValueStatus("Debug", appDebug)
 	headerGap := 34 - lipgloss.Width(header)
 	if headerGap < 2 {
 		headerGap = 2
@@ -396,14 +395,14 @@ func buildDevOverlayBox(spec devOverlaySpec) string {
 
 // buildDevFilterModalBox keeps the build dev filter modal box representation consistent.
 func buildDevFilterModalBox(shown map[string]bool) string {
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
-	onStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
-	offStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F97316"}).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
+	keyStyle := devInteractiveAccentStyle()
+	onStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"})
+	offStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#52525B"})
+	labelStyle := devNormalForegroundStyle()
 	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
 	const (
-		filterKeyWidth   = 6
-		filterStateWidth = 3
+		filterKeyWidth   = 5
+		filterStateWidth = 2
 	)
 
 	labelWidth := 0
@@ -418,33 +417,26 @@ func buildDevFilterModalBox(shown map[string]bool) string {
 
 	lines := make([]string, 0, len(devComponentFilterOrder)+3)
 	for i, component := range devComponentFilterOrder {
-		state := offStyle.Render("OFF")
+		state := offStyle.Render("○")
 		if shown[component] {
-			state = onStyle.Render("ON")
+			state = onStyle.Render("●")
 		}
-		key := keyColumn.Render(keyStyle.Render("[" + fmt.Sprintf("%d", i+1) + "]"))
+		key := keyColumn.Render(keyStyle.Render(fmt.Sprintf("%d", i+1)))
 		label := labelColumn.Render(labelStyle.Render(component))
-		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, key, label, "   ", stateColumn.Render(state)))
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, key, stateColumn.Render(state), label))
 	}
-	lines = append(lines, ruleStyle.Render(strings.Repeat("─", filterKeyWidth+labelWidth+6+filterStateWidth)))
-	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, keyColumn.Render(keyStyle.Render("[a]")), labelStyle.Render("Show all")))
-	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, keyColumn.Render(keyStyle.Render("[esc]")), labelStyle.Render("Close")))
+	lines = append(lines, ruleStyle.Render(strings.Repeat("─", filterKeyWidth+labelWidth+filterStateWidth)))
+	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, keyColumn.Render(keyStyle.Render("a")), labelStyle.Render("Show all")))
+	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, keyColumn.Render(keyStyle.Render("Esc")), labelStyle.Render("Close")))
 	return buildDevOverlayRowsBox(devOverlaySpec{
 		Title: "Component Filters",
-		Hint:  "Toggle components with [1-7]",
+		Hint:  "1–7 Toggle components",
 	}, lines)
 }
 
 // buildDevHotkeyModalBox keeps the build dev hotkey modal box representation consistent.
 func buildDevHotkeyModalBox(tools []devToolLink, dbQueryLogging bool, appDebug string) string {
-	panel := strings.Join(buildDevHotkeyPanel(tools, dbQueryLogging, appDebug), "\n")
-	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"})
-	return lipgloss.JoinVertical(
-		lipgloss.Center,
-		panel,
-		"",
-		hintStyle.Render("Press Esc or [?] to close"),
-	)
+	return strings.Join(buildDevHotkeyPanel(tools, dbQueryLogging, appDebug), "\n")
 }
 
 // buildDevCommandModalBox keeps the build dev command modal box representation consistent.
@@ -535,11 +527,11 @@ func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args 
 func commandModalHint(selectedAcceptsArgs bool, argsFocused bool) string {
 	if selectedAcceptsArgs {
 		if argsFocused {
-			return "Use Shift+Tab to return to the command list, Enter to run"
+			return "Shift+Tab Commands     Enter Run     Esc Close"
 		}
-		return "Use ↑/↓ to select, type to jump, Tab for args, Enter to run"
+		return "↑/↓ Select     Type Jump     Tab Args     Enter Run     Esc Close"
 	}
-	return "Use ↑/↓ to select, type to jump, Enter to run"
+	return "↑/↓ Select     Type Jump     Enter Run     Esc Close"
 }
 
 // truncateDevOverlayText centralizes truncate dev overlay text behavior so callers follow the same contract.
@@ -562,8 +554,8 @@ func renderDevHotkeyPanelItem(keyStyle, labelStyle lipgloss.Style, keyWidth int,
 	if strings.TrimSpace(key) == "" && strings.TrimSpace(label) == "" {
 		return ""
 	}
-	keyText := keyStyle.Render("[" + key + "]")
-	padding := keyWidth - lipgloss.Width("["+key+"]")
+	keyText := keyStyle.Render(key)
+	padding := keyWidth - lipgloss.Width(key)
 	if padding < 0 {
 		padding = 0
 	}
