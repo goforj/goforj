@@ -151,7 +151,7 @@ func TestDevTUIRecoveryPreservesRealTerminalChrome(t *testing.T) {
 	}
 	plain := stripANSI(raw)
 	for _, want := range []string{
-		"Resources",
+		"1 App",
 		"? Help",
 		"Development build failed",
 		"Vite could not resolve ./src/missing",

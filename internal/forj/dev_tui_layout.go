@@ -173,7 +173,7 @@ func layoutDevFooterGroups(statuses []string, actions []string, itemGap int, wid
 
 // renderDevFooterBooleanStatus pairs an enabled or disabled semantic indicator with a normal status label.
 func renderDevFooterBooleanStatus(label string, active bool) string {
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
+	labelStyle := devNormalForegroundStyle()
 	indicator := "○"
 	indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#52525B"})
 	if active {
@@ -185,16 +185,31 @@ func renderDevFooterBooleanStatus(label string, active bool) string {
 
 // renderDevFooterValueStatus preserves non-boolean runtime settings as a label and muted value.
 func renderDevFooterValueStatus(label, value string) string {
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
-	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	labelStyle := devNormalForegroundStyle()
+	valueStyle := devMutedForegroundStyle()
 	return labelStyle.Render(label) + " " + valueStyle.Render(strings.TrimSpace(value))
 }
 
 // renderDevFooterShortcut keeps the render dev footer shortcut representation consistent.
 func renderDevFooterShortcut(key, label string) string {
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	keyStyle := devInteractiveAccentStyle()
+	labelStyle := devMutedForegroundStyle()
 	return keyStyle.Render(key) + " " + labelStyle.Render(label)
+}
+
+// devInteractiveAccentStyle keeps keyboard destinations and actions visually related.
+func devInteractiveAccentStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+}
+
+// devNormalForegroundStyle keeps persistent navigation labels quieter than semantic state.
+func devNormalForegroundStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
+}
+
+// devMutedForegroundStyle keeps secondary values and labels subordinate to interactive keys.
+func devMutedForegroundStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
 }
 
 type devOverlaySpec struct {
@@ -210,30 +225,47 @@ func buildDevOverlayRowsBox(spec devOverlaySpec, rows []string) string {
 	return buildDevOverlayBox(spec)
 }
 
-// buildDevResourceHeaderLine keeps the build dev resource header line representation consistent.
+// buildDevResourceHeaderLine resolves the available terminal width for persistent resource navigation.
 func buildDevResourceHeaderLine(tools []devToolLink) string {
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"}).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"})
-	placeholderStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"})
-
-	items := []string{titleStyle.Render("Resources")}
-	if len(tools) == 0 {
-		items = append(items, placeholderStyle.Render("loading…"))
-		return strings.Join(items, "   ")
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		width = 0
 	}
+	return buildDevResourceHeaderLineAtWidth(tools, width)
+}
+
+// buildDevResourceHeaderLineAtWidth composes complete keyboard destinations without wrapping the TUI.
+func buildDevResourceHeaderLineAtWidth(tools []devToolLink, width int) string {
+	if width <= 0 {
+		width = 120
+	}
+	placeholderStyle := devMutedForegroundStyle()
+	if len(tools) == 0 {
+		return placeholderStyle.Render("loading…")
+	}
+	keyStyle := devInteractiveAccentStyle()
+	labelStyle := devNormalForegroundStyle()
+	items := make([]string, 0, min(len(tools), 9))
 	for i, tool := range tools {
 		if i >= 9 {
 			break
 		}
-		items = append(items, lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			keyStyle.Render("["+fmt.Sprintf("%d", i+1)+"]"),
-			" ",
-			labelStyle.Render(tool.Label),
-		))
+		items = append(items, keyStyle.Render(fmt.Sprintf("%d", i+1))+" "+labelStyle.Render(tool.Label))
 	}
-	return strings.Join(items, "   ")
+	for _, gap := range []int{5, 2} {
+		line := strings.Join(items, strings.Repeat(" ", gap))
+		if lipgloss.Width(line) <= width {
+			return line
+		}
+	}
+	ellipsis := placeholderStyle.Render("…")
+	for visible := len(items) - 1; visible > 0; visible-- {
+		line := strings.Join(items[:visible], "  ") + "  " + ellipsis
+		if lipgloss.Width(line) <= width {
+			return line
+		}
+	}
+	return ansi.Truncate(items[0], width, "")
 }
 
 // buildDevHotkeyPanel keeps the build dev hotkey panel representation consistent.
