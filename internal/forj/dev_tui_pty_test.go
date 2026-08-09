@@ -96,7 +96,7 @@ func TestDevTUIStartupTranscriptSurvivesAlternateScreen(t *testing.T) {
 	if restoredAt < 0 {
 		t.Fatalf("startup transcript TUI did not restore its alternate screen: %q", raw)
 	}
-	for _, expected := range []string{"Starting queue worker", "Routes registered", "Ready"} {
+	for _, expected := range []string{"┏ App startup", "Starting queue worker", "Routes registered", "┗", "Ready"} {
 		if index := strings.LastIndex(raw, expected); index < restoredAt {
 			t.Fatalf("startup output %q was not replayed after terminal restoration: %q", expected, raw)
 		}

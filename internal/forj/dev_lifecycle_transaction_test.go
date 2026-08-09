@@ -88,7 +88,7 @@ func TestDevStartupTransactionPreservesInitialLifecycleOutput(t *testing.T) {
 		t.Fatalf("startup success lines = %#v", lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	for _, want := range []string{"┃ Starting", "Build App", "Run App", "Starting queue worker", "Routes registered", "Ready", "66ms"} {
+	for _, want := range []string{"┏ App startup", "Build App", "Run App", "Starting queue worker", "Routes registered", "┗", "Ready", "66ms"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("startup transcript omitted %q:\n%s", want, plain)
 		}
