@@ -47,6 +47,62 @@ func (c *devPTYTransitionCapture) String() string {
 	return c.output.String()
 }
 
+// TestDevTUIStartupTranscriptPTYHelper completes one startup transaction before restoring its pseudo-terminal.
+func TestDevTUIStartupTranscriptPTYHelper(t *testing.T) {
+	if os.Getenv("GOFORJ_DEV_TUI_STARTUP_PTY_HELPER") != "1" {
+		return
+	}
+
+	config := &project.Config{}
+	writer := newDevBubbleWriter(config, func() {}, func() {}, func(devShellCommandRequest) {})
+	transaction := newDevStartupTransaction(config, []string{"Build App", "Run App"}, false)
+	writer.BeginLifecycleTransaction(transaction)
+	_, _ = io.WriteString(writer, "01:04:29.753 Jobs Starting queue worker\n")
+	_, _ = io.WriteString(writer, "01:04:29.755 HTTP Routes registered\n")
+	writer.CompleteLifecycleTransaction(transaction.Key, 66*time.Millisecond, devLifecycleTransactionSummary{})
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close development TUI: %v", err)
+	}
+}
+
+// TestDevTUIStartupTranscriptSurvivesAlternateScreen restores the initial App story to shell history on exit.
+func TestDevTUIStartupTranscriptSurvivesAlternateScreen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDevTUIStartupTranscriptPTYHelper$")
+	command.Env = append(os.Environ(), "GOFORJ_DEV_TUI_STARTUP_PTY_HELPER=1")
+	terminal, err := pty.StartWithSize(command, &pty.Winsize{Rows: 30, Cols: 120})
+	if err != nil {
+		t.Fatalf("start startup transcript TUI in pseudo-terminal: %v", err)
+	}
+	defer terminal.Close()
+
+	var transcript bytes.Buffer
+	_, readErr := io.Copy(&transcript, terminal)
+	waitErr := command.Wait()
+	if ctx.Err() != nil {
+		t.Fatalf("startup transcript TUI timed out: %v\n%s", ctx.Err(), transcript.String())
+	}
+	if waitErr != nil {
+		t.Fatalf("startup transcript TUI failed: %v\n%s", waitErr, transcript.String())
+	}
+	if readErr != nil && !strings.Contains(strings.ToLower(readErr.Error()), "input/output error") {
+		t.Fatalf("read startup transcript TUI: %v", readErr)
+	}
+
+	raw := transcript.String()
+	restoredAt := strings.LastIndex(raw, "\x1b[?1049l")
+	if restoredAt < 0 {
+		t.Fatalf("startup transcript TUI did not restore its alternate screen: %q", raw)
+	}
+	for _, expected := range []string{"Starting queue worker", "Routes registered", "Ready"} {
+		if index := strings.LastIndex(raw, expected); index < restoredAt {
+			t.Fatalf("startup output %q was not replayed after terminal restoration: %q", expected, raw)
+		}
+	}
+}
+
 // TestDevTUIRecoveryPTYHelper renders the production TUI inside the parent test's real pseudo-terminal.
 func TestDevTUIRecoveryPTYHelper(t *testing.T) {
 	if os.Getenv("GOFORJ_DEV_TUI_PTY_HELPER") != "1" {
