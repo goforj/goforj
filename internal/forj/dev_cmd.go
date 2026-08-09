@@ -370,6 +370,7 @@ func devAppPhaseLabel(config *project.Config, action string) string {
 // runDevPhaseOutput gives framework-owned startup work the same bounded ownership as configured tasks.
 func runDevPhaseOutput(name string, outWriter io.Writer, errWriter io.Writer, run func(io.Writer, io.Writer) error) error {
 	block := newDevTaskOutputBlock(name, outWriter, errWriter, nil)
+	block.successLabel = devPhaseSuccessLabel(name)
 	phaseOut := block.stdoutWriter()
 	phaseErr := block.stderrWriter()
 	startedAt := time.Now()
@@ -379,6 +380,25 @@ func runDevPhaseOutput(name string, outWriter io.Writer, errWriter io.Writer, ru
 		return runErr
 	}
 	return finishErr
+}
+
+// devPhaseSuccessLabel turns an active App phase into a natural completed state.
+func devPhaseSuccessLabel(name string) string {
+	fields := strings.Fields(name)
+	if len(fields) < 2 {
+		return "Done"
+	}
+	noun := strings.Join(fields[1:], " ")
+	switch fields[0] {
+	case "Preparing":
+		return noun + " prepared"
+	case "Building":
+		return noun + " built"
+	case "Finalizing":
+		return noun + " finalized"
+	default:
+		return "Done"
+	}
 }
 
 // planDevInitialTasks preserves arbitrary pre-task ordering unless every task matches a framework-owned bootstrap convention.
@@ -669,13 +689,14 @@ func runDevTasks(tasks []project.DevTask) error {
 }
 
 type devTaskOutputBlock struct {
-	mu         sync.Mutex
-	name       string
-	stdout     io.Writer
-	stderr     io.Writer
-	stopLoader func()
-	started    bool
-	streams    []*devTaskOutputBlockStream
+	mu           sync.Mutex
+	name         string
+	successLabel string
+	stdout       io.Writer
+	stderr       io.Writer
+	stopLoader   func()
+	started      bool
+	streams      []*devTaskOutputBlockStream
 }
 
 type devTaskOutputBlockStream struct {
@@ -777,11 +798,18 @@ func (b *devTaskOutputBlock) finish(success bool, elapsed time.Duration) (bool, 
 		}
 		stream.lineStart = true
 	}
-	status := "Done"
+	status := strings.TrimSpace(b.successLabel)
+	if status == "" {
+		status = "Done"
+	}
 	if !success {
 		status = "Failed"
 	}
-	footer := devTaskOutputBoundary("┗") + " " + joinDevLifecycleFields(status, formatDevElapsed(elapsed)) + "\n\n"
+	mark := ""
+	if success {
+		mark = console.SuccessMark() + " "
+	}
+	footer := devTaskOutputBoundary("┗") + " " + mark + joinDevLifecycleFields(status, formatDevElapsed(elapsed)) + "\n\n"
 	if _, err := io.WriteString(b.stdout, footer); err != nil {
 		return true, err
 	}
@@ -973,7 +1001,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 		if err := ensureDevDatabaseExistsWithWriters(config, outWriter, errWriter); err != nil {
 			return result, err
 		}
-		writeDevTimingLine(outWriter, "Dev databases ready in "+formatDevElapsed(time.Since(start)))
+		writeDevSuccessLine(outWriter, "Dev databases ready", formatDevElapsed(time.Since(start)))
 	}
 	start := time.Now()
 	writeDevActionLine(outWriter, "Running auto-migrate")
@@ -991,7 +1019,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 		return result, fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
 	}
 	result.MigrateElapsed = time.Since(start)
-	writeDevTimingLine(outWriter, "Auto-migrate finished in "+formatDevElapsed(result.MigrateElapsed))
+	writeDevTimingLine(outWriter, "Auto-migrate  ·  "+formatDevElapsed(result.MigrateElapsed))
 	return result, nil
 }
 
@@ -1985,7 +2013,7 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 		if err := runDevBuildCommand(outWriter, errWriter, jobs[0]); err != nil {
 			return fmt.Errorf("%s: %w", failurePrefix, err)
 		}
-		writeDevTimingLine(outWriter, "Built "+jobs[0].app.Name+" in "+formatDevElapsed(time.Since(start)))
+		writeDevSuccessLine(outWriter, "Built "+jobs[0].app.Name, formatDevElapsed(time.Since(start)))
 		return nil
 	}
 
@@ -2020,7 +2048,7 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	if len(failures) > 0 {
 		return fmt.Errorf("%s: %s", failurePrefix, strings.Join(failures, "; "))
 	}
-	writeDevTimingLine(outWriter, "Built apps in "+formatDevElapsed(time.Since(start)))
+	writeDevSuccessLine(outWriter, "Built apps", formatDevElapsed(time.Since(start)))
 	return nil
 }
 
@@ -2356,6 +2384,11 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 // writeDevActionLine uses the session writer so plain terminals and the TUI preserve one action format.
 func writeDevActionLine(out io.Writer, message string) {
 	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
+}
+
+// writeDevSuccessLine gives completed preparation milestones enough contrast to scan as outcomes.
+func writeDevSuccessLine(out io.Writer, message string, fields ...string) {
+	_, _ = io.WriteString(out, console.SuccessMark()+" "+joinDevLifecycleFields(message, fields...)+"\n")
 }
 
 // writeDevTimingLine keeps secondary duration details visually quieter than the action they describe.
