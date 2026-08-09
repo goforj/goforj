@@ -151,6 +151,22 @@ func (t *devBubbleLifecycleTransaction) transientLines() []string {
 	return append([]string(nil), lines...)
 }
 
+// successLines preserves the one-time startup story while keeping routine successful restarts collapsed.
+func (t *devBubbleLifecycleTransaction) successLines(elapsed time.Duration, summary devLifecycleTransactionSummary) []string {
+	if t == nil {
+		return nil
+	}
+	lines := make([]string, 0, len(t.lines)+2)
+	if t.transaction.Kind == devLifecycleStartup && !t.transaction.Detailed && len(t.lines) > 0 {
+		rail := console.Colorize(console.ColorGray, "┃")
+		lines = append(lines, rail+" "+t.transaction.inProgressLine())
+		for _, line := range t.lines {
+			lines = append(lines, rail+" "+line)
+		}
+	}
+	return append(lines, t.transaction.successLine(elapsed, summary))
+}
+
 // failureLines expands retained output beneath the failed transaction summary.
 func (t *devBubbleLifecycleTransaction) failureLines(elapsed time.Duration, err error) []string {
 	if t == nil {
@@ -405,7 +421,7 @@ func (w *devBubbleWriter) compactLifecycleTransactionActive() bool {
 	return w.lifecycle != nil && !w.lifecycle.transaction.Detailed
 }
 
-// CompleteLifecycleTransaction discards successful infrastructure chatter and retains only its summary.
+// CompleteLifecycleTransaction preserves initial startup context while collapsing routine restarts to their summary.
 func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.Duration, summary devLifecycleTransactionSummary) {
 	w.mu.Lock()
 	if w.lifecycle == nil || w.lifecycle.transaction.Key != strings.TrimSpace(key) {
@@ -414,10 +430,10 @@ func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.
 	}
 	w.flushPendingLocked()
 	w.partial = ""
-	transaction := w.lifecycle.transaction
+	transaction := w.lifecycle
 	w.lifecycle = nil
 	w.program.Send(devSetLifecycleLinesMsg{})
-	w.program.Send(devAppendLinesMsg{lines: []string{transaction.successLine(elapsed, summary)}})
+	w.program.Send(devAppendLinesMsg{lines: transaction.successLines(elapsed, summary)})
 	w.clearTransitionLocked(key)
 	w.mu.Unlock()
 }
