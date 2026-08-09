@@ -1093,7 +1093,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 			_, _ = io.WriteString(errWriter, res.Stderr)
 		}
 	} else {
-		writeDevTimingLine(outWriter, "Auto-migrate  ·  "+formatDevElapsed(result.MigrateElapsed))
+		writeDevTimingLine(outWriter, "Auto-migrate · "+formatDevElapsed(result.MigrateElapsed))
 	}
 	return result, nil
 }
