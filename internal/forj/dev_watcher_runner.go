@@ -438,6 +438,8 @@ func configureCompiledDevCommand(
 	triggerCommand := strings.Join(strings.Fields(spec.Command.Shell), " ")
 	spec.DisplayCommand = triggerCommand
 	appName := spec.App
+	orchestrationOut := outWriter
+	orchestrationErr := errWriter
 	if outputTail != nil {
 		outWriter = io.MultiWriter(outWriter, outputTail)
 		errWriter = io.MultiWriter(errWriter, outputTail)
@@ -446,8 +448,14 @@ func configureCompiledDevCommand(
 	if startup != nil {
 		onTrigger = func() { startup.noteTrigger(spec.ID) }
 	}
-	stdout := newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger)
-	stderr := newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger)
+	stdout := setDevwatchOrchestrationOutput(
+		newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger),
+		orchestrationOut,
+	)
+	stderr := setDevwatchOrchestrationOutput(
+		newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger),
+		orchestrationErr,
+	)
 	if spec.Kind == devWatcherAppRun && !spec.Legacy && !spec.FullProcessOverride {
 		spec.NativeRuntimeCommand = spec.Command.Shell
 	}
