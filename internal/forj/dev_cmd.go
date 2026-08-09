@@ -253,11 +253,8 @@ func (c *DevCmd) Run() error {
 		if errors.Is(err, errDevInterrupted) {
 			cleanupDevTerminal()
 			if config.Dev.DownOnExit {
-				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
 				if err := runDevDownTasks(effectiveDevDownTasks(config)); err != nil {
 					console.Errorf("forj down failed: %v", err)
-				} else {
-					console.Successf("forj down complete")
 				}
 			}
 			return nil
@@ -309,7 +306,7 @@ type devInitialTaskPlan struct {
 func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
 	plan := planDevInitialTasks(config)
 	if plan.fastPath {
-		if err := runDevTasks("Running pre-dev setup", plan.preBuild); err != nil {
+		if err := runDevTasks(plan.preBuild); err != nil {
 			return err
 		}
 		if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
@@ -324,7 +321,7 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 		}); err != nil {
 			return err
 		}
-		if err := runDevTasks("Running post-migrate setup", plan.postMigrate); err != nil {
+		if err := runDevTasks(plan.postMigrate); err != nil {
 			return err
 		}
 		if len(plan.postMigrate) > 0 {
@@ -647,7 +644,7 @@ func postgresCreateDatabasesScript(names []string) string {
 }
 
 // runDevTasks centralizes run dev tasks behavior so callers follow the same contract.
-func runDevTasks(heading string, tasks []project.DevTask) error {
+func runDevTasks(tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -656,7 +653,6 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
 	}
 	defer devNull.Close()
-	console.Actionf("%s", heading)
 	for _, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
 		res, _, err := runDevTask(task, devNull, outputTail)
@@ -941,7 +937,7 @@ func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 			preTasks = append(preTasks, task)
 		}
 	}
-	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
+	if err := runDevTasks(preTasks); err != nil {
 		return false, err
 	}
 	if err := runDevPhaseOutput(devAppPhaseLabel(config, "Preparing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
@@ -949,7 +945,7 @@ func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 	}); err != nil {
 		return false, err
 	}
-	if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
+	if err := runDevTasks(postMigrateTasks); err != nil {
 		return false, err
 	}
 	return rebuildAfterSetup, nil
@@ -1875,7 +1871,7 @@ func runDevFrontendDependencySetup(config *project.Config) error {
 			}
 		}
 	}
-	return runDevTasks("Installing frontend dependencies", tasks)
+	return runDevTasks(tasks)
 }
 
 // structuredDevSPARoots snapshots configured frontend roots so render can identify newly generated workspaces.
@@ -3004,7 +3000,6 @@ func runDevDownTasks(tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	console.Infof("Bringing down resources")
 	for _, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
 		res, hadOutput, err := runDevTask(task, os.Stdin, outputTail)

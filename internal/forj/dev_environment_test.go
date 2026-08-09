@@ -96,7 +96,7 @@ func assertDevInheritedEnvironment(t *testing.T, dotenvValue string) {
 // runDevEnvironmentPreTask records the environment inherited by an ordinary configured task.
 func runDevEnvironmentPreTask(logPath string) error {
 	command := "printf '%s|%s|%s\\n' \"$INHERITED_TOKEN\" \"$SERVICE_ADDRESS\" \"$DOTENV_ONLY\" >> " + shellSingleQuote(logPath)
-	return runDevTasks("Host environment pre task", []project.DevTask{
+	return runDevTasks([]project.DevTask{
 		{
 			Name: "Record environment",
 			Cmd:  command,

@@ -135,7 +135,7 @@ func TestDevSetupAndTeardownTasksUseCoordinatedLoaders(t *testing.T) {
 		IsTerminal:        func(int) bool { return true },
 	}))
 
-	if err := runDevTasks("Running pre-dev setup", []project.DevTask{{
+	if err := runDevTasks([]project.DevTask{{
 		Name: "Start development services",
 		Cmd:  "printf 'services ready\\n'",
 	}}); err != nil {
@@ -156,6 +156,11 @@ func TestDevSetupAndTeardownTasksUseCoordinatedLoaders(t *testing.T) {
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("lifecycle loader omitted %q: %q", expected, output.String())
+		}
+	}
+	for _, unexpected := range []string{"Running pre-dev setup", "Bringing down resources"} {
+		if strings.Contains(output.String(), unexpected) {
+			t.Fatalf("lifecycle output retained redundant orchestration line %q: %q", unexpected, output.String())
 		}
 	}
 	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 4 {
