@@ -158,7 +158,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs", "./internal/http")
+	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs", "./internal/http", "./internal/logger")
 	cmd.Dir = projectDir
 	cmd.Env = testkit.ProcessGoEnv("", nil)
 	var out bytes.Buffer
@@ -233,7 +233,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			}
 			defer stopProcAsync(t, "queue-worker-"+driver, proc, time.Second)
 
-			tokens := []string{"Queue worker started · default · 30 workers"}
+			tokens := []string{"Queue worker started → default · 30 workers"}
 			if !waitForOutputContains(proc, tokens, 5*time.Second) {
 				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, ansiEscapeRe.ReplaceAllString(proc.Output(), ""))
 			}

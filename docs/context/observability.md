@@ -89,7 +89,7 @@ Instead:
 Current intended message shape:
 
 ```text
-HTTP server started · :3000 · 23 routes
+HTTP server started → :3000 · 23 routes
 ```
 
 ## Degraded Runtime Feedback
