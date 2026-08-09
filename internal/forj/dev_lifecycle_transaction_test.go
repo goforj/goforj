@@ -5,12 +5,33 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/goforj/goforj/project"
 )
+
+type devLifecycleRecordingWriter struct {
+	bytes.Buffer
+	began     []devLifecycleTransaction
+	completed []devLifecycleTransactionSummary
+}
+
+// BeginLifecycleTransaction records the transaction selected by the runner.
+func (w *devLifecycleRecordingWriter) BeginLifecycleTransaction(transaction devLifecycleTransaction) {
+	w.began = append(w.began, transaction)
+}
+
+// CompleteLifecycleTransaction records the structured work summary selected by the runner.
+func (w *devLifecycleRecordingWriter) CompleteLifecycleTransaction(_ string, _ time.Duration, summary devLifecycleTransactionSummary) {
+	w.completed = append(w.completed, summary)
+}
+
+// FailLifecycleTransaction satisfies the lifecycle controller contract for runner boundary tests.
+func (*devLifecycleRecordingWriter) FailLifecycleTransaction(string, time.Duration, error) {}
 
 // TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput verifies success retains one durable high-signal line.
 func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing.T) {
@@ -20,8 +41,11 @@ func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing
 		t.Fatal("expected compact transaction to retain lifecycle output")
 	}
 
-	line := stripANSI(transaction.successLine(1034 * time.Millisecond))
-	for _, want := range []string{"Restarted", "Build App", "SPA", "Run App", "1.03s"} {
+	line := stripANSI(transaction.successLine(1034*time.Millisecond, devLifecycleTransactionSummary{
+		BuildElapsed:   380 * time.Millisecond,
+		MigrateElapsed: 340 * time.Millisecond,
+	}))
+	for _, want := range []string{"Restarted", "build 380ms", "migrate 340ms", "1.03s"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("success summary missing %q: %q", want, line)
 		}
@@ -30,6 +54,61 @@ func TestDevRestartTransactionCollapsesSuccessfulInfrastructureOutput(t *testing
 		if strings.Contains(line, hidden) {
 			t.Fatalf("success summary leaked retained output %q", hidden)
 		}
+	}
+}
+
+// TestBeginActiveDevRestartTransactionCoversAutomaticRebuilds verifies runner-owned rebuilds use the same boundary as manual restarts.
+func TestBeginActiveDevRestartTransactionCoversAutomaticRebuilds(t *testing.T) {
+	writer := &devLifecycleRecordingWriter{}
+	active, err := beginActiveDevRestartTransaction(writer, &project.Config{}, []string{"Build App", "Build app SPA frontend", "Run App"})
+	if err != nil {
+		t.Fatalf("beginActiveDevRestartTransaction() error = %v", err)
+	}
+	if active == nil || len(writer.began) != 1 {
+		t.Fatalf("active transaction = %#v, began = %#v", active, writer.began)
+	}
+	if got := stripANSI(writer.began[0].inProgressLine()); !strings.Contains(got, "Restarting") || !strings.Contains(got, "SPA") {
+		t.Fatalf("restart transaction line = %q", got)
+	}
+}
+
+// TestWaitDevLifecycleReadinessUsesTheConventionalAppHealthBoundary verifies framework startup output stays buffered until HTTP is serving.
+func TestWaitDevLifecycleReadinessUsesTheConventionalAppHealthBoundary(t *testing.T) {
+	requested := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requested <- request.URL.Path
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	t.Setenv("APP_URL", server.URL+"/public-prefix")
+
+	config := &project.Config{Render: project.RenderConfig{Components: project.Components{WebAPI: true}}}
+	controller := &devWatcherController{tasks: map[string]*devWatcherTask{
+		"runtime": {spec: devCompiledWatcher{Kind: devWatcherAppRun, App: project.DefaultAppName}},
+	}}
+	if err := waitDevLifecycleReadiness(context.Background(), config, controller); err != nil {
+		t.Fatalf("waitDevLifecycleReadiness() error = %v", err)
+	}
+	if path := <-requested; path != devLifecycleReadyPath {
+		t.Fatalf("readiness path = %q, want %q", path, devLifecycleReadyPath)
+	}
+}
+
+// TestWaitDevLifecycleReadinessSkipsCustomRuntimes verifies GoForj does not infer readiness for processes whose protocol it does not own.
+func TestWaitDevLifecycleReadinessSkipsCustomRuntimes(t *testing.T) {
+	config := &project.Config{Render: project.RenderConfig{Components: project.Components{WebAPI: true}}}
+	controller := &devWatcherController{tasks: map[string]*devWatcherTask{
+		"runtime": {spec: devCompiledWatcher{Kind: devWatcherAppRun, App: project.DefaultAppName, FullProcessOverride: true}},
+	}}
+	if err := waitDevLifecycleReadiness(context.Background(), config, controller); err != nil {
+		t.Fatalf("waitDevLifecycleReadiness() error = %v", err)
+	}
+}
+
+// TestDevLifecycleReadinessURLRejectsRelativeURLs keeps readiness attribution tied to a concrete App endpoint.
+func TestDevLifecycleReadinessURLRejectsRelativeURLs(t *testing.T) {
+	if _, err := devLifecycleReadinessURL("localhost:3000"); err == nil {
+		t.Fatal("devLifecycleReadinessURL() error = nil, want relative URL error")
 	}
 }
 
@@ -76,7 +155,7 @@ func TestDevStartupTransactionSummarizesPersistentResources(t *testing.T) {
 	t.Setenv("COMPOSE_PROFILES", "mailpit")
 
 	transaction := newDevStartupTransaction(config, []string{"Run App"}, false)
-	line := stripANSI(transaction.successLine(120 * time.Millisecond))
+	line := stripANSI(transaction.successLine(120*time.Millisecond, devLifecycleTransactionSummary{}))
 	if !strings.Contains(line, "Ready") || !strings.Contains(line, "App :9000") || !strings.Contains(line, "resources") {
 		t.Fatalf("initial summary = %q", line)
 	}
