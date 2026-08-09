@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -116,9 +115,9 @@ func TestDevTUIWatcherTransitionPTYHelper(t *testing.T) {
 	}
 
 	writer := newDevBubbleWriter(&project.Config{}, func() {}, func() {}, func(devShellCommandRequest) {})
-	releaseFIFO := os.Getenv("GOFORJ_DEV_TUI_RELEASE_FIFO")
-	if releaseFIFO == "" {
-		t.Fatal("release FIFO is required")
+	releaseFile := os.Getenv("GOFORJ_DEV_TUI_RELEASE_FILE")
+	if releaseFile == "" {
+		t.Fatal("release file is required")
 	}
 	controller, err := newDevWatcherController([]devCompiledWatcher{{
 		ID:       "structured:app:spa:frontend",
@@ -126,7 +125,7 @@ func TestDevTUIWatcherTransitionPTYHelper(t *testing.T) {
 		App:      "app",
 		Kind:     devWatcherSPABuild,
 		Postpone: true,
-		Command:  devwatch.Command{Shell: "read < " + shellSingleQuote(releaseFIFO)},
+		Command:  devwatch.Command{Shell: "while [ ! -f " + shellSingleQuote(releaseFile) + " ]; do sleep 0.01; done"},
 	}}, nil, writer, writer, false)
 	if err != nil {
 		t.Fatalf("start watcher controller: %v", err)
@@ -145,16 +144,13 @@ func TestDevTUIWatcherTransitionPTYHelper(t *testing.T) {
 func TestDevTUIWatcherTransitionIsVisibleInRealTerminal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	releaseFIFO := filepath.Join(t.TempDir(), "release")
-	if err := syscall.Mkfifo(releaseFIFO, 0o600); err != nil {
-		t.Fatalf("create watcher release FIFO: %v", err)
-	}
+	releaseFile := filepath.Join(t.TempDir(), "release")
 
 	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDevTUIWatcherTransitionPTYHelper$")
 	command.Env = append(
 		os.Environ(),
 		"GOFORJ_DEV_TUI_WATCHER_PTY_HELPER=1",
-		"GOFORJ_DEV_TUI_RELEASE_FIFO="+releaseFIFO,
+		"GOFORJ_DEV_TUI_RELEASE_FILE="+releaseFile,
 	)
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Rows: 30, Cols: 120})
 	if err != nil {
@@ -176,16 +172,8 @@ func TestDevTUIWatcherTransitionIsVisibleInRealTerminal(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("watcher transition was not rendered before timeout: %v\n%s", ctx.Err(), transcript.String())
 	}
-	release, err := os.OpenFile(releaseFIFO, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("open watcher release FIFO: %v", err)
-	}
-	if _, err := release.WriteString("continue\n"); err != nil {
-		_ = release.Close()
+	if err := os.WriteFile(releaseFile, []byte("continue\n"), 0o600); err != nil {
 		t.Fatalf("release watcher command: %v", err)
-	}
-	if err := release.Close(); err != nil {
-		t.Fatalf("close watcher release FIFO: %v", err)
 	}
 	waitErr := command.Wait()
 	readErr := <-readDone
