@@ -44,25 +44,31 @@ func (w *devLifecycleRecordingWriter) CompleteLifecycleTransaction(_ string, _ t
 // FailLifecycleTransaction satisfies the lifecycle controller contract for runner boundary tests.
 func (*devLifecycleRecordingWriter) FailLifecycleTransaction(string, time.Duration, error) {}
 
-// TestDevRestartTransactionGroupsSuccessfulInfrastructureOutput verifies success retains one bounded restart story.
-func TestDevRestartTransactionGroupsSuccessfulInfrastructureOutput(t *testing.T) {
+// TestDevRestartTransactionStreamsSuccessfulInfrastructureOutput verifies restart work no longer needs temporary retention.
+func TestDevRestartTransactionStreamsSuccessfulInfrastructureOutput(t *testing.T) {
 	transaction := newDevRestartTransaction([]string{"Build App", "Build app SPA frontend", "Run App"}, false)
 	buffer := &devBubbleLifecycleTransaction{transaction: transaction}
-	if !buffer.retain([]string{"Watchers stopping", "HTTP server shut down", "Starting Run App"}) {
-		t.Fatal("expected compact transaction to retain lifecycle output")
+	output := []string{"Watchers stopping", "HTTP server shut down", "Starting Run App"}
+	if buffer.retain(output) {
+		t.Fatal("restart transaction unexpectedly retained lifecycle output")
+	}
+	if !buffer.streamsGroupedOutput() {
+		t.Fatal("restart transaction did not select durable grouped streaming")
 	}
 
-	lines := buffer.successLines(1034*time.Millisecond, devLifecycleTransactionSummary{
+	lines := []string{buffer.headingLine()}
+	lines = append(lines, buffer.groupedLines(output)...)
+	lines = append(lines, buffer.successLines(1034*time.Millisecond, devLifecycleTransactionSummary{
 		BuildElapsed:   380 * time.Millisecond,
 		MigrateElapsed: 340 * time.Millisecond,
-	})
-	if len(lines) != len(buffer.lines)+2 {
+	})...)
+	if len(lines) != len(output)+2 {
 		t.Fatalf("restart success lines = %#v, want grouped lifecycle output", lines)
 	}
-	output := stripANSI(strings.Join(lines, "\n"))
+	joined := stripANSI(strings.Join(lines, "\n"))
 	for _, want := range []string{"┏ App restart", "Build App", "SPA", "Run App", "Watchers stopping", "HTTP server shut down", "Starting Run App", "┗", "Restarted", "build 380ms", "migrate 340ms", "1.03s"} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("restart output missing %q:\n%s", want, output)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("restart output missing %q:\n%s", want, joined)
 		}
 	}
 }
@@ -246,9 +252,11 @@ func TestDevLifecycleReadinessURLRejectsRelativeURLs(t *testing.T) {
 func TestDevRestartTransactionExpandsFailureOutput(t *testing.T) {
 	transaction := newDevRestartTransaction([]string{"Build App", "Run App"}, false)
 	buffer := &devBubbleLifecycleTransaction{transaction: transaction}
-	buffer.retain([]string{"Build App", "go build ./...", "cmd/app/main.go:42:17: undefined: server.New"})
+	childOutput := []string{"Build App", "go build ./...", "cmd/app/main.go:42:17: undefined: server.New"}
 
-	lines := buffer.failureLines(842*time.Millisecond, errors.New("go build failed"))
+	lines := []string{buffer.headingLine()}
+	lines = append(lines, buffer.groupedLines(childOutput)...)
+	lines = append(lines, buffer.failureLines(842*time.Millisecond, errors.New("go build failed"))...)
 	joined := stripANSI(strings.Join(lines, "\n"))
 	for _, want := range []string{"Restart failed", "842ms", "Build App", "go build ./...", "undefined: server.New", "go build failed"} {
 		if !strings.Contains(joined, want) {

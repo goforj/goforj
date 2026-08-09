@@ -128,9 +128,36 @@ type devBubbleLifecycleTransaction struct {
 	lines       []string
 }
 
-// retain captures infrastructure output only for the default compact lifecycle view.
+// streamsGroupedOutput identifies restart work that can move directly into the durable transcript.
+func (t *devBubbleLifecycleTransaction) streamsGroupedOutput() bool {
+	return t != nil && t.transaction.Kind == devLifecycleRestart && !t.transaction.Detailed
+}
+
+// headingLine opens one durable lifecycle block before its child output begins.
+func (t *devBubbleLifecycleTransaction) headingLine() string {
+	if t == nil {
+		return ""
+	}
+	heading := "App startup"
+	if t.transaction.Kind == devLifecycleRestart {
+		heading = "App restart"
+	}
+	return console.Colorize(console.ColorGray, "┏") + " " + joinDevLifecycleFields(heading, t.transaction.Watchers...)
+}
+
+// groupedLines associates streamed lifecycle output with its already-open transaction block.
+func (t *devBubbleLifecycleTransaction) groupedLines(lines []string) []string {
+	rail := console.Colorize(console.ColorGray, "┃")
+	grouped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		grouped = append(grouped, rail+" "+line)
+	}
+	return grouped
+}
+
+// retain captures initial startup output until readiness is known and the terminal story can be committed.
 func (t *devBubbleLifecycleTransaction) retain(lines []string) bool {
-	if t == nil || t.transaction.Detailed {
+	if t == nil || t.transaction.Detailed || t.transaction.Kind != devLifecycleStartup {
 		return false
 	}
 	t.lines = append(t.lines, lines...)
@@ -152,24 +179,19 @@ func (t *devBubbleLifecycleTransaction) transientLines() []string {
 	return append([]string(nil), lines...)
 }
 
-// successLines preserves successful startup and restart work as one bounded lifecycle block.
+// successLines closes streamed restarts or commits buffered startup as one bounded lifecycle block.
 func (t *devBubbleLifecycleTransaction) successLines(elapsed time.Duration, summary devLifecycleTransactionSummary) []string {
 	if t == nil {
 		return nil
 	}
+	bottom := console.Colorize(console.ColorGray, "┗")
+	if t.streamsGroupedOutput() {
+		return []string{bottom + " " + t.transaction.successLine(elapsed, summary)}
+	}
 	lines := make([]string, 0, len(t.lines)+2)
 	if !t.transaction.Detailed && len(t.lines) > 0 {
-		top := console.Colorize(console.ColorGray, "┏")
-		rail := console.Colorize(console.ColorGray, "┃")
-		bottom := console.Colorize(console.ColorGray, "┗")
-		heading := "App startup"
-		if t.transaction.Kind == devLifecycleRestart {
-			heading = "App restart"
-		}
-		lines = append(lines, top+" "+joinDevLifecycleFields(heading, t.transaction.Watchers...))
-		for _, line := range t.lines {
-			lines = append(lines, rail+" "+line)
-		}
+		lines = append(lines, t.headingLine())
+		lines = append(lines, t.groupedLines(t.lines)...)
 		return append(lines, bottom+" "+t.transaction.successLine(elapsed, summary))
 	}
 	return append(lines, t.transaction.successLine(elapsed, summary))
@@ -179,6 +201,14 @@ func (t *devBubbleLifecycleTransaction) successLines(elapsed time.Duration, summ
 func (t *devBubbleLifecycleTransaction) failureLines(elapsed time.Duration, err error) []string {
 	if t == nil {
 		return nil
+	}
+	if t.streamsGroupedOutput() {
+		lines := []string{}
+		if detail := strings.TrimSpace(formatDevLifecycleFailure(err)); detail != "" {
+			lines = append(lines, t.groupedLines([]string{detail})...)
+		}
+		bottom := console.Colorize(console.ColorGray, "┗")
+		return append(lines, bottom+" "+t.transaction.failureLine(elapsed))
 	}
 	lines := []string{t.transaction.failureLine(elapsed)}
 	if len(t.lines) > 0 {
@@ -403,14 +433,18 @@ func (w *devBubbleWriter) flushPendingLocked() {
 		w.flushTimer.Stop()
 		w.flushTimer = nil
 	}
-	if w.lifecycle.retain(payload) {
+	if w.lifecycle != nil && w.lifecycle.streamsGroupedOutput() {
+		w.program.Send(devAppendLinesMsg{lines: w.lifecycle.groupedLines(payload)})
+		return
+	}
+	if w.lifecycle != nil && w.lifecycle.retain(payload) {
 		w.program.Send(devSetLifecycleLinesMsg{active: true, lines: w.lifecycle.transientLines()})
 		return
 	}
 	w.program.Send(devAppendLinesMsg{lines: payload})
 }
 
-// BeginLifecycleTransaction reserves the status row and retains concurrent process output until the outcome is known.
+// BeginLifecycleTransaction opens restart output immediately while reserving startup output until readiness is known.
 func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTransaction) {
 	if strings.TrimSpace(transaction.Key) == "" {
 		return
@@ -422,12 +456,16 @@ func (w *devBubbleWriter) BeginLifecycleTransaction(transaction devLifecycleTran
 		w.partial = ""
 	}
 	w.lifecycle = &devBubbleLifecycleTransaction{transaction: transaction}
-	w.program.Send(devSetLifecycleLinesMsg{active: true})
+	if w.lifecycle.streamsGroupedOutput() {
+		w.program.Send(devAppendLinesMsg{lines: []string{w.lifecycle.headingLine()}})
+	} else {
+		w.program.Send(devSetLifecycleLinesMsg{active: true})
+	}
 	w.setTransitionLocked(transaction.Key, transaction.inProgressLine())
 	w.mu.Unlock()
 }
 
-// compactLifecycleTransactionActive reports whether typed runner narration is redundant with the active shelf.
+// compactLifecycleTransactionActive reports whether the active structured boundary replaces typed runner narration.
 func (w *devBubbleWriter) compactLifecycleTransactionActive() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -442,8 +480,13 @@ func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.
 		return
 	}
 	w.flushPendingLocked()
-	w.partial = ""
 	transaction := w.lifecycle
+	if w.partial != "" {
+		if transaction.streamsGroupedOutput() {
+			w.program.Send(devAppendLinesMsg{lines: transaction.groupedLines([]string{w.partial})})
+		}
+		w.partial = ""
+	}
 	w.lifecycle = nil
 	w.program.Send(devSetLifecycleLinesMsg{})
 	successLines := transaction.successLines(elapsed, summary)
@@ -455,7 +498,7 @@ func (w *devBubbleWriter) CompleteLifecycleTransaction(key string, elapsed time.
 	w.mu.Unlock()
 }
 
-// FailLifecycleTransaction replays retained context because a failed transition must explain itself.
+// FailLifecycleTransaction closes streamed restarts or expands retained startup context with its failure.
 func (w *devBubbleWriter) FailLifecycleTransaction(key string, elapsed time.Duration, err error) {
 	w.mu.Lock()
 	if w.lifecycle == nil || w.lifecycle.transaction.Key != strings.TrimSpace(key) {
@@ -464,7 +507,11 @@ func (w *devBubbleWriter) FailLifecycleTransaction(key string, elapsed time.Dura
 	}
 	w.flushPendingLocked()
 	if w.partial != "" {
-		w.lifecycle.lines = append(w.lifecycle.lines, w.partial)
+		if w.lifecycle.streamsGroupedOutput() {
+			w.program.Send(devAppendLinesMsg{lines: w.lifecycle.groupedLines([]string{w.partial})})
+		} else {
+			w.lifecycle.lines = append(w.lifecycle.lines, w.partial)
+		}
 		w.partial = ""
 	}
 	lines := w.lifecycle.failureLines(elapsed, err)
