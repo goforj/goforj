@@ -1131,7 +1131,7 @@ func TestRunDevBuildKeepsMultiAppSuccessTranscriptCompact(t *testing.T) {
 	if strings.Contains(text, "Built billing") {
 		t.Fatalf("expected no per-app success timing lines, got stdout %q", text)
 	}
-	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Build  ·  ") {
+	if !strings.Contains(text, stripANSI(console.SuccessMark())+" Build · ") {
 		t.Fatalf("expected aggregate build timing, got stdout %q", text)
 	}
 	if errOut.Len() != 0 {
