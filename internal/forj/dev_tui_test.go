@@ -734,8 +734,8 @@ func TestDevBubbleModelHelpHotkeyExecutesAndDismisses(t *testing.T) {
 	if restarts != 1 {
 		t.Fatalf("expected restart hotkey to fire once, got %d", restarts)
 	}
-	if len(got.lines) == 0 || !strings.Contains(stripANSI(got.lines[len(got.lines)-1]), "Restart requested") {
-		t.Fatalf("expected restart notice appended to transcript, got %#v", got.lines)
+	if len(got.lines) != 0 {
+		t.Fatalf("expected restart request to wait for the lifecycle transaction, got %#v", got.lines)
 	}
 }
 
