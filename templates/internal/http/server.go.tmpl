@@ -176,10 +176,19 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	if isInternalDevwatch {
 		return nil
 	}
+	if isGoForjDevReadinessProbe(r) {
+		return nil
+	}
 
 	s.logger.HTTPAccess(v.URI, v.Status, v.Method, v.Latency, v.Error, r.RealIP())
 
 	return nil
+}
+
+// isGoForjDevReadinessProbe authenticates private dev-loop traffic so ordinary health requests remain observable.
+func isGoForjDevReadinessProbe(r web.Context) bool {
+	token := strings.TrimSpace(env.Get("GOFORJ_DEV_READINESS_TOKEN", ""))
+	return token != "" && r.Request().Header.Get("X-GoForj-Dev-Readiness") == token
 }
 
 func resolveHTTPAccessLogsEnabled() bool {

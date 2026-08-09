@@ -153,6 +153,11 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	defer unlock()
+	restoreReadinessToken, err := installDevLifecycleReadinessToken()
+	if err != nil {
+		return err
+	}
+	defer restoreReadinessToken()
 
 	outputSession := devOutputSession{}
 	var cleanupOnce sync.Once
@@ -1053,7 +1058,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 	}
 	if config.Render.Components.Docker {
 		start := time.Now()
-		if !isDevPhaseOutput(outWriter) {
+		if !isDevPhaseOutput(outWriter) && !suppressDevLifecycleOrchestration(outWriter) {
 			writeDevActionLine(outWriter, "Ensuring dev databases")
 		}
 		if err := ensureDevDatabaseExistsWithWriters(config, outWriter, errWriter); err != nil {
@@ -1062,7 +1067,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 		writeDevSuccessLine(outWriter, "Databases", formatDevElapsed(time.Since(start)))
 	}
 	start := time.Now()
-	phaseOutput := isDevPhaseOutput(outWriter)
+	phaseOutput := isDevPhaseOutput(outWriter) || suppressDevLifecycleOrchestration(outWriter)
 	if !phaseOutput {
 		writeDevActionLine(outWriter, "Running auto-migrate")
 	}
@@ -1085,7 +1090,11 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 	result.MigrateElapsed = time.Since(start)
 	if phaseOutput {
 		if total, ok := devMigrationTotal(res.Stdout); ok {
-			writeDevSuccessLine(outWriter, "Migrations", strconv.Itoa(total))
+			fields := []string{strconv.Itoa(total)}
+			if suppressDevLifecycleOrchestration(outWriter) {
+				fields = append(fields, formatDevElapsed(result.MigrateElapsed))
+			}
+			writeDevSuccessLine(outWriter, "Migrations", fields...)
 		} else if strings.TrimSpace(res.Stdout) != "" {
 			_, _ = io.WriteString(outWriter, res.Stdout)
 		}
@@ -1668,7 +1677,9 @@ watcherLoop:
 				if err != nil {
 					return err
 				}
-				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
+				if !suppressDevLifecycleOrchestration(session.outWriter) {
+					writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
+				}
 				spaRootsBeforeBuild := structuredDevSPARoots(session.config)
 				if err := session.reloadProjectConfig(); err != nil {
 					failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
@@ -1694,7 +1705,7 @@ watcherLoop:
 					runtime.stopAndDrain(true)
 					return fmt.Errorf("reload dev environment: %w", err)
 				}
-				if err := runDevBuild(session.config, session.outWriter, session.errWriter); err != nil {
+				if err := runDevPreflightBuild(session.config, session.outWriter, session.errWriter); err != nil {
 					runtime.controller.resumeBuilds()
 					if activeTransaction != nil {
 						failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, err)
@@ -2034,12 +2045,18 @@ func hasNewStructuredDevSPARoot(before map[string]bool, config *project.Config) 
 
 // runDevBuild rebuilds every active app so a previous binary never masks current source changes.
 func runDevBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevBuildJobs(config, outWriter, errWriter, "forj build failed")
+	return runDevBuildJobs(config, outWriter, errWriter, "forj build failed", true)
+}
+
+// runDevPreflightBuild keeps a healthy runtime alive when changed source does not compile without duplicating the published reconciliation result.
+func runDevPreflightBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+	reportSuccess := !suppressDevLifecycleOrchestration(outWriter)
+	return runDevBuildJobs(config, outWriter, errWriter, "forj build failed", reportSuccess)
 }
 
 // runDevInitialBuild builds every active app before pre-dev tasks can call generated app commands.
 func runDevInitialBuild(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	return runDevBuildJobs(config, outWriter, errWriter, "initial forj build failed")
+	return runDevBuildJobs(config, outWriter, errWriter, "initial forj build failed", true)
 }
 
 // runDevInitialSPABuilds publishes frontend assets after dependency setup and before the runtime-owning rebuild.
@@ -2049,6 +2066,8 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 		return false, err
 	}
 	built := false
+	compactLifecycle := suppressDevLifecycleOrchestration(outWriter)
+	startedAt := time.Now()
 	for _, watcher := range watchers {
 		if watcher.Kind != devWatcherSPABuild {
 			continue
@@ -2061,7 +2080,9 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 			built = true
 			continue
 		}
-		writeDevActionLine(outWriter, heading)
+		if !compactLifecycle {
+			writeDevActionLine(outWriter, heading)
+		}
 		if err := runDevSubprocess(devSubprocessRun{
 			command:    watcher.Command.Shell,
 			dir:        watcher.Command.Dir,
@@ -2073,6 +2094,9 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 			return false, fmt.Errorf("initial SPA build %q failed: %w", watcher.Name, err)
 		}
 		built = true
+	}
+	if built && compactLifecycle {
+		writeDevSuccessLine(outWriter, "SPA", formatDevElapsed(time.Since(startedAt)))
 	}
 	return built, nil
 }
@@ -2108,7 +2132,7 @@ type devBuildResult struct {
 }
 
 // runDevBuildJobs runs app builds together so multi-app dev startup scales with the slowest build.
-func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, failurePrefix string) error {
+func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.Writer, failurePrefix string, reportSuccess bool) error {
 	jobs := devBuildJobs(config)
 	clearDevBuildReadyStamps(jobs)
 	switch len(jobs) {
@@ -2119,7 +2143,9 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 		if err := runDevBuildCommand(outWriter, errWriter, jobs[0]); err != nil {
 			return fmt.Errorf("%s: %w", failurePrefix, err)
 		}
-		writeDevSuccessLine(outWriter, "Build", formatDevElapsed(time.Since(start)))
+		if reportSuccess {
+			writeDevSuccessLine(outWriter, "Build", formatDevElapsed(time.Since(start)))
+		}
 		return nil
 	}
 
@@ -2154,7 +2180,9 @@ func runDevBuildJobs(config *project.Config, outWriter io.Writer, errWriter io.W
 	if len(failures) > 0 {
 		return fmt.Errorf("%s: %s", failurePrefix, strings.Join(failures, "; "))
 	}
-	writeDevSuccessLine(outWriter, "Build", formatDevElapsed(time.Since(start)))
+	if reportSuccess {
+		writeDevSuccessLine(outWriter, "Build", formatDevElapsed(time.Since(start)))
+	}
 	return nil
 }
 
@@ -2303,7 +2331,7 @@ func runDevBuildCommand(outWriter io.Writer, errWriter io.Writer, job devBuildJo
 	if usesDevBootstrapConsole(outWriter, errWriter) {
 		return runDevBuildJobWithLoader(outWriter, errWriter, heading, job)
 	}
-	if !isDevPhaseOutput(outWriter) {
+	if !isDevPhaseOutput(outWriter) && !suppressDevLifecycleOrchestration(outWriter) {
 		writeDevActionLine(outWriter, heading)
 	}
 	setDevStatusLine(outWriter, heading)

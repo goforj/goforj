@@ -9,6 +9,7 @@ import (
 	{{- end }}
 	"github.com/goforj/web"
 	"github.com/goforj/web/webtest"
+	"github.com/goforj/web/webmiddleware"
 	"github.com/stretchr/testify/assert"
 	"{{ .GoModuleName }}/internal/runtime"
 )
@@ -24,6 +25,23 @@ func TestPluralizeHTTPRoutes(t *testing.T) {
 	assert.Equal(t, "route", pluralizeHTTPRoutes(1))
 	assert.Equal(t, "routes", pluralizeHTTPRoutes(0))
 	assert.Equal(t, "routes", pluralizeHTTPRoutes(2))
+}
+
+func TestLogSuppressesAuthenticatedDevReadinessProbe(t *testing.T) {
+	t.Setenv("GOFORJ_DEV_READINESS_TOKEN", "test-readiness-token")
+	ctx := webtest.NewContext(nil, nil, "/-/health", nil)
+	ctx.Request().Header.Set("X-GoForj-Dev-Readiness", "test-readiness-token")
+	assert.True(t, isGoForjDevReadinessProbe(ctx))
+
+	server := &Server{httpAccessLogs: true}
+	assert.NoError(t, server.Log(ctx, webmiddleware.RequestLoggerValues{
+		URI:    "/-/health",
+		Method: "GET",
+		Status: 200,
+	}))
+
+	ctx.Request().Header.Set("X-GoForj-Dev-Readiness", "untrusted-token")
+	assert.False(t, isGoForjDevReadinessProbe(ctx))
 }
 
 {{- if .ProjectComponents.Storage }}
