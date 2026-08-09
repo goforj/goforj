@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/console"
 	"golang.org/x/term"
 )
@@ -14,7 +15,20 @@ const devSectionSeparatorRuleWidth = 5
 
 // buildDevFooterSeparatorLine keeps the build dev footer separator line representation consistent.
 func buildDevFooterSeparatorLine() string {
-	return buildDevSectionSeparatorLine("")
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		width = 0
+	}
+	return buildDevFooterSeparatorLineAtWidth(width)
+}
+
+// buildDevFooterSeparatorLineAtWidth renders a subdued structural boundary at the model's current width.
+func buildDevFooterSeparatorLineAtWidth(width int) string {
+	if width <= 0 {
+		width = 120
+	}
+	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D4D4D8", Dark: "#27272A"})
+	return ruleStyle.Render(strings.Repeat("─", width))
 }
 
 // buildDevWatcherStopSeparatorLine keeps the transcript boundary compact once the full-width interactive footer is gone.
@@ -84,77 +98,103 @@ func buildDevFooterLineWithURLs(apiURL, lighthouseURL string) string {
 
 // buildDevFooterLineWithState keeps the build dev footer line with state representation consistent.
 func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bool, appDebug string) string {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		width = 0
+	}
+	return buildDevFooterLineWithStateAtWidth(apiURL, lighthouseURL, dbQueryLogging, appDebug, width)
+}
+
+// buildDevFooterLineWithStateAtWidth composes status and action groups without allowing terminal wrapping.
+func buildDevFooterLineWithStateAtWidth(apiURL, lighthouseURL string, dbQueryLogging bool, appDebug string, width int) string {
 	if apiURL == "" && lighthouseURL == "" {
 		return ""
 	}
-	left := make([]string, 0, 4)
+	statuses := make([]string, 0, 4)
 	if lighthouseURL != "" {
-		left = append(left, renderDevFooterStatus("Lighthouse", "ON", true))
+		statuses = append(statuses, renderDevFooterBooleanStatus("Lighthouse", true))
 	}
 	if apiURL != "" {
-		left = append(left, renderDevFooterStatus("API", "ON", true))
+		statuses = append(statuses, renderDevFooterBooleanStatus("API", true))
 	}
 	if lighthouseURL != "" || apiURL != "" {
-		queryState := "off"
-		if dbQueryLogging {
-			queryState = "on"
-		}
-		left = append(left, renderDevFooterStatus("Query", strings.ToUpper(queryState), dbQueryLogging))
-		left = append(left, renderDevFooterStatus("Debug", appDebug, false))
+		statuses = append(statuses, renderDevFooterBooleanStatus("Query", dbQueryLogging))
+		statuses = append(statuses, renderDevFooterValueStatus("Debug", appDebug))
 	}
-	right := []string{
-		renderDevFooterShortcut("?", "Controls"),
+	actions := []string{
 		renderDevFooterShortcut("/", "Find"),
 		renderDevFooterShortcut("x", "Command"),
-		renderDevFooterShortcut("f", "Filters"),
-		renderDevFooterShortcut("l", "Live"),
-		renderDevFooterShortcut("r", "Restart"),
-		renderDevFooterShortcut("c", "Clear"),
+		renderDevFooterShortcut("?", "Help"),
 	}
-	leftText := strings.Join(left, renderDevFooterDivider())
-	rightText := strings.Join(right, "   ")
-	width, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || width <= 0 {
-		return leftText + "    " + rightText
+	if width <= 0 {
+		width = 120
 	}
-	leftWidth := lipgloss.Width(leftText)
-	rightWidth := lipgloss.Width(rightText)
-	if leftWidth+rightWidth+4 >= width {
-		return leftText + "    " + rightText
+	booleanStatuses := statuses
+	if len(booleanStatuses) > 0 {
+		booleanStatuses = booleanStatuses[:len(booleanStatuses)-1]
 	}
-	return leftText + strings.Repeat(" ", width-leftWidth-rightWidth) + rightText
+	help := actions[len(actions)-1:]
+	for _, layout := range []struct {
+		statuses []string
+		actions  []string
+		gap      int
+	}{
+		{statuses: statuses, actions: actions, gap: 5},
+		{statuses: statuses, actions: actions, gap: 2},
+		{statuses: statuses, actions: help, gap: 2},
+		{statuses: booleanStatuses, actions: help, gap: 2},
+		{statuses: booleanStatuses, gap: 2},
+	} {
+		if line, ok := layoutDevFooterGroups(layout.statuses, layout.actions, layout.gap, width); ok {
+			return line
+		}
+	}
+	return ansi.Truncate(strings.Join(booleanStatuses, "  "), width, "")
 }
 
-// renderDevFooterDivider keeps the render dev footer divider representation consistent.
-func renderDevFooterDivider() string {
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#3F3F46"}).
-		Render("  |  ")
+// layoutDevFooterGroups keeps statuses left-aligned and actions right-aligned when both fit on one row.
+func layoutDevFooterGroups(statuses []string, actions []string, itemGap int, width int) (string, bool) {
+	left := strings.Join(statuses, strings.Repeat(" ", itemGap))
+	if len(actions) == 0 {
+		if lipgloss.Width(left) <= width {
+			return left, true
+		}
+		return "", false
+	}
+	right := strings.Join(actions, strings.Repeat(" ", itemGap))
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+	const minimumGroupGap = 4
+	if leftWidth+rightWidth+minimumGroupGap > width {
+		return "", false
+	}
+	return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right, true
 }
 
-// renderDevFooterStatus keeps the render dev footer status representation consistent.
-func renderDevFooterStatus(label, state string, active bool) string {
+// renderDevFooterBooleanStatus pairs an enabled or disabled semantic indicator with a normal status label.
+func renderDevFooterBooleanStatus(label string, active bool) string {
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
-	stateColor := lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#A1A1AA"}
+	indicator := "○"
+	indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#52525B"})
 	if active {
-		stateColor = lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}
+		indicator = "●"
+		indicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"})
 	}
-	if strings.EqualFold(state, "OFF") {
-		stateColor = lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F97316"}
-	}
-	return lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		labelStyle.Render(label),
-		" ",
-		lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(state),
-	)
+	return indicatorStyle.Render(indicator) + " " + labelStyle.Render(label)
+}
+
+// renderDevFooterValueStatus preserves non-boolean runtime settings as a label and muted value.
+func renderDevFooterValueStatus(label, value string) string {
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	return labelStyle.Render(label) + " " + valueStyle.Render(strings.TrimSpace(value))
 }
 
 // renderDevFooterShortcut keeps the render dev footer shortcut representation consistent.
 func renderDevFooterShortcut(key, label string) string {
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#A1A1AA"})
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"})
-	return keyStyle.Render("["+key+"]") + " " + labelStyle.Render(label)
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	return keyStyle.Render(key) + " " + labelStyle.Render(label)
 }
 
 type devOverlaySpec struct {

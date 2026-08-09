@@ -3,11 +3,13 @@ package forj
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/project"
 )
@@ -80,16 +82,17 @@ func TestBuildDevFooterLine(t *testing.T) {
 		"LIGHTHOUSE_ENABLED": "true",
 	}))
 	if !strings.Contains(line, "Lighthouse") || !strings.Contains(line, "API") {
-		t.Fatalf("expected hotkey help in footer line: %q", line)
+		t.Fatalf("expected capability status in footer line: %q", line)
 	}
-	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
-		t.Fatalf("expected action hotkeys in footer line: %q", line)
+	for _, expected := range []string{"● Lighthouse", "● API", "○ Query", "/ Find", "x Command", "? Help"} {
+		if !strings.Contains(line, expected) {
+			t.Fatalf("footer line omitted %q: %q", expected, line)
+		}
 	}
-	if !strings.Contains(line, "[/] Find") {
-		t.Fatalf("expected find shortcut in footer line: %q", line)
-	}
-	if !strings.Contains(line, "[x] Command") {
-		t.Fatalf("expected command shortcut in footer line: %q", line)
+	for _, hidden := range []string{"ON", "OFF", "|", "[", "]", "Controls", "Filters", "Live", "Restart", "Clear"} {
+		if strings.Contains(line, hidden) {
+			t.Fatalf("footer line retained %q: %q", hidden, line)
+		}
 	}
 }
 
@@ -170,21 +173,78 @@ func TestDevTerminalModeResetSequenceDoesNotAdvanceTheCursor(t *testing.T) {
 }
 
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
-	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/lighthouse", true, "2"))
+	line := stripANSI(buildDevFooterLineWithStateAtWidth("http://localhost:3000", "http://localhost:3000/lighthouse", true, "2", 160))
 	if strings.Contains(line, "\n") {
 		t.Fatalf("expected single-line footer, got multiline output: %q", line)
 	}
 	if !strings.Contains(line, "Lighthouse") || !strings.Contains(line, "API") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}
-	if !strings.Contains(line, "Query") || !strings.Contains(line, "ON") || !strings.Contains(line, "Debug") || !strings.Contains(line, "2") {
-		t.Fatalf("expected state pills in line: %q", line)
+	if !strings.Contains(line, "● Query") || !strings.Contains(line, "Debug 2") {
+		t.Fatalf("expected semantic status values in line: %q", line)
 	}
-	if strings.Contains(line, "[ Lighthouse") || strings.Contains(line, "Lighthouse  ON ]") {
-		t.Fatalf("expected flatter footer status format, got: %q", line)
+	for _, expected := range []string{"/ Find", "x Command", "? Help"} {
+		if !strings.Contains(line, expected) {
+			t.Fatalf("footer line omitted action %q: %q", expected, line)
+		}
 	}
-	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[x] Command") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
-		t.Fatalf("expected env/restart hotkeys in line: %q", line)
+	if lipgloss.Width(line) != 160 {
+		t.Fatalf("footer width = %d, want 160: %q", lipgloss.Width(line), line)
+	}
+}
+
+// TestBuildDevFooterLineRespondsWithoutWrapping verifies narrow terminals shed secondary controls in useful tiers.
+func TestBuildDevFooterLineRespondsWithoutWrapping(t *testing.T) {
+	tests := []struct {
+		width  int
+		want   []string
+		hidden []string
+	}{
+		{width: 80, want: []string{"Debug 0", "/ Find", "x Command", "? Help"}},
+		{width: 55, want: []string{"Debug 0", "? Help"}, hidden: []string{"/ Find", "x Command"}},
+		{width: 40, want: []string{"○ Query", "? Help"}, hidden: []string{"Debug"}},
+		{width: 30, want: []string{"● Lighthouse", "● API", "○ Query"}, hidden: []string{"Debug", "Help"}},
+		{width: 20, want: []string{"● Lighthouse"}, hidden: []string{"\n"}},
+	}
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("width %d", test.width), func(t *testing.T) {
+			line := stripANSI(buildDevFooterLineWithStateAtWidth("http://localhost:3000", "http://localhost:3000/lighthouse", false, "0", test.width))
+			if lipgloss.Width(line) > test.width {
+				t.Fatalf("footer width = %d, exceeds %d: %q", lipgloss.Width(line), test.width, line)
+			}
+			for _, expected := range test.want {
+				if !strings.Contains(line, expected) {
+					t.Fatalf("footer omitted %q at width %d: %q", expected, test.width, line)
+				}
+			}
+			for _, hidden := range test.hidden {
+				if strings.Contains(line, hidden) {
+					t.Fatalf("footer retained %q at width %d: %q", hidden, test.width, line)
+				}
+			}
+		})
+	}
+}
+
+// TestDevBubbleModelReflowsFooterOnResize verifies the live TUI uses its current model width rather than startup TTY dimensions.
+func TestDevBubbleModelReflowsFooterOnResize(t *testing.T) {
+	model := devBubbleModel{
+		apiURL:        "http://localhost:3000",
+		lighthouseURL: "http://localhost:3000/lighthouse",
+		appDebug:      "0",
+	}
+	next, _ := model.Update(tea.WindowSizeMsg{Width: 40, Height: 20})
+	footer := stripANSI(next.(devBubbleModel).footerLine)
+	if lipgloss.Width(footer) > 40 {
+		t.Fatalf("resized footer width = %d, exceeds 40: %q", lipgloss.Width(footer), footer)
+	}
+	for _, expected := range []string{"● Lighthouse", "○ Query", "? Help"} {
+		if !strings.Contains(footer, expected) {
+			t.Fatalf("resized footer omitted %q: %q", expected, footer)
+		}
+	}
+	if strings.Contains(footer, "Debug") || strings.Contains(footer, "Command") {
+		t.Fatalf("resized footer retained lower-priority content: %q", footer)
 	}
 }
 
