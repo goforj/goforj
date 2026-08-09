@@ -49,6 +49,7 @@ type devLifecycleTransactionController interface {
 }
 
 type devLifecycleOrchestrationController interface {
+	// compactLifecycleTransactionActive reports whether restart orchestration currently owns lifecycle output.
 	compactLifecycleTransactionActive() bool
 }
 
