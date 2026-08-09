@@ -805,11 +805,11 @@ func (b *devTaskOutputBlock) finish(success bool, elapsed time.Duration) (bool, 
 	if !success {
 		status = "Failed"
 	}
-	mark := ""
+	footerContent := joinDevLifecycleFields(status, formatDevElapsed(elapsed))
 	if success {
-		mark = console.SuccessMark() + " "
+		footerContent = formatDevSuccessLine(status, formatDevElapsed(elapsed))
 	}
-	footer := devTaskOutputBoundary("┗") + " " + mark + joinDevLifecycleFields(status, formatDevElapsed(elapsed)) + "\n\n"
+	footer := devTaskOutputBoundary("┗") + " " + footerContent + "\n\n"
 	if _, err := io.WriteString(b.stdout, footer); err != nil {
 		return true, err
 	}
@@ -2388,7 +2388,18 @@ func writeDevActionLine(out io.Writer, message string) {
 
 // writeDevSuccessLine gives completed preparation milestones enough contrast to scan as outcomes.
 func writeDevSuccessLine(out io.Writer, message string, fields ...string) {
-	_, _ = io.WriteString(out, console.SuccessMark()+" "+joinDevLifecycleFields(message, fields...)+"\n")
+	_, _ = io.WriteString(out, formatDevSuccessLine(message, fields...)+"\n")
+}
+
+// formatDevSuccessLine contrasts a completed outcome from its muted timing details.
+func formatDevSuccessLine(message string, fields ...string) string {
+	parts := []string{console.SuccessMark() + " " + console.Colorize(console.ColorGreen, strings.TrimSpace(message))}
+	for _, field := range fields {
+		if field = strings.TrimSpace(field); field != "" {
+			parts = append(parts, console.Colorize(console.ColorGray, field))
+		}
+	}
+	return strings.Join(parts, "  ·  ")
 }
 
 // writeDevTimingLine keeps secondary duration details visually quieter than the action they describe.

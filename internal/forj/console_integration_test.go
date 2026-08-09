@@ -65,6 +65,35 @@ func TestExternalConsoleSemanticMarks(t *testing.T) {
 	}
 }
 
+// TestDevSuccessLineRetainsSemanticColor verifies preparation blocks preserve their stronger completion treatment.
+func TestDevSuccessLineRetainsSemanticColor(t *testing.T) {
+	previous := console.Default()
+	t.Cleanup(func() {
+		console.SetDefault(previous)
+	})
+
+	var output bytes.Buffer
+	colorEnabled := true
+	unicodeEnabled := true
+	console.SetDefault(console.New(console.Config{
+		Stdout:         &output,
+		Stderr:         &output,
+		ColorEnabled:   &colorEnabled,
+		UnicodeEnabled: &unicodeEnabled,
+	}))
+
+	writeDevSuccessLine(&output, "Built app", "376ms")
+	for _, expected := range []string{
+		console.ColorGreen + "✔" + console.ColorReset,
+		console.ColorGreen + "Built app" + console.ColorReset,
+		console.ColorGray + "376ms" + console.ColorReset,
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("success output omitted %q: %q", expected, output.String())
+		}
+	}
+}
+
 // TestRunWithLoaderPropagatesErrorsAndReleasesTheTransient verifies the extracted loader owns cleanup on every return path.
 func TestRunWithLoaderPropagatesErrorsAndReleasesTheTransient(t *testing.T) {
 	previous := console.Default()
