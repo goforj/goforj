@@ -193,15 +193,21 @@ func devWatcherBuildHerdSeed(t *testing.T) int64 {
 // waitForDevWatcherBuildHerdIdle requires every task to drain its active and coalesced work.
 func waitForDevWatcherBuildHerdIdle(t *testing.T, controller *devWatcherController, compiled []devCompiledWatcher) {
 	t.Helper()
+	stable := false
 	waitForDevWatcherBuildHerdCondition(t, "mixed build herd to become idle", func() bool {
 		for _, spec := range compiled {
 			task := controller.tasks[spec.ID]
 			task.mu.Lock()
-			idle := !task.busy && !task.pending
+			idle := task.activeCancel == nil && !task.busy && !task.pending && len(task.triggerCh) == 0
 			task.mu.Unlock()
 			if !idle {
+				stable = false
 				return false
 			}
+		}
+		if !stable {
+			stable = true
+			return false
 		}
 		return true
 	})
