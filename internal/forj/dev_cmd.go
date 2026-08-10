@@ -682,7 +682,7 @@ func runDevTasks(tasks []project.DevTask) error {
 	defer devNull.Close()
 	for _, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
-		res, _, err := runDevTask(task, devNull, outputTail)
+		res, _, err := runDevTask(task, devNull, outputTail, true)
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -696,14 +696,15 @@ func runDevTasks(tasks []project.DevTask) error {
 }
 
 type devTaskOutputBlock struct {
-	mu           sync.Mutex
-	name         string
-	successLabel string
-	stdout       io.Writer
-	stderr       io.Writer
-	stopLoader   func()
-	started      bool
-	streams      []*devTaskOutputBlockStream
+	mu            sync.Mutex
+	name          string
+	successLabel  string
+	stdout        io.Writer
+	stderr        io.Writer
+	stopLoader    func()
+	started       bool
+	trailingBlank bool
+	streams       []*devTaskOutputBlockStream
 }
 
 type devTaskOutputBlockStream struct {
@@ -717,10 +718,11 @@ type devTaskOutputBlockStream struct {
 // newDevTaskOutputBlock labels streamed task output only after a command has something useful to show.
 func newDevTaskOutputBlock(name string, stdout io.Writer, stderr io.Writer, stopLoader func()) *devTaskOutputBlock {
 	return &devTaskOutputBlock{
-		name:       strings.TrimSpace(name),
-		stdout:     stdout,
-		stderr:     stderr,
-		stopLoader: stopLoader,
+		name:          strings.TrimSpace(name),
+		stdout:        stdout,
+		stderr:        stderr,
+		stopLoader:    stopLoader,
+		trailingBlank: true,
 	}
 }
 
@@ -875,7 +877,10 @@ func (b *devTaskOutputBlock) finish(success bool, elapsed time.Duration) (bool, 
 			footerContent = formatDevSuccessLine(status, formatDevElapsed(elapsed))
 		}
 	}
-	footer := devTaskOutputBoundary("┗") + " " + footerContent + "\n\n"
+	footer := devTaskOutputBoundary("┗") + " " + footerContent + "\n"
+	if b.trailingBlank {
+		footer += "\n"
+	}
 	if _, err := io.WriteString(b.stdout, footer); err != nil {
 		return true, err
 	}
@@ -893,7 +898,7 @@ func devTaskOutputBoundary(value string) string {
 }
 
 // runDevTask keeps loader handoff, live output ownership, and completion boundaries consistent across setup and teardown.
-func runDevTask(task project.DevTask, stdin io.Reader, outputTail *devTaskOutputTail) (execx.Result, bool, error) {
+func runDevTask(task project.DevTask, stdin io.Reader, outputTail *devTaskOutputTail, trailingBlank bool) (execx.Result, bool, error) {
 	loader := console.NewLoader(task.Name)
 	if err := loader.Start(); err != nil {
 		return execx.Result{}, false, err
@@ -904,6 +909,7 @@ func runDevTask(task project.DevTask, stdin io.Reader, outputTail *devTaskOutput
 		console.Default().StderrWriter(),
 		loader.Stop,
 	)
+	outputBlock.trailingBlank = trailingBlank
 	cmd := newDevTaskCommand(
 		task,
 		stdin,
@@ -3189,9 +3195,9 @@ func runDevDownTasks(tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	for _, task := range tasks {
+	for index, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
-		res, hadOutput, err := runDevTask(task, os.Stdin, outputTail)
+		res, hadOutput, err := runDevTask(task, os.Stdin, outputTail, index < len(tasks)-1)
 		if err != nil {
 			return fmt.Errorf("dev_down task '%s' failed: %v", task.Name, err)
 		}
