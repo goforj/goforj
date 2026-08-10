@@ -1095,10 +1095,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 	result.MigrateElapsed = time.Since(start)
 	if phaseOutput {
 		if total, ok := devMigrationTotal(res.Stdout); ok {
-			fields := []string{strconv.Itoa(total)}
-			if suppressDevLifecycleOrchestration(outWriter) {
-				fields = append(fields, formatDevElapsed(result.MigrateElapsed))
-			}
+			fields := []string{strconv.Itoa(total), formatDevElapsed(result.MigrateElapsed)}
 			writeDevSuccessLine(outWriter, "Migrations", fields...)
 		} else if strings.TrimSpace(res.Stdout) != "" {
 			_, _ = io.WriteString(outWriter, res.Stdout)

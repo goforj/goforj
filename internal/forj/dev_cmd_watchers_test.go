@@ -2096,8 +2096,8 @@ func TestRunDevAppSetupSummarizesMigrationCommand(t *testing.T) {
 		t.Fatalf("run dev app setup: %v", err)
 	}
 	plain := stripANSI(output.String())
-	if !strings.Contains(plain, stripANSI(console.SuccessMark())+" Migrations · 2") {
-		t.Fatalf("preparation output omitted compact migration result: %q", plain)
+	if !strings.Contains(plain, stripANSI(console.SuccessMark())+" Migrations · 2 ·") {
+		t.Fatalf("preparation output omitted timed migration result: %q", plain)
 	}
 	if strings.Contains(plain, "migrations complete") || strings.Contains(plain, "applied first") {
 		t.Fatalf("preparation output replayed migration command prose: %q", plain)
