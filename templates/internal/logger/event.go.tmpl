@@ -19,14 +19,15 @@ import (
 // It captures structured fields before zerolog serializes them so dedupe and
 // sinks can run on the in-memory entry instead of reparsing JSON bytes.
 type Event struct {
-	logger   *AppLogger
-	output   *zerolog.Logger
-	level    zerolog.Level
-	disabled bool
-	caller   bool
-	compact  bool
-	fields   []eventField
-	unordered bool
+	logger        *AppLogger
+	output        *zerolog.Logger
+	level         zerolog.Level
+	disabled      bool
+	caller        bool
+	compact       bool
+	compactValues []string
+	fields        []eventField
+	unordered     bool
 }
 
 type eventField struct {
@@ -58,6 +59,7 @@ func newEvent(logger *AppLogger, output *zerolog.Logger, level zerolog.Level, di
 	event.disabled = disabled || logger == nil || output == nil
 	event.caller = false
 	event.compact = false
+	event.compactValues = event.compactValues[:0]
 	event.fields = event.fields[:0]
 	event.unordered = false
 	return event
@@ -74,6 +76,12 @@ func (e *Event) release() {
 	e.caller = false
 	e.compact = false
 	e.unordered = false
+	if cap(e.compactValues) > 16 {
+		e.compactValues = nil
+	} else if len(e.compactValues) > 0 {
+		clear(e.compactValues)
+		e.compactValues = e.compactValues[:0]
+	}
 	if cap(e.fields) > 64 {
 		e.fields = make([]eventField, 0, 8)
 	} else if len(e.fields) > 0 {
@@ -111,6 +119,16 @@ func (e *Event) Compact() *Event {
 	if e != nil && !e.disabled {
 		e.compact = true
 	}
+	return e
+}
+
+// CompactValues selects display-only console values while preserving every structured field for sinks and JSON output.
+func (e *Event) CompactValues(values ...string) *Event {
+	if e == nil || e.disabled {
+		return e
+	}
+	e.compact = true
+	e.compactValues = append(e.compactValues[:0], values...)
 	return e
 }
 
@@ -326,7 +344,11 @@ func (l *AppLogger) outputEntry(entry LogEntry) LogEntry {
 	if l == nil || l.config.format == logFormatJSON || !entry.compact {
 		return entry
 	}
-	entry.orderedFields = []eventField{eventField{key: consoleCompactKey, value: compactLogFields(entry.orderedFields)}}
+	compact := compactLogFields(entry.orderedFields)
+	if len(entry.compactValues) > 0 {
+		compact = compactLogValues(entry.compactValues)
+	}
+	entry.orderedFields = []eventField{eventField{key: consoleCompactKey, value: compact}}
 	entry.Fields = nil
 	return entry
 }
@@ -346,6 +368,7 @@ func (e *Event) buildEntry(msg string) LogEntry {
 		signature:     buildEventSignature(e.level.String(), msg, orderedFields, e.unordered),
 		orderedFields: orderedFields,
 		compact:       e.compact,
+		compactValues: append([]string(nil), e.compactValues...),
 	}
 }
 
@@ -529,6 +552,18 @@ func compactLogFields(fields []eventField) string {
 		if value != "" {
 			key := str.Of(field.key).Trim().ToLower().String()
 			values = append(values, fmt.Sprintf("%s%s%s", colorForCompactField(key, value), value, Reset))
+		}
+	}
+	return strings.Join(values, fmt.Sprintf(" %s·%s ", HighIntensityBlack, Reset))
+}
+
+// compactLogValues joins an explicit console projection without exposing those values as structured fields.
+func compactLogValues(fields []string) string {
+	values := make([]string, 0, len(fields))
+	for _, field := range fields {
+		value := strings.TrimSpace(field)
+		if value != "" {
+			values = append(values, fmt.Sprintf("%s%s%s", colorForCompactField("", value), value, Reset))
 		}
 	}
 	return strings.Join(values, fmt.Sprintf(" %s·%s ", HighIntensityBlack, Reset))

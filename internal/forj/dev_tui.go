@@ -55,22 +55,17 @@ type devLifecycleOrchestrationController interface {
 
 // devOutputSession names the terminal streams and lifecycle ownership that must change together when the TUI is enabled.
 type devOutputSession struct {
-	stdout           io.Writer
-	stderr           io.Writer
-	shutdown         func()
-	refresh          func()
-	restoresTerminal bool
+	stdout   io.Writer
+	stderr   io.Writer
+	shutdown func()
+	refresh  func()
 }
 
-// finishDevOutputSession falls back to a defensive reset only when the selected session did not capture and restore terminal state itself.
-func finishDevOutputSession(session devOutputSession, fallbackRestore func()) {
+// finishDevOutputSession restores terminal state only through the session that captured and changed it.
+func finishDevOutputSession(session devOutputSession) {
 	if session.shutdown != nil {
 		session.shutdown()
-		if session.restoresTerminal {
-			return
-		}
 	}
-	fallbackRestore()
 }
 
 // buildDevOutputSession selects plain terminal streams or a coordinated TUI output session.

@@ -158,14 +158,13 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 	defer restoreReadinessToken()
+	inheritDevLifecycleReadinessToken(inheritedEnv)
 
 	outputSession := devOutputSession{}
 	var cleanupOnce sync.Once
 	cleanupDevTerminal := func() {
 		cleanupOnce.Do(func() {
-			finishDevOutputSession(outputSession, func() {
-				restoreDevTerminalState(nil, nil)
-			})
+			finishDevOutputSession(outputSession)
 		})
 	}
 	defer cleanupDevTerminal()

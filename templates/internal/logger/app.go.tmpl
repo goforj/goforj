@@ -64,6 +64,7 @@ type LogEntry struct {
 	signature     string
 	orderedFields []eventField
 	compact       bool
+	compactValues []string
 }
 
 func logEntryTimestamp(entry LogEntry) string {

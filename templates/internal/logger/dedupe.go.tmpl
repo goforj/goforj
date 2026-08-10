@@ -274,6 +274,7 @@ func cloneLogEntry(entry LogEntry) LogEntry {
 		copy(cloned.orderedFields, entry.orderedFields)
 	}
 	cloned.compact = entry.compact
+	cloned.compactValues = append([]string(nil), entry.compactValues...)
 	return cloned
 }
 
