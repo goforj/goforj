@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,6 +38,15 @@ func TestInstallDevLifecycleReadinessTokenRestoresInheritedValue(t *testing.T) {
 	generated := os.Getenv(devLifecycleReadyEnv)
 	if generated == "" || generated == "inherited-token" {
 		t.Fatalf("generated readiness token = %q", generated)
+	}
+	inherited := processEnvironment{"PATH": "/launcher/bin"}
+	inheritDevLifecycleReadinessToken(inherited)
+	isolated := isolateDevRuntimeEnvironments([]devCompiledWatcher{{
+		Kind:    devWatcherAppRun,
+		Command: devwatch.Command{Shell: "./bin/app"},
+	}}, inherited)
+	if !isolated[0].Command.ReplaceEnv || isolated[0].Command.Env[devLifecycleReadyEnv] != generated {
+		t.Fatalf("isolated runtime readiness token = %q, want %q", isolated[0].Command.Env[devLifecycleReadyEnv], generated)
 	}
 	restore()
 	if got := os.Getenv(devLifecycleReadyEnv); got != "inherited-token" {
@@ -248,7 +258,13 @@ func TestWaitDevLifecycleReadinessUsesTheConventionalAppHealthBoundary(t *testin
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	t.Setenv("APP_URL", server.URL+"/public-prefix")
+	host, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split readiness listener: %v", err)
+	}
+	t.Setenv("APP_URL", "https://public.example.test/application-prefix")
+	t.Setenv("API_HTTP_HOST", host)
+	t.Setenv("API_HTTP_PORT", port)
 
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{WebAPI: true}}}
 	controller := &devWatcherController{tasks: map[string]*devWatcherTask{
@@ -277,10 +293,10 @@ func TestWaitDevLifecycleReadinessSkipsCustomRuntimes(t *testing.T) {
 	}
 }
 
-// TestDevLifecycleReadinessURLRejectsRelativeURLs keeps readiness attribution tied to a concrete App endpoint.
-func TestDevLifecycleReadinessURLRejectsRelativeURLs(t *testing.T) {
-	if _, err := devLifecycleReadinessURL("localhost:3000"); err == nil {
-		t.Fatal("devLifecycleReadinessURL() error = nil, want relative URL error")
+// TestDevLifecycleReadinessURLRejectsInvalidPorts fails before a malformed listener can delay startup.
+func TestDevLifecycleReadinessURLRejectsInvalidPorts(t *testing.T) {
+	if _, err := devLifecycleReadinessURL(map[string]string{"API_HTTP_PORT": "invalid"}); err == nil {
+		t.Fatal("devLifecycleReadinessURL() error = nil, want invalid port error")
 	}
 }
 

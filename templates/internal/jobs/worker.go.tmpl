@@ -64,9 +64,11 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 
 	workerCount := managedQueueWorkerCount(managed)
 	s.logger.Info().
-		Compact().
-		Str("queue", strings.Join(managedQueueNames(managed), ", ")).
-		Str("workers", fmt.Sprintf("%d %s", workerCount, pluralizeQueueWorkers(workerCount))).
+		CompactValues(strings.Join(managedQueueNames(managed), ", "), fmt.Sprintf("%d %s", workerCount, pluralizeQueueWorkers(workerCount))).
+		Str("driver", string(s.queues.Default().Driver())).
+		Strs("queues", managedQueueNames(managed)).
+		Int("workers", workerCount).
+		Strs("queue_workers", managedQueueWorkerAllocations(managed)).
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
@@ -209,6 +211,20 @@ func managedQueueWorkerCount(instances []queues.Instance) int {
 		total += instance.Workers
 	}
 	return total
+}
+
+// managedQueueWorkerAllocations returns stable queue=workers labels for structured logs.
+func managedQueueWorkerAllocations(instances []queues.Instance) []string {
+	allocations := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		name := normalizeQueueResourceName(instance.Name)
+		if name == "" || instance.Workers <= 0 {
+			continue
+		}
+		allocations = append(allocations, fmt.Sprintf("%s=%d", name, instance.Workers))
+	}
+	sort.Strings(allocations)
+	return allocations
 }
 
 // pluralizeQueueWorkers keeps the startup summary grammatical at every worker count.

@@ -1053,32 +1053,29 @@ func TestLifecycleTemplatesUseConciseStartupSummaries(t *testing.T) {
 		{
 			path: filepath.Join(templateRoot, "http", "server.go.tmpl"),
 			required: []string{
-				`Compact().`,
-				`Str("listen", httpListenAddress(host, port))`,
-				`Str("routes", fmt.Sprintf("%d %s", routeCount, pluralizeHTTPRoutes(routeCount)))`,
+				`CompactValues(httpListenAddress(host, port), fmt.Sprintf("%d %s", routeCount, pluralizeHTTPRoutes(routeCount)))`,
+				`Any("host", host)`,
+				`Any("port", port)`,
+				`Any("addr", addr)`,
+				`Any("count", routeCount)`,
 				`Msg("HTTP server started")`,
 			},
 			forbidden: []string{
-				`.Any("host", host)`,
-				`.Any("port", port)`,
-				`.Any("addr", addr)`,
 				`route:list for full list`,
 			},
 		},
 		{
 			path: filepath.Join(templateRoot, "jobs", "worker.go.tmpl"),
 			required: []string{
-				`Compact().`,
-				`Str("queue", strings.Join(managedQueueNames(managed), ", "))`,
-				`Str("workers", fmt.Sprintf("%d %s", workerCount, pluralizeQueueWorkers(workerCount)))`,
+				`CompactValues(strings.Join(managedQueueNames(managed), ", "), fmt.Sprintf("%d %s", workerCount, pluralizeQueueWorkers(workerCount)))`,
+				`Str("driver",`,
+				`Strs("queues",`,
+				`Int("workers",`,
+				`Strs("queue_workers",`,
 				`Msg("Queue worker started")`,
 			},
 			forbidden: []string{
 				`Msg("Starting queue worker")`,
-				`.Str("driver",`,
-				`.Strs("queues",`,
-				`.Int("workers",`,
-				`.Strs("queue_workers",`,
 			},
 		},
 	}

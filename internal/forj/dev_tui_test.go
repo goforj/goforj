@@ -118,46 +118,30 @@ func TestDevConfigUsesWatcherStdinKeepsInteractiveChildrenOffTheTUI(t *testing.T
 	}
 }
 
-func TestFinishDevOutputSessionRestoresTerminalExactlyOnce(t *testing.T) {
+func TestFinishDevOutputSessionShutsDownOnlySelectedOwners(t *testing.T) {
 	tests := []struct {
-		name                    string
-		hasShutdown             bool
-		restoresTerminal        bool
-		wantShutdownCalls       int
-		wantFallbackRestoration int
+		name              string
+		hasShutdown       bool
+		wantShutdownCalls int
 	}{
-		{name: "before session selection", wantFallbackRestoration: 1},
-		{name: "missing terminal owner", restoresTerminal: true, wantFallbackRestoration: 1},
-		{name: "plain session", hasShutdown: true, wantShutdownCalls: 1, wantFallbackRestoration: 1},
-		{name: "bubble session", hasShutdown: true, restoresTerminal: true, wantShutdownCalls: 1},
+		{name: "before session selection"},
+		{name: "plain session", hasShutdown: true, wantShutdownCalls: 1},
+		{name: "bubble session", hasShutdown: true, wantShutdownCalls: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			shutdownCalls := 0
-			fallbackRestorations := 0
-			ownedRestorations := 0
-			session := devOutputSession{restoresTerminal: test.restoresTerminal}
+			session := devOutputSession{}
 			if test.hasShutdown {
 				session.shutdown = func() {
 					shutdownCalls++
-					if test.restoresTerminal {
-						ownedRestorations++
-					}
 				}
 			}
 
-			finishDevOutputSession(session, func() {
-				fallbackRestorations++
-			})
+			finishDevOutputSession(session)
 
 			if shutdownCalls != test.wantShutdownCalls {
 				t.Fatalf("shutdown calls = %d, want %d", shutdownCalls, test.wantShutdownCalls)
-			}
-			if fallbackRestorations != test.wantFallbackRestoration {
-				t.Fatalf("fallback restorations = %d, want %d", fallbackRestorations, test.wantFallbackRestoration)
-			}
-			if got := ownedRestorations + fallbackRestorations; got != 1 {
-				t.Fatalf("terminal restorations = %d, want exactly 1", got)
 			}
 		})
 	}
