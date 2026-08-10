@@ -206,6 +206,9 @@ func TestDevSetupAndTeardownTasksUseCoordinatedLoaders(t *testing.T) {
 			t.Fatalf("lifecycle output retained redundant orchestration line %q: %q", unexpected, output.String())
 		}
 	}
+	if strings.HasSuffix(output.String(), "\n\n") {
+		t.Fatalf("final teardown output retained an extra blank line: %q", output.String())
+	}
 	if got := strings.Count(output.String(), "\r\x1b[2K"); got < 4 {
 		t.Fatalf("lifecycle loader clear writes = %d, want at least 4: %q", got, output.String())
 	}
