@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"{{ .GoModuleName }}/internal/runtime"
 	"{{ .GoModuleName }}/internal/inspects"
 	"{{ .GoModuleName }}/internal/logger"
+	"{{ .GoModuleName }}/internal/runtime"
 )
 
 func captureStderr(t *testing.T, fn func()) string {
@@ -164,7 +164,13 @@ func TestAppLoggerJSONFormat(t *testing.T) {
 
 	output := captureStderr(t, func() {
 		appLogger := logger.NewAppLogger()
-		appLogger.Info().Str("route", "/api/v1").Msg("Registering route")
+		appLogger.Info().
+			CompactValues(":3000", "23 routes").
+			Str("route", "/api/v1").
+			Str("host", "0.0.0.0").
+			Str("port", "3000").
+			Int("count", 23).
+			Msg("Registering route")
 	})
 	output = strings.TrimSpace(output)
 
@@ -189,6 +195,18 @@ func TestAppLoggerJSONFormat(t *testing.T) {
 	}
 	if payload["route"] != "/api/v1" {
 		t.Fatalf("expected route field, got %#v", payload["route"])
+	}
+	if payload["host"] != "0.0.0.0" {
+		t.Fatalf("expected host field, got %#v", payload["host"])
+	}
+	if payload["port"] != "3000" {
+		t.Fatalf("expected port field, got %#v", payload["port"])
+	}
+	if payload["count"] != float64(23) {
+		t.Fatalf("expected numeric count field, got %#v", payload["count"])
+	}
+	if _, ok := payload["compact"]; ok {
+		t.Fatalf("did not expect console projection metadata, got %#v", payload)
 	}
 	if _, ok := payload["caller"]; !ok {
 		t.Fatalf("expected caller field, got %#v", payload)
@@ -358,19 +376,21 @@ func TestAppLoggerCompactKeepsStructuredFields(t *testing.T) {
 			entries = append(entries, entry)
 		})
 		appLogger.Info().
-			Compact().
-			Str("listen", ":3000").
-			Str("routes", "23 routes").
+			CompactValues(":3000", "23 routes").
+			Str("host", "0.0.0.0").
+			Str("port", "3000").
+			Str("addr", "0.0.0.0:3000").
+			Int("count", 23).
 			Msg("HTTP server started")
 	})
 	output = stripANSI(output)
 	if !strings.Contains(output, "HTTP server started → :3000 · 23 routes") {
 		t.Fatalf("expected compact console fields, got %q", output)
 	}
-	if strings.Contains(output, "listen=") || strings.Contains(output, "routes=") {
+	if strings.Contains(output, "host=") || strings.Contains(output, "count=") {
 		t.Fatalf("compact console output retained field labels: %q", output)
 	}
-	if len(entries) != 1 || entries[0].Fields["listen"] != ":3000" || entries[0].Fields["routes"] != "23 routes" {
+	if len(entries) != 1 || entries[0].Fields["host"] != "0.0.0.0" || entries[0].Fields["port"] != "3000" || entries[0].Fields["addr"] != "0.0.0.0:3000" || entries[0].Fields["count"] != 23 {
 		t.Fatalf("compact event lost structured sink fields: %#v", entries)
 	}
 }

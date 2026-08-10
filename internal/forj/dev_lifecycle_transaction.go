@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -64,12 +65,20 @@ func installDevLifecycleReadinessToken() (func(), error) {
 	}, nil
 }
 
+// inheritDevLifecycleReadinessToken adds the private handshake to the launcher snapshot used by replacement environments.
+func inheritDevLifecycleReadinessToken(environment processEnvironment) {
+	token := strings.TrimSpace(os.Getenv(devLifecycleReadyEnv))
+	if token != "" {
+		environment[devLifecycleReadyEnv] = token
+	}
+}
+
 // waitDevLifecycleReadiness keeps startup output inside the transaction until a conventional HTTP App is serving.
 func waitDevLifecycleReadiness(ctx context.Context, config *project.Config, controller *devWatcherController) error {
 	if !devLifecycleNeedsHTTPReadiness(config, controller) {
 		return nil
 	}
-	readinessURL, err := devLifecycleReadinessURL(resolveAPIURL(snapshotProcessEnv()))
+	readinessURL, err := devLifecycleReadinessURL(snapshotProcessEnv())
 	if err != nil {
 		return err
 	}
@@ -119,20 +128,27 @@ func devLifecycleNeedsHTTPReadiness(config *project.Config, controller *devWatch
 	return false
 }
 
-// devLifecycleReadinessURL probes the framework-owned root path even when a public App URL includes a path prefix.
-func devLifecycleReadinessURL(appURL string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(appURL))
-	if err != nil {
-		return "", fmt.Errorf("parse App URL for readiness: %w", err)
+// devLifecycleReadinessURL targets the local listener independently from the public App URL used for links.
+func devLifecycleReadinessURL(environment map[string]string) (string, error) {
+	host := strings.TrimSpace(envValue(environment, "API_HTTP_HOST"))
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	default:
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("parse App URL for readiness: absolute URL required")
+	port := strings.TrimSpace(envValue(environment, "API_HTTP_PORT"))
+	if port == "" {
+		port = strings.TrimSpace(envValue(environment, "PORT"))
 	}
-	parsed.Path = devLifecycleReadyPath
-	parsed.RawPath = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), nil
+	if port == "" {
+		port = "3000"
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", fmt.Errorf("prepare App readiness probe: invalid HTTP port %q", port)
+	}
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: devLifecycleReadyPath}).String(), nil
 }
 
 // newDevStartupTransaction describes the first watcher generation without exposing its internal state changes.

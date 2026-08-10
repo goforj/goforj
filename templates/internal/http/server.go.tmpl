@@ -120,9 +120,11 @@ func (s *Server) Serve(ctx context.Context, host string, port string) error {
 
 	routeCount := len(web.BuildRouteEntries(s.groups))
 	s.logger.Info().
-		Compact().
-		Str("listen", httpListenAddress(host, port)).
-		Str("routes", fmt.Sprintf("%d %s", routeCount, pluralizeHTTPRoutes(routeCount))).
+		CompactValues(httpListenAddress(host, port), fmt.Sprintf("%d %s", routeCount, pluralizeHTTPRoutes(routeCount))).
+		Any("host", host).
+		Any("port", port).
+		Any("addr", addr).
+		Any("count", routeCount).
 		Msg("HTTP server started")
 	err = server.Serve(ctx)
 	if err != nil {
