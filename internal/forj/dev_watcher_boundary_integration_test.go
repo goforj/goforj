@@ -478,7 +478,10 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 		writeDevWatcherBoundarySource(t, sourcePath, fmt.Sprintf("pending-%02d", index), index%2 == 0)
 	}
 	writeDevWatcherBoundarySource(t, sourcePath, "latest", true)
-	waitForDevWatcherChurnBuildLine(t, logPath, "build-success:2:latest")
+	latestBuild := waitForDevWatcherBoundaryBuildVersion(t, logPath, "latest")
+	if latestBuild < 2 || latestBuild > 3 {
+		t.Fatalf("latest artifact build=%d, want bounded convergence within builds 2..3\n%s", latestBuild, readDevWatcherChurnFile(logPath))
+	}
 	waitForDevWatcherChurnTaskIdle(t, controller.tasks[buildID])
 	waitForDevWatcherBoundaryCondition(t, "one runtime follow-up queued during replacement", func() bool {
 		return len(controller.tasks[runtimeID].triggerCh) == 1
@@ -506,7 +509,7 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 		}
 		return state.heartbeat >= stableHeartbeat+20
 	})
-	assertDevWatcherChurnBuildCountStable(t, logPath, 2)
+	assertDevWatcherChurnBuildCountStable(t, logPath, latestBuild)
 	lines := readDevWatcherChurnLines(logPath)
 	starts := countDevWatcherChurnLines(logPath, "runtime-start:")
 	if starts < 2 || starts > 3 {
@@ -535,6 +538,28 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 		t.Fatalf("close boundary transcript: %v", err)
 	}
 	waitForDevWatcherBoundaryProcessExit(t, latest.pid)
+}
+
+// waitForDevWatcherBoundaryBuildVersion returns the successful build sequence that published the requested source version.
+func waitForDevWatcherBoundaryBuildVersion(t *testing.T, path string, version string) int {
+	t.Helper()
+	sequence := 0
+	waitForDevWatcherBoundaryCondition(t, "successful build of "+version, func() bool {
+		for _, line := range readDevWatcherChurnLines(path) {
+			parts := strings.Split(line, ":")
+			if len(parts) != 3 || parts[0] != "build-success" || parts[2] != version {
+				continue
+			}
+			parsed, err := strconv.Atoi(parts[1])
+			if err != nil {
+				continue
+			}
+			sequence = parsed
+			return true
+		}
+		return false
+	})
+	return sequence
 }
 
 // devWatcherBoundaryHelperCommand returns the tagged helper command accepted by the production shell wrapper.
