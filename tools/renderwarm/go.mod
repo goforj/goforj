@@ -16,7 +16,7 @@ require (
 	github.com/goforj/cache/driver/rediscache v0.4.0
 	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
-	github.com/goforj/env/v2 v2.6.0
+	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/events v0.2.0
 	github.com/goforj/events/eventscore v0.2.0
 	github.com/goforj/httpx v1.1.0

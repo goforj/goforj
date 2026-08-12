@@ -40,6 +40,8 @@ type Server struct {
 	readinessChecks []ReadinessCheck
 	consoleHub      *lighthouse.Hub
 	httpAccessLogs  bool
+	spaAccessLogs   bool
+	spas            []Spa
 	appTimeouts     *runtime.Timeouts
 {{- if .ProjectComponents.Storage }}
 	storage         *storages.Manager
@@ -74,7 +76,9 @@ func NewServer(
 		logger:          componentLogger,
 		readinessChecks: readinessChecks,
 		consoleHub:      consoleHub,
-		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
+		httpAccessLogs:  env.GetBool("HTTP_ACCESS_LOG_ENABLED", "true"),
+		spaAccessLogs:   env.GetBool("HTTP_SPA_ACCESS_LOG_ENABLED", "false"),
+		spas:            append([]Spa(nil), GetSpas()...),
 		appTimeouts:     appTimeouts,
 {{- if .ProjectComponents.Storage }}
 		storage:         storage,
@@ -177,6 +181,14 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	if isInternalDevwatch {
 		return nil
 	}
+	if !s.spaAccessLogs && len(s.spas) > 0 && suppressRoutineSPAAccessLog(r.Path(), v, s.spas) {
+		return nil
+	}
+{{- if .ProjectComponents.Metrics }}
+	if suppressRoutineFrameworkAccessLog(v.URI, v.Method, v.Status, v.Error) {
+		return nil
+	}
+{{- end }}
 	if isGoForjDevReadinessProbe(r) {
 		return nil
 	}
@@ -186,15 +198,39 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	return nil
 }
 
+// suppressRoutineSPAAccessLog keeps successful SPA delivery quiet unless the App explicitly enables it.
+func suppressRoutineSPAAccessLog(route string, values webmiddleware.RequestLoggerValues, spas []Spa) bool {
+	if values.Error != nil || !successfulHTTPAccessLogStatus(values.Status) ||
+		(values.Method != http.MethodGet && values.Method != http.MethodHead) {
+		return false
+	}
+	for index := range spas {
+		if route == spas[index].baseUri {
+			return true
+		}
+	}
+	return false
+}
+
+// successfulHTTPAccessLogStatus treats cache validation as successful delivery without hiding redirects.
+func successfulHTTPAccessLogStatus(status int) bool {
+	return status >= http.StatusOK && status < http.StatusMultipleChoices || status == http.StatusNotModified
+}
+
+{{- if .ProjectComponents.Metrics }}
+// suppressRoutineFrameworkAccessLog keeps successful automated framework traffic out of the application access stream while preserving failures and unexpected requests.
+func suppressRoutineFrameworkAccessLog(uri string, method string, status int, requestErr error) bool {
+	if uri != "/metrics" || requestErr != nil || !successfulHTTPAccessLogStatus(status) {
+		return false
+	}
+	return method == http.MethodGet || method == http.MethodHead
+}
+{{- end }}
+
 // isGoForjDevReadinessProbe authenticates private dev-loop traffic so ordinary health requests remain observable.
 func isGoForjDevReadinessProbe(r web.Context) bool {
 	token := strings.TrimSpace(env.Get("GOFORJ_DEV_READINESS_TOKEN", ""))
 	return token != "" && r.Request().Header.Get("X-GoForj-Dev-Readiness") == token
-}
-
-func resolveHTTPAccessLogsEnabled() bool {
-	raw := str.Of(env.Get("HTTP_ACCESS_LOG_ENABLED", "true")).Trim().ToLower().String()
-	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
 }
 
 // logHTTPErrorResponses captures local error response bodies for debugging.
@@ -337,7 +373,7 @@ func (w *httpErrorCaptureResponseWriter) Body() []byte {
 // mountSinglePageApplications mounts SPA/static application surfaces.
 func (s *Server) mountSinglePageApplications(router web.Router) error {
 	// register single page applications
-	for _, spa := range GetSpas() {
+	for _, spa := range s.spas {
 		handler := webmiddleware.StaticWithConfig(webmiddleware.StaticConfig{
 			HTML5:      true,
 			Root:       spa.FileRoot(),

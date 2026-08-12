@@ -2,6 +2,12 @@ package http
 
 import (
 	"bytes"
+	"errors"
+	"net/http"
+	{{- if .ProjectComponents.Metrics }}
+	"os"
+	{{- end }}
+	"time"
 	"testing"
 
 	{{- if .ProjectComponents.Storage }}
@@ -11,6 +17,7 @@ import (
 	"github.com/goforj/web/webtest"
 	"github.com/goforj/web/webmiddleware"
 	"github.com/stretchr/testify/assert"
+	"{{ .GoModuleName }}/internal/logger"
 	"{{ .GoModuleName }}/internal/runtime"
 )
 
@@ -43,6 +50,182 @@ func TestLogSuppressesAuthenticatedDevReadinessProbe(t *testing.T) {
 	ctx.Request().Header.Set("X-GoForj-Dev-Readiness", "untrusted-token")
 	assert.False(t, isGoForjDevReadinessProbe(ctx))
 }
+
+// TestSuppressRoutineSPAAccessLog verifies only successful registered SPA routes are quiet by default.
+func TestSuppressRoutineSPAAccessLog(t *testing.T) {
+	spas := []Spa{
+		{baseUri: "/*"},
+		{baseUri: "/admin/*"},
+	}
+	tests := []struct {
+		name    string
+		route   string
+		values  webmiddleware.RequestLoggerValues
+		spas    []Spa
+		want    bool
+	}{
+		{name: "successful SPA asset", route: "/*", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusOK}, want: true},
+		{name: "successful additional SPA asset", route: "/admin/*", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusOK}, want: true},
+		{name: "cached SPA asset", route: "/*", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusNotModified}, want: true},
+		{name: "failed SPA asset", route: "/*", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusNotFound}, want: false},
+		{name: "SPA handler error", route: "/*", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusOK, Error: errors.New("delivery failed")}, want: false},
+		{name: "application request", route: "/api/v1/reports", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusOK}, want: false},
+		{name: "no registered SPAs", route: "/*", values: webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusOK}, spas: []Spa{}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			registered := spas
+			if test.spas != nil {
+				registered = test.spas
+			}
+			assert.Equal(t, test.want, suppressRoutineSPAAccessLog(test.route, test.values, registered))
+		})
+	}
+}
+
+// BenchmarkSuppressRoutineSPAAccessLog guards registered-route and ordinary request checks against allocations.
+func BenchmarkSuppressRoutineSPAAccessLog(b *testing.B) {
+	spas := []Spa{
+		{baseUri: "/*"},
+	}
+	values := webmiddleware.RequestLoggerValues{Method: http.MethodGet, Status: http.StatusOK}
+	for _, benchmark := range []struct {
+		name  string
+		route string
+		want  bool
+	}{
+		{name: "application_request", route: "/api/v1/reports"},
+		{name: "SPA_request", route: "/*", want: true},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if got := suppressRoutineSPAAccessLog(benchmark.route, values, spas); got != benchmark.want {
+					b.Fatalf("suppressRoutineSPAAccessLog() = %t, want %t", got, benchmark.want)
+				}
+			}
+		})
+	}
+}
+
+// TestLogSuppressesOnlySuccessfulSPATraffic verifies env policy does not hide SPA failures or application requests.
+func TestLogSuppressesOnlySuccessfulSPATraffic(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_DEDUPE_ENABLED", "false")
+	entries := make([]logger.LogEntry, 0, 2)
+	appLogger := logger.NewAppLogger()
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+	server := &Server{logger: appLogger, httpAccessLogs: true}
+	spaContext := webtest.NewContext(nil, nil, "/assets/*", nil)
+	appContext := webtest.NewContext(nil, nil, "/api/v1/reports", nil)
+	server.spas = []Spa{
+		{baseUri: "/assets/*"},
+	}
+
+	assert.NoError(t, server.Log(spaContext, webmiddleware.RequestLoggerValues{
+		URI: "/assets/app.js", Method: http.MethodGet, Status: http.StatusOK, Latency: time.Millisecond,
+	}))
+	assert.Empty(t, entries)
+
+	assert.NoError(t, server.Log(spaContext, webmiddleware.RequestLoggerValues{
+		URI: "/assets/missing.js", Method: http.MethodGet, Status: http.StatusNotFound, Latency: time.Millisecond,
+	}))
+	assert.NoError(t, server.Log(appContext, webmiddleware.RequestLoggerValues{
+		URI: "/api/v1/reports", Method: http.MethodGet, Status: http.StatusOK, Latency: time.Millisecond,
+	}))
+	assert.Len(t, entries, 2)
+
+	server.spaAccessLogs = true
+	assert.NoError(t, server.Log(spaContext, webmiddleware.RequestLoggerValues{
+		URI: "/assets/app.js", Method: http.MethodGet, Status: http.StatusOK, Latency: time.Millisecond,
+	}))
+	assert.Len(t, entries, 3)
+}
+
+{{- if .ProjectComponents.Metrics }}
+// TestSuppressRoutineFrameworkAccessLog verifies only successful framework-owned scrapes bypass access logging.
+func TestSuppressRoutineFrameworkAccessLog(t *testing.T) {
+	tests := []struct {
+		name       string
+		uri        string
+		method     string
+		status     int
+		requestErr error
+		want       bool
+	}{
+		{name: "successful metrics scrape", uri: "/metrics", method: http.MethodGet, status: http.StatusOK, want: true},
+		{name: "successful metrics head", uri: "/metrics", method: http.MethodHead, status: http.StatusNoContent, want: true},
+		{name: "failed metrics scrape", uri: "/metrics", method: http.MethodGet, status: http.StatusInternalServerError, want: false},
+		{name: "metrics handler error", uri: "/metrics", method: http.MethodGet, status: http.StatusOK, requestErr: errors.New("scrape failed"), want: false},
+		{name: "unexpected metrics method", uri: "/metrics", method: http.MethodPost, status: http.StatusMethodNotAllowed, want: false},
+		{name: "manual metrics query", uri: "/metrics?debug=true", method: http.MethodGet, status: http.StatusOK, want: false},
+		{name: "application request", uri: "/api/v1/reports", method: http.MethodGet, status: http.StatusOK, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, suppressRoutineFrameworkAccessLog(test.uri, test.method, test.status, test.requestErr))
+		})
+	}
+}
+
+// BenchmarkSuppressRoutineFrameworkAccessLog guards the request hot path against allocations and expensive matching.
+func BenchmarkSuppressRoutineFrameworkAccessLog(b *testing.B) {
+	b.Run("application_request", func(b *testing.B) {
+		uri := benchmarkAccessLogURI("/api/v1/reports")
+		b.ReportAllocs()
+		for b.Loop() {
+			if suppressRoutineFrameworkAccessLog(uri, http.MethodGet, http.StatusOK, nil) {
+				b.Fatal("application request was suppressed")
+			}
+		}
+	})
+	b.Run("metrics_scrape", func(b *testing.B) {
+		uri := benchmarkAccessLogURI("/metrics")
+		b.ReportAllocs()
+		for b.Loop() {
+			if !suppressRoutineFrameworkAccessLog(uri, http.MethodGet, http.StatusOK, nil) {
+				b.Fatal("metrics scrape was not suppressed")
+			}
+		}
+	})
+}
+
+// benchmarkAccessLogURI prevents constant folding from hiding the real exact-match cost.
+func benchmarkAccessLogURI(fallback string) string {
+	if value := os.Getenv("GOFORJ_BENCHMARK_ACCESS_LOG_URI"); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// TestLogSuppressesOnlyRoutineFrameworkMetricsTraffic verifies the logger boundary preserves failures and application requests.
+func TestLogSuppressesOnlyRoutineFrameworkMetricsTraffic(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_DEDUPE_ENABLED", "false")
+	entries := make([]logger.LogEntry, 0, 2)
+	appLogger := logger.NewAppLogger()
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+	server := &Server{logger: appLogger, httpAccessLogs: true}
+	ctx := webtest.NewContext(nil, nil, "/metrics", nil)
+
+	assert.NoError(t, server.Log(ctx, webmiddleware.RequestLoggerValues{
+		URI: "/metrics", Method: http.MethodGet, Status: http.StatusOK, Latency: time.Millisecond,
+	}))
+	assert.Empty(t, entries)
+
+	assert.NoError(t, server.Log(ctx, webmiddleware.RequestLoggerValues{
+		URI: "/metrics", Method: http.MethodGet, Status: http.StatusInternalServerError, Latency: time.Millisecond,
+	}))
+	assert.NoError(t, server.Log(ctx, webmiddleware.RequestLoggerValues{
+		URI: "/api/v1/reports", Method: http.MethodGet, Status: http.StatusOK, Latency: time.Millisecond,
+	}))
+	assert.Len(t, entries, 2)
+}
+{{- end }}
 
 {{- if .ProjectComponents.Storage }}
 
