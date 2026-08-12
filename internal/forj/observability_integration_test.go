@@ -51,7 +51,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	renderedDefaultTargets := readRenderedFile(t, projectDir, "containers/observability/vmagent/metrics-targets.json")
 	for _, token := range []string{
-		"host.docker.internal:3000",
+		"host.docker.internal:10000",
 		`"process": "app"`,
 		`"service": "Observability Test App"`,
 		`"environment": "local"`,
@@ -82,6 +82,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"grafana-seed:",
 		"stop_grace_period: 1s",
 		"build:\n      context: ./containers/observability/vmagent",
+		"./containers/observability/vmagent:/etc/vmagent:ro",
 		"victoriametrics:/victoria-metrics-data",
 		"build:\n      context: ./containers/observability/grafana",
 		"grafana:/var/lib/grafana",
@@ -107,7 +108,6 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"image: victoriametrics/vmagent:v1.120.0",
 		"image: grafana/grafana:12.0.2",
 		"image: curlimages/curl:8.10.1",
-		"./containers/observability/vmagent:/etc/vmagent:ro",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
 		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
@@ -173,7 +173,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	metricsTargetsJSON := readRenderedFile(t, projectDir, "containers/observability/vmagent/metrics-targets.json")
 	for _, token := range []string{
-		"host.docker.internal:3000",
+		"host.docker.internal:10000",
 		`"process": "app"`,
 		`"service": "Observability Test App"`,
 		`"environment": "local"`,
@@ -535,9 +535,9 @@ func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
 
 	targets := readRenderedMetricsTargets(t, projectDir)
 	want := []renderedMetricsTarget{
-		{App: "app", Process: "app", Target: "host.docker.internal:3000"},
-		{App: "billing", Process: "app", Target: "host.docker.internal:3001"},
-		{App: "customer-portal", Process: "app", Target: "host.docker.internal:3002"},
+		{App: "app", Process: "app", Target: "host.docker.internal:10000"},
+		{App: "billing", Process: "app", Target: "host.docker.internal:10010"},
+		{App: "customer-portal", Process: "app", Target: "host.docker.internal:10020"},
 	}
 	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
 

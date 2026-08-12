@@ -33,6 +33,8 @@
       context: ./containers/observability/vmagent
     environment:
       - TZ=${TZ:-UTC}
+    volumes:
+      - ./containers/observability/vmagent:/etc/vmagent:ro
     depends_on:
       - victoriametrics
     extra_hosts:

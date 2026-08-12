@@ -53,7 +53,6 @@ type observabilityApp struct {
 	Name        string
 	Index       int
 	EnvPrefix   string
-	HTTPPort    int
 	RuntimeBase int
 	Components  project.Components
 }
@@ -260,7 +259,7 @@ func buildMetricsTargets(input generationInput) (observabilityTargetPlan, error)
 func (r observabilityTargetResolver) buildStandaloneTargets(plan observabilityAppTargetPlan) ([]metricsTargetEntry, error) {
 	entries := make([]metricsTargetEntry, 0, len(plan.applications))
 	for _, app := range plan.applications {
-		port, err := r.resolveStandaloneMetricsPort(app, plan.activeRoles)
+		port, err := r.resolveStandaloneMetricsPort(app)
 		if err != nil {
 			return nil, err
 		}
@@ -328,7 +327,6 @@ func discoverObservabilityApps(projectDir string, config *project.Config, active
 			Name:        app.Name,
 			Index:       index,
 			EnvPrefix:   project.AppEnvironmentPrefix(app.Name),
-			HTTPPort:    3000 + index,
 			RuntimeBase: 10000 + index*10,
 			Components:  observabilityAppComponents(config, app.Name, activeRoles),
 		})
@@ -478,18 +476,8 @@ func (r observabilityTargetResolver) resolveComposeMetricsHost(role metricsTarge
 	return role.Name, true
 }
 
-// resolveStandaloneMetricsPort prefers the HTTP listener because app run exposes /metrics there when HTTP is present.
-func (r observabilityTargetResolver) resolveStandaloneMetricsPort(app observabilityApp, activeRoles []metricsTargetRole) (string, error) {
-	if containsObservabilityRole(activeRoles, "api") {
-		if match, ok := r.firstEnvTrimmed(observabilityAppEnvKeys(app, "PORT", "API_HTTP_PORT")); ok {
-			port, err := strconv.Atoi(match.value)
-			if err != nil {
-				return "", fmt.Errorf("invalid %s %q: %w", match.key, match.value, err)
-			}
-			return strconv.Itoa(port), nil
-		}
-		return strconv.Itoa(app.HTTPPort), nil
-	}
+// resolveStandaloneMetricsPort keeps automated scrapes on the App's dedicated metrics listener instead of its public HTTP middleware path.
+func (r observabilityTargetResolver) resolveStandaloneMetricsPort(app observabilityApp) (string, error) {
 	return r.resolveAppRolePort(metricsTargetRole{Name: "api", Offset: 0}, app)
 }
 

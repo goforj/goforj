@@ -72,6 +72,7 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 
 - `forj generate --observability` writes `containers/observability/vmagent/metrics-targets.json`.
 - `vmagent` reads that file through Prometheus file-based service discovery.
+- The generated development Compose service mounts the vmagent configuration directory read-only, so atomic target updates are visible without rebuilding or recreating the container.
 - Target generation is controlled by `OBSERVABILITY_METRICS_TARGET_MODE`:
   - `auto`
     - chooses `local-single`, matching the combined `app run` command
@@ -79,9 +80,9 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
   - `local-single`
     - one generated target per app
     - intended for standalone host mode
-    - default app for `app`: `http://host.docker.internal:3000/metrics` when the HTTP source is present
-    - default for the first additional app: `http://host.docker.internal:3001/metrics` when the HTTP source is present
-    - otherwise defaults to that app's shared metrics port, such as `10000` for the default app or `10010` for the first additional app
+    - scrapes the App's dedicated metrics listener so automated collection stays outside the public HTTP middleware and access logs
+    - default app for `app`: `http://host.docker.internal:10000/metrics`
+    - default for the first additional app: `http://host.docker.internal:10010/metrics`
     - generated labels: `process=app` and `app=<app>`
   - `local-multi`
     - one host, one target per app and source role

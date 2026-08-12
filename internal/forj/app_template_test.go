@@ -556,6 +556,7 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 	for _, snippet := range []string{
 		`runtime.NewRuntimeHost(runtimes...).Run(ctx)`,
 		`DisableMetricsEndpoint: true,`,
+		`metrics.StartPrometheusEndpoint(ctx, metricsLogger, "app", runtime.MetricsPort(), c.metricsManager.Registry())`,
 		`type RunCmd struct {`,
 		`func NewRunCmd(`,
 		`httpRuntime *http.Runtime`,
@@ -570,6 +571,7 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 		`exec.Command(`,
 		`os.Executable()`,
 		`FORJ_SUBPROCESS=1`,
+		`c.httpRuntime == nil`,
 	} {
 		if strings.Contains(source, snippet) {
 			t.Fatalf("did not expect run_cmd template to contain %q", snippet)

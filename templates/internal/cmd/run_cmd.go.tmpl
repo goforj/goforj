@@ -121,7 +121,7 @@ func (c *RunCmd) Run(ctx context.Context) error {
 	}
 
 {{- if .ProjectComponents.Metrics }}
-	if c.metricsManager != nil && c.metricsManager.Registry() != nil && c.httpRuntime == nil {
+	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
 		metricsLogger := c.logger
 		if metricsLogger != nil {
 			metricsLogger = metricsLogger.WithComponent("Metrics")

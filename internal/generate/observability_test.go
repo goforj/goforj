@@ -35,9 +35,23 @@ func TestGenerateObservabilityFilesWritesSingleProcessTargetsByDefaultInStandalo
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "app", target: "metrics.internal:3200"},
+		{process: "app", target: "metrics.internal:9200"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "staging", want)
+}
+
+// TestGenerateObservabilityFilesRejectsInvalidStandaloneMetricsPort verifies a bad scrape listener cannot silently fall back to public HTTP traffic.
+func TestGenerateObservabilityFilesRejectsInvalidStandaloneMetricsPort(t *testing.T) {
+	projectDir := observabilityTestProjectDir(t, "http")
+
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "local-single")
+	t.Setenv("METRICS_PORT", "not-a-port")
+	t.Setenv("API_HTTP_PORT", "3200")
+
+	_, err := GenerateObservabilityFiles(projectDir)
+	if err == nil || !strings.Contains(err.Error(), `invalid METRICS_PORT "not-a-port"`) {
+		t.Fatalf("GenerateObservabilityFiles error = %v, want invalid dedicated metrics port", err)
+	}
 }
 
 // TestGenerateObservabilityFilesWritesLocalMultiTargetsWhenExplicitlySelected keeps process layout tied to the selected commands.
@@ -87,9 +101,9 @@ func TestGenerateObservabilityFilesWritesStandaloneTargetsForConventionalApps(t 
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "app", appName: "app", target: "host.docker.internal:3000"},
-		{process: "app", appName: "billing", target: "host.docker.internal:3001"},
-		{process: "app", appName: "customer-portal", target: "host.docker.internal:3002"},
+		{process: "app", appName: "app", target: "host.docker.internal:10000"},
+		{process: "app", appName: "billing", target: "host.docker.internal:10010"},
+		{process: "app", appName: "customer-portal", target: "host.docker.internal:10020"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
@@ -180,7 +194,7 @@ func TestGenerateObservabilityFilesFiltersLocalMultiTargetsByAppComponents(t *te
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }
 
-// TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode verifies explicit combined-process mode follows the HTTP listener.
+// TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode verifies explicit combined-process mode follows the dedicated metrics listener.
 func TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http")
 
@@ -201,7 +215,7 @@ func TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode(t 
 
 	targets := readMetricsTargets(t, projectDir)
 	want := []metricsTargetWant{
-		{process: "app", target: "host.docker.internal:3300"},
+		{process: "app", target: "host.docker.internal:9300"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }

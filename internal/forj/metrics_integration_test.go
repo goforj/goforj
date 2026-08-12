@@ -119,6 +119,46 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	}
 }
 
+func TestRenderedCombinedAppUsesSharedMetricsEndpoint(t *testing.T) {
+	projectDir := t.TempDir()
+	renderMetricsTestApp(t, projectDir)
+
+	binPath := buildRenderedDefaultApp(t, projectDir, nil, "build rendered combined app")
+	httpAddr := findFreeAddr(t)
+	_, httpPort, err := net.SplitHostPort(httpAddr)
+	if err != nil {
+		t.Fatalf("split combined HTTP addr: %v", err)
+	}
+	metricsAddr := findFreeAddr(t)
+	_, metricsPort, err := net.SplitHostPort(metricsAddr)
+	if err != nil {
+		t.Fatalf("split combined metrics addr: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binPath, "run")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, map[string]string{
+		"API_HTTP_PORT": httpPort,
+		"METRICS_PORT":  metricsPort,
+	})
+	handle := &procHandle{name: "combined-app", cmd: cmd, cancel: cancel}
+	cmd.Stdout = &handle.stdout
+	cmd.Stderr = &handle.stderr
+	if err := handle.Start(); err != nil {
+		t.Fatalf("start combined app: %v", err)
+	}
+	defer stopProcAsync(t, "combined-app", handle, time.Second)
+
+	if err := waitForHTTPStatus(handle, "http://127.0.0.1:"+httpPort+"/-/health", http.StatusOK, 5*time.Second); err != nil {
+		t.Fatalf("combined app HTTP endpoint: %v", err)
+	}
+	if err := waitForHTTPStatus(handle, "http://127.0.0.1:"+metricsPort+"/metrics", http.StatusOK, 5*time.Second); err != nil {
+		t.Fatalf("combined app metrics endpoint: %v", err)
+	}
+}
+
 func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{

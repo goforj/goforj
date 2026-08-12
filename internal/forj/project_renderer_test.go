@@ -339,7 +339,7 @@ func TestObservabilityDockerfilesBakeRuntimeAssets(t *testing.T) {
 	}
 	template := string(data)
 	for _, token := range []string{
-		"host.docker.internal:3000",
+		"host.docker.internal:10000",
 		`"app": "app"`,
 		`"environment": "local"`,
 		`"process": "app"`,
