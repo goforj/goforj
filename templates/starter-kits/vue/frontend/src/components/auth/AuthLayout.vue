@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import { appName } from '@/lib/app'
-import logoMark from '@/assets/goforj-logo.png'
+import logoDark from '@/assets/goforj-tile-dark.svg'
+import logoLight from '@/assets/goforj-tile-light.svg'
+import ThemeLogo from '@/components/ThemeLogo.vue'
 
 defineProps<{
   title: string
@@ -14,7 +16,7 @@ defineProps<{
     <div class="flex w-full max-w-sm flex-col gap-8">
       <div class="flex flex-col items-center gap-4">
         <RouterLink to="/" class="flex flex-col items-center gap-2 font-medium">
-          <img :src="logoMark" alt="" class="size-12 object-contain" />
+          <ThemeLogo :light-src="logoLight" :dark-src="logoDark" class="grid size-12" />
           <span class="sr-only">{{ appName }}</span>
         </RouterLink>
 

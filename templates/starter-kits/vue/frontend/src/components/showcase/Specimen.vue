@@ -33,9 +33,9 @@ const anchor = computed(() => slugify(props.name))
     :class="cn('scroll-mt-24 overflow-hidden rounded-xl border bg-card', props.class)"
   >
     <header class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-2.5">
-      <a :href="`#${anchor}`" class="text-sm font-medium text-foreground hover:underline underline-offset-4">
-        {{ name }}
-      </a>
+      <h2 class="text-sm font-medium text-foreground">
+        <a :href="`#${anchor}`" class="hover:underline underline-offset-4">{{ name }}</a>
+      </h2>
       <SpecimenSource v-if="source" :name="name" :path="path" :source="source" />
     </header>
 

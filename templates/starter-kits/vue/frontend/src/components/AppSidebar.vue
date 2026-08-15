@@ -7,7 +7,8 @@ import NavDocuments from './NavDocuments.vue'
 import NavMain from './NavMain.vue'
 import NavSecondary from './NavSecondary.vue'
 import NavUser from './NavUser.vue'
-import goforjLogo from '../assets/goforj-logo.png'
+import goforjLogoDark from '../assets/goforj-tile-dark.svg'
+import goforjLogoLight from '../assets/goforj-tile-light.svg'
 import { appName, resourceLinks } from '@/lib/app'
 import { appNavMain } from '@/lib/navigation'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from './ui/sidebar'
@@ -44,7 +45,13 @@ const navSecondary = [
   },
 ]
 
-const brand = { name: appName, logoSrc: goforjLogo, logoCollapsedSrc: goforjLogo }
+const brand = {
+  name: appName,
+  logoSrc: goforjLogoLight,
+  logoDarkSrc: goforjLogoDark,
+  logoCollapsedSrc: goforjLogoLight,
+  logoCollapsedDarkSrc: goforjLogoDark,
+}
 
 defineEmits<{
   (event: 'logout'): void

@@ -7,9 +7,9 @@
           <Badge variant="outline" class="border-border/70 text-foreground dark:border-white/20 dark:text-white">Local shadcn-vue source</Badge>
         </div>
         <div class="grid max-w-3xl gap-3">
-          <CardTitle class="text-3xl font-semibold tracking-tight md:text-5xl">
+          <h1 class="text-3xl font-semibold leading-tight tracking-tight md:text-5xl">
             Start from an application shell that already feels production-ready.
-          </CardTitle>
+          </h1>
           <CardDescription class="max-w-2xl text-base text-muted-foreground dark:text-slate-300">
             Vue, Vite, Tailwind, and shadcn-vue source files are rendered directly into your app so your team can inspect, adapt, or replace every layer.
           </CardDescription>
