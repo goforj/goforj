@@ -1,0 +1,157 @@
+schema_version: 2
+id: invoice-domain
+title: Invoice Domain
+description: Establish an invoice repository and service that remain independent from HTTP.
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    This reusable fixture establishes invoice lookup behavior before a transport is added.
+  before: |
+    the App has its generated runtime but no invoice behavior.
+  after: |
+    the App can find invoices through a service and repository without depending on HTTP.
+  files:
+    - internal/invoices/invoice.go
+    - internal/invoices/repository.go
+    - internal/invoices/service.go
+    - internal/invoices/service_test.go
+    - app/wire/inject_services_app.go
+  common_mistakes:
+    - Do not move repository lookup behavior into an HTTP controller.
+    - Do not edit `app/wire/wire_gen.go` by hand.
+steps:
+  - id: add-invoice-model
+    title: Add the invoice model
+    write:
+      path: internal/invoices/invoice.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        // Invoice is the application-facing invoice representation.
+        type Invoice struct {
+                ID         string `json:"id"`
+                CustomerID string `json:"customer_id"`
+                TotalCents int64  `json:"total_cents"`
+                Status     string `json:"status"`
+        }
+
+  - id: add-invoice-repository
+    title: Add the invoice repository
+    write:
+      path: internal/invoices/repository.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "context"
+                "errors"
+        )
+
+        // ErrInvoiceNotFound lets callers handle absence without depending on persistence details.
+        var ErrInvoiceNotFound = errors.New("invoice not found")
+
+        // Repository defines the persistence behavior required by invoice services.
+        type Repository interface {
+                // Find returns one invoice while honoring the caller's cancellation boundary.
+                Find(context.Context, string) (Invoice, error)
+        }
+
+        // MemoryRepository keeps the diagnostic fixture deterministic without imposing a database driver.
+        type MemoryRepository struct{}
+
+        // NewRepository provides the fixture repository through the App dependency graph.
+        func NewRepository() Repository {
+                return &MemoryRepository{}
+        }
+
+        // Find returns a stable invoice while preserving the same boundary a real repository implements.
+        func (*MemoryRepository) Find(_ context.Context, id string) (Invoice, error) {
+                if id == "" || id == "missing" {
+                        return Invoice{}, ErrInvoiceNotFound
+                }
+                return Invoice{
+                        ID:         id,
+                        CustomerID: "customer-42",
+                        TotalCents: 12500,
+                        Status:     "open",
+                }, nil
+        }
+
+  - id: add-invoice-service
+    title: Add the invoice service
+    write:
+      path: internal/invoices/service.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import "context"
+
+        // Service owns invoice lookup behavior outside transport packages.
+        type Service struct {
+                repository Repository
+        }
+
+        // NewService makes the repository boundary explicit to Wire and focused tests.
+        func NewService(repository Repository) *Service {
+                return &Service{repository: repository}
+        }
+
+        // Find returns one invoice while propagating the caller's cancellation boundary.
+        func (service *Service) Find(ctx context.Context, id string) (Invoice, error) {
+                return service.repository.Find(ctx, id)
+        }
+
+  - id: test-invoice-service
+    title: Test invoice lookup
+    write:
+      path: internal/invoices/service_test.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "context"
+                "testing"
+        )
+
+        // TestServiceFind proves invoice behavior without starting an HTTP runtime.
+        func TestServiceFind(t *testing.T) {
+                service := NewService(NewRepository())
+                invoice, err := service.Find(context.Background(), "inv-42")
+                if err != nil {
+                        t.Fatalf("Find(): %v", err)
+                }
+                if invoice.ID != "inv-42" || invoice.TotalCents != 12500 {
+                        t.Fatalf("invoice = %#v", invoice)
+                }
+        }
+
+  - id: import-invoice-services
+    title: Import invoice providers
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+      new: "\t\"example.com/invoiceeval/internal/invoices\"\n\t\"example.com/invoiceeval/internal/runtime\"\n"
+
+  - id: provide-invoice-services
+    title: Provide invoice services
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\tinvoices.NewRepository,\n\tinvoices.NewService,\n\tapp.NewLifecycleRegistry,\n"
+checks:
+  - command: [go, test, ./internal/invoices]
+  - command: [forj, build]

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -240,6 +241,13 @@ func TestEmbeddedV1ScenariosRetainDecodeAndDocumentationParity(t *testing.T) {
 			body, err := embeddedScenarioSpecs.ReadFile("specs/" + entry.Name())
 			if err != nil {
 				t.Fatalf("read embedded spec: %v", err)
+			}
+			_, version, err := decodeScenarioDocument(body)
+			if err != nil {
+				t.Fatalf("decode scenario document: %v", err)
+			}
+			if version != 0 {
+				t.Skip("versioned scenario is covered by its schema contract")
 			}
 			var legacy scenarioSpecV1
 			decoder := yaml.NewDecoder(strings.NewReader(string(body)))
@@ -507,6 +515,35 @@ checks:
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestInvoiceHTTPRoutePlanKeepsControllerOutOfPreparation protects the real diagnostic fixture from leaking its target implementation.
+func TestInvoiceHTTPRoutePlanKeepsControllerOutOfPreparation(t *testing.T) {
+	catalog, err := loadScenarioCatalog("")
+	if err != nil {
+		t.Fatalf("loadScenarioCatalog(): %v", err)
+	}
+	plan, ok := catalog.plans["invoice-http-route"]
+	if !ok {
+		t.Fatal("invoice-http-route scenario is not registered")
+	}
+	if plan.spec.SchemaVersion != liveScenarioSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", plan.spec.SchemaVersion, liveScenarioSchemaVersion)
+	}
+	if !reflect.DeepEqual(plan.dependencyScenarioIDs, []string{"invoice-domain"}) {
+		t.Fatalf("dependency closure = %q", plan.dependencyScenarioIDs)
+	}
+	if len(plan.targetSteps) != 2 || plan.targetSteps[0].step.ID != "scaffold-invoice-controller" {
+		t.Fatalf("target steps = %#v", plan.targetSteps)
+	}
+	for _, step := range append(append([]plannedScenarioStep(nil), plan.dependencySteps...), plan.preparationSteps...) {
+		if step.step.Write != nil && step.step.Write.Path == "internal/invoices/controller.go" {
+			t.Fatalf("controller target leaked through %s step %q", step.spec.ID, step.step.ID)
+		}
+		if step.step.Run != nil && reflect.DeepEqual(step.step.Run.Run, []string{"forj", "make:controller", "invoices"}) {
+			t.Fatalf("generator target leaked through %s step %q", step.spec.ID, step.step.ID)
+		}
 	}
 }
 
