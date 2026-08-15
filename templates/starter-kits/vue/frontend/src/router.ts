@@ -74,4 +74,33 @@ router.afterEach((to) => {
   document.title = `${title} · ${appName}`
 })
 
+// Every route is lazily imported, so its chunk is fetched on first visit. After
+// a deploy the old filenames are gone, and anyone still holding the previous
+// page gets a rejected import and a blank screen on their next navigation.
+// Reload once onto the new build instead, guarding against a loop when the
+// failure is something other than a stale chunk.
+const reloadedKey = 'route-chunk-reloaded'
+
+router.onError((error, to) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const staleChunk = /dynamically imported module|Importing a module script failed|Failed to fetch/i.test(message)
+
+  if (!staleChunk || !to?.fullPath) {
+    return
+  }
+
+  if (sessionStorage.getItem(reloadedKey) === to.fullPath) {
+    return
+  }
+
+  sessionStorage.setItem(reloadedKey, to.fullPath)
+  window.location.assign(to.fullPath)
+})
+
+router.afterEach((to) => {
+  if (sessionStorage.getItem(reloadedKey) === to.fullPath) {
+    sessionStorage.removeItem(reloadedKey)
+  }
+})
+
 export default router

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import ThemeLogo from './ThemeLogo.vue'
 
 defineProps<{
   name: string
   logoSrc?: string
+  logoDarkSrc?: string
   logoCollapsedSrc?: string
+  logoCollapsedDarkSrc?: string
 }>()
 </script>
 
@@ -16,17 +19,17 @@ defineProps<{
         class="h-auto! px-1! py-1! group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0.5!"
       >
         <RouterLink to="/" :aria-label="name">
-          <img
+          <ThemeLogo
             v-if="logoSrc"
-            :src="logoSrc"
-            alt=""
-            class="h-8 w-auto shrink-0 object-contain group-data-[collapsible=icon]:hidden"
+            :light-src="logoSrc"
+            :dark-src="logoDarkSrc"
+            class="grid size-8 group-data-[collapsible=icon]:hidden"
           />
-          <img
+          <ThemeLogo
             v-if="logoCollapsedSrc"
-            :src="logoCollapsedSrc"
-            alt=""
-            class="hidden size-6 shrink-0 object-contain group-data-[collapsible=icon]:block"
+            :light-src="logoCollapsedSrc"
+            :dark-src="logoCollapsedDarkSrc"
+            class="hidden size-6 group-data-[collapsible=icon]:grid"
           />
           <span class="truncate text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
             {{ name }}

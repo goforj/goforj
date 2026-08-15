@@ -22,8 +22,13 @@ export function themePreference(): ThemePreference {
 }
 
 export function applyTheme(preference: ThemePreference = themePreference()) {
-  document.documentElement.classList.toggle('dark', resolveTheme(preference))
-  document.documentElement.style.colorScheme = resolveTheme(preference) ? 'dark' : 'light'
+  const dark = resolveTheme(preference)
+  document.documentElement.classList.toggle('dark', dark)
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+  document.querySelector<HTMLLinkElement>('[data-theme-icon]')?.setAttribute(
+    'href',
+    dark ? '/goforj-tile-dark.svg' : '/goforj-tile-light.svg',
+  )
 }
 
 export function setThemePreference(preference: ThemePreference) {

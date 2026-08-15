@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" href="/goforj-logo.png" type="image/png" />
-    <link rel="apple-touch-icon" href="/goforj-logo.png" />
+    <link rel="icon" href="/goforj-tile-light.svg" type="image/svg+xml" data-theme-icon />
     <script>
       const theme = localStorage.getItem('theme')
       const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
       const dark = theme === 'dark' || ((!theme || theme === 'system') && systemDark)
       document.documentElement.classList.toggle('dark', dark)
       document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+      document.querySelector('[data-theme-icon]').href = dark ? '/goforj-tile-dark.svg' : '/goforj-tile-light.svg'
     </script>
     <title>App</title>
   </head>
