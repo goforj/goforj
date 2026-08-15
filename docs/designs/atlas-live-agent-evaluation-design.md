@@ -688,7 +688,7 @@ packages:
 type ProjectPreparer interface {
 	Capabilities(context.Context) (PreparationCapabilities, error)
 	Resolve(context.Context, PreparationRequest) (ResolvedPreparationPlan, error)
-	Prepare(context.Context, ResolvedPreparationPlan) (PreparedProject, error)
+	Prepare(context.Context, PreparationRequest, ResolvedPreparationPlan) (PreparedProject, error)
 }
 
 type PreparedProject interface {
@@ -710,6 +710,15 @@ Candidate GoForj code may execute only product operations named by this plan;
 it cannot substitute its embedded scenario catalog or redefine preparation or pass
 criteria. A candidate-catalog mismatch is ineligible, not self-consistent
 evidence.
+
+`Prepare` receives both the original trusted request and its resolved plan. This
+keeps preparers stateless across resolution and execution, so retries, concurrent
+attempts, and process-separated implementations do not depend on an in-memory
+request registry. The orchestration identity in the request, plan, and result
+must match. The overall plan digest binds the scenario-prefix digest, exact
+GoForj executable digest, and the non-secret material environment projection;
+those component digests remain explicit fields so a mismatch can be diagnosed
+rather than appearing only as an opaque hash failure.
 
 `PreparationResult` returns resolved identities, tree and catalog digests,
 health-check evidence, and ownership of every created path. Atlas owns the
