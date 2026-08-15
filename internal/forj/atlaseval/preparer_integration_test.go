@@ -51,7 +51,11 @@ func TestPreparerMaterializesInvoiceStartingState(t *testing.T) {
 func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	workRoot := t.TempDir()
 	baseRoot := filepath.Join(workRoot, "bases")
-	preparer := NewPreparer(baseRoot, nil)
+	baseBuildCache := filepath.Join(workRoot, "base-gocache")
+	trialBuildCache := filepath.Join(workRoot, "trial-gocache")
+	baseEnvironment := testkit.ProcessGoEnv("", map[string]string{"GOCACHE": baseBuildCache})
+	trialEnvironment := testkit.ProcessGoEnv("", map[string]string{"GOCACHE": trialBuildCache})
+	preparer := NewPreparer(baseRoot, baseEnvironment, nil)
 	t.Cleanup(func() {
 		if err := preparer.Close(context.Background()); err != nil {
 			t.Fatalf("Close preparer: %v", err)
@@ -69,7 +73,7 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 		DestinationRoot: filepath.Join(workRoot, "projects"),
 		ForjExecutable:  testkit.EnsureIntegrationForjBinary(t),
 		OrchestrationID: "paired-none",
-		Environment:     testkit.ProcessGoEnv("", nil),
+		Environment:     trialEnvironment,
 	}
 	plan, err := preparer.Resolve(context.Background(), request)
 	if err != nil {
@@ -95,5 +99,13 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	}
 	if none.Result().BaselineTree != agents.Result().BaselineTree {
 		t.Fatalf("paired baseline trees differ: %s != %s", none.Result().BaselineTree, agents.Result().BaselineTree)
+	}
+	if entries, err := os.ReadDir(baseBuildCache); err != nil || len(entries) == 0 {
+		t.Fatalf("base preparation did not use its private build cache: entries=%v error=%v", entries, err)
+	}
+	if entries, err := os.ReadDir(trialBuildCache); err == nil && len(entries) > 0 {
+		t.Fatalf("preparation warmed the candidate build cache: %v", entries)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read candidate build cache: %v", err)
 	}
 }
