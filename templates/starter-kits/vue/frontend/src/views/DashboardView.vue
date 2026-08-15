@@ -1,16 +1,23 @@
 <template>
   <section class="grid gap-6">
-    <Card class="overflow-hidden border-border/60 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_96%,white),var(--background))] text-card-foreground shadow-xl dark:bg-[linear-gradient(135deg,hsl(0_0%_5%),hsl(0_0%_8%))] dark:text-white">
+    <!--
+      Tint the hero rather than lifting it. Every other card here is the Card
+      default shadow-sm, so a heavier shadow reads as a smudge instead of
+      elevation — light mode gives --card the same value as --background, which
+      leaves the shadow doing all the work of drawing the card. The gradient is
+      token-only, so it follows the theme in both modes with no dark: overrides.
+    -->
+    <Card class="overflow-hidden bg-[linear-gradient(140deg,color-mix(in_oklab,var(--primary)_7%,var(--card)),var(--card)_60%)]">
       <CardHeader class="relative gap-4 p-6 md:p-8">
         <div class="flex flex-wrap items-center gap-2">
-          <Badge class="border-primary/20 bg-primary/10 text-primary hover:bg-primary/15 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/15">Vue application shell</Badge>
-          <Badge variant="outline" class="border-border/70 text-foreground dark:border-white/20 dark:text-white">Local shadcn-vue source</Badge>
+          <Badge class="border-primary/20 bg-primary/10 text-primary hover:bg-primary/15">Vue application shell</Badge>
+          <Badge variant="outline">Local shadcn-vue source</Badge>
         </div>
         <div class="grid max-w-3xl gap-3">
           <h1 class="text-3xl font-semibold leading-tight tracking-tight md:text-5xl">
             Start from an application shell that already feels production-ready.
           </h1>
-          <CardDescription class="max-w-2xl text-base text-muted-foreground dark:text-slate-300">
+          <CardDescription class="max-w-2xl text-base">
             Vue, Vite, Tailwind, and shadcn-vue source files are rendered directly into your app so your team can inspect, adapt, or replace every layer.
           </CardDescription>
         </div>
