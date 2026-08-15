@@ -107,6 +107,17 @@ func TestRemoveEvaluationWorkRootHandlesReadOnlyModuleDirectories(t *testing.T) 
 	}
 }
 
+// TestEvaluationRuntimeIdentityRecordsReconstructableComponents keeps retained attempts independent from deleted command workspaces.
+func TestEvaluationRuntimeIdentityRecordsReconstructableComponents(t *testing.T) {
+	identity := evaluationRuntimeIdentity()
+	if identity.Framework.Module != "github.com/goforj/goforj" || identity.Framework.Version == "" || identity.Supervisor.Module != "github.com/goforj/atlas" || identity.Supervisor.Version == "" {
+		t.Fatalf("runtime identity is incomplete: %#v", identity)
+	}
+	if identity.GoVersion == "" || identity.GOOS != runtime.GOOS || identity.GOARCH != runtime.GOARCH {
+		t.Fatalf("Go runtime identity is incomplete: %#v", identity)
+	}
+}
+
 // environmentValues converts one process environment into its effective key/value map for focused assertions.
 func environmentValues(environment []string) map[string]string {
 	values := make(map[string]string, len(environment))
