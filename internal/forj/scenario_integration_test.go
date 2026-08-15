@@ -28,3 +28,20 @@ func TestRunnableScenarioPathIntegration(t *testing.T) {
 		t.Fatalf("scenario:test runtime-observability failed: %v\n%s", err, output.String())
 	}
 }
+
+// TestInvoiceHTTPRouteScenarioIntegration proves the first live-evaluation fixture and its golden target remain executable together.
+func TestInvoiceHTTPRouteScenarioIntegration(t *testing.T) {
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "scenario:test", "invoice-http-route")
+	cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("scenario:test invoice-http-route failed: %v\n%s", err, output.String())
+	}
+}
