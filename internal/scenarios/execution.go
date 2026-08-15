@@ -28,11 +28,11 @@ type scenarioWorkspace struct {
 
 // scenarioExecution keeps the invariant collaborators for every dependency, step, and verification command in one run.
 type scenarioExecution struct {
-	logger              *logger.AppLogger
-	workspace           scenarioWorkspace
-	forjExec            string
-	catalog             scenarioCatalog
-	appliedDependencies map[string]bool
+	context     context.Context
+	logger      *logger.AppLogger
+	workspace   scenarioWorkspace
+	forjExec    string
+	environment []string
 }
 
 const scenarioCommandTimeout = 3 * time.Minute
@@ -45,14 +45,18 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 	}
 
 	execution := scenarioExecution{
-		logger:              options.Logger,
-		workspace:           workspace,
-		forjExec:            forjExec,
-		catalog:             catalog,
-		appliedDependencies: map[string]bool{},
+		context:     context.Background(),
+		logger:      options.Logger,
+		workspace:   workspace,
+		forjExec:    forjExec,
+		environment: append([]string(nil), options.Environment...),
+	}
+	plan, ok := catalog.plans[spec.ID]
+	if !ok {
+		return workspace.cleanupAfter(fmt.Errorf("scenario plan %q is unavailable", spec.ID))
 	}
 	console.Actionf("scenario %s", spec.ID)
-	runErr := workspace.cleanupAfter(execution.run(spec))
+	runErr := workspace.cleanupAfter(execution.run(plan))
 	if options.Keep {
 		console.Infof("scenario workdir: %s", workspace.root)
 	}
@@ -61,6 +65,23 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 	}
 	console.Successf("scenario passed: %s", spec.ID)
 	return nil
+}
+
+// prepare applies the immutable live prefix and never observes target steps or final checks.
+func (execution scenarioExecution) prepare(plan scenarioPlan) error {
+	if err := writeScenarioProjectConfig(execution.workspace.root, plan.spec); err != nil {
+		return err
+	}
+	if err := execution.runCommand(ScenarioCommand{Run: []string{"forj", "render"}}, "render app"); err != nil {
+		return err
+	}
+	if err := execution.applyPlannedSteps(plan.spec.ID, "dependency", plan.dependencySteps); err != nil {
+		return err
+	}
+	if err := execution.applyPlannedSteps(plan.spec.ID, "preparation", plan.preparationSteps); err != nil {
+		return err
+	}
+	return execution.runChecks(plan.startingChecks, "verify starting state")
 }
 
 // createScenarioWorkspace creates an isolated directory only after the scenario ID is known to be path-safe.
@@ -97,56 +118,62 @@ func (workspace scenarioWorkspace) cleanupAfter(runErr error) error {
 	return runErr
 }
 
-// run applies the rendered project, inherited steps, selected steps, and verification commands in their contract order.
-func (execution scenarioExecution) run(spec ScenarioSpec) error {
-	if err := writeScenarioProjectConfig(execution.workspace.root, spec); err != nil {
+// run applies every stage of the compiled golden path in contract order.
+func (execution scenarioExecution) run(plan scenarioPlan) error {
+	if err := writeScenarioProjectConfig(execution.workspace.root, plan.spec); err != nil {
 		return err
 	}
 	if err := execution.runCommand(ScenarioCommand{Run: []string{"forj", "render"}}, "render app"); err != nil {
 		return err
 	}
-	if err := execution.applyDependencies(spec); err != nil {
+	if err := execution.applyPlannedSteps(plan.spec.ID, "dependency", plan.dependencySteps); err != nil {
 		return err
 	}
-	for _, step := range spec.Steps {
-		if err := execution.applyStep(spec, step); err != nil {
-			return fmt.Errorf("%s step %q: %w", spec.ID, step.Title, err)
-		}
+	if err := execution.applyPlannedSteps(plan.spec.ID, "preparation", plan.preparationSteps); err != nil {
+		return err
 	}
-	for _, command := range spec.Verify.Commands {
-		if err := execution.runCommand(command, "verify"); err != nil {
-			return err
+	if err := execution.runChecks(plan.startingChecks, "verify starting state"); err != nil {
+		return err
+	}
+	if err := execution.applyPlannedSteps(plan.spec.ID, "target", plan.targetSteps); err != nil {
+		return err
+	}
+	return execution.runChecks(plan.finalChecks, "verify")
+}
+
+// applyPlannedSteps preserves owner metadata while executing one immutable plan stage.
+func (execution scenarioExecution) applyPlannedSteps(scenarioID, stage string, steps []plannedScenarioStep) error {
+	for _, planned := range steps {
+		if err := execution.applyStep(planned.spec, planned.step); err != nil {
+			return fmt.Errorf("%s %s %s step %q: %w", scenarioID, stage, planned.spec.ID, planned.step.Title, err)
 		}
 	}
 	return nil
 }
 
-// applyDependencies applies ancestors before dependents so cumulative scenarios reproduce the documented golden path exactly once.
-func (execution scenarioExecution) applyDependencies(spec ScenarioSpec) error {
-	for _, dependencyID := range spec.DependsOn {
-		dependency, ok := execution.catalog.byID[dependencyID]
-		if !ok {
-			return fmt.Errorf("%s depends on unknown scenario %q", spec.ID, dependencyID)
-		}
-		if err := execution.applyDependencies(dependency); err != nil {
+// runChecks applies one check stage without exposing whether execution is full or prefix-only to the command runner.
+func (execution scenarioExecution) runChecks(commands []ScenarioCommand, label string) error {
+	for _, command := range commands {
+		if err := execution.runCommand(command, label); err != nil {
 			return err
 		}
-		if execution.appliedDependencies[dependency.ID] {
-			continue
-		}
-		for _, step := range dependency.Steps {
-			if err := execution.applyStep(dependency, step); err != nil {
-				return fmt.Errorf("%s dependency %s step %q: %w", spec.ID, dependency.ID, step.Title, err)
-			}
-		}
-		execution.appliedDependencies[dependency.ID] = true
 	}
 	return nil
 }
 
 // writeScenarioProjectConfig relies on the canonical component sequence so intentionally absent primitives stay disabled.
 func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
-	config := project.Config{
+	config := scenarioProjectConfig(spec)
+	body, err := yaml.Marshal(config)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, ".goforj.yml"), body, 0o644)
+}
+
+// scenarioProjectConfig projects scenario semantics without coupling preparation metadata to YAML serialization.
+func scenarioProjectConfig(spec ScenarioSpec) project.Config {
+	return project.Config{
 		ProjectName:  spec.Title,
 		GoModuleName: spec.App.ModuleName,
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -162,11 +189,6 @@ func writeScenarioProjectConfig(root string, spec ScenarioSpec) error {
 			WirePaths:         []string{project.DefaultApp().WireDir},
 		},
 	}
-	body, err := yaml.Marshal(config)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(root, ".goforj.yml"), body, 0o644)
 }
 
 // applyStep preserves the declared action order because later scenario edits can depend on earlier generated content.
@@ -287,11 +309,18 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 	if args[0] == "forj" {
 		args[0] = execution.forjExec
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), scenarioCommandTimeout)
+	parent := execution.context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, scenarioCommandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = execution.workspace.root
-	cmd.Env = scenarioProcessEnv()
+	cmd.Env = execution.environment
+	if len(cmd.Env) == 0 {
+		cmd.Env = scenarioProcessEnv()
+	}
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output

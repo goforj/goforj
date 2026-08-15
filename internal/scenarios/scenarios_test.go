@@ -1,6 +1,10 @@
 package scenarios
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +14,20 @@ import (
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
+
+// TestMain turns the package test binary into a deterministic subprocess for scenario command tests.
+func TestMain(m *testing.M) {
+	if os.Getenv("GOFORJ_SCENARIO_HELPER") == "1" {
+		failArgument := os.Getenv("GOFORJ_SCENARIO_FAIL_ARGUMENT")
+		for _, argument := range os.Args[1:] {
+			if failArgument != "" && argument == failArgument {
+				os.Exit(9)
+			}
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 // TestLoadEmbeddedScenarioSpecs verifies the shipped catalog is non-empty and includes the golden-path entry point.
 func TestLoadEmbeddedScenarioSpecs(t *testing.T) {
@@ -128,6 +146,189 @@ func TestDecodeScenarioSpecRejectsTrailingDocuments(t *testing.T) {
 	}
 }
 
+// TestDecodeScenarioSpecV2NormalizesPreparation verifies the live schema compiles into the execution model shared with legacy specs.
+func TestDecodeScenarioSpecV2NormalizesPreparation(t *testing.T) {
+	spec, err := decodeScenarioSpec([]byte(`schema_version: 2
+id: invoice-http-route
+title: Invoice HTTP Route
+prepare:
+  steps:
+    - id: seed-invoices
+      title: Seed invoices
+      command: [go, run, ./internal/testseed]
+  checks:
+    - command: [go, test, ./internal/invoices]
+      contains: [PASS]
+steps:
+  - id: scaffold-controller
+    title: Scaffold the Controller
+    command: [forj, "make:controller", invoices]
+checks:
+  - command: [forj, build]
+`))
+	if err != nil {
+		t.Fatalf("decode v2 scenario: %v", err)
+	}
+	if spec.SchemaVersion != 2 {
+		t.Fatalf("schema version = %d, want 2", spec.SchemaVersion)
+	}
+	if got := spec.Prepare.Steps[0].Run.Run; strings.Join(got, " ") != "go run ./internal/testseed" {
+		t.Fatalf("preparation command = %q", got)
+	}
+	if got := spec.Prepare.Checks[0].Contains; len(got) != 1 || got[0] != "PASS" {
+		t.Fatalf("preparation check evidence = %q", got)
+	}
+	if got := spec.Steps[0].ID; got != "scaffold-controller" {
+		t.Fatalf("target step ID = %q", got)
+	}
+	if got := spec.Verify.Commands[0].Run; strings.Join(got, " ") != "forj build" {
+		t.Fatalf("final check = %q", got)
+	}
+}
+
+// TestDecodeScenarioSpecV2RejectsInvalidContracts proves malformed live recipes fail before catalog execution.
+func TestDecodeScenarioSpecV2RejectsInvalidContracts(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "unsupported version", body: "schema_version: 3\nid: example\ntitle: Example\n", wantErr: "unsupported schema_version 3"},
+		{name: "unknown field", body: "schema_version: 2\nid: example\ntitle: Example\nprepares: {}\n", wantErr: "field prepares not found"},
+		{name: "missing action", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: add-route\n    title: Add route\n", wantErr: "must declare exactly one"},
+		{name: "multiple actions", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: add-route\n    title: Add route\n    command: [forj, build]\n    write:\n      path: route.go\n      content: package route\n", wantErr: "must declare exactly one"},
+		{name: "invalid step ID", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: Add Route\n    title: Add route\n    command: [forj, build]\n", wantErr: "must be a safe slug"},
+		{name: "duplicate step ID", body: "schema_version: 2\nid: example\ntitle: Example\nprepare:\n  steps:\n    - id: add-route\n      title: Prepare route\n      command: [forj, build]\nsteps:\n  - id: add-route\n    title: Add route\n    command: [forj, build]\n", wantErr: `duplicate scenario step ID "add-route"`},
+		{name: "missing check command", body: "schema_version: 2\nid: example\ntitle: Example\nchecks:\n  - contains: [PASS]\n", wantErr: "checks[0].command is required"},
+		{name: "anchor", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - &step\n    id: add-route\n    title: Add route\n    command: [forj, build]\n", wantErr: "aliases and anchors are not supported"},
+		{name: "alias", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - &step\n    id: add-route\n    title: Add route\n    command: [forj, build]\n  - *step\n", wantErr: "aliases and anchors are not supported"},
+		{name: "duplicate key", body: "schema_version: 2\nid: example\nid: second\ntitle: Example\n", wantErr: "mapping key \"id\" already defined"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := decodeScenarioSpec([]byte(test.body))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("decodeScenarioSpec() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+// TestDecodeScenarioSpecV1PreservesLegacyActions ensures schema selection does not tighten established external catalogs.
+func TestDecodeScenarioSpecV1PreservesLegacyActions(t *testing.T) {
+	spec, err := decodeScenarioSpec([]byte("id: example\ntitle: Example\nsteps:\n  - title: Legacy\n    run:\n      run: [forj, build]\n"))
+	if err != nil {
+		t.Fatalf("decode legacy scenario: %v", err)
+	}
+	if spec.SchemaVersion != 0 || len(spec.Prepare.Steps) != 0 || spec.Steps[0].ID != "" {
+		t.Fatalf("legacy normalization changed: %#v", spec)
+	}
+}
+
+// TestEmbeddedV1ScenariosRetainDecodeAndDocumentationParity freezes legacy behavior while the live schema migrates incrementally.
+func TestEmbeddedV1ScenariosRetainDecodeAndDocumentationParity(t *testing.T) {
+	entries, err := embeddedScenarioSpecs.ReadDir("specs")
+	if err != nil {
+		t.Fatalf("read embedded specs: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		t.Run(entry.Name(), func(t *testing.T) {
+			body, err := embeddedScenarioSpecs.ReadFile("specs/" + entry.Name())
+			if err != nil {
+				t.Fatalf("read embedded spec: %v", err)
+			}
+			var legacy scenarioSpecV1
+			decoder := yaml.NewDecoder(strings.NewReader(string(body)))
+			decoder.KnownFields(true)
+			if err := decoder.Decode(&legacy); err != nil {
+				t.Fatalf("decode legacy wire: %v", err)
+			}
+			want := normalizeScenarioV1(legacy)
+			if strings.TrimSpace(want.App.ModuleName) == "" {
+				want.App.ModuleName = "example.com/" + strings.ReplaceAll(want.ID, "-", "")
+			}
+			got, err := decodeScenarioSpec(body)
+			if err != nil {
+				t.Fatalf("decode selected schema: %v", err)
+			}
+			wantYAML, err := yaml.Marshal(want)
+			if err != nil {
+				t.Fatalf("marshal legacy spec: %v", err)
+			}
+			gotYAML, err := yaml.Marshal(got)
+			if err != nil {
+				t.Fatalf("marshal selected spec: %v", err)
+			}
+			if !bytes.Equal(gotYAML, wantYAML) {
+				index := 0
+				for index < len(gotYAML) && index < len(wantYAML) && gotYAML[index] == wantYAML[index] {
+					index++
+				}
+				start := index - 80
+				if start < 0 {
+					start = 0
+				}
+				gotEnd := index + 160
+				if gotEnd > len(gotYAML) {
+					gotEnd = len(gotYAML)
+				}
+				wantEnd := index + 160
+				if wantEnd > len(wantYAML) {
+					wantEnd = len(wantYAML)
+				}
+				t.Fatalf("normalized v1 spec changed at byte %d\ngot:  %q\nwant: %q", index, gotYAML[start:gotEnd], wantYAML[start:wantEnd])
+			}
+			gotMarkdown, err := renderScenarioMarkdown(got)
+			if err != nil {
+				t.Fatalf("render selected schema: %v", err)
+			}
+			wantMarkdown, err := renderScenarioMarkdown(want)
+			if err != nil {
+				t.Fatalf("render legacy schema: %v", err)
+			}
+			if gotMarkdown != wantMarkdown {
+				t.Fatal("legacy generated documentation changed during schema selection")
+			}
+		})
+	}
+}
+
+// TestCompileScenarioPlanOrdersDependencyDiamondOnce proves plan compilation owns shared dependency ordering for every execution mode.
+func TestCompileScenarioPlanOrdersDependencyDiamondOnce(t *testing.T) {
+	step := func(id string) ScenarioStep {
+		return ScenarioStep{ID: id, Title: id, Run: &ScenarioCommand{Run: []string{"true"}}}
+	}
+	specs := []ScenarioSpec{
+		{ID: "base", Prepare: ScenarioPreparation{Steps: []ScenarioStep{step("base-prepare")}}, Steps: []ScenarioStep{step("base-target")}},
+		{ID: "cache", DependsOn: []string{"base"}, Steps: []ScenarioStep{step("cache-target")}},
+		{ID: "events", DependsOn: []string{"base"}, Steps: []ScenarioStep{step("events-target")}},
+		{ID: "app", DependsOn: []string{"cache", "events"}, Prepare: ScenarioPreparation{Steps: []ScenarioStep{step("app-prepare")}}, Steps: []ScenarioStep{step("app-target")}},
+	}
+	byID := make(map[string]ScenarioSpec, len(specs))
+	for _, spec := range specs {
+		byID[spec.ID] = spec
+	}
+	plan, err := compileScenarioPlan(byID["app"], byID)
+	if err != nil {
+		t.Fatalf("compile scenario plan: %v", err)
+	}
+	var got []string
+	for _, planned := range plan.dependencySteps {
+		got = append(got, planned.step.ID)
+	}
+	want := "base-prepare,base-target,cache-target,events-target"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("dependency steps = %q, want %q", got, want)
+	}
+	if len(plan.preparationSteps) != 1 || plan.preparationSteps[0].step.ID != "app-prepare" || len(plan.targetSteps) != 1 || plan.targetSteps[0].step.ID != "app-target" {
+		t.Fatalf("selected plan stages = %#v / %#v", plan.preparationSteps, plan.targetSteps)
+	}
+}
+
 // TestUnsafeScenarioIDCannotMutateOutsideRoots verifies generation and execution reject a catalog before ID-derived paths are touched.
 func TestUnsafeScenarioIDCannotMutateOutsideRoots(t *testing.T) {
 	tests := []struct {
@@ -198,6 +399,251 @@ func TestUnsafeScenarioIDCannotMutateOutsideRoots(t *testing.T) {
 func TestValidateRequiresLogger(t *testing.T) {
 	if err := Validate(ValidateOptions{}); err == nil || !strings.Contains(err.Error(), "logger is required") {
 		t.Fatalf("Validate() error = %v, want logger invariant", err)
+	}
+}
+
+// TestPrepareRejectsLegacyScenarioBeforeMutation keeps live evaluation from guessing at a v1 starting state.
+func TestPrepareRejectsLegacyScenarioBeforeMutation(t *testing.T) {
+	base := t.TempDir()
+	specDir := filepath.Join(base, "specs")
+	workDir := filepath.Join(base, "work")
+	writeScenarioSpecFixture(t, specDir, "legacy.yaml", "id: legacy\ntitle: Legacy\n")
+
+	_, err := Prepare(context.Background(), PrepareOptions{
+		Logger:      logger.NewSilentLogger(),
+		SpecDir:     specDir,
+		WorkDir:     workDir,
+		ScenarioID:  "legacy",
+		ForjExec:    os.Args[0],
+		Environment: os.Environ(),
+	})
+	if !errors.Is(err, ErrUnsupportedLiveScenario) {
+		t.Fatalf("Prepare() error = %v, want unsupported live scenario", err)
+	}
+	if _, statErr := os.Stat(workDir); !os.IsNotExist(statErr) {
+		t.Fatalf("work root was mutated before rejection: %v", statErr)
+	}
+}
+
+// TestPrepareExecutesOnlyLivePrefix proves dependencies and fixture work cannot leak the golden target into the agent workspace.
+func TestPrepareExecutesOnlyLivePrefix(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "base.yaml", `schema_version: 2
+id: invoice-domain
+title: Invoice Domain
+steps:
+  - id: add-domain
+    title: Add domain
+    write:
+      path: internal/invoices/domain.txt
+      content: dependency-state
+`)
+	writeScenarioSpecFixture(t, specDir, "live.yaml", `schema_version: 2
+id: invoice-http-route
+title: Invoice HTTP Route
+depends_on: [invoice-domain]
+prepare:
+  steps:
+    - id: seed-invoices
+      title: Seed invoices
+      write:
+        path: internal/invoices/seed.txt
+        content: prepared-state
+  checks:
+    - command: [forj, check-start]
+steps:
+  - id: add-controller
+    title: Add controller
+    write:
+      path: internal/invoices/controller.txt
+      content: target-oracle-secret
+checks:
+  - command: [forj, check-target]
+`)
+	environment := append(os.Environ(), "GOFORJ_SCENARIO_HELPER=1")
+	prepared, err := Prepare(context.Background(), PrepareOptions{
+		Logger:      logger.NewSilentLogger(),
+		SpecDir:     specDir,
+		WorkDir:     t.TempDir(),
+		ScenarioID:  "invoice-http-route",
+		ForjExec:    os.Args[0],
+		Environment: environment,
+	})
+	if err != nil {
+		t.Fatalf("Prepare(): %v", err)
+	}
+	root := prepared.Root
+	t.Cleanup(func() {
+		if err := prepared.Close(); err != nil {
+			t.Fatalf("close prepared scenario: %v", err)
+		}
+	})
+
+	for _, path := range []string{"internal/invoices/domain.txt", "internal/invoices/seed.txt"} {
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			t.Fatalf("prepared workspace missing %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal/invoices/controller.txt")); !os.IsNotExist(err) {
+		t.Fatalf("target step reached prepared workspace: %v", err)
+	}
+	if prepared.SchemaVersion != 2 || prepared.CatalogDigest == "" || len(prepared.ScenarioDigests) != 2 || prepared.ForjExecutable == "" || prepared.ForjDigest == "" {
+		t.Fatalf("prepared metadata = %#v", prepared)
+	}
+	if prepared.ScenarioDigests[0].ID != "invoice-domain" || prepared.ScenarioDigests[1].ID != "invoice-http-route" {
+		t.Fatalf("scenario digest order = %#v", prepared.ScenarioDigests)
+	}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(body), "target-oracle-secret") {
+			return fmt.Errorf("target oracle leaked into %s", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPrepareFailureNeverAppliesTarget proves a failed starting-state check cannot fall through into golden work.
+func TestPrepareFailureNeverAppliesTarget(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "failure.yaml", `schema_version: 2
+id: failing-start
+title: Failing Start
+prepare:
+  steps:
+    - id: prepare-state
+      title: Prepare state
+      write:
+        path: prepared.txt
+        content: prepared
+  checks:
+    - command: [forj, reject-start]
+steps:
+  - id: apply-target
+    title: Apply target
+    write:
+      path: target.txt
+      content: target`)
+	workDir := t.TempDir()
+	environment := append(os.Environ(), "GOFORJ_SCENARIO_HELPER=1", "GOFORJ_SCENARIO_FAIL_ARGUMENT=reject-start")
+	_, err := Prepare(context.Background(), PrepareOptions{
+		Logger:      logger.NewSilentLogger(),
+		SpecDir:     specDir,
+		WorkDir:     workDir,
+		Keep:        true,
+		ScenarioID:  "failing-start",
+		ForjExec:    os.Args[0],
+		Environment: environment,
+	})
+	if err == nil || !strings.Contains(err.Error(), "reject-start") {
+		t.Fatalf("Prepare() error = %v, want starting-check failure", err)
+	}
+	entries, readErr := os.ReadDir(workDir)
+	if readErr != nil || len(entries) != 1 {
+		t.Fatalf("retained failed workspaces = %v, %v", entries, readErr)
+	}
+	root := filepath.Join(workDir, entries[0].Name())
+	if _, statErr := os.Stat(filepath.Join(root, "prepared.txt")); statErr != nil {
+		t.Fatalf("preparation step did not run: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "target.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("target step ran after failed starting check: %v", statErr)
+	}
+}
+
+// TestValidateV2ExecutesCompletePlan proves ordinary scenario testing extends the same prefix through target work.
+func TestValidateV2ExecutesCompletePlan(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "complete.yaml", `schema_version: 2
+id: complete-plan
+title: Complete Plan
+prepare:
+  steps:
+    - id: prepare-state
+      title: Prepare state
+      write:
+        path: prepared.txt
+        content: prepared
+  checks:
+    - command: [forj, check-start]
+steps:
+  - id: apply-target
+    title: Apply target
+    write:
+      path: target.txt
+      content: target
+checks:
+  - command: [forj, check-target]`)
+	workDir := t.TempDir()
+	environment := append(os.Environ(), "GOFORJ_SCENARIO_HELPER=1")
+	if err := Validate(ValidateOptions{
+		Logger:      logger.NewSilentLogger(),
+		SpecDir:     specDir,
+		WorkDir:     workDir,
+		Keep:        true,
+		IDs:         []string{"complete-plan"},
+		ForjExec:    os.Args[0],
+		Environment: environment,
+	}); err != nil {
+		t.Fatalf("Validate(): %v", err)
+	}
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		t.Fatalf("read work root: %v", err)
+	}
+	var completedRoot string
+	for _, entry := range entries {
+		candidate := filepath.Join(workDir, entry.Name())
+		if _, err := os.Stat(filepath.Join(candidate, "target.txt")); err == nil {
+			completedRoot = candidate
+			break
+		}
+	}
+	if completedRoot == "" {
+		t.Fatalf("complete target not found beneath %s", workDir)
+	}
+	for _, path := range []string{"prepared.txt", "target.txt"} {
+		if _, err := os.Stat(filepath.Join(completedRoot, path)); err != nil {
+			t.Fatalf("complete plan missing %s: %v", path, err)
+		}
+	}
+}
+
+// TestRenderScenarioMarkdownIncludesPreparationContext keeps fixture work distinct from numbered target steps.
+func TestRenderScenarioMarkdownIncludesPreparationContext(t *testing.T) {
+	spec, err := decodeScenarioSpec([]byte(`schema_version: 2
+id: prepared-doc
+title: Prepared Doc
+prepare:
+  steps:
+    - id: seed-data
+      title: Seed data
+      command: [forj, seed]
+  checks:
+    - command: [forj, check-start]
+steps:
+  - id: add-feature
+    title: Add feature
+    command: [forj, build]
+`))
+	if err != nil {
+		t.Fatalf("decode scenario: %v", err)
+	}
+	body, err := renderScenarioMarkdown(spec)
+	if err != nil {
+		t.Fatalf("render scenario: %v", err)
+	}
+	for _, token := range []string{"## Starting State", "### Seed data", "forj check-start", "## Step 1: Add feature"} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("rendered v2 documentation missing %q\n%s", token, body)
+		}
 	}
 }
 
