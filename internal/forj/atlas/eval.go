@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/goforj/atlas/eval/isolate"
 	"github.com/goforj/atlas/eval/verify"
 	"github.com/goforj/goforj/internal/forj/atlaseval"
+	"github.com/goforj/goforj/version"
 )
 
 // EvalCmd groups opt-in live-agent evaluation commands.
@@ -143,6 +145,7 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 			eval.GuidanceProfileNone:   noneEnvironment,
 			eval.GuidanceProfileAgents: agentsEnvironment,
 		},
+		Runtime: evaluationRuntimeIdentity(),
 	})
 	body, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -160,6 +163,46 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 		attemptErrors = append(attemptErrors, diagnosticErr)
 	}
 	return errors.Join(attemptErrors...)
+}
+
+// evaluationRuntimeIdentity makes retained diagnostics reconstructable after command-owned binaries and workspaces are removed.
+func evaluationRuntimeIdentity() eval.RuntimeIdentity {
+	return eval.RuntimeIdentity{
+		Supervisor: atlasSoftwareIdentity(),
+		Framework: eval.SoftwareIdentity{
+			Module:  "github.com/goforj/goforj",
+			Version: version.Version,
+			Commit:  version.Commit,
+			Dirty:   version.Dirty,
+		},
+		GoVersion: runtime.Version(),
+		GOOS:      runtime.GOOS,
+		GOARCH:    runtime.GOARCH,
+	}
+}
+
+// atlasSoftwareIdentity reports the exact dependency selected into the current GoForj binary.
+func atlasSoftwareIdentity() eval.SoftwareIdentity {
+	identity := eval.SoftwareIdentity{Module: "github.com/goforj/atlas", Version: "unknown"}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return identity
+	}
+	for _, dependency := range info.Deps {
+		if dependency.Path != identity.Module {
+			continue
+		}
+		identity.Version = dependency.Version
+		if dependency.Replace != nil {
+			replacement := dependency.Replace.Version
+			if replacement == "" {
+				replacement = "local"
+			}
+			identity.Version += " => " + replacement
+		}
+		return identity
+	}
+	return identity
 }
 
 // removeEvaluationWorkRoot restores traversal only inside the command-owned root so read-only module caches remain disposable.
