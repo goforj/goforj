@@ -235,6 +235,9 @@ func normalizeScenarioV2Steps(path string, wires []scenarioStepV2) ([]ScenarioSt
 		}
 		actions := 0
 		if len(wire.Command) > 0 {
+			if err := validateScenarioCommand(fieldPath+".command", wire.Command); err != nil {
+				return nil, err
+			}
 			actions++
 		}
 		if wire.Write != nil {
@@ -265,12 +268,31 @@ func normalizeScenarioV2Checks(path string, wires []scenarioCheckV2) ([]Scenario
 		if len(wire.Command) == 0 {
 			return nil, fmt.Errorf("%s[%d].command is required", path, index)
 		}
+		if err := validateScenarioCommand(fmt.Sprintf("%s[%d].command", path, index), wire.Command); err != nil {
+			return nil, err
+		}
 		checks = append(checks, ScenarioCommand{
 			Run:      append([]string(nil), wire.Command...),
 			Contains: append([]string(nil), wire.Contains...),
 		})
 	}
 	return checks, nil
+}
+
+// validateScenarioCommand keeps v2 commands structured by rejecting interpreters that reintroduce a hidden shell language.
+func validateScenarioCommand(fieldPath string, arguments []string) error {
+	executable := strings.TrimSpace(arguments[0])
+	if executable == "" {
+		return fmt.Errorf("%s executable is required", fieldPath)
+	}
+	if separator := strings.LastIndexAny(executable, `/\`); separator >= 0 {
+		executable = executable[separator+1:]
+	}
+	switch strings.ToLower(executable) {
+	case "sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe":
+		return fmt.Errorf("%s must not invoke a shell interpreter", fieldPath)
+	}
+	return nil
 }
 
 // validateScenarioStepIDs keeps preparation and target actions addressable across narrative edits.
