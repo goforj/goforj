@@ -3,6 +3,8 @@
 ## Status
 
 - Design status: proposed
+- Implementation status: diagnostic vertical slice complete locally; released
+  module integration pending
 - Planning date: 2026-08-15
 - Target repositories: `atlas` and `goforj`
 - Primary ownership: Atlas evaluation library, agent adapters, guidance
