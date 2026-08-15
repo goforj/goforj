@@ -125,6 +125,15 @@ undeclared dependencies. Both were deleted.
 A test that walks every import and fails on a bare specifier absent from
 `package.json` would have caught both. Not written yet.
 
+`vue-tsc` was a devDependency that no script invoked, so nothing ever
+typechecked the kit and two errors in the calendar examples shipped. `build` is
+now `vue-tsc --noEmit && vite build`, with `build-only` for the unchecked path.
+
+Both errors were the same cause: `ref()` unwraps deeply, which strips the
+private field the `@internationalized/date` `DateValue` union is discriminated
+on, so the value no longer assigns to the calendar's model. Use `shallowRef`
+for date values — they are immutable, so deep reactivity buys nothing anyway.
+
 ## Checks worth re-running after edits
 
 Not automated; run ad hoc from `src/`:
@@ -139,8 +148,12 @@ Not automated; run ad hoc from `src/`:
 
 ## Open
 
-- `items-start` on the Forms grid was committed but had not appeared in a render
-  as of the last check.
-- The Go change allowing `GOFORJ_TEMPLATES_DIR` is **not compile-verified** —
-  there was no Go toolchain available. Syntax and imports were checked statically.
+- Several committed changes have not appeared in the render at `:3000`. The
+  served bundle is missing the heading work *and* `ThemeLogo`, and its entry
+  hash has not changed across rebuilds. `GOFORJ_TEMPLATES_DIR` was reverted in
+  `a6aa611f`, so the binary is once again the only source of templates and
+  `go install ./cmd/forj` has to run before any render reflects an edit.
+  Building the kit directly is the fastest way to check work in the meantime:
+  `cd templates/starter-kits/vue/frontend && npm run build -- --outDir /tmp/x`.
+  Never build with the default `outDir` — `dist/` would land under `//go:embed all:*`.
 - `ThemeLogo` and the light/dark tile assets are recent work not covered here.
