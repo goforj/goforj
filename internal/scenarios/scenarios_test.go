@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -433,6 +434,26 @@ func TestPrepareRejectsLegacyScenarioBeforeMutation(t *testing.T) {
 	}
 }
 
+// TestResolvePreparationReturnsStableLivePlanWithoutMutation separates trusted selection from workspace execution.
+func TestResolvePreparationReturnsStableLivePlanWithoutMutation(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "live.yaml", "schema_version: 2\nid: live\ntitle: Live\n")
+	resolved, err := ResolvePreparation(ResolveOptions{SpecDir: specDir, ScenarioID: "live"})
+	if err != nil {
+		t.Fatalf("ResolvePreparation(): %v", err)
+	}
+	if resolved.ScenarioID != "live" || resolved.SchemaVersion != liveScenarioSchemaVersion || resolved.PlanDigest == "" || resolved.CatalogDigest == "" || len(resolved.ScenarioDigests) != 1 || len(resolved.ProjectConfigYAML) == 0 {
+		t.Fatalf("resolved preparation = %#v", resolved)
+	}
+	if resolved.ScenarioDigests[0].ID != "live" {
+		t.Fatalf("scenario digests = %#v", resolved.ScenarioDigests)
+	}
+	entries, err := os.ReadDir(specDir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "live.yaml" {
+		t.Fatalf("resolution mutated source catalog: entries=%v error=%v", entries, err)
+	}
+}
+
 // TestPrepareExecutesOnlyLivePrefix proves dependencies and fixture work cannot leak the golden target into the agent workspace.
 func TestPrepareExecutesOnlyLivePrefix(t *testing.T) {
 	specDir := t.TempDir()
@@ -495,7 +516,7 @@ checks:
 	if _, err := os.Stat(filepath.Join(root, "internal/invoices/controller.txt")); !os.IsNotExist(err) {
 		t.Fatalf("target step reached prepared workspace: %v", err)
 	}
-	if prepared.SchemaVersion != 2 || prepared.CatalogDigest == "" || len(prepared.ScenarioDigests) != 2 || prepared.ForjExecutable == "" || prepared.ForjDigest == "" {
+	if prepared.SchemaVersion != 2 || prepared.CatalogDigest == "" || len(prepared.ScenarioDigests) != 2 || prepared.ForjExecutable == "" || prepared.ForjDigest == "" || prepared.PlanDigest == "" || prepared.BaselineTree == "" {
 		t.Fatalf("prepared metadata = %#v", prepared)
 	}
 	if prepared.ScenarioDigests[0].ID != "invoice-domain" || prepared.ScenarioDigests[1].ID != "invoice-http-route" {
@@ -515,6 +536,123 @@ checks:
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestPrepareRejectsChangedResolvedPlanBeforeMutation prevents selection and execution from observing different external catalogs.
+func TestPrepareRejectsChangedResolvedPlanBeforeMutation(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "live.yaml", `schema_version: 2
+id: live
+title: Live
+steps:
+  - id: target
+    title: Target
+    write:
+      path: target.txt
+      content: target
+`)
+	workRoot := filepath.Join(t.TempDir(), "work")
+	_, err := Prepare(context.Background(), PrepareOptions{
+		Logger:             logger.NewSilentLogger(),
+		SpecDir:            specDir,
+		WorkDir:            workRoot,
+		ScenarioID:         "live",
+		ForjExec:           os.Args[0],
+		Environment:        os.Environ(),
+		ExpectedPlanDigest: "sha256:stale",
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolved preparation plan changed") {
+		t.Fatalf("Prepare() error = %v, want changed-plan rejection", err)
+	}
+	if _, statErr := os.Stat(workRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("changed plan mutated workspace: %v", statErr)
+	}
+}
+
+// TestClonePreparedCreatesAnIndependentIdenticalTree verifies cached bases never become candidate workspaces.
+func TestClonePreparedCreatesAnIndependentIdenticalTree(t *testing.T) {
+	baseRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseRoot, "internal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseRoot, "internal", "service.go"), []byte("package internal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := digestScenarioTree(baseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &PreparedScenario{Root: baseRoot, ScenarioID: "clone-fixture", BaselineTree: digest}
+	clone, err := ClonePrepared(base, t.TempDir())
+	if err != nil {
+		t.Fatalf("ClonePrepared(): %v", err)
+	}
+	clonePath := filepath.Join(clone.Root, "internal", "service.go")
+	if err := os.WriteFile(clonePath, []byte("package changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(baseRoot, "internal", "service.go"))
+	if err != nil || string(body) != "package internal\n" {
+		t.Fatalf("base changed through clone: %q, %v", body, err)
+	}
+	if err := clone.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+	if _, err := os.Stat(clone.Root); !os.IsNotExist(err) {
+		t.Fatalf("clone root survived Close(): %v", err)
+	}
+}
+
+// TestClonePreparedRejectsEscapingSymlinks prevents an immutable base from turning copy traversal into host access.
+func TestClonePreparedRejectsEscapingSymlinks(t *testing.T) {
+	baseRoot := t.TempDir()
+	if err := os.Symlink(filepath.Join("..", "outside"), filepath.Join(baseRoot, "escape")); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	digest, err := digestScenarioTree(baseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &PreparedScenario{Root: baseRoot, ScenarioID: "unsafe-clone", BaselineTree: digest}
+	_, err = ClonePrepared(base, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "escapes its root") {
+		t.Fatalf("ClonePrepared() error = %v, want escaping-link rejection", err)
+	}
+}
+
+// TestClonePreparedPreservesReadOnlyDirectories proves post-order mode restoration does not block copying children.
+func TestClonePreparedPreservesReadOnlyDirectories(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix directory write modes")
+	}
+	baseRoot := t.TempDir()
+	directory := filepath.Join(baseRoot, "readonly")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "fixture.txt"), []byte("fixture"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(directory, 0o700) })
+	digest, err := digestScenarioTree(baseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := ClonePrepared(&PreparedScenario{Root: baseRoot, ScenarioID: "readonly-clone", BaselineTree: digest}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = clone.Close() })
+	info, err := os.Stat(filepath.Join(clone.Root, "readonly"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o555 {
+		t.Fatalf("cloned directory mode = %o, want 555", info.Mode().Perm())
 	}
 }
 
