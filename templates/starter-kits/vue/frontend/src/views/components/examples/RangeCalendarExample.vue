@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { getLocalTimeZone, parseDate } from '@internationalized/date'
+import { computed, shallowRef } from 'vue'
+import { type DateValue, getLocalTimeZone, parseDate } from '@internationalized/date'
+import type { DateRange } from 'reka-ui'
 import { Input } from '@/components/ui/input'
 import { RangeCalendar } from '@/components/ui/range-calendar'
 
-const range = ref({ start: parseDate('2026-04-23'), end: parseDate('2026-04-30') })
+// shallowRef, not ref. Dates are immutable value objects, and ref's deep
+// unwrapping strips the private field the DateValue union is discriminated
+// on, leaving a type that will not assign to RangeCalendar's model.
+const range = shallowRef<DateRange>({ start: parseDate('2026-04-23'), end: parseDate('2026-04-30') })
 
 const formatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-function label(value?: { toDate: (tz: string) => Date } | null) {
+function label(value?: DateValue | null) {
   return value ? formatter.format(value.toDate(getLocalTimeZone())) : ''
 }
 
