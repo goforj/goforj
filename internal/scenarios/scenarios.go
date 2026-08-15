@@ -2,10 +2,10 @@ package scenarios
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"go/format"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,7 +15,6 @@ import (
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
-	"gopkg.in/yaml.v3"
 )
 
 //go:embed specs/*.yaml
@@ -34,19 +33,23 @@ type GenerateOptions struct {
 
 // ValidateOptions controls executable scenario validation.
 type ValidateOptions struct {
-	Logger   *logger.AppLogger
-	SpecDir  string
-	WorkDir  string
-	Keep     bool
-	All      bool
-	IDs      []string
-	ForjExec string
+	Logger      *logger.AppLogger
+	SpecDir     string
+	WorkDir     string
+	Keep        bool
+	All         bool
+	IDs         []string
+	ForjExec    string
+	Environment []string
 }
 
 // scenarioCatalog keeps the validated graph and its lookup index together so execution cannot observe a different catalog than selection.
 type scenarioCatalog struct {
-	specs []ScenarioSpec
-	byID  map[string]ScenarioSpec
+	specs         []ScenarioSpec
+	byID          map[string]ScenarioSpec
+	plans         map[string]scenarioPlan
+	digests       map[string]string
+	catalogDigest string
 }
 
 // scenarioDependencyValidator owns graph traversal state so recursive checks cannot receive mismatched indexes or visit sets.
@@ -140,14 +143,22 @@ func Validate(options ValidateOptions) error {
 
 // ScenarioSpec is the executable and documentable contract for one verified scenario.
 type ScenarioSpec struct {
-	ID          string               `yaml:"id"`
-	Title       string               `yaml:"title"`
-	Description string               `yaml:"description"`
-	DependsOn   []string             `yaml:"depends_on"`
-	App         ScenarioApp          `yaml:"app"`
-	Markdown    ScenarioMarkdown     `yaml:"markdown"`
-	Steps       []ScenarioStep       `yaml:"steps"`
-	Verify      ScenarioVerification `yaml:"verify"`
+	SchemaVersion int                  `yaml:"schema_version,omitempty"`
+	ID            string               `yaml:"id"`
+	Title         string               `yaml:"title"`
+	Description   string               `yaml:"description"`
+	DependsOn     []string             `yaml:"depends_on"`
+	App           ScenarioApp          `yaml:"app"`
+	Markdown      ScenarioMarkdown     `yaml:"markdown"`
+	Prepare       ScenarioPreparation  `yaml:"prepare,omitempty"`
+	Steps         []ScenarioStep       `yaml:"steps"`
+	Verify        ScenarioVerification `yaml:"verify"`
+}
+
+// ScenarioPreparation defines fixture-only work and the checks that prove the live starting state.
+type ScenarioPreparation struct {
+	Steps  []ScenarioStep    `yaml:"steps"`
+	Checks []ScenarioCommand `yaml:"checks"`
 }
 
 // ScenarioApp describes the rendered App that a scenario exercises.
@@ -210,6 +221,7 @@ type MarkdownSection struct {
 
 // ScenarioStep combines the reader-facing explanation with one executable change or command.
 type ScenarioStep struct {
+	ID      string              `yaml:"id,omitempty"`
 	Title   string              `yaml:"title"`
 	Explain string              `yaml:"explain"`
 	Run     *ScenarioCommand    `yaml:"run,omitempty"`
@@ -246,7 +258,7 @@ type ScenarioCommand struct {
 
 // loadScenarioCatalog reads and validates the entire dependency graph before callers can mutate generated output or work directories.
 func loadScenarioCatalog(specDir string) (scenarioCatalog, error) {
-	specs, err := readScenarioSpecs(specDir)
+	specs, digests, err := readScenarioSpecs(specDir)
 	if err != nil {
 		return scenarioCatalog{}, err
 	}
@@ -258,16 +270,27 @@ func loadScenarioCatalog(specDir string) (scenarioCatalog, error) {
 	for _, spec := range specs {
 		byID[spec.ID] = spec
 	}
-	return scenarioCatalog{specs: specs, byID: byID}, nil
+	plans, err := compileScenarioPlans(specs, byID)
+	if err != nil {
+		return scenarioCatalog{}, err
+	}
+	return scenarioCatalog{
+		specs:         specs,
+		byID:          byID,
+		plans:         plans,
+		digests:       digests,
+		catalogDigest: digestScenarioCatalog(specs, digests),
+	}, nil
 }
 
 // readScenarioSpecs decodes every source file before catalog-wide validation resolves graph relationships.
-func readScenarioSpecs(specDir string) ([]ScenarioSpec, error) {
+func readScenarioSpecs(specDir string) ([]ScenarioSpec, map[string]string, error) {
 	var specs []ScenarioSpec
+	digests := map[string]string{}
 	if strings.TrimSpace(specDir) != "" {
 		entries, err := os.ReadDir(specDir)
 		if err != nil {
-			return nil, fmt.Errorf("read spec dir: %w", err)
+			return nil, nil, fmt.Errorf("read spec dir: %w", err)
 		}
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
@@ -275,18 +298,19 @@ func readScenarioSpecs(specDir string) ([]ScenarioSpec, error) {
 			}
 			body, err := os.ReadFile(filepath.Join(specDir, entry.Name()))
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			spec, err := decodeScenarioSpec(body)
 			if err != nil {
-				return nil, fmt.Errorf("%s: %w", entry.Name(), err)
+				return nil, nil, fmt.Errorf("%s: %w", entry.Name(), err)
 			}
 			specs = append(specs, spec)
+			digests[spec.ID] = fmt.Sprintf("sha256:%x", sha256.Sum256(body))
 		}
 	} else {
 		entries, err := embeddedScenarioSpecs.ReadDir("specs")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
@@ -294,44 +318,27 @@ func readScenarioSpecs(specDir string) ([]ScenarioSpec, error) {
 			}
 			body, err := embeddedScenarioSpecs.ReadFile("specs/" + entry.Name())
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			spec, err := decodeScenarioSpec(body)
 			if err != nil {
-				return nil, fmt.Errorf("%s: %w", entry.Name(), err)
+				return nil, nil, fmt.Errorf("%s: %w", entry.Name(), err)
 			}
 			specs = append(specs, spec)
+			digests[spec.ID] = fmt.Sprintf("sha256:%x", sha256.Sum256(body))
 		}
 	}
 	sort.Slice(specs, func(i, j int) bool { return specs[i].ID < specs[j].ID })
-	return specs, nil
+	return specs, digests, nil
 }
 
-// decodeScenarioSpec applies per-file defaults while catalog-wide constraints remain centralized in validateScenarioCatalog.
-func decodeScenarioSpec(body []byte) (ScenarioSpec, error) {
-	var spec ScenarioSpec
-	decoder := yaml.NewDecoder(bytes.NewReader(body))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&spec); err != nil {
-		return spec, err
+// digestScenarioCatalog binds the sorted scenario IDs to their exact source digests.
+func digestScenarioCatalog(specs []ScenarioSpec, digests map[string]string) string {
+	hash := sha256.New()
+	for _, spec := range specs {
+		fmt.Fprintf(hash, "%s\x00%s\x00", spec.ID, digests[spec.ID])
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return spec, fmt.Errorf("multiple YAML documents are not supported")
-		}
-		return spec, fmt.Errorf("decode trailing YAML: %w", err)
-	}
-	if strings.TrimSpace(spec.ID) == "" {
-		return spec, fmt.Errorf("id is required")
-	}
-	if strings.TrimSpace(spec.Title) == "" {
-		return spec, fmt.Errorf("title is required")
-	}
-	if strings.TrimSpace(spec.App.ModuleName) == "" {
-		spec.App.ModuleName = "example.com/" + strings.ReplaceAll(spec.ID, "-", "")
-	}
-	return spec, nil
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil))
 }
 
 // selectSpecs resolves requested IDs only from the validated catalog index.
@@ -455,12 +462,43 @@ func renderScenarioMarkdown(spec ScenarioSpec) (string, error) {
 	b.WriteString(":::\n\n")
 	writeScenarioIntroduction(&b, spec)
 	writeScenarioFiles(&b, spec)
+	if err := writeScenarioPreparation(&b, spec); err != nil {
+		return "", err
+	}
 	if err := writeScenarioSteps(&b, spec); err != nil {
 		return "", err
 	}
 	writeScenarioVerification(&b, spec)
 	writeScenarioGuidance(&b, spec)
 	return strings.TrimRight(b.String(), "\n") + "\n", nil
+}
+
+// writeScenarioPreparation explains fixture-only work without presenting it as an agent or reader target step.
+func writeScenarioPreparation(b *strings.Builder, spec ScenarioSpec) error {
+	if len(spec.Prepare.Steps) == 0 && len(spec.Prepare.Checks) == 0 {
+		return nil
+	}
+	b.WriteString("## Starting State\n\n")
+	b.WriteString("The scenario prepares and verifies this fixture state before the target workflow begins.\n\n")
+	for _, step := range spec.Prepare.Steps {
+		fmt.Fprintf(b, "### %s\n\n", step.Title)
+		if strings.TrimSpace(step.Explain) != "" {
+			b.WriteString(strings.TrimSpace(step.Explain))
+			b.WriteString("\n\n")
+		}
+		if err := writeScenarioStepAction(b, spec, step); err != nil {
+			return err
+		}
+	}
+	if len(spec.Prepare.Checks) > 0 {
+		b.WriteString("The starting state is checked with:\n\n")
+		for _, check := range spec.Prepare.Checks {
+			b.WriteString("```bash\n")
+			b.WriteString(strings.Join(check.Run, " "))
+			b.WriteString("\n```\n\n")
+		}
+	}
+	return nil
 }
 
 // writeScenarioIntroduction keeps the reader's goal and starting state ahead of implementation details.
@@ -574,31 +612,39 @@ func writeScenarioSteps(b *strings.Builder, spec ScenarioSpec) error {
 			b.WriteString(strings.TrimSpace(step.Explain))
 			b.WriteString("\n\n")
 		}
-		if step.Write != nil {
-			fmt.Fprintf(b, "Create or replace `%s`:\n\n", step.Write.Path)
-			if err := writeFormattedCodeBlock(b, step.Write.Language, expandScenarioMarkdownText(spec, step.Write.Content)); err != nil {
-				return fmt.Errorf("format %s: %w", step.Write.Path, err)
-			}
+		if err := writeScenarioStepAction(b, spec, step); err != nil {
+			return err
 		}
-		if step.Append != nil {
-			fmt.Fprintf(b, "Append to `%s`:\n\n", step.Append.Path)
-			writeCodeBlock(b, step.Append.Language, expandScenarioMarkdownText(spec, step.Append.Content))
+	}
+	return nil
+}
+
+// writeScenarioStepAction keeps executable changes and their documentation on one rendering path.
+func writeScenarioStepAction(b *strings.Builder, spec ScenarioSpec, step ScenarioStep) error {
+	if step.Write != nil {
+		fmt.Fprintf(b, "Create or replace `%s`:\n\n", step.Write.Path)
+		if err := writeFormattedCodeBlock(b, step.Write.Language, expandScenarioMarkdownText(spec, step.Write.Content)); err != nil {
+			return fmt.Errorf("format %s: %w", step.Write.Path, err)
 		}
-		if step.Replace != nil {
-			newContent := expandScenarioMarkdownText(spec, step.Replace.New)
-			if strings.TrimSpace(newContent) == "" {
-				fmt.Fprintf(b, "Remove from `%s`:\n\n", step.Replace.Path)
-				writeCodeBlock(b, step.Replace.Language, expandScenarioMarkdownText(spec, step.Replace.Old))
-			} else {
-				fmt.Fprintf(b, "Update `%s` so it includes:\n\n", step.Replace.Path)
-				writeCodeBlock(b, step.Replace.Language, newContent)
-			}
+	}
+	if step.Append != nil {
+		fmt.Fprintf(b, "Append to `%s`:\n\n", step.Append.Path)
+		writeCodeBlock(b, step.Append.Language, expandScenarioMarkdownText(spec, step.Append.Content))
+	}
+	if step.Replace != nil {
+		newContent := expandScenarioMarkdownText(spec, step.Replace.New)
+		if strings.TrimSpace(newContent) == "" {
+			fmt.Fprintf(b, "Remove from `%s`:\n\n", step.Replace.Path)
+			writeCodeBlock(b, step.Replace.Language, expandScenarioMarkdownText(spec, step.Replace.Old))
+		} else {
+			fmt.Fprintf(b, "Update `%s` so it includes:\n\n", step.Replace.Path)
+			writeCodeBlock(b, step.Replace.Language, newContent)
 		}
-		if step.Run != nil && len(step.Run.Run) > 0 {
-			b.WriteString("```bash\n")
-			b.WriteString(strings.Join(step.Run.Run, " "))
-			b.WriteString("\n```\n\n")
-		}
+	}
+	if step.Run != nil && len(step.Run.Run) > 0 {
+		b.WriteString("```bash\n")
+		b.WriteString(strings.Join(step.Run.Run, " "))
+		b.WriteString("\n```\n\n")
 	}
 	return nil
 }
