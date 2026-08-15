@@ -604,20 +604,23 @@ func TestClonePreparedCreatesAnIndependentIdenticalTree(t *testing.T) {
 	}
 }
 
-// TestClonePreparedRejectsEscapingSymlinks prevents an immutable base from turning copy traversal into host access.
-func TestClonePreparedRejectsEscapingSymlinks(t *testing.T) {
+// TestClonePreparedRejectsSymlinks keeps version-one bases portable and closes link semantics at the trust boundary.
+func TestClonePreparedRejectsSymlinks(t *testing.T) {
 	baseRoot := t.TempDir()
-	if err := os.Symlink(filepath.Join("..", "outside"), filepath.Join(baseRoot, "escape")); err != nil {
+	if err := os.WriteFile(filepath.Join(baseRoot, "target"), []byte("fixture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(baseRoot, "link")); err != nil {
 		t.Skipf("symlinks are unavailable: %v", err)
 	}
 	digest, err := digestScenarioTree(baseRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := &PreparedScenario{Root: baseRoot, ScenarioID: "unsafe-clone", BaselineTree: digest}
+	base := &PreparedScenario{Root: baseRoot, ScenarioID: "linked-clone", BaselineTree: digest}
 	_, err = ClonePrepared(base, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "escapes its root") {
-		t.Fatalf("ClonePrepared() error = %v, want escaping-link rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "unsupported symlink") {
+		t.Fatalf("ClonePrepared() error = %v, want link rejection", err)
 	}
 }
 
