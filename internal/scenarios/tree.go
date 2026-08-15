@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // copyScenarioTree preserves one immutable prepared base without following links outside that base.
@@ -39,19 +38,7 @@ func copyScenarioTree(sourceRoot, destinationRoot string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(sourcePath)
-			if err != nil {
-				return err
-			}
-			if filepath.IsAbs(target) {
-				return fmt.Errorf("prepared scenario contains absolute symlink %q", relative)
-			}
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(sourcePath), target))
-			relativeTarget, err := filepath.Rel(sourceRoot, resolved)
-			if err != nil || relativeTarget == ".." || strings.HasPrefix(relativeTarget, ".."+string(filepath.Separator)) {
-				return fmt.Errorf("prepared scenario symlink %q escapes its root", relative)
-			}
-			return os.Symlink(target, destinationPath)
+			return fmt.Errorf("prepared scenario contains unsupported symlink %q", relative)
 		}
 		if entry.IsDir() {
 			if err := os.MkdirAll(destinationPath, 0o700); err != nil {
