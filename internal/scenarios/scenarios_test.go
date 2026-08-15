@@ -202,8 +202,12 @@ func TestDecodeScenarioSpecV2RejectsInvalidContracts(t *testing.T) {
 		{name: "invalid step ID", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: Add Route\n    title: Add route\n    command: [forj, build]\n", wantErr: "must be a safe slug"},
 		{name: "duplicate step ID", body: "schema_version: 2\nid: example\ntitle: Example\nprepare:\n  steps:\n    - id: add-route\n      title: Prepare route\n      command: [forj, build]\nsteps:\n  - id: add-route\n    title: Add route\n    command: [forj, build]\n", wantErr: `duplicate scenario step ID "add-route"`},
 		{name: "missing check command", body: "schema_version: 2\nid: example\ntitle: Example\nchecks:\n  - contains: [PASS]\n", wantErr: "checks[0].command is required"},
+		{name: "blank executable", body: "schema_version: 2\nid: example\ntitle: Example\nchecks:\n  - command: ['']\n", wantErr: "checks[0].command executable is required"},
+		{name: "shell step", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: run-shell\n    title: Run shell\n    command: [/bin/sh, -c, echo hidden]\n", wantErr: "steps[0].command must not invoke a shell interpreter"},
+		{name: "shell check", body: "schema_version: 2\nid: example\ntitle: Example\nchecks:\n  - command: [pwsh.exe, -Command, Write-Output hidden]\n", wantErr: "checks[0].command must not invoke a shell interpreter"},
 		{name: "anchor", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - &step\n    id: add-route\n    title: Add route\n    command: [forj, build]\n", wantErr: "aliases and anchors are not supported"},
 		{name: "alias", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - &step\n    id: add-route\n    title: Add route\n    command: [forj, build]\n  - *step\n", wantErr: "aliases and anchors are not supported"},
+		{name: "merge key", body: "schema_version: 2\nid: example\ntitle: Example\nprepare: &base {}\n<<: *base\n", wantErr: "YAML merge keys are not supported"},
 		{name: "duplicate key", body: "schema_version: 2\nid: example\nid: second\ntitle: Example\n", wantErr: "mapping key \"id\" already defined"},
 	}
 

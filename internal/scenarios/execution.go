@@ -69,6 +69,16 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 
 // prepare applies the immutable live prefix and never observes target steps or final checks.
 func (execution scenarioExecution) prepare(plan scenarioPlan) error {
+	return execution.execute(plan, false)
+}
+
+// run applies the complete golden path through the same prefix used by live preparation.
+func (execution scenarioExecution) run(plan scenarioPlan) error {
+	return execution.execute(plan, true)
+}
+
+// execute stops at the one explicit preparation boundary instead of maintaining separate stage interpreters.
+func (execution scenarioExecution) execute(plan scenarioPlan, includeTarget bool) error {
 	if err := writeScenarioProjectConfig(execution.workspace.root, plan.spec); err != nil {
 		return err
 	}
@@ -81,7 +91,16 @@ func (execution scenarioExecution) prepare(plan scenarioPlan) error {
 	if err := execution.applyPlannedSteps(plan.spec.ID, "preparation", plan.preparationSteps); err != nil {
 		return err
 	}
-	return execution.runChecks(plan.startingChecks, "verify starting state")
+	if err := execution.runChecks(plan.startingChecks, "verify starting state"); err != nil {
+		return err
+	}
+	if !includeTarget {
+		return nil
+	}
+	if err := execution.applyPlannedSteps(plan.spec.ID, "target", plan.targetSteps); err != nil {
+		return err
+	}
+	return execution.runChecks(plan.finalChecks, "verify")
 }
 
 // createScenarioWorkspace creates an isolated directory only after the scenario ID is known to be path-safe.
@@ -116,29 +135,6 @@ func (workspace scenarioWorkspace) cleanupAfter(runErr error) error {
 		return errors.Join(runErr, cleanupErr)
 	}
 	return runErr
-}
-
-// run applies every stage of the compiled golden path in contract order.
-func (execution scenarioExecution) run(plan scenarioPlan) error {
-	if err := writeScenarioProjectConfig(execution.workspace.root, plan.spec); err != nil {
-		return err
-	}
-	if err := execution.runCommand(ScenarioCommand{Run: []string{"forj", "render"}}, "render app"); err != nil {
-		return err
-	}
-	if err := execution.applyPlannedSteps(plan.spec.ID, "dependency", plan.dependencySteps); err != nil {
-		return err
-	}
-	if err := execution.applyPlannedSteps(plan.spec.ID, "preparation", plan.preparationSteps); err != nil {
-		return err
-	}
-	if err := execution.runChecks(plan.startingChecks, "verify starting state"); err != nil {
-		return err
-	}
-	if err := execution.applyPlannedSteps(plan.spec.ID, "target", plan.targetSteps); err != nil {
-		return err
-	}
-	return execution.runChecks(plan.finalChecks, "verify")
 }
 
 // applyPlannedSteps preserves owner metadata while executing one immutable plan stage.
