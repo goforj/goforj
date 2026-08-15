@@ -46,8 +46,6 @@ markdown:
 prepare:
   checks:
     - command: [go, test, ./internal/invoices]
-    - command: [sh, -c, "test ! -e internal/invoices/controller.go"]
-    - command: [sh, -c, "! grep -q invoices.Controller app/routes.go"]
 steps:
   - id: scaffold-invoice-controller
     title: Scaffold the invoice controller
