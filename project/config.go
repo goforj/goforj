@@ -146,7 +146,9 @@ type RenderConfig struct {
 	StarterKit           StarterKit         `yaml:"starter_kit" json:"starter_kit"`
 	StarterKitOptions    *StarterKitOptions `yaml:"starter_kit_options,omitempty" json:"starter_kit_options,omitempty"`
 	HelpFormat           HelpFormat         `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	AgentGuidance        AgentGuidance      `yaml:"agent_guidance,omitempty" json:"agent_guidance,omitempty"`
 	GoForjVersion        string             `yaml:"goforj_version" json:"goforj_version"`
+	agentGuidanceSet     bool
 	legacyQueueDriverSet bool
 	legacyQueueDriver    string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
@@ -173,6 +175,10 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("decode render config: %w", err)
 	}
 	*c = RenderConfig(fields)
+	c.agentGuidanceSet = yamlMappingValue(value, "agent_guidance") != nil
+	if c.agentGuidanceSet && !c.AgentGuidance.Valid() {
+		return fmt.Errorf("decode render config: unsupported agent_guidance %q; expected %q or %q", c.AgentGuidance, AgentGuidanceBaseline, AgentGuidanceNone)
+	}
 	delete(c.Extra, "component_contract")
 	delete(c.Extra, "queue_driver")
 	if len(c.Extra) == 0 {
@@ -188,6 +194,11 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+// HasAgentGuidance reports whether a Project explicitly persisted the guidance contract.
+func (c RenderConfig) HasAgentGuidance() bool {
+	return c.agentGuidanceSet || c.AgentGuidance.Valid()
 }
 
 // AppConfig records optional per-app participation in project-level capabilities.

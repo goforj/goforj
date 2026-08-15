@@ -356,6 +356,7 @@ func (m *model) finalizeConfig() error {
 		m.config.Render.StarterKitOptions = nil
 	}
 	m.config.Render.HelpFormat = project.NormalizeHelpFormat(m.config.Render.HelpFormat)
+	m.config.Render.AgentGuidance = m.selectedAgentGuidance()
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
 		Pre:               []project.DevTask{},
@@ -387,6 +388,14 @@ func (m *model) finalizeConfig() error {
 		})
 	}
 	return nil
+}
+
+// selectedAgentGuidance maps wizard surfaces onto the durable render contract independently from optional Atlas features.
+func (m model) selectedAgentGuidance() project.AgentGuidance {
+	if m.selectedAtlasSurfaces().guidelines {
+		return project.AgentGuidanceBaseline
+	}
+	return project.AgentGuidanceNone
 }
 
 // frontendNPMWatch returns compatibility filters for an existing frontend whose

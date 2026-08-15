@@ -1122,6 +1122,9 @@ func TestAtlasMinimalInstallsGuidelinesOnly(t *testing.T) {
 	if !surfaces.guidelines || surfaces.skills || surfaces.mcp {
 		t.Fatalf("expected minimal atlas guidelines only, got %#v", surfaces)
 	}
+	if got := m.selectedAgentGuidance(); got != project.AgentGuidanceBaseline {
+		t.Fatalf("minimal agent guidance = %q", got)
+	}
 }
 
 func TestAtlasSkipDisablesInstall(t *testing.T) {
@@ -1137,6 +1140,9 @@ func TestAtlasSkipDisablesInstall(t *testing.T) {
 	}
 	if m.atlasInstallEnabled() {
 		t.Fatalf("expected skip to disable atlas install")
+	}
+	if got := m.selectedAgentGuidance(); got != project.AgentGuidanceNone {
+		t.Fatalf("skip agent guidance = %q", got)
 	}
 }
 
@@ -1185,6 +1191,20 @@ func TestAtlasCustomRequiresAgentAndSurface(t *testing.T) {
 	m = next.(model)
 	if m.stage != StageProjectPath {
 		t.Fatalf("expected custom selections to continue to project path, got %v", m.stage)
+	}
+}
+
+// TestAtlasCustomWithoutGuidelinesKeepsBaselineAbsent separates optional Atlas features from native guidance.
+func TestAtlasCustomWithoutGuidelinesKeepsBaselineAbsent(t *testing.T) {
+	m := initialModel()
+	m.atlasMode = atlasModeCustom
+	for index, listItem := range m.atlasSurfaceList.Items() {
+		item := listItem.(AtlasSurfaceItem)
+		item.Selected = item.Surface == atlasSurfaceSkills
+		m.atlasSurfaceList.SetItem(index, item)
+	}
+	if got := m.selectedAgentGuidance(); got != project.AgentGuidanceNone {
+		t.Fatalf("custom skills-only agent guidance = %q", got)
 	}
 }
 
