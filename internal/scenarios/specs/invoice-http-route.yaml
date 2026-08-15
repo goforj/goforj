@@ -1,0 +1,106 @@
+schema_version: 2
+id: invoice-http-route
+title: Invoice HTTP Route
+description: Add a thin invoice lookup endpoint through the App's normal generator and registration points.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Add `GET /api/v1/invoices/:id` to an App that already owns invoice lookup behavior.
+
+    The target is intentionally small: use the controller generator, inject the existing service, translate not-found behavior, and leave repository lookup in the domain layer.
+  before: |
+    the App has a tested invoice service and repository, but no invoice controller or route.
+  after: |
+    the App exposes one service-backed invoice endpoint through its normal Wire and route registration points.
+  files:
+    - internal/invoices/controller.go
+    - app/wire/inject_http_controllers_app.go
+    - app/routes.go
+  generated_files:
+    intro: The controller generator updates the App-owned registration points.
+    files:
+      - app/wire/inject_http_controllers_app.go
+      - app/routes.go
+    note: Review these changes, but do not edit `app/wire/wire_gen.go`.
+  manual_check: |
+    List the registered route:
+
+    ```bash
+    forj route:list
+    ```
+
+    Expected route:
+
+    ```text
+    GET  /api/v1/invoices/:id
+    ```
+  common_mistakes:
+    - Do not perform repository lookup in the controller.
+    - Do not hand-edit generated Wire output.
+    - Do not register the route outside the controller package and App route registry.
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+    - command: [sh, -c, "test ! -e internal/invoices/controller.go"]
+    - command: [sh, -c, "! grep -q invoices.Controller app/routes.go"]
+steps:
+  - id: scaffold-invoice-controller
+    title: Scaffold the invoice controller
+    explain: Use the framework generator so the controller enters both the HTTP Wire set and App route registry.
+    command: [forj, make:controller, invoices]
+
+  - id: implement-invoice-controller
+    title: Call the invoice service
+    explain: Keep transport translation in the controller and invoice lookup in the existing service.
+    write:
+      path: internal/invoices/controller.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "errors"
+                "net/http"
+
+                "github.com/goforj/web"
+        )
+
+        // Controller translates invoice HTTP requests into application service calls.
+        type Controller struct {
+                service *Service
+        }
+
+        // NewController exposes the service dependency to the App Wire graph.
+        func NewController(service *Service) *Controller {
+                return &Controller{service: service}
+        }
+
+        // Routes declares the invoice HTTP surface owned by this package.
+        func (controller *Controller) Routes() []web.Route {
+                return []web.Route{
+                        web.NewRoute(http.MethodGet, "/invoices/:id", controller.Show),
+                }
+        }
+
+        // Show translates invoice lookup results into the public HTTP contract.
+        func (controller *Controller) Show(request web.Context) error {
+                invoice, err := controller.service.Find(request.Context(), request.Param("id"))
+                if errors.Is(err, ErrInvoiceNotFound) {
+                        return request.JSON(http.StatusNotFound, map[string]string{"error": "invoice not found"})
+                }
+                if err != nil {
+                        return err
+                }
+                return request.JSON(http.StatusOK, invoice)
+        }
+checks:
+  - command: [go, test, ./internal/invoices]
+  - command: [forj, build]
+  - command: [forj, route:list]
+    contains: [GET, /api/v1/invoices/:id]
