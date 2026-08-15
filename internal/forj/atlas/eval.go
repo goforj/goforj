@@ -88,6 +88,10 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 			return err
 		}
 	}
+	baseEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, "base"), forjExecutable)
+	if err != nil {
+		return err
+	}
 	noneEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, eval.GuidanceProfileNone), forjExecutable)
 	if err != nil {
 		return err
@@ -120,7 +124,7 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), nil)
+	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil)
 	defer func() {
 		runErr = errors.Join(runErr, preparer.Close(context.Background()))
 	}()

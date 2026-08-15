@@ -116,6 +116,30 @@ func TestPreparerRejectsUncorrelatedPlan(t *testing.T) {
 	}
 }
 
+// TestPreparerRejectsMaterialBaseEnvironmentDrift prevents cache isolation from changing the Project preparation contract.
+func TestPreparerRejectsMaterialBaseEnvironmentDrift(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "projects")
+	request := eval.PreparationRequest{
+		ScenarioID:      "invoice-http-route",
+		DestinationRoot: destination,
+		ForjExecutable:  os.Args[0],
+		OrchestrationID: "trial-01:none",
+		Environment:     []string{"APP_ENV=test"},
+	}
+	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), []string{"APP_ENV=production"}, nil)
+	plan, err := preparer.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = preparer.Prepare(context.Background(), request, plan)
+	if err == nil || !strings.Contains(err.Error(), "base environment does not match") {
+		t.Fatalf("Prepare() error = %v, want material base environment rejection", err)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("base environment drift mutated destination: %v", statErr)
+	}
+}
+
 // TestPreparerCapabilitiesAdvertiseOnlyImplementedSchema keeps negotiation narrower than future scenario formats.
 func TestPreparerCapabilitiesAdvertiseOnlyImplementedSchema(t *testing.T) {
 	capabilities, err := (Preparer{}).Capabilities(context.Background())

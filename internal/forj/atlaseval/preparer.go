@@ -18,10 +18,11 @@ import (
 
 // Preparer resolves and materializes trusted GoForj scenario prefixes for Atlas.
 type Preparer struct {
-	SpecDir  string
-	Logger   *logger.AppLogger
-	BaseRoot string
-	cache    *preparationCache
+	SpecDir         string
+	Logger          *logger.AppLogger
+	BaseRoot        string
+	BaseEnvironment []string
+	cache           *preparationCache
 }
 
 // preparationCache owns immutable command-local bases shared only by paired trial clones.
@@ -32,11 +33,12 @@ type preparationCache struct {
 }
 
 // NewPreparer enables command-local immutable-base reuse under an explicitly owned root.
-func NewPreparer(baseRoot string, appLogger *logger.AppLogger) *Preparer {
+func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger) *Preparer {
 	return &Preparer{
-		BaseRoot: baseRoot,
-		Logger:   appLogger,
-		cache:    &preparationCache{bases: map[string]*scenarios.PreparedScenario{}},
+		BaseRoot:        baseRoot,
+		BaseEnvironment: append([]string(nil), baseEnvironment...),
+		Logger:          appLogger,
+		cache:           &preparationCache{bases: map[string]*scenarios.PreparedScenario{}},
 	}
 }
 
@@ -150,7 +152,15 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 	base := preparer.cache.bases[key]
 	if base == nil {
 		var err error
-		base, err = preparer.materializeScenario(ctx, request, plan, preparer.BaseRoot, false)
+		baseRequest := request
+		baseRequest.Environment = append([]string(nil), preparer.BaseEnvironment...)
+		if baseRequest.Environment == nil {
+			return nil, fmt.Errorf("evaluation base environment is required")
+		}
+		if preparationEnvironmentDigest(baseRequest.Environment) != plan.EnvironmentDigest {
+			return nil, fmt.Errorf("evaluation base environment does not match the resolved material environment")
+		}
+		base, err = preparer.materializeScenario(ctx, baseRequest, plan, preparer.BaseRoot, false)
 		if err != nil {
 			return nil, err
 		}
