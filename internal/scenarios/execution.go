@@ -111,7 +111,7 @@ func (workspace scenarioWorkspace) cleanupAfter(runErr error) error {
 	if !workspace.removeAfter {
 		return runErr
 	}
-	if err := os.RemoveAll(workspace.root); err != nil {
+	if err := removeScenarioTree(workspace.root); err != nil {
 		cleanupErr := fmt.Errorf("remove temporary scenario workspace %q: %w", workspace.root, err)
 		return errors.Join(runErr, cleanupErr)
 	}
