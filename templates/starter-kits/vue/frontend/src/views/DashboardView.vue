@@ -1,14 +1,14 @@
 <template>
   <section class="grid gap-6">
     <!--
-      Tint the hero rather than lifting it. Every other card here is the Card
-      default shadow-sm, so a heavier shadow reads as a smudge instead of
-      elevation — light mode gives --card the same value as --background, which
-      leaves the shadow doing all the work of drawing the card. The gradient is
-      token-only, so it follows the theme in both modes with no dark: overrides.
+      No gradient and no extra elevation. Every token in this theme is chroma 0,
+      so a colour mix cannot tint — it only returns grey, and grey pooling in one
+      corner of a bordered card reads as an inset shadow. Scale, badges, and
+      padding already separate the hero; it takes the same surface as every other
+      card so the page has one elevation language.
     -->
-    <Card class="overflow-hidden bg-[linear-gradient(140deg,color-mix(in_oklab,var(--primary)_7%,var(--card)),var(--card)_60%)]">
-      <CardHeader class="relative gap-4 p-6 md:p-8">
+    <Card class="overflow-hidden">
+      <CardHeader class="gap-4 p-6 md:p-8">
         <div class="flex flex-wrap items-center gap-2">
           <Badge class="border-primary/20 bg-primary/10 text-primary hover:bg-primary/15">Vue application shell</Badge>
           <Badge variant="outline">Local shadcn-vue source</Badge>
