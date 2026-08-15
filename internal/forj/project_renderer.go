@@ -26,6 +26,7 @@ import (
 	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/internal/envfile"
+	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
@@ -1163,6 +1164,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.timeRenderStage("runWireGenerate", func() error { return p.generateWire(p) }); err != nil {
 		return fmt.Errorf("wire generate: %w", err)
 	}
+	if input.renderAll {
+		if _, err := atlas.ReconcileAgentGuidance(p.workspace.root, p.config.Render.AgentGuidance); err != nil {
+			return fmt.Errorf("reconcile agent guidance: %w", err)
+		}
+	}
 
 	p.printRenderDetails()
 	p.printOverallSummary()
@@ -2241,6 +2247,14 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 		return nil
 	}
 	changed := false
+	if !p.config.Render.HasAgentGuidance() {
+		guidance, err := atlas.InferAgentGuidance(p.workspace.root)
+		if err != nil {
+			return err
+		}
+		p.config.Render.AgentGuidance = guidance
+		changed = true
+	}
 	if p.config.NeedsComponentMigration() {
 		changed = true
 	}

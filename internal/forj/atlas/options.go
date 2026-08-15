@@ -21,7 +21,7 @@ type InstallOptions struct {
 // RunInstall writes Atlas guidance, skills, and MCP config for a rendered project.
 func RunInstall(ctx context.Context, opts InstallOptions) (install.Result, error) {
 	root := firstNonEmpty(opts.Root, ".")
-	return install.NewInstaller().Install(ctx, install.Options{
+	result, err := install.NewInstaller().Install(ctx, install.Options{
 		Root:          root,
 		Project:       Project(root),
 		Agents:        opts.Agents,
@@ -32,4 +32,12 @@ func RunInstall(ctx context.Context, opts InstallOptions) (install.Result, error
 		NoInteraction: opts.NoInteraction,
 		DryRun:        opts.DryRun,
 	})
+	if err != nil || opts.DryRun {
+		return result, err
+	}
+	_, err = SynchronizeAgentGuidance(root)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
