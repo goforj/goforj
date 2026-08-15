@@ -30,7 +30,8 @@ func (*UpdateCmd) Signature() string {
 
 // Run executes the Atlas update workflow.
 func (c *UpdateCmd) Run() error {
-	result, err := install.NewUpdater().Update(context.Background(), install.Options{
+	ctx := context.Background()
+	result, err := install.NewUpdater().Update(ctx, install.Options{
 		Root:          ".",
 		Project:       Project("."),
 		Agents:        c.Agent,
@@ -48,6 +49,9 @@ func (c *UpdateCmd) Run() error {
 	if c.DryRun {
 		printResult("Would update Atlas", result)
 		return nil
+	}
+	if _, err := SynchronizeAgentGuidance("."); err != nil {
+		return err
 	}
 	printResult("Updated Atlas", result)
 	return nil
