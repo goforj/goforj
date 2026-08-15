@@ -2684,8 +2684,11 @@ func (p *ProjectRenderer) ensureFrontendPlaceholderAssets(app project.App) error
 		return err
 	}
 	contentString := string(content)
-	if strings.Contains(contentString, frontendPlaceholderLogoName) {
-		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName), frontendPlaceholderLogoTemplate); err != nil {
+	for _, asset := range frontendPlaceholderAssets {
+		if !strings.Contains(contentString, asset.name) {
+			continue
+		}
+		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), asset.name), asset.template); err != nil {
 			return err
 		}
 	}
@@ -2697,6 +2700,15 @@ func isGeneratedFrontendDistPlaceholderNeedingRefresh(content string, projectNam
 	trimmed := strings.TrimSpace(content)
 	if trimmed == strings.TrimSpace(oldFrontendDistPlaceholder(projectName)) {
 		return true
+	}
+	if strings.Contains(trimmed, `data-goforj-placeholder="temper-v1"`) {
+		return true
+	}
+	// The prior branded placeholder used a green network illustration that is specific enough to distinguish it from user-authored pages.
+	if strings.Contains(trimmed, `<span class="brand-tagline">Composable apps for Go</span>`) &&
+		strings.Contains(trimmed, `<section class="visual" aria-hidden="true">`) &&
+		strings.Contains(trimmed, `<div class="connector-mask">`) {
+		return !strings.Contains(trimmed, `data-goforj-placeholder="temper-v2"`)
 	}
 	// These strings are kept only to refresh generated placeholders from pre-rename projects.
 	oldPlaceholderCopy := "This app " + "target is running, but no frontend " + "build has been deployed yet."
@@ -3369,9 +3381,22 @@ func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
 }
 
 const (
-	frontendPlaceholderLogoName     = "goforj-logo.png"
-	frontendPlaceholderLogoTemplate = "starter-kits/vue/frontend/public/goforj-logo.png"
+	frontendPlaceholderLogoName          = "goforj-logo.png"
+	frontendPlaceholderLogoTemplate      = "starter-kits/vue/frontend/public/goforj-logo.png"
+	frontendPlaceholderDarkMarkName      = "goforj-mark-dark.svg"
+	frontendPlaceholderDarkMarkTemplate  = "internal/lighthouse/ui/src/assets/goforj-mark-dark.svg"
+	frontendPlaceholderLightMarkName     = "goforj-mark-light.svg"
+	frontendPlaceholderLightMarkTemplate = "internal/lighthouse/ui/src/assets/goforj-mark-light.svg"
 )
+
+var frontendPlaceholderAssets = []struct {
+	name     string
+	template string
+}{
+	{name: frontendPlaceholderLogoName, template: frontendPlaceholderLogoTemplate},
+	{name: frontendPlaceholderDarkMarkName, template: frontendPlaceholderDarkMarkTemplate},
+	{name: frontendPlaceholderLightMarkName, template: frontendPlaceholderLightMarkTemplate},
+}
 
 // defaultFrontendDistPlaceholderContent keeps no-SPA fallback pages consistent across apps.
 func defaultFrontendDistPlaceholderContent() string {
@@ -3389,8 +3414,11 @@ func (p *ProjectRenderer) writeFrontendDistPlaceholder(index string, content str
 	if p.stats != nil {
 		p.stats.recordCreated(index)
 	}
-	if strings.Contains(content, frontendPlaceholderLogoName) {
-		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), frontendPlaceholderLogoName), frontendPlaceholderLogoTemplate); err != nil {
+	for _, asset := range frontendPlaceholderAssets {
+		if !strings.Contains(content, asset.name) {
+			continue
+		}
+		if err := p.copyFrontendPlaceholderAsset(filepath.Join(filepath.Dir(index), asset.name), asset.template); err != nil {
 			return err
 		}
 	}
