@@ -77,6 +77,7 @@ type atlasCommands struct {
 	listSkills atlas.ListSkillsCmd
 	makeSkill  atlas.MakeSkillCmd
 	mcp        atlas.MCPCmd
+	eval       atlas.EvalCmd
 }
 
 // NewAtlasCommands constructs the complete dependency-free Atlas command family.
@@ -88,6 +89,7 @@ func NewAtlasCommands() *atlasCommands {
 		listSkills: *atlas.NewListSkillsCmd(),
 		makeSkill:  *atlas.NewMakeSkillCmd(),
 		mcp:        *atlas.NewMCPCmd(),
+		eval:       atlas.EvalCmd{},
 	}
 }
 
