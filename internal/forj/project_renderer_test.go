@@ -1367,22 +1367,43 @@ func TestRenderAppWritesAppAwareFrontendPlaceholder(t *testing.T) {
 
 	assertProjectRendererFileContains(t, filepath.Join("cmd", "billing", "frontend", "dist", "index.html"),
 		"<title>Test / billing</title>",
-		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
-		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
-		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`data-goforj-placeholder="temper-v2"`,
+		`<link rel="icon" href="./goforj-mark-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">`,
+		`<link rel="icon" href="./goforj-mark-light.svg" type="image/svg+xml" media="(prefers-color-scheme: light)">`,
+		`<picture class="mark">`,
+		`<span class="brand-tagline">The composable stack for building with Go.</span>`,
 		`<div class="status"><span class="status-dot"></span>Running</div>`,
 		"<h1>billing</h1>",
 		`<div class="app-meta">`,
 		`<span>billing</span>`,
 		`<span class="app-meta-divider"></span>`,
-		"Read the docs",
+		"Build the interface",
 		`<section class="visual" aria-hidden="true">`,
 		`<div class="core">`,
 		`<div class="cube">`,
-		`<img src="./goforj-logo.png" alt="">`,
+		`<img src="./goforj-mark-dark.svg" alt="">`,
 	)
-	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-dark.svg"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-light.svg"))
+}
+
+func TestGeneratedFrontendPlaceholderRefreshesPreTemperDesign(t *testing.T) {
+	legacy := `<span class="brand-tagline">Composable apps for Go</span>
+<section class="visual" aria-hidden="true">
+<div class="connector-mask"></div>`
+	if !isGeneratedFrontendDistPlaceholderNeedingRefresh(legacy, "Test") {
+		t.Fatal("expected the previous generated design to be refreshed")
+	}
+
+	intermediate := `<main data-goforj-placeholder="temper-v1"></main>`
+	if !isGeneratedFrontendDistPlaceholderNeedingRefresh(intermediate, "Test") {
+		t.Fatal("expected the intermediate PNG design to be refreshed")
+	}
+
+	current := legacy + `<main data-goforj-placeholder="temper-v2"></main>`
+	if isGeneratedFrontendDistPlaceholderNeedingRefresh(current, "Test") {
+		t.Fatal("expected the current design marker to prevent another refresh")
+	}
 }
 
 func TestRenderAppMigratesOldFrontendPlaceholder(t *testing.T) {
@@ -1418,22 +1439,23 @@ func TestRenderAppMigratesOldFrontendPlaceholder(t *testing.T) {
 
 	assertProjectRendererFileContains(t, indexPath,
 		"<title>Test / billing</title>",
-		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
-		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
-		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<link rel="icon" href="./goforj-mark-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">`,
+		`<link rel="icon" href="./goforj-mark-light.svg" type="image/svg+xml" media="(prefers-color-scheme: light)">`,
+		`<picture class="mark">`,
+		`<span class="brand-tagline">The composable stack for building with Go.</span>`,
 		`<div class="status"><span class="status-dot"></span>Running</div>`,
 		"<h1>billing</h1>",
 		`<div class="app-meta">`,
 		`<span>billing</span>`,
 		`<span class="app-meta-divider"></span>`,
-		"Read the docs",
+		"Build the interface",
 		`<section class="visual" aria-hidden="true">`,
 		`<div class="core">`,
 		`<div class="cube">`,
-		`<img src="./goforj-logo.png" alt="">`,
+		`<img src="./goforj-mark-dark.svg" alt="">`,
 	)
-	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-dark.svg"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-light.svg"))
 }
 
 func TestRenderAppMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.T) {
@@ -1469,22 +1491,23 @@ func TestRenderAppMigratesStyledFrontendPlaceholderWithoutLogo(t *testing.T) {
 
 	assertProjectRendererFileContains(t, indexPath,
 		"<title>Test / billing</title>",
-		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
-		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
-		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<link rel="icon" href="./goforj-mark-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">`,
+		`<link rel="icon" href="./goforj-mark-light.svg" type="image/svg+xml" media="(prefers-color-scheme: light)">`,
+		`<picture class="mark">`,
+		`<span class="brand-tagline">The composable stack for building with Go.</span>`,
 		`<div class="status"><span class="status-dot"></span>Running</div>`,
 		"<h1>billing</h1>",
 		`<div class="app-meta">`,
 		`<span>billing</span>`,
 		`<span class="app-meta-divider"></span>`,
-		"Read the docs",
+		"Build the interface",
 		`<section class="visual" aria-hidden="true">`,
 		`<div class="core">`,
 		`<div class="cube">`,
-		`<img src="./goforj-logo.png" alt="">`,
+		`<img src="./goforj-mark-dark.svg" alt="">`,
 	)
-	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-dark.svg"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-light.svg"))
 }
 
 func TestRenderAppMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *testing.T) {
@@ -1520,20 +1543,21 @@ func TestRenderAppMigratesStyledFrontendPlaceholderWithLegacyLogoName(t *testing
 	}
 
 	assertProjectRendererFileContains(t, indexPath,
-		`<link rel="icon" href="./goforj-logo.png" type="image/png">`,
-		`<link rel="apple-touch-icon" href="./goforj-logo.png">`,
-		`<img class="mark" src="./goforj-logo.png" alt="GoForj logo">`,
-		`<span class="brand-tagline">Composable apps for Go</span>`,
+		`<link rel="icon" href="./goforj-mark-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">`,
+		`<link rel="icon" href="./goforj-mark-light.svg" type="image/svg+xml" media="(prefers-color-scheme: light)">`,
+		`<picture class="mark">`,
+		`<span class="brand-tagline">The composable stack for building with Go.</span>`,
 		`<div class="status"><span class="status-dot"></span>Running</div>`,
 		`<div class="app-meta">`,
 		`<span class="app-meta-divider"></span>`,
-		"Read the docs",
+		"Build the interface",
 		`<section class="visual" aria-hidden="true">`,
 		`<div class="core">`,
 		`<div class="cube">`,
-		`<img src="./goforj-logo.png" alt="">`,
+		`<img src="./goforj-mark-dark.svg" alt="">`,
 	)
-	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-logo.png"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-dark.svg"))
+	assertProjectRendererLogoCopied(t, filepath.Join("cmd", "billing", "frontend", "dist", "goforj-mark-light.svg"))
 }
 
 func TestRenderAppPreservesCustomFrontendPlaceholder(t *testing.T) {
@@ -1751,7 +1775,17 @@ func assertProjectRendererLogoCopied(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("read copied logo %s: %v", path, err)
 	}
-	want, err := templatesFS.ReadFile(frontendPlaceholderLogoTemplate)
+	templatePath := ""
+	for _, asset := range frontendPlaceholderAssets {
+		if filepath.Base(path) == asset.name {
+			templatePath = asset.template
+			break
+		}
+	}
+	if templatePath == "" {
+		t.Fatalf("no placeholder asset template registered for %s", path)
+	}
+	want, err := templatesFS.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("read template logo: %v", err)
 	}
