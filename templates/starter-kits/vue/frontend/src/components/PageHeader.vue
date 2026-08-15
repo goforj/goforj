@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Badge } from '@/components/ui/badge'
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardDescription, CardHeader } from '@/components/ui/card'
 
 defineProps<{
   /** Leading badge, e.g. "Components". */
@@ -19,7 +19,7 @@ defineProps<{
         <Badge v-if="eyebrow">{{ eyebrow }}</Badge>
         <Badge v-if="section" variant="outline">{{ section }}</Badge>
       </div>
-      <CardTitle class="text-2xl font-semibold tracking-tight">{{ title }}</CardTitle>
+      <h1 class="text-2xl font-semibold leading-none tracking-tight">{{ title }}</h1>
       <CardDescription v-if="description" class="max-w-3xl text-base">
         {{ description }}
       </CardDescription>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import SpecimenSource from './SpecimenSource.vue'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { slugify } from '.'
 
@@ -29,9 +29,9 @@ const anchor = computed(() => slugify(props.title))
   <Card :id="anchor" :class="cn('scroll-mt-24', props.class)" data-slot="showcase">
     <CardHeader class="gap-2">
       <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <CardTitle class="text-lg font-semibold tracking-tight">
+        <h2 class="text-lg font-semibold leading-none tracking-tight">
           <a :href="`#${anchor}`" class="hover:underline underline-offset-4">{{ title }}</a>
-        </CardTitle>
+        </h2>
         <SpecimenSource
           v-if="source"
           :name="title"
