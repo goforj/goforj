@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"github.com/goforj/atlas/eval"
-	"github.com/goforj/atlas/eval/isolate"
-	"github.com/goforj/atlas/eval/verify"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/scenarios"
 	"github.com/goforj/goforj/internal/testkit"
@@ -139,7 +137,7 @@ func TestInvoiceHTTPVerifierRunsIndependentBehaviorOracle(t *testing.T) {
 		t.Fatalf("scenario workspaces = %#v, want one directory", entries)
 	}
 	projectRoot := filepath.Join(workRoot, entries[0].Name())
-	verifier := verify.NewAddHTTPControllerVerifier(isolate.VerifierCommands{
+	verifier := eval.NewAddHTTPControllerVerifier(eval.VerifierCommands{
 		WorkRoot:       t.TempDir(),
 		ForjExecutable: forjExecutable,
 		Environment:    environment,
