@@ -531,31 +531,25 @@ Suggested Atlas layout:
 
 ```text
 eval/
+  contracts.go
+  runner.go
+  codex.go
+  guidance.go
+  unconfined.go
+  verifier_commands.go
+  add_http_controller.go
+  artifacts.go
+  report.go
   evaluations/
     add_http_controller/
       evaluation.yaml
       prompt.md
-  verify/
-    add_http_controller.go
-    add_http_controller_test.go
-  agent/
-    adapter.go
-    codex.go
-    claude.go
-  guidance/
-    profile.go
-    materialize.go
-  isolate/
-    environment.go
-    project.go
-  capture/
-    events.go
-    redact.go
-  report/
-    scorecard.go
-    terminal.go
-    json.go
 ```
+
+Evaluation contracts and their concrete diagnostic machinery share one
+responsibility and remain in package `eval`. A nested package is warranted only
+when it exposes a cohesive API that can stand on its own; scenario manifests
+remain under `evaluations/` as embedded data rather than a Go package.
 
 The GoForj CLI should contain only the thin `atlas:eval` wrapper and Project
 scenario adapter required to call this library.

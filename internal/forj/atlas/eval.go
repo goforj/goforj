@@ -17,10 +17,6 @@ import (
 	"time"
 
 	"github.com/goforj/atlas/eval"
-	"github.com/goforj/atlas/eval/agent/codex"
-	"github.com/goforj/atlas/eval/guidance"
-	"github.com/goforj/atlas/eval/isolate"
-	"github.com/goforj/atlas/eval/verify"
 	"github.com/goforj/goforj/internal/forj/atlaseval"
 	"github.com/goforj/goforj/version"
 )
@@ -101,17 +97,17 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 		return err
 	}
 	verifierEnvironment := append([]string(nil), noneEnvironment...)
-	verifierCommands := isolate.VerifierCommands{
+	verifierCommands := eval.VerifierCommands{
 		WorkRoot:       filepath.Join(workRoot, "verifier"),
 		GoExecutable:   goExecutable,
 		ForjExecutable: forjExecutable,
 		Environment:    verifierEnvironment,
 	}
-	registry, err := eval.NewRegistry(eval.PromotedWorkflows(), verify.Promoted(verifierCommands))
+	registry, err := eval.NewRegistry(eval.PromotedWorkflows(), eval.PromotedVerifiers(verifierCommands))
 	if err != nil {
 		return err
 	}
-	agent, err := codex.New(codex.Options{
+	agent, err := eval.NewCodexAgent(eval.CodexOptions{
 		Executable:       command.CodexExecutable,
 		Model:            command.Model,
 		ModelProvider:    command.ModelProvider,
@@ -131,9 +127,9 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	runner := eval.Runner{
 		Registry:  registry,
 		Preparer:  preparer,
-		Backend:   isolate.UnconfinedLocal{WorkRoot: filepath.Join(workRoot, "backend")},
+		Backend:   eval.UnconfinedLocal{WorkRoot: filepath.Join(workRoot, "backend")},
 		Agent:     agent,
-		Guidance:  guidance.ProjectResolver{},
+		Guidance:  eval.ProjectGuidanceResolver{},
 		Artifacts: artifacts,
 	}
 	trialID, err := newEvaluationTrialID()
