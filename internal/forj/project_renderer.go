@@ -696,6 +696,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: projectComponents.WebAPI || projectComponents.WebUI,
 			templates: []string{
 				"internal/http/lighthouse.go.tmpl",
+				"internal/http/maintenance.go.tmpl",
+				"internal/http/maintenance_test.go.tmpl",
 				"internal/http/README.md.tmpl",
 				"internal/http/cors.go.tmpl",
 				"internal/http/routes_list_cmd.go.tmpl",

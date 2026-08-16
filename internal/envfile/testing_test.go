@@ -136,3 +136,14 @@ func TestMergeTestingPreservesPrefixedApplicationValues(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeTestingDisablesMaintenanceMode prevents a committed deployment toggle from taking the test suite offline.
+func TestMergeTestingDisablesMaintenanceMode(t *testing.T) {
+	example := []byte("APP_MAINTENANCE_ENABLED=true\nBILLING_APP_MAINTENANCE_ENABLED=true\n")
+	got := string(envfile.MergeTesting(nil, example))
+	for _, want := range []string{"APP_MAINTENANCE_ENABLED=false", "BILLING_APP_MAINTENANCE_ENABLED=false"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("MergeTesting() omitted %q:\n%s", want, got)
+		}
+	}
+}

@@ -85,7 +85,17 @@ func TestAboutServiceFollowsCurrentAppMailComponent(t *testing.T) {
 		})
 	}
 }
+
 {{- end }}
+
+// TestAboutServiceReportsMaintenanceMode exposes planned downtime through the App's operational snapshot.
+func TestAboutServiceReportsMaintenanceMode(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	report := NewAboutService().Build()
+	if !report.Environment.Maintenance {
+		t.Fatal("AboutService did not report enabled maintenance mode")
+	}
+}
 
 func TestAppPortResolutionUsesAppScopedOverrides(t *testing.T) {
 	t.Setenv("FORJ_APP", "app")
