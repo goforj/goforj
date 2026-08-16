@@ -622,6 +622,37 @@ steps:
 	}
 }
 
+// TestResolveScenarioPreparationToolsRequiresWire binds implicit generator dependencies before any Project mutation.
+func TestResolveScenarioPreparationToolsRequiresWire(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "live.yaml", `schema_version: 2
+id: live
+title: Live
+steps:
+  - id: target
+    title: Target
+    write:
+      path: target.txt
+      content: target
+`)
+	toolsDir := t.TempDir()
+	goName := "go"
+	if runtime.GOOS == "windows" {
+		goName += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, goName), []byte("go"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{"PATH=" + toolsDir}
+	if runtime.GOOS == "windows" {
+		environment = append(environment, "PATHEXT=.EXE")
+	}
+	_, _, err := ResolveScenarioPreparationTools(os.Args[0], environment, ResolveOptions{SpecDir: specDir, ScenarioID: "live"})
+	if err == nil || !strings.Contains(err.Error(), `resolve tool "wire"`) {
+		t.Fatalf("ResolveScenarioPreparationTools() error = %v, want missing Wire identity", err)
+	}
+}
+
 // TestClonePreparedCreatesAnIndependentIdenticalTree verifies cached bases never become candidate workspaces.
 func TestClonePreparedCreatesAnIndependentIdenticalTree(t *testing.T) {
 	baseRoot := t.TempDir()
