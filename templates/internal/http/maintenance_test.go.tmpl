@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/maintenance"
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -87,13 +88,13 @@ func TestMaintenanceModeDisabledPreservesApplicationTraffic(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
 
-	require.NoError(t, runtime.EnableMaintenance())
+	require.NoError(t, maintenance.Enable())
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 
-	require.NoError(t, runtime.DisableMaintenance())
+	require.NoError(t, maintenance.Disable())
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)

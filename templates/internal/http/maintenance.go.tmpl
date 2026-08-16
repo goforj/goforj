@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/goforj/web"
-	"{{.GoModuleName}}/internal/runtime"
+	"{{.GoModuleName}}/internal/maintenance"
 )
 
 const maintenanceHTMLTemplate = `<!doctype html>
@@ -63,7 +63,7 @@ func maintenanceHTML(appName string) []byte {
 func (s *Server) maintenanceMode() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if !runtime.MaintenanceEnabled() {
+			if !maintenance.Enabled() {
 				return next(r)
 			}
 			if maintenancePathAllowed(r) {

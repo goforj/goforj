@@ -1,10 +1,8 @@
-package cmd
+package maintenance
 
 import (
 	"os"
 	"testing"
-
-	"{{.GoModuleName}}/internal/runtime"
 )
 
 // TestMaintenanceCommandsRoundTrip verifies the preboot commands update shared runtime state.
@@ -12,19 +10,19 @@ func TestMaintenanceCommandsRoundTrip(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	t.Setenv("FORJ_APP", "app")
-	if err := (&MaintenanceEnableCmd{}).Run(); err != nil {
+	if err := (&EnableCmd{}).Run(); err != nil {
 		t.Fatalf("maintenance enable: %v", err)
 	}
-	if !runtime.MaintenanceEnabled() {
+	if !Enabled() {
 		t.Fatal("maintenance:enable did not enable maintenance")
 	}
-	if err := (&MaintenanceDisableCmd{}).Run(); err != nil {
+	if err := (&DisableCmd{}).Run(); err != nil {
 		t.Fatalf("maintenance disable: %v", err)
 	}
-	if runtime.MaintenanceEnabled() {
+	if Enabled() {
 		t.Fatal("maintenance:disable did not disable maintenance")
 	}
-	if _, err := os.Stat(runtime.MaintenancePath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(Path()); !os.IsNotExist(err) {
 		t.Fatalf("maintenance file remained after disable: %v", err)
 	}
 }
@@ -34,7 +32,7 @@ func TestMaintenanceDisableCommandCannotOverrideEnvironment(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
 	t.Setenv("FORJ_APP", "app")
-	if err := (&MaintenanceDisableCmd{}).Run(); err == nil {
+	if err := (&DisableCmd{}).Run(); err == nil {
 		t.Fatal("maintenance:disable unexpectedly overrode APP_MAINTENANCE_ENABLED")
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/maintenance"
 	"{{.GoModuleName}}/internal/queues"
 	"github.com/goforj/queue"
 	"github.com/goforj/str/v2"
@@ -67,7 +68,7 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 		s.logger.Info().Msg("Queue worker shut down")
 	}()
 	workersRunning := false
-	if !runtime.MaintenanceEnabled() {
+	if !maintenance.Enabled() {
 		if err := startManagedQueueWorkers(runCtx, managed); err != nil {
 			return err
 		}
@@ -83,7 +84,7 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 		select {
 		case <-runCtx.Done():
 		case <-maintenanceTicker.C:
-			maintenanceEnabled := runtime.MaintenanceEnabled()
+			maintenanceEnabled := maintenance.Enabled()
 			if maintenanceEnabled && workersRunning {
 				s.logger.Info().Msg("Pausing queue worker for maintenance mode")
 				if err := s.shutdownGeneration(managed); err != nil {
