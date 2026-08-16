@@ -31,7 +31,8 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
 				Components: project.Components{
-					Jobs: true,
+					Jobs:      true,
+					Scheduler: true,
 				},
 			},
 		},
@@ -43,6 +44,7 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 	generateRenderedProject(t, projectDir, queueEnv)
 
 	binPath := buildRenderedQueueSelectionApp(t, projectDir, queueEnv)
+	runRenderedMaintenanceUnitTests(t, projectDir, queueEnv)
 
 	out := runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker")
 	assertWorkerOutputContainsQueues(t, out, "default", "emails", "reports")
@@ -63,6 +65,68 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 	if !strings.Contains(out, `unknown queue "missing"`) {
 		t.Fatalf("expected missing queue error, got:\n%s", out)
 	}
+
+	assertRenderedWorkerFollowsMaintenance(t, projectDir, binPath, queueEnv)
+}
+
+// runRenderedMaintenanceUnitTests executes generated runtime and scheduler contracts that are not part of a binary build.
+func runRenderedMaintenanceUnitTests(t *testing.T, projectDir string, env map[string]string) {
+	t.Helper()
+	cmd := exec.Command("go", "test", "./internal/runtime", "./internal/cmd", "./internal/schedules", "-count=1")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationGoProcessEnv(t, env)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("test rendered maintenance packages: %v\n%s", err, output)
+	}
+}
+
+// assertRenderedWorkerFollowsMaintenance verifies a running worker drains, waits, and starts a fresh generation across down and up.
+func assertRenderedWorkerFollowsMaintenance(t *testing.T, projectDir, binPath string, env map[string]string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binPath, "worker")
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, env)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start rendered maintenance worker: %v", err)
+	}
+	waitForWorkerOutput(t, &out, "Queue worker started", 1)
+	runRenderedMaintenanceCommand(t, projectDir, binPath, env, "down")
+	waitForWorkerOutput(t, &out, "Queue worker paused for maintenance mode", 1)
+	runRenderedMaintenanceCommand(t, projectDir, binPath, env, "up")
+	waitForWorkerOutput(t, &out, "Queue worker started", 2)
+	cancel()
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		t.Fatalf("maintenance worker exit: %v\n%s", err, out.String())
+	}
+}
+
+// runRenderedMaintenanceCommand invokes the same App binary that owns the running worker state.
+func runRenderedMaintenanceCommand(t *testing.T, projectDir, binPath string, env map[string]string, command string) {
+	t.Helper()
+	cmd := exec.Command(binPath, command)
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, env)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run %s: %v\n%s", command, err, output)
+	}
+}
+
+// waitForWorkerOutput waits for a stable lifecycle message count from the rendered worker.
+func waitForWorkerOutput(t *testing.T, out *bytes.Buffer, message string, count int) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Count(out.String(), message) >= count {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("worker output did not contain %q %d times:\n%s", message, count, out.String())
 }
 
 // buildRenderedQueueSelectionApp keeps the build rendered queue selection app representation consistent.

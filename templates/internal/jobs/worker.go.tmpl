@@ -48,7 +48,7 @@ func (s *Worker) Start() error {
 }
 
 // StartWithContext starts the queue worker and blocks until the context is canceled.
-func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) error {
+func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) (runErr error) {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
@@ -58,10 +58,67 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 	if err != nil {
 		return err
 	}
-	if err := startManagedQueueWorkers(runCtx, managed); err != nil {
-		return err
+	generationOpen := true
+	defer func() {
+		s.logger.Info().Msg("Shutting down queue worker")
+		if generationOpen {
+			runErr = errors.Join(runErr, s.shutdownGeneration(managed))
+		}
+		s.logger.Info().Msg("Queue worker shut down")
+	}()
+	workersRunning := false
+	if !runtime.MaintenanceEnabled() {
+		if err := startManagedQueueWorkers(runCtx, managed); err != nil {
+			return err
+		}
+		workersRunning = true
+		s.logWorkerStarted(managed)
+	} else {
+		s.logger.Info().Msg("Queue worker waiting for maintenance mode to end")
 	}
 
+	maintenanceTicker := time.NewTicker(100 * time.Millisecond)
+	defer maintenanceTicker.Stop()
+	for runCtx.Err() == nil {
+		select {
+		case <-runCtx.Done():
+		case <-maintenanceTicker.C:
+			maintenanceEnabled := runtime.MaintenanceEnabled()
+			if maintenanceEnabled && workersRunning {
+				s.logger.Info().Msg("Pausing queue worker for maintenance mode")
+				if err := s.shutdownGeneration(managed); err != nil {
+					return err
+				}
+				workersRunning = false
+				generationOpen = false
+				s.logger.Info().Msg("Queue worker paused for maintenance mode")
+				continue
+			}
+			if !maintenanceEnabled && !workersRunning {
+				if !generationOpen {
+					if err := s.queues.Rebuild(); err != nil {
+						return fmt.Errorf("rebuild queues after maintenance: %w", err)
+					}
+					generationOpen = true
+					managed = s.queues.Instances()
+					managed, err = selectManagedQueues(s.queues, queueNames...)
+					if err != nil {
+						return err
+					}
+				}
+				if err := startManagedQueueWorkers(runCtx, managed); err != nil {
+					return err
+				}
+				workersRunning = true
+				s.logWorkerStarted(managed)
+			}
+		}
+	}
+	return nil
+}
+
+// logWorkerStarted reports the active queue allocation whenever a worker generation starts or resumes.
+func (s *Worker) logWorkerStarted(managed []queues.Instance) {
 	workerCount := managedQueueWorkerCount(managed)
 	s.logger.Info().
 		CompactValues(strings.Join(managedQueueNames(managed), ", "), fmt.Sprintf("%d %s", workerCount, pluralizeQueueWorkers(workerCount))).
@@ -70,8 +127,10 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 		Int("workers", workerCount).
 		Strs("queue_workers", managedQueueWorkerAllocations(managed)).
 		Msg("Queue worker started")
-	<-runCtx.Done()
-	s.logger.Info().Msg("Shutting down queue worker")
+}
+
+// shutdownGeneration stops intake and gives work already accepted by this worker generation its configured drain window.
+func (s *Worker) shutdownGeneration(managed []queues.Instance) error {
 	if activeJobs := managedActiveJobs(managed); activeJobs > 0 {
 		s.logger.Info().Int64("active_jobs", activeJobs).Msg("Waiting for queue jobs to complete")
 	}
@@ -84,8 +143,6 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 		}
 		return err
 	}
-	s.logger.Info().Msg("Queue worker shut down")
-
 	return nil
 }
 

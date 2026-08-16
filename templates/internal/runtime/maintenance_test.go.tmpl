@@ -1,0 +1,100 @@
+package runtime
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// TestMaintenanceStateRoundTrip verifies down and up state is App-scoped, durable, and immediately observable.
+func TestMaintenanceStateRoundTrip(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	t.Setenv("FORJ_APP", "app")
+
+	if MaintenanceEnabled() {
+		t.Fatal("maintenance unexpectedly enabled")
+	}
+	if err := EnableMaintenance(); err != nil {
+		t.Fatalf("enable maintenance: %v", err)
+	}
+	if !MaintenanceEnabled() {
+		t.Fatal("maintenance state was not observed")
+	}
+	info, err := os.Stat(filepath.Join("_data", "runtime", "app", "maintenance.json"))
+	if err != nil {
+		t.Fatalf("stat maintenance state: %v", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("maintenance state permissions = %o, want private", info.Mode().Perm())
+	}
+	if err := DisableMaintenance(); err != nil {
+		t.Fatalf("disable maintenance: %v", err)
+	}
+	if MaintenanceEnabled() {
+		t.Fatal("maintenance remained enabled")
+	}
+}
+
+// TestMaintenanceStateObservesExternalProcessWrites verifies split runtimes refresh shared filesystem state without a restart.
+func TestMaintenanceStateObservesExternalProcessWrites(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	t.Setenv("FORJ_APP", "app")
+	if MaintenanceEnabled() {
+		t.Fatal("maintenance unexpectedly enabled")
+	}
+	path := MaintenancePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir external state: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write external state: %v", err)
+	}
+	time.Sleep(maintenanceRefreshInterval + 10*time.Millisecond)
+	if !MaintenanceEnabled() {
+		t.Fatal("external maintenance state was not observed")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove external state: %v", err)
+	}
+	time.Sleep(maintenanceRefreshInterval + 10*time.Millisecond)
+	if MaintenanceEnabled() {
+		t.Fatal("external maintenance removal was not observed")
+	}
+}
+
+// TestMaintenanceEnvironmentForcesState verifies deployment configuration remains authoritative over local commands.
+func TestMaintenanceEnvironmentForcesState(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	t.Setenv("FORJ_APP", "app")
+	if err := DisableMaintenance(); err != nil {
+		t.Fatalf("disable command state: %v", err)
+	}
+	if !MaintenanceEnabled() {
+		t.Fatal("environment-enforced maintenance was disabled")
+	}
+}
+
+// TestMaintenancePathSeparatesNamedApps verifies one App can enter maintenance without changing a sibling App.
+func TestMaintenancePathSeparatesNamedApps(t *testing.T) {
+	if len(Apps) < 2 {
+		t.Skip("rendered project has no additional App")
+	}
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	namedApp := Apps[1].Name
+	t.Setenv("FORJ_APP", namedApp)
+	if err := EnableMaintenance(); err != nil {
+		t.Fatalf("enable named App maintenance: %v", err)
+	}
+	if got := MaintenancePath(); got != filepath.Join("_data", "runtime", namedApp, "maintenance.json") {
+		t.Fatalf("named App maintenance path = %q", got)
+	}
+	t.Setenv("FORJ_APP", "app")
+	if MaintenanceEnabled() {
+		t.Fatal("default App inherited named App command state")
+	}
+}

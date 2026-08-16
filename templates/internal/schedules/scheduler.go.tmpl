@@ -100,12 +100,30 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	if err != nil {
 		return err
 	}
+	maintenancePauseOwned, err := syncMaintenancePause(s.Scheduler, false)
+	if err != nil {
+		return err
+	}
 
-	// start the scheduler
 	s.Scheduler.Start()
 	s.logger.Info().Msg("Scheduler started")
 
-	<-runCtx.Done()
+	maintenanceTicker := time.NewTicker(100 * time.Millisecond)
+	defer maintenanceTicker.Stop()
+	var runErr error
+
+maintenanceLoop:
+	for runCtx.Err() == nil {
+		select {
+		case <-runCtx.Done():
+		case <-maintenanceTicker.C:
+			maintenancePauseOwned, err = syncMaintenancePause(s.Scheduler, maintenancePauseOwned)
+			if err != nil {
+				runErr = err
+				break maintenanceLoop
+			}
+		}
+	}
 	s.logger.Info().Msg("Shutting down scheduler")
 
 	shutdownErr := make(chan error, 1)
@@ -118,12 +136,32 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 		err = errors.New("scheduler shutdown timed out")
 	}
 	if err != nil {
-		return err
+		return errors.Join(runErr, err)
 	}
 
 	s.logger.Info().Msg("Scheduler shut down")
 
-	return nil
+	return runErr
+}
+
+// syncMaintenancePause overlays maintenance state without clearing an independently paused scheduler.
+func syncMaintenancePause(engine *scheduler.Scheduler, owned bool) (bool, error) {
+	if runtime.MaintenanceEnabled() {
+		if engine.IsPausedAll() {
+			return owned, nil
+		}
+		if err := engine.PauseAll(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if !owned {
+		return false, nil
+	}
+	if err := engine.ResumeAll(); err != nil {
+		return true, err
+	}
+	return false, nil
 }
 
 // ProvideScheduler creates and configures the underlying scheduler engine.

@@ -331,7 +331,7 @@ func (s *AboutService) Build() AboutReport {
 			Module:        "{{.GoModuleName}}",
 			Environment:   env.Get("APP_ENV", "local"),
 			Debug:         env.Get("APP_DEBUG", "0") != "0",
-			Maintenance:   env.GetBool("APP_MAINTENANCE_ENABLED", "false"),
+			Maintenance:   MaintenanceEnabled(),
 			GoVersion:     goruntime.Version(),
 			GoForjVersion: aboutForjVersion(),
 		},
