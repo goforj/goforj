@@ -1,0 +1,144 @@
+schema_version: 2
+id: invoice-attachments
+title: Invoice Attachments
+description: Add a portable invoice attachment workflow backed by a purpose-named storage resource.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    storage: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: configure-attachment-storage
+    title: Configure the attachment disk
+    append:
+      path: .env
+      language: dotenv
+      content: |
+
+        STORAGE_ATTACHMENTS_DRIVER=local
+        STORAGE_ATTACHMENTS_ROOT=storage/app/attachments
+  - id: generate-attachment-accessor
+    title: Generate the named storage accessor
+    command: [forj, generate, --storage]
+  - id: add-attachment-service
+    title: Add the attachment service
+    write:
+      path: internal/invoices/attachments.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from infrastructure drivers.
+        package invoices
+
+        import (
+                "context"
+                "errors"
+                "fmt"
+                "path"
+
+                "example.com/invoiceeval/internal/storages"
+                "github.com/goforj/storage"
+        )
+
+        // ErrAttachmentInputInvalid rejects paths that cannot identify one invoice attachment.
+        var ErrAttachmentInputInvalid = errors.New("invoice ID, filename, and body are required")
+
+        // Attachment describes the stable application result of one storage write.
+        type Attachment struct {
+                Path string
+                Size int
+        }
+
+        // AttachmentService keeps file policy independent from local or object storage drivers.
+        type AttachmentService struct {
+                disk storage.Storage
+        }
+
+        // NewAttachmentService selects the purpose-named disk through the generated manager.
+        func NewAttachmentService(manager *storages.Manager) *AttachmentService {
+                return &AttachmentService{disk: manager.Attachments()}
+        }
+
+        // Store writes one bounded attachment beneath its owning invoice.
+        func (service *AttachmentService) Store(ctx context.Context, invoiceID, filename string, body []byte) (Attachment, error) {
+                if invoiceID == "" || path.Base(filename) != filename || filename == "." || len(body) == 0 {
+                        return Attachment{}, ErrAttachmentInputInvalid
+                }
+                storedPath := path.Join("invoices", invoiceID, "attachments", filename)
+                if err := service.disk.WithContext(ctx).Put(storedPath, body); err != nil {
+                        return Attachment{}, fmt.Errorf("store invoice attachment: %w", err)
+                }
+                return Attachment{Path: storedPath, Size: len(body)}, nil
+        }
+
+        // Read returns one attachment while preserving caller cancellation.
+        func (service *AttachmentService) Read(ctx context.Context, storedPath string) ([]byte, error) {
+                body, err := service.disk.WithContext(ctx).Get(storedPath)
+                if err != nil {
+                        return nil, fmt.Errorf("read invoice attachment: %w", err)
+                }
+                return body, nil
+        }
+  - id: register-attachment-service
+    title: Register the attachment service
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tinvoices.NewService,\n"
+      new: "\tinvoices.NewService,\n\tinvoices.NewAttachmentService,\n"
+  - id: test-attachment-service
+    title: Test portable attachment storage
+    write:
+      path: internal/invoices/attachments_test.go
+      language: go
+      content: |
+        // Package invoices verifies attachment behavior through the generated resource boundary.
+        package invoices
+
+        import (
+                "bytes"
+                "context"
+                "path/filepath"
+                "testing"
+
+                "example.com/invoiceeval/internal/storages"
+        )
+
+        // TestAttachmentServiceStoreAndRead proves application paths remain stable across storage drivers.
+        func TestAttachmentServiceStoreAndRead(t *testing.T) {
+                t.Setenv("STORAGE_DRIVER", "local")
+                t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "default"))
+                t.Setenv("STORAGE_ATTACHMENTS_DRIVER", "local")
+                t.Setenv("STORAGE_ATTACHMENTS_ROOT", filepath.Join(t.TempDir(), "attachments"))
+
+                manager, err := storages.NewManager()
+                if err != nil {
+                        t.Fatalf("storages.NewManager(): %v", err)
+                }
+                t.Cleanup(func() {
+                        if err := manager.Close(); err != nil {
+                                t.Errorf("manager.Close(): %v", err)
+                        }
+                })
+
+                service := NewAttachmentService(manager)
+                want := []byte("invoice attachment")
+                attachment, err := service.Store(context.Background(), "inv-42", "receipt.txt", want)
+                if err != nil {
+                        t.Fatalf("service.Store(): %v", err)
+                }
+                got, err := service.Read(context.Background(), attachment.Path)
+                if err != nil {
+                        t.Fatalf("service.Read(): %v", err)
+                }
+                if !bytes.Equal(got, want) {
+                        t.Fatalf("service.Read() = %q, want %q", got, want)
+                }
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

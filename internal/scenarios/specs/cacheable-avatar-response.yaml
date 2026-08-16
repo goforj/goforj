@@ -1,0 +1,207 @@
+schema_version: 2
+id: cacheable-avatar-response
+title: Cacheable Avatar Response
+description: Serve storage-backed avatar bytes with browser revalidation semantics.
+depends_on: [named-avatar-storage]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    storage: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: scaffold-avatar-controller
+    title: Scaffold the avatar controller
+    command: [forj, make:controller, avatars]
+  - id: add-avatar-image-service
+    title: Add the storage-backed image service
+    write:
+      path: internal/avatars/service.go
+      language: go
+      content: |
+        // Package avatars owns avatar retrieval independently from HTTP and storage drivers.
+        package avatars
+
+        import (
+                "context"
+                "crypto/sha256"
+                "encoding/hex"
+                "fmt"
+                "path"
+
+                "github.com/goforj/storage"
+        )
+
+        // Image is the application result required by cache-aware HTTP delivery.
+        type Image struct {
+                Body        []byte
+                ContentType string
+                Digest      string
+        }
+
+        // Service keeps storage access and content identity outside the controller.
+        type Service struct {
+                disk storage.Storage
+        }
+
+        // NewService requires the purpose-named avatar disk.
+        func NewService(disk storage.Storage) *Service {
+                return &Service{disk: disk}
+        }
+
+        // Find loads the current avatar and derives a content validator from its bytes.
+        func (service *Service) Find(ctx context.Context, userID string) (Image, error) {
+                body, err := service.disk.WithContext(ctx).Get(path.Join("users", userID, "avatars", "current.png"))
+                if err != nil {
+                        return Image{}, fmt.Errorf("read avatar: %w", err)
+                }
+                digest := sha256.Sum256(body)
+                return Image{Body: body, ContentType: "image/png", Digest: hex.EncodeToString(digest[:])}, nil
+        }
+  - id: replace-avatar-controller
+    title: Add cache-aware HTTP translation
+    write:
+      path: internal/avatars/controller.go
+      language: go
+      content: |
+        // Package avatars owns avatar HTTP translation.
+        package avatars
+
+        import (
+                "net/http"
+
+                "github.com/goforj/web"
+        )
+
+        // Controller translates avatar application results into cache-aware HTTP responses.
+        type Controller struct {
+                service *Service
+        }
+
+        // NewController requires the avatar service through Wire.
+        func NewController(service *Service) *Controller {
+                return &Controller{service: service}
+        }
+
+        // Routes exposes one current-avatar endpoint.
+        func (controller *Controller) Routes() []web.Route {
+                return []web.Route{web.NewRoute(http.MethodGet, "/avatars/:id", controller.Show)}
+        }
+
+        // Show returns avatar bytes or confirms the caller's cached representation is current.
+        func (controller *Controller) Show(request web.Context) error {
+                image, err := controller.service.Find(request.Context(), request.Param("id"))
+                if err != nil {
+                        return err
+                }
+                etag := `"` + image.Digest + `"`
+                request.SetHeader("Cache-Control", "private, max-age=0, must-revalidate")
+                request.SetHeader("ETag", etag)
+                if request.Request().Header.Get("If-None-Match") == etag {
+                        return request.NoContent(http.StatusNotModified)
+                }
+                return request.Blob(http.StatusOK, image.ContentType, image.Body)
+        }
+  - id: import-avatar-service-provider
+    title: Import the avatar service and storage manager
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: |
+                "example.com/invoiceeval/internal/invoices"
+      new: |
+                "example.com/invoiceeval/internal/avatars"
+                "example.com/invoiceeval/internal/invoices"
+                "example.com/invoiceeval/internal/storages"
+
+                "github.com/goforj/storage"
+  - id: register-avatar-service-provider
+    title: Register the avatar service provider
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: |
+                invoices.NewAvatarStorage,
+      new: |
+                invoices.NewAvatarStorage,
+                provideAvatarService,
+  - id: add-avatar-service-provider
+    title: Select the named avatar disk
+    append:
+      path: app/wire/inject_services_app.go
+      language: go
+      content: |
+
+        // provideAvatarService selects the purpose-named disk at the App composition boundary.
+        func provideAvatarService(manager *storages.Manager) *avatars.Service {
+                var disk storage.Storage = manager.Avatars()
+                return avatars.NewService(disk)
+        }
+  - id: test-avatar-revalidation
+    title: Test conditional avatar delivery
+    write:
+      path: internal/avatars/controller_test.go
+      language: go
+      content: |
+        // Package avatars verifies conditional delivery without bypassing application storage behavior.
+        package avatars
+
+        import (
+                "net/http"
+                "net/http/httptest"
+                "path/filepath"
+                "testing"
+
+                "example.com/invoiceeval/internal/storages"
+                "github.com/goforj/web/webtest"
+        )
+
+        // TestControllerShowReturnsNotModified proves a matching validator avoids retransferring avatar bytes.
+        func TestControllerShowReturnsNotModified(t *testing.T) {
+                t.Setenv("STORAGE_DRIVER", "local")
+                t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "default"))
+                t.Setenv("STORAGE_AVATARS_DRIVER", "local")
+                t.Setenv("STORAGE_AVATARS_ROOT", filepath.Join(t.TempDir(), "avatars"))
+
+                manager, err := storages.NewManager()
+                if err != nil {
+                        t.Fatalf("storages.NewManager(): %v", err)
+                }
+                t.Cleanup(func() {
+                        if err := manager.Close(); err != nil {
+                                t.Errorf("manager.Close(): %v", err)
+                        }
+                })
+                if err := manager.Avatars().Put("users/42/avatars/current.png", []byte("avatar")); err != nil {
+                        t.Fatalf("store avatar: %v", err)
+                }
+
+                controller := NewController(NewService(manager.Avatars()))
+                firstRequest := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/42", nil)
+                firstResponse := httptest.NewRecorder()
+                firstContext := webtest.NewContext(firstRequest, firstResponse, "/avatars/:id", webtest.PathParams{"id": "42"})
+                if err := controller.Show(firstContext); err != nil {
+                        t.Fatalf("controller.Show(first): %v", err)
+                }
+                etag := firstResponse.Header().Get("ETag")
+                if firstResponse.Code != http.StatusOK || etag == "" {
+                        t.Fatalf("first response = status %d ETag %q, want 200 and validator", firstResponse.Code, etag)
+                }
+
+                conditionalRequest := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/42", nil)
+                conditionalRequest.Header.Set("If-None-Match", etag)
+                conditionalResponse := httptest.NewRecorder()
+                conditionalContext := webtest.NewContext(conditionalRequest, conditionalResponse, "/avatars/:id", webtest.PathParams{"id": "42"})
+                if err := controller.Show(conditionalContext); err != nil {
+                        t.Fatalf("controller.Show(conditional): %v", err)
+                }
+                if conditionalResponse.Code != http.StatusNotModified || conditionalResponse.Body.Len() != 0 {
+                        t.Fatalf("conditional response = status %d body %q, want 304 with no body", conditionalResponse.Code, conditionalResponse.Body.String())
+                }
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
