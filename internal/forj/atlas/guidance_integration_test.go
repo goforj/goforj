@@ -39,6 +39,11 @@ func TestBaselineGuidanceSurvivesProjectLifecycle(t *testing.T) {
 	if !bytes.Contains(want, []byte("flat, self-contained, and portable")) || !bytes.Contains(want, []byte("can stand on its own")) {
 		t.Fatalf("rendered guidance omitted package-boundary workflow:\n%s", want)
 	}
+	for _, expected := range []string{"`forj make:job invoices:receipt`", "`wire/inject_services_app.go`", "before running generators, builds"} {
+		if !bytes.Contains(want, []byte(expected)) {
+			t.Fatalf("rendered guidance omitted %q:\n%s", expected, want)
+		}
+	}
 
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	runGuidanceLifecycleCommand(t, projectRoot, forjExecutable, "build", "-o", filepath.Join(t.TempDir(), "app"))
