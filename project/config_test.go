@@ -588,3 +588,52 @@ render:
 		t.Fatalf("expected vue starter kit, got %q", cfg.Render.StarterKit)
 	}
 }
+
+// TestLoadProjectConfigSupportsNestedStarterKitOptions verifies the scalar starter-kit selection remains compatible while options stay grouped.
+func TestLoadProjectConfigSupportsNestedStarterKitOptions(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".goforj.yml")
+	if err := os.WriteFile(configPath, []byte(`project_name: Test
+module_name: example.com/test
+render:
+  starter_kit: vue
+  starter_kit_options:
+    component_library: false
+  components:
+    web_ui: true
+apps:
+  photos:
+    starter_kit: react
+    starter_kit_options:
+      component_library: false
+    components:
+      web_ui: true
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadProjectConfigAt(root)
+	if err != nil {
+		t.Fatalf("LoadProjectConfigAt returned error: %v", err)
+	}
+	if cfg.Render.StarterKit != StarterKitVue {
+		t.Fatalf("starter kit = %q, want vue", cfg.Render.StarterKit)
+	}
+	if cfg.Render.StarterKitOptions.ComponentLibraryEnabled() {
+		t.Fatal("default App component library = true, want false")
+	}
+	if cfg.Apps["photos"].StarterKitOptions.ComponentLibraryEnabled() {
+		t.Fatal("photos App component library = true, want false")
+	}
+	if !(*StarterKitOptions)(nil).ComponentLibraryEnabled() {
+		t.Fatal("omitted starter-kit options must preserve the default-on behavior")
+	}
+	encoded, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if !strings.Contains(string(encoded), "starter_kit: vue") ||
+		!strings.Contains(string(encoded), "starter_kit_options:\n        component_library: false") {
+		t.Fatalf("encoded default App did not retain scalar starter kit with nested options:\n%s", encoded)
+	}
+}

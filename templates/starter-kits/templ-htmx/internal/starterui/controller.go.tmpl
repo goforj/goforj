@@ -39,12 +39,14 @@ func NewController(
 func (c *Controller) Routes() []web.Route {
 	return []web.Route{
 		web.NewRoute(http.MethodGet, "/", c.Dashboard),
+{{- if .ComponentLibrary }}
 		web.NewRoute(http.MethodGet, "/components", c.Components),
 		web.NewRoute(http.MethodGet, "/components/overview", c.ComponentsOverview),
 		web.NewRoute(http.MethodGet, "/components/forms", c.Forms),
 		web.NewRoute(http.MethodGet, "/components/navigation", c.Navigation),
 		web.NewRoute(http.MethodGet, "/components/overlays", c.Overlays),
 		web.NewRoute(http.MethodGet, "/components/data", c.Data),
+{{- end }}
 		web.NewRoute(http.MethodGet, "/settings", c.Settings),
 		web.NewRoute(http.MethodGet, "/settings/profile", c.SettingsProfile),
 		web.NewRoute(http.MethodGet, "/settings/password", c.SettingsPassword),
@@ -66,6 +68,7 @@ func (c *Controller) Dashboard(r web.Context) error {
 	return c.renderAppPage(r, "Dashboard", DashboardPage)
 }
 
+{{- if .ComponentLibrary }}
 // Components redirects to the component overview.
 func (c *Controller) Components(r web.Context) error {
 	return r.Redirect(http.StatusSeeOther, "/components/overview")
@@ -95,6 +98,7 @@ func (c *Controller) Overlays(r web.Context) error {
 func (c *Controller) Data(r web.Context) error {
 	return c.renderAppPage(r, "Components Data", DataPage)
 }
+{{- end }}
 
 // Settings redirects to profile settings.
 func (c *Controller) Settings(r web.Context) error {

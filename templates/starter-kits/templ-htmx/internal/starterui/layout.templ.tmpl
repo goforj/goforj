@@ -430,6 +430,7 @@ templ appSidebarNavigation(data PageData) {
 					<a href="/">@iconDashboard()<span>Dashboard</span></a>
 				}
 			</li>
+{{- if .ComponentLibrary }}
 			<li>
 				if data.Title == "Components Overview" {
 					<a href="/components/overview" aria-current="page">@iconBlocks()<span>Components</span></a>
@@ -476,6 +477,7 @@ templ appSidebarNavigation(data PageData) {
 					</ul>
 				}
 			</li>
+{{- end }}
 		</ul>
 	</div>
 	<div role="group" aria-labelledby="resources-sidebar-group">
@@ -509,11 +511,13 @@ templ appCommandMenu() {
 				<div role="group" aria-labelledby="gf-command-navigation">
 					<span role="heading" id="gf-command-navigation">Navigation</span>
 					<a role="menuitem" href="/">@iconDashboard()<span>Dashboard</span><kbd class="ml-auto text-muted-foreground bg-transparent tracking-widest">G D</kbd></a>
+{{- if .ComponentLibrary }}
 					<a role="menuitem" href="/components/overview">@iconBlocks()<span>Components overview</span><kbd class="ml-auto text-muted-foreground bg-transparent tracking-widest">G C</kbd></a>
 					<a role="menuitem" href="/components/forms">@iconWorkflow()<span>Components forms</span></a>
 					<a role="menuitem" href="/components/navigation">@iconLayoutTemplate()<span>Components navigation</span></a>
 					<a role="menuitem" href="/components/overlays">@iconMousePointerClick()<span>Components overlays</span></a>
 					<a role="menuitem" href="/components/data">@iconDatabase()<span>Components data</span></a>
+{{- end }}
 				</div>
 				<hr role="separator"/>
 				<div role="group" aria-labelledby="gf-command-settings">

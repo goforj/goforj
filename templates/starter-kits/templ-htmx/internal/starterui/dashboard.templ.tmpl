@@ -2,6 +2,7 @@ package starterui
 
 templ DashboardPage(data PageData) {
 	@shell(data) {
+{{- if .ComponentLibrary }}
 		<div class="page-stack">
 			@heroMuted("templ application shell", "Local Basecoat source", "Start from an application shell that already feels production-ready.", "templ, htmx, Tailwind, and Basecoat source files are rendered directly into your app so your team can inspect, adapt, or replace every layer.")
 			<div class="grid grid-3">
@@ -18,5 +19,15 @@ templ DashboardPage(data PageData) {
 					</div>
 				</div>
 		</div>
+{{- else }}
+		<div class="dashboard-canvas" aria-label="Empty dashboard canvas">
+			<div class="dashboard-canvas-grid">
+				<div class="dashboard-placeholder"></div>
+				<div class="dashboard-placeholder"></div>
+				<div class="dashboard-placeholder"></div>
+			</div>
+			<div class="dashboard-placeholder dashboard-placeholder-large"></div>
+		</div>
+{{- end }}
 	}
 }

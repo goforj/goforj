@@ -3,11 +3,13 @@ import { appName } from '@/lib/app'
 import { authState, loadCurrentUser } from '@/lib/auth'
 
 const DashboardView = () => import('@/views/DashboardView.vue')
+// goforj:component-library:on:start
 const ComponentsOverviewView = () => import('@/views/components/ComponentsOverviewView.vue')
 const ComponentsFormsView = () => import('@/views/components/ComponentsFormsView.vue')
 const ComponentsNavigationView = () => import('@/views/components/ComponentsNavigationView.vue')
 const ComponentsOverlaysView = () => import('@/views/components/ComponentsOverlaysView.vue')
 const ComponentsDataView = () => import('@/views/components/ComponentsDataView.vue')
+// goforj:component-library:end
 const LoginView = () => import('@/views/LoginView.vue')
 const ForgotPasswordView = () => import('@/views/ForgotPasswordView.vue')
 const RegisterView = () => import('@/views/RegisterView.vue')
@@ -29,12 +31,14 @@ const router = createRouter({
   },
   routes: [
     { path: '/', name: 'dashboard', component: DashboardView, meta: { title: 'Dashboard' } },
+    // goforj:component-library:on:start
     { path: '/components', redirect: '/components/overview' },
     { path: '/components/overview', name: 'components-overview', component: ComponentsOverviewView, meta: { title: 'Components Overview' } },
     { path: '/components/forms', name: 'components-forms', component: ComponentsFormsView, meta: { title: 'Components Forms' } },
     { path: '/components/navigation', name: 'components-navigation', component: ComponentsNavigationView, meta: { title: 'Components Navigation' } },
     { path: '/components/overlays', name: 'components-overlays', component: ComponentsOverlaysView, meta: { title: 'Components Overlays' } },
     { path: '/components/data', name: 'components-data', component: ComponentsDataView, meta: { title: 'Components Data' } },
+    // goforj:component-library:end
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', publicShell: true } },
     { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { title: 'Forgot password', publicShell: true } },
     { path: '/register', name: 'register', component: RegisterView, meta: { title: 'Create account', publicShell: true } },

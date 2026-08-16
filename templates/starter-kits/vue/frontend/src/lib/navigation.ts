@@ -1,5 +1,8 @@
 import type { Component } from 'vue'
-import { Blocks, LayoutDashboard } from '@lucide/vue'
+import { LayoutDashboard } from '@lucide/vue'
+// goforj:component-library:on:start
+import { Blocks } from '@lucide/vue'
+// goforj:component-library:end
 
 export type AppNavItem = {
   title: string
@@ -13,6 +16,7 @@ export type AppNavItem = {
 
 export const appNavMain: AppNavItem[] = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
+  // goforj:component-library:on:start
   {
     title: 'Components',
     url: '/components',
@@ -25,6 +29,7 @@ export const appNavMain: AppNavItem[] = [
       { title: 'Data', url: '/components/data' },
     ],
   },
+  // goforj:component-library:end
 ]
 
 export function findAppNavItem(path: string) {

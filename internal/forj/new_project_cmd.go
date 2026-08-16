@@ -317,6 +317,7 @@ type model struct {
 	extrasIndex          int
 	demoAppEnabled       bool
 	starterKitApplicable bool
+	componentLibrary     bool
 	resourcePreparation  *newProjectResourcePreparation
 	atlasMode            atlasMode
 	atlasRecommendations []string
@@ -347,6 +348,7 @@ func (m *model) finalizeConfig() error {
 	m.config.Render.StarterKit = project.NormalizeStarterKit(m.config.Render.StarterKit)
 	if !components.WebUI || components.DemoApp {
 		m.config.Render.StarterKit = project.StarterKitNone
+		m.config.Render.StarterKitOptions = nil
 	}
 	m.config.Render.HelpFormat = project.NormalizeHelpFormat(m.config.Render.HelpFormat)
 	// Reset slices before populating.
@@ -484,6 +486,7 @@ func initialModelWithOptions(options newProjectModelOptions) model {
 		helpFormatList:       helpFormatList,
 		starterKitList:       starterKitList,
 		starterKitApplicable: components.WebUI,
+		componentLibrary:     true,
 		atlasModeList:        atlasModeList,
 		atlasAgentList:       atlasAgentList,
 		atlasSurfaceList:     atlasSurfaceList,
@@ -512,6 +515,7 @@ func (m *model) applyComponentSelection() {
 	m.starterKitApplicable = m.components().WebUI
 	if !m.components().WebUI {
 		m.config.Render.StarterKit = project.StarterKitNone
+		m.config.Render.StarterKitOptions = nil
 	}
 }
 
@@ -534,19 +538,27 @@ func (m *model) applyHelpFormatSelection() {
 func (m *model) applyStarterKitSelection() {
 	if !m.config.Render.Components.WebUI {
 		m.config.Render.StarterKit = project.StarterKitNone
+		m.config.Render.StarterKitOptions = nil
 		return
 	}
 	index := m.starterKitList.Index()
 	if index < 0 || index >= len(m.starterKitList.Items()) {
 		m.config.Render.StarterKit = project.StarterKitNone
+		m.config.Render.StarterKitOptions = nil
 		return
 	}
 	item, ok := m.starterKitList.Items()[index].(StarterKitItem)
 	if !ok {
 		m.config.Render.StarterKit = project.StarterKitNone
+		m.config.Render.StarterKitOptions = nil
 		return
 	}
 	m.config.Render.StarterKit = project.NormalizeStarterKit(item.Key)
+	if m.config.Render.StarterKit == project.StarterKitNone || m.componentLibrary {
+		m.config.Render.StarterKitOptions = nil
+		return
+	}
+	m.config.Render.StarterKitOptions = project.NewStarterKitOptions(false)
 }
 
 // applyExtrasSelection applies Demo's temporary constraints without erasing the unlocked component choices.
@@ -572,6 +584,7 @@ func (m *model) applyExtrasSelection() {
 	selected.DatabasePostgres = false
 	selected.DatabaseSQLite = false
 	m.config.Render.StarterKit = project.StarterKitNone
+	m.config.Render.StarterKitOptions = nil
 	selected.ResolveDependencies()
 	*m.components() = selected
 	m.resetResourcePreview()
@@ -850,6 +863,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.stage = StageStarterKit
 				} else {
 					m.config.Render.StarterKit = project.StarterKitNone
+					m.config.Render.StarterKitOptions = nil
 					m.stage = StageExtras
 				}
 				return m, nil
@@ -866,6 +880,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch msg.String() {
+			case " ":
+				if m.highlightedStarterKit() != project.StarterKitNone {
+					m.componentLibrary = !m.componentLibrary
+				}
+				return m, nil
 			case "enter":
 				m.applyStarterKitSelection()
 				m.stage = StageExtras
@@ -1125,11 +1144,14 @@ func (m model) View() string {
 	if m.stage >= StageStarterKit && m.starterKitApplicable {
 		starterKitSummary := m.selectedStarterKitSummary()
 		if m.stage == StageStarterKit {
+			componentLibrary := m.selectedComponentLibrarySummary()
 			panels = append(panels, m.panelWithTitle("Starter Kit", lipgloss.JoinVertical(
 				lipgloss.Left,
 				m.renderStarterKitList(m.termWidth),
+				"",
+				normalStyle.Render("Component library: "+componentLibrary),
 			), m.termWidth, true))
-			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+			actions = []string{"Space to toggle component library", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 		} else {
 			panels = append(panels, m.panelWithTitle("Starter Kit", normalStyle.Render(starterKitSummary), m.termWidth, false))
 		}
@@ -1254,6 +1276,7 @@ func (m model) View() string {
 			{"Path", m.projectPath()},
 			{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
 			{"Starter kit", m.selectedStarterKitSummary()},
+			{"Component library", m.selectedComponentLibrarySummary()},
 			{"Agent support", m.atlasSummary()},
 			{"Components", componentNames},
 		}
@@ -1670,10 +1693,10 @@ func renderHelpPreview(format project.HelpFormat, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// selectedStarterKitSummary centralizes selected starter kit summary behavior so callers follow the same contract.
-func (m model) selectedStarterKitSummary() string {
+// highlightedStarterKit returns the committed or previewed starter-kit selection.
+func (m model) highlightedStarterKit() project.StarterKit {
 	if !m.config.Render.Components.WebUI || m.config.Render.Components.DemoApp {
-		return "None"
+		return project.StarterKitNone
 	}
 	starterKit := project.NormalizeStarterKit(m.config.Render.StarterKit)
 	if m.stage == StageStarterKit {
@@ -1684,10 +1707,27 @@ func (m model) selectedStarterKitSummary() string {
 			}
 		}
 	}
+	return starterKit
+}
+
+// selectedStarterKitSummary centralizes selected starter kit summary behavior so callers follow the same contract.
+func (m model) selectedStarterKitSummary() string {
+	starterKit := m.highlightedStarterKit()
 	if definition, ok := project.StarterKitDefinitionByKey(starterKit); ok {
 		return definition.Label
 	}
 	return "None"
+}
+
+// selectedComponentLibrarySummary reports whether the selected starter kit includes its showcase.
+func (m model) selectedComponentLibrarySummary() string {
+	if m.highlightedStarterKit() == project.StarterKitNone {
+		return "Not applicable"
+	}
+	if m.componentLibrary {
+		return "On"
+	}
+	return "Off"
 }
 
 // renderAtlasDetectedSummary keeps the render atlas detected summary representation consistent.

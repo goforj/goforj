@@ -126,3 +126,34 @@
     @apply bg-background text-foreground;
   }
 }
+
+.dashboard-canvas {
+  display: grid;
+  gap: 1rem;
+  min-height: calc(100vh - 8rem);
+}
+
+.dashboard-canvas-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.dashboard-placeholder {
+  min-height: 12rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(to bottom right, transparent calc(50% - 0.5px), var(--border) 50%, transparent calc(50% + 0.5px)),
+    linear-gradient(to top right, transparent calc(50% - 0.5px), var(--border) 50%, transparent calc(50% + 0.5px)),
+    color-mix(in oklab, var(--muted) 20%, transparent);
+}
+
+.dashboard-placeholder-large {
+  min-height: 24rem;
+}
+
+@media (min-width: 768px) {
+  .dashboard-canvas-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

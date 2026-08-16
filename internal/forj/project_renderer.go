@@ -177,6 +177,7 @@ type templateRenderConfig struct {
 	Components                  project.Components
 	ProjectComponents           project.Components
 	StarterKit                  project.StarterKit
+	ComponentLibrary            bool
 	HelpFormat                  project.HelpFormat
 	Resources                   resourceRenderValues
 	HelpFormatterFunc           string
@@ -1234,7 +1235,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		if err := p.prepareDevAppsForAppMutation(); err != nil {
 			return err
 		}
-		changed, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.HelpFormat)
+		changed, err := p.setAppConfig(app.Name, opts.Components, opts.StarterKit, opts.StarterKitOptions, opts.HelpFormat)
 		if err != nil {
 			return err
 		}
@@ -1501,7 +1502,7 @@ func (p *ProjectRenderer) removeAppConfig(name string) bool {
 }
 
 // setAppConfig persists app participation so future full renders keep the same app shape.
-func (p *ProjectRenderer) setAppConfig(name string, components project.Components, starterKit project.StarterKit, helpFormat project.HelpFormat) (bool, error) {
+func (p *ProjectRenderer) setAppConfig(name string, components project.Components, starterKit project.StarterKit, starterKitOptions *project.StarterKitOptions, helpFormat project.HelpFormat) (bool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || name == project.DefaultAppName {
 		return false, nil
@@ -1522,16 +1523,20 @@ func (p *ProjectRenderer) setAppConfig(name string, components project.Component
 	if !components.WebUI {
 		starterKit = project.StarterKitNone
 	}
+	if starterKit == project.StarterKitNone {
+		starterKitOptions = nil
+	}
 	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
 		return false, err
 	}
 	helpFormat = project.NormalizeHelpFormat(helpFormat)
 	existing := p.config.Apps[name]
 	p.config.Apps[name] = project.AppConfig{
-		Components: components,
-		StarterKit: starterKit,
-		HelpFormat: helpFormat,
-		Extra:      existing.Extra,
+		Components:        components,
+		StarterKit:        starterKit,
+		StarterKitOptions: starterKitOptions,
+		HelpFormat:        helpFormat,
+		Extra:             existing.Extra,
 	}
 	return project.ProjectComponents(p.config) != before, nil
 }
@@ -3283,12 +3288,28 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 		return nil
 	}
 	frontendDir := projectlayout.FrontendDir(".", app)
+	componentLibrary := appRenderComponentLibrary(p.config, app)
 	sourceRoot, err := starterKitFrontendSource(starterKit)
 	if err != nil {
 		return err
 	}
-	if err := p.copyRawPathToDestFiltered(sourceRoot, frontendDir, skipFrontendDependencyDirectory); err != nil {
+	if err := p.copyRawPathToDestFiltered(sourceRoot, frontendDir, starterKitFrontendSkip(starterKit, componentLibrary)); err != nil {
 		return err
+	}
+	if !componentLibrary {
+		if err := p.removeUnmodifiedStarterKitShowcaseFiles(sourceRoot, frontendDir); err != nil {
+			return err
+		}
+	}
+	if err := p.renderStarterKitFeatureFiles(sourceRoot, frontendDir, componentLibrary); err != nil {
+		return err
+	}
+	if !componentLibrary {
+		if variantDist := starterKitComponentLibraryOffDist(starterKit); variantDist != "" {
+			if err := p.copyRawPathToDest(variantDist, filepath.Join(frontendDir, "dist")); err != nil {
+				return err
+			}
+		}
 	}
 	if starterKit == project.StarterKitTemplHTMX {
 		if err := p.scaffoldTemplHTMXStarterKitForApp(app, overwriteGeneratedTemplates); err != nil {
@@ -3311,6 +3332,145 @@ func (p *ProjectRenderer) scaffoldStarterKitForApp(app project.App, starterKit p
 	return nil
 }
 
+// removeUnmodifiedStarterKitShowcaseFiles removes known showcase files while preserving owner additions and edits.
+func (p *ProjectRenderer) removeUnmodifiedStarterKitShowcaseFiles(sourceRoot, frontendDir string) error {
+	for _, relRoot := range []string{"src/components/showcase", "src/views/components"} {
+		sourcePath := filepath.Join(sourceRoot, relRoot)
+		if _, err := fs.ReadDir(templatesFS, sourcePath); err != nil {
+			continue
+		}
+		if err := fs.WalkDir(templatesFS, sourcePath, func(entry string, item fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if item.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(sourceRoot, entry)
+			if err != nil {
+				return err
+			}
+			destination := filepath.Join(frontendDir, rel)
+			current, err := p.workspace.readFile(destination)
+			if os.IsNotExist(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			original, err := templatesFS.ReadFile(entry)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(current, original) {
+				return nil
+			}
+			_, err = p.workspace.removeFileIfExists(destination)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// starterKitFrontendSkip omits dependency trees and disabled showcase-only source directories.
+func starterKitFrontendSkip(starterKit project.StarterKit, componentLibrary bool) func(string, fs.DirEntry) bool {
+	return func(rel string, entry fs.DirEntry) bool {
+		if skipFrontendDependencyDirectory(rel, entry) {
+			return true
+		}
+		if componentLibrary || !entry.IsDir() {
+			return false
+		}
+		clean := filepath.ToSlash(rel)
+		if clean == "dist" && starterKit != project.StarterKitTemplHTMX {
+			return true
+		}
+		return clean == "src/components/showcase" || clean == "src/views/components"
+	}
+}
+
+// starterKitComponentLibraryOffDist returns the prebuilt browser bundle for a client-rendered minimal starter.
+func starterKitComponentLibraryOffDist(starterKit project.StarterKit) string {
+	switch project.NormalizeStarterKit(starterKit) {
+	case project.StarterKitVue:
+		return "starter-kits/vue/component-library-off-dist"
+	case project.StarterKitReact:
+		return "starter-kits/react/component-library-off-dist"
+	default:
+		return ""
+	}
+}
+
+// renderStarterKitFeatureFiles resolves small feature blocks without duplicating complete frontend starter kits.
+func (p *ProjectRenderer) renderStarterKitFeatureFiles(sourceRoot, frontendDir string, componentLibrary bool) error {
+	for _, rel := range []string{"src/App.tsx", "src/router.ts", "src/lib/navigation.ts", "src/views/DashboardView.vue"} {
+		source := filepath.Join(sourceRoot, rel)
+		content, err := templatesFS.ReadFile(source)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if !bytes.Contains(content, []byte("goforj:component-library:")) {
+			continue
+		}
+		filtered, err := filterStarterKitFeature(content, componentLibrary)
+		if err != nil {
+			return fmt.Errorf("render starter-kit feature file %s: %w", source, err)
+		}
+		if err := p.workspace.writeFile(filepath.Join(frontendDir, rel), filtered, 0o644); err != nil {
+			return err
+		}
+		p.stats.recordCreated(filepath.Join(frontendDir, rel))
+	}
+	return nil
+}
+
+// filterStarterKitFeature retains the enabled variant and strips renderer-only feature markers.
+func filterStarterKitFeature(content []byte, componentLibrary bool) ([]byte, error) {
+	const markerPrefix = "goforj:component-library:"
+	lines := strings.Split(string(content), "\n")
+	var output []string
+	include := true
+	inside := false
+	for _, line := range lines {
+		if strings.Contains(line, markerPrefix+"on:start") {
+			if inside {
+				return nil, fmt.Errorf("nested component-library feature marker")
+			}
+			inside = true
+			include = componentLibrary
+			continue
+		}
+		if strings.Contains(line, markerPrefix+"off:start") {
+			if inside {
+				return nil, fmt.Errorf("nested component-library feature marker")
+			}
+			inside = true
+			include = !componentLibrary
+			continue
+		}
+		if strings.Contains(line, markerPrefix+"end") {
+			if !inside {
+				return nil, fmt.Errorf("component-library end marker has no start")
+			}
+			inside = false
+			include = true
+			continue
+		}
+		if include {
+			output = append(output, line)
+		}
+	}
+	if inside {
+		return nil, fmt.Errorf("component-library feature marker is not closed")
+	}
+	return []byte(strings.Join(output, "\n")), nil
+}
+
 // scaffoldTemplHTMXStarterKitForApp keeps server-rendered templates aligned when the frontend starter is refreshed.
 func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, overwriteGeneratedTemplates bool) error {
 	mappings := []templateMapping{
@@ -3318,17 +3478,21 @@ func (p *ProjectRenderer) scaffoldTemplHTMXStarterKitForApp(app project.App, ove
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/controller_test.go.tmpl", "internal/starterui/controller_test.go"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/viewmodels.go.tmpl", "internal/starterui/viewmodels.go"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/auth_views.templ.tmpl", "internal/starterui/auth_views.templ"),
-		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_data.templ.tmpl", "internal/starterui/components_data.templ"),
-		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_forms.templ.tmpl", "internal/starterui/components_forms.templ"),
-		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_navigation.templ.tmpl", "internal/starterui/components_navigation.templ"),
-		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_overlays.templ.tmpl", "internal/starterui/components_overlays.templ"),
-		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_views.templ.tmpl", "internal/starterui/components_views.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/dashboard.templ.tmpl", "internal/starterui/dashboard.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/icons.templ.tmpl", "internal/starterui/icons.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/layout.templ.tmpl", "internal/starterui/layout.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/settings_views.templ.tmpl", "internal/starterui/settings_views.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/ui.templ.tmpl", "internal/starterui/ui.templ"),
 		mapTemplateTo("starter-kits/templ-htmx/internal/starterui/views.templ.tmpl", "internal/starterui/views.templ"),
+	}
+	if appRenderComponentLibrary(p.config, app) {
+		mappings = append(mappings,
+			mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_data.templ.tmpl", "internal/starterui/components_data.templ"),
+			mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_forms.templ.tmpl", "internal/starterui/components_forms.templ"),
+			mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_navigation.templ.tmpl", "internal/starterui/components_navigation.templ"),
+			mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_overlays.templ.tmpl", "internal/starterui/components_overlays.templ"),
+			mapTemplateTo("starter-kits/templ-htmx/internal/starterui/components_views.templ.tmpl", "internal/starterui/components_views.templ"),
+		)
 	}
 	if overwriteGeneratedTemplates {
 		return p.writeTemplateMappingsForApp(app, mappings)
@@ -3620,6 +3784,7 @@ func (w projectRenderWorkspace) templateDataForApp(config *project.Config, app p
 		Components:                  components,
 		ProjectComponents:           project.ProjectComponents(config),
 		StarterKit:                  starterKit,
+		ComponentLibrary:            appRenderComponentLibrary(config, app),
 		HelpFormat:                  helpFormat,
 		HelpFormatterFunc:           helpFormatterFunc(helpFormat),
 		HelpCommandFunc:             helpCommandFunc(helpFormat),
@@ -3706,6 +3871,20 @@ func appRenderStarterKit(config *project.Config, app project.App) project.Starte
 		return project.StarterKitNone
 	}
 	return starterKit
+}
+
+// appRenderComponentLibrary resolves the default-on showcase choice for one App.
+func appRenderComponentLibrary(config *project.Config, app project.App) bool {
+	if config == nil {
+		return true
+	}
+	options := config.Render.StarterKitOptions
+	if app.Name != "" && app.Name != project.DefaultAppName {
+		if appConfig, ok := config.Apps[app.Name]; ok {
+			options = appConfig.StarterKitOptions
+		}
+	}
+	return options.ComponentLibraryEnabled()
 }
 
 // runtimeAppMetadataForRender creates the compiled App table from one project's discovered and configured Apps.
