@@ -2587,3 +2587,12 @@ there. The same slice must then pass with qualified observation in the
 authoritative sandbox before its results can support guidance or release
 claims. Persistent caching, additional scenarios, and Atlas capability slices
 follow that working vertical path.
+
+The local `forj atlas:eval compare` command must require an explicitly supplied
+disposable, revocable Codex credential. Copying that credential into private
+process state prevents ambient configuration from affecting attribution, but
+it does not hide provider authority from same-UID candidate code. Terminal
+output and retained artifacts must share one redaction policy, and the local
+manifest key provides post-run integrity checking rather than adversarial
+authentication. Authoritative execution requires brokered provider transport
+and artifact signing authority outside the candidate boundary.
