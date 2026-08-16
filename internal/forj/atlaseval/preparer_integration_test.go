@@ -310,12 +310,18 @@ func TestAddAppCommandVerifierCalibration(t *testing.T) {
 // TestAddJobVerifierCalibration proves the job contract requires its typed payload identity.
 func TestAddJobVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-		evaluation:  "add-job",
-		scenario:    "invoice-receipt-job",
-		path:        "internal/invoices/receipt_job.go",
-		old:         "InvoiceID string",
-		mutant:      "Reference string",
-		additional:  []evaluationMutation{{old: "payload.InvoiceID", mutant: "payload.Reference"}},
+		evaluation: "add-job",
+		scenario:   "invoice-receipt-job",
+		path:       "internal/invoices/receipt_job.go",
+		old:        "InvoiceID string",
+		mutant:     "Reference string",
+		additional: []evaluationMutation{{old: "payload.InvoiceID", mutant: "payload.Reference"}},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/receipt_job.go",
+			old:        "job.service.Find(ctx, payload.InvoiceID)",
+			mutant:     "func() (Invoice, error) { _ = payload.InvoiceID; return job.service.Find(ctx, \"missing\") }()",
+			wantFailed: "receipt-job-behavior",
+		},
 		wantFailed:  "typed-job",
 		wantCompile: true,
 	})
@@ -328,12 +334,40 @@ func TestAddMigrationVerifierCalibration(t *testing.T) {
 
 // TestAddScheduleVerifierCalibration proves the schedule contract rejects work detached from its runtime context.
 func TestAddScheduleVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")", wantFailed: "schedule-shape", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-schedule",
+		scenario:    "invoice-reconcile-schedule",
+		path:        "internal/invoices/reconcile_schedule.go",
+		old:         "schedule.service.Find(ctx, \"inv-42\")",
+		mutant:      "schedule.service.Find(context.Background(), \"inv-42\")",
+		wantFailed:  "schedule-shape",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/reconcile_schedule.go",
+			old:        `schedule.service.Find(ctx, "inv-42")`,
+			mutant:     `schedule.service.Find(ctx, "missing")`,
+			wantFailed: "reconcile-schedule-behavior",
+		},
+	})
 }
 
 // TestAddEventSubscriberVerifierCalibration proves the subscriber contract rejects work detached from its event context.
 func TestAddEventSubscriberVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)", wantFailed: "subscriber-boundary", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-event-subscriber",
+		scenario:    "invoice-paid-subscriber",
+		path:        "internal/invoices/paid_subscriber.go",
+		old:         "subscriber.service.Find(ctx, event.InvoiceID)",
+		mutant:      "subscriber.service.Find(context.Background(), event.InvoiceID)",
+		wantFailed:  "subscriber-boundary",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/paid_subscriber.go",
+			old:        "subscriber.service.Find(ctx, event.InvoiceID)",
+			mutant:     "func() (Invoice, error) { _ = event.InvoiceID; return subscriber.service.Find(ctx, \"inv-42\") }()",
+			wantFailed: "paid-subscriber-behavior",
+		},
+	})
 }
 
 // TestCreateModelVerifierCalibration proves the model contract requires the database-derived field shape.
