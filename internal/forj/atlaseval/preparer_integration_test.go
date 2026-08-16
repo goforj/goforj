@@ -173,8 +173,8 @@ func TestPreparerDelegatesDurableGuidanceTreatment(t *testing.T) {
 	}
 }
 
-// TestInvoiceHTTPVerifierRunsIndependentBehaviorOracle proves the promoted verifier accepts the executable golden family without trusting its tests.
-func TestInvoiceHTTPVerifierRunsIndependentBehaviorOracle(t *testing.T) {
+// TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies proves diagnostic success, mutation rejection, and layout neutrality.
+func TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies(t *testing.T) {
 	workRoot := t.TempDir()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	environment := testkit.IntegrationGoProcessEnv(t, nil)
@@ -205,11 +205,11 @@ func TestInvoiceHTTPVerifierRunsIndependentBehaviorOracle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify(): %v", err)
 	}
-	if result.FrameworkOutcome.Status != eval.EndpointPassed {
+	if result.FrameworkOutcome.Status != eval.EndpointIneligible {
 		t.Fatalf("framework outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
-	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointPassed) {
-		t.Fatalf("independent invoice behavior check did not pass: %#v", result.Checks)
+	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointIneligible) {
+		t.Fatalf("shared-process behavior check did not retain its evidence limitation: %#v", result.Checks)
 	}
 	controllerPath := filepath.Join(projectRoot, "internal", "invoices", "controller.go")
 	controller, err := os.ReadFile(controllerPath)
@@ -238,7 +238,7 @@ func TestInvoiceHTTPVerifierRunsIndependentBehaviorOracle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify(transport family): %v", err)
 	}
-	if transportResult.FrameworkOutcome.Status != eval.EndpointPassed || !evaluationCheckHasStatus(transportResult.Checks, "invoice-behavior", eval.EndpointPassed) {
+	if transportResult.FrameworkOutcome.Status != eval.EndpointIneligible || !evaluationCheckHasStatus(transportResult.Checks, "invoice-behavior", eval.EndpointIneligible) {
 		t.Fatalf("transport-package implementation family failed: outcome=%#v checks=%#v", transportResult.FrameworkOutcome, transportResult.Checks)
 	}
 }

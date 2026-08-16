@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestPreparerRejectsExecutableOrEnvironmentDrift(t *testing.T) {
 		OrchestrationID: "trial-01:none",
 		Environment:     testPreparationEnvironment(t, "first", "off"),
 	}
-	goExecutable := filepath.Join(strings.TrimPrefix(baseRequest.Environment[0], "PATH="), "go")
+	goExecutable := filepath.Join(strings.TrimPrefix(baseRequest.Environment[0], "PATH="), testToolFileName("go"))
 	for _, test := range []struct {
 		name   string
 		mutate func(*eval.PreparationRequest) error
@@ -220,13 +221,28 @@ func TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths(t *testing
 	}
 }
 
-// testPreparationEnvironment supplies one explicit PATH-selected Go executable for preparation identity tests.
+// testPreparationEnvironment supplies explicit PATH-selected Go and Wire executables for preparation identity tests.
 func testPreparationEnvironment(t *testing.T, goContents, goWork string) []string {
 	t.Helper()
 	tools := t.TempDir()
-	goExecutable := filepath.Join(tools, "go")
+	goExecutable := filepath.Join(tools, testToolFileName("go"))
 	if err := os.WriteFile(goExecutable, []byte(goContents), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return []string{"PATH=" + tools, "APP_ENV=test", "GOWORK=" + goWork}
+	if err := os.WriteFile(filepath.Join(tools, testToolFileName("wire")), []byte("wire"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{"PATH=" + tools, "APP_ENV=test", "GOWORK=" + goWork}
+	if runtime.GOOS == "windows" {
+		environment = append(environment, "PATHEXT=.EXE")
+	}
+	return environment
+}
+
+// testToolFileName mirrors the platform executable suffix without relying on the host PATH.
+func testToolFileName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".EXE"
+	}
+	return name
 }
