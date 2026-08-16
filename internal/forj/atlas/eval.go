@@ -68,10 +68,11 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
-	redactionSecrets, err := loadEvalRedactionSecrets(credential)
+	frozenCredential, err := eval.LoadCodexCredential(credential)
 	if err != nil {
 		return err
 	}
+	redactor := frozenCredential.Redactor(eval.NewRedactor(nil))
 	artifactRoot, err := resolveEvalArtifactRoot(command.Artifacts)
 	if err != nil {
 		return err
@@ -99,7 +100,6 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
-	redactor := eval.NewRedactor(redactionSecrets)
 	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance)
 	defer func() {
 		runErr = errors.Join(runErr, preparer.Close(context.Background()))
@@ -110,7 +110,7 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 		ArtifactKey:         artifactKey,
 		Redactor:            redactor,
 		Preparer:            preparer,
-		Codex:               eval.CodexOptions{Executable: command.CodexExecutable, Model: command.Model, ModelProvider: command.ModelProvider, CredentialSource: credential},
+		Codex:               eval.CodexOptions{Executable: command.CodexExecutable, Model: command.Model, ModelProvider: command.ModelProvider, Credential: frozenCredential},
 		GoExecutable:        goExecutable,
 		ForjExecutable:      forjExecutable,
 		VerifierEnvironment: append([]string(nil), noneEnvironment...),
@@ -248,59 +248,6 @@ func resolveEvalCredential(candidate string) (string, error) {
 		return "", fmt.Errorf("Codex credential %q is not a regular file", path)
 	}
 	return path, nil
-}
-
-// loadEvalRedactionSecrets extracts credential values that could appear in diagnostic output without retaining the credential itself.
-func loadEvalRedactionSecrets(path string) ([]string, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read Codex credential for artifact redaction: %w", err)
-	}
-	var credential any
-	if err := json.Unmarshal(body, &credential); err != nil {
-		return nil, fmt.Errorf("decode Codex credential for artifact redaction: %w", err)
-	}
-	return credentialSecrets(credential), nil
-}
-
-// credentialSecrets collects values belonging to common credential fields from an untrusted decoded auth document.
-func credentialSecrets(value any) []string {
-	secrets := make([]string, 0)
-	seen := make(map[string]struct{})
-	var visit func(any)
-	visit = func(value any) {
-		switch typed := value.(type) {
-		case []any:
-			for _, item := range typed {
-				visit(item)
-			}
-		case map[string]any:
-			for key, item := range typed {
-				if credentialSecretField(key) {
-					if secret, ok := item.(string); ok && secret != "" {
-						if _, exists := seen[secret]; !exists {
-							seen[secret] = struct{}{}
-							secrets = append(secrets, secret)
-						}
-					}
-				}
-				visit(item)
-			}
-		}
-	}
-	visit(value)
-	return secrets
-}
-
-// credentialSecretField identifies auth.json fields whose values must never enter retained diagnostics.
-func credentialSecretField(key string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(key))
-	switch normalized {
-	case "access_token", "token", "id_token", "refresh_token", "api_key", "client_secret", "password", "secret":
-		return true
-	default:
-		return strings.HasSuffix(normalized, "_api_key") || strings.HasSuffix(normalized, "_access_token") || strings.HasSuffix(normalized, "_refresh_token")
-	}
 }
 
 // resolveEvalArtifactRoot selects a retained private directory outside every disposable agent Project.
