@@ -80,8 +80,8 @@ func TestSyncPublishesSafeExampleAndTestingContracts(t *testing.T) {
 	}
 }
 
-// TestSetLocalUsesDotenvEncodingAndRefreshesContracts verifies prompted values cannot inject assignments or leak into safe files.
-func TestSetLocalUsesDotenvEncodingAndRefreshesContracts(t *testing.T) {
+// TestSetLocalUsesDotenvEncodingWithoutPublishingContracts verifies prompted values remain private until the generation lifecycle runs.
+func TestSetLocalUsesDotenvEncodingWithoutPublishingContracts(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".env.example"), []byte("APP_ENV=local\nCUSTOM_TOKEN=\n"), 0o644); err != nil {
 		t.Fatalf("write example: %v", err)
@@ -97,14 +97,12 @@ func TestSetLocalUsesDotenvEncodingAndRefreshesContracts(t *testing.T) {
 	if strings.Count(string(local), "INJECTED=") != 1 || !strings.Contains(string(local), `CUSTOM_TOKEN="line one\nINJECTED=true"`) {
 		t.Fatalf("local environment did not encode the value as one assignment:\n%s", local)
 	}
-	for _, name := range []string{".env.example", ".env.testing"} {
-		content, readErr := os.ReadFile(filepath.Join(root, name))
-		if readErr != nil {
-			t.Fatalf("read %s: %v", name, readErr)
-		}
-		if strings.Contains(string(content), "line one") || strings.Contains(string(content), "INJECTED=true") {
-			t.Fatalf("%s exposed local input:\n%s", name, content)
-		}
+	example, err := os.ReadFile(filepath.Join(root, ".env.example"))
+	if err != nil || string(example) != "APP_ENV=local\nCUSTOM_TOKEN=\n" {
+		t.Fatalf("SetLocal changed committed example: %q, %v", example, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".env.testing")); !os.IsNotExist(err) {
+		t.Fatalf("SetLocal published .env.testing: %v", err)
 	}
 }
 

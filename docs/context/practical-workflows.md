@@ -104,7 +104,7 @@ Rendered projects use a synchronized three-file contract:
 - `.env.example` is the committed safe inventory
 - `.env.testing` is the committed deterministic profile loaded by `goforj/env` during tests
 
-Use `forj env:set KEY` to enter a local secret without putting its value in shell history. Normal `forj generate`, `forj build`, and `forj dev` runs synchronize both committed files. CI can run `forj env:check` on a clean checkout to detect drift without creating `.env`, then run tests using `.env.testing`; process variables remain the override path for live-service credentials.
+Use `forj env:set KEY` to enter a local secret without putting its value in shell history. The next `forj generate`, `forj build`, or `forj dev` run synchronizes both committed files through the shared generation lifecycle. CI can run `forj env:check` on a clean checkout to detect drift without creating `.env`, then run tests using `.env.testing`; process variables remain the override path for live-service credentials.
 
 ## Integration Test Reality
 
