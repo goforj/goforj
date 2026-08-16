@@ -256,6 +256,7 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 	}{
 		{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)"},
 		{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string"},
+		{evaluation: "add-migration", scenario: "invoice-status-migration", path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", mutant: "-- Wrong migration"},
 		{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")"},
 		{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)"},
 		{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress"},
@@ -314,6 +315,13 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 				t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 			}
 			path := filepath.Join(projectRoot, filepath.FromSlash(test.path))
+			if strings.ContainsAny(test.path, "*?[") {
+				matches, globErr := filepath.Glob(path)
+				if globErr != nil || len(matches) != 1 {
+					t.Fatalf("mutant target %q matches = %v, error = %v", test.path, matches, globErr)
+				}
+				path = matches[0]
+			}
 			body, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("read mutant target: %v", err)

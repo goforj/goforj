@@ -1,0 +1,20 @@
+schema_version: 2
+id: invoice-status-migration
+title: Invoice Status Migration
+description: Scaffold a default-connection migration pair for an upcoming invoice status schema change.
+app:
+  module_name: example.com/migrationeval
+  doc_module_name: your/module
+  components:
+    cli: true
+    database_sqlite: true
+prepare:
+  checks:
+    - command: [forj, build]
+steps:
+  - id: scaffold-invoice-status-migration
+    title: Scaffold the migration pair
+    command: [forj, make:migration, add_status_to_invoices, --no-open]
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

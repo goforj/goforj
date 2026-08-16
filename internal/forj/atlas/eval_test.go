@@ -37,6 +37,85 @@ func TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey(t *testing.T) {
 	}
 }
 
+// TestReadEvalArtifactKeyNeverCreatesAuthority keeps report-only commands from changing an artifact root.
+func TestReadEvalArtifactKeyNeverCreatesAuthority(t *testing.T) {
+	root := t.TempDir()
+	if _, err := readEvalArtifactKey(root); err == nil {
+		t.Fatal("readEvalArtifactKey() created or accepted a missing key")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".manifest-key")); !os.IsNotExist(err) {
+		t.Fatalf("report key appeared after read: %v", err)
+	}
+}
+
+// TestValidateEvaluationTrialsBoundsModelSpend prevents accidental zero-work and unbounded diagnostic invocations.
+func TestValidateEvaluationTrialsBoundsModelSpend(t *testing.T) {
+	for _, trials := range []int{1, 20} {
+		if err := validateEvaluationTrials(trials); err != nil {
+			t.Fatalf("validateEvaluationTrials(%d): %v", trials, err)
+		}
+	}
+	for _, trials := range []int{0, 21} {
+		if err := validateEvaluationTrials(trials); err == nil {
+			t.Fatalf("validateEvaluationTrials(%d) succeeded", trials)
+		}
+	}
+}
+
+// TestEvaluationProfilesRejectsUnsupportedTreatmentsBeforeSetup keeps invocation policy explicit and side-effect free.
+func TestEvaluationProfilesRejectsUnsupportedTreatmentsBeforeSetup(t *testing.T) {
+	profiles, err := evaluationProfiles([]string{eval.GuidanceProfileAgents, eval.GuidanceProfileAgents, eval.GuidanceProfileNone})
+	if err != nil || !slices.Equal(profiles, []string{eval.GuidanceProfileAgents, eval.GuidanceProfileNone}) {
+		t.Fatalf("evaluationProfiles() = %v, %v", profiles, err)
+	}
+	for _, profiles := range [][]string{nil, {"skills"}} {
+		if _, err := evaluationProfiles(profiles); err == nil {
+			t.Fatalf("evaluationProfiles(%v) succeeded", profiles)
+		}
+	}
+}
+
+// TestEvalReportCmdAuthenticatesSummary keeps retained output behind Atlas's manifest verification.
+func TestEvalReportCmdAuthenticatesSummary(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("0123456789abcdef0123456789abcdef")
+	if err := os.WriteFile(filepath.Join(root, ".manifest-key"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := eval.NewArtifactStore(root, key, eval.NewRedactor(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := store.Begin("attempt-report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifacts.WriteText("summary.txt", "verified summary\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := artifacts.Finalize("sha256:plan", "sha256:baseline", "sha256:final"); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, "attempt-report")
+	output := captureStdout(t, func() {
+		if err := (&EvalReportCmd{Directory: directory}).Run(); err != nil {
+			t.Fatalf("EvalReportCmd.Run(): %v", err)
+		}
+	})
+	if output != "verified summary\n" {
+		t.Fatalf("report output = %q", output)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "summary.txt"), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&EvalReportCmd{Directory: directory}).Run(); err == nil {
+		t.Fatal("EvalReportCmd.Run() accepted tampered evidence")
+	}
+}
+
 // TestMaterializeEvaluationGuidanceUsesProductionDurablePath keeps evaluation treatments on the same config and marker path used by rendering.
 func TestMaterializeEvaluationGuidanceUsesProductionDurablePath(t *testing.T) {
 	root := t.TempDir()

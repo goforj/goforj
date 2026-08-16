@@ -2,9 +2,13 @@
 
 ## Status
 
-- Design status: proposed
-- Implementation status: diagnostic vertical slice complete locally; released
-  module integration pending
+- Design status: accepted and under active implementation
+- Implementation status: Phase 1 contracts, Phase 2 unconfined diagnostics,
+  the promoted core portfolio, per-command immutable preparation reuse, and
+  the local `list`, `run`, `compare`, `suite`, and authenticated `report`
+  commands are implemented. Phase 3 authoritative isolation, Phase 5
+  persistent cross-command caching, capability-slice experiments, and release
+  automation remain intentionally incomplete.
 - Planning date: 2026-08-15
 - Target repositories: `atlas` and `goforj`
 - Primary ownership: Atlas evaluation library, agent adapters, guidance
@@ -42,7 +46,10 @@ GoForj should own the user-facing command, consistent with every other Atlas
 entry point:
 
 ```bash
-forj atlas:eval run add-http-controller --agent codex --guidance agents
+forj atlas:eval run add-http-controller \
+  --guidance agents \
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json
 ```
 
 The command should be a thin wrapper over an Atlas evaluation library. Projects
@@ -228,34 +235,50 @@ Example output:
 add-http-controller       Add an HTTP controller for existing invoice behavior
 add-app-command           Add and register an App command
 add-job                   Add a job with a typed payload
+add-migration             Scaffold a database migration pair for an App
 add-named-app-route       Add a route to an additional App
+add-named-cache           Configure and inject a named cache
+add-named-resource        Configure and inject a named queue
+add-named-storage         Configure and inject a named storage disk
 create-model              Create a model from a database table
 repair-wire-provider      Diagnose and repair a missing provider
+unknown-framework-shape   Ask for clarification instead of inventing a shape
 ```
 
-### Run one scenario
+### Run one diagnostic treatment
 
 ```bash
 forj atlas:eval run add-http-controller \
-  --agent codex \
   --guidance agents \
-  --intent authoritative \
-  --backend container-ci
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json
 ```
+
+The current command is deliberately diagnostic and uses the unconfined local
+backend. It accepts only the implemented `none` and `agents` profiles. It does
+not accept an authoritative intent or backend selection until Phase 3 can
+enforce those claims.
 
 ### Compare guidance profiles
 
 ```bash
 forj atlas:eval compare add-http-controller \
-  --agent codex \
-  --guidance none,agents,skills,recommended-hermetic \
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json \
   --trials 5
 ```
+
+The diagnostic comparison is a fixed `none` versus `agents` pair so the first
+implemented experiment cannot silently widen its treatment set. Skills, MCP,
+placebo, randomized ordering, and custom slices remain Phase 6 work.
 
 ### Run a suite
 
 ```bash
-forj atlas:eval suite core --agent codex --guidance agents --trials 3
+forj atlas:eval suite core \
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json \
+  --trials 3
 ```
 
 ### Inspect a retained run
@@ -264,7 +287,7 @@ forj atlas:eval suite core --agent codex --guidance agents --trials 3
 forj atlas:eval report /path/to/run-artifacts/attempt-01J5Y6KQ7M4C
 ```
 
-Authoritative output should be concise:
+The future authoritative output should be concise:
 
 ```text
 add-http-controller  ·  Codex  ·  AGENTS.md only
@@ -280,14 +303,15 @@ add-http-controller  ·  Codex  ·  AGENTS.md only
 Outcome PASS  ·  Workflow PASS  ·  42s
 ```
 
-An unconfined diagnostic run must be explicit:
+The local implementation must state its unconfined diagnostic status in every
+result even though the command currently has no authoritative backend to
+select:
 
 ```bash
 forj atlas:eval run add-http-controller \
-  --agent codex \
   --guidance agents \
-  --intent diagnostic \
-  --backend unconfined-local
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json
 ```
 
 It may report deterministic artifact checks, but it cannot upgrade them into
@@ -295,8 +319,8 @@ trusted action evidence:
 
 ```text
 Artifact checks PASS  ·  Outcome INELIGIBLE  ·  Workflow INELIGIBLE
-Unconfined diagnostic: run with --intent authoritative --backend container-ci
-to produce evaluation evidence.
+Unconfined diagnostic: no authoritative backend is implemented; this result
+cannot produce evaluation evidence.
 ```
 
 On failure, the report should name the failed invariant and point to the
@@ -1720,13 +1744,16 @@ failure layered on every agent outcome.
 
 ## Initial Scenario Suite
 
-The first suite should stay small and cover the highest-leverage framework
-decisions.
+The promoted core suite should stay focused while covering the highest-leverage
+framework decisions. It currently contains 13 paired evaluations; adding a
+surface requires a versioned workflow, semantic verifier, executable GoForj
+scenario, positive calibration, and a targeted mutant.
 
-Before implementing the Atlas side, each live evaluation must name its exact
-GoForj scenario, workflow, and verifier IDs. The current catalog does not yet
-cover every entry below; missing topology, resource-driver, seeded-defect, and
-preparation-boundary support belongs to the GoForj scenario contract first.
+Each live evaluation names its exact GoForj scenario, workflow, and verifier
+IDs. The promoted entries below now have those three independently versioned
+joins. Any future topology, resource-driver, seeded-defect, or preparation
+boundary must land in the GoForj scenario contract before Atlas promotes its
+evaluation.
 
 ### `add-http-controller`
 
@@ -1738,20 +1765,32 @@ domain-handler shapes that preserve those boundaries.
 
 ### `add-app-command`
 
-Prompt for a billing-report synchronization command. Require the command
+Prompt for an invoice lookup command. Require the command
 generator, correct command collection registration, invocation of the owning
 application behavior, and appropriate context propagation.
 
 ### `add-job`
 
-Prompt for a receipt job carrying an order ID. Require the job generator, typed
+Prompt for a receipt job carrying an invoice ID. Require the job generator, typed
 payload conventions, handler placement, invocation of the owning application
 behavior, and job tests.
 
+### `add-migration`
+
+Ask the agent to scaffold an intentionally empty invoice-status migration pair.
+Require `make:migration`, the correct default connection placement, matching up
+and down files, and no invented schema operation.
+
 ### `add-schedule`
 
-Prompt for hourly stale-session cleanup. Require the schedule generator and the
-framework's actual schedule registration shape rather than an invented one.
+Prompt for hourly invoice reconciliation. Require the schedule generator and
+the framework's actual schedule registration shape rather than an invented one.
+
+### `add-event-subscriber`
+
+Prompt for an invoice-paid event and subscriber. Require both generators, a
+typed invoice ID, service-bound handling, and the framework's named event
+subscription registration.
 
 ### `create-model`
 
@@ -1764,10 +1803,14 @@ Render `app` and `admin`, then ask for an admin audit endpoint. Require the
 additional-App command prefix and prohibit edits to the default App's route
 registry.
 
-### `add-named-resource`
+### `add-named-resource`, `add-named-cache`, and `add-named-storage`
 
-Ask for a named queue or storage resource. Require generator/config behavior,
-named accessor usage, and correct dependency injection.
+Ask independently for named queue, cache, and storage resources. Require
+configuration and generation behavior, the generated named accessor, a
+cohesive App-owned boundary, and dependency injection through the services
+Wire set. Accept concise domain-owned names such as `reports.Dispatcher`,
+`profiles.Cache`, or `avatars.Storage`; the verifier must not require a
+contrived type name merely because the golden fixture uses one.
 
 ### `repair-wire-provider`
 
@@ -2440,7 +2483,8 @@ The first-slice ownership boundary is explicit:
 
 ### Phase 4: Core scenarios
 
-- Implement controller, command, job, model, named-App, and Wire-repair
+- Implement controller, command, job, schedule, event/subscriber, migration,
+  model, named-App, named queue/cache/storage, Wire-repair, and clarification
   scenarios.
 - Reuse existing GoForj scenario and deterministic Atlas workflow metadata.
 - Add calibrated Go AST, ownership, registration, black-box, build, and test

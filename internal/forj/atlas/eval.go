@@ -27,6 +27,8 @@ import (
 type EvalCmd struct {
 	Compare EvalCompareCmd `cmd:""`
 	List    EvalListCmd    `cmd:""`
+	Report  EvalReportCmd  `cmd:""`
+	Run     EvalRunCmd     `cmd:""`
 	Suite   EvalSuiteCmd   `cmd:""`
 }
 
@@ -43,6 +45,24 @@ type EvalCompareCmd struct {
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
 	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+	Trials          int    `help:"Independent paired trials" default:"1"`
+}
+
+// EvalRunCmd runs one promoted diagnostic treatment without paying for an unused comparison profile.
+type EvalRunCmd struct {
+	Evaluation      string `arg:"" help:"Promoted evaluation ID" default:"add-http-controller"`
+	Guidance        string `help:"Guidance profile" enum:"none,agents" default:"agents"`
+	Model           string `help:"Exact Codex model identity" required:""`
+	ModelProvider   string `name:"model-provider" help:"Codex model provider" default:"openai"`
+	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
+	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
+	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+	Trials          int    `help:"Independent trials" default:"1"`
+}
+
+// EvalReportCmd authenticates and prints one retained attempt summary.
+type EvalReportCmd struct {
+	Directory string `arg:"" help:"Retained attempt artifact directory" type:"path"`
 }
 
 // EvalListCmd lists the promoted evaluation catalog without starting an agent.
@@ -69,6 +89,44 @@ func (*EvalListCmd) Run() error {
 	return nil
 }
 
+// Signature returns the Kong metadata for EvalRunCmd.
+func (*EvalRunCmd) Signature() string {
+	return `name:"run" help:"Run one promoted diagnostic treatment"`
+}
+
+// Run executes one selected guidance profile through a fresh agent session.
+func (command *EvalRunCmd) Run() (runErr error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runEvaluationTreatments(ctx, evaluationInvocation{
+		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
+		Credential: command.Credential, Artifacts: command.Artifacts,
+	}, command.Evaluation, command.Guidance, command.Trials)
+}
+
+// Signature returns the Kong metadata for EvalReportCmd.
+func (*EvalReportCmd) Signature() string {
+	return `name:"report" help:"Authenticate and print one retained evaluation summary"`
+}
+
+// Run verifies the complete retained attempt before rendering its human summary.
+func (command *EvalReportCmd) Run() error {
+	directory, err := filepath.Abs(command.Directory)
+	if err != nil {
+		return err
+	}
+	key, err := readEvalArtifactKey(filepath.Dir(directory))
+	if err != nil {
+		return err
+	}
+	summary, _, err := eval.ReadVerifiedAttemptSummary(directory, key)
+	if err != nil {
+		return err
+	}
+	fmt.Print(summary)
+	return nil
+}
+
 // EvalSuiteCmd runs every promoted evaluation in one suite with shared preparation caches and frozen authority.
 type EvalSuiteCmd struct {
 	Suite           string `arg:"" help:"Promoted evaluation suite" default:"core"`
@@ -77,6 +135,7 @@ type EvalSuiteCmd struct {
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
 	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+	Trials          int    `help:"Independent paired trials per evaluation" default:"1"`
 }
 
 // Signature returns the Kong metadata for EvalSuiteCmd.
@@ -98,7 +157,7 @@ func (command *EvalSuiteCmd) Run() (runErr error) {
 	return runEvaluationComparisons(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
 		Credential: command.Credential, Artifacts: command.Artifacts,
-	}, ids)
+	}, ids, command.Trials)
 }
 
 // evaluationInvocation contains the authority and runtime options shared by compare and suite execution.
@@ -127,59 +186,153 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	return runEvaluationComparisons(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
 		Credential: command.Credential, Artifacts: command.Artifacts,
-	}, []string{command.Evaluation})
+	}, []string{command.Evaluation}, command.Trials)
 }
 
 // runEvaluationComparisons shares frozen credentials, tool resolution, caches, and verifier infrastructure across one invocation.
-func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocation, evaluationIDs []string) (runErr error) {
+func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocation, evaluationIDs []string, trials int) (runErr error) {
+	if err := validateEvaluationTrials(trials); err != nil {
+		return err
+	}
+	execution, err := newEvaluationExecution(invocation, []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		runErr = errors.Join(runErr, execution.Close())
+	}()
+	results := make([]eval.GuidanceDiagnosticResult, 0, len(evaluationIDs)*trials)
+	var attemptErrors []error
+	for _, evaluationID := range evaluationIDs {
+		for range trials {
+			result, diagnosticErr := execution.diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
+				EvaluationID:    evaluationID,
+				DestinationRoot: filepath.Join(execution.workRoot, "projects"),
+				Environments:    execution.environments,
+			})
+			results = append(results, result)
+			for _, attempt := range result.Attempts {
+				if attempt.Error != "" {
+					attemptErrors = append(attemptErrors, fmt.Errorf("%s/%s treatment: %s", evaluationID, attempt.Profile, execution.redactor.Text(attempt.Error)))
+				}
+			}
+			if diagnosticErr != nil {
+				attemptErrors = append(attemptErrors, fmt.Errorf("%s: %s", evaluationID, execution.redactor.Text(diagnosticErr.Error())))
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if err := printEvaluationResults(results, execution.redactor, execution.artifactRoot); err != nil {
+		return err
+	}
+	return errors.Join(attemptErrors...)
+}
+
+// runEvaluationTreatments executes one guidance profile while reusing immutable preparation across requested trials.
+func runEvaluationTreatments(ctx context.Context, invocation evaluationInvocation, evaluationID, profile string, trials int) (runErr error) {
+	if err := validateEvaluationTrials(trials); err != nil {
+		return err
+	}
+	execution, err := newEvaluationExecution(invocation, []string{profile})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		runErr = errors.Join(runErr, execution.Close())
+	}()
+	results := make([]eval.GuidanceDiagnosticAttempt, 0, trials)
+	var attemptErrors []error
+	for range trials {
+		attempt, attemptErr := execution.diagnostic.RunTreatment(ctx, eval.LocalDiagnosticTreatmentRequest{
+			EvaluationID:    evaluationID,
+			GuidanceProfile: profile,
+			DestinationRoot: filepath.Join(execution.workRoot, "projects"),
+			Environment:     execution.environments[profile],
+		})
+		results = append(results, attempt)
+		if attemptErr != nil {
+			attemptErrors = append(attemptErrors, fmt.Errorf("%s/%s treatment: %s", evaluationID, profile, execution.redactor.Text(attemptErr.Error())))
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if err := printEvaluationResults(results, execution.redactor, execution.artifactRoot); err != nil {
+		return err
+	}
+	return errors.Join(attemptErrors...)
+}
+
+// evaluationExecution owns one invocation's frozen authority, caches, diagnostic runner, and temporary files.
+type evaluationExecution struct {
+	diagnostic   *eval.LocalGuidanceDiagnostic
+	preparer     *atlaseval.Preparer
+	workRoot     string
+	artifactRoot string
+	environments map[string][]string
+	redactor     eval.Redactor
+}
+
+// newEvaluationExecution creates only the private treatment environments requested by the command.
+func newEvaluationExecution(invocation evaluationInvocation, profiles []string) (*evaluationExecution, error) {
+	selectedProfiles, err := evaluationProfiles(profiles)
+	if err != nil {
+		return nil, err
+	}
 	forjExecutable, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("resolve current Forj executable: %w", err)
+		return nil, fmt.Errorf("resolve current Forj executable: %w", err)
 	}
 	goExecutable, err := exec.LookPath("go")
 	if err != nil {
-		return fmt.Errorf("resolve Go executable: %w", err)
+		return nil, fmt.Errorf("resolve Go executable: %w", err)
 	}
 	credential, err := resolveEvalCredential(invocation.Credential)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	frozenCredential, err := eval.LoadCodexCredential(credential)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	redactor := frozenCredential.Redactor(eval.NewRedactor(nil))
 	artifactRoot, err := resolveEvalArtifactRoot(invocation.Artifacts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	artifactKey, err := loadOrCreateEvalArtifactKey(artifactRoot)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	workRoot, err := os.MkdirTemp("", "goforj-atlas-eval-")
 	if err != nil {
-		return err
+		return nil, err
 	}
+	failed := true
 	defer func() {
-		runErr = errors.Join(runErr, removeEvaluationWorkRoot(workRoot))
+		if failed {
+			_ = removeEvaluationWorkRoot(workRoot)
+		}
 	}()
 	baseEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, "base"), forjExecutable)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	noneEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, eval.GuidanceProfileNone), forjExecutable)
-	if err != nil {
-		return err
-	}
-	agentsEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, eval.GuidanceProfileAgents), forjExecutable)
-	if err != nil {
-		return err
+	environments := make(map[string][]string, len(selectedProfiles))
+	for _, profile := range selectedProfiles {
+		environment, environmentErr := evaluationEnvironment(filepath.Join(workRoot, profile), forjExecutable)
+		if environmentErr != nil {
+			return nil, environmentErr
+		}
+		environments[profile] = environment
 	}
 	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance)
-	defer func() {
-		runErr = errors.Join(runErr, preparer.Close(context.Background()))
-	}()
+	verifierEnvironment := environments[selectedProfiles[0]]
 	diagnostic, err := eval.NewLocalGuidanceDiagnostic(eval.LocalGuidanceDiagnosticOptions{
 		WorkRoot:            workRoot,
 		ArtifactRoot:        artifactRoot,
@@ -189,36 +342,57 @@ func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocati
 		Codex:               eval.CodexOptions{Executable: invocation.CodexExecutable, Model: invocation.Model, ModelProvider: invocation.ModelProvider, Credential: frozenCredential},
 		GoExecutable:        goExecutable,
 		ForjExecutable:      forjExecutable,
-		VerifierEnvironment: append([]string(nil), noneEnvironment...),
+		VerifierEnvironment: append([]string(nil), verifierEnvironment...),
 		Runtime:             evaluationRuntimeIdentity(),
 	})
 	if err != nil {
-		return err
+		_ = preparer.Close(context.Background())
+		return nil, err
 	}
-	results := make([]eval.GuidanceDiagnosticResult, 0, len(evaluationIDs))
-	var attemptErrors []error
-	for _, evaluationID := range evaluationIDs {
-		result, diagnosticErr := diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
-			EvaluationID:    evaluationID,
-			DestinationRoot: filepath.Join(workRoot, "projects"),
-			Environments: map[string][]string{
-				eval.GuidanceProfileNone:   noneEnvironment,
-				eval.GuidanceProfileAgents: agentsEnvironment,
-			},
-		})
-		results = append(results, result)
-		for _, attempt := range result.Attempts {
-			if attempt.Error != "" {
-				attemptErrors = append(attemptErrors, fmt.Errorf("%s/%s treatment: %s", evaluationID, attempt.Profile, redactor.Text(attempt.Error)))
-			}
+	failed = false
+	return &evaluationExecution{
+		diagnostic: diagnostic, preparer: preparer, workRoot: workRoot, artifactRoot: artifactRoot,
+		environments: environments, redactor: redactor,
+	}, nil
+}
+
+// evaluationProfiles validates and de-duplicates the diagnostic treatment set before creating persistent artifacts.
+func evaluationProfiles(profiles []string) ([]string, error) {
+	selected := make([]string, 0, len(profiles))
+	seen := make(map[string]bool, len(profiles))
+	for _, profile := range profiles {
+		if profile != eval.GuidanceProfileNone && profile != eval.GuidanceProfileAgents {
+			return nil, fmt.Errorf("unsupported evaluation guidance profile %q", profile)
 		}
-		if diagnosticErr != nil {
-			attemptErrors = append(attemptErrors, fmt.Errorf("%s: %s", evaluationID, redactor.Text(diagnosticErr.Error())))
-		}
-		if ctx.Err() != nil {
-			break
+		if !seen[profile] {
+			seen[profile] = true
+			selected = append(selected, profile)
 		}
 	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("at least one evaluation guidance profile is required")
+	}
+	return selected, nil
+}
+
+// Close releases preparation caches before removing the command-owned workspace.
+func (execution *evaluationExecution) Close() error {
+	if execution == nil {
+		return nil
+	}
+	return errors.Join(execution.preparer.Close(context.Background()), removeEvaluationWorkRoot(execution.workRoot))
+}
+
+// validateEvaluationTrials bounds accidental model spend while keeping repeated experiments explicit.
+func validateEvaluationTrials(trials int) error {
+	if trials < 1 || trials > 20 {
+		return fmt.Errorf("evaluation trials must be between 1 and 20")
+	}
+	return nil
+}
+
+// printEvaluationResults preserves the existing single-result shape while emitting arrays for repeated runs.
+func printEvaluationResults[T any](results []T, redactor eval.Redactor, artifactRoot string) error {
 	var output any = results
 	if len(results) == 1 {
 		output = results[0]
@@ -229,7 +403,7 @@ func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocati
 	}
 	fmt.Println(string(body))
 	fmt.Printf("Artifacts: %s\n", artifactRoot)
-	return errors.Join(attemptErrors...)
+	return nil
 }
 
 // evaluationRuntimeIdentity makes retained diagnostics reconstructable after command-owned binaries and workspaces are removed.
@@ -423,6 +597,18 @@ func loadOrCreateEvalArtifactKey(root string) ([]byte, error) {
 	closeErr := file.Close()
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return nil, errors.Join(err, os.Remove(path))
+	}
+	return key, nil
+}
+
+// readEvalArtifactKey loads the existing root key without creating trust material while reporting retained evidence.
+func readEvalArtifactKey(root string) ([]byte, error) {
+	key, err := os.ReadFile(filepath.Join(root, ".manifest-key"))
+	if err != nil {
+		return nil, fmt.Errorf("read evaluation artifact key: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("evaluation artifact key has invalid length")
 	}
 	return key, nil
 }
