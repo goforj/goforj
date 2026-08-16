@@ -332,7 +332,7 @@ func newEvaluationExecution(invocation evaluationInvocation, profiles []string) 
 		environments[profile] = environment
 	}
 	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance)
-	verifierEnvironment := environments[selectedProfiles[0]]
+	// Verifiers may read prepared module archives, so their seed must never come from agent-writable treatment state.
 	diagnostic, err := eval.NewLocalGuidanceDiagnostic(eval.LocalGuidanceDiagnosticOptions{
 		WorkRoot:            workRoot,
 		ArtifactRoot:        artifactRoot,
@@ -342,7 +342,7 @@ func newEvaluationExecution(invocation evaluationInvocation, profiles []string) 
 		Codex:               eval.CodexOptions{Executable: invocation.CodexExecutable, Model: invocation.Model, ModelProvider: invocation.ModelProvider, Credential: frozenCredential},
 		GoExecutable:        goExecutable,
 		ForjExecutable:      forjExecutable,
-		VerifierEnvironment: append([]string(nil), verifierEnvironment...),
+		VerifierEnvironment: append([]string(nil), baseEnvironment...),
 		Runtime:             evaluationRuntimeIdentity(),
 	})
 	if err != nil {
