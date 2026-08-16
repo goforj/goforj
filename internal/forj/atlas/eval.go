@@ -37,7 +37,7 @@ type EvalCompareCmd struct {
 	Model           string `help:"Exact Codex model identity" required:""`
 	ModelProvider   string `name:"model-provider" help:"Codex model provider" default:"openai"`
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
-	Credential      string `help:"Codex auth.json source; defaults to the current user configuration" type:"path"`
+	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
 }
 
@@ -120,7 +120,8 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	artifacts, err := eval.NewArtifactStore(artifactRoot, artifactKey, eval.NewRedactor(redactionSecrets))
+	redactor := eval.NewRedactor(redactionSecrets)
+	artifacts, err := eval.NewArtifactStore(artifactRoot, artifactKey, redactor)
 	if err != nil {
 		return err
 	}
@@ -151,7 +152,7 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 		},
 		Runtime: evaluationRuntimeIdentity(),
 	})
-	body, err := json.MarshalIndent(result, "", "  ")
+	body, err := marshalRedactedEvaluation(result, redactor)
 	if err != nil {
 		return err
 	}
@@ -160,11 +161,11 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	var attemptErrors []error
 	for _, attempt := range result.Attempts {
 		if attempt.Error != "" {
-			attemptErrors = append(attemptErrors, fmt.Errorf("%s treatment: %s", attempt.Profile, attempt.Error))
+			attemptErrors = append(attemptErrors, fmt.Errorf("%s treatment: %s", attempt.Profile, redactor.Text(attempt.Error)))
 		}
 	}
 	if diagnosticErr != nil {
-		attemptErrors = append(attemptErrors, diagnosticErr)
+		attemptErrors = append(attemptErrors, errors.New(redactor.Text(diagnosticErr.Error())))
 	}
 	return errors.Join(attemptErrors...)
 }
@@ -229,14 +230,10 @@ func removeEvaluationWorkRoot(root string) error {
 	return errors.Join(walkErr, os.RemoveAll(root))
 }
 
-// resolveEvalCredential uses only the caller's existing Codex credential as the source for private per-attempt copies.
+// resolveEvalCredential requires an explicit disposable credential so diagnostics never silently inherit a developer's normal login.
 func resolveEvalCredential(candidate string) (string, error) {
 	if strings.TrimSpace(candidate) == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		candidate = filepath.Join(home, ".codex", "auth.json")
+		return "", fmt.Errorf("Codex credential is required; pass a disposable, revocable auth.json with --credential")
 	}
 	path, err := filepath.Abs(candidate)
 	if err != nil {
@@ -314,10 +311,46 @@ func resolveEvalArtifactRoot(candidate string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return "", fmt.Errorf("create evaluation artifact root: %w", err)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return "", fmt.Errorf("create evaluation artifact root: %w", err)
+		}
+		return path, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect evaluation artifact root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("evaluation artifact root must be a real directory")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		return "", fmt.Errorf("evaluation artifact root permissions must be 0700")
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return "", fmt.Errorf("read evaluation artifact root: %w", err)
+	}
+	if len(entries) > 0 {
+		marker, err := os.Lstat(filepath.Join(path, ".manifest-key"))
+		if err != nil || !marker.Mode().IsRegular() {
+			return "", fmt.Errorf("non-empty evaluation artifact root is not owned by Atlas evaluation")
+		}
 	}
 	return path, nil
+}
+
+// marshalRedactedEvaluation applies artifact-equivalent redaction before diagnostic values reach the terminal.
+func marshalRedactedEvaluation(value any, redactor eval.Redactor) ([]byte, error) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var decoded any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(redactor.JSONValue(decoded), "", "  ")
 }
 
 // loadOrCreateEvalArtifactKey keeps retained manifests verifiable across diagnostic commands.

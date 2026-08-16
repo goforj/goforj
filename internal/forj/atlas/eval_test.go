@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/goforj/atlas/eval"
 )
 
 // TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey keeps retained manifests verifiable across invocations.
@@ -46,6 +48,46 @@ func TestLoadEvalRedactionSecretsExtractsCredentialTokens(t *testing.T) {
 		if !containsString(secrets, want) {
 			t.Fatalf("redaction secrets = %q, want %q", secrets, want)
 		}
+	}
+}
+
+// TestResolveEvalCredentialRequiresExplicitDisposableSource prevents silent use of a developer's normal Codex login.
+func TestResolveEvalCredentialRequiresExplicitDisposableSource(t *testing.T) {
+	if _, err := resolveEvalCredential(""); err == nil || !strings.Contains(err.Error(), "disposable") {
+		t.Fatalf("resolveEvalCredential() error = %v, want explicit disposable credential requirement", err)
+	}
+}
+
+// TestResolveEvalArtifactRootRejectsUnownedExistingContent prevents broad caller paths from becoming artifact stores.
+func TestResolveEvalArtifactRootRejectsUnownedExistingContent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "unrelated.txt"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveEvalArtifactRoot(root); err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("resolveEvalArtifactRoot() error = %v, want unowned-root rejection", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("artifact root permissions changed to %o", info.Mode().Perm())
+	}
+}
+
+// TestMarshalRedactedEvaluationKeepsSecretsOutOfTerminalJSON applies the retained-artifact boundary to command output.
+func TestMarshalRedactedEvaluationKeepsSecretsOutOfTerminalJSON(t *testing.T) {
+	secret := "terminal-secret-value"
+	body, err := marshalRedactedEvaluation(map[string]any{"error": "token=" + secret}, eval.NewRedactor([]string{secret}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(body, []byte(secret)) || !bytes.Contains(body, []byte("[REDACTED]")) {
+		t.Fatalf("redacted terminal JSON = %s", body)
 	}
 }
 
