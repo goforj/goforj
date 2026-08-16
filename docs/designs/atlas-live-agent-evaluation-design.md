@@ -295,6 +295,7 @@ placebo, randomized ordering, and custom slices remain Phase 6 work.
 
 ```bash
 forj atlas:eval suite core \
+  --kind feature \
   --model gpt-5.6-sol \
   --credential /path/to/disposable-auth.json \
   --trials 3
@@ -611,6 +612,7 @@ schema_version: 1
 id: add-http-controller
 summary: Add an HTTP controller for existing invoice behavior
 suite: core
+task_kind: scaffold
 project_scenario: invoice-http-route
 workflow: goforj-add-http-route/v1
 verifier: add-http-controller/v1
@@ -621,8 +623,10 @@ limits:
 ```
 
 The prompt is always the adjacent `prompt.md`; its digest is recorded in the
-resolved manifest. The manifest composes three independently versioned
-contracts and does not restate them:
+resolved manifest. `suite` identifies the release-sized portfolio, while
+`task_kind` separates scaffold discovery, feature implementation, repair, and
+safe-abstention measurements for focused execution and reporting. The manifest
+composes three independently versioned contracts and does not restate them:
 
 - `project_scenario` owns the starting Project and golden target recipe;
 - `workflow` owns required framework actions and their observation classes;
@@ -1619,8 +1623,11 @@ earlier protected write, deleted or replaced output, and shell, copied-binary,
 or absolute-path invocation.
 
 Black-box behavior, such as a seeded request and persistence assertion, should
-complement AST and build checks. Verifier mutation tests run without a live
-model and belong in ordinary CI.
+complement AST and build checks. The verifier installs those probes only in its
+private clone after removing candidate tests. Each probe is calibrated with a
+compiling mutant that preserves the structural evidence while violating the
+runtime invariant. Verifier mutation tests run without a live model and belong
+in ordinary CI.
 
 At least two valid implementations for each core target should differ in
 nonessential names or structure, such as an existing domain service versus a
