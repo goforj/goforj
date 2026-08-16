@@ -19,6 +19,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
+	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/internal/launcher"
 	"github.com/goforj/goforj/project"
@@ -37,6 +38,17 @@ func main() {
 		return
 	}
 	launcher.Capture()
+	args := os.Args[1:]
+	inGeneratedApp := isGeneratedAppDir()
+	if inGeneratedApp && shouldAutoInitializeEnvironment(args) {
+		created, initErr := envcontract.Initialize(".")
+		if initErr != nil && !errors.Is(initErr, envcontract.ErrExampleMissing) {
+			console.Fatalf("initializing local environment: %v", initErr)
+		}
+		if created {
+			console.Successf("Created .env with fresh local secrets")
+		}
+	}
 
 	// Default environment
 	setCLIDefaultEnv("APP_ENV", "local")
@@ -64,8 +76,6 @@ func main() {
 	}
 	cliNativeCommandNames = nativeCommandNames(parser.Model.Node)
 
-	args := os.Args[1:]
-	inGeneratedApp := isGeneratedAppDir()
 	appContext := ""
 	if appName, remaining, ok := resolveAppPrefix(args, inGeneratedApp); ok {
 		if shouldRunFrameworkCommandWithAppEnv(remaining) {
@@ -144,6 +154,23 @@ func main() {
 		}
 		console.Fatalf("%v", err)
 	}
+}
+
+// shouldAutoInitializeEnvironment keeps explicit initialization and rendering in control of their own file lifecycle.
+func shouldAutoInitializeEnvironment(args []string) bool {
+	for _, argument := range args {
+		argument = strings.TrimSpace(argument)
+		if argument == "" || strings.HasPrefix(argument, "-") {
+			continue
+		}
+		switch argument {
+		case "env:init", "env:check", "new", "render":
+			return false
+		default:
+			return true
+		}
+	}
+	return true
 }
 
 // configureCLIConsole enables terminal-owned progress without changing redirected or unsupported terminal output.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/project"
 )
 
@@ -118,6 +119,9 @@ func (c *Cmd) run(tidy moduleTidyRunner) error {
 	if err != nil {
 		return err
 	}
+	if _, err := envcontract.Sync("."); err != nil {
+		return fmt.Errorf("sync environment contracts: %w", err)
+	}
 	if run.dependencyTaskRan {
 		if err := tidy("."); err != nil {
 			return err
@@ -141,6 +145,10 @@ func generateProjectFiles(projectDir string, selection GenerationSelection, tidy
 	result := GenerationResult{TotalFiles: run.totalFiles, ChangedFiles: run.changedFiles}
 	if err != nil {
 		return result, err
+	}
+	_, err = envcontract.Sync(projectDir)
+	if err != nil {
+		return result, fmt.Errorf("sync environment contracts: %w", err)
 	}
 	if run.dependencyFilesChanged {
 		if err := tidy(projectDir); err != nil {

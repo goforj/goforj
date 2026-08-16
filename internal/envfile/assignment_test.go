@@ -69,3 +69,31 @@ func TestAssignmentParsersKeepSemanticAndSourceScanningDistinct(t *testing.T) {
 		t.Fatalf("ScanKey() = %q, %t", key, ok)
 	}
 }
+
+// TestEncodeValueRoundTripsLiteralSecretCharacters verifies stored input cannot become interpolation or another assignment.
+func TestEncodeValueRoundTripsLiteralSecretCharacters(t *testing.T) {
+	want := "prefix $TOKEN `command`\nINJECTED=true"
+	line := "SECRET=" + envfile.EncodeValue(want)
+	key, got, ok := envfile.ParseAssignment(line)
+	if !ok || key != "SECRET" || got != want {
+		t.Fatalf("encoded assignment = %q; parsed %q, %q, %t", line, key, got, ok)
+	}
+}
+
+// TestIsValidKeyUsesPortableDotenvNames verifies keys are safe to pass through every supported environment parser.
+func TestIsValidKeyUsesPortableDotenvNames(t *testing.T) {
+	for _, test := range []struct {
+		key  string
+		want bool
+	}{
+		{key: "APP_KEY", want: true},
+		{key: "_PRIVATE", want: true},
+		{key: "9INVALID", want: false},
+		{key: "BAD-KEY", want: false},
+		{key: "", want: false},
+	} {
+		if got := envfile.IsValidKey(test.key); got != test.want {
+			t.Errorf("IsValidKey(%q) = %t, want %t", test.key, got, test.want)
+		}
+	}
+}

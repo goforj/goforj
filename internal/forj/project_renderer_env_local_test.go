@@ -51,6 +51,31 @@ func TestProjectRendererSeedsQueueDriverOnlyInEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}
+	environmentInfo, err := os.Stat(".env")
+	if err != nil {
+		t.Fatalf("stat .env: %v", err)
+	}
+	if got := environmentInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf(".env mode = %o, want 600", got)
+	}
+	testingData, err := os.ReadFile(".env.testing")
+	if err != nil {
+		t.Fatalf("read .env.testing: %v", err)
+	}
+	localAppKey, localAppKeySet := envfile.Lookup(strings.Split(string(envData), "\n"), "APP_KEY")
+	if !localAppKeySet || localAppKey == "" {
+		t.Fatalf("local environment omitted APP_KEY:\n%s", envData)
+	}
+	if !strings.Contains(string(testingData), "APP_ENV=testing") || strings.Contains(string(testingData), localAppKey) {
+		t.Fatalf("committed test environment is not safe and runnable:\n%s", testingData)
+	}
+	gitignoreData, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignoreData), "!.env.testing") {
+		t.Fatalf(".gitignore does not expose the committed test contract:\n%s", gitignoreData)
+	}
 	environmentLines := strings.Split(string(envData), "\n")
 	queueDriver, queueDriverSet := envfile.Lookup(environmentLines, "QUEUE_DRIVER")
 	supportedDrivers, supportedDriversSet := envfile.Lookup(environmentLines, "QUEUE_SUPPORTED_DRIVERS")

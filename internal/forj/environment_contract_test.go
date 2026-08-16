@@ -57,7 +57,7 @@ func TestEnsureGitignoreEnvironmentRulesPreservesOwnerEntries(t *testing.T) {
 		t.Fatalf("read gitignore: %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"vendor/", "# owner rule", "custom.tmp", ".env.host", ".env.local", "!.env.example"} {
+	for _, want := range []string{"vendor/", "# owner rule", "custom.tmp", ".env.host", ".env.local", "!.env.example", "!.env.testing"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("updated gitignore omitted %q:\n%s", want, text)
 		}

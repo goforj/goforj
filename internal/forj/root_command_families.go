@@ -17,6 +17,9 @@ type projectAuthoringCommands struct {
 	newProject NewProjectCmd
 	makeApp    makeapp.Cmd
 	render     RenderCmd
+	envInit    EnvInitCmd
+	envSet     EnvSetCmd
+	envCheck   EnvCheckCmd
 }
 
 // NewProjectAuthoringCommands constructs the project-authoring family from its shared renderer dependencies.
@@ -26,6 +29,9 @@ func NewProjectAuthoringCommands(appLogger *logger.AppLogger, renderer *ProjectR
 		newProject: *NewNewProjectCmd(appLogger, renderer),
 		makeApp:    *makeapp.NewCmd(appLogger, renderer),
 		render:     *NewCmd(appLogger, renderer),
+		envInit:    EnvInitCmd{},
+		envSet:     *NewEnvSetCmd(),
+		envCheck:   EnvCheckCmd{},
 	}
 }
 
