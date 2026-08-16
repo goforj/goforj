@@ -560,16 +560,13 @@ func TestGeneratedAccessorNames(t *testing.T) {
 	runFixtureGoTest(t, root, "./internal/caches", "TestGeneratedAccessorNames", nil)
 }
 
-func TestGenerateCacheFilesRejectsUnknownEnvVars(t *testing.T) {
+// TestGenerateCacheFilesIgnoresUnknownEnvVars leaves similarly prefixed application settings unclaimed.
+func TestGenerateCacheFilesIgnoresUnknownEnvVars(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRVIER", "redis")
 
-	_, err := GenerateCacheFiles(t.TempDir())
-	if err == nil {
-		t.Fatal("expected GenerateCacheFiles to reject unknown cache env vars")
-	}
-	if !strings.Contains(err.Error(), "CACHE_SESSIONS_DRVIER") {
-		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	if _, err := GenerateCacheFiles(t.TempDir()); err != nil {
+		t.Fatalf("GenerateCacheFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
 

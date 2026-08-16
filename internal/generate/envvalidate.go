@@ -131,7 +131,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 		trimmed := strings.TrimPrefix(key, contract.Prefix+"_")
 		scopedKey, ok := splitScopedEnvKey(trimmed, contract.RootKeys)
 		if !ok {
-			problems = append(problems, fmt.Sprintf("%s is not a supported %s env var", key, strings.ToLower(contract.Prefix)))
+			// Resource prefixes are common application vocabulary, so GoForj only owns shapes it actually consumes.
 			continue
 		}
 		if scopedKey.child != "" {
@@ -257,7 +257,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			trimmed := strings.TrimPrefix(key, resourcePrefix+"_")
 			scopedKey, ok := splitScopedEnvKey(trimmed, v.contract.RootKeys)
 			if !ok {
-				problems = append(problems, fmt.Sprintf("%s is not a supported %s env var", key, strings.ToLower(v.contract.Prefix)))
+				// An App overlay does not give GoForj ownership of every key beneath the same textual prefix.
 				continue
 			}
 			if scopedKey.child != "" {

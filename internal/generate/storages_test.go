@@ -420,16 +420,13 @@ func TestGenerateStorageFilesTracksOptionalDiskWarnings(t *testing.T) {
 	}
 }
 
-func TestGenerateStorageFilesRejectsUnknownEnvVars(t *testing.T) {
+// TestGenerateStorageFilesIgnoresUnknownEnvVars leaves similarly prefixed application settings unclaimed.
+func TestGenerateStorageFilesIgnoresUnknownEnvVars(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_PUBLIC_ROOOT", "storage/app/public")
 
-	_, err := GenerateStorageFiles(t.TempDir())
-	if err == nil {
-		t.Fatal("expected GenerateStorageFiles to reject unknown storage env vars")
-	}
-	if !strings.Contains(err.Error(), "STORAGE_PUBLIC_ROOOT") {
-		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	if _, err := GenerateStorageFiles(t.TempDir()); err != nil {
+		t.Fatalf("GenerateStorageFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
 
