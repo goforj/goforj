@@ -36,6 +36,9 @@ func TestBaselineGuidanceSurvivesProjectLifecycle(t *testing.T) {
 	if !bytes.Contains(want, []byte("`forj make:*`")) {
 		t.Fatalf("rendered guidance omitted generator workflow:\n%s", want)
 	}
+	if !bytes.Contains(want, []byte("can stand on its own")) {
+		t.Fatalf("rendered guidance omitted package-boundary workflow:\n%s", want)
+	}
 
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	runGuidanceLifecycleCommand(t, projectRoot, forjExecutable, "build", "-o", filepath.Join(t.TempDir(), "app"))
