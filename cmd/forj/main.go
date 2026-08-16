@@ -541,7 +541,7 @@ type parsedAppHelp struct {
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 const (
-	appHelpTimeout   = 500 * time.Millisecond
+	appHelpTimeout   = 1500 * time.Millisecond
 	appHelpWaitDelay = 100 * time.Millisecond
 )
 
