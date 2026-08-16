@@ -365,7 +365,7 @@ func evaluationProjectChanges(t *testing.T, baselineRoot string, finalRoot strin
 	return changes
 }
 
-// evaluationFileStates hashes files and symlink targets while ignoring directory metadata that carries no ownership signal.
+// evaluationFileStates mirrors Atlas tree ownership across directories, files, and symlink targets.
 func evaluationFileStates(t *testing.T, root string) map[string]eval.ProjectPathState {
 	t.Helper()
 	states := map[string]eval.ProjectPathState{}
@@ -373,14 +373,18 @@ func evaluationFileStates(t *testing.T, root string) map[string]eval.ProjectPath
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() {
+		if path == root {
 			return nil
 		}
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(filepath.ToSlash(relative), "_data/") {
+		relative = filepath.ToSlash(relative)
+		if relative == "_data" && entry.IsDir() {
+			return filepath.SkipDir
+		}
+		if strings.HasPrefix(relative, "_data/") {
 			return nil
 		}
 		info, err := entry.Info()
@@ -389,7 +393,9 @@ func evaluationFileStates(t *testing.T, root string) map[string]eval.ProjectPath
 		}
 		kind := "file"
 		var body []byte
-		if entry.Type()&os.ModeSymlink != 0 {
+		if entry.IsDir() {
+			kind = "directory"
+		} else if entry.Type()&os.ModeSymlink != 0 {
 			kind = "symlink"
 			target, err := os.Readlink(path)
 			if err != nil {
@@ -404,7 +410,7 @@ func evaluationFileStates(t *testing.T, root string) map[string]eval.ProjectPath
 		}
 		body = normalizeEvaluationFixtureFile(filepath.ToSlash(relative), body)
 		digest := sha256.Sum256(body)
-		states[filepath.ToSlash(relative)] = eval.ProjectPathState{Kind: kind, Digest: fmt.Sprintf("sha256:%x", digest), Mode: uint32(info.Mode())}
+		states[relative] = eval.ProjectPathState{Kind: kind, Digest: fmt.Sprintf("sha256:%x", digest), Mode: uint32(info.Mode())}
 		return nil
 	}); err != nil {
 		t.Fatalf("snapshot %s: %v", root, err)
