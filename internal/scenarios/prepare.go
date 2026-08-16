@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
@@ -138,6 +139,10 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 	if plan.spec.SchemaVersion != liveScenarioSchemaVersion {
 		return nil, fmt.Errorf("%w: scenario %q must declare schema_version %d", ErrUnsupportedLiveScenario, plan.spec.ID, liveScenarioSchemaVersion)
 	}
+	tools, _, err := resolveScenarioPlanTools(forjExecutable, options.Environment, plan, false)
+	if err != nil {
+		return nil, err
+	}
 	digests := preparationScenarioDigests(catalog, plan)
 	planDigest := digestPreparationPlan(plan.spec.ID, plan.spec.SchemaVersion, digests)
 	if options.ExpectedPlanDigest != "" && options.ExpectedPlanDigest != planDigest {
@@ -153,7 +158,7 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		logger:      options.Logger,
 		workspace:   workspace,
 		forjExec:    forjExecutable,
-		tools:       copyScenarioTools(options.ToolExecutables),
+		tools:       tools,
 		environment: append([]string(nil), options.Environment...),
 	}
 	if err := execution.prepare(plan); err != nil {
@@ -178,6 +183,71 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		BaselineTree:    baselineTree,
 		workspace:       workspace,
 	}, nil
+}
+
+// ResolveScenarioPreparationTools binds every prefix executable to an identity selected before cached preparation.
+func ResolveScenarioPreparationTools(forjExecutable string, environment []string, options ResolveOptions) (map[string]string, string, error) {
+	forjPath, _, err := resolveScenarioExecutable(forjExecutable)
+	if err != nil {
+		return nil, "", err
+	}
+	catalog, err := loadScenarioCatalog(options.SpecDir)
+	if err != nil {
+		return nil, "", err
+	}
+	plan, ok := catalog.plans[options.ScenarioID]
+	if !ok {
+		return nil, "", fmt.Errorf("unknown scenario %q", options.ScenarioID)
+	}
+	if plan.spec.SchemaVersion != liveScenarioSchemaVersion {
+		return nil, "", fmt.Errorf("%w: scenario %q must declare schema_version %d", ErrUnsupportedLiveScenario, plan.spec.ID, liveScenarioSchemaVersion)
+	}
+	return resolveScenarioPlanTools(forjPath, environment, plan, false)
+}
+
+// resolveScenarioPlanTools fingerprints every executable that the selected plan may invoke.
+func resolveScenarioPlanTools(forjPath string, environment []string, plan scenarioPlan, includeTarget bool) (map[string]string, string, error) {
+	names := map[string]bool{"forj": true}
+	collect := func(steps []plannedScenarioStep) {
+		for _, planned := range steps {
+			if planned.step.Run != nil && len(planned.step.Run.Run) > 0 {
+				names[planned.step.Run.Run[0]] = true
+			}
+		}
+	}
+	collect(plan.dependencySteps)
+	collect(plan.preparationSteps)
+	for _, command := range plan.startingChecks {
+		names[command.Run[0]] = true
+	}
+	if includeTarget {
+		collect(plan.targetSteps)
+		for _, command := range plan.finalChecks {
+			names[command.Run[0]] = true
+		}
+	}
+	tools := make(map[string]string, len(names))
+	digests := make([]string, 0, len(names))
+	for name := range names {
+		var toolPath, digest string
+		var err error
+		if name == "forj" {
+			toolPath, digest, err = resolveScenarioExecutable(forjPath)
+		} else {
+			toolPath, digest, err = resolveScenarioTool(name, environment)
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		tools[name] = toolPath
+		digests = append(digests, name+"\x00"+digest)
+	}
+	sort.Strings(digests)
+	hash := sha256.New()
+	for _, identity := range digests {
+		fmt.Fprintf(hash, "%s\x00", identity)
+	}
+	return tools, fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
 
 // ResolvePreparationTools resolves every executable used by a live preparation prefix against its explicit environment.
