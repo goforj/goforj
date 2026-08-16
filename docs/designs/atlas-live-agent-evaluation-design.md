@@ -232,17 +232,36 @@ forj atlas:eval list
 Example output:
 
 ```text
-add-http-controller       Add an HTTP controller for existing invoice behavior
-add-app-command           Add and register an App command
-add-job                   Add a job with a typed payload
-add-migration             Scaffold a database migration pair for an App
-add-named-app-route       Add a route to an additional App
-add-named-cache           Configure and inject a named cache
-add-named-resource        Configure and inject a named queue
-add-named-storage         Configure and inject a named storage disk
-create-model              Create a model from a database table
-repair-wire-provider      Diagnose and repair a missing provider
-unknown-framework-shape   Ask for clarification instead of inventing a shape
+add-app-command                    Add a context-aware App command
+add-app-lifecycle-hook             Add application readiness behavior
+add-cached-repository              Add cache-aside repository lookup
+add-database-transaction           Add an atomic database workflow
+add-event-subscriber               Add a typed event and subscriber
+add-http-controller                Add an HTTP controller
+add-job                            Add typed background work
+add-mail-workflow                  Send mail through the generated manager
+add-migration                      Scaffold a migration pair
+add-named-app-route                Add a route to an additional App
+add-named-cache                    Configure and inject a named cache
+add-named-resource                 Configure and inject a named queue
+add-named-storage                  Configure and inject named storage
+add-outbound-http-integration      Add a context-aware HTTP integration
+add-route-middleware               Add application-owned middleware
+add-schedule                       Add recurring scheduled work
+add-upload-workflow                Add a validated upload workflow
+add-validated-write-endpoint       Add a validated write endpoint
+build-json-api-feature             Build a service-backed JSON API feature
+choose-storage-for-files           Infer a durable named storage boundary
+create-additional-app              Add an independently runnable App
+create-model                       Generate a model from a seeded table
+dispatch-event-followup-job        Dispatch typed work from an event
+model-relationships                Generate explicit model relationships
+protect-route-with-auth            Protect a route through generated Auth
+publish-domain-event               Publish and handle a typed event
+repair-wire-provider               Repair a missing Wire provider
+schedule-existing-job              Schedule dispatch of an existing job
+serve-cacheable-image              Serve a conditionally cached image
+unknown-framework-shape            Ask for clarification without guessing
 ```
 
 ### Run one diagnostic treatment
@@ -1762,7 +1781,7 @@ failure layered on every agent outcome.
 ## Initial Scenario Suite
 
 The promoted core suite should stay focused while covering the highest-leverage
-framework decisions. It currently contains 27 promoted evaluations; adding a
+framework decisions. It currently contains 30 promoted evaluations; adding a
 surface requires a versioned workflow, semantic verifier, executable GoForj
 scenario, positive calibration, and a targeted mutant.
 
@@ -1814,6 +1833,12 @@ subscription registration.
 Seed a database table and ask for application access to it. Require
 `make:model`, repository ownership, and correct connection selection.
 
+### `model-relationships`
+
+Seed related tables and ask for conventional models. Require `make:model`, the
+Project's `.db-relationships.yaml` contract, generated relationship fields,
+repository-owned relationship loading, and cancellation propagation.
+
 ### `add-named-app-route`
 
 Render `app` and `admin`, then ask for an admin audit endpoint. Require the
@@ -1828,6 +1853,20 @@ cohesive App-owned boundary, and dependency injection through the services
 Wire set. Accept concise domain-owned names such as `reports.Dispatcher`,
 `profiles.Cache`, or `avatars.Storage`; the verifier must not require a
 contrived type name merely because the golden fixture uses one.
+
+### `choose-storage-for-files`
+
+Describe a durable file category without naming the framework primitive.
+Require the agent to infer purpose-named storage, configure and generate its
+accessor, inject the storage manager, and keep file operations behind an
+application service instead of writing directly to a local path.
+
+### `serve-cacheable-image`
+
+Ask for storage-backed image delivery that avoids retransferring unchanged
+content. Require the existing service and storage boundary, request-context
+propagation, explicit cache policy, validator comparison, and a `304 Not
+Modified` response when the validator matches.
 
 ### `repair-wire-provider`
 

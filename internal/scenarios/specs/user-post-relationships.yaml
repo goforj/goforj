@@ -1,0 +1,80 @@
+schema_version: 2
+id: user-post-relationships
+title: User and Post Relationships
+description: Generate related models from seeded SQLite tables and an explicit relationship contract.
+app:
+  module_name: example.com/relationshipeval
+  doc_module_name: your/module
+  components:
+    cli: true
+    database_sqlite: true
+prepare:
+  steps:
+    - id: add-related-tables-migration
+      title: Add the related users and posts tables
+      write:
+        path: migrations/2026_08_16_000001_users_posts.sqlite.up.sql
+        language: sql
+        content: |
+          CREATE TABLE users (
+              id INTEGER PRIMARY KEY,
+              email TEXT NOT NULL
+          );
+          CREATE TABLE posts (
+              id INTEGER PRIMARY KEY,
+              user_id INTEGER NOT NULL,
+              title TEXT NOT NULL,
+              FOREIGN KEY (user_id) REFERENCES users(id)
+          );
+    - id: add-related-tables-rollback
+      title: Add the related tables rollback
+      write:
+        path: migrations/2026_08_16_000001_users_posts.sqlite.down.sql
+        language: sql
+        content: |
+          DROP TABLE posts;
+          DROP TABLE users;
+    - id: migrate-related-tables
+      title: Create the related tables
+      command: [forj, migrate]
+  checks:
+    - command: [forj, migrate]
+steps:
+  - id: declare-user-post-relationship
+    title: Declare the relationship contract
+    write:
+      path: .db-relationships.yaml
+      language: yaml
+      content: |
+        users:
+          - "1-many id->posts:user_id"
+  - id: generate-post-model
+    title: Generate the related post model
+    command: [forj, make:model, posts, --package, content]
+  - id: generate-user-model
+    title: Generate the user model with its relationship
+    command: [forj, make:model, users, --package, content]
+  - id: test-user-post-relationship
+    title: Test the generated relationship contract
+    write:
+      path: internal/content/user_test.go
+      language: go
+      content: |
+        // Package content verifies schema-derived model behavior.
+        package content
+
+        import "testing"
+
+        // TestUserRelationships keeps the declared preload path attached to the generated model.
+        func TestUserRelationships(t *testing.T) {
+                user := &User{}
+                for _, relationship := range user.Relationships() {
+                        if relationship == "Posts" {
+                                return
+                        }
+                }
+                t.Fatalf("User.Relationships() = %v, want Posts", user.Relationships())
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

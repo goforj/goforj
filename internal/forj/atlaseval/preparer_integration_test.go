@@ -332,6 +332,11 @@ func TestCreateModelVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress", wantFailed: "model-shape"})
 }
 
+// TestModelRelationshipsVerifierCalibration proves the generated relationship remains attached to its schema key contract.
+func TestModelRelationshipsVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "model-relationships", scenario: "user-post-relationships", path: ".db-relationships.yaml", old: "1-many id->posts:user_id", mutant: "1-many id->posts:id", wantFailed: "relationship-contract"})
+}
+
 // TestAddNamedAppRouteVerifierCalibration proves additional-App routing stays attached to the selected App.
 func TestAddNamedAppRouteVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-app-route", scenario: "admin-audit-route", path: "internal/audits/controller.go", old: "/api/v1/audits", mutant: "/api/v1/wrong", wantFailed: "admin-route-visible"})
@@ -383,6 +388,16 @@ func TestAddNamedStorageVerifierCalibration(t *testing.T) {
 		},
 		wantFailed: "named-storage-injection",
 	})
+}
+
+// TestChooseStorageForFilesVerifierCalibration proves an inferred durable file category uses its purpose-named accessor.
+func TestChooseStorageForFilesVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "choose-storage-for-files", scenario: "invoice-attachments", path: "internal/invoices/attachments.go", old: "manager.Attachments()", mutant: "manager.Default()", wantFailed: "attachment-service-boundary"})
+}
+
+// TestServeCacheableImageVerifierCalibration proves a successful image response retains conditional revalidation.
+func TestServeCacheableImageVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "serve-cacheable-image", scenario: "cacheable-avatar-response", path: "internal/avatars/controller.go", old: `"If-None-Match"`, mutant: `"X-Ignored-Validator"`, wantFailed: "avatar-revalidation"})
 }
 
 // TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set.
