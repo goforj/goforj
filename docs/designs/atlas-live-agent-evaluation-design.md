@@ -685,6 +685,7 @@ type ProjectPreparer interface {
 	Capabilities(context.Context) (PreparationCapabilities, error)
 	Resolve(context.Context, PreparationRequest) (ResolvedPreparationPlan, error)
 	Prepare(context.Context, PreparationRequest, ResolvedPreparationPlan) (PreparedProject, error)
+	MaterializeGuidance(context.Context, PreparedProject, Guidance) (Guidance, error)
 }
 
 type PreparedProject interface {
@@ -715,6 +716,11 @@ must match. The overall plan digest binds the scenario-prefix digest, exact
 GoForj executable digest, and the non-secret material environment projection;
 those component digests remain explicit fields so a mismatch can be diagnosed
 rather than appearing only as an opaque hash failure.
+
+`MaterializeGuidance` applies the treatment through the Project's real durable
+configuration and ownership path after the shared starting state is measured.
+The agent adapter consumes and verifies that prepared treatment; it does not
+write a provider-specific approximation of Project guidance.
 
 `PreparationResult` returns resolved identities, tree and catalog digests,
 health-check evidence, and ownership of every created path. Atlas owns the
@@ -1297,11 +1303,9 @@ preflight.
 Each agent adapter should know how to:
 
 - resolve and verify an absolute agent executable outside the trial;
-- report supported observation and isolation capabilities;
+- report the isolation properties it directly enforces;
 - create isolated configuration and home directories;
-- install the selected native instruction projection;
-- install the selected skills;
-- configure only the selected MCP servers;
+- verify the Project-owned guidance, skills, and MCP selection it receives;
 - start a new non-interactive session;
 - provide the prompt;
 - apply time and command limits;
@@ -1317,7 +1321,7 @@ Suggested interface:
 ```go
 type EvaluationAgent interface {
 	Name() string
-	Capabilities(context.Context) (AgentCapabilities, error)
+	Properties(context.Context) (AgentProperties, error)
 	Prepare(context.Context, RunEnvironment, Guidance) (AgentPreparation, error)
 	Start(context.Context, PreparedAgent) (EvaluationSession, error)
 }
@@ -1433,7 +1437,9 @@ authoritative evaluation only after an adapter selects and qualifies an
 equivalent facility.
 
 Before a trial begins, compare the scenario's required observation classes with
-the adapter and backend capability set. If a required class is unavailable, the
+the backend capability set. Separately require both the backend and adapter to
+claim any isolation property the adapter can weaken, such as credential
+isolation. If a required class or property is unavailable, the
 trial is ineligible for that behavioral endpoint and should fail preflight
 rather than infer evidence from prose. Artifact-only results remain useful but
 must be reported as a separate outcome. An explicit local diagnostic mode may
@@ -2313,8 +2319,9 @@ The first implementation is additive.
 - No agent provider becomes a required GoForj dependency.
 - GoForj scenario specs and Atlas evaluation manifests include independent
   schema versions.
-- Agent adapters should report observation capabilities before execution;
-  scenarios requiring unavailable capabilities fail preflight as ineligible.
+- Backends should report trusted observation capabilities before execution;
+  adapters report only isolation properties they enforce. Scenarios requiring
+  unavailable capabilities or properties fail preflight as ineligible.
 - Legacy GoForj scenarios remain usable by existing commands and external
   catalogs even when they do not support live preparation.
 - GoForj and Atlas exchange versioned evaluation capabilities before Project
@@ -2541,8 +2548,8 @@ reachability. Persistent caching is not an MVP acceptance requirement.
    backend: a container runtime, VM runner, or another enforceable boundary?
 2. Which Codex execution surface exposes the stable non-interactive behavior
    required by the first adapter?
-3. Which event capabilities are required for an adapter to support behavioral
-   gates rather than artifact-only scoring?
+3. Which backend event capabilities are required to support behavioral gates
+   rather than artifact-only scoring?
 4. Where should historical scorecards live so model drift can be inspected
    without turning the repository into a large artifact archive?
 5. What trial counts and regression thresholds are statistically useful within
