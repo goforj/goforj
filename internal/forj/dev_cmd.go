@@ -2084,6 +2084,7 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 			if err := runDevSPABuildWithLoader(outWriter, errWriter, heading, watcher); err != nil {
 				return false, fmt.Errorf("initial SPA build %q failed: %w", watcher.Name, err)
 			}
+			recordDevSPABuild(".", watcher)
 			built = true
 			continue
 		}
@@ -2100,6 +2101,7 @@ func runDevInitialSPABuilds(config *project.Config, outWriter io.Writer, errWrit
 		}); err != nil {
 			return false, fmt.Errorf("initial SPA build %q failed: %w", watcher.Name, err)
 		}
+		recordDevSPABuild(".", watcher)
 		built = true
 	}
 	if built && compactLifecycle {

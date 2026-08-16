@@ -14,6 +14,7 @@ import (
 
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/apiindex"
+	"github.com/goforj/goforj/internal/appassets"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -28,8 +29,10 @@ type Step struct {
 
 // Pipeline coordinates source generation, indexing, and the caller's final build or launch step.
 type Pipeline struct {
-	logger   *logger.AppLogger
-	apiIndex apiindex.Preparer
+	logger        *logger.AppLogger
+	apiIndex      apiindex.Preparer
+	prepareAssets func(root string, assets []appassets.Asset) (string, error)
+	prepareWire   func(root string) (string, error)
 }
 
 const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
@@ -120,10 +123,13 @@ type RunOptions struct {
 
 // NewPipeline creates a build pipeline whose index candidates share the final step's success boundary.
 func NewPipeline(appLogger *logger.AppLogger, apiIndex apiindex.Preparer) Pipeline {
-	return Pipeline{
-		logger:   appLogger,
-		apiIndex: apiIndex,
+	pipeline := Pipeline{
+		logger:        appLogger,
+		apiIndex:      apiIndex,
+		prepareAssets: prepareAppAssets,
 	}
+	pipeline.prepareWire = pipeline.runWireGenerate
+	return pipeline
 }
 
 // Run executes the configured steps from the project root and publishes API artifacts after the final step succeeds.
@@ -155,24 +161,41 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) (er
 		}
 	}()
 	steps := make([]Step, 0, 4)
+	var assets []appassets.Asset
 	if !opts.SkipPreparation {
 		steps = append(steps, Step{Name: "generate", Run: p.generateProjectFiles})
 		if buildUsesTemplHTMX(absRoot) {
 			steps = append(steps, Step{Name: "templ", Run: p.runTemplGenerate})
 		}
-		if !opts.SkipWire {
-			steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
+		if !opts.PreparationOnly {
+			var assetErr error
+			assets, assetErr = configuredAppAssets(absRoot)
+			if assetErr != nil {
+				return assetErr
+			}
+		}
+		if !opts.SkipWire && (opts.PreparationOnly || len(assets) == 0) {
+			steps = append(steps, Step{Name: "wire", Run: p.prepareWire})
 		}
 	}
 	if !opts.PreparationOnly {
-		steps = append(steps, Step{Name: "build:api-index", Run: func(root string) (string, error) {
-			preparation, err := p.prepareAPIIndex(root, opts.APIIndexStrict, opts.BuildTags...)
-			if err != nil {
-				return "", err
+		if len(assets) > 0 {
+			stepName := "assets + api-index"
+			if !opts.SkipWire {
+				stepName = "assets + wire + api-index"
 			}
-			pendingAPIIndex = preparation.Candidate
-			return preparation.Status, nil
-		}})
+			steps = append(steps, Step{Name: stepName, Run: func(root string) (string, error) {
+				status, candidate, err := p.prepareAssetsWireAndAPIIndex(root, assets, !opts.SkipWire, opts.APIIndexStrict, opts.BuildTags...)
+				pendingAPIIndex = candidate
+				return status, err
+			}})
+		} else {
+			steps = append(steps, Step{Name: "build:api-index", Run: func(root string) (string, error) {
+				preparation, err := p.prepareAPIIndex(root, opts.APIIndexStrict, opts.BuildTags...)
+				pendingAPIIndex = preparation.Candidate
+				return preparation.Status, err
+			}})
+		}
 		steps = append(steps, final)
 	}
 	for index, step := range steps {
@@ -202,6 +225,46 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) (er
 		p.logger.Info().Str("kind", kind).Int("steps", len(steps)).Msg("Pipeline completed")
 	}
 	return nil
+}
+
+type assetPreparationResult struct {
+	status string
+	err    error
+}
+
+type apiIndexPreparationResult struct {
+	preparation apiindex.Preparation
+	err         error
+}
+
+// prepareAssetsWireAndAPIIndex overlaps assets with Go preparation while keeping Wire's writes ahead of API-index reads.
+func (p Pipeline) prepareAssetsWireAndAPIIndex(root string, assets []appassets.Asset, runWire bool, strict bool, buildTags ...string) (string, apiindex.Candidate, error) {
+	assetResults := make(chan assetPreparationResult, 1)
+	go func() {
+		status, err := p.prepareAssets(root, assets)
+		assetResults <- assetPreparationResult{status: status, err: err}
+	}()
+	wireStatus := ""
+	var wireErr error
+	if runWire {
+		wireStatus, wireErr = p.prepareWire(root)
+	}
+	apiIndexResult := apiIndexPreparationResult{}
+	if wireErr == nil {
+		apiIndexResult.preparation, apiIndexResult.err = p.prepareAPIIndex(root, strict, buildTags...)
+	}
+	assetsResult := <-assetResults
+	statuses := make([]string, 0, 3)
+	if strings.TrimSpace(assetsResult.status) != "" {
+		statuses = append(statuses, "assets "+assetsResult.status)
+	}
+	if strings.TrimSpace(wireStatus) != "" {
+		statuses = append(statuses, "wire "+wireStatus)
+	}
+	if strings.TrimSpace(apiIndexResult.preparation.Status) != "" {
+		statuses = append(statuses, "api-index "+apiIndexResult.preparation.Status)
+	}
+	return strings.Join(statuses, ", "), apiIndexResult.preparation.Candidate, errors.Join(assetsResult.err, wireErr, apiIndexResult.err)
 }
 
 // resolveProjectRoot validates the explicit command root once so every pipeline step shares one stable absolute path.
