@@ -441,8 +441,31 @@ func TestRunAppHelpForAppBoundsUnresponsiveBinary(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("unresponsive binary error = %v, want deadline exceeded", err)
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("unresponsive binary elapsed = %s, want bounded help probe", elapsed)
+	}
+}
+
+// TestPrintGeneratedAppHelpAllowsColdValidBinary keeps cold App startup from silently hiding project commands.
+func TestPrintGeneratedAppHelpAllowsColdValidBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appScript := "#!/bin/sh\nsleep 0.75\nprintf '%s\\n\\n%s\\n  %s\\n' 'test · app' 'app' 'about    Show environment'\n"
+	if err := os.WriteFile(filepath.Join("bin", "app"), []byte(appScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := printGeneratedAppHelp([]string{"app"}); err != nil {
+			t.Fatalf("print app help: %v", err)
+		}
+	})
+	if !strings.Contains(output, "about") {
+		t.Fatalf("expected delayed valid App help, got %q", output)
 	}
 }
 
