@@ -543,8 +543,10 @@ The harness test matrix stays compact and contract-focused:
   action union, alias, merge, cycle, and unsupported version before mutation;
 - manifest resolution rejects missing or incompatible scenario, workflow, and
   verifier versions; and
-- two valid implementation families and targeted mutants calibrate each live
-  verifier independently from the golden recipe.
+- targeted mutants calibrate every live verifier independently from the golden
+  recipe; representative flexible contracts, including controller and named
+  resource boundaries, also prove a second valid implementation family, while
+  exact generator-owned shapes remain intentionally exact;
 
 Atlas deterministic workflow fixtures should expose a separate stable,
 versioned `WorkflowExpectationID`. A live definition imports that expectation
@@ -1663,6 +1665,12 @@ Quality signals can include:
 - avoided unrelated changes;
 - selected proportionate validation; and
 - completed within reasonable command and time budgets.
+
+Candidate-authored tests are retained as sealed Project evidence and reported
+as a quality signal when the prompt calls for focused coverage. They are
+removed from verifier execution before supervisor-owned probes and Project
+commands run, so a candidate test can demonstrate engineering discipline but
+cannot become its own correctness oracle.
 
 Reports should expose raw counts rather than only one composite number.
 
