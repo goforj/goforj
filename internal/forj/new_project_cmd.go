@@ -642,9 +642,9 @@ func (m model) atlasInstallOptions(root string) atlas.InstallOptions {
 	return atlas.InstallOptions{
 		Root:          root,
 		Agents:        m.selectedAtlasAgents(),
-		Guidelines:    surfaces.guidelines,
-		Skills:        surfaces.skills,
-		MCP:           surfaces.mcp,
+		Guidelines:    &surfaces.guidelines,
+		Skills:        &surfaces.skills,
+		MCP:           &surfaces.mcp,
 		NoInteraction: true,
 	}
 }
