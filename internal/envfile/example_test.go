@@ -46,13 +46,13 @@ func TestRedactExampleRedactsSecrets(t *testing.T) {
 	want := strings.Join([]string{
 		"# App",
 		"APP_KEY=",
-		"APP_DIAG_TOKEN= # generated per project",
+		"APP_DIAG_TOKEN=",
 		"API_JWT_SECRET_KEY=",
 		"AUTH_ACCESS_TOKEN_TTL=15m",
 		"FRONTEND_AUTH_PASSWORD_MIN_LENGTH=8",
 		"FRONTEND_AUTH_PASSWORD_REQUIRE_UPPER=true",
 		"AUTH_BOOTSTRAP_PASSWORD=",
-		"export SERVICE_API_KEY = # provisioned externally",
+		"export SERVICE_API_KEY =",
 		"GOOGLE_APPLICATION_CREDENTIALS=",
 		"AWS_ACCESS_KEY_ID=",
 		"GITHUB_PAT=",
@@ -61,7 +61,7 @@ func TestRedactExampleRedactsSecrets(t *testing.T) {
 		"DATABASE_DSN=''",
 		"DATABASE_URL=",
 		"NATS_URL=",
-		"CUSTOM_BROKER='' # arbitrary key",
+		"CUSTOM_BROKER=''",
 		"APP_URL=http://localhost:3000",
 		"",
 		"# Resources",
@@ -99,7 +99,7 @@ func TestRedactExamplePreservesLineConventions(t *testing.T) {
 // TestRedactExampleRedactsMultilineSecrets verifies quoted private material cannot escape through continuation lines.
 func TestRedactExampleRedactsMultilineSecrets(t *testing.T) {
 	source := "JWT_PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nowner-private-material\n-----END PRIVATE KEY-----\" # generated\nCACHE_DRIVER=memory\n"
-	want := "JWT_PRIVATE_KEY=\"\"\n\n # generated\nCACHE_DRIVER=memory\n"
+	want := "JWT_PRIVATE_KEY=\"\"\n\n\nCACHE_DRIVER=memory\n"
 	if got := string(envfile.RedactExample([]byte(source))); got != want {
 		t.Fatalf("RedactExample() = %q, want %q", got, want)
 	}
@@ -119,6 +119,36 @@ func TestMergeExamplePreservesSafeOwnerContract(t *testing.T) {
 	} {
 		if !strings.Contains(merged, want) {
 			t.Fatalf("merged environment example omitted %q:\n%s", want, merged)
+		}
+	}
+}
+
+// TestMergeExampleFailsClosedForNewApplicationKeys verifies private values need an explicit committed example before publication.
+func TestMergeExampleFailsClosedForNewApplicationKeys(t *testing.T) {
+	merged := string(envfile.MergeExample(nil, []byte("FEATURE_FLAG=true\nSSH_KEY=private\nAPP_ENV=local\n")))
+	for _, want := range []string{"FEATURE_FLAG=\n", "SSH_KEY=\n", "APP_ENV=local\n"} {
+		if !strings.Contains(merged, want) {
+			t.Fatalf("MergeExample() omitted %q:\n%s", want, merged)
+		}
+	}
+	if strings.Contains(merged, "private") {
+		t.Fatalf("MergeExample() published private material:\n%s", merged)
+	}
+
+	existing := []byte("FEATURE_FLAG=true\n")
+	merged = string(envfile.MergeExample(existing, []byte("FEATURE_FLAG=false\n")))
+	if !strings.Contains(merged, "FEATURE_FLAG=true") {
+		t.Fatalf("MergeExample() replaced an explicitly committed app value:\n%s", merged)
+	}
+}
+
+// TestRedactExampleClosesClassifierBypasses verifies metadata and decoded multiline values cannot retain credentials.
+func TestRedactExampleClosesClassifierBypasses(t *testing.T) {
+	source := "AUTH_PASSWORD_MIN_LENGTH_API_KEY=private # private\nSSH_KEY=ssh-private\nHMAC_KEY=hmac-private\nMULTILINE_ENDPOINT=\"mysql://user:\npassword@db/app\"\n"
+	got := string(envfile.RedactExample([]byte(source)))
+	for _, secret := range []string{"private", "ssh-private", "hmac-private", "password@db"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("RedactExample() retained %q:\n%s", secret, got)
 		}
 	}
 }

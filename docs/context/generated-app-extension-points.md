@@ -95,7 +95,7 @@ The generated environment contract has distinct ownership boundaries:
 - `.env.example` is a safe committed inventory
 - `.env.testing` is a safe committed test profile
 
-Generation synchronizes the committed contracts from local state while redacting secrets and preserving project-owned entries. Extensions should add their keys to `.env`; they should not create a competing `.env.test` convention. Use process environment variables for CI-only or live integration credentials because they override `goforj/env` file values.
+Generation synchronizes the committed contracts from local state while blanking secret-like framework values and every newly discovered application value. A developer must explicitly place a safe application default in `.env.example` before generation propagates it to `.env.testing`; existing committed application values remain authoritative. Extensions should not create a competing `.env.test` convention. Use process environment variables for CI-only or live integration credentials because they override `goforj/env` file values, and run a repository secret scanner in addition to reviewing contract diffs.
 
 Recent practical lesson:
 

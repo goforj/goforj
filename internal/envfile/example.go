@@ -5,12 +5,14 @@ import (
 	"strings"
 
 	"github.com/goforj/str/v2"
+	"github.com/joho/godotenv"
 )
 
 // RedactExample derives a commit-safe environment contract without discarding runtime-shaping values or comments.
 func RedactExample(source []byte) []byte {
 	var output bytes.Buffer
 	var multilineQuote byte
+	sensitiveValues := sensitiveAssignmentValues(source)
 	for _, chunk := range bytes.SplitAfter(source, []byte{'\n'}) {
 		if len(chunk) == 0 {
 			continue
@@ -27,7 +29,7 @@ func RedactExample(source []byte) []byte {
 		}
 
 		key, prefix, value, ok := scanAssignment(string(line))
-		if !ok || (!isSensitiveKey(key) && !valueContainsURLUserinfo(value)) {
+		if !ok || (!isSensitiveKey(key) && !sensitiveValues[key] && !valueContainsURLUserinfo(value)) {
 			output.Write(chunk)
 			continue
 		}
@@ -39,12 +41,30 @@ func RedactExample(source []byte) []byte {
 	return output.Bytes()
 }
 
+// sensitiveAssignmentValues decodes complete assignments so multiline credential URLs cannot evade line transforms.
+func sensitiveAssignmentValues(source []byte) map[string]bool {
+	values, err := godotenv.Unmarshal(string(source))
+	if err != nil {
+		return nil
+	}
+	sensitive := make(map[string]bool)
+	for key, value := range values {
+		joined := strings.Map(func(character rune) rune {
+			if character == '\r' || character == '\n' {
+				return -1
+			}
+			return character
+		}, value)
+		if valueContainsURLUserinfo(joined) {
+			sensitive[key] = true
+		}
+	}
+	return sensitive
+}
+
 // MergeExample updates generated assignments while retaining existing safe comments and app-owned keys.
 func MergeExample(existing []byte, source []byte) []byte {
 	generated := RedactExample(source)
-	if len(existing) == 0 {
-		return generated
-	}
 	lines := strings.Split(string(RedactExample(existing)), "\n")
 	indices := map[string]int{}
 	commented := map[string]bool{}
@@ -82,10 +102,14 @@ func MergeExample(existing []byte, source []byte) []byte {
 	for _, key := range order {
 		line := generatedAssignments[key]
 		if index, exists := indices[key]; exists {
-			if commented[key] && !generatedCommented[key] || commented[key] == generatedCommented[key] {
+			if (isFrameworkContractKey(key) || isSensitiveKey(key)) && (commented[key] && !generatedCommented[key] || commented[key] == generatedCommented[key]) {
 				lines[index] = line
 			}
 			continue
+		}
+		if !isFrameworkContractKey(key) {
+			_, prefix, value, _ := scanAssignment(line)
+			line, _ = redactAssignmentValue(prefix, value)
 		}
 		if len(lines) > 0 && lines[len(lines)-1] == "" {
 			lines[len(lines)-1] = line
@@ -139,13 +163,8 @@ func isSensitiveKey(key string) bool {
 	if normalized == "APP_KEY" {
 		return true
 	}
-	if isSecretMetadataKey(normalized) {
-		return false
-	}
 	for _, marker := range []string{
 		"SECRET",
-		"TOKEN",
-		"PASSWORD",
 		"PRIVATE_KEY",
 		"CREDENTIAL",
 		"API_KEY",
@@ -161,7 +180,16 @@ func isSensitiveKey(key string) bool {
 			return true
 		}
 	}
+	if normalized == "SSH_KEY" || strings.HasSuffix(normalized, "_SSH_KEY") || normalized == "HMAC_KEY" || strings.HasSuffix(normalized, "_HMAC_KEY") {
+		return true
+	}
 	if normalized == "PAT" || strings.HasSuffix(normalized, "_PAT") {
+		return true
+	}
+	if isSecretMetadataKey(normalized) {
+		return false
+	}
+	if strings.Contains(normalized, "TOKEN") || strings.Contains(normalized, "PASSWORD") {
 		return true
 	}
 	return isCredentialBearingURL(normalized)
@@ -209,7 +237,7 @@ func isCredentialBearingURL(key string) bool {
 	return false
 }
 
-// redactAssignmentValue removes an assignment value while retaining quoting and any genuine inline comment.
+// redactAssignmentValue removes an assignment value and its inline comment because comments can repeat credentials.
 func redactAssignmentValue(prefix string, value string) (string, byte) {
 	if strings.TrimSpace(value) == "" {
 		return prefix + value, 0
@@ -222,10 +250,9 @@ func redactAssignmentValue(prefix string, value string) (string, byte) {
 		if closing < 0 {
 			return prefix + leadingSpace + string([]byte{quote, quote}), quote
 		}
-		suffix := inlineCommentSuffix(value[closing+1:])
-		return prefix + leadingSpace + string([]byte{quote, quote}) + suffix, 0
+		return prefix + leadingSpace + string([]byte{quote, quote}), 0
 	}
-	return prefix + unquotedCommentSuffix(value), 0
+	return prefix, 0
 }
 
 // isQuote limits multiline handling to quoting conventions supported by common dotenv parsers.
@@ -249,38 +276,11 @@ func findClosingQuote(value string, start int, quote byte) int {
 	return -1
 }
 
-// inlineCommentSuffix retains only whitespace or a comment after a quoted secret to avoid leaking concatenated value fragments.
-func inlineCommentSuffix(value string) string {
-	commentStart := skipHorizontalSpace(value, 0)
-	if commentStart == len(value) {
-		return value
-	}
-	if value[commentStart] == '#' {
-		return value
-	}
-	return ""
-}
-
-// unquotedCommentSuffix keeps the explanatory portion of a secret assignment without preserving the secret itself.
-func unquotedCommentSuffix(value string) string {
-	for index := 0; index < len(value); index++ {
-		if value[index] != '#' || index > 0 && value[index-1] != ' ' && value[index-1] != '\t' {
-			continue
-		}
-		start := index
-		for start > 0 && (value[start-1] == ' ' || value[start-1] == '\t') {
-			start--
-		}
-		return value[start:]
-	}
-	return ""
-}
-
-// redactMultilineContinuation blanks quoted payload lines until their terminator while preserving a trailing comment.
+// redactMultilineContinuation blanks quoted payload lines and any trailing comment through their terminator.
 func redactMultilineContinuation(line string, quote byte) (string, bool) {
 	closing := findClosingQuote(line, 0, quote)
 	if closing < 0 {
 		return "", false
 	}
-	return inlineCommentSuffix(line[closing+1:]), true
+	return "", true
 }

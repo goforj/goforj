@@ -24,6 +24,7 @@ import (
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/devservices"
+	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
@@ -330,6 +331,14 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 func (p *ProjectRenderer) beginRenderInvocation(root string) error {
 	workspace, err := resolveProjectRenderWorkspace(root)
 	if err != nil {
+		return err
+	}
+	for _, path := range []string{".env", ".env.host", ".env.local", ".env.example", ".env.testing", ".gitignore"} {
+		if err := workspace.rejectEnvironmentSpecialFile(path); err != nil {
+			return err
+		}
+	}
+	if err := envcontract.ValidateMigration(workspace.root); err != nil {
 		return err
 	}
 	p.workspace = workspace
@@ -1971,6 +1980,9 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 	if prefix == "" {
 		return false, nil
 	}
+	if err := w.rejectEnvironmentSpecialFile(path); err != nil {
+		return false, err
+	}
 	data, err := w.readFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -2287,6 +2299,13 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 
 // ensureGitignoreEnvironmentRules adds newly generated local environment files without replacing owner-authored ignore rules.
 func ensureGitignoreEnvironmentRules(path string) error {
+	info, err := os.Lstat(path)
+	if err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("inspect .gitignore: expected a regular file")
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	source, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil

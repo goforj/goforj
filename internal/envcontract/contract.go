@@ -56,6 +56,17 @@ func syncContracts(root string, preparedExample *[]byte) (SyncResult, error) {
 	if err != nil {
 		return SyncResult{}, err
 	}
+	var result SyncResult
+	err = withProjectLock(root, func() error {
+		var syncErr error
+		result, syncErr = syncContractsUnlocked(root, preparedExample)
+		return syncErr
+	})
+	return result, err
+}
+
+// syncContractsUnlocked publishes one contract pair while the project lock protects its source snapshot.
+func syncContractsUnlocked(root string, preparedExample *[]byte) (SyncResult, error) {
 	local, err := readRegularFile(filepath.Join(root, localEnvironmentName))
 	if os.IsNotExist(err) {
 		return SyncResult{}, nil
@@ -67,6 +78,11 @@ func syncContracts(root string, preparedExample *[]byte) (SyncResult, error) {
 	if err != nil {
 		return SyncResult{}, err
 	}
+	previousExample, exampleReadErr := readOptional(filepath.Join(root, exampleEnvironmentName))
+	if exampleReadErr != nil {
+		return SyncResult{}, fmt.Errorf("read %s before publication: %w", exampleEnvironmentName, exampleReadErr)
+	}
+	exampleExisted := previousExample != nil
 	result := SyncResult{}
 	result.ExampleChanged, err = writeIfChanged(filepath.Join(root, exampleEnvironmentName), example, 0o644, true)
 	if err != nil {
@@ -74,6 +90,11 @@ func syncContracts(root string, preparedExample *[]byte) (SyncResult, error) {
 	}
 	result.TestingChanged, err = writeIfChanged(filepath.Join(root, testingEnvironmentName), testing, 0o644, true)
 	if err != nil {
+		if result.ExampleChanged {
+			if rollbackErr := restoreFile(filepath.Join(root, exampleEnvironmentName), previousExample, exampleExisted, 0o644); rollbackErr != nil {
+				return SyncResult{}, fmt.Errorf("write %s: %w; restore %s: %v", testingEnvironmentName, err, exampleEnvironmentName, rollbackErr)
+			}
+		}
 		return SyncResult{}, fmt.Errorf("write %s: %w", testingEnvironmentName, err)
 	}
 	return result, nil
@@ -85,11 +106,19 @@ func Check(root string) error {
 	if err != nil {
 		return err
 	}
+	return withProjectLock(root, func() error {
+		return checkUnlocked(root)
+	})
+}
+
+// checkUnlocked compares one stable project snapshot while synchronization is excluded.
+func checkUnlocked(root string) error {
 	local, localErr := readRegularFile(filepath.Join(root, localEnvironmentName))
 	if localErr != nil && !os.IsNotExist(localErr) {
 		return fmt.Errorf("read %s: %w", localEnvironmentName, localErr)
 	}
 	if os.IsNotExist(localErr) {
+		var err error
 		local, err = readRegularFile(filepath.Join(root, exampleEnvironmentName))
 		if err != nil {
 			return fmt.Errorf("read %s: %w", exampleEnvironmentName, err)
@@ -118,6 +147,17 @@ func Initialize(root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	created := false
+	err = withProjectLock(root, func() error {
+		var initializeErr error
+		created, initializeErr = initializeUnlocked(root)
+		return initializeErr
+	})
+	return created, err
+}
+
+// initializeUnlocked creates or secures the local file while the project lock excludes competing updates.
+func initializeUnlocked(root string) (bool, error) {
 	localPath := filepath.Join(root, localEnvironmentName)
 	if info, err := os.Lstat(localPath); err == nil {
 		if !info.Mode().IsRegular() {
@@ -177,29 +217,34 @@ func SetLocal(root string, key string, value string) error {
 	if value == "" {
 		return fmt.Errorf("environment value for %s cannot be empty", key)
 	}
-	if _, err := Initialize(root); err != nil {
-		return err
-	}
 	root, err := absoluteRoot(root)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(root, localEnvironmentName)
-	content, err := readRegularFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", localEnvironmentName, err)
-	}
-	lines := strings.Split(string(content), "\n")
-	lines = envfile.SetFinal(lines, key, envfile.EncodeValue(value))
-	updated := []byte(strings.Join(lines, "\n"))
-	if err := writeAtomic(path, updated, 0o600, false); err != nil {
-		return fmt.Errorf("write %s: %w", localEnvironmentName, err)
-	}
-	return nil
+	return withProjectLock(root, func() error {
+		if _, err := initializeUnlocked(root); err != nil {
+			return err
+		}
+		path := filepath.Join(root, localEnvironmentName)
+		content, err := readRegularFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", localEnvironmentName, err)
+		}
+		lines := strings.Split(string(content), "\n")
+		lines = envfile.SetFinal(lines, key, envfile.EncodeValue(value))
+		updated := []byte(strings.Join(lines, "\n"))
+		if err := writeAtomic(path, updated, 0o600, false); err != nil {
+			return fmt.Errorf("write %s: %w", localEnvironmentName, err)
+		}
+		return nil
+	})
 }
 
 // expectedContracts derives both safe outputs while preserving their current project-owned additions.
 func expectedContracts(root string, local []byte, preparedExample *[]byte) ([]byte, []byte, error) {
+	if err := envfile.ValidatePortableDocument(local); err != nil {
+		return nil, nil, fmt.Errorf("validate %s: %w", localEnvironmentName, err)
+	}
 	existingExample := []byte(nil)
 	if preparedExample != nil {
 		existingExample = *preparedExample
@@ -210,6 +255,9 @@ func expectedContracts(root string, local []byte, preparedExample *[]byte) ([]by
 			return nil, nil, fmt.Errorf("read %s: %w", exampleEnvironmentName, err)
 		}
 	}
+	if err := envfile.ValidatePortableDocument(existingExample); err != nil {
+		return nil, nil, fmt.Errorf("validate %s: %w", exampleEnvironmentName, err)
+	}
 	example := envfile.MergeExample(existingExample, local)
 	existingTesting, err := readOptional(filepath.Join(root, testingEnvironmentName))
 	if err != nil {
@@ -218,7 +266,31 @@ func expectedContracts(root string, local []byte, preparedExample *[]byte) ([]by
 	if len(existingTesting) > 0 && !envfile.IsManagedTestingContract(existingTesting) {
 		return nil, nil, ErrUnmanagedTestingContract
 	}
+	if err := envfile.ValidatePortableDocument(existingTesting); err != nil {
+		return nil, nil, fmt.Errorf("validate %s: %w", testingEnvironmentName, err)
+	}
 	return example, envfile.MergeTesting(existingTesting, example), nil
+}
+
+// ValidateMigration validates portable inputs and refuses legacy private test profiles before rendering can make them stageable.
+func ValidateMigration(root string) error {
+	root, err := absoluteRoot(root)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{localEnvironmentName, exampleEnvironmentName, testingEnvironmentName} {
+		content, err := readOptional(filepath.Join(root, name))
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		if name == testingEnvironmentName && len(content) > 0 && !envfile.IsManagedTestingContract(content) {
+			return ErrUnmanagedTestingContract
+		}
+		if err := envfile.ValidatePortableDocument(content); err != nil {
+			return fmt.Errorf("validate %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // materializeLocal replaces framework-owned secrets with fresh values and leaves application credentials for the developer.
@@ -294,7 +366,7 @@ func readRegularFile(path string) ([]byte, error) {
 
 // writeIfChanged avoids timestamp churn when the committed contract is already current.
 func writeIfChanged(path string, content []byte, mode fs.FileMode, preserveMode bool) (bool, error) {
-	current, err := os.ReadFile(path)
+	current, err := readRegularFile(path)
 	if err == nil && bytes.Equal(current, content) {
 		return false, nil
 	}
@@ -311,8 +383,10 @@ func writeIfChanged(path string, content []byte, mode fs.FileMode, preserveMode 
 func writeAtomic(path string, content []byte, defaultMode fs.FileMode, preserveMode bool) error {
 	mode := defaultMode.Perm()
 	if preserveMode {
-		if info, err := os.Stat(path); err == nil {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
 			mode = info.Mode().Perm()
+		} else if err == nil {
+			return fmt.Errorf("expected a regular file")
 		} else if !os.IsNotExist(err) {
 			return err
 		}
@@ -339,4 +413,12 @@ func writeAtomic(path string, content []byte, defaultMode fs.FileMode, preserveM
 		return err
 	}
 	return os.Rename(temporaryPath, path)
+}
+
+// restoreFile rolls back the first half of pair publication when the second half fails.
+func restoreFile(path string, content []byte, existed bool, mode fs.FileMode) error {
+	if !existed {
+		return os.Remove(path)
+	}
+	return writeAtomic(path, content, mode, true)
 }

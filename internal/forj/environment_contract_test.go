@@ -1,11 +1,54 @@
 package forj
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goforj/goforj/internal/envcontract"
 )
+
+// TestRenderPreflightRejectsLegacyTestingBeforeGitignoreMutation protects ignored private profiles during upgrades.
+func TestRenderPreflightRejectsLegacyTestingBeforeGitignoreMutation(t *testing.T) {
+	root := t.TempDir()
+	gitignorePath := filepath.Join(root, ".gitignore")
+	gitignore := []byte(".env*\n!.env.example\n")
+	if err := os.WriteFile(gitignorePath, gitignore, 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env.testing"), []byte("PRIVATE_TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatalf("write legacy testing profile: %v", err)
+	}
+	renderer := &ProjectRenderer{}
+	if err := renderer.beginRenderInvocation(root); !errors.Is(err, envcontract.ErrUnmanagedTestingContract) {
+		t.Fatalf("beginRenderInvocation() error = %v, want unmanaged contract", err)
+	}
+	after, err := os.ReadFile(gitignorePath)
+	if err != nil || string(after) != string(gitignore) {
+		t.Fatalf("render preflight changed gitignore: %q, %v", after, err)
+	}
+}
+
+// TestEnsureGitignoreEnvironmentRulesRejectsSymlink prevents outside files from becoming tracked project content.
+func TestEnsureGitignoreEnvironmentRulesRejectsSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(target, []byte("PRIVATE_TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), ".gitignore")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+	if err := ensureGitignoreEnvironmentRules(path); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("ensureGitignoreEnvironmentRules() error = %v, want regular-file rejection", err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil || string(content) != "PRIVATE_TOKEN=secret\n" {
+		t.Fatalf("gitignore update changed symlink target: %q, %v", content, err)
+	}
+}
 
 // TestWriteEnvironmentExampleAtomic verifies publication redacts first and preserves an owner-selected file mode.
 func TestWriteEnvironmentExampleAtomic(t *testing.T) {

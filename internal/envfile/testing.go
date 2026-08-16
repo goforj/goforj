@@ -157,29 +157,79 @@ func testingDatabase(value string) string {
 	if value == "" {
 		return "app_testing"
 	}
-	extension := filepath.Ext(value)
-	switch strings.ToLower(extension) {
-	case ".db", ".sqlite", ".sqlite3":
-		return strings.TrimSuffix(value, extension) + "_testing" + extension
-	}
-	if strings.HasSuffix(value, "_testing") {
+	if isSQLiteMemoryDatabase(value) {
 		return value
 	}
-	return value + "_testing"
+	path, suffix := splitDatabaseSuffix(value)
+	extension := filepath.Ext(path)
+	switch strings.ToLower(extension) {
+	case ".db", ".sqlite", ".sqlite3":
+		return strings.TrimSuffix(path, extension) + "_testing" + extension + suffix
+	}
+	if strings.HasSuffix(path, "_testing") {
+		return value
+	}
+	return path + "_testing" + suffix
+}
+
+// isSQLiteMemoryDatabase preserves SQLite's special in-memory DSNs instead of turning them into disk files.
+func isSQLiteMemoryDatabase(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == ":memory:" || strings.HasPrefix(normalized, "file::memory:")
+}
+
+// splitDatabaseSuffix keeps URI query and fragment options attached after deriving the isolated database path.
+func splitDatabaseSuffix(value string) (string, string) {
+	index := strings.IndexAny(value, "?#")
+	if index < 0 {
+		return value, ""
+	}
+	return value[:index], value[index:]
 }
 
 // isFrameworkTestingKey identifies values whose test policy remains framework-owned across synchronization.
 func isFrameworkTestingKey(key string) bool {
+	return isFrameworkContractKey(key)
+}
+
+var frameworkContractKeys = map[string]bool{
+	"API_HTTP_HOST": true, "API_HTTP_PORT": true, "API_JWT_SECRET_KEY": true, "API_SWAGGER_ENABLED": true,
+	"APP_DEBUG": true, "APP_DIAG_TOKEN": true, "APP_ENV": true, "APP_KEY": true, "APP_LOG_FORMAT": true,
+	"APP_LOG_TIME": true, "APP_NAME": true, "APP_URL": true, "AUTH_BOOTSTRAP_EMAIL": true,
+	"AUTH_BOOTSTRAP_PASSWORD": true, "AUTH_BOOTSTRAP_USERNAME": true, "CACHE_ADDRESSES": true,
+	"CACHE_DRIVER": true, "CACHE_ENDPOINT": true, "CACHE_REGION": true, "CACHE_SESSIONS_DRIVER": true,
+	"CACHE_SETTINGS_DRIVER": true, "CACHE_SUPPORTED_DRIVERS": true, "CACHE_URL": true, "COMPOSE_PROFILES": true,
+	"DB_DATABASE": true, "DB_DRIVER": true, "DB_HOST": true, "DB_PASSWORD": true, "DB_PORT": true,
+	"DB_ROOT_PASSWORD": true, "DB_SQLITE_DATABASE": true, "DB_SUPPORTED_DRIVERS": true, "DB_USERNAME": true,
+	"EVENTS_BROKERS": true, "EVENTS_DRIVER": true, "EVENTS_PROJECT_ID": true, "EVENTS_SUPPORTED_DRIVERS": true,
+	"EVENTS_URI": true, "EVENTS_URL": true, "GRAFANA_ADMIN_PASSWORD": true, "GRAFANA_ADMIN_USER": true,
+	"GRAFANA_PORT": true, "IP_ADDRESS": true, "LIGHTHOUSE_ENABLED": true, "LIGHTHOUSE_SECRET": true,
+	"LIGHTHOUSE_URL": true, "MAILPIT_HTTP_PORT": true, "MAILPIT_SMTP_PORT": true, "MAIL_DRIVER": true,
+	"MAIL_FROM_ADDRESS": true, "MAIL_FROM_NAME": true, "MAIL_SMTP_HOST": true, "MAIL_SMTP_PORT": true,
+	"MAIL_SUPPORTED_DRIVERS": true, "API_METRICS_PORT": true, "JOBS_METRICS_PORT": true,
+	"METRICS_API_PORT": true, "METRICS_JOBS_PORT": true, "METRICS_PORT": true,
+	"METRICS_SCHEDULER_PORT": true, "SCHEDULER_METRICS_PORT": true, "WORKER_METRICS_PORT": true,
+	"OBSERVABILITY_VM_PORT": true, "QUEUE_ACCESS_KEY": true,
+	"QUEUE_DRIVER": true, "QUEUE_ENDPOINT": true, "QUEUE_REGION": true, "QUEUE_SECRET_KEY": true,
+	"QUEUE_SHUTDOWN_TIMEOUT": true, "QUEUE_SUPPORTED_DRIVERS": true, "QUEUE_URL": true, "QUEUE_WORKERS": true,
+	"REDIS_DB": true, "REDIS_HOST": true, "REDIS_PASSWORD": true, "REDIS_PORT": true,
+	"SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT": true, "STORAGE_DRIVER": true, "STORAGE_FAVICONS_DRIVER": true,
+	"STORAGE_FAVICONS_ROOT": true, "STORAGE_PUBLIC_DRIVER": true, "STORAGE_PUBLIC_ROOT": true,
+	"STORAGE_ROOT": true, "STORAGE_SUPPORTED_DRIVERS": true, "TZ": true,
+}
+
+// isFrameworkContractKey matches only rendered framework keys and their named-App overlays.
+func isFrameworkContractKey(key string) bool {
 	normalized := strings.ToUpper(strings.TrimSpace(key))
-	for _, prefix := range []string{
-		"APP_", "API_", "HTTP_", "AUTH_", "DB_", "REDIS_", "CACHE_", "QUEUE_", "EVENTS_",
-		"STORAGE_", "MAIL_", "METRICS_", "LIGHTHOUSE_", "OBSERVABILITY_", "GRAFANA_", "SCHEDULER_",
-	} {
-		if strings.HasPrefix(normalized, prefix) || strings.Contains(normalized, "_"+prefix) {
+	if frameworkContractKeys[normalized] {
+		return true
+	}
+	for candidate := range frameworkContractKeys {
+		if strings.HasSuffix(normalized, "_"+candidate) {
 			return true
 		}
 	}
-	return normalized == "TZ" || normalized == "PORT"
+	return false
 }
 
 // activeAssignmentIndices records the controlling assignment for each active key.

@@ -4,9 +4,11 @@ package envcontract_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/goforj/goforj/internal/envcontract"
@@ -124,13 +126,64 @@ func TestSyncPublishesSafeExampleAndTestingContracts(t *testing.T) {
 			t.Fatalf("committed contracts exposed %q:\n%s", secret, combined)
 		}
 	}
-	for _, want := range []string{"DB_PASSWORD=test", "DB_DATABASE=app_testing", "FEATURE_FLAG=true"} {
+	for _, want := range []string{"DB_PASSWORD=test", "DB_DATABASE=app_testing", "FEATURE_FLAG="} {
 		if !strings.Contains(string(testingEnvironment), want) {
 			t.Errorf("testing environment omitted %q:\n%s", want, testingEnvironment)
 		}
 	}
 	if err := envcontract.Check(root); err != nil {
 		t.Fatalf("Check() after sync: %v", err)
+	}
+}
+
+// TestSyncRejectsNonPortableAssignments verifies valid-but-ambiguous dotenv grammar never reaches committed contracts.
+func TestSyncRejectsNonPortableAssignments(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SERVICE.API_KEY=private\n"), 0o600); err != nil {
+		t.Fatalf("write local environment: %v", err)
+	}
+	if _, err := envcontract.Sync(root); err == nil || !strings.Contains(err.Error(), "portable") {
+		t.Fatalf("Sync() error = %v, want portable-key rejection", err)
+	}
+	for _, name := range []string{".env.example", ".env.testing"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Fatalf("Sync() published %s after validation failure: %v", name, err)
+		}
+	}
+}
+
+// TestConcurrentSetLocalPreservesEveryUpdate verifies project locking covers the full read-modify-write lifecycle.
+func TestConcurrentSetLocalPreservesEveryUpdate(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env.example"), []byte("APP_ENV=local\n"), 0o644); err != nil {
+		t.Fatalf("write example: %v", err)
+	}
+	const writers = 12
+	var wait sync.WaitGroup
+	errorsByWriter := make(chan error, writers)
+	for index := 0; index < writers; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			errorsByWriter <- envcontract.SetLocal(root, fmt.Sprintf("CUSTOM_%02d", index), fmt.Sprintf("value-%02d", index))
+		}(index)
+	}
+	wait.Wait()
+	close(errorsByWriter)
+	for err := range errorsByWriter {
+		if err != nil {
+			t.Fatalf("SetLocal() error: %v", err)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatalf("read local environment: %v", err)
+	}
+	for index := 0; index < writers; index++ {
+		want := fmt.Sprintf("CUSTOM_%02d=value-%02d", index, index)
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("concurrent local environment omitted %q:\n%s", want, content)
+		}
 	}
 }
 

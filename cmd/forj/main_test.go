@@ -15,6 +15,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/build"
+	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/launcher"
 )
 
@@ -798,45 +799,67 @@ func TestLauncherEnvironmentExcludesCLIDefaults(t *testing.T) {
 	}
 }
 
-// TestShouldAutoInitializeEnvironmentKeepsLifecycleOwnershipExplicit verifies only commands that consume a Project bootstrap missing local configuration.
-func TestShouldAutoInitializeEnvironmentKeepsLifecycleOwnershipExplicit(t *testing.T) {
+// TestReadOnlyCLIRequestRecognizesNonMutatingInvocations verifies help and version stay read-only regardless of flag position.
+func TestReadOnlyCLIRequestRecognizesNonMutatingInvocations(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want bool
 	}{
-		{name: "root help", args: nil},
-		{name: "root help flag", args: []string{"--help"}},
-		{name: "version flag", args: []string{"--version"}},
-		{name: "build", args: []string{"build"}, want: true},
-		{name: "dev", args: []string{"--dev", "dev"}, want: true},
-		{name: "explicit init", args: []string{"env:init"}},
-		{name: "secret entry initializes after validation", args: []string{"env:set", "APP_KEY"}},
-		{name: "read only check", args: []string{"env:check"}},
-		{name: "render", args: []string{"render"}},
-		{name: "new", args: []string{"new", "project"}},
+		{name: "root help flag", args: []string{"--help"}, want: true},
+		{name: "command help flag", args: []string{"build", "--help"}, want: true},
+		{name: "leading help flag", args: []string{"--help", "build"}, want: true},
+		{name: "version flag", args: []string{"--version"}, want: true},
+		{name: "build", args: []string{"build"}},
+		{name: "passthrough help", args: []string{"run", "--", "--help"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := shouldAutoInitializeEnvironment(test.args); got != test.want {
-				t.Fatalf("shouldAutoInitializeEnvironment(%v) = %t, want %t", test.args, got, test.want)
+			if got := readOnlyCLIRequest(test.args); got != test.want {
+				t.Fatalf("readOnlyCLIRequest(%v) = %t, want %t", test.args, got, test.want)
 			}
 		})
 	}
 }
 
-// TestEnvironmentInitializationArgsResolvesAppPrefixes keeps prefixed read-only commands from creating local state before dispatch.
-func TestEnvironmentInitializationArgsResolvesAppPrefixes(t *testing.T) {
-	defer chdirTemp(t)()
-	writeGeneratedAppMarker(t)
-	writeSourceApp(t, "billing")
-
-	got := environmentInitializationArgs([]string{"billing", "env:check"}, true)
-	if !reflect.DeepEqual(got, []string{"env:check"}) {
-		t.Fatalf("environmentInitializationArgs() = %v, want [env:check]", got)
+// TestFirstCLICommandSkipsInheritedFlags verifies parsed initialization classifies the actual command.
+func TestFirstCLICommandSkipsInheritedFlags(t *testing.T) {
+	if got := firstCLICommand([]string{"--dev", "build"}); got != "build" {
+		t.Fatalf("firstCLICommand() = %q, want build", got)
 	}
-	if shouldAutoInitializeEnvironment(got) {
-		t.Fatal("app-prefixed env:check requested local initialization")
+}
+
+// TestInitializeParsedEnvironmentUsesSelectedBuildRoot verifies cross-project builds initialize their target, not the caller.
+func TestInitializeParsedEnvironmentUsesSelectedBuildRoot(t *testing.T) {
+	caller := t.TempDir()
+	target := t.TempDir()
+	for name, content := range map[string]string{
+		".goforj.yml":  "project_name: Target\n",
+		"go.mod":       "module example.com/target\n\ngo 1.24\n",
+		".env.example": "APP_ENV=local\nAPP_KEY=\n",
+	} {
+		if err := os.WriteFile(filepath.Join(target, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write target %s: %v", name, err)
+		}
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get caller directory: %v", err)
+	}
+	if err := os.Chdir(caller); err != nil {
+		t.Fatalf("change caller directory: %v", err)
+	}
+	defer func() { _ = os.Chdir(previous) }()
+	root := &cmd.RootCmd{}
+	root.RootCmd.BuildCmd.Root = target
+	if err := initializeParsedEnvironment([]string{"build", "--root", target}, root, false); err != nil {
+		t.Fatalf("initializeParsedEnvironment() error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, ".env")); err != nil {
+		t.Fatalf("selected build root was not initialized: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(caller, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("caller directory was initialized: %v", err)
 	}
 }
 

@@ -152,6 +152,9 @@ func appCacheOwnerEnvironmentKey(source []byte, appName string, generatedDefault
 
 // removeGeneratedAppCacheDriverDefault removes one stale App Cache default only when its generated section proves framework ownership.
 func (w projectRenderWorkspace) removeGeneratedAppCacheDriverDefault(path string, appName string) (bool, error) {
+	if err := w.rejectEnvironmentSpecialFile(path); err != nil {
+		return false, err
+	}
 	source, err := w.readFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
