@@ -93,8 +93,9 @@ func (worker renderComboWorker) run(combo renderCombo) *renderComboFailure {
 		Dev:          project.DevConfig{},
 		Apps:         combo.apps,
 		Render: project.RenderConfig{
-			Components: combo.components,
-			StarterKit: combo.starterKit,
+			Components:        combo.components,
+			StarterKit:        combo.starterKit,
+			StarterKitOptions: combo.starterKitOptions,
 		},
 	}
 	if repoRoot, err := os.Getwd(); err == nil {

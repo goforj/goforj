@@ -12,6 +12,7 @@ type renderCombo struct {
 	id                  string
 	components          project.Components
 	starterKit          project.StarterKit
+	starterKitOptions   *project.StarterKitOptions
 	apps                map[string]project.AppConfig
 	enabled             []string
 	legacyConfig        bool
@@ -391,6 +392,27 @@ func starterKitRenderCombos() []renderCombo {
 			components: cfg,
 			starterKit: project.StarterKitTemplHTMX,
 			enabled:    append(componentLabels(cfg), "StarterKit:templ_htmx"),
+		},
+		{
+			id:                "starter_vue_minimal_auth_sqlite",
+			components:        cfg,
+			starterKit:        project.StarterKitVue,
+			starterKitOptions: project.NewStarterKitOptions(false),
+			enabled:           append(componentLabels(cfg), "StarterKit:Vue", "ComponentLibrary:Off"),
+		},
+		{
+			id:                "starter_react_minimal_auth_sqlite",
+			components:        cfg,
+			starterKit:        project.StarterKitReact,
+			starterKitOptions: project.NewStarterKitOptions(false),
+			enabled:           append(componentLabels(cfg), "StarterKit:React", "ComponentLibrary:Off"),
+		},
+		{
+			id:                "starter_templ_htmx_minimal_auth_sqlite",
+			components:        cfg,
+			starterKit:        project.StarterKitTemplHTMX,
+			starterKitOptions: project.NewStarterKitOptions(false),
+			enabled:           append(componentLabels(cfg), "StarterKit:templ_htmx", "ComponentLibrary:Off"),
 		},
 	}
 }

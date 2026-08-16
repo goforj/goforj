@@ -29,16 +29,51 @@ func TestCmdSkipsWizardWhenSelectionIsExplicit(t *testing.T) {
 	defer restore()
 
 	for name, cmd := range map[string]*Cmd{
-		"components":  {Components: "web-api"},
-		"without":     {Without: "web-ui"},
-		"starter-kit": {StarterKit: "vue"},
-		"help-format": {HelpFormat: string(project.HelpFormatExternalCLI)},
+		"components":        {Components: "web-api"},
+		"without":           {Without: "web-ui"},
+		"starter-kit":       {StarterKit: "vue"},
+		"component-library": {ComponentLibrary: "off"},
+		"help-format":       {HelpFormat: string(project.HelpFormatExternalCLI)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if cmd.shouldRunWizard() {
 				t.Fatalf("expected explicit %s selection to skip wizard", name)
 			}
 		})
+	}
+}
+
+// TestAppSelectionSupportsComponentLibraryOptOut verifies scriptable app creation persists a nested starter-kit option.
+func TestAppSelectionSupportsComponentLibraryOptOut(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "photos", Components: "web-ui", StarterKit: "react", ComponentLibrary: "off"}
+	selection, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, WebUI: true}},
+	})
+	if err != nil {
+		t.Fatalf("appSelection() error = %v", err)
+	}
+	if selection.StarterKit != project.StarterKitReact {
+		t.Fatalf("StarterKit = %q, want react", selection.StarterKit)
+	}
+	if selection.StarterKitOptions.ComponentLibraryEnabled() {
+		t.Fatal("component library = true, want false")
+	}
+}
+
+// TestAppSelectionRejectsInvalidComponentLibrary verifies the new command validation branch has direct coverage.
+func TestAppSelectionRejectsInvalidComponentLibrary(t *testing.T) {
+	restore := stubInteractiveTerminal(t, false)
+	defer restore()
+
+	cmd := &Cmd{Name: "photos", Components: "web-ui", StarterKit: "react", ComponentLibrary: "maybe"}
+	_, err := cmd.appSelection(&project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, WebUI: true}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "use on or off") {
+		t.Fatalf("appSelection() error = %v, want on/off validation", err)
 	}
 }
 

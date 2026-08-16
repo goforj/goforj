@@ -124,6 +124,171 @@ func TestScaffoldStarterKitPreservesExistingFrontendFiles(t *testing.T) {
 	}
 }
 
+// TestScaffoldStarterKitsWithoutComponentLibrary verifies every official kit keeps its shell while omitting showcase navigation and pages.
+func TestScaffoldStarterKitsWithoutComponentLibrary(t *testing.T) {
+	tests := []struct {
+		name       string
+		starterKit project.StarterKit
+		check      func(*testing.T)
+	}{
+		{
+			name:       "vue",
+			starterKit: project.StarterKitVue,
+			check: func(t *testing.T) {
+				assertFileOmits(t, filepath.Join(starterKitFrontendDir(), "src", "router.ts"), "/components")
+				assertFileOmits(t, filepath.Join(starterKitFrontendDir(), "src", "lib", "navigation.ts"), "title: 'Components'")
+				assertFileContains(t, filepath.Join(starterKitFrontendDir(), "src", "views", "DashboardView.vue"), "Empty dashboard canvas")
+				if _, err := os.Stat(filepath.Join(starterKitFrontendDir(), "src", "views", "components")); !os.IsNotExist(err) {
+					t.Fatalf("Vue showcase views should be omitted, stat error = %v", err)
+				}
+			},
+		},
+		{
+			name:       "react",
+			starterKit: project.StarterKitReact,
+			check: func(t *testing.T) {
+				path := filepath.Join(starterKitFrontendDir(), "src", "App.tsx")
+				assertFileOmits(t, path, `path="/components`)
+				assertFileOmits(t, path, "function ComponentsOverviewView")
+				assertFileContains(t, path, "Empty dashboard canvas")
+			},
+		},
+		{
+			name:       "templ htmx",
+			starterKit: project.StarterKitTemplHTMX,
+			check: func(t *testing.T) {
+				assertFileOmits(t, filepath.Join("internal", "starterui", "controller.go"), `"/components`)
+				assertFileContains(t, filepath.Join("internal", "starterui", "dashboard.templ"), "Empty dashboard canvas")
+				if _, err := os.Stat(filepath.Join("internal", "starterui", "components_views.templ")); !os.IsNotExist(err) {
+					t.Fatalf("templ showcase views should be omitted, stat error = %v", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			original, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("get working directory: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(original) })
+			if err := os.Chdir(t.TempDir()); err != nil {
+				t.Fatalf("change working directory: %v", err)
+			}
+			renderer := &ProjectRenderer{
+				workspace: currentProjectRenderWorkspace(t),
+				config: &project.Config{
+					GoModuleName: "example.com/testapp",
+					Render: project.RenderConfig{
+						Components:        project.Components{WebUI: true, WebAPI: true},
+						StarterKit:        test.starterKit,
+						StarterKitOptions: project.NewStarterKitOptions(false),
+					},
+				},
+				stats: &renderStats{},
+			}
+			initializeDefaultResourceStateForTest(t, renderer)
+			if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), test.starterKit, true); err != nil {
+				t.Fatalf("scaffold starter kit: %v", err)
+			}
+			test.check(t)
+		})
+	}
+}
+
+// TestDisablingComponentLibraryPreservesEditedShowcaseFiles verifies rerenders remove only unchanged framework copies.
+func TestDisablingComponentLibraryPreservesEditedShowcaseFiles(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(original) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+
+	config := &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{WebUI: true},
+			StarterKit: project.StarterKitVue,
+		},
+	}
+	renderer := &ProjectRenderer{workspace: currentProjectRenderWorkspace(t), config: config, stats: &renderStats{}}
+	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitVue, true); err != nil {
+		t.Fatalf("scaffold enabled starter kit: %v", err)
+	}
+	edited := filepath.Join(starterKitFrontendDir(), "src", "views", "components", "ComponentsOverviewView.vue")
+	if err := os.WriteFile(edited, []byte("owner customization\n"), 0o644); err != nil {
+		t.Fatalf("edit showcase file: %v", err)
+	}
+	config.Render.StarterKitOptions = project.NewStarterKitOptions(false)
+	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitVue, true); err != nil {
+		t.Fatalf("scaffold disabled starter kit: %v", err)
+	}
+	assertFileContains(t, edited, "owner customization")
+	unchanged := filepath.Join(starterKitFrontendDir(), "src", "views", "components", "ComponentsFormsView.vue")
+	if _, err := os.Stat(unchanged); !os.IsNotExist(err) {
+		t.Fatalf("unchanged showcase file should be removed, stat error = %v", err)
+	}
+}
+
+// assertFileContains verifies a generated file retains a required starter-kit surface.
+func assertFileContains(t *testing.T, path, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !strings.Contains(string(content), expected) {
+		t.Fatalf("%s does not contain %q", path, expected)
+	}
+}
+
+// assertFileOmits verifies a generated file does not expose a disabled starter-kit surface.
+func assertFileOmits(t *testing.T, path, unexpected string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if strings.Contains(string(content), unexpected) {
+		t.Fatalf("%s unexpectedly contains %q", path, unexpected)
+	}
+}
+
+// TestFilterStarterKitFeature validates variant selection and each malformed-marker failure mode.
+func TestFilterStarterKitFeature(t *testing.T) {
+	content := []byte("always\n// goforj:component-library:on:start\non\n// goforj:component-library:end\n// goforj:component-library:off:start\noff\n// goforj:component-library:end\n")
+	enabled, err := filterStarterKitFeature(content, true)
+	if err != nil {
+		t.Fatalf("filter enabled feature: %v", err)
+	}
+	if string(enabled) != "always\non\n" {
+		t.Fatalf("enabled feature = %q, want always and on blocks", enabled)
+	}
+	disabled, err := filterStarterKitFeature(content, false)
+	if err != nil {
+		t.Fatalf("filter disabled feature: %v", err)
+	}
+	if string(disabled) != "always\noff\n" {
+		t.Fatalf("disabled feature = %q, want always and off blocks", disabled)
+	}
+
+	invalid := map[string]string{
+		"nested":   "// goforj:component-library:on:start\n// goforj:component-library:off:start\n",
+		"orphaned": "// goforj:component-library:end\n",
+		"unclosed": "// goforj:component-library:on:start\n",
+	}
+	for name, source := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if _, err := filterStarterKitFeature([]byte(source), true); err == nil {
+				t.Fatal("filterStarterKitFeature() error = nil, want malformed marker error")
+			}
+		})
+	}
+}
+
 func TestScaffoldReactStarterKit(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {

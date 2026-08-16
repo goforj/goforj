@@ -35,7 +35,7 @@ func TestSetAppConfigPreservesUnknownFields(t *testing.T) {
 	}
 	renderer := projectRendererForTest(t, config)
 
-	if _, err := renderer.setAppConfig("worker", project.Components{CLI: true}, project.StarterKitNone, project.DefaultHelpFormat()); err != nil {
+	if _, err := renderer.setAppConfig("worker", project.Components{CLI: true}, project.StarterKitNone, nil, project.DefaultHelpFormat()); err != nil {
 		t.Fatalf("set App config: %v", err)
 	}
 	if got := config.Apps["worker"].Extra; !reflect.DeepEqual(got, extra) {
