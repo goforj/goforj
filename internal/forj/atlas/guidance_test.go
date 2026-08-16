@@ -20,7 +20,7 @@ func TestReconcileAgentGuidanceUsesStableCodexFallback(t *testing.T) {
 		t.Fatalf("ReconcileAgentGuidance(): %v", err)
 	}
 	content := readGuidanceTestFile(t, filepath.Join(root, "AGENTS.md"))
-	if !strings.Contains(content, "`forj make:*`") || !strings.Contains(content, "can stand on its own") || !strings.Contains(content, "<!-- "+files.DefaultMarker+":start -->") {
+	if !strings.Contains(content, "`forj make:*`") || !strings.Contains(content, "flat, self-contained, and portable") || !strings.Contains(content, "can stand on its own") || !strings.Contains(content, "<!-- "+files.DefaultMarker+":start -->") {
 		t.Fatalf("AGENTS.md missing canonical baseline:\n%s", content)
 	}
 	if len(result.Updated) != 1 || result.Updated[0] != filepath.Join(root, "AGENTS.md") {
