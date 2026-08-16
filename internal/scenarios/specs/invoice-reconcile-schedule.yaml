@@ -1,0 +1,56 @@
+schema_version: 2
+id: invoice-reconcile-schedule
+title: Invoice Reconcile Schedule
+description: Add an hourly schedule that invokes existing invoice application behavior through normal registration.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    scheduler: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: scaffold-reconcile-schedule
+    title: Scaffold the reconcile schedule
+    command: [forj, make:schedule, invoices:reconcile, --every, 1h]
+  - id: implement-reconcile-schedule
+    title: Invoke invoice behavior from the registered schedule
+    write:
+      path: internal/invoices/reconcile_schedule.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its recurring work.
+        package invoices
+
+        import (
+                "context"
+                "time"
+        )
+
+        // ReconcileSchedule runs periodic invoice reconciliation.
+        type ReconcileSchedule struct {
+                service *Service
+        }
+
+        // NewReconcileSchedule exposes invoice behavior to scheduler wiring.
+        func NewReconcileSchedule(service *Service) *ReconcileSchedule {
+                return &ReconcileSchedule{service: service}
+        }
+
+        // Name returns the operator-facing schedule identity.
+        func (*ReconcileSchedule) Name() string { return "invoices:reconcile" }
+
+        // Interval keeps cadence separate from the work implementation.
+        func (*ReconcileSchedule) Interval() (time.Duration, error) { return time.Hour, nil }
+
+        // Handle propagates scheduler cancellation into invoice behavior.
+        func (schedule *ReconcileSchedule) Handle(ctx context.Context) error {
+                _, err := schedule.service.Find(ctx, "inv-42")
+                return err
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

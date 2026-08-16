@@ -1,0 +1,77 @@
+schema_version: 2
+id: invoice-receipt-job
+title: Invoice Receipt Job
+description: Add a typed invoice receipt job whose handler invokes existing application behavior.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    jobs: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: scaffold-receipt-job
+    title: Scaffold the receipt job
+    command: [forj, make:job, invoices:receipt]
+  - id: implement-receipt-job
+    title: Use a typed payload and invoice service
+    write:
+      path: internal/invoices/receipt_job.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its background work.
+        package invoices
+
+        import (
+                "context"
+                "encoding/json"
+                "fmt"
+
+                "example.com/invoiceeval/internal/queues"
+                "github.com/goforj/queue"
+        )
+
+        // ReceiptJobTypeName identifies receipt work during dispatch and registration.
+        const ReceiptJobTypeName = "invoices:receipt"
+
+        // ReceiptJobPayload carries the identity needed to reload current invoice state.
+        type ReceiptJobPayload struct {
+                InvoiceID string `json:"invoice_id"`
+        }
+
+        // ReceiptJob owns receipt dispatch and handling.
+        type ReceiptJob struct {
+                queues *queues.Manager
+                service *Service
+        }
+
+        // NewReceiptJob exposes queue and application dependencies to Wire.
+        func NewReceiptJob(queues *queues.Manager, service *Service) *ReceiptJob {
+                return &ReceiptJob{queues: queues, service: service}
+        }
+
+        // Queue dispatches the typed receipt payload.
+        func (job *ReceiptJob) Queue(ctx context.Context, payload ReceiptJobPayload) error {
+                body, err := json.Marshal(payload)
+                if err != nil {
+                        return err
+                }
+                _, err = job.queues.WithContext(ctx).Dispatch(queue.NewJob(ReceiptJobTypeName).Payload(body))
+                return err
+        }
+
+        // HandleTask reloads invoice state through the service at execution time.
+        func (job *ReceiptJob) HandleTask(ctx context.Context, message queue.Message) error {
+                var payload ReceiptJobPayload
+                if err := message.Bind(&payload); err != nil {
+                        return fmt.Errorf("bind receipt payload: %w", err)
+                }
+                _, err := job.service.Find(ctx, payload.InvoiceID)
+                return err
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

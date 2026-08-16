@@ -1,0 +1,57 @@
+schema_version: 2
+id: named-profiles-cache
+title: Named Profiles Cache
+description: Configure a named profiles cache and select its generated accessor through dependency injection.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    cache: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: configure-profiles-cache
+    title: Configure the named cache
+    append:
+      path: .env
+      language: dotenv
+      content: |
+
+        CACHE_PROFILES_DRIVER=memory
+  - id: generate-cache-accessors
+    title: Generate the named accessor
+    command: [forj, generate, --cache]
+  - id: add-profile-cache
+    title: Select the generated accessor through the manager
+    write:
+      path: internal/invoices/profile_cache.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its cache selection.
+        package invoices
+
+        import (
+                "example.com/invoiceeval/internal/caches"
+                "github.com/goforj/cache"
+        )
+
+        // ProfileCache owns the App-facing profiles cache selection.
+        type ProfileCache struct{ cache *cache.Cache }
+
+        // NewProfileCache injects the cache manager and selects the generated named accessor.
+        func NewProfileCache(manager *caches.Manager) *ProfileCache {
+                return &ProfileCache{cache: manager.Profiles()}
+        }
+  - id: register-profile-cache
+    title: Register the application cache owner
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tinvoices.NewService,\n"
+      new: "\tinvoices.NewService,\n\tinvoices.NewProfileCache,\n"
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

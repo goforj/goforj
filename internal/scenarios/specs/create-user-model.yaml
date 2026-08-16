@@ -1,0 +1,43 @@
+schema_version: 2
+id: create-user-model
+title: Create User Model
+description: Inspect a real SQLite users table and generate its model and repository registration.
+app:
+  module_name: example.com/modeleval
+  doc_module_name: your/module
+  components:
+    cli: true
+    database_sqlite: true
+prepare:
+  steps:
+    - id: add-users-migration
+      title: Add the seeded users table
+      write:
+        path: migrations/2026_08_16_000001_users.sqlite.up.sql
+        language: sql
+        content: |
+          CREATE TABLE users (
+              id INTEGER PRIMARY KEY,
+              email TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              created_at DATETIME NOT NULL
+          );
+    - id: add-users-rollback
+      title: Add the users rollback
+      write:
+        path: migrations/2026_08_16_000001_users.sqlite.down.sql
+        language: sql
+        content: |
+          DROP TABLE users;
+    - id: migrate-users-table
+      title: Create the users table
+      command: [forj, migrate]
+  checks:
+    - command: [forj, migrate]
+steps:
+  - id: generate-user-model
+    title: Generate the model from the users table
+    command: [forj, make:model, users]
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

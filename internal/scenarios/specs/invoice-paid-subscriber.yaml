@@ -1,0 +1,69 @@
+schema_version: 2
+id: invoice-paid-subscriber
+title: Invoice Paid Subscriber
+description: Add a typed invoice-paid event and lifecycle-registered subscriber that invokes invoice behavior.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    events: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: scaffold-invoice-paid-event
+    title: Scaffold the event
+    command: [forj, make:event, invoices:paid]
+  - id: scaffold-invoice-paid-subscriber
+    title: Scaffold the subscriber
+    command: [forj, make:subscriber, invoices:paid]
+  - id: implement-invoice-paid-event
+    title: Carry the invoice identity
+    write:
+      path: internal/invoices/paid_event.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its application events.
+        package invoices
+
+        // PaidEventTopic is the stable invoice-paid routing key.
+        const PaidEventTopic = "invoices.paid"
+
+        // PaidEvent carries the invoice identity needed by subscribers.
+        type PaidEvent struct {
+                InvoiceID string `json:"invoice_id"`
+        }
+
+        // Topic routes the event through the configured bus.
+        func (PaidEvent) Topic() string { return PaidEventTopic }
+  - id: implement-invoice-paid-subscriber
+    title: Invoke invoice behavior from the subscriber
+    write:
+      path: internal/invoices/paid_subscriber.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its event subscribers.
+        package invoices
+
+        import "context"
+
+        // PaidSubscriber handles invoice-paid events.
+        type PaidSubscriber struct {
+                service *Service
+        }
+
+        // NewPaidSubscriber exposes invoice behavior to event wiring.
+        func NewPaidSubscriber(service *Service) *PaidSubscriber {
+                return &PaidSubscriber{service: service}
+        }
+
+        // Handle propagates event cancellation into invoice lookup.
+        func (subscriber *PaidSubscriber) Handle(ctx context.Context, event PaidEvent) error {
+                _, err := subscriber.service.Find(ctx, event.InvoiceID)
+                return err
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
