@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
@@ -216,7 +217,9 @@ func ResolveScenarioPreparationTools(forjExecutable string, environment []string
 
 // resolveScenarioPlanTools fingerprints every executable that the selected plan may invoke.
 func resolveScenarioPlanTools(forjPath string, environment []string, plan scenarioPlan, includeTarget bool) (map[string]string, string, error) {
-	names := map[string]bool{"forj": true}
+	// GoForj commands can invoke Go and Wire internally, so their bytes must be
+	// bound even when those tools do not appear as top-level scenario commands.
+	names := map[string]bool{"forj": true, "go": true, "wire": true}
 	collect := func(steps []plannedScenarioStep) {
 		for _, planned := range steps {
 			if planned.step.Run != nil && len(planned.step.Run.Run) > 0 {
@@ -321,13 +324,34 @@ func resolveScenarioTool(name string, environment []string) (string, string, err
 		return "", "", fmt.Errorf("resolve tool %q: PATH is required", name)
 	}
 	for _, directory := range filepath.SplitList(pathValue) {
-		candidate := filepath.Join(directory, name)
-		path, digest, err := resolveScenarioExecutable(candidate)
-		if err == nil {
-			return path, digest, nil
+		for _, fileName := range scenarioToolFileNames(name, environment) {
+			candidate := filepath.Join(directory, fileName)
+			path, digest, err := resolveScenarioExecutable(candidate)
+			if err == nil {
+				return path, digest, nil
+			}
 		}
 	}
 	return "", "", fmt.Errorf("resolve tool %q from PATH", name)
+}
+
+// scenarioToolFileNames applies the supplied Windows executable policy without consulting mutable process state.
+func scenarioToolFileNames(name string, environment []string) []string {
+	if runtime.GOOS != "windows" || filepath.Ext(name) != "" {
+		return []string{name}
+	}
+	extensions := scenarioEnvironmentMap(environment)[scenarioEnvironmentKey("PATHEXT")]
+	if extensions == "" {
+		extensions = ".COM;.EXE;.BAT;.CMD"
+	}
+	names := make([]string, 0, 4)
+	for _, extension := range strings.Split(extensions, ";") {
+		extension = strings.TrimSpace(extension)
+		if extension != "" {
+			names = append(names, name+extension)
+		}
+	}
+	return names
 }
 
 // Close releases the temporary Project when the caller did not request retention.

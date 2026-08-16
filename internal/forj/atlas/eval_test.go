@@ -148,6 +148,19 @@ func TestMarshalRedactedEvaluationKeepsSecretsOutOfTerminalJSON(t *testing.T) {
 // TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj keeps host workspaces and the source executable outside agent ownership.
 func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	root := t.TempDir()
+	hostTools := filepath.Join(root, "host-tools")
+	if err := os.Mkdir(hostTools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range append([]string{"go"}, evaluationSupportToolNames()...) {
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(hostTools, name), []byte(name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", hostTools)
 	t.Setenv("ATLAS_EVAL_SECRET", "must-not-leak")
 	t.Setenv("GOENV", filepath.Join(root, "host-go-env"))
 	t.Setenv("GOFLAGS", "-modfile=host.mod")
@@ -169,6 +182,9 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	}
 	if values["GOWORK"] != "off" {
 		t.Fatalf("GOWORK = %q", values["GOWORK"])
+	}
+	if !strings.HasPrefix(values["ATLAS_EVAL_TOOLS_DIGEST"], "sha256:") {
+		t.Fatalf("ATLAS_EVAL_TOOLS_DIGEST = %q", values["ATLAS_EVAL_TOOLS_DIGEST"])
 	}
 	for key, want := range map[string]string{"GOENV": "off", "GOPROXY": "https://proxy.golang.org,direct", "GOSUMDB": "sum.golang.org", "GOTOOLCHAIN": "local"} {
 		if values[key] != want {
@@ -204,6 +220,14 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	}
 	if string(body) != "candidate" {
 		t.Fatalf("source executable changed through private copy: %q", body)
+	}
+	for _, tool := range evaluationSupportToolNames() {
+		if runtime.GOOS == "windows" {
+			tool += ".exe"
+		}
+		if _, err := os.Stat(filepath.Join(toolsDir, tool)); err != nil {
+			t.Fatalf("snapshotted tool %q: %v", tool, err)
+		}
 	}
 }
 
