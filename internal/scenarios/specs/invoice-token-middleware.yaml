@@ -132,7 +132,7 @@ steps:
 
         // provideInvoiceController resolves transport policy once during App composition.
         func provideInvoiceController(service *invoices.Service) *invoices.Controller {
-                return invoices.NewController(service, env.Get("INVOICE_HTTP_TOKEN", "invoice-secret"))
+                return invoices.NewController(service, env.Get("INVOICE_HTTP_TOKEN", ""))
         }
 checks:
   - command: [go, test, ./internal/invoices]
