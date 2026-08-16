@@ -327,6 +327,71 @@ func TestEmbeddedV1ScenariosRetainDecodeAndDocumentationParity(t *testing.T) {
 	}
 }
 
+// TestMigratedV2ScenariosPreserveReaderWorkflow keeps schema preparation splits from silently deleting or reordering established documentation steps.
+func TestMigratedV2ScenariosPreserveReaderWorkflow(t *testing.T) {
+	legacyTitles := map[string][]string{
+		"cached-user-profile": {
+			"Add a Named Cache", "Add the Repository", "Use the Repository in the Service", "Wire the Repository and Cache",
+			"Add Repository Providers", "Add Provider Functions", "Add Repository Tests", "Update the Service Test",
+		},
+		"file-upload-storage": {
+			"Add a Named Storage Disk", "Scaffold the Controller", "Add the Service", "Replace the Starter Controller",
+			"Add Upload Imports", "Add Upload Providers", "Add the Upload Service Provider", "Add a Service Test",
+		},
+		"json-api-route": {
+			"Scaffold the Controller", "Add the Service", "Replace the Starter Controller", "Provide the Service",
+			"Add the Service Provider", "Add a Service Test",
+		},
+		"reports-daily-schedule": {
+			"Add a Daily Runner", "Add Daily Targets to the Repository", "Scaffold the Daily Schedule",
+			"Connect the Schedule to the Runner", "Wire the Runner", "Test the Runner",
+		},
+		"reports-generate-job": {
+			"Configure Report Storage", "Enable the Sync Queue for Tests", "Refresh Generated Resources", "Add the Report Service",
+			"Generate the Job", "Replace the Generated Job", "Share the Job with App Services", "Dispatch the Job from Notifications",
+			"Keep Lifecycle Subscriber Registration", "Add Report Imports", "Add Report Providers", "Add the Report Service Provider",
+			"Add a Report Service Test", "Add a Generate Job Handler Test",
+		},
+		"users-created-event": {
+			"Refresh Event Resources", "Add the Event", "Extend the Repository", "Add an Event Publisher Boundary",
+			"Publish from the Service", "Add the Notification Handler", "Add Subscriber Registration", "Test Subscriber Delivery",
+			"Register Subscribers in the Lifecycle", "Update the Controller", "Wire the Event Boundary and Subscriber", "Add Event Providers",
+			"Add the Event Bus Provider", "Update the Service Test", "Test User Route Registration",
+		},
+	}
+	specs, err := List("")
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	byID := make(map[string]ScenarioSpec, len(specs))
+	for _, spec := range specs {
+		byID[spec.ID] = spec
+	}
+	for id, titles := range legacyTitles {
+		t.Run(id, func(t *testing.T) {
+			spec, ok := byID[id]
+			if !ok {
+				t.Fatalf("migrated scenario %q is absent", id)
+			}
+			if spec.SchemaVersion != 2 {
+				t.Fatalf("schema version = %d, want 2", spec.SchemaVersion)
+			}
+			markdown, err := renderScenarioMarkdown(spec)
+			if err != nil {
+				t.Fatalf("render markdown: %v", err)
+			}
+			position := 0
+			for _, title := range titles {
+				next := strings.Index(markdown[position:], title)
+				if next < 0 {
+					t.Fatalf("legacy workflow heading %q is absent or reordered", title)
+				}
+				position += next + len(title)
+			}
+		})
+	}
+}
+
 // TestCompileScenarioPlanOrdersDependencyDiamondOnce proves plan compilation owns shared dependency ordering for every execution mode.
 func TestCompileScenarioPlanOrdersDependencyDiamondOnce(t *testing.T) {
 	step := func(id string) ScenarioStep {
