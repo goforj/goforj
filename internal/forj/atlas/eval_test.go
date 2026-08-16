@@ -32,6 +32,23 @@ func TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey(t *testing.T) {
 	}
 }
 
+// TestLoadEvalRedactionSecretsExtractsCredentialTokens keeps auth.json values out of retained evaluation diagnostics.
+func TestLoadEvalRedactionSecretsExtractsCredentialTokens(t *testing.T) {
+	credential := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(credential, []byte(`{"auth":{"access_token":"access-token-value","token":"token-value"},"provider":{"refresh_token":"refresh-token-value"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := loadEvalRedactionSecrets(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"access-token-value", "token-value", "refresh-token-value"} {
+		if !containsString(secrets, want) {
+			t.Fatalf("redaction secrets = %q, want %q", secrets, want)
+		}
+	}
+}
+
 // TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj keeps host workspaces and the source executable outside agent ownership.
 func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	root := t.TempDir()
@@ -128,4 +145,14 @@ func environmentValues(environment []string) map[string]string {
 		}
 	}
 	return values
+}
+
+// containsString reports whether values contains want.
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

@@ -64,6 +64,10 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
+	redactionSecrets, err := loadEvalRedactionSecrets(credential)
+	if err != nil {
+		return err
+	}
 	artifactRoot, err := resolveEvalArtifactRoot(command.Artifacts)
 	if err != nil {
 		return err
@@ -116,7 +120,7 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	artifacts, err := eval.NewArtifactStore(artifactRoot, artifactKey, eval.NewRedactor(nil))
+	artifacts, err := eval.NewArtifactStore(artifactRoot, artifactKey, eval.NewRedactor(redactionSecrets))
 	if err != nil {
 		return err
 	}
@@ -243,6 +247,58 @@ func resolveEvalCredential(candidate string) (string, error) {
 		return "", fmt.Errorf("Codex credential %q is not a regular file", path)
 	}
 	return path, nil
+}
+
+// loadEvalRedactionSecrets extracts credential values that could appear in diagnostic output without retaining the credential itself.
+func loadEvalRedactionSecrets(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read Codex credential for artifact redaction: %w", err)
+	}
+	var credential any
+	if err := json.Unmarshal(body, &credential); err != nil {
+		return nil, fmt.Errorf("decode Codex credential for artifact redaction: %w", err)
+	}
+	return credentialSecrets(credential), nil
+}
+
+// credentialSecrets collects values belonging to common credential fields from an untrusted decoded auth document.
+func credentialSecrets(value any) []string {
+	secrets := make([]string, 0)
+	seen := make(map[string]struct{})
+	var visit func(any)
+	visit = func(value any) {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				visit(item)
+			}
+		case map[string]any:
+			for key, item := range typed {
+				if credentialSecretField(key) {
+					if secret, ok := item.(string); ok && secret != "" {
+						if _, exists := seen[secret]; !exists {
+							seen[secret] = struct{}{}
+							secrets = append(secrets, secret)
+						}
+					}
+				}
+				visit(item)
+			}
+		}
+	}
+	visit(value)
+	return secrets
+}
+
+// credentialSecretField identifies auth.json fields whose values must never enter retained diagnostics.
+func credentialSecretField(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "access_token", "token", "id_token", "refresh_token", "api_key", "client_secret", "password", "secret":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveEvalArtifactRoot selects a retained private directory outside every disposable agent Project.
