@@ -10,10 +10,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/goforj/atlas/eval"
@@ -48,6 +50,13 @@ func (*EvalCompareCmd) Signature() string {
 
 // Run executes two fresh diagnostic sessions and prints their machine-readable results.
 func (command *EvalCompareCmd) Run() (runErr error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return command.run(ctx)
+}
+
+// run executes the comparison with a caller-owned lifecycle so cancellation reaches every evaluation resource.
+func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	definition, err := eval.LoadPromotedDefinition(command.Evaluation)
 	if err != nil {
 		return err
@@ -141,7 +150,7 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	result, diagnosticErr := runner.RunGuidanceDiagnostic(context.Background(), eval.GuidanceDiagnosticRequest{
+	result, diagnosticErr := runner.RunGuidanceDiagnostic(ctx, eval.GuidanceDiagnosticRequest{
 		LogicalTrialID:  trialID,
 		Definition:      definition,
 		DestinationRoot: filepath.Join(workRoot, "projects"),
@@ -290,11 +299,12 @@ func credentialSecrets(value any) []string {
 
 // credentialSecretField identifies auth.json fields whose values must never enter retained diagnostics.
 func credentialSecretField(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
 	case "access_token", "token", "id_token", "refresh_token", "api_key", "client_secret", "password", "secret":
 		return true
 	default:
-		return false
+		return strings.HasSuffix(normalized, "_api_key") || strings.HasSuffix(normalized, "_access_token") || strings.HasSuffix(normalized, "_refresh_token")
 	}
 }
 
@@ -410,12 +420,16 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 		return nil, err
 	}
 	overrides := map[string]string{
-		"GOCACHE":    goCache,
-		"GOMODCACHE": moduleCache,
-		"GOPATH":     goPath,
-		"GOWORK":     "off",
-		"HOME":       home,
-		"PATH":       toolsDir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
+		"GOCACHE":     goCache,
+		"GOENV":       "off",
+		"GOMODCACHE":  moduleCache,
+		"GOPATH":      goPath,
+		"GOPROXY":     "https://proxy.golang.org,direct",
+		"GOSUMDB":     "sum.golang.org",
+		"GOTOOLCHAIN": "local",
+		"GOWORK":      "off",
+		"HOME":        home,
+		"PATH":        toolsDir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
 	}
 	base := baseEvaluationEnvironment()
 	environment := make([]string, 0, len(base)+len(overrides))
@@ -442,7 +456,6 @@ func baseEvaluationEnvironment() []string {
 		"SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
 		"LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM",
 		"SSL_CERT_FILE", "SSL_CERT_DIR",
-		"GOPROXY", "GOSUMDB", "GONOPROXY", "GOPRIVATE", "GOENV", "GOFLAGS", "CGO_ENABLED", "CC", "CXX",
 	}
 	environment := make([]string, 0, len(keys))
 	for _, key := range keys {
