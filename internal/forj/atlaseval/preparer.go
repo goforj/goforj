@@ -2,27 +2,19 @@
 package atlaseval
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/goforj/atlas/eval"
-	"github.com/goforj/atlas/files"
-	"github.com/goforj/atlas/guidelines"
-	atlasproject "github.com/goforj/atlas/project"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/scenarios"
 	"github.com/goforj/goforj/project"
-	"github.com/goforj/goforj/version"
-	"gopkg.in/yaml.v3"
 )
 
 // Preparer resolves and materializes trusted GoForj scenario prefixes for Atlas.
@@ -31,8 +23,12 @@ type Preparer struct {
 	Logger          *logger.AppLogger
 	BaseRoot        string
 	BaseEnvironment []string
+	Guidance        GuidanceMaterializer
 	cache           *preparationCache
 }
+
+// GuidanceMaterializer applies one durable host-specific guidance selection and returns the exact native files visible to the agent.
+type GuidanceMaterializer func(context.Context, eval.PreparedProject, eval.Guidance, project.AgentGuidance) (eval.Guidance, error)
 
 // preparationCache owns immutable command-local bases shared only by paired trial clones.
 type preparationCache struct {
@@ -42,11 +38,12 @@ type preparationCache struct {
 }
 
 // NewPreparer enables command-local immutable-base reuse under an explicitly owned root.
-func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger) *Preparer {
+func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger, materializer GuidanceMaterializer) *Preparer {
 	return &Preparer{
 		BaseRoot:        baseRoot,
 		BaseEnvironment: append([]string(nil), baseEnvironment...),
 		Logger:          appLogger,
+		Guidance:        materializer,
 		cache:           &preparationCache{bases: map[string]*scenarios.PreparedScenario{}},
 	}
 }
@@ -129,38 +126,19 @@ func (preparer Preparer) Prepare(ctx context.Context, request eval.PreparationRe
 	return &preparedProject{prepared: prepared, result: result}, nil
 }
 
-// MaterializeGuidance applies the selected treatment through GoForj's durable configuration and managed instruction marker.
-func (Preparer) MaterializeGuidance(_ context.Context, prepared eval.PreparedProject, guidance eval.Guidance) (eval.Guidance, error) {
+// MaterializeGuidance delegates durable host-native instruction ownership to the injected production materializer.
+func (preparer Preparer) MaterializeGuidance(ctx context.Context, prepared eval.PreparedProject, guidance eval.Guidance) (eval.Guidance, error) {
 	if prepared == nil || strings.TrimSpace(prepared.Result().ProjectRoot) == "" {
 		return eval.Guidance{}, fmt.Errorf("prepared Project is required")
 	}
-	root := prepared.Result().ProjectRoot
 	selection, err := evaluationGuidanceSelection(guidance.Profile)
 	if err != nil {
 		return eval.Guidance{}, err
 	}
-	config, err := project.LoadProjectConfigAt(root)
-	if err != nil {
-		return eval.Guidance{}, fmt.Errorf("load prepared Project configuration: %w", err)
+	if preparer.Guidance == nil {
+		return eval.Guidance{}, fmt.Errorf("durable guidance materializer is required")
 	}
-	config.Render.AgentGuidance = selection
-	if err := writeEvaluationGuidanceConfig(filepath.Join(root, ".goforj.yml"), config); err != nil {
-		return eval.Guidance{}, fmt.Errorf("persist evaluation guidance selection: %w", err)
-	}
-	if err := reconcileEvaluationGuidance(root, selection, config); err != nil {
-		return eval.Guidance{}, err
-	}
-	result := eval.Guidance{Profile: guidance.Profile, Skills: append([]string(nil), guidance.Skills...), MCP: append([]string(nil), guidance.MCP...)}
-	if selection == project.AgentGuidanceBaseline {
-		body, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-		if err != nil {
-			return eval.Guidance{}, fmt.Errorf("read managed evaluation guidance: %w", err)
-		}
-		result.Files = map[string][]byte{"AGENTS.md": body}
-	} else {
-		result.Files = map[string][]byte{}
-	}
-	return result, nil
+	return preparer.Guidance(ctx, prepared, guidance, selection)
 }
 
 // evaluationGuidanceSelection binds Atlas treatment names to GoForj's durable render policy.
@@ -173,81 +151,6 @@ func evaluationGuidanceSelection(profile string) (project.AgentGuidance, error) 
 	default:
 		return "", fmt.Errorf("unsupported evaluation guidance profile %q", profile)
 	}
-}
-
-// reconcileEvaluationGuidance uses the same stable Codex projection as a project without optional Atlas state.
-func reconcileEvaluationGuidance(root string, selection project.AgentGuidance, config *project.Config) error {
-	path := filepath.Join(root, "AGENTS.md")
-	existing, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	next := files.RemoveMarkerBlock(string(existing), files.DefaultMarker)
-	if selection == project.AgentGuidanceBaseline {
-		identity, discoverErr := atlasproject.Discover(root)
-		if discoverErr != nil {
-			identity = atlasproject.Project{Root: root}
-		}
-		identity.Name = firstNonEmptyEvaluation(config.ProjectName, identity.Name, "goforj-project")
-		identity.GoForjVersion = firstNonEmptyEvaluation(config.Render.GoForjVersion, version.String())
-		next = files.MergeMarkerBlock(string(existing), files.DefaultMarker, guidelines.Compose(identity.WithDiscoveredDefaults()))
-	}
-	if next == string(existing) {
-		return nil
-	}
-	if strings.TrimSpace(next) == "" {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return os.Remove(path)
-	}
-	return writeEvaluationGuidanceFile(path, []byte(next), 0o644)
-}
-
-// firstNonEmptyEvaluation chooses the durable Project fact before any discovery fallback.
-func firstNonEmptyEvaluation(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-// writeEvaluationGuidanceConfig publishes the selected render policy before the instruction marker so later renders preserve the treatment.
-func writeEvaluationGuidanceConfig(path string, config *project.Config) error {
-	var content bytes.Buffer
-	encoder := yaml.NewEncoder(&content)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(config); err != nil {
-		return err
-	}
-	return writeEvaluationGuidanceFile(path, content.Bytes(), 0o644)
-}
-
-// writeEvaluationGuidanceFile avoids publishing a partial durable treatment if evaluation setup is interrupted.
-func writeEvaluationGuidanceFile(path string, content []byte, mode fs.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(mode.Perm()); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, path)
 }
 
 // Close removes every immutable base retained for this command.
