@@ -143,8 +143,8 @@ func TestGenerateProjectFilesUsesAppOverlayManifestFromProjectEnvironment(t *tes
 	}
 }
 
-// TestGenerateProjectFilesRejectsAppResourceTypos verifies recognized Apps retain malformed keys long enough to report them.
-func TestGenerateProjectFilesRejectsAppResourceTypos(t *testing.T) {
+// TestGenerateProjectFilesIgnoresUnknownAppResourceKeys keeps configured and inferred App prefixes from claiming application settings.
+func TestGenerateProjectFilesIgnoresUnknownAppResourceKeys(t *testing.T) {
 	tests := []struct {
 		name        string
 		projectFile string
@@ -169,9 +169,8 @@ func TestGenerateProjectFilesRejectsAppResourceTypos(t *testing.T) {
 			}
 			writeGenerationEnvironmentFile(t, root, ".env", test.environment)
 
-			_, err := GenerateProjectFiles(root, GenerationSelection{Cache: true})
-			if err == nil || !strings.Contains(err.Error(), "BILLING_CACHE_ADRR") {
-				t.Fatalf("GenerateProjectFiles error = %v, want BILLING_CACHE_ADRR validation", err)
+			if _, err := GenerateProjectFiles(root, GenerationSelection{Cache: true}); err != nil {
+				t.Fatalf("GenerateProjectFiles() rejected an unrecognized App env var: %v", err)
 			}
 		})
 	}

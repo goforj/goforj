@@ -52,8 +52,8 @@ func TestGenerateResourceFilesDiscoversAppOnlyNamedAccessors(t *testing.T) {
 	}
 }
 
-// TestGenerateResourceFilesRejectsUnknownAppNamedKeys verifies validation reports the original App-prefixed key instead of accepting an unusable runtime setting.
-func TestGenerateResourceFilesRejectsUnknownAppNamedKeys(t *testing.T) {
+// TestGenerateResourceFilesIgnoresUnknownAppNamedKeys keeps similarly prefixed application settings outside framework ownership.
+func TestGenerateResourceFilesIgnoresUnknownAppNamedKeys(t *testing.T) {
 	for _, tt := range appNamedAccessorTests() {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -62,10 +62,8 @@ func TestGenerateResourceFilesRejectsUnknownAppNamedKeys(t *testing.T) {
 			badKey := "BILLING_" + strings.TrimSuffix(tt.activeKey, "_DRIVER") + "_REPORTS_BADKEY"
 			t.Setenv(badKey, "unexpected")
 
-			if _, err := tt.generate(root); err == nil {
-				t.Fatalf("generate %s with unknown App-named key unexpectedly succeeded", tt.name)
-			} else if !strings.Contains(err.Error(), badKey) {
-				t.Fatalf("generation error %q does not identify %s", err, badKey)
+			if _, err := tt.generate(root); err != nil {
+				t.Fatalf("generate %s rejected unrecognized App env var %s: %v", tt.name, badKey, err)
 			}
 		})
 	}

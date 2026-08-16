@@ -66,9 +66,6 @@ func GenerateDBFiles(projectDir string) (int, error) {
 
 // generateDBFiles uses one captured environment for validation, rendering, and named-resource discovery.
 func generateDBFiles(input generationInput) (int, error) {
-	if err := validateAppPrefixedDBEnv(input); err != nil {
-		return 0, err
-	}
 	names := discoverDBConnectionNames(input)
 	driverPlan, err := discoverDBDrivers(input, names)
 	if err != nil {
@@ -105,29 +102,6 @@ func discoverDBConnectionNames(input generationInput) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// validateAppPrefixedDBEnv rejects App-scoped keys that cannot become a root or named database setting at runtime.
-func validateAppPrefixedDBEnv(input generationInput) error {
-	problems := []string{}
-	for _, appPrefix := range generationAppEnvPrefixesForResource(input, "DB") {
-		prefix := appPrefix + "_DB_"
-		for _, entry := range input.environment.Entries() {
-			key := entry.key
-			if !strings.HasPrefix(key, prefix) {
-				continue
-			}
-			if _, valid := splitScopedEnvKey(strings.TrimPrefix(key, prefix), dbRootKeys); valid {
-				continue
-			}
-			problems = append(problems, fmt.Sprintf("%s is not a supported database env var", key))
-		}
-	}
-	if len(problems) == 0 {
-		return nil
-	}
-	sort.Strings(problems)
-	return fmt.Errorf("invalid database env:\n- %s", strings.Join(problems, "\n- "))
 }
 
 // dbHelperConnectionName skips driver-specific helper keys such as DB_SQLITE_DATABASE.

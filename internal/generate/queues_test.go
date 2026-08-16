@@ -475,16 +475,15 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 	}
 }
 
-func TestGenerateQueueFilesRejectsUnknownEnvVars(t *testing.T) {
+// TestGenerateQueueFilesIgnoresUnknownEnvVars leaves similarly prefixed application settings unclaimed.
+func TestGenerateQueueFilesIgnoresUnknownEnvVars(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRVIER", "redis")
+	root := t.TempDir()
+	prepareManifestPackage(filepath.Join("internal", "queues"), true)(t, root)
 
-	_, err := GenerateQueueFiles(t.TempDir())
-	if err == nil {
-		t.Fatal("expected GenerateQueueFiles to reject unknown queue env vars")
-	}
-	if !strings.Contains(err.Error(), "QUEUE_CRITICAL_DRVIER") {
-		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	if _, err := GenerateQueueFiles(root); err != nil {
+		t.Fatalf("GenerateQueueFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
 

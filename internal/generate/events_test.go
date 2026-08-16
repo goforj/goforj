@@ -664,16 +664,13 @@ func TestGeneratedObserver(t *testing.T) {
 	runFixtureGoTest(t, root, "./internal/events", "TestGeneratedObserver", nil)
 }
 
-func TestGenerateEventFilesRejectsUnknownEnvVars(t *testing.T) {
+// TestGenerateEventFilesIgnoresUnknownPrefixedEnvVars keeps application settings outside GoForj's recognized contract.
+func TestGenerateEventFilesIgnoresUnknownPrefixedEnvVars(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "redis")
 	t.Setenv("EVENTS_UNKNOWN_VALUE", "1")
 
-	_, err := GenerateEventFiles(t.TempDir())
-	if err == nil {
-		t.Fatal("expected GenerateEventFiles to reject unknown events env vars")
-	}
-	if !strings.Contains(err.Error(), "EVENTS_UNKNOWN_VALUE") {
-		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	if _, err := GenerateEventFiles(t.TempDir()); err != nil {
+		t.Fatalf("GenerateEventFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
 
