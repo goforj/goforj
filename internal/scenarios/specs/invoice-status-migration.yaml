@@ -14,7 +14,7 @@ prepare:
 steps:
   - id: scaffold-invoice-status-migration
     title: Scaffold the migration pair
-    command: [forj, make:migration, add_status_to_invoices, --no-open]
+    command: [forj, make:migration, add_status_to_invoices]
 checks:
   - command: [forj, build]
   - command: [go, test, ./...]
