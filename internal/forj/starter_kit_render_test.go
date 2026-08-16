@@ -100,6 +100,8 @@ func TestScaffoldStarterKitPreservesExistingFrontendFiles(t *testing.T) {
 		filepath.Join(frontendDir, "components.json"),
 		filepath.Join(frontendDir, "src", "App.vue"),
 		filepath.Join(frontendDir, "dist", "index.html"),
+		filepath.Join(frontendDir, "dist", "goforj-tile-dark.svg"),
+		filepath.Join(frontendDir, "dist", "goforj-tile-light.svg"),
 		filepath.Join(frontendDir, "dist", "goforj-logo.png"),
 	} {
 		if _, err := os.Stat(path); err != nil {
