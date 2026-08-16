@@ -723,6 +723,38 @@ func TestWizardUpdatesStarterKitSelectionFromCursor(t *testing.T) {
 	}
 }
 
+// TestWizardRendersComponentLibraryAsRadioInputs verifies starter-kit options expose both choices and their selected state.
+func TestWizardRendersComponentLibraryAsRadioInputs(t *testing.T) {
+	model := initialAppWizardModel("reporting", &project.Config{
+		Render: project.RenderConfig{
+			Components: project.Components{WebUI: true},
+			StarterKit: project.StarterKitVue,
+		},
+	})
+	model.stage = appWizardStarterKit
+	for index, raw := range model.starterKitList.Items() {
+		if raw.(starterKitItem).Key == project.StarterKitVue {
+			model.starterKitList.Select(index)
+			break
+		}
+	}
+
+	view := ansi.Strip(model.renderStarterKitOptions())
+	for _, expected := range []string{"Options", "Component library", "● On", "○ Off"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("starter-kit options omitted %q:\n%s", expected, view)
+		}
+	}
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeySpace})
+	view = ansi.Strip(next.(appWizardModel).renderStarterKitOptions())
+	for _, expected := range []string{"○ On", "● Off"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("toggled starter-kit options omitted %q:\n%s", expected, view)
+		}
+	}
+}
+
 func TestWizardViewKeepsLeadingSpacingWithoutTrailingBlankLine(t *testing.T) {
 	model := initialAppWizardModel("reporting", &project.Config{
 		Render: project.RenderConfig{

@@ -67,6 +67,11 @@ func (i helpFormatItem) Description() string { return i.Desc }
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i helpFormatItem) FilterValue() string { return i.Label }
 
+type starterKitOptionRow struct {
+	Label   string
+	Enabled bool
+}
+
 type appWizardStage int
 
 const (
@@ -327,9 +332,8 @@ func (m appWizardModel) View() string {
 		actions = []string{"Space to toggle", "A select all", "C select none", "Enter to continue", "Esc to cancel"}
 	case appWizardStarterKit:
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
-		componentLibrary := m.selectedComponentLibrarySummary()
-		panels = append(panels, wizardPanel("Starter Kit", lipgloss.JoinVertical(lipgloss.Left, m.renderStarterKitList(), "", "Component library: "+componentLibrary), m.termWidth, true))
-		actions = []string{"Space to toggle component library", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		panels = append(panels, wizardPanel("Starter Kit", lipgloss.JoinVertical(lipgloss.Left, m.renderStarterKitList(), "", m.renderStarterKitOptions()), m.termWidth, true))
+		actions = []string{"Space to toggle option", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case appWizardHelpFormat:
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
 		panels = append(panels, m.renderHelpFormatStage())
@@ -630,6 +634,32 @@ func (m appWizardModel) renderStarterKitList() string {
 		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// renderStarterKitOptions renders kit-specific choices as radio inputs that can grow into additional option rows.
+func (m appWizardModel) renderStarterKitOptions() string {
+	if m.highlightedStarterKit() == project.StarterKitNone {
+		return wizardMutedStyle.Render("Options · Not applicable")
+	}
+
+	lines := []string{wizardPrimaryStyle.Render("Options")}
+	options := []starterKitOptionRow{
+		{Label: "Component library", Enabled: m.componentLibrary},
+	}
+	for _, option := range options {
+		onMarker := wizardPrimaryStyle.Render("○")
+		offMarker := wizardAccentStyle.Render("●")
+		if option.Enabled {
+			onMarker = wizardAccentStyle.Render("●")
+			offMarker = wizardPrimaryStyle.Render("○")
+		}
+		lines = append(lines,
+			"  "+wizardPrimaryStyle.Render(option.Label),
+			"    "+onMarker+" On",
+			"    "+offMarker+" Off",
+		)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 // syncHelpFormatSelectionFromCursor makes cursor movement behave like a radio selection.

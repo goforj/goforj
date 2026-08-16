@@ -1059,6 +1059,29 @@ func TestStarterKitComponentLibraryCanBeDisabled(t *testing.T) {
 	}
 }
 
+// TestStarterKitComponentLibraryRendersAsRadioInputs verifies the project wizard exposes both option choices and their selected state.
+func TestStarterKitComponentLibraryRendersAsRadioInputs(t *testing.T) {
+	m := initialModel()
+	m.stage = StageStarterKit
+	m.config.Render.Components.WebUI = true
+	selectStarterKitRow(t, &m, project.StarterKitVue)
+
+	view := ansi.Strip(m.renderStarterKitOptions())
+	for _, expected := range []string{"Options", "Component library", "● On", "○ Off"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("starter-kit options omitted %q:\n%s", expected, view)
+		}
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	view = ansi.Strip(next.(model).renderStarterKitOptions())
+	for _, expected := range []string{"○ On", "● Off"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("toggled starter-kit options omitted %q:\n%s", expected, view)
+		}
+	}
+}
+
 func TestAtlasRecommendedMovesToProjectPath(t *testing.T) {
 	m := initialModel()
 	m.stage = StageAtlasSupport
