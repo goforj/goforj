@@ -419,7 +419,7 @@ func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read selected Codex guidance: %v", err)
 	}
-	if !strings.Contains(string(guidance), "can stand on its own") {
+	if !strings.Contains(string(guidance), "flat, self-contained, and portable") || !strings.Contains(string(guidance), "can stand on its own") {
 		t.Fatalf("selected Codex guidance omitted package-boundary guidance:\n%s", guidance)
 	}
 	for _, path := range []string{

@@ -36,7 +36,7 @@ func TestBaselineGuidanceSurvivesProjectLifecycle(t *testing.T) {
 	if !bytes.Contains(want, []byte("`forj make:*`")) {
 		t.Fatalf("rendered guidance omitted generator workflow:\n%s", want)
 	}
-	if !bytes.Contains(want, []byte("can stand on its own")) {
+	if !bytes.Contains(want, []byte("flat, self-contained, and portable")) || !bytes.Contains(want, []byte("can stand on its own")) {
 		t.Fatalf("rendered guidance omitted package-boundary workflow:\n%s", want)
 	}
 
