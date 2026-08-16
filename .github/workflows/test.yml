@@ -254,18 +254,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: framework 1/6
-            args: framework --shard=1/6
-          - name: framework 2/6
-            args: framework --shard=2/6
-          - name: framework 3/6
-            args: framework --shard=3/6
-          - name: framework 4/6
-            args: framework --shard=4/6
-          - name: framework 5/6
-            args: framework --shard=5/6
-          - name: framework 6/6
-            args: framework --shard=6/6
+          - name: framework 1/8
+            args: framework --shard=1/8
+          - name: framework 2/8
+            args: framework --shard=2/8
+          - name: framework 3/8
+            args: framework --shard=3/8
+          - name: framework 4/8
+            args: framework --shard=4/8
+          - name: framework 5/8
+            args: framework --shard=5/8
+          - name: framework 6/8
+            args: framework --shard=6/8
+          - name: framework 7/8
+            args: framework --shard=7/8
+          - name: framework 8/8
+            args: framework --shard=8/8
           - name: multi-app
             args: framework --framework-profile=multiapp
           - name: rendered sqlite
