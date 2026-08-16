@@ -275,6 +275,7 @@ type majorSurfaceVerifierCase struct {
 	old         string
 	mutant      string
 	additional  []evaluationMutation
+	alternates  []evaluationFileMutation
 	wantFailed  string
 	wantCompile bool
 }
@@ -283,6 +284,13 @@ type majorSurfaceVerifierCase struct {
 type evaluationMutation struct {
 	old    string
 	mutant string
+}
+
+// evaluationFileMutation describes one reversible source change used to prove a verifier accepts an independently valid implementation family.
+type evaluationFileMutation struct {
+	path        string
+	old         string
+	replacement string
 }
 
 // TestAddAppCommandVerifierCalibration proves the App command contract accepts its golden Project and rejects lost cancellation.
@@ -331,17 +339,50 @@ func TestAddNamedAppRouteVerifierCalibration(t *testing.T) {
 
 // TestAddNamedResourceVerifierCalibration proves named queues are resolved through their generated manager accessor.
 func TestAddNamedResourceVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-resource", scenario: "named-reports-queue", path: "internal/invoices/report_dispatcher.go", old: "manager.Reports()", mutant: "manager.Default()", wantFailed: "named-queue-injection"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-named-resource",
+		scenario:   "named-reports-queue",
+		path:       "internal/invoices/report_dispatcher.go",
+		old:        "manager.Reports()",
+		mutant:     "manager.Default()",
+		alternates: []evaluationFileMutation{
+			{path: "internal/invoices/report_dispatcher.go", old: "ReportDispatcher", replacement: "Dispatcher"},
+			{path: "app/wire/inject_services_app.go", old: "NewReportDispatcher", replacement: "NewDispatcher"},
+		},
+		wantFailed: "named-queue-injection",
+	})
 }
 
 // TestAddNamedCacheVerifierCalibration proves named caches are resolved through their generated manager accessor.
 func TestAddNamedCacheVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-cache", scenario: "named-profiles-cache", path: "internal/invoices/profile_cache.go", old: "manager.Profiles()", mutant: "manager.Default()", wantFailed: "named-cache-injection"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-named-cache",
+		scenario:   "named-profiles-cache",
+		path:       "internal/invoices/profile_cache.go",
+		old:        "manager.Profiles()",
+		mutant:     "manager.Default()",
+		alternates: []evaluationFileMutation{
+			{path: "internal/invoices/profile_cache.go", old: "ProfileCache", replacement: "Cache"},
+			{path: "app/wire/inject_services_app.go", old: "NewProfileCache", replacement: "NewCache"},
+		},
+		wantFailed: "named-cache-injection",
+	})
 }
 
 // TestAddNamedStorageVerifierCalibration proves named storage is resolved through its generated manager accessor.
 func TestAddNamedStorageVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-storage", scenario: "named-avatar-storage", path: "internal/invoices/avatar_storage.go", old: "manager.Avatars()", mutant: "manager.Default()", wantFailed: "named-storage-injection"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-named-storage",
+		scenario:   "named-avatar-storage",
+		path:       "internal/invoices/avatar_storage.go",
+		old:        "manager.Avatars()",
+		mutant:     "manager.Default()",
+		alternates: []evaluationFileMutation{
+			{path: "internal/invoices/avatar_storage.go", old: "AvatarStorage", replacement: "Storage"},
+			{path: "app/wire/inject_services_app.go", old: "NewAvatarStorage", replacement: "NewStorage"},
+		},
+		wantFailed: "named-storage-injection",
+	})
 }
 
 // TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set.
@@ -510,6 +551,18 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	if result.FrameworkOutcome.Status != eval.EndpointPassed {
 		t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
+	if len(test.alternates) > 0 {
+		originals := applyEvaluationAlternates(t, projectRoot, test.alternates)
+		alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
+		alternateResult, verifyErr := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: alternateChanges})
+		if verifyErr != nil {
+			t.Fatalf("Verify(alternate): %v", verifyErr)
+		}
+		if alternateResult.FrameworkOutcome.Status != eval.EndpointPassed {
+			t.Fatalf("alternate outcome = %#v; checks = %#v", alternateResult.FrameworkOutcome, alternateResult.Checks)
+		}
+		restoreEvaluationAlternates(t, originals)
+	}
 	path := filepath.Join(projectRoot, filepath.FromSlash(test.path))
 	if strings.ContainsAny(test.path, "*?[") {
 		matches, globErr := filepath.Glob(path)
@@ -553,6 +606,46 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	}
 	if !evaluationCheckFailed(mutantResult.Checks, test.wantFailed) {
 		t.Fatalf("mutant checks = %#v, want %q to fail", mutantResult.Checks, test.wantFailed)
+	}
+}
+
+// applyEvaluationAlternates mutates only the reviewed files and retains exact originals for the subsequent negative calibration.
+func applyEvaluationAlternates(t *testing.T, projectRoot string, mutations []evaluationFileMutation) map[string][]byte {
+	t.Helper()
+	originals := make(map[string][]byte, len(mutations))
+	for _, mutation := range mutations {
+		candidatePath := filepath.Join(projectRoot, filepath.FromSlash(mutation.path))
+		body, exists := originals[candidatePath]
+		if !exists {
+			var err error
+			body, err = os.ReadFile(candidatePath)
+			if err != nil {
+				t.Fatalf("read alternate target %q: %v", mutation.path, err)
+			}
+			originals[candidatePath] = append([]byte(nil), body...)
+		}
+		current, err := os.ReadFile(candidatePath)
+		if err != nil {
+			t.Fatalf("read current alternate target %q: %v", mutation.path, err)
+		}
+		if !strings.Contains(string(current), mutation.old) {
+			t.Fatalf("alternate target %q does not contain %q", mutation.path, mutation.old)
+		}
+		updated := strings.ReplaceAll(string(current), mutation.old, mutation.replacement)
+		if err := os.WriteFile(candidatePath, []byte(updated), 0o644); err != nil {
+			t.Fatalf("write alternate target %q: %v", mutation.path, err)
+		}
+	}
+	return originals
+}
+
+// restoreEvaluationAlternates returns the golden Project exactly so the targeted mutant remains independent of positive-family calibration.
+func restoreEvaluationAlternates(t *testing.T, originals map[string][]byte) {
+	t.Helper()
+	for path, body := range originals {
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatalf("restore alternate target %q: %v", path, err)
+		}
 	}
 }
 
