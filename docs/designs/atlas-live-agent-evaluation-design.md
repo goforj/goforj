@@ -779,10 +779,10 @@ same modules, install the same frontend dependencies, or perform other
 deterministic fixture preparation.
 
 The first vertical slice should prepare one immutable Project base per command
-and copy it for repeated trials. It should use wholly trial-private Go module,
-Go build, and package-manager caches. Persistent cross-command caching and
-dependency seeds are deferred until representative small and large scenarios
-measure a real bottleneck.
+and copy it for repeated trials. Every agent trial should use private writable
+Go module, Go build, and package-manager caches. Persistent cross-command
+caching and general dependency seeds are deferred until representative small
+and large scenarios measure a real bottleneck.
 
 The first request for a prepared-base key should:
 
@@ -927,14 +927,18 @@ copy-on-write materialization is available and materially faster on the target
 platform.
 
 Go module, Go build, and package-manager download caches should remain separate
-from the immutable Project-base cache. The first authoritative implementation
-uses wholly trial-private caches. A trusted dependency-acquisition phase may
-hydrate them before baseline capture through pinned, checksum-enforcing proxies
-or declared local fixture endpoints. Network `off` means no undeclared external
-egress; it does not prohibit supervisor-declared loopback fixtures. The first
-slice may accept repeated verified downloads rather than weakening provenance.
+from the immutable Project-base cache. Agent trials and verifier phases use
+independent writable caches. After trusted preparation, verifier phases may
+read its checksum-backed Go module archives as a local proxy and copy required
+modules into their own private caches; missing modules fall through to the
+declared upstream. This avoids repeated network downloads without letting a
+candidate write state consumed by another verifier phase. A trusted
+dependency-acquisition phase may likewise hydrate private caches before
+baseline capture through pinned, checksum-enforcing proxies or declared local
+fixture endpoints. Network `off` means no undeclared external egress; it does
+not prohibit supervisor-declared loopback fixtures.
 
-Later seed support is opt-in per tool and requires a tool-specific
+Other seed support is opt-in per tool and requires a tool-specific
 immutability, writable-overlay, corruption, and performance contract. A generic
 directory overlay is not assumed to work for Go, npm, pnpm, and yarn.
 
