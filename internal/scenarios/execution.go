@@ -3,12 +3,15 @@ package scenarios
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"go/format"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 // scenarioWorkspace owns the isolated directory lifecycle for one executable scenario.
 type scenarioWorkspace struct {
 	root        string
+	toolRoot    string
 	removeAfter bool
 }
 
@@ -33,6 +37,7 @@ type scenarioExecution struct {
 	workspace   scenarioWorkspace
 	forjExec    string
 	tools       map[string]string
+	toolDigest  string
 	environment []string
 }
 
@@ -46,7 +51,11 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 	if !ok {
 		return fmt.Errorf("scenario plan %q is unavailable", spec.ID)
 	}
-	tools, _, err := resolveScenarioPlanTools(forjExec, options.Environment, plan, true)
+	environment := append([]string(nil), options.Environment...)
+	if environment == nil {
+		environment = scenarioProcessEnv()
+	}
+	tools, toolDigest, err := resolveScenarioPlanTools(forjExec, environment, plan, true)
 	if err != nil {
 		return err
 	}
@@ -60,7 +69,12 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 		workspace:   workspace,
 		forjExec:    forjExec,
 		tools:       tools,
-		environment: append([]string(nil), options.Environment...),
+		toolDigest:  toolDigest,
+		environment: environment,
+	}
+	execution, err = execution.snapshotTools()
+	if err != nil {
+		return workspace.cleanupAfter(err)
 	}
 	console.Actionf("scenario %s", spec.ID)
 	runErr := workspace.cleanupAfter(execution.run(plan))
@@ -86,6 +100,9 @@ func (execution scenarioExecution) run(plan scenarioPlan) error {
 
 // execute stops at the one explicit preparation boundary instead of maintaining separate stage interpreters.
 func (execution scenarioExecution) execute(plan scenarioPlan, includeTarget bool) error {
+	if err := execution.contextErr(); err != nil {
+		return err
+	}
 	if err := writeScenarioProjectConfig(execution.workspace.root, plan.spec); err != nil {
 		return err
 	}
@@ -134,12 +151,15 @@ func createScenarioWorkspace(options ValidateOptions, spec ScenarioSpec) (scenar
 
 // cleanupAfter removes an owned temporary workspace while retaining both scenario and cleanup failures for diagnosis.
 func (workspace scenarioWorkspace) cleanupAfter(runErr error) error {
-	if !workspace.removeAfter {
-		return runErr
+	var cleanupErr error
+	if workspace.removeAfter {
+		cleanupErr = removeScenarioTree(workspace.root)
 	}
-	if err := removeScenarioTree(workspace.root); err != nil {
-		cleanupErr := fmt.Errorf("remove temporary scenario workspace %q: %w", workspace.root, err)
-		return errors.Join(runErr, cleanupErr)
+	if workspace.toolRoot != "" {
+		cleanupErr = errors.Join(cleanupErr, removeScenarioTree(workspace.toolRoot))
+	}
+	if cleanupErr != nil {
+		return errors.Join(runErr, fmt.Errorf("remove temporary scenario workspace %q: %w", workspace.root, cleanupErr))
 	}
 	return runErr
 }
@@ -147,6 +167,9 @@ func (workspace scenarioWorkspace) cleanupAfter(runErr error) error {
 // applyPlannedSteps preserves owner metadata while executing one immutable plan stage.
 func (execution scenarioExecution) applyPlannedSteps(scenarioID, stage string, steps []plannedScenarioStep) error {
 	for _, planned := range steps {
+		if err := execution.contextErr(); err != nil {
+			return err
+		}
 		if err := execution.applyStep(planned.spec, planned.step); err != nil {
 			return fmt.Errorf("%s %s %s step %q: %w", scenarioID, stage, planned.spec.ID, planned.step.Title, err)
 		}
@@ -157,6 +180,9 @@ func (execution scenarioExecution) applyPlannedSteps(scenarioID, stage string, s
 // runChecks applies one check stage without exposing whether execution is full or prefix-only to the command runner.
 func (execution scenarioExecution) runChecks(commands []ScenarioCommand, label string) error {
 	for _, command := range commands {
+		if err := execution.contextErr(); err != nil {
+			return err
+		}
 		if err := execution.runCommand(command, label); err != nil {
 			return err
 		}
@@ -196,6 +222,9 @@ func scenarioProjectConfig(spec ScenarioSpec) project.Config {
 
 // applyStep preserves the declared action order because later scenario edits can depend on earlier generated content.
 func (execution scenarioExecution) applyStep(spec ScenarioSpec, step ScenarioStep) error {
+	if err := execution.contextErr(); err != nil {
+		return err
+	}
 	if step.Write != nil {
 		if err := execution.writeFile(spec, *step.Write); err != nil {
 			return err
@@ -221,6 +250,9 @@ func (execution scenarioExecution) applyStep(spec ScenarioSpec, step ScenarioSte
 
 // writeFile formats valid Go sources so executable examples remain stable across generated documentation and tests.
 func (execution scenarioExecution) writeFile(spec ScenarioSpec, change ScenarioFileChange) error {
+	if err := execution.contextErr(); err != nil {
+		return err
+	}
 	path, err := execution.workspace.path(change.Path)
 	if err != nil {
 		return err
@@ -241,6 +273,9 @@ func (execution scenarioExecution) writeFile(spec ScenarioSpec, change ScenarioF
 
 // appendFile preserves existing generated content for scenario steps that intentionally extend a file.
 func (execution scenarioExecution) appendFile(spec ScenarioSpec, change ScenarioFileChange) error {
+	if err := execution.contextErr(); err != nil {
+		return err
+	}
 	path, err := execution.workspace.path(change.Path)
 	if err != nil {
 		return err
@@ -264,6 +299,9 @@ func appendAndCloseScenarioFile(file io.WriteCloser, content []byte) error {
 
 // replaceText requires an exact old value so template drift cannot silently produce an incomplete scenario.
 func (execution scenarioExecution) replaceText(spec ScenarioSpec, change ScenarioReplace) error {
+	if err := execution.contextErr(); err != nil {
+		return err
+	}
 	path, err := execution.workspace.path(change.Path)
 	if err != nil {
 		return err
@@ -305,6 +343,9 @@ func (workspace scenarioWorkspace) path(relative string) (string, error) {
 
 // runCommand substitutes the current Forj executable so scenarios validate the build under test rather than an installed release.
 func (execution scenarioExecution) runCommand(command ScenarioCommand, label string) error {
+	if err := execution.contextErr(); err != nil {
+		return err
+	}
 	if len(command.Run) == 0 {
 		return fmt.Errorf("command is required")
 	}
@@ -327,7 +368,7 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 	if len(environment) == 0 {
 		environment = scenarioProcessEnv()
 	}
-	var output scenarioOutputBuffer
+	output := newScenarioOutputBuffer(command.Contains)
 	supervisor := devwatch.NewSupervisor(devwatch.SupervisorOptions{})
 	defer supervisor.Close()
 	_, err := supervisor.Run(ctx, "scenario command", devwatch.Command{
@@ -349,7 +390,7 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 		}
 		return fmt.Errorf("%s: %w\n%s", strings.Join(command.Run, " "), err, text)
 	}
-	for _, expected := range command.Contains {
+	for _, expected := range output.missingContains() {
 		if !strings.Contains(output.String(), expected) {
 			return fmt.Errorf("%s: output missing %q\n%s", strings.Join(command.Run, " "), expected, output.String())
 		}
@@ -361,10 +402,33 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 type scenarioOutputBuffer struct {
 	buffer    bytes.Buffer
 	truncated bool
+	wanted    map[string]bool
+	found     map[string]bool
+	tail      []byte
+	tailLimit int
+}
+
+// newScenarioOutputBuffer retains bounded diagnostics while observing required output across the complete stream.
+func newScenarioOutputBuffer(contains []string) scenarioOutputBuffer {
+	output := scenarioOutputBuffer{wanted: make(map[string]bool, len(contains)), found: make(map[string]bool, len(contains))}
+	for _, expected := range contains {
+		if expected == "" {
+			continue
+		}
+		output.wanted[expected] = true
+		if len(expected) > output.tailLimit {
+			output.tailLimit = len(expected)
+		}
+	}
+	if output.tailLimit > 0 {
+		output.tailLimit--
+	}
+	return output
 }
 
 // Write retains at most the scenario diagnostic limit to prevent a failed command exhausting runner memory.
 func (buffer *scenarioOutputBuffer) Write(content []byte) (int, error) {
+	buffer.observe(content)
 	remaining := scenarioCommandOutputLimit - buffer.buffer.Len()
 	if remaining <= 0 {
 		buffer.truncated = true
@@ -377,6 +441,40 @@ func (buffer *scenarioOutputBuffer) Write(content []byte) (int, error) {
 	}
 	_, _ = buffer.buffer.Write(content)
 	return len(content), nil
+}
+
+// observe tracks expected fragments independently from the bounded diagnostic retention buffer.
+func (buffer *scenarioOutputBuffer) observe(content []byte) {
+	if len(buffer.wanted) == 0 {
+		return
+	}
+	joined := make([]byte, len(buffer.tail)+len(content))
+	copy(joined, buffer.tail)
+	copy(joined[len(buffer.tail):], content)
+	for expected := range buffer.wanted {
+		if !buffer.found[expected] && bytes.Contains(joined, []byte(expected)) {
+			buffer.found[expected] = true
+		}
+	}
+	if buffer.tailLimit == 0 {
+		buffer.tail = nil
+		return
+	}
+	if len(joined) > buffer.tailLimit {
+		joined = joined[len(joined)-buffer.tailLimit:]
+	}
+	buffer.tail = append(buffer.tail[:0], joined...)
+}
+
+// missingContains returns expected stream fragments that were never observed.
+func (buffer *scenarioOutputBuffer) missingContains() []string {
+	missing := make([]string, 0, len(buffer.wanted))
+	for expected := range buffer.wanted {
+		if !buffer.found[expected] {
+			missing = append(missing, expected)
+		}
+	}
+	return missing
 }
 
 // String makes truncation visible in diagnostics without changing command success semantics.
@@ -393,10 +491,116 @@ func scenarioEnvironmentMap(environment []string) map[string]string {
 	for _, entry := range environment {
 		key, value, ok := strings.Cut(entry, "=")
 		if ok {
-			values[key] = value
+			values[scenarioEnvironmentKey(key)] = value
 		}
 	}
 	return values
+}
+
+// scenarioEnvironmentKey mirrors Windows process lookup, where environment variable names are case-insensitive.
+func scenarioEnvironmentKey(key string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(key)
+	}
+	return key
+}
+
+// contextErr keeps file actions from continuing after their caller has cancelled the evaluation.
+func (execution scenarioExecution) contextErr() error {
+	if execution.context == nil {
+		return nil
+	}
+	return execution.context.Err()
+}
+
+// snapshotTools copies already-resolved executables into the owned workspace so PATH changes or in-place replacements cannot alter execution.
+func (execution scenarioExecution) snapshotTools() (scenarioExecution, error) {
+	if err := execution.contextErr(); err != nil {
+		return scenarioExecution{}, err
+	}
+	root, err := os.MkdirTemp("", "forj-scenario-tools-")
+	if err != nil {
+		return scenarioExecution{}, fmt.Errorf("create scenario tool root: %w", err)
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = removeScenarioTree(root)
+		}
+	}()
+	execution.workspace.toolRoot = root
+	tools := make(map[string]string, len(execution.tools))
+	digests := make(map[string]string, len(execution.tools))
+	for name, source := range execution.tools {
+		if err := execution.contextErr(); err != nil {
+			return scenarioExecution{}, err
+		}
+		if err := validateScenarioToolName(name); err != nil {
+			return scenarioExecution{}, err
+		}
+		destination := filepath.Join(root, name+filepath.Ext(source))
+		if err := copyScenarioExecutable(source, destination); err != nil {
+			return scenarioExecution{}, fmt.Errorf("snapshot tool %q: %w", name, err)
+		}
+		tools[name] = destination
+		_, digest, err := resolveScenarioExecutable(destination)
+		if err != nil {
+			return scenarioExecution{}, fmt.Errorf("verify tool %q snapshot: %w", name, err)
+		}
+		digests[name] = digest
+	}
+	if execution.toolDigest != "" && execution.toolDigest != digestScenarioTools(digests) {
+		return scenarioExecution{}, fmt.Errorf("scenario tool bytes changed before execution")
+	}
+	execution.tools = tools
+	if forj := tools["forj"]; forj != "" {
+		execution.forjExec = forj
+	}
+	success = true
+	return execution, nil
+}
+
+// digestScenarioTools uses the same stable name-and-byte identity as preparation resolution.
+func digestScenarioTools(tools map[string]string) string {
+	identities := make([]string, 0, len(tools))
+	for name, digest := range tools {
+		identities = append(identities, name+"\x00"+digest)
+	}
+	sort.Strings(identities)
+	hash := sha256.New()
+	for _, identity := range identities {
+		fmt.Fprintf(hash, "%s\x00", identity)
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil))
+}
+
+// validateScenarioToolName keeps tool snapshots beneath their owned directory on every supported host.
+func validateScenarioToolName(name string) error {
+	if name == "" || strings.ContainsAny(name, `/\\`) || filepath.Base(name) != name {
+		return fmt.Errorf("invalid scenario tool name %q", name)
+	}
+	return nil
+}
+
+// copyScenarioExecutable verifies the selected regular file as it is copied and makes the private snapshot executable.
+func copyScenarioExecutable(source, destination string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%q is not a regular file", source)
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		return errors.Join(err, input.Close())
+	}
+	_, copyErr := io.Copy(output, input)
+	return errors.Join(copyErr, input.Close(), output.Close())
 }
 
 // scenarioProcessEnv isolates Go caches so scenario subprocesses do not depend on a developer's global cache state.

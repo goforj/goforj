@@ -1,6 +1,7 @@
 package scenarios
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -183,6 +184,87 @@ func TestScenarioOutputBufferBoundsDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(buffer.String(), "output truncated") {
 		t.Fatalf("bounded output did not identify truncation: %q", buffer.String())
+	}
+}
+
+// TestScenarioOutputBufferFindsRequiredTextBeyondRetainedDiagnostics keeps successful checks independent from diagnostic truncation.
+func TestScenarioOutputBufferFindsRequiredTextBeyondRetainedDiagnostics(t *testing.T) {
+	buffer := newScenarioOutputBuffer([]string{"complete marker", "across chunks"})
+	if _, err := buffer.Write([]byte(strings.Repeat("x", scenarioCommandOutputLimit+16))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buffer.Write([]byte("complete marker across ")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buffer.Write([]byte("chunks")); err != nil {
+		t.Fatal(err)
+	}
+	if missing := buffer.missingContains(); len(missing) != 0 {
+		t.Fatalf("missing streamed output = %q", missing)
+	}
+}
+
+// TestSnapshotToolsUsesPrivateCopies prevents later source replacement from changing the executable bytes selected for a scenario.
+func TestSnapshotToolsUsesPrivateCopies(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "forj")
+	if err := os.WriteFile(source, []byte("selected bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := (scenarioExecution{
+		workspace: scenarioWorkspace{root: t.TempDir(), removeAfter: true},
+		tools:     map[string]string{"forj": source},
+	}).snapshotTools()
+	if err != nil {
+		t.Fatalf("snapshotTools(): %v", err)
+	}
+	t.Cleanup(func() { _ = execution.workspace.cleanupAfter(nil) })
+	if err := os.WriteFile(source, []byte("replacement bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(execution.tools["forj"])
+	if err != nil || string(body) != "selected bytes" {
+		t.Fatalf("private tool bytes = %q, %v", body, err)
+	}
+	if execution.forjExec != execution.tools["forj"] {
+		t.Fatalf("forj executable = %q, want private snapshot %q", execution.forjExec, execution.tools["forj"])
+	}
+}
+
+// TestSnapshotToolsRejectsReplacementAfterResolution ensures the immutable copy is checked against the tool identity embedded in the plan.
+func TestSnapshotToolsRejectsReplacementAfterResolution(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "forj")
+	if err := os.WriteFile(source, []byte("selected bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, digest, err := resolveScenarioExecutable(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("replacement bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = (scenarioExecution{
+		workspace:  scenarioWorkspace{root: t.TempDir(), removeAfter: true},
+		tools:      map[string]string{"forj": source},
+		toolDigest: digestScenarioTools(map[string]string{"forj": digest}),
+	}).snapshotTools()
+	if err == nil || !strings.Contains(err.Error(), "tool bytes changed") {
+		t.Fatalf("snapshotTools() error = %v, want changed-byte rejection", err)
+	}
+}
+
+// TestApplyStepStopsBeforeMutationAfterCancellation keeps cancellation from leaking partial candidate state between phases.
+func TestApplyStepStopsBeforeMutationAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := t.TempDir()
+	execution := scenarioExecution{context: ctx, workspace: scenarioWorkspace{root: root}}
+	err := execution.applyStep(ScenarioSpec{}, ScenarioStep{Write: &ScenarioFileChange{Path: "late.txt", Content: "late"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("applyStep() error = %v, want cancellation", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "late.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("cancelled step wrote a file: %v", statErr)
 	}
 }
 

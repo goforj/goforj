@@ -243,13 +243,13 @@ func normalizeScenarioV2Steps(path string, wires []scenarioStepV2) ([]ScenarioSt
 			actions++
 		}
 		if wire.Write != nil {
-			if err := validateScenarioFileChange(fieldPath+".write", *wire.Write); err != nil {
+			if err := validateScenarioFileChange(fieldPath+".write", *wire.Write, true); err != nil {
 				return nil, err
 			}
 			actions++
 		}
 		if wire.Append != nil {
-			if err := validateScenarioFileChange(fieldPath+".append", *wire.Append); err != nil {
+			if err := validateScenarioFileChange(fieldPath+".append", *wire.Append, false); err != nil {
 				return nil, err
 			}
 			actions++
@@ -311,14 +311,14 @@ func validateScenarioCommand(fieldPath string, arguments []string) error {
 }
 
 // validateScenarioFileChange rejects unsafe or malformed v2 source before a workspace exists.
-func validateScenarioFileChange(fieldPath string, change ScenarioFileChange) error {
+func validateScenarioFileChange(fieldPath string, change ScenarioFileChange, completeGoSource bool) error {
 	if err := validateScenarioFilePath(fieldPath+".path", change.Path); err != nil {
 		return err
 	}
 	if change.Content == "" {
 		return fmt.Errorf("%s.content is required", fieldPath)
 	}
-	if scenarioGoSource(change.Path, change.Language) {
+	if completeGoSource && scenarioGoSource(change.Path, change.Language) {
 		if _, err := format.Source([]byte(change.Content)); err != nil {
 			return fmt.Errorf("%s.content: invalid Go source: %w", fieldPath, err)
 		}
@@ -334,9 +334,6 @@ func validateScenarioReplace(fieldPath string, change ScenarioReplace) error {
 	if change.Old == "" {
 		return fmt.Errorf("%s.old is required", fieldPath)
 	}
-	if change.New == "" {
-		return fmt.Errorf("%s.new is required", fieldPath)
-	}
 	if change.Old == change.New {
 		return fmt.Errorf("%s.new must differ from old", fieldPath)
 	}
@@ -345,8 +342,8 @@ func validateScenarioReplace(fieldPath string, change ScenarioReplace) error {
 
 // validateScenarioFilePath uses slash semantics so external catalogs are safe on every host OS.
 func validateScenarioFilePath(fieldPath, value string) error {
-	clean := path.Clean(strings.ReplaceAll(strings.TrimSpace(value), `\\`, "/"))
-	volumePath := len(clean) >= 3 && ((clean[0] >= 'a' && clean[0] <= 'z') || (clean[0] >= 'A' && clean[0] <= 'Z')) && clean[1] == ':' && clean[2] == '/'
+	clean := path.Clean(strings.ReplaceAll(strings.TrimSpace(value), `\`, "/"))
+	volumePath := len(clean) >= 2 && ((clean[0] >= 'a' && clean[0] <= 'z') || (clean[0] >= 'A' && clean[0] <= 'Z')) && clean[1] == ':'
 	if clean == "." || clean == "" || strings.ContainsRune(clean, 0) || strings.HasPrefix(clean, "/") || volumePath || clean == ".." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("%s %q must be a relative path beneath the scenario root", fieldPath, value)
 	}
