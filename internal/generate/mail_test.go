@@ -306,16 +306,13 @@ func TestObserverChain(t *testing.T) {
 	runFixtureGoTest(t, root, "./internal/mail", "TestObserverChain", nil)
 }
 
-func TestGenerateMailFilesRejectsUnknownEnvVars(t *testing.T) {
+// TestGenerateMailFilesIgnoresUnknownEnvVars leaves similarly prefixed application settings unclaimed.
+func TestGenerateMailFilesIgnoresUnknownEnvVars(t *testing.T) {
 	t.Setenv("MAIL_DRIVER", "log")
 	t.Setenv("MAIL_RESND_API_KEY", "bad")
 
-	_, err := GenerateMailFiles(t.TempDir())
-	if err == nil {
-		t.Fatal("expected GenerateMailFiles to reject unknown mail env vars")
-	}
-	if !strings.Contains(err.Error(), "MAIL_RESND_API_KEY") {
-		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	if _, err := GenerateMailFiles(t.TempDir()); err != nil {
+		t.Fatalf("GenerateMailFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
 
