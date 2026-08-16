@@ -1,0 +1,65 @@
+schema_version: 2
+id: invoice-readiness-hook
+title: Invoice Readiness Hook
+description: Add an App readiness check through the existing lifecycle registry.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Add an application-owned readiness check without moving startup behavior into constructors or runtime bootstrap.
+  before: |
+    the App has invoice behavior and the generated empty lifecycle registry.
+  after: |
+    startup verifies invoice access through the lifecycle registry while honoring cancellation.
+  files:
+    - app/lifecycle.go
+  common_mistakes:
+    - Do not perform I/O in constructors.
+    - Do not replace the caller's context with a background context.
+steps:
+  - id: add-invoice-readiness-hook
+    title: Add invoice readiness
+    write:
+      path: app/lifecycle.go
+      language: go
+      content: |
+        // Package app owns application composition and lifecycle hooks.
+        package app
+
+        import (
+                "context"
+                "fmt"
+
+                "example.com/invoiceeval/internal/invoices"
+                "example.com/invoiceeval/internal/runtime"
+        )
+
+        // LifecycleRegistry owns application-specific startup and shutdown hooks.
+        type LifecycleRegistry struct {
+                invoices *invoices.Service
+        }
+
+        // NewLifecycleRegistry requires invoice behavior because readiness depends on that boundary.
+        func NewLifecycleRegistry(invoices *invoices.Service) *LifecycleRegistry {
+                return &LifecycleRegistry{invoices: invoices}
+        }
+
+        // Register adds application hooks to the shared runtime lifecycle.
+        func (registry *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
+                lifecycle.On(runtime.BeforeStartup, registry.BeforeStartup)
+        }
+
+        // BeforeStartup proves required invoice access before the App reports readiness.
+        func (registry *LifecycleRegistry) BeforeStartup(ctx context.Context) error {
+                if _, err := registry.invoices.Find(ctx, "readiness"); err != nil {
+                        return fmt.Errorf("check invoice readiness: %w", err)
+                }
+                return nil
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

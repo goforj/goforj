@@ -1749,7 +1749,7 @@ failure layered on every agent outcome.
 ## Initial Scenario Suite
 
 The promoted core suite should stay focused while covering the highest-leverage
-framework decisions. It currently contains 13 paired evaluations; adding a
+framework decisions. It currently contains 27 promoted evaluations; adding a
 surface requires a versioned workflow, semantic verifier, executable GoForj
 scenario, positive calibration, and a targeted mutant.
 
@@ -1834,6 +1834,30 @@ require trusted final-response capture. After the agent emits that response it
 must exit successfully without waiting for a user turn. The verifier checks the
 evidence-gathering budget and independently confirms the allowed no-mutation
 scope.
+
+### Application-shaped capstones
+
+`create-additional-app`, `build-json-api-feature`, `add-cached-repository`, `add-upload-workflow`,
+`publish-domain-event`, `dispatch-event-followup-job`, and
+`schedule-existing-job` promote the same cumulative scenario path published in
+the documentation. Together they measure whether an agent can compose
+generators, application services, repositories, named resources, lifecycle
+registration, event reactions, typed queued work, and scheduled dispatch
+without moving behavior into transport or infrastructure bootstrap.
+
+The additional-App case verifies Project topology directly; the six capstones
+do not replace the focused primitive evaluations. They test
+composition and boundary preservation, while the smaller evaluations retain
+more precise failure attribution. Their golden Projects and targeted mutants
+are calibration evidence until repeated live treatments are run; they must not
+be reported as completed comparative trials merely because their verifiers
+pass.
+
+Focused application-boundary cases cover decoded request validation, route
+middleware, database transactions, generated mail delivery, generated Auth
+composition, lifecycle readiness, and context-aware outbound HTTP. These cases
+keep high-risk boundaries independently attributable even when a capstone also
+touches the same framework area.
 
 ### Scripted clarification
 

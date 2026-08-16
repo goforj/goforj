@@ -1,0 +1,141 @@
+schema_version: 2
+id: invoice-token-middleware
+title: Invoice Token Middleware
+description: Protect an invoice route with application-owned middleware and resolved configuration.
+depends_on: [invoice-http-route]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Require a configured token around invoice routes without moving business behavior into middleware.
+  before: |
+    the invoice lookup route is public.
+  after: |
+    route composition applies a tested token policy whose configuration is resolved once by Wire.
+  files:
+    - internal/invoices/middleware.go
+    - internal/invoices/middleware_test.go
+    - internal/invoices/controller.go
+    - app/wire/inject_http_controllers_app.go
+steps:
+  - id: add-invoice-token-middleware
+    title: Add the route policy
+    write:
+      path: internal/invoices/middleware.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "net/http"
+
+                "github.com/goforj/web"
+        )
+
+        // RequireToken rejects requests without the configured invoice token.
+        func RequireToken(expected string) web.Middleware {
+                return func(next web.Handler) web.Handler {
+                        return func(request web.Context) error {
+                                if expected == "" || request.Request().Header.Get("X-Invoice-Token") != expected {
+                                        return request.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+                                }
+                                return next(request)
+                        }
+                }
+        }
+  - id: test-invoice-token-middleware
+    title: Prove rejected and accepted requests
+    write:
+      path: internal/invoices/middleware_test.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "net/http"
+                "net/http/httptest"
+                "testing"
+
+                "github.com/goforj/web"
+                "github.com/goforj/web/webtest"
+        )
+
+        // TestRequireToken proves the policy stops unauthorized requests and continues authorized ones.
+        func TestRequireToken(t *testing.T) {
+                tests := []struct {
+                        name       string
+                        expected   string
+                        token      string
+                        wantStatus int
+                }{
+                        {name: "missing token", expected: "invoice-secret", wantStatus: http.StatusUnauthorized},
+                        {name: "unconfigured policy", wantStatus: http.StatusUnauthorized},
+                        {name: "valid token", expected: "invoice-secret", token: "invoice-secret", wantStatus: http.StatusNoContent},
+                }
+                for _, test := range tests {
+                        t.Run(test.name, func(t *testing.T) {
+                                request := httptest.NewRequest(http.MethodGet, "/invoices/inv-42", nil)
+                                request.Header.Set("X-Invoice-Token", test.token)
+                                response := httptest.NewRecorder()
+                                context := webtest.NewContext(request, response, "/invoices/:id", nil)
+                                next := func(context web.Context) error {
+                                        return context.NoContent(http.StatusNoContent)
+                                }
+                                if err := RequireToken(test.expected)(next)(context); err != nil {
+                                        t.Fatalf("middleware: %v", err)
+                                }
+                                if response.Code != test.wantStatus {
+                                        t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+                                }
+                        })
+                }
+        }
+  - id: apply-invoice-token-middleware
+    title: Apply the policy at route composition
+    replace:
+      path: internal/invoices/controller.go
+      language: go
+      old: "type Controller struct {\n\tservice *Service\n}\n\n// NewController exposes the service dependency to the App Wire graph.\nfunc NewController(service *Service) *Controller {\n\treturn &Controller{service: service}\n}"
+      new: "type Controller struct {\n\tservice *Service\n\ttoken   string\n}\n\n// NewController exposes resolved HTTP policy and service dependencies to the App Wire graph.\nfunc NewController(service *Service, token string) *Controller {\n\treturn &Controller{service: service, token: token}\n}"
+  - id: wrap-invoice-route
+    title: Wrap the invoice route
+    replace:
+      path: internal/invoices/controller.go
+      language: go
+      old: 'web.NewRoute(http.MethodGet, "/invoices/:id", controller.Show),'
+      new: 'web.NewRoute(http.MethodGet, "/invoices/:id", controller.Show, RequireToken(controller.token)),'
+  - id: import-invoice-token-config
+    title: Import configuration at the provider boundary
+    replace:
+      path: app/wire/inject_http_controllers_app.go
+      language: go
+      old: "import (\n"
+      new: "import (\n\t\"github.com/goforj/env/v2\"\n"
+  - id: use-invoice-controller-provider
+    title: Use the configured controller provider
+    replace:
+      path: app/wire/inject_http_controllers_app.go
+      language: go
+      old: "\tinvoices.NewController,\n"
+      new: "\tprovideInvoiceController,\n"
+  - id: define-invoice-controller-provider
+    title: Resolve token configuration once
+    append:
+      path: app/wire/inject_http_controllers_app.go
+      language: go
+      content: |
+
+        // provideInvoiceController resolves transport policy once during App composition.
+        func provideInvoiceController(service *invoices.Service) *invoices.Controller {
+                return invoices.NewController(service, env.Get("INVOICE_HTTP_TOKEN", "invoice-secret"))
+        }
+checks:
+  - command: [go, test, ./internal/invoices]
+  - command: [forj, build]
+  - command: [forj, route:list]
+    contains: [/api/v1/invoices/:id]
