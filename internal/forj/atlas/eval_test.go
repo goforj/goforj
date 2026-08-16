@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -228,6 +229,16 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(toolsDir, tool)); err != nil {
 			t.Fatalf("snapshotted tool %q: %v", tool, err)
 		}
+	}
+}
+
+// TestEvaluationSupportToolsIncludeCodexInterpreter keeps script-based Codex launchers usable inside the fixed tool snapshot.
+func TestEvaluationSupportToolsIncludeCodexInterpreter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows Codex launcher does not use an env-resolved Node interpreter")
+	}
+	if !slices.Contains(evaluationSupportToolNames(), "node") {
+		t.Fatal("evaluation support tools omit the Codex Node interpreter")
 	}
 }
 
