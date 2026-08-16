@@ -312,7 +312,7 @@ func resolveScenarioTool(name string, environment []string) (string, string, err
 	pathValue := ""
 	for _, entry := range environment {
 		key, value, ok := strings.Cut(entry, "=")
-		if ok && key == "PATH" {
+		if ok && scenarioEnvironmentKey(key) == scenarioEnvironmentKey("PATH") {
 			pathValue = value
 			break
 		}
