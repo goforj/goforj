@@ -145,7 +145,7 @@ func testingDatabase(value string) string {
 	return value + "_testing"
 }
 
-// isFrameworkTestingKey identifies values whose test policy remains renderer-owned across synchronization.
+// isFrameworkTestingKey identifies values whose test policy remains framework-owned across synchronization.
 func isFrameworkTestingKey(key string) bool {
 	normalized := strings.ToUpper(strings.TrimSpace(key))
 	for _, prefix := range []string{

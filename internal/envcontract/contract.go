@@ -149,7 +149,7 @@ func Initialize(root string) (bool, error) {
 	return true, nil
 }
 
-// SetLocal stores one prompted local value privately and refreshes its safe committed contract entry.
+// SetLocal stores one prompted local value privately so the next generation lifecycle can publish its safe contract entry.
 func SetLocal(root string, key string, value string) error {
 	key = strings.TrimSpace(key)
 	if !envfile.IsValidKey(key) {
@@ -175,9 +175,6 @@ func SetLocal(root string, key string, value string) error {
 	updated := []byte(strings.Join(lines, "\n"))
 	if err := writeAtomic(path, updated, 0o600, false); err != nil {
 		return fmt.Errorf("write %s: %w", localEnvironmentName, err)
-	}
-	if _, err := Sync(root); err != nil {
-		return err
 	}
 	return nil
 }
