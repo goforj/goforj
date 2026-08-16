@@ -209,7 +209,8 @@ func TestDecodeScenarioSpecV2RejectsInvalidContracts(t *testing.T) {
 		{name: "file traversal", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: write-file\n    title: Write file\n    write:\n      path: ../escape.txt\n      content: escape\n", wantErr: "steps[0].write.path \"../escape.txt\" must be a relative path"},
 		{name: "missing file body", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: write-file\n    title: Write file\n    write:\n      path: example.txt\n      content: ''\n", wantErr: "steps[0].write.content is required"},
 		{name: "invalid Go body", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: write-file\n    title: Write file\n    write:\n      path: example.go\n      content: 'package example\\nfunc Broken('\n", wantErr: "steps[0].write.content: invalid Go source"},
-		{name: "empty replacement", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: replace-file\n    title: Replace file\n    replace:\n      path: example.txt\n      old: old\n      new: ''\n", wantErr: "steps[0].replace.new is required"},
+		{name: "single backslash traversal", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: write-file\n    title: Write file\n    write:\n      path: ..\\escape.txt\n      content: escape\n", wantErr: "must be a relative path"},
+		{name: "windows drive path", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: write-file\n    title: Write file\n    write:\n      path: C:\\escape.txt\n      content: escape\n", wantErr: "must be a relative path"},
 		{name: "anchor", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - &step\n    id: add-route\n    title: Add route\n    command: [forj, build]\n", wantErr: "aliases and anchors are not supported"},
 		{name: "alias", body: "schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - &step\n    id: add-route\n    title: Add route\n    command: [forj, build]\n  - *step\n", wantErr: "aliases and anchors are not supported"},
 		{name: "merge key", body: "schema_version: 2\nid: example\ntitle: Example\nprepare: &base {}\n<<: *base\n", wantErr: "YAML merge keys are not supported"},
@@ -223,6 +224,17 @@ func TestDecodeScenarioSpecV2RejectsInvalidContracts(t *testing.T) {
 				t.Fatalf("decodeScenarioSpec() error = %v, want %q", err, test.wantErr)
 			}
 		})
+	}
+}
+
+// TestDecodeScenarioSpecV2AllowsFragmentGoAppendAndEmptyReplacement keeps real source edits concise without weakening whole-file writes.
+func TestDecodeScenarioSpecV2AllowsFragmentGoAppendAndEmptyReplacement(t *testing.T) {
+	spec, err := decodeScenarioSpec([]byte("schema_version: 2\nid: example\ntitle: Example\nsteps:\n  - id: append-route\n    title: Append route\n    append:\n      path: route.go\n      content: '\\nfunc Route() {}\\n'\n  - id: remove-marker\n    title: Remove marker\n    replace:\n      path: route.go\n      old: marker\n      new: ''\n"))
+	if err != nil {
+		t.Fatalf("decodeScenarioSpec(): %v", err)
+	}
+	if spec.Steps[0].Append == nil || spec.Steps[1].Replace == nil || spec.Steps[1].Replace.New != "" {
+		t.Fatalf("normalized source edits = %#v", spec.Steps)
 	}
 }
 
@@ -576,6 +588,37 @@ steps:
 	}
 	if _, statErr := os.Stat(workRoot); !os.IsNotExist(statErr) {
 		t.Fatalf("changed plan mutated workspace: %v", statErr)
+	}
+}
+
+// TestPrepareRejectsChangedResolvedToolsBeforeMutation keeps the execution bytes bound to the toolchain identity selected by the caller.
+func TestPrepareRejectsChangedResolvedToolsBeforeMutation(t *testing.T) {
+	specDir := t.TempDir()
+	writeScenarioSpecFixture(t, specDir, "live.yaml", `schema_version: 2
+id: live
+title: Live
+steps:
+  - id: target
+    title: Target
+    write:
+      path: target.txt
+      content: target
+`)
+	workRoot := filepath.Join(t.TempDir(), "work")
+	_, err := Prepare(context.Background(), PrepareOptions{
+		Logger:             logger.NewSilentLogger(),
+		SpecDir:            specDir,
+		WorkDir:            workRoot,
+		ScenarioID:         "live",
+		ForjExec:           os.Args[0],
+		Environment:        os.Environ(),
+		ExpectedToolDigest: "sha256:stale",
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolved scenario tools changed") {
+		t.Fatalf("Prepare() error = %v, want changed-tool rejection", err)
+	}
+	if _, statErr := os.Stat(workRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("changed tools mutated workspace: %v", statErr)
 	}
 }
 
