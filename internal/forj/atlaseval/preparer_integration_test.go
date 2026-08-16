@@ -275,9 +275,18 @@ type majorSurfaceVerifierCase struct {
 	old         string
 	mutant      string
 	additional  []evaluationMutation
+	behavior    *evaluationBehaviorMutation
 	alternates  []evaluationFileMutation
 	wantFailed  string
 	wantCompile bool
+}
+
+// evaluationBehaviorMutation preserves structural evidence while violating the supervisor-owned runtime oracle.
+type evaluationBehaviorMutation struct {
+	path       string
+	old        string
+	mutant     string
+	wantFailed string
 }
 
 // evaluationMutation completes a compiling semantic mutant when one replacement cannot preserve source validity.
@@ -392,12 +401,38 @@ func TestAddNamedStorageVerifierCalibration(t *testing.T) {
 
 // TestChooseStorageForFilesVerifierCalibration proves an inferred durable file category uses its purpose-named accessor.
 func TestChooseStorageForFilesVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "choose-storage-for-files", scenario: "invoice-attachments", path: "internal/invoices/attachments.go", old: "manager.Attachments()", mutant: "manager.Default()", wantFailed: "attachment-service-boundary"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "choose-storage-for-files",
+		scenario:   "invoice-attachments",
+		path:       "internal/invoices/attachments.go",
+		old:        "manager.Attachments()",
+		mutant:     "manager.Default()",
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/attachments.go",
+			old:        "return body, nil",
+			mutant:     "return append(body, '!'), nil",
+			wantFailed: "attachment-storage-behavior",
+		},
+		wantFailed: "attachment-service-boundary",
+	})
 }
 
 // TestServeCacheableImageVerifierCalibration proves a successful image response retains conditional revalidation.
 func TestServeCacheableImageVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "serve-cacheable-image", scenario: "cacheable-avatar-response", path: "internal/avatars/controller.go", old: `"If-None-Match"`, mutant: `"X-Ignored-Validator"`, wantFailed: "avatar-revalidation"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "serve-cacheable-image",
+		scenario:   "cacheable-avatar-response",
+		path:       "internal/avatars/controller.go",
+		old:        `"If-None-Match"`,
+		mutant:     `"X-Ignored-Validator"`,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/avatars/controller.go",
+			old:        "return request.NoContent(http.StatusNotModified)",
+			mutant:     "return request.NoContent(http.StatusOK)",
+			wantFailed: "avatar-revalidation-behavior",
+		},
+		wantFailed: "avatar-revalidation",
+	})
 }
 
 // TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set.
@@ -421,7 +456,20 @@ func TestBuildJSONAPIFeatureVerifierCalibration(t *testing.T) {
 
 // TestAddCachedRepositoryVerifierCalibration proves cache-aside lookup uses the requested named cache.
 func TestAddCachedRepositoryVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-cached-repository", scenario: "cached-user-profile", path: "app/wire/inject_services_app.go", old: "manager.Profiles()", mutant: "manager.Default()", wantFailed: "profiles-cache-registration"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-cached-repository",
+		scenario:   "cached-user-profile",
+		path:       "app/wire/inject_services_app.go",
+		old:        "manager.Profiles()",
+		mutant:     "manager.Default()",
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/users/repository.go",
+			old:        "cache.Set(cacheForRequest, key, user, profileCacheTTL)",
+			mutant:     `cache.Set(cacheForRequest, "wrong:"+key, user, profileCacheTTL)`,
+			wantFailed: "cache-aside-behavior",
+		},
+		wantFailed: "profiles-cache-registration",
+	})
 }
 
 // TestAddUploadWorkflowVerifierCalibration proves upload storage resolves through the requested named disk.
@@ -474,12 +522,18 @@ func TestAddOutboundHTTPIntegrationVerifierCalibration(t *testing.T) {
 // TestAddValidatedWriteEndpointVerifierCalibration proves valid invoice creation preserves request cancellation.
 func TestAddValidatedWriteEndpointVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-		evaluation:  "add-validated-write-endpoint",
-		scenario:    "create-invoice-validation",
-		path:        "internal/invoices/controller.go",
-		old:         "controller.service.Create(request.Context(), input)",
-		mutant:      "controller.service.Create(context.Background(), input)",
-		additional:  []evaluationMutation{{old: `"errors"`, mutant: "\"context\"\n\t\"errors\""}},
+		evaluation: "add-validated-write-endpoint",
+		scenario:   "create-invoice-validation",
+		path:       "internal/invoices/controller.go",
+		old:        "controller.service.Create(request.Context(), input)",
+		mutant:     "controller.service.Create(context.Background(), input)",
+		additional: []evaluationMutation{{old: `"errors"`, mutant: "\"context\"\n\t\"errors\""}},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/controller.go",
+			old:        "return request.JSON(http.StatusCreated, invoice)",
+			mutant:     "return request.JSON(http.StatusOK, invoice)",
+			wantFailed: "invoice-validation-behavior",
+		},
 		wantFailed:  "validated-request-boundary",
 		wantCompile: true,
 	})
@@ -492,7 +546,21 @@ func TestAddRouteMiddlewareVerifierCalibration(t *testing.T) {
 
 // TestAddDatabaseTransactionVerifierCalibration proves the transaction retains the caller's cancellation boundary.
 func TestAddDatabaseTransactionVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-database-transaction", scenario: "account-transfer-transaction", path: "internal/accounts/service.go", old: "service.accounts.WithTransaction(ctx,", mutant: "service.accounts.WithTransaction(context.Background(),", wantFailed: "atomic-transfer-service", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-database-transaction",
+		scenario:    "account-transfer-transaction",
+		path:        "internal/accounts/service.go",
+		old:         "service.accounts.WithTransaction(ctx,",
+		mutant:      "service.accounts.WithTransaction(context.Background(),",
+		wantFailed:  "atomic-transfer-service",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/accounts/service.go",
+			old:        "return accounts.AdjustBalance(ctx, toID, amountCents)",
+			mutant:     "return accounts.AdjustBalance(ctx, fromID, amountCents)",
+			wantFailed: "transaction-behavior",
+		},
+	})
 }
 
 // TestAddMailWorkflowVerifierCalibration proves delivery retains the caller's cancellation boundary.
@@ -621,6 +689,39 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	}
 	if !evaluationCheckFailed(mutantResult.Checks, test.wantFailed) {
 		t.Fatalf("mutant checks = %#v, want %q to fail", mutantResult.Checks, test.wantFailed)
+	}
+	if test.behavior != nil {
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatalf("restore structural mutant target: %v", err)
+		}
+		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior)
+	}
+}
+
+// verifyEvaluationBehaviorMutant proves the executable oracle catches a compiling implementation with valid structural evidence.
+func verifyEvaluationBehaviorMutant(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot string, mutation evaluationBehaviorMutation) {
+	t.Helper()
+	path := filepath.Join(projectRoot, filepath.FromSlash(mutation.path))
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read behavior mutant target: %v", err)
+	}
+	if strings.Count(string(body), mutation.old) != 1 {
+		t.Fatalf("behavior mutant target %q count = %d", mutation.old, strings.Count(string(body), mutation.old))
+	}
+	mutant := strings.Replace(string(body), mutation.old, mutation.mutant, 1)
+	if err := os.WriteFile(path, []byte(mutant), 0o644); err != nil {
+		t.Fatalf("write behavior mutant: %v", err)
+	}
+	result, err := verifier.Verify(t.Context(), eval.VerificationInput{
+		ProjectRoot: projectRoot,
+		Changes:     evaluationProjectChanges(t, baselineRoot, projectRoot),
+	})
+	if err != nil {
+		t.Fatalf("Verify(behavior mutant): %v", err)
+	}
+	if result.FrameworkOutcome.Status != eval.EndpointFailed || !evaluationCheckFailed(result.Checks, mutation.wantFailed) {
+		t.Fatalf("behavior mutant outcome = %#v; checks = %#v; want %q to fail", result.FrameworkOutcome, result.Checks, mutation.wantFailed)
 	}
 }
 
