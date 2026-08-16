@@ -245,27 +245,73 @@ func TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies(t *testi
 	}
 }
 
-// TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants calibrates every promoted framework contract against executable GoForj scenarios.
-func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *testing.T) {
-	tests := []struct {
-		evaluation string
-		scenario   string
-		path       string
-		old        string
-		mutant     string
-	}{
-		{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)"},
-		{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string"},
-		{evaluation: "add-migration", scenario: "invoice-status-migration", path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", mutant: "-- Wrong migration"},
-		{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")"},
-		{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)"},
-		{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress"},
-		{evaluation: "add-named-app-route", scenario: "admin-audit-route", path: "internal/audits/controller.go", old: "/api/v1/audits", mutant: "/api/v1/wrong"},
-		{evaluation: "add-named-resource", scenario: "named-reports-queue", path: "internal/invoices/report_dispatcher.go", old: "manager.Reports()", mutant: "manager.Default()"},
-		{evaluation: "add-named-cache", scenario: "named-profiles-cache", path: "internal/invoices/profile_cache.go", old: "manager.Profiles()", mutant: "manager.Default()"},
-		{evaluation: "add-named-storage", scenario: "named-avatar-storage", path: "internal/invoices/avatar_storage.go", old: "manager.Avatars()", mutant: "manager.Default()"},
-		{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry"},
-	}
+// majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
+type majorSurfaceVerifierCase struct {
+	evaluation string
+	scenario   string
+	path       string
+	old        string
+	mutant     string
+}
+
+// TestAddAppCommandVerifierCalibration proves the App command contract accepts its golden Project and rejects lost cancellation.
+func TestAddAppCommandVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)"})
+}
+
+// TestAddJobVerifierCalibration proves the job contract requires its typed payload identity.
+func TestAddJobVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string"})
+}
+
+// TestAddMigrationVerifierCalibration proves the migration contract recognizes the generated connection-specific pair.
+func TestAddMigrationVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-migration", scenario: "invoice-status-migration", path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", mutant: "-- Wrong migration"})
+}
+
+// TestAddScheduleVerifierCalibration proves the schedule contract rejects work detached from its runtime context.
+func TestAddScheduleVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")"})
+}
+
+// TestAddEventSubscriberVerifierCalibration proves the subscriber contract rejects work detached from its event context.
+func TestAddEventSubscriberVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)"})
+}
+
+// TestCreateModelVerifierCalibration proves the model contract requires the database-derived field shape.
+func TestCreateModelVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress"})
+}
+
+// TestAddNamedAppRouteVerifierCalibration proves additional-App routing stays attached to the selected App.
+func TestAddNamedAppRouteVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-app-route", scenario: "admin-audit-route", path: "internal/audits/controller.go", old: "/api/v1/audits", mutant: "/api/v1/wrong"})
+}
+
+// TestAddNamedResourceVerifierCalibration proves named queues are resolved through their generated manager accessor.
+func TestAddNamedResourceVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-resource", scenario: "named-reports-queue", path: "internal/invoices/report_dispatcher.go", old: "manager.Reports()", mutant: "manager.Default()"})
+}
+
+// TestAddNamedCacheVerifierCalibration proves named caches are resolved through their generated manager accessor.
+func TestAddNamedCacheVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-cache", scenario: "named-profiles-cache", path: "internal/invoices/profile_cache.go", old: "manager.Profiles()", mutant: "manager.Default()"})
+}
+
+// TestAddNamedStorageVerifierCalibration proves named storage is resolved through its generated manager accessor.
+func TestAddNamedStorageVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-storage", scenario: "named-avatar-storage", path: "internal/invoices/avatar_storage.go", old: "manager.Avatars()", mutant: "manager.Default()"})
+}
+
+// TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set.
+func TestRepairWireProviderVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry"})
+}
+
+// testMajorSurfaceVerifierCalibration exercises one contract independently so the integration runner can shard the complete portfolio.
+func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) {
+	t.Helper()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	environment := testkit.IntegrationGoProcessEnv(t, nil)
 	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), environment, logger.NewAppLogger(), nil)
@@ -275,72 +321,68 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 	if err != nil {
 		t.Fatalf("NewRegistry(): %v", err)
 	}
-	for _, test := range tests {
-		t.Run(test.evaluation, func(t *testing.T) {
-			request := eval.PreparationRequest{
-				ScenarioID:      test.scenario,
-				DestinationRoot: filepath.Join(t.TempDir(), "project"),
-				ForjExecutable:  forjExecutable,
-				OrchestrationID: "calibration-" + test.evaluation,
-				Environment:     environment,
-			}
-			plan, err := preparer.Resolve(t.Context(), request)
-			if err != nil {
-				t.Fatalf("Resolve(): %v", err)
-			}
-			prepared, err := preparer.Prepare(t.Context(), request, plan)
-			if err != nil {
-				t.Fatalf("Prepare(): %v", err)
-			}
-			t.Cleanup(func() { _ = prepared.Close(context.Background()) })
-			workRoot := t.TempDir()
-			if err := scenarios.Validate(scenarios.ValidateOptions{Logger: logger.NewAppLogger(), WorkDir: workRoot, Keep: true, IDs: []string{test.scenario}, ForjExec: forjExecutable, Environment: environment}); err != nil {
-				t.Fatalf("build %s scenario: %v", test.scenario, err)
-			}
-			projectRoot := findEvaluationScenarioRoot(t, workRoot, test.scenario)
-			definition, err := eval.LoadPromotedDefinition(test.evaluation)
-			if err != nil {
-				t.Fatalf("LoadPromotedDefinition(): %v", err)
-			}
-			resolved, err := registry.Resolve(definition)
-			if err != nil {
-				t.Fatalf("Resolve(): %v", err)
-			}
-			changes := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
-			result, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: changes})
-			if err != nil {
-				t.Fatalf("Verify(): %v", err)
-			}
-			if result.FrameworkOutcome.Status != eval.EndpointPassed {
-				t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
-			}
-			path := filepath.Join(projectRoot, filepath.FromSlash(test.path))
-			if strings.ContainsAny(test.path, "*?[") {
-				matches, globErr := filepath.Glob(path)
-				if globErr != nil || len(matches) != 1 {
-					t.Fatalf("mutant target %q matches = %v, error = %v", test.path, matches, globErr)
-				}
-				path = matches[0]
-			}
-			body, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read mutant target: %v", err)
-			}
-			if strings.Count(string(body), test.old) != 1 {
-				t.Fatalf("mutant target %q count = %d", test.old, strings.Count(string(body), test.old))
-			}
-			mutant := strings.Replace(string(body), test.old, test.mutant, 1)
-			if err := os.WriteFile(path, []byte(mutant), 0o644); err != nil {
-				t.Fatalf("write mutant: %v", err)
-			}
-			mutantResult, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
-			if err != nil {
-				t.Fatalf("Verify(mutant): %v", err)
-			}
-			if mutantResult.FrameworkOutcome.Status != eval.EndpointFailed {
-				t.Fatalf("mutant outcome = %#v; checks = %#v", mutantResult.FrameworkOutcome, mutantResult.Checks)
-			}
-		})
+	request := eval.PreparationRequest{
+		ScenarioID:      test.scenario,
+		DestinationRoot: filepath.Join(t.TempDir(), "project"),
+		ForjExecutable:  forjExecutable,
+		OrchestrationID: "calibration-" + test.evaluation,
+		Environment:     environment,
+	}
+	plan, err := preparer.Resolve(t.Context(), request)
+	if err != nil {
+		t.Fatalf("Resolve(): %v", err)
+	}
+	prepared, err := preparer.Prepare(t.Context(), request, plan)
+	if err != nil {
+		t.Fatalf("Prepare(): %v", err)
+	}
+	t.Cleanup(func() { _ = prepared.Close(context.Background()) })
+	workRoot := t.TempDir()
+	if err := scenarios.Validate(scenarios.ValidateOptions{Logger: logger.NewAppLogger(), WorkDir: workRoot, Keep: true, IDs: []string{test.scenario}, ForjExec: forjExecutable, Environment: environment}); err != nil {
+		t.Fatalf("build %s scenario: %v", test.scenario, err)
+	}
+	projectRoot := findEvaluationScenarioRoot(t, workRoot, test.scenario)
+	definition, err := eval.LoadPromotedDefinition(test.evaluation)
+	if err != nil {
+		t.Fatalf("LoadPromotedDefinition(): %v", err)
+	}
+	resolved, err := registry.Resolve(definition)
+	if err != nil {
+		t.Fatalf("Resolve(): %v", err)
+	}
+	changes := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
+	result, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: changes})
+	if err != nil {
+		t.Fatalf("Verify(): %v", err)
+	}
+	if result.FrameworkOutcome.Status != eval.EndpointPassed {
+		t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
+	}
+	path := filepath.Join(projectRoot, filepath.FromSlash(test.path))
+	if strings.ContainsAny(test.path, "*?[") {
+		matches, globErr := filepath.Glob(path)
+		if globErr != nil || len(matches) != 1 {
+			t.Fatalf("mutant target %q matches = %v, error = %v", test.path, matches, globErr)
+		}
+		path = matches[0]
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read mutant target: %v", err)
+	}
+	if strings.Count(string(body), test.old) != 1 {
+		t.Fatalf("mutant target %q count = %d", test.old, strings.Count(string(body), test.old))
+	}
+	mutant := strings.Replace(string(body), test.old, test.mutant, 1)
+	if err := os.WriteFile(path, []byte(mutant), 0o644); err != nil {
+		t.Fatalf("write mutant: %v", err)
+	}
+	mutantResult, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
+	if err != nil {
+		t.Fatalf("Verify(mutant): %v", err)
+	}
+	if mutantResult.FrameworkOutcome.Status != eval.EndpointFailed {
+		t.Fatalf("mutant outcome = %#v; checks = %#v", mutantResult.FrameworkOutcome, mutantResult.Checks)
 	}
 }
 
