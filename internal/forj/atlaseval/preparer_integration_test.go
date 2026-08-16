@@ -14,6 +14,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/scenarios"
 	"github.com/goforj/goforj/internal/testkit"
+	"github.com/goforj/goforj/project"
 )
 
 // TestPreparerMaterializesInvoiceStartingState verifies the real CLI reaches a healthy target-free Project.
@@ -111,6 +112,67 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 		t.Fatalf("preparation warmed the candidate build cache: %v", entries)
 	} else if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("read candidate build cache: %v", err)
+	}
+}
+
+// TestPreparerMaterializesDurableGuidanceTreatment proves evaluation guidance uses the same render setting and managed marker retained by normal projects.
+func TestPreparerMaterializesDurableGuidanceTreatment(t *testing.T) {
+	workRoot := t.TempDir()
+	preparer := NewPreparer(filepath.Join(workRoot, "bases"), testkit.ProcessGoEnv("", nil), nil)
+	t.Cleanup(func() { _ = preparer.Close(context.Background()) })
+	request := eval.PreparationRequest{
+		ScenarioID:      "invoice-http-route",
+		DestinationRoot: filepath.Join(workRoot, "project"),
+		ForjExecutable:  testkit.EnsureIntegrationForjBinary(t),
+		OrchestrationID: "guidance-treatment",
+		Environment:     testkit.ProcessGoEnv("", nil),
+	}
+	plan, err := preparer.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := preparer.Prepare(context.Background(), request, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = prepared.Close(context.Background()) })
+	before := prepared.Result().BaselineTree
+	agents, err := preparer.MaterializeGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileAgents})
+	if err != nil {
+		t.Fatalf("MaterializeGuidance(agents): %v", err)
+	}
+	if string(agents.Files["AGENTS.md"]) == "" || !strings.Contains(string(agents.Files["AGENTS.md"]), "<!-- goforj-atlas:start -->") {
+		t.Fatalf("agents guidance did not retain managed marker: %q", agents.Files["AGENTS.md"])
+	}
+	config, err := project.LoadProjectConfigAt(prepared.Result().ProjectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Render.AgentGuidance != project.AgentGuidanceBaseline {
+		t.Fatalf("render agent guidance = %q, want baseline", config.Render.AgentGuidance)
+	}
+	if prepared.Result().BaselineTree != before {
+		t.Fatalf("guidance treatment changed pre-guidance preparation identity: %s != %s", prepared.Result().BaselineTree, before)
+	}
+	none, err := preparer.MaterializeGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileNone})
+	if err != nil {
+		t.Fatalf("MaterializeGuidance(none): %v", err)
+	}
+	if len(none.Files) != 0 {
+		t.Fatalf("none guidance files = %#v", none.Files)
+	}
+	config, err = project.LoadProjectConfigAt(prepared.Result().ProjectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Render.AgentGuidance != project.AgentGuidanceNone {
+		t.Fatalf("render agent guidance = %q, want none", config.Render.AgentGuidance)
+	}
+	content, err := os.ReadFile(filepath.Join(prepared.Result().ProjectRoot, "AGENTS.md"))
+	if err == nil && strings.Contains(string(content), "<!-- goforj-atlas:start -->") {
+		t.Fatalf("none treatment retained managed guidance: %s", content)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read none guidance: %v", err)
 	}
 }
 
