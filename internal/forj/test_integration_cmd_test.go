@@ -258,6 +258,7 @@ func TestMultiAppOnly(t *testing.T) {}
 		{packagePath: "example.com/discovery", name: "TestMultiAppOnly"},
 	})
 	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 6)
+	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 8)
 }
 
 // writeIntegrationDiscoveryFixture writes one Go discovery fixture inside a test-owned temporary module.
