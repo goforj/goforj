@@ -4,7 +4,9 @@ package atlaseval
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -265,6 +267,8 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 	}
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	environment := testkit.IntegrationGoProcessEnv(t, nil)
+	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), environment, logger.NewAppLogger(), nil)
+	t.Cleanup(func() { _ = preparer.Close(context.Background()) })
 	runner := eval.VerifierCommands{WorkRoot: t.TempDir(), ForjExecutable: forjExecutable, Environment: environment}
 	registry, err := eval.NewRegistry(eval.PromotedWorkflows(), eval.PromotedVerifiers(runner))
 	if err != nil {
@@ -272,6 +276,22 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 	}
 	for _, test := range tests {
 		t.Run(test.evaluation, func(t *testing.T) {
+			request := eval.PreparationRequest{
+				ScenarioID:      test.scenario,
+				DestinationRoot: filepath.Join(t.TempDir(), "project"),
+				ForjExecutable:  forjExecutable,
+				OrchestrationID: "calibration-" + test.evaluation,
+				Environment:     environment,
+			}
+			plan, err := preparer.Resolve(t.Context(), request)
+			if err != nil {
+				t.Fatalf("Resolve(): %v", err)
+			}
+			prepared, err := preparer.Prepare(t.Context(), request, plan)
+			if err != nil {
+				t.Fatalf("Prepare(): %v", err)
+			}
+			t.Cleanup(func() { _ = prepared.Close(context.Background()) })
 			workRoot := t.TempDir()
 			if err := scenarios.Validate(scenarios.ValidateOptions{Logger: logger.NewAppLogger(), WorkDir: workRoot, Keep: true, IDs: []string{test.scenario}, ForjExec: forjExecutable, Environment: environment}); err != nil {
 				t.Fatalf("build %s scenario: %v", test.scenario, err)
@@ -285,7 +305,8 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 			if err != nil {
 				t.Fatalf("Resolve(): %v", err)
 			}
-			result, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
+			changes := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
+			result, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: changes})
 			if err != nil {
 				t.Fatalf("Verify(): %v", err)
 			}
@@ -313,6 +334,97 @@ func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *te
 			}
 		})
 	}
+}
+
+// evaluationProjectChanges projects real prepared-to-golden file changes into the Atlas ownership contract.
+func evaluationProjectChanges(t *testing.T, baselineRoot string, finalRoot string) []eval.ProjectChange {
+	t.Helper()
+	baseline := evaluationFileStates(t, baselineRoot)
+	final := evaluationFileStates(t, finalRoot)
+	paths := make([]string, 0, len(baseline)+len(final))
+	seen := map[string]bool{}
+	for path := range baseline {
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	for path := range final {
+		if !seen[path] {
+			paths = append(paths, path)
+		}
+	}
+	slices.Sort(paths)
+	changes := make([]eval.ProjectChange, 0, len(paths))
+	for _, path := range paths {
+		before, hadBefore := baseline[path]
+		after, hasAfter := final[path]
+		if hadBefore && hasAfter && before == after {
+			continue
+		}
+		changes = append(changes, eval.ProjectChange{Path: path, Before: before, After: after})
+	}
+	return changes
+}
+
+// evaluationFileStates hashes files and symlink targets while ignoring directory metadata that carries no ownership signal.
+func evaluationFileStates(t *testing.T, root string) map[string]eval.ProjectPathState {
+	t.Helper()
+	states := map[string]eval.ProjectPathState{}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(filepath.ToSlash(relative), "_data/") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		kind := "file"
+		var body []byte
+		if entry.Type()&os.ModeSymlink != 0 {
+			kind = "symlink"
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			body = []byte(target)
+		} else {
+			body, err = os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+		}
+		body = normalizeEvaluationFixtureFile(filepath.ToSlash(relative), body)
+		digest := sha256.Sum256(body)
+		states[filepath.ToSlash(relative)] = eval.ProjectPathState{Kind: kind, Digest: fmt.Sprintf("sha256:%x", digest), Mode: uint32(info.Mode())}
+		return nil
+	}); err != nil {
+		t.Fatalf("snapshot %s: %v", root, err)
+	}
+	return states
+}
+
+// normalizeEvaluationFixtureFile removes independently rendered secret entropy without hiding candidate changes in live verification.
+func normalizeEvaluationFixtureFile(path string, body []byte) []byte {
+	if path != ".env" {
+		return body
+	}
+	lines := strings.Split(string(body), "\n")
+	for index, line := range lines {
+		key, _, ok := strings.Cut(line, "=")
+		if ok && (key == "APP_KEY" || key == "APP_DIAG_TOKEN" || strings.HasSuffix(key, "_SECRET")) {
+			lines[index] = key + "=<fixture-secret>"
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // TestUnknownFrameworkShapeCalibratesSafeAbstention proves the ambiguous fixture accepts a precise question and rejects speculative edits.
