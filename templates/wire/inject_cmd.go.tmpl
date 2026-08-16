@@ -31,6 +31,10 @@ var cmdSet = wire.NewSet(
 	{{.AppPackageName}}.NewCommands,
 	{{.AppPackageName}}.NewRootCmd,
 	cmd.NewAboutCmd,
+{{- if .Components.HasRuntime }}
+	cmd.NewDownCmd,
+	cmd.NewUpCmd,
+{{- end }}
 {{- if .Components.Cache }}
 	cmd.NewCacheShellCmd,
 {{- end }}

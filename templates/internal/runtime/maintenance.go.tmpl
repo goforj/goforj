@@ -1,0 +1,136 @@
+package runtime
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/goforj/env/v2"
+)
+
+const maintenanceRefreshInterval = 100 * time.Millisecond
+
+var maintenanceCache struct {
+	mu       sync.Mutex
+	snapshot atomic.Pointer[maintenanceSnapshot]
+}
+
+type maintenanceSnapshot struct {
+	path      string
+	enabled   bool
+	checkedAt time.Time
+}
+
+type maintenanceFile struct {
+	App       string    `json:"app"`
+	EnabledAt time.Time `json:"enabled_at"`
+}
+
+// MaintenanceEnabled reports whether the selected App is globally in maintenance mode.
+func MaintenanceEnabled() bool {
+	if env.GetBool("APP_MAINTENANCE_ENABLED", "false") {
+		return true
+	}
+	path := MaintenancePath()
+	now := time.Now()
+	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, path, now) {
+		return snapshot.enabled
+	}
+	maintenanceCache.mu.Lock()
+	defer maintenanceCache.mu.Unlock()
+	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, path, now) {
+		return snapshot.enabled
+	}
+	_, err := os.Stat(path)
+	snapshot := &maintenanceSnapshot{
+		path:      path,
+		enabled:   err == nil || !errors.Is(err, os.ErrNotExist),
+		checkedAt: now,
+	}
+	maintenanceCache.snapshot.Store(snapshot)
+	return snapshot.enabled
+}
+
+// maintenanceSnapshotFresh reports whether the lock-free observation remains valid for the selected App.
+func maintenanceSnapshotFresh(snapshot *maintenanceSnapshot, path string, now time.Time) bool {
+	return snapshot != nil && snapshot.path == path && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval
+}
+
+// MaintenancePath returns the App-scoped local state file used by down and up.
+func MaintenancePath() string {
+	appName := CurrentApp().Name
+	if appName == "" {
+		appName = "app"
+	}
+	return filepath.Join("_data", "runtime", appName, "maintenance.json")
+}
+
+// EnableMaintenance atomically publishes maintenance state for every runtime sharing the App data directory.
+func EnableMaintenance() error {
+	path := MaintenancePath()
+	if _, err := os.Stat(path); err == nil {
+		invalidateMaintenanceCache(path, true)
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(maintenanceFile{App: CurrentApp().Name, EnabledAt: time.Now().UTC()})
+	if err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".maintenance-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(append(payload, '\n')); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			invalidateMaintenanceCache(path, true)
+			return nil
+		}
+		return err
+	}
+	invalidateMaintenanceCache(path, true)
+	return nil
+}
+
+// DisableMaintenance removes command-managed state while preserving an environment-enforced deployment policy.
+func DisableMaintenance() error {
+	path := MaintenancePath()
+	err := os.Remove(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	invalidateMaintenanceCache(path, false)
+	return nil
+}
+
+// invalidateMaintenanceCache makes same-process commands and tests observe their writes immediately.
+func invalidateMaintenanceCache(path string, enabled bool) {
+	maintenanceCache.mu.Lock()
+	maintenanceCache.snapshot.Store(&maintenanceSnapshot{path: path, enabled: enabled, checkedAt: time.Now()})
+	maintenanceCache.mu.Unlock()
+}

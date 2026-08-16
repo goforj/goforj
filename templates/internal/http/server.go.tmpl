@@ -43,7 +43,6 @@ type Server struct {
 	spaAccessLogs      bool
 	spas               []Spa
 	appTimeouts        *runtime.Timeouts
-	maintenanceEnabled bool
 	maintenancePage    []byte
 {{- if .ProjectComponents.Storage }}
 	storage         *storages.Manager
@@ -74,11 +73,6 @@ func NewServer(
 	if componentLogger != nil {
 		componentLogger = componentLogger.WithComponent("HTTP")
 	}
-	maintenanceEnabled := env.GetBool("APP_MAINTENANCE_ENABLED", "false")
-	var maintenancePage []byte
-	if maintenanceEnabled {
-		maintenancePage = maintenanceHTML(env.Get("APP_NAME", "App"))
-	}
 	s := &Server{
 		logger:             componentLogger,
 		readinessChecks:    readinessChecks,
@@ -87,8 +81,7 @@ func NewServer(
 		spaAccessLogs:      env.GetBool("HTTP_SPA_ACCESS_LOG_ENABLED", "false"),
 		spas:               append([]Spa(nil), GetSpas()...),
 		appTimeouts:        appTimeouts,
-		maintenanceEnabled: maintenanceEnabled,
-		maintenancePage:    maintenancePage,
+		maintenancePage:    maintenanceHTML(env.Get("APP_NAME", "App")),
 {{- if .ProjectComponents.Storage }}
 		storage:         storage,
 {{- end }}
@@ -464,9 +457,7 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 		// http_exchange event is recorded before Log() finalizes the inspect.
 		router.Use(s.captureHTTPExchange())
 	}
-	if s.maintenanceEnabled {
-		router.Use(s.maintenanceMode())
-	}
+	router.Use(s.maintenanceMode())
 	return nil
 }
 
