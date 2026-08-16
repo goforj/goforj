@@ -3,6 +3,7 @@ package atlas
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -340,7 +341,7 @@ func loadOrCreateEvalArtifactKey(root string) ([]byte, error) {
 	return key, nil
 }
 
-// evaluationEnvironment gives both treatments identical private Go caches and disables workspace leakage.
+// evaluationEnvironment gives both treatments identical private Go caches and a fixed developer tool surface.
 func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 	goExecutable, err := exec.LookPath("go")
 	if err != nil {
@@ -358,20 +359,22 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 	if err := errors.Join(os.MkdirAll(goCache, 0o700), os.MkdirAll(moduleCache, 0o700), os.MkdirAll(goPath, 0o700), os.MkdirAll(home, 0o700), os.MkdirAll(toolsDir, 0o700)); err != nil {
 		return nil, err
 	}
-	if err := installEvaluationForj(toolsDir, forjExecutable); err != nil {
+	toolsDigest, err := installEvaluationTools(toolsDir, forjExecutable)
+	if err != nil {
 		return nil, err
 	}
 	overrides := map[string]string{
-		"GOCACHE":     goCache,
-		"GOENV":       "off",
-		"GOMODCACHE":  moduleCache,
-		"GOPATH":      goPath,
-		"GOPROXY":     "https://proxy.golang.org,direct",
-		"GOSUMDB":     "sum.golang.org",
-		"GOTOOLCHAIN": "local",
-		"GOWORK":      "off",
-		"HOME":        home,
-		"PATH":        toolsDir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
+		"GOCACHE":                 goCache,
+		"GOENV":                   "off",
+		"GOMODCACHE":              moduleCache,
+		"GOPATH":                  goPath,
+		"GOPROXY":                 "https://proxy.golang.org,direct",
+		"GOSUMDB":                 "sum.golang.org",
+		"GOTOOLCHAIN":             "local",
+		"GOWORK":                  "off",
+		"HOME":                    home,
+		"PATH":                    toolsDir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
+		"ATLAS_EVAL_TOOLS_DIGEST": toolsDigest,
 	}
 	base := baseEvaluationEnvironment()
 	environment := make([]string, 0, len(base)+len(overrides))
@@ -388,6 +391,36 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 		environment = append(environment, key+"="+value)
 	}
 	return environment, nil
+}
+
+// installEvaluationTools snapshots the small command surface agents need without exposing the supervisor's complete PATH.
+func installEvaluationTools(toolsDir, forjExecutable string) (string, error) {
+	hash := sha256.New()
+	forjDigest, err := installEvaluationTool(toolsDir, "forj", forjExecutable)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(hash, "forj\x00%s\x00", forjDigest)
+	for _, name := range evaluationSupportToolNames() {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			return "", fmt.Errorf("resolve evaluation tool %q: %w", name, err)
+		}
+		digest, err := installEvaluationTool(toolsDir, name, path)
+		if err != nil {
+			return "", fmt.Errorf("install evaluation tool %q: %w", name, err)
+		}
+		fmt.Fprintf(hash, "%s\x00%s\x00", name, digest)
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}
+
+// evaluationSupportToolNames keeps the diagnostic shell useful while making every available command an explicit harness decision.
+func evaluationSupportToolNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"wire"}
+	}
+	return []string{"bash", "cat", "git", "head", "ls", "sed", "wire"}
 }
 
 // baseEvaluationEnvironment retains only process settings needed by portable tools and excludes ambient credentials and user configuration.
@@ -408,23 +441,30 @@ func baseEvaluationEnvironment() []string {
 	return environment
 }
 
-// installEvaluationForj gives the agent one attempt-private PATH entry for the exact candidate binary.
-func installEvaluationForj(toolsDir, source string) error {
-	name := "forj"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
+// installEvaluationTool gives the agent an attempt-private executable without sharing a mutable source binary.
+func installEvaluationTool(toolsDir, name, source string) (string, error) {
+	if runtime.GOOS == "windows" && filepath.Ext(name) == "" {
+		extension := filepath.Ext(source)
+		if extension == "" {
+			extension = ".exe"
+		}
+		name += extension
 	}
 	destination := filepath.Join(toolsDir, name)
 	input, err := os.Open(source)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer input.Close()
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o500)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, copyErr := io.Copy(output, input)
+	hash := sha256.New()
+	_, copyErr := io.Copy(io.MultiWriter(output, hash), input)
 	closeErr := output.Close()
-	return errors.Join(copyErr, closeErr)
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
