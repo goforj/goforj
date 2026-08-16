@@ -16,6 +16,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/scheduler/v2"
 	"github.com/goforj/str/v2"
+	"{{.GoModuleName}}/internal/maintenance"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -146,7 +147,7 @@ maintenanceLoop:
 
 // syncMaintenancePause overlays maintenance state without clearing an independently paused scheduler.
 func syncMaintenancePause(engine *scheduler.Scheduler, owned bool) (bool, error) {
-	if runtime.MaintenanceEnabled() {
+	if maintenance.Enabled() {
 		if engine.IsPausedAll() {
 			return owned, nil
 		}
