@@ -2138,10 +2138,11 @@ Its core contract should include:
 - never manually edit `wire_gen.go`;
 - keep transport and composition thin;
 - place business behavior behind the owning application or domain boundary;
-- begin with one cohesive package for a responsibility and add a subpackage only
-  when it has a cohesive API that can stand on its own;
-- avoid category packages such as `services`, `handlers`, `models`, `types`, or
-  `utils` when they merely sort implementation files;
+- keep packages as flat, self-contained, and portable as practical, beginning
+  with one cohesive package for a responsibility;
+- add a subpackage only when it has a cohesive API that can stand on its own,
+  and avoid Java/PHP-style category nesting when it merely sorts implementation
+  files;
 - keep persistence behind a repository or equivalent port when persistence is
   part of the feature;
 - use the additional-App CLI prefix when applicable;
