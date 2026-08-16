@@ -35,14 +35,16 @@ import (
 
 // Server is a struct that represents an HTTP server.
 type Server struct {
-	logger          *logger.AppLogger
-	groups          []web.RouteGroup
-	readinessChecks []ReadinessCheck
-	consoleHub      *lighthouse.Hub
-	httpAccessLogs  bool
-	spaAccessLogs   bool
-	spas            []Spa
-	appTimeouts     *runtime.Timeouts
+	logger             *logger.AppLogger
+	groups             []web.RouteGroup
+	readinessChecks    []ReadinessCheck
+	consoleHub         *lighthouse.Hub
+	httpAccessLogs     bool
+	spaAccessLogs      bool
+	spas               []Spa
+	appTimeouts        *runtime.Timeouts
+	maintenanceEnabled bool
+	maintenancePage    []byte
 {{- if .ProjectComponents.Storage }}
 	storage         *storages.Manager
 {{- end }}
@@ -72,14 +74,21 @@ func NewServer(
 	if componentLogger != nil {
 		componentLogger = componentLogger.WithComponent("HTTP")
 	}
+	maintenanceEnabled := env.GetBool("APP_MAINTENANCE_ENABLED", "false")
+	var maintenancePage []byte
+	if maintenanceEnabled {
+		maintenancePage = maintenanceHTML(env.Get("APP_NAME", "App"))
+	}
 	s := &Server{
-		logger:          componentLogger,
-		readinessChecks: readinessChecks,
-		consoleHub:      consoleHub,
-		httpAccessLogs:  env.GetBool("HTTP_ACCESS_LOG_ENABLED", "true"),
-		spaAccessLogs:   env.GetBool("HTTP_SPA_ACCESS_LOG_ENABLED", "false"),
-		spas:            append([]Spa(nil), GetSpas()...),
-		appTimeouts:     appTimeouts,
+		logger:             componentLogger,
+		readinessChecks:    readinessChecks,
+		consoleHub:         consoleHub,
+		httpAccessLogs:     env.GetBool("HTTP_ACCESS_LOG_ENABLED", "true"),
+		spaAccessLogs:      env.GetBool("HTTP_SPA_ACCESS_LOG_ENABLED", "false"),
+		spas:               append([]Spa(nil), GetSpas()...),
+		appTimeouts:        appTimeouts,
+		maintenanceEnabled: maintenanceEnabled,
+		maintenancePage:    maintenancePage,
 {{- if .ProjectComponents.Storage }}
 		storage:         storage,
 {{- end }}
@@ -454,6 +463,9 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 		// Body dump must unwind before request logging so the captured
 		// http_exchange event is recorded before Log() finalizes the inspect.
 		router.Use(s.captureHTTPExchange())
+	}
+	if s.maintenanceEnabled {
+		router.Use(s.maintenanceMode())
 	}
 	return nil
 }

@@ -1,0 +1,123 @@
+package http
+
+import (
+	"fmt"
+	"html"
+	"net/http"
+	"strings"
+
+	"github.com/goforj/web"
+)
+
+const maintenanceHTMLTemplate = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>%s · Maintenance</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { align-items: center; background: #fafafa; color: #18181b; display: flex; justify-content: center; margin: 0; min-height: 100vh; padding: 1.5rem; }
+    main { max-width: 34rem; text-align: center; width: 100%%; }
+    .mark { align-items: center; background: #18181b; border-radius: 1rem; color: #fff; display: inline-flex; font-size: 1rem; font-weight: 750; height: 3.25rem; justify-content: center; letter-spacing: -.04em; margin-bottom: 1.75rem; width: 3.25rem; }
+    .eyebrow { color: #71717a; font-size: .75rem; font-weight: 700; letter-spacing: .12em; margin: 0 0 .75rem; text-transform: uppercase; }
+    h1 { font-size: clamp(2rem, 7vw, 3.25rem); letter-spacing: -.055em; line-height: 1.05; margin: 0; }
+    .message { color: #52525b; font-size: 1.05rem; line-height: 1.7; margin: 1.25rem auto 0; max-width: 28rem; }
+    .status { align-items: center; color: #71717a; display: inline-flex; font-size: .875rem; gap: .55rem; margin-top: 2rem; }
+    .dot { animation: pulse 1.8s ease-in-out infinite; background: #f59e0b; border-radius: 999px; height: .55rem; width: .55rem; }
+    @keyframes pulse { 50%% { opacity: .35; transform: scale(.85); } }
+    @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+    @media (prefers-color-scheme: dark) {
+      body { background: #09090b; color: #fafafa; }
+      .mark { background: #fafafa; color: #18181b; }
+      .eyebrow, .status { color: #a1a1aa; }
+      .message { color: #d4d4d8; }
+    }
+  </style>
+</head>
+<body>
+  <main role="status" aria-live="polite">
+    <div class="mark" aria-hidden="true">GF</div>
+    <p class="eyebrow">%s</p>
+    <h1>We&rsquo;ll be right back.</h1>
+    <p class="message">The application is temporarily unavailable while scheduled maintenance is underway.</p>
+    <div class="status"><span class="dot" aria-hidden="true"></span><span>Maintenance in progress</span></div>
+  </main>
+</body>
+</html>`
+
+// maintenanceHTML builds the browser response once at server startup while escaping the project-owned display name.
+func maintenanceHTML(appName string) []byte {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		appName = "Application"
+	}
+	escaped := html.EscapeString(appName)
+	return []byte(fmt.Sprintf(maintenanceHTMLTemplate, escaped, escaped))
+}
+
+// maintenanceMode blocks application traffic while leaving operational control surfaces reachable.
+func (s *Server) maintenanceMode() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			if maintenancePathAllowed(r) {
+				return next(r)
+			}
+			return s.maintenanceResponse(r)
+		}
+	}
+}
+
+// maintenancePathAllowed keeps planned downtime observable without exposing application routes.
+func maintenancePathAllowed(r web.Context) bool {
+	request := r.Request()
+	if request == nil || request.URL == nil {
+		return false
+	}
+	path := request.URL.Path
+	switch path {
+	case "/-/health", "/-/ready", "/metrics":
+		return true
+	default:
+		return strings.HasPrefix(path, "/lighthouse/")
+	}
+}
+
+// maintenanceResponse negotiates a stable machine response without making browser starter kits render API JSON.
+func (s *Server) maintenanceResponse(r web.Context) error {
+	r.SetHeader("Cache-Control", "no-store, max-age=0")
+	r.SetHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	r.SetHeader("Vary", "Accept")
+	r.SetHeader("X-Robots-Tag", "noindex, nofollow")
+	jsonResponse := maintenanceWantsJSON(r)
+	if r.Method() == http.MethodHead {
+		if jsonResponse {
+			r.SetHeader("Content-Type", "application/json; charset=UTF-8")
+		} else {
+			r.SetHeader("Content-Type", "text/html; charset=UTF-8")
+		}
+		return r.NoContent(http.StatusServiceUnavailable)
+	}
+	if jsonResponse {
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{
+			"ok":          false,
+			"error":       "service unavailable",
+			"maintenance": true,
+		})
+	}
+	return r.Blob(http.StatusServiceUnavailable, "text/html; charset=UTF-8", s.maintenancePage)
+}
+
+// maintenanceWantsJSON identifies API paths first and honors explicit JSON clients elsewhere.
+func maintenanceWantsJSON(r web.Context) bool {
+	request := r.Request()
+	if request != nil && request.URL != nil {
+		path := request.URL.Path
+		if path == "/api" || strings.HasPrefix(path, "/api/") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(r.Header("Accept")), "application/json")
+}
