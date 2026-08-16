@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/atlas/agents"
 	"github.com/goforj/atlas/config"
 	"github.com/goforj/atlas/files"
+	"github.com/goforj/atlas/install"
 	"github.com/goforj/goforj/project"
 )
 
@@ -107,6 +108,29 @@ func TestReconcileAgentGuidanceUsesCommittedTargets(t *testing.T) {
 	}
 }
 
+// TestReconcileGuidanceIntentUsesEveryTarget proves GoForj is the sole native writer for Atlas's versioned request.
+func TestReconcileGuidanceIntentUsesEveryTarget(t *testing.T) {
+	root := writeGuidanceTestProject(t)
+	targets := []string{}
+	for _, agent := range agents.Builtins() {
+		targets = append(targets, agent.Name())
+	}
+	intent := install.GuidanceReconciliation{
+		Version: install.GuidanceReconciliationVersion,
+		Enabled: true,
+		Targets: targets,
+	}
+	if _, err := ReconcileGuidanceIntent(root, intent); err != nil {
+		t.Fatalf("ReconcileGuidanceIntent(): %v", err)
+	}
+	for _, agent := range agents.Builtins() {
+		content := readGuidanceTestFile(t, agent.GuidelinesPath(root))
+		if !strings.Contains(content, "<!-- "+files.DefaultMarker+":start -->") {
+			t.Fatalf("%s projection missing managed marker", agent.Name())
+		}
+	}
+}
+
 // TestInferAgentGuidanceUsesOnlyManagedLegacyEvidence avoids claiming user-authored instructions as GoForj-owned.
 func TestInferAgentGuidanceUsesOnlyManagedLegacyEvidence(t *testing.T) {
 	root := writeGuidanceTestProject(t)
@@ -138,7 +162,7 @@ func TestRunInstallSynchronizesDurableGuidance(t *testing.T) {
 	if _, err := RunInstall(t.Context(), InstallOptions{
 		Root:       root,
 		Agents:     []string{"codex"},
-		Guidelines: true,
+		Guidelines: boolValue(true),
 	}); err != nil {
 		t.Fatalf("RunInstall(): %v", err)
 	}
@@ -152,7 +176,7 @@ func TestRunInstallSynchronizesDurableGuidance(t *testing.T) {
 	if _, err := RunInstall(t.Context(), InstallOptions{
 		Root:   root,
 		Agents: []string{"codex"},
-		Skills: true,
+		Skills: boolValue(true),
 	}); err != nil {
 		t.Fatalf("RunInstall(skills only): %v", err)
 	}
@@ -166,6 +190,11 @@ func TestRunInstallSynchronizesDurableGuidance(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(err) {
 		t.Fatalf("skills-only install retained managed AGENTS.md: %v", err)
 	}
+}
+
+// boolValue returns a distinct explicit CLI surface selection for tests.
+func boolValue(value bool) *bool {
+	return &value
 }
 
 // writeGuidanceTestProject creates the minimum metadata required by the canonical Atlas composer.

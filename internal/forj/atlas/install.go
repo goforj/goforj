@@ -6,9 +6,9 @@ import "context"
 type InstallCmd struct {
 	Agent         []string `help:"Agent to install. Repeatable. Supported: codex, claude, copilot, gemini"`
 	AllAgents     bool     `help:"Install all supported agents"`
-	Guidelines    bool     `help:"Install generated guideline files"`
-	Skills        bool     `help:"Install generated skill or instruction files"`
-	MCP           bool     `help:"Install MCP configuration"`
+	Guidelines    *bool    `help:"Install generated guideline files"`
+	Skills        *bool    `help:"Install generated skill or instruction files"`
+	MCP           *bool    `help:"Install MCP configuration"`
 	NoInteraction bool     `name:"no-interaction" help:"Run without interactive prompts"`
 	DryRun        bool     `name:"dry-run" help:"Show files that would be written without changing the project"`
 }
