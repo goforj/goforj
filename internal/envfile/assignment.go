@@ -1,10 +1,25 @@
 package envfile
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/joho/godotenv"
 )
+
+// ValidatePortableDocument rejects dotenv syntax that GoForj cannot transform without ambiguity.
+func ValidatePortableDocument(content []byte) error {
+	values, err := godotenv.Unmarshal(string(content))
+	if err != nil {
+		return fmt.Errorf("parse dotenv document: %w", err)
+	}
+	for key := range values {
+		if !IsValidKey(key) {
+			return fmt.Errorf("environment key %q is outside GoForj's portable letters, digits, and underscores grammar", key)
+		}
+	}
+	return nil
+}
 
 // EncodeValue returns one dotenv-safe assignment value without exposing it through shell interpolation.
 func EncodeValue(value string) string {

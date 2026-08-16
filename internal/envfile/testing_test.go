@@ -93,6 +93,25 @@ func TestMergeTestingDatabaseNames(t *testing.T) {
 	}
 }
 
+// TestMergeTestingDatabaseURIs isolates SQLite paths without corrupting query options or memory semantics.
+func TestMergeTestingDatabaseURIs(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: "file:./_data/sqlite/app.db?_busy_timeout=5000", want: "file:./_data/sqlite/app_testing.db?_busy_timeout=5000"},
+		{value: "./_data/sqlite/app.db?cache=shared", want: "./_data/sqlite/app_testing.db?cache=shared"},
+		{value: ":memory:", want: ":memory:"},
+		{value: "file::memory:?cache=shared", want: "file::memory:?cache=shared"},
+	} {
+		example := []byte("DB_SQLITE_DATABASE=" + test.value + "\n")
+		got := string(envfile.MergeTesting(nil, example))
+		if !strings.Contains(got, "DB_SQLITE_DATABASE="+envfile.EncodeValue(test.want)) {
+			t.Errorf("MergeTesting(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+}
+
 // TestMergeTestingRefreshesAndPrunesNamedAppValues verifies prefixed framework keys follow the same ownership policy as root keys.
 func TestMergeTestingRefreshesAndPrunesNamedAppValues(t *testing.T) {
 	existing := envfile.MergeTesting(nil, []byte("BILLING_DB_PASSWORD=\nREMOVED_DB_PASSWORD=\n"))
@@ -103,5 +122,17 @@ func TestMergeTestingRefreshesAndPrunesNamedAppValues(t *testing.T) {
 	}
 	if strings.Contains(got, "REMOVED_DB_PASSWORD=") {
 		t.Fatalf("removed named App password was retained:\n%s", got)
+	}
+}
+
+// TestMergeTestingPreservesPrefixedApplicationValues prevents naming conventions from claiming owner configuration.
+func TestMergeTestingPreservesPrefixedApplicationValues(t *testing.T) {
+	existing := envfile.MergeTesting(nil, []byte("APP_FEATURE_MODE=test-fixture\nMAIL_TEMPLATE_VARIANT=compact\nBILLING_APP_FEATURE_MODE=billing-test\n"))
+	example := []byte("APP_FEATURE_MODE=local\nBILLING_APP_FEATURE_MODE=local\n")
+	got := string(envfile.MergeTesting(existing, example))
+	for _, want := range []string{"APP_FEATURE_MODE=test-fixture", "MAIL_TEMPLATE_VARIANT=compact", "BILLING_APP_FEATURE_MODE=billing-test"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("MergeTesting() did not preserve %q:\n%s", want, got)
+		}
 	}
 }
