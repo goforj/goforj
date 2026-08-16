@@ -12,29 +12,29 @@ func TestMaintenanceCommandsRoundTrip(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	t.Setenv("FORJ_APP", "app")
-	if err := (&DownCmd{}).Run(); err != nil {
-		t.Fatalf("down: %v", err)
+	if err := (&MaintenanceEnableCmd{}).Run(); err != nil {
+		t.Fatalf("maintenance enable: %v", err)
 	}
 	if !runtime.MaintenanceEnabled() {
-		t.Fatal("down did not enable maintenance")
+		t.Fatal("maintenance:enable did not enable maintenance")
 	}
-	if err := (&UpCmd{}).Run(); err != nil {
-		t.Fatalf("up: %v", err)
+	if err := (&MaintenanceDisableCmd{}).Run(); err != nil {
+		t.Fatalf("maintenance disable: %v", err)
 	}
 	if runtime.MaintenanceEnabled() {
-		t.Fatal("up did not disable maintenance")
+		t.Fatal("maintenance:disable did not disable maintenance")
 	}
 	if _, err := os.Stat(runtime.MaintenancePath()); !os.IsNotExist(err) {
-		t.Fatalf("maintenance file remained after up: %v", err)
+		t.Fatalf("maintenance file remained after disable: %v", err)
 	}
 }
 
-// TestUpCommandCannotOverrideEnvironment verifies operators receive a clear error when deployment configuration owns maintenance state.
-func TestUpCommandCannotOverrideEnvironment(t *testing.T) {
+// TestMaintenanceDisableCommandCannotOverrideEnvironment verifies operators receive a clear error when deployment configuration owns maintenance state.
+func TestMaintenanceDisableCommandCannotOverrideEnvironment(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
 	t.Setenv("FORJ_APP", "app")
-	if err := (&UpCmd{}).Run(); err == nil {
-		t.Fatal("up unexpectedly overrode APP_MAINTENANCE_ENABLED")
+	if err := (&MaintenanceDisableCmd{}).Run(); err == nil {
+		t.Fatal("maintenance:disable unexpectedly overrode APP_MAINTENANCE_ENABLED")
 	}
 }

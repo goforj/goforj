@@ -155,6 +155,6 @@ binds the server to `0.0.0.0:8080`.
 
 ## Maintenance Mode
 
-Run `./bin/app down` to put the running App into maintenance mode and `./bin/app up` to restore it. Browser and starter-kit requests receive a self-contained maintenance page, while API requests receive a JSON `503 Service Unavailable` response. The same commands also pause new queue work and future schedule launches when those runtimes are enabled.
+Run `./bin/app maintenance:enable` to put the running App into maintenance mode and `./bin/app maintenance:disable` to restore it. Browser and starter-kit requests receive a self-contained maintenance page, while API requests receive a JSON `503 Service Unavailable` response. The same commands also pause new queue work and future schedule launches when those runtimes are enabled.
 
 Health, readiness, metrics, and Lighthouse endpoints remain available so operators can distinguish planned maintenance from a failed process. `APP_MAINTENANCE_ENABLED=true` is an environment-enforced deployment policy and requires a restart to clear. Additional Apps use their own binary and App-scoped maintenance state.
