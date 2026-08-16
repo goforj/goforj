@@ -19,8 +19,8 @@ type Commands struct {
 	ResourcesCmd cmd.ResourcesCmd `cmd:""`
 	AboutCmd cmd.AboutCmd `cmd:""`
 	{{- if .Components.HasRuntime }}
-	DownCmd cmd.DownCmd `cmd:""`
-	UpCmd cmd.UpCmd `cmd:""`
+	MaintenanceEnableCmd cmd.MaintenanceEnableCmd `cmd:""`
+	MaintenanceDisableCmd cmd.MaintenanceDisableCmd `cmd:""`
 	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	AuthCreateUserCmd auth.CreateUserCmd `cmd:""`
@@ -48,8 +48,8 @@ func NewCommands(
 	resourcesCmd *cmd.ResourcesCmd,
 	aboutCmd *cmd.AboutCmd,
 	{{- if .Components.HasRuntime }}
-	downCmd *cmd.DownCmd,
-	upCmd *cmd.UpCmd,
+	maintenanceEnableCmd *cmd.MaintenanceEnableCmd,
+	maintenanceDisableCmd *cmd.MaintenanceDisableCmd,
 	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authCreateUserCmd *auth.CreateUserCmd,
@@ -75,8 +75,8 @@ func NewCommands(
 		ResourcesCmd: *resourcesCmd,
 		AboutCmd: *aboutCmd,
 		{{- if .Components.HasRuntime }}
-		DownCmd: *downCmd,
-		UpCmd: *upCmd,
+		MaintenanceEnableCmd: *maintenanceEnableCmd,
+		MaintenanceDisableCmd: *maintenanceDisableCmd,
 		{{- end }}
 		{{- if and .Components.Auth .Components.HasDatabase }}
 		AuthCreateUserCmd: *authCreateUserCmd,

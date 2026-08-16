@@ -80,7 +80,7 @@ func runRenderedMaintenanceUnitTests(t *testing.T, projectDir string, env map[st
 	}
 }
 
-// assertRenderedWorkerFollowsMaintenance verifies a running worker drains, waits, and starts a fresh generation across down and up.
+// assertRenderedWorkerFollowsMaintenance verifies a running worker drains, waits, and starts a fresh generation across maintenance transitions.
 func assertRenderedWorkerFollowsMaintenance(t *testing.T, projectDir, binPath string, env map[string]string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,9 +95,9 @@ func assertRenderedWorkerFollowsMaintenance(t *testing.T, projectDir, binPath st
 		t.Fatalf("start rendered maintenance worker: %v", err)
 	}
 	waitForWorkerOutput(t, &out, "Queue worker started", 1)
-	runRenderedMaintenanceCommand(t, projectDir, binPath, env, "down")
+	runRenderedMaintenanceCommand(t, projectDir, binPath, env, "maintenance:enable")
 	waitForWorkerOutput(t, &out, "Queue worker paused for maintenance mode", 1)
-	runRenderedMaintenanceCommand(t, projectDir, binPath, env, "up")
+	runRenderedMaintenanceCommand(t, projectDir, binPath, env, "maintenance:disable")
 	waitForWorkerOutput(t, &out, "Queue worker started", 2)
 	cancel()
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
