@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,6 +231,31 @@ func TestSnapshotToolsUsesPrivateCopies(t *testing.T) {
 	}
 }
 
+// TestSnapshotToolsRunsInstalledGo proves a runtime-dependent Go binary keeps its GOROOT after scenario tool preparation.
+func TestSnapshotToolsRunsInstalledGo(t *testing.T) {
+	goExecutable, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("resolve go: %v", err)
+	}
+	execution, err := (scenarioExecution{
+		context:     context.Background(),
+		logger:      logger.NewSilentLogger(),
+		workspace:   scenarioWorkspace{root: t.TempDir(), removeAfter: true},
+		tools:       map[string]string{"go": goExecutable},
+		environment: scenarioProcessEnv(),
+	}).snapshotTools()
+	if err != nil {
+		t.Fatalf("snapshotTools(): %v", err)
+	}
+	t.Cleanup(func() { _ = execution.workspace.cleanupAfter(nil) })
+	if execution.tools["go"] == goExecutable || execution.toolEnvironment["go"]["GOROOT"] == "" {
+		t.Fatalf("Go snapshot = %q runtime binding = %#v", execution.tools["go"], execution.toolEnvironment["go"])
+	}
+	if err := execution.runCommand(ScenarioCommand{Run: []string{"go", "env", "GOROOT"}}, "verify Go runtime"); err != nil {
+		t.Fatalf("runCommand() = %v", err)
+	}
+}
+
 // TestSnapshotToolsRejectsReplacementAfterResolution ensures the immutable copy is checked against the tool identity embedded in the plan.
 func TestSnapshotToolsRejectsReplacementAfterResolution(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "forj")
@@ -250,6 +276,29 @@ func TestSnapshotToolsRejectsReplacementAfterResolution(t *testing.T) {
 	}).snapshotTools()
 	if err == nil || !strings.Contains(err.Error(), "tool bytes changed") {
 		t.Fatalf("snapshotTools() error = %v, want changed-byte rejection", err)
+	}
+}
+
+// TestSnapshotToolsCleansFailedPrivateToolRoot keeps a failed snapshot from leaking supervisor-owned executable copies.
+func TestSnapshotToolsCleansFailedPrivateToolRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tools")
+	previous := createScenarioToolRoot
+	createScenarioToolRoot = func() (string, error) {
+		if err := os.Mkdir(root, 0o700); err != nil {
+			return "", err
+		}
+		return root, nil
+	}
+	t.Cleanup(func() { createScenarioToolRoot = previous })
+	_, err := (scenarioExecution{
+		workspace: scenarioWorkspace{root: t.TempDir(), removeAfter: true},
+		tools:     map[string]string{"forj": filepath.Join(t.TempDir(), "missing-forj")},
+	}).snapshotTools()
+	if err == nil {
+		t.Fatal("snapshotTools() unexpectedly succeeded")
+	}
+	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
+		t.Fatalf("failed snapshot tool root remains: %v", statErr)
 	}
 }
 
