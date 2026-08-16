@@ -41,6 +41,31 @@ func TestGenerateProjectFilesSynchronizesEnvironmentContracts(t *testing.T) {
 	}
 }
 
+// TestGenerationEnvironmentExamplePrunesDisabledAppKeys keeps contract cleanup inside the generation-owned synchronization boundary.
+func TestGenerationEnvironmentExamplePrunesDisabledAppKeys(t *testing.T) {
+	root := t.TempDir()
+	config := "project_name: Test\nmodule_name: example.test/app\nrender:\n  components: [cli, cache]\napps:\n  billing:\n    components: [cli]\n"
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	example := "CACHE_DRIVER=memory\nBILLING_CACHE_DRIVER=memory\nOWNER_SETTING=keep\n"
+	if err := os.WriteFile(filepath.Join(root, ".env.example"), []byte(example), 0o644); err != nil {
+		t.Fatalf("write environment example: %v", err)
+	}
+	got, err := generationEnvironmentExample(root)
+	if err != nil {
+		t.Fatalf("generationEnvironmentExample() error: %v", err)
+	}
+	if strings.Contains(string(got), "BILLING_CACHE_DRIVER=") {
+		t.Fatalf("disabled App key survived generation cleanup:\n%s", got)
+	}
+	for _, want := range []string{"CACHE_DRIVER=memory", "OWNER_SETTING=keep"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("generation cleanup omitted %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {

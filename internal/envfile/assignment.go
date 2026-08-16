@@ -129,7 +129,7 @@ func scanAssignment(line string) (string, string, string, bool) {
 	}
 	key := line[keyStart:cursor]
 	cursor = skipHorizontalSpace(line, cursor)
-	if cursor >= len(line) || line[cursor] != '=' {
+	if cursor >= len(line) || line[cursor] != '=' && line[cursor] != ':' {
 		return "", "", "", false
 	}
 	cursor++

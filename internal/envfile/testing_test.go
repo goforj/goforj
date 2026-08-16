@@ -12,7 +12,7 @@ func TestMergeTestingCreatesSafeRunnableProfile(t *testing.T) {
 	example := []byte("# App\nAPP_ENV=local\nAPP_KEY=\nAPI_JWT_SECRET_KEY=\nDB_HOST=mysql\nDB_DATABASE=app\nDB_USERNAME=postgres\nDB_PASSWORD=\nMAIL_RESEND_API_KEY=\nFEATURE_FLAG=true\n")
 	got := string(envfile.MergeTesting(nil, example))
 	for _, want := range []string{
-		"# Automatically loaded by goforj/env when running tests.",
+		"# Selected automatically by goforj/env when tests load the environment.",
 		"APP_ENV=testing",
 		"APP_KEY=base64:",
 		"API_JWT_SECRET_KEY=goforj-public-testing-jwt-signing-key",
@@ -26,6 +26,25 @@ func TestMergeTestingCreatesSafeRunnableProfile(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("testing contract omitted %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestMergeTestingSuppliesLocalServiceURLs keeps supported NATS and RabbitMQ test profiles runnable without publishing private credentials.
+func TestMergeTestingSuppliesLocalServiceURLs(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		example string
+		want    string
+	}{
+		{name: "NATS", example: "QUEUE_DRIVER=nats\nQUEUE_URL=\n", want: "QUEUE_URL=nats://goforj:goforj@nats:4222"},
+		{name: "RabbitMQ", example: "QUEUE_DRIVER=rabbitmq\nQUEUE_URL=\n", want: "QUEUE_URL=amqp://goforj:goforj@rabbitmq:5672/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := string(envfile.MergeTesting(nil, []byte(test.example)))
+			if !strings.Contains(got, test.want) {
+				t.Fatalf("testing contract omitted %q:\n%s", test.want, got)
+			}
+		})
 	}
 }
 
@@ -71,5 +90,18 @@ func TestMergeTestingDatabaseNames(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("testing contract omitted %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestMergeTestingRefreshesAndPrunesNamedAppValues verifies prefixed framework keys follow the same ownership policy as root keys.
+func TestMergeTestingRefreshesAndPrunesNamedAppValues(t *testing.T) {
+	existing := envfile.MergeTesting(nil, []byte("BILLING_DB_PASSWORD=\nREMOVED_DB_PASSWORD=\n"))
+	example := []byte("BILLING_DB_PASSWORD=\n")
+	got := string(envfile.MergeTesting(existing, example))
+	if !strings.Contains(got, "BILLING_DB_PASSWORD=test") {
+		t.Fatalf("named App password was not refreshed:\n%s", got)
+	}
+	if strings.Contains(got, "REMOVED_DB_PASSWORD=") {
+		t.Fatalf("removed named App password was retained:\n%s", got)
 	}
 }

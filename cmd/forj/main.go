@@ -40,7 +40,7 @@ func main() {
 	launcher.Capture()
 	args := os.Args[1:]
 	inGeneratedApp := isGeneratedAppDir()
-	if inGeneratedApp && shouldAutoInitializeEnvironment(args) {
+	if inGeneratedApp && shouldAutoInitializeEnvironment(environmentInitializationArgs(args, inGeneratedApp)) {
 		created, initErr := envcontract.Initialize(".")
 		if initErr != nil && !errors.Is(initErr, envcontract.ErrExampleMissing) {
 			console.Fatalf("initializing local environment: %v", initErr)
@@ -156,6 +156,14 @@ func main() {
 	}
 }
 
+// environmentInitializationArgs resolves an App prefix before deciding whether the underlying framework command may create local state.
+func environmentInitializationArgs(args []string, inGeneratedApp bool) []string {
+	if _, remaining, ok := resolveAppPrefix(args, inGeneratedApp); ok {
+		return remaining
+	}
+	return args
+}
+
 // shouldAutoInitializeEnvironment keeps explicit initialization and rendering in control of their own file lifecycle.
 func shouldAutoInitializeEnvironment(args []string) bool {
 	for _, argument := range args {
@@ -164,13 +172,13 @@ func shouldAutoInitializeEnvironment(args []string) bool {
 			continue
 		}
 		switch argument {
-		case "env:init", "env:check", "new", "render":
+		case "env:init", "env:set", "env:check", "new", "render", "help":
 			return false
 		default:
 			return true
 		}
 	}
-	return true
+	return false
 }
 
 // configureCLIConsole enables terminal-owned progress without changing redirected or unsupported terminal output.

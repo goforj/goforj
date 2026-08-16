@@ -18,15 +18,15 @@ The framework owns the mechanical synchronization between those surfaces so a de
 | --- | --- | --- |
 | `.env` | ignored | Private local values and generated local secrets |
 | `.env.example` | committed | Safe inventory and portable defaults |
-| `.env.testing` | committed | Safe, deterministic values loaded by `goforj/env` while testing |
+| `.env.testing` | committed | Safe, deterministic values selected by `goforj/env` when tests load the environment |
 
-GoForj uses `.env.testing`, not `.env.test`. The environment package selects it when `APP_ENV=testing` or when the process is running as a Go test.
+GoForj uses `.env.testing`, not `.env.test`. Calls to `goforj/env` select it when `APP_ENV=testing` or when the process is running as a Go test. Generated application construction loads the environment; an arbitrary package test that never loads `goforj/env` does not read dotenv files merely because the test process exists.
 
 Process environment variables retain precedence over dotenv files. CI can therefore use the committed `.env.testing` for the complete ordinary test contract and inject only credentials needed by explicit live-service tests.
 
 ## Developer Workflow
 
-A source-aware `forj` command automatically creates a missing `.env` from `.env.example`. This makes a clone runnable without a manual copy step. Initialization:
+A `forj` command that needs the local runtime environment automatically creates a missing `.env` from `.env.example`. Read-only help, version, and environment-check commands do not create it. This makes a clone runnable without a manual copy step. Initialization:
 
 - never replaces an existing `.env`
 - creates the file with private permissions where supported
@@ -64,7 +64,9 @@ The implementation does not prune unknown keys automatically. Removing project-o
 
 ## Secret Boundary
 
-Secret-like names such as tokens, passwords, private keys, credentials, DSNs, and API keys are blank in `.env.example`. Existing `.env.testing` is also redacted before synchronization, which makes migration from previously ignored test files safe for keys covered by the policy.
+Secret-like names such as tokens, passwords, private keys, credentials, DSNs, API keys, personal access tokens, and webhooks are blank in `.env.example`. Redaction covers both `KEY=value` and dotenv-supported `KEY: value` assignments.
+
+An existing `.env.testing` without GoForj's managed marker may contain historically private test credentials. Synchronization refuses to rewrite or expose that file. Move values that must remain private into `.env`, remove the legacy `.env.testing`, and run `forj generate` to create the committed deterministic profile.
 
 `.env.testing` uses conspicuously public deterministic values for framework credentials. Examples include `DB_PASSWORD=test` and named `goforj-public-testing-*` signing values. Unknown application secrets remain blank. These values are test fixtures, not deployment credentials.
 
@@ -94,7 +96,7 @@ forj env:check
 go test ./...
 ```
 
-`forj env:check` derives expected output from `.env` when it exists and otherwise from committed `.env.example`. It fails with the stale filenames and directs the developer to run `forj generate`; it never rewrites files.
+`forj env:check` derives expected output from `.env` when it exists and otherwise from committed `.env.example`. It fails with the stale filenames and directs the developer to run `forj generate`; it never rewrites files. On a clean checkout it verifies consistency between the two committed contracts, but it cannot infer a required key omitted from both files without a local generation source.
 
 Ordinary tests should require no live third-party secrets. Tests that intentionally contact an external service should receive only their required secrets through process environment variables and fail clearly when those values are absent.
 
