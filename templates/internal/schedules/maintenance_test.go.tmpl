@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/goforj/scheduler/v2"
-	"{{.GoModuleName}}/internal/runtime"
+	"{{.GoModuleName}}/internal/maintenance"
 )
 
 // TestSyncMaintenancePauseTracksLiveState verifies maintenance pauses future launches and releases only the pause it owns.
@@ -23,7 +23,7 @@ func TestSyncMaintenancePauseTracksLiveState(t *testing.T) {
 	if owned || engine.IsPausedAll() {
 		t.Fatal("normal state unexpectedly paused scheduler")
 	}
-	if err := runtime.EnableMaintenance(); err != nil {
+	if err := maintenance.Enable(); err != nil {
 		t.Fatalf("enable maintenance: %v", err)
 	}
 	owned, err = syncMaintenancePause(engine, owned)
@@ -43,7 +43,7 @@ func TestSyncMaintenancePauseTracksLiveState(t *testing.T) {
 	if !owned || !engine.IsPausedAll() {
 		t.Fatal("maintenance did not restore its scheduler pause")
 	}
-	if err := runtime.DisableMaintenance(); err != nil {
+	if err := maintenance.Disable(); err != nil {
 		t.Fatalf("disable maintenance: %v", err)
 	}
 	owned, err = syncMaintenancePause(engine, owned)
@@ -67,7 +67,7 @@ func TestSyncMaintenancePausePreservesIndependentPause(t *testing.T) {
 	if err := engine.PauseAll(); err != nil {
 		t.Fatalf("pause scheduler: %v", err)
 	}
-	if err := runtime.EnableMaintenance(); err != nil {
+	if err := maintenance.Enable(); err != nil {
 		t.Fatalf("enable maintenance: %v", err)
 	}
 	owned, err := syncMaintenancePause(engine, false)
@@ -77,7 +77,7 @@ func TestSyncMaintenancePausePreservesIndependentPause(t *testing.T) {
 	if owned {
 		t.Fatal("maintenance claimed an existing scheduler pause")
 	}
-	if err := runtime.DisableMaintenance(); err != nil {
+	if err := maintenance.Disable(); err != nil {
 		t.Fatalf("disable maintenance: %v", err)
 	}
 	owned, err = syncMaintenancePause(engine, owned)

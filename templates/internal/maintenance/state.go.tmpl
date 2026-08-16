@@ -1,10 +1,11 @@
-package runtime
+package maintenance
 
 import (
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,12 +31,12 @@ type maintenanceFile struct {
 	EnabledAt time.Time `json:"enabled_at"`
 }
 
-// MaintenanceEnabled reports whether the selected App is globally in maintenance mode.
-func MaintenanceEnabled() bool {
+// Enabled reports whether the selected App is globally in maintenance mode.
+func Enabled() bool {
 	if env.GetBool("APP_MAINTENANCE_ENABLED", "false") {
 		return true
 	}
-	path := MaintenancePath()
+	path := Path()
 	now := time.Now()
 	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, path, now) {
 		return snapshot.enabled
@@ -60,18 +61,14 @@ func maintenanceSnapshotFresh(snapshot *maintenanceSnapshot, path string, now ti
 	return snapshot != nil && snapshot.path == path && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval
 }
 
-// MaintenancePath returns the App-scoped local state file used by maintenance commands.
-func MaintenancePath() string {
-	appName := CurrentApp().Name
-	if appName == "" {
-		appName = "app"
-	}
-	return filepath.Join("_data", "runtime", appName, "maintenance.json")
+// Path returns the App-scoped local state file used by maintenance commands.
+func Path() string {
+	return filepath.Join("_data", "runtime", currentAppName(), "maintenance.json")
 }
 
-// EnableMaintenance atomically publishes maintenance state for every runtime sharing the App data directory.
-func EnableMaintenance() error {
-	path := MaintenancePath()
+// Enable atomically publishes maintenance state for every runtime sharing the App data directory.
+func Enable() error {
+	path := Path()
 	if _, err := os.Stat(path); err == nil {
 		invalidateMaintenanceCache(path, true)
 		return nil
@@ -81,7 +78,7 @@ func EnableMaintenance() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	payload, err := json.Marshal(maintenanceFile{App: CurrentApp().Name, EnabledAt: time.Now().UTC()})
+	payload, err := json.Marshal(maintenanceFile{App: currentAppName(), EnabledAt: time.Now().UTC()})
 	if err != nil {
 		return err
 	}
@@ -117,15 +114,24 @@ func EnableMaintenance() error {
 	return nil
 }
 
-// DisableMaintenance removes command-managed state while preserving an environment-enforced deployment policy.
-func DisableMaintenance() error {
-	path := MaintenancePath()
+// Disable removes command-managed state while preserving an environment-enforced deployment policy.
+func Disable() error {
+	path := Path()
 	err := os.Remove(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	invalidateMaintenanceCache(path, false)
 	return nil
+}
+
+// currentAppName resolves the process identity already selected by the generated launch path.
+func currentAppName() string {
+	appName := strings.TrimSpace(env.Get("FORJ_APP", "app"))
+	if appName == "" {
+		return "app"
+	}
+	return appName
 }
 
 // invalidateMaintenanceCache makes same-process commands and tests observe their writes immediately.

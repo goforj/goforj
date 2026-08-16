@@ -69,10 +69,10 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 	assertRenderedWorkerFollowsMaintenance(t, projectDir, binPath, queueEnv)
 }
 
-// runRenderedMaintenanceUnitTests executes generated runtime and scheduler contracts that are not part of a binary build.
+// runRenderedMaintenanceUnitTests executes generated maintenance, runtime, and scheduler contracts that are not part of a binary build.
 func runRenderedMaintenanceUnitTests(t *testing.T, projectDir string, env map[string]string) {
 	t.Helper()
-	cmd := exec.Command("go", "test", "./internal/runtime", "./internal/cmd", "./internal/schedules", "-count=1")
+	cmd := exec.Command("go", "test", "./internal/maintenance", "./internal/runtime", "./internal/schedules", "-count=1")
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationGoProcessEnv(t, env)
 	if output, err := cmd.CombinedOutput(); err != nil {
