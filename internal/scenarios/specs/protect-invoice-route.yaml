@@ -1,0 +1,41 @@
+schema_version: 2
+id: protect-invoice-route
+title: Protect Invoice Route
+description: Move an existing invoice route behind generated Auth middleware.
+depends_on: [invoice-http-route]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    auth: true
+    database_sqlite: true
+    web_api: true
+markdown:
+  intro: |
+    Protect invoice lookup through the App's generated Auth route group.
+  before: |
+    Auth is enabled but the generated invoice controller remains in the public route group.
+  after: |
+    invoice routes are composed with the generated authentication middleware while Auth endpoints stay public.
+  files:
+    - app/routes.go
+steps:
+  - id: remove-public-invoice-routes
+    title: Remove invoices from the public group
+    replace:
+      path: app/routes.go
+      language: go
+      old: "\t\tinvoicesController.Routes(),\n"
+      new: ""
+  - id: add-protected-invoice-routes
+    title: Add invoices to the protected group
+    replace:
+      path: app/routes.go
+      language: go
+      old: "\t\thelloController.Routes(),\n"
+      new: "\t\thelloController.Routes(),\n\t\tinvoicesController.Routes(),\n"
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
+  - command: [forj, route:list]
+    contains: [/api/v1/invoices/:id]

@@ -1,0 +1,203 @@
+schema_version: 2
+id: create-invoice-validation
+title: Create Invoice Validation
+description: Add a validated invoice write endpoint with stable public errors.
+depends_on: [invoice-http-route]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Add invoice creation while keeping binding, validation, and application behavior in their proper boundaries.
+  before: |
+    invoices can be read through HTTP but cannot be created.
+  after: |
+    malformed JSON returns 400, decoded invalid input returns stable 422 field codes, and valid input reaches the service.
+  files:
+    - internal/invoices/repository.go
+    - internal/invoices/service.go
+    - internal/invoices/controller.go
+    - internal/invoices/controller_validation_test.go
+steps:
+  - id: extend-invoice-repository
+    title: Add invoice creation persistence
+    replace:
+      path: internal/invoices/repository.go
+      language: go
+      old: "type Repository interface {\n\t// Find returns one invoice while honoring the caller's cancellation boundary.\n\tFind(context.Context, string) (Invoice, error)\n}"
+      new: "type Repository interface {\n\t// Find returns one invoice while honoring the caller's cancellation boundary.\n\tFind(context.Context, string) (Invoice, error)\n\t// Create persists a validated invoice through the same cancellation boundary.\n\tCreate(context.Context, Invoice) (Invoice, error)\n}"
+  - id: implement-invoice-create-repository
+    title: Implement invoice creation
+    append:
+      path: internal/invoices/repository.go
+      language: go
+      content: |
+
+        // Create returns the persisted invoice shape for this deterministic fixture repository.
+        func (*MemoryRepository) Create(_ context.Context, invoice Invoice) (Invoice, error) {
+                invoice.ID = "inv-created"
+                invoice.Status = "open"
+                return invoice, nil
+        }
+  - id: add-invoice-create-service
+    title: Add invoice creation behavior
+    append:
+      path: internal/invoices/service.go
+      language: go
+      content: |
+
+        // CreateInput is normalized application input independent from JSON field names.
+        type CreateInput struct {
+                CustomerID string
+                TotalCents int64
+        }
+
+        // Create persists a validated invoice through the repository boundary.
+        func (service *Service) Create(ctx context.Context, input CreateInput) (Invoice, error) {
+                return service.repository.Create(ctx, Invoice{CustomerID: input.CustomerID, TotalCents: input.TotalCents})
+        }
+  - id: register-invoice-create-route
+    title: Register the write route
+    replace:
+      path: internal/invoices/controller.go
+      language: go
+      old: 'web.NewRoute(http.MethodGet, "/invoices/:id", controller.Show),'
+      new: |-
+        web.NewRoute(http.MethodGet, "/invoices/:id", controller.Show),
+                        web.NewRoute(http.MethodPost, "/invoices", controller.Store),
+  - id: add-invoice-request-boundary
+    title: Bind and validate invoice input
+    append:
+      path: internal/invoices/controller.go
+      language: go
+      content: |
+
+        const (
+                errorInvalidPayload   = "invalid_payload"
+                errorValidationFailed = "validation_failed"
+                fieldRequired         = "required"
+                fieldMustBePositive   = "must_be_positive"
+        )
+
+        // createInvoiceRequest is the JSON-specific shape accepted by the invoice endpoint.
+        type createInvoiceRequest struct {
+                CustomerID string `json:"customer_id"`
+                TotalCents int64  `json:"total_cents"`
+        }
+
+        // validationErrorResponse keeps public failure codes stable across binder implementations.
+        type validationErrorResponse struct {
+                Error  string            `json:"error"`
+                Fields map[string]string `json:"fields,omitempty"`
+        }
+
+        // Store validates transport input before invoking invoice behavior.
+        func (controller *Controller) Store(request web.Context) error {
+                var payload createInvoiceRequest
+                if err := request.Bind(&payload); err != nil {
+                        return request.JSON(http.StatusBadRequest, validationErrorResponse{Error: errorInvalidPayload})
+                }
+                input, fields := payload.input()
+                if len(fields) != 0 {
+                        return request.JSON(http.StatusUnprocessableEntity, validationErrorResponse{Error: errorValidationFailed, Fields: fields})
+                }
+                invoice, err := controller.service.Create(request.Context(), input)
+                if err != nil {
+                        return err
+                }
+                return request.JSON(http.StatusCreated, invoice)
+        }
+
+        // input normalizes customer identity and returns stable field error codes.
+        func (payload createInvoiceRequest) input() (CreateInput, map[string]string) {
+                fields := make(map[string]string)
+                customerID := strings.TrimSpace(payload.CustomerID)
+                if customerID == "" {
+                        fields["customer_id"] = fieldRequired
+                }
+                if payload.TotalCents <= 0 {
+                        fields["total_cents"] = fieldMustBePositive
+                }
+                return CreateInput{CustomerID: customerID, TotalCents: payload.TotalCents}, fields
+        }
+  - id: import-invoice-normalization
+    title: Import request normalization
+    replace:
+      path: internal/invoices/controller.go
+      language: go
+      old: "\t\"net/http\"\n"
+      new: "\t\"net/http\"\n\t\"strings\"\n"
+  - id: test-invoice-validation
+    title: Test malformed, invalid, and valid input
+    write:
+      path: internal/invoices/controller_validation_test.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "context"
+                "net/http"
+                "net/http/httptest"
+                "strings"
+                "testing"
+
+                "github.com/goforj/web/webtest"
+        )
+
+        // validationRepository records service input without coupling the test to persistence.
+        type validationRepository struct {
+                created Invoice
+        }
+
+        // Find is unused by creation tests but preserves the repository contract.
+        func (*validationRepository) Find(context.Context, string) (Invoice, error) {
+                return Invoice{}, ErrInvoiceNotFound
+        }
+
+        // Create records the normalized invoice received from the service.
+        func (repository *validationRepository) Create(_ context.Context, invoice Invoice) (Invoice, error) {
+                repository.created = invoice
+                invoice.ID = "inv-created"
+                return invoice, nil
+        }
+
+        // TestControllerStoreSeparatesPayloadAndValidationFailures proves the public request contract.
+        func TestControllerStoreSeparatesPayloadAndValidationFailures(t *testing.T) {
+                tests := []struct {
+                        name       string
+                        body       string
+                        wantStatus int
+                }{
+                        {name: "malformed", body: `{"customer_id":`, wantStatus: http.StatusBadRequest},
+                        {name: "invalid", body: `{"customer_id":" ","total_cents":0}`, wantStatus: http.StatusUnprocessableEntity},
+                        {name: "valid", body: `{"customer_id":" customer-42 ","total_cents":12500}`, wantStatus: http.StatusCreated},
+                }
+                for _, test := range tests {
+                        t.Run(test.name, func(t *testing.T) {
+                                repository := &validationRepository{}
+                                controller := NewController(NewService(repository))
+                                request := httptest.NewRequest(http.MethodPost, "/invoices", strings.NewReader(test.body))
+                                request.Header.Set("Content-Type", "application/json")
+                                response := httptest.NewRecorder()
+                                requestContext := webtest.NewContext(request, response, "/invoices", nil)
+                                if err := controller.Store(requestContext); err != nil {
+                                        t.Fatalf("Store(): %v", err)
+                                }
+                                if response.Code != test.wantStatus {
+                                        t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+                                }
+                                if test.name == "valid" && repository.created.CustomerID != "customer-42" {
+                                        t.Fatalf("created = %#v", repository.created)
+                                }
+                        })
+                }
+        }
+checks:
+  - command: [go, test, ./internal/invoices]
+  - command: [forj, build]
+  - command: [forj, route:list]
+    contains: [POST, /api/v1/invoices]

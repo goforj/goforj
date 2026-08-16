@@ -1,0 +1,97 @@
+schema_version: 2
+id: invoice-receipt-mail
+title: Invoice Receipt Mail
+description: Send invoice receipts through the generated mail manager from an application service.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    mail: true
+markdown:
+  intro: |
+    Add receipt delivery without importing SMTP or a provider SDK into invoice behavior.
+  before: |
+    invoice lookup exists and the App has a generated mail manager.
+  after: |
+    a focused service finds the invoice and sends through the configured default mailer with caller cancellation.
+  files:
+    - internal/invoices/receipt_mailer.go
+    - internal/invoices/receipt_mailer_test.go
+    - app/wire/inject_services_app.go
+steps:
+  - id: add-receipt-mailer
+    title: Add receipt delivery
+    write:
+      path: internal/invoices/receipt_mailer.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import (
+                "context"
+                "fmt"
+
+                "example.com/invoiceeval/internal/mail"
+        )
+
+        // ReceiptMailer owns invoice receipt delivery through the generated mail manager.
+        type ReceiptMailer struct {
+                invoices *Service
+                mail     *mail.Manager
+        }
+
+        // NewReceiptMailer constructs receipt delivery with invoice behavior and configured mail.
+        func NewReceiptMailer(invoices *Service, mailManager *mail.Manager) *ReceiptMailer {
+                return &ReceiptMailer{invoices: invoices, mail: mailManager}
+        }
+
+        // Send finds the current invoice and sends its receipt through the default mailer.
+        func (mailer *ReceiptMailer) Send(ctx context.Context, invoiceID string, email string) error {
+                invoice, err := mailer.invoices.Find(ctx, invoiceID)
+                if err != nil {
+                        return err
+                }
+                subject, body := receiptContent(invoice)
+                return mailer.mail.Default().
+                        Message().
+                        To(email, "").
+                        Subject(subject).
+                        Text(body).
+                        Send(ctx)
+        }
+
+        // receiptContent keeps deterministic message content independently testable from delivery.
+        func receiptContent(invoice Invoice) (string, string) {
+                return "Invoice " + invoice.ID, fmt.Sprintf("Total: %d cents", invoice.TotalCents)
+        }
+  - id: test-receipt-content
+    title: Test receipt content
+    write:
+      path: internal/invoices/receipt_mailer_test.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior independently from transport concerns.
+        package invoices
+
+        import "testing"
+
+        // TestReceiptContent keeps recipient-facing content stable without contacting a provider.
+        func TestReceiptContent(t *testing.T) {
+                subject, body := receiptContent(Invoice{ID: "inv-42", TotalCents: 12500})
+                if subject != "Invoice inv-42" || body != "Total: 12500 cents" {
+                        t.Fatalf("subject = %q, body = %q", subject, body)
+                }
+        }
+  - id: provide-receipt-mailer
+    title: Provide receipt delivery
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tinvoices.NewService,\n"
+      new: "\tinvoices.NewService,\n\tinvoices.NewReceiptMailer,\n"
+checks:
+  - command: [go, test, ./internal/invoices]
+  - command: [forj, build]
+  - command: [go, test, ./...]

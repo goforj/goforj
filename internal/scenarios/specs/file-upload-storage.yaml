@@ -1,3 +1,4 @@
+schema_version: 2
 id: file-upload-storage
 title: File Upload to Storage
 description: Add an upload endpoint that writes files to a named GoForj storage disk.
@@ -44,19 +45,19 @@ markdown:
   file_groups:
     - title: Configuration
       files:
-        - .env
+      - .env
     - title: Uploads feature
       files:
-        - internal/uploads/service.go
-        - internal/uploads/service_test.go
-        - internal/uploads/controller.go
+      - internal/uploads/service.go
+      - internal/uploads/service_test.go
+      - internal/uploads/controller.go
     - title: HTTP registration
       files:
-        - app/wire/inject_http_controllers_app.go
-        - app/routes.go
+      - app/wire/inject_http_controllers_app.go
+      - app/routes.go
     - title: App wiring
       files:
-        - app/wire/inject_services_app.go
+      - app/wire/inject_services_app.go
   generated_files:
     intro: "The storage generator updates:"
     files:
@@ -116,7 +117,8 @@ markdown:
   next_steps:
     - "Next, publish a `users.created` event and handle it with [Users Created Event](/scenarios/users-created-event)."
 steps:
-  - title: Add a Named Storage Disk
+  - id: add-a-named-storage-disk
+    title: Add a Named Storage Disk
     explain: |
       Add a named `uploads` disk to `.env`, then run the build pipeline so your App exposes `app.Storage().Uploads()`.
     replace:
@@ -126,6 +128,9 @@ steps:
         STORAGE_SUPPORTED_DRIVERS=local
       new: |
         STORAGE_SUPPORTED_DRIVERS=local,memory
+  - id: configure-the-uploads-disk
+    title: Configure the Uploads Disk
+    explain: Keep the named disk's driver and path in application configuration.
     append:
       path: .env
       language: dotenv
@@ -134,16 +139,20 @@ steps:
         STORAGE_UPLOADS_DRIVER=local
         STORAGE_UPLOADS_ROOT=storage/app/uploads
         STORAGE_UPLOADS_PREFIX=
-    run:
-      run: ["forj", "build"]
 
-  - title: Scaffold the Controller
+  - id: refresh-storage-resources
+    title: Refresh Storage Resources
+    explain: Run the build pipeline after changing named resource configuration.
+    command: ["forj", "build"]
+
+  - id: scaffold-the-controller
+    title: Scaffold the Controller
     explain: |
       Start with the real make command. It creates the uploads controller, wires the constructor, and registers its routes.
-    run:
-      run: ["forj", "make:controller", "uploads"]
+    command: ["forj", "make:controller", "uploads"]
 
-  - title: Add the Service
+  - id: add-the-service
+    title: Add the Service
     explain: |
       Create `internal/uploads/service.go`.
 
@@ -257,7 +266,8 @@ steps:
                 return name
         }
 
-  - title: Replace the Starter Controller
+  - id: replace-the-starter-controller
+    title: Replace the Starter Controller
     explain: |
       Replace `internal/uploads/controller.go`.
 
@@ -329,7 +339,8 @@ steps:
                 return ctx.JSON(http.StatusCreated, upload)
         }
 
-  - title: Add Upload Imports
+  - id: add-upload-imports
+    title: Add Upload Imports
     explain: |
       Add imports for the generated storage manager and uploads package.
     replace:
@@ -342,7 +353,8 @@ steps:
                 "{{module}}/internal/storages"
                 "{{module}}/internal/uploads"
 
-  - title: Add Upload Providers
+  - id: add-upload-providers
+    title: Add Upload Providers
     explain: |
       Add the upload service provider, which selects its named disk at the composition root.
     replace:
@@ -354,7 +366,8 @@ steps:
                 provideUploadsService,
                 provideUserProfileCache,
 
-  - title: Add the Upload Service Provider
+  - id: add-the-upload-service-provider
+    title: Add the Upload Service Provider
     explain: |
       `provideUploadsService` keeps named disk selection out of application behavior without exporting an ambiguous `storage.Storage` to Wire.
     replace:
@@ -372,7 +385,8 @@ steps:
         // provideUserRepository preserves the service boundary while Wire composes its concrete cache-aside implementation.
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {
 
-  - title: Add a Service Test
+  - id: add-a-service-test
+    title: Add a Service Test
     explain: |
       Create `internal/uploads/service_test.go`.
 
@@ -493,10 +507,9 @@ steps:
                 }
         }
 
-verify:
-  commands:
-    - run: ["forj", "build"]
-    - run: ["go", "test", "./..."]
-    - run: ["forj", "route:list"]
-      contains:
-        - "/api/v1/uploads"
+checks:
+  - command: ["forj", "build"]
+  - command: ["go", "test", "./..."]
+  - command: ["forj", "route:list"]
+    contains:
+      - "/api/v1/uploads"

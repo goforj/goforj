@@ -1,3 +1,4 @@
+schema_version: 2
 id: cached-user-profile
 title: Cached User Profile
 description: Add a repository and named cache resource to the JSON API route scenario.
@@ -45,16 +46,16 @@ markdown:
   file_groups:
     - title: Configuration
       files:
-        - .env
+      - .env
     - title: Users feature
       files:
-        - internal/users/repository.go
-        - internal/users/repository_test.go
-        - internal/users/service.go
-        - internal/users/service_test.go
+      - internal/users/repository.go
+      - internal/users/repository_test.go
+      - internal/users/service.go
+      - internal/users/service_test.go
     - title: App wiring
       files:
-        - app/wire/inject_services_app.go
+      - app/wire/inject_services_app.go
   generated_files:
     intro: "The cache generator updates:"
     files:
@@ -113,7 +114,8 @@ markdown:
   next_steps:
     - "Next, add [File Upload to Storage](/scenarios/file-upload-storage) with a named storage disk."
 steps:
-  - title: Add a Named Cache
+  - id: add-a-named-cache
+    title: Add a Named Cache
     explain: |
       Add a named `profiles` cache to `.env`, then run the build pipeline so your App exposes `app.Caches().Profiles()`.
     append:
@@ -124,10 +126,14 @@ steps:
         CACHE_PROFILES_DRIVER=memory
         CACHE_PROFILES_DEFAULT_TTL_SECONDS=300
         CACHE_PROFILES_PREFIX=profiles
-    run:
-      run: ["forj", "build"]
 
-  - title: Add the Repository
+  - id: refresh-cache-resources
+    title: Refresh Cache Resources
+    explain: Run the build pipeline after changing named resource configuration.
+    command: ["forj", "build"]
+
+  - id: add-the-repository
+    title: Add the Repository
     explain: |
       Create `internal/users/repository.go`.
 
@@ -227,7 +233,8 @@ steps:
                 return "users:" + id + ":profile"
         }
 
-  - title: Use the Repository in the Service
+  - id: use-the-repository-in-the-service
+    title: Use the Repository in the Service
     explain: |
       Replace `internal/users/service.go`.
 
@@ -273,7 +280,8 @@ steps:
                 return s.repository.Find(ctx, id)
         }
 
-  - title: Wire the Repository and Cache
+  - id: wire-the-repository-and-cache
+    title: Wire the Repository and Cache
     explain: |
       Open `app/wire/inject_services_app.go`.
 
@@ -289,7 +297,8 @@ steps:
 
                 "{{module}}/internal/caches"
 
-  - title: Add Repository Providers
+  - id: add-repository-providers
+    title: Add Repository Providers
     explain: |
       Add the source repository, cached repository provider, and named cache provider.
     replace:
@@ -303,7 +312,8 @@ steps:
                 provideUserRepository,
                 users.NewService,
 
-  - title: Add Provider Functions
+  - id: add-provider-functions
+    title: Add Provider Functions
     explain: |
       `provideUserProfileCache` selects the named resource. `provideUserRepository` keeps the service wired to the repository interface.
     replace:
@@ -322,7 +332,8 @@ steps:
                 return manager.Profiles()
         }
 
-  - title: Add Repository Tests
+  - id: add-repository-tests
+    title: Add Repository Tests
     explain: |
       Create `internal/users/repository_test.go`.
 
@@ -377,7 +388,8 @@ steps:
                 }
         }
 
-  - title: Update the Service Test
+  - id: update-the-service-test
+    title: Update the Service Test
     explain: |
       Keep the service test focused on service behavior.
     write:
@@ -404,10 +416,9 @@ steps:
                 }
         }
 
-verify:
-  commands:
-    - run: ["forj", "build"]
-    - run: ["go", "test", "./..."]
-    - run: ["forj", "route:list"]
-      contains:
-        - "/api/v1/users/:id"
+checks:
+  - command: ["forj", "build"]
+  - command: ["go", "test", "./..."]
+  - command: ["forj", "route:list"]
+    contains:
+      - "/api/v1/users/:id"
