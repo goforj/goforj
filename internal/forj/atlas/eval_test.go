@@ -37,14 +37,14 @@ func TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey(t *testing.T) {
 // TestLoadEvalRedactionSecretsExtractsCredentialTokens keeps auth.json values out of retained evaluation diagnostics.
 func TestLoadEvalRedactionSecretsExtractsCredentialTokens(t *testing.T) {
 	credential := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(credential, []byte(`{"auth":{"access_token":"access-token-value","token":"token-value"},"provider":{"refresh_token":"refresh-token-value"}}`), 0o600); err != nil {
+	if err := os.WriteFile(credential, []byte(`{"auth":{"access_token":"access-token-value","token":"token-value"},"provider":{"refresh_token":"refresh-token-value","OPENAI_API_KEY":"api-key-value"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	secrets, err := loadEvalRedactionSecrets(credential)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"access-token-value", "token-value", "refresh-token-value"} {
+	for _, want := range []string{"access-token-value", "token-value", "refresh-token-value", "api-key-value"} {
 		if !containsString(secrets, want) {
 			t.Fatalf("redaction secrets = %q, want %q", secrets, want)
 		}
@@ -95,6 +95,10 @@ func TestMarshalRedactedEvaluationKeepsSecretsOutOfTerminalJSON(t *testing.T) {
 func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("ATLAS_EVAL_SECRET", "must-not-leak")
+	t.Setenv("GOENV", filepath.Join(root, "host-go-env"))
+	t.Setenv("GOFLAGS", "-modfile=host.mod")
+	t.Setenv("GOPROXY", "https://credential@private.example.invalid")
+	t.Setenv("GOPRIVATE", "private.example.invalid")
 	source := filepath.Join(root, "source-forj")
 	if err := os.WriteFile(source, []byte("candidate"), 0o700); err != nil {
 		t.Fatal(err)
@@ -111,6 +115,16 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	}
 	if values["GOWORK"] != "off" {
 		t.Fatalf("GOWORK = %q", values["GOWORK"])
+	}
+	for key, want := range map[string]string{"GOENV": "off", "GOPROXY": "https://proxy.golang.org,direct", "GOSUMDB": "sum.golang.org", "GOTOOLCHAIN": "local"} {
+		if values[key] != want {
+			t.Fatalf("%s = %q, want %q", key, values[key], want)
+		}
+	}
+	for _, key := range []string{"GOFLAGS", "GOPRIVATE"} {
+		if _, leaked := values[key]; leaked {
+			t.Fatalf("ambient %s reached the evaluation process", key)
+		}
 	}
 	if _, leaked := values["ATLAS_EVAL_SECRET"]; leaked {
 		t.Fatal("ambient credential-like environment reached the evaluation process")
