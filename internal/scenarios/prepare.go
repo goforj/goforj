@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
@@ -25,9 +24,9 @@ type PrepareOptions struct {
 	Keep               bool
 	ScenarioID         string
 	ForjExec           string
-	ToolExecutables    map[string]string
 	Environment        []string
 	ExpectedPlanDigest string
+	ExpectedToolDigest string
 }
 
 // ResolveOptions identifies a live scenario without granting permission to mutate a workspace.
@@ -63,6 +62,7 @@ type PreparedScenario struct {
 	ScenarioDigests []ScenarioSourceDigest
 	ForjExecutable  string
 	ForjDigest      string
+	ToolDigest      string
 	PlanDigest      string
 	BaselineTree    string
 	workspace       scenarioWorkspace
@@ -139,9 +139,12 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 	if plan.spec.SchemaVersion != liveScenarioSchemaVersion {
 		return nil, fmt.Errorf("%w: scenario %q must declare schema_version %d", ErrUnsupportedLiveScenario, plan.spec.ID, liveScenarioSchemaVersion)
 	}
-	tools, _, err := resolveScenarioPlanTools(forjExecutable, options.Environment, plan, false)
+	tools, toolDigest, err := resolveScenarioPlanTools(forjExecutable, options.Environment, plan, false)
 	if err != nil {
 		return nil, err
+	}
+	if options.ExpectedToolDigest != "" && options.ExpectedToolDigest != toolDigest {
+		return nil, fmt.Errorf("resolved scenario tools changed: got %s, want %s", toolDigest, options.ExpectedToolDigest)
 	}
 	digests := preparationScenarioDigests(catalog, plan)
 	planDigest := digestPreparationPlan(plan.spec.ID, plan.spec.SchemaVersion, digests)
@@ -159,7 +162,12 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		workspace:   workspace,
 		forjExec:    forjExecutable,
 		tools:       tools,
+		toolDigest:  toolDigest,
 		environment: append([]string(nil), options.Environment...),
+	}
+	execution, err = execution.snapshotTools()
+	if err != nil {
+		return nil, workspace.cleanupAfter(err)
 	}
 	if err := execution.prepare(plan); err != nil {
 		return nil, workspace.cleanupAfter(err)
@@ -179,6 +187,7 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		ScenarioDigests: digests,
 		ForjExecutable:  forjExecutable,
 		ForjDigest:      forjDigest,
+		ToolDigest:      toolDigest,
 		PlanDigest:      planDigest,
 		BaselineTree:    baselineTree,
 		workspace:       workspace,
@@ -227,7 +236,7 @@ func resolveScenarioPlanTools(forjPath string, environment []string, plan scenar
 		}
 	}
 	tools := make(map[string]string, len(names))
-	digests := make([]string, 0, len(names))
+	digests := make(map[string]string, len(names))
 	for name := range names {
 		var toolPath, digest string
 		var err error
@@ -240,32 +249,9 @@ func resolveScenarioPlanTools(forjPath string, environment []string, plan scenar
 			return nil, "", err
 		}
 		tools[name] = toolPath
-		digests = append(digests, name+"\x00"+digest)
+		digests[name] = digest
 	}
-	sort.Strings(digests)
-	hash := sha256.New()
-	for _, identity := range digests {
-		fmt.Fprintf(hash, "%s\x00", identity)
-	}
-	return tools, fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
-}
-
-// ResolvePreparationTools resolves every executable used by a live preparation prefix against its explicit environment.
-func ResolvePreparationTools(forjExecutable string, environment []string) (map[string]string, string, error) {
-	forjPath, forjDigest, err := resolveScenarioExecutable(forjExecutable)
-	if err != nil {
-		return nil, "", err
-	}
-	goPath, goDigest, err := resolveScenarioTool("go", environment)
-	if err != nil {
-		return nil, "", err
-	}
-	tools := map[string]string{"forj": forjPath, "go": goPath}
-	hash := sha256.New()
-	for _, identity := range []string{"forj\x00" + forjDigest, "go\x00" + goDigest} {
-		fmt.Fprintf(hash, "%s\x00", identity)
-	}
-	return tools, fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+	return tools, digestScenarioTools(digests), nil
 }
 
 // preparationScenarioDigests records the complete dependency closure followed by the selected target scenario.
@@ -342,18 +328,6 @@ func resolveScenarioTool(name string, environment []string) (string, string, err
 		}
 	}
 	return "", "", fmt.Errorf("resolve tool %q from PATH", name)
-}
-
-// copyScenarioTools prevents a caller from changing command selection after preparation begins.
-func copyScenarioTools(tools map[string]string) map[string]string {
-	if tools == nil {
-		return nil
-	}
-	result := make(map[string]string, len(tools))
-	for name, path := range tools {
-		result[name] = path
-	}
-	return result
 }
 
 // Close releases the temporary Project when the caller did not request retention.

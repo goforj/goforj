@@ -361,9 +361,16 @@ func (preparer Preparer) materializeScenario(ctx context.Context, request eval.P
 	if appLogger == nil {
 		appLogger = logger.NewSilentLogger()
 	}
-	tools, _, err := scenarios.ResolveScenarioPreparationTools(request.ForjExecutable, request.Environment, scenarios.ResolveOptions{SpecDir: preparer.SpecDir, ScenarioID: request.ScenarioID})
+	_, forjDigest, err := scenarios.ResolveExecutable(request.ForjExecutable)
 	if err != nil {
 		return nil, err
+	}
+	_, toolchainDigest, err := scenarios.ResolveScenarioPreparationTools(request.ForjExecutable, request.Environment, scenarios.ResolveOptions{SpecDir: preparer.SpecDir, ScenarioID: request.ScenarioID})
+	if err != nil {
+		return nil, err
+	}
+	if preparationPlanDigest(plan.ScenarioPlanDigest, forjDigest, toolchainDigest, preparationEnvironmentDigest(request.Environment)) != plan.PlanDigest {
+		return nil, fmt.Errorf("resolved scenario tools changed before preparation")
 	}
 	return scenarios.Prepare(ctx, scenarios.PrepareOptions{
 		Logger:             appLogger,
@@ -372,9 +379,9 @@ func (preparer Preparer) materializeScenario(ctx context.Context, request eval.P
 		Keep:               keep,
 		ScenarioID:         request.ScenarioID,
 		ForjExec:           request.ForjExecutable,
-		ToolExecutables:    tools,
 		Environment:        append([]string(nil), request.Environment...),
 		ExpectedPlanDigest: plan.ScenarioPlanDigest,
+		ExpectedToolDigest: toolchainDigest,
 	})
 }
 
