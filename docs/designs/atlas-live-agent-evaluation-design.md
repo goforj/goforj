@@ -431,7 +431,12 @@ dependency, and documentation behavior. It is not live-evaluable until it has a
 versioned preparation boundary; attempting to prepare it returns a stable
 `unsupported_live_scenario` error before mutation. Checked-in specs may migrate
 incrementally. Migration tests must compare ordinary golden-path execution and
-generated documentation before and after migration.
+generated documentation before and after migration. The embedded migration
+guard retains the established reader-facing workflow headings in order while
+allowing schema v2 to split a legacy multi-action step into explicit executable
+steps. The normal scenario validation matrix continues to execute the complete
+golden path, so the guard covers both documentation continuity and runnable
+behavior without freezing YAML encoding details.
 
 For a migrated spec, ordinary `scenario:test` still exercises the full golden
 path: completed dependencies, preparation, starting-state checks, target steps,

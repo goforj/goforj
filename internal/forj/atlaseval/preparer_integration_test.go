@@ -269,136 +269,187 @@ func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture 
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
 type majorSurfaceVerifierCase struct {
-	evaluation string
-	scenario   string
-	path       string
-	old        string
-	mutant     string
+	evaluation  string
+	scenario    string
+	path        string
+	old         string
+	mutant      string
+	additional  []evaluationMutation
+	wantFailed  string
+	wantCompile bool
+}
+
+// evaluationMutation completes a compiling semantic mutant when one replacement cannot preserve source validity.
+type evaluationMutation struct {
+	old    string
+	mutant string
 }
 
 // TestAddAppCommandVerifierCalibration proves the App command contract accepts its golden Project and rejects lost cancellation.
 func TestAddAppCommandVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)", wantFailed: "command-shape", wantCompile: true})
 }
 
 // TestAddJobVerifierCalibration proves the job contract requires its typed payload identity.
 func TestAddJobVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string", wantFailed: "typed-job"})
 }
 
 // TestAddMigrationVerifierCalibration proves the migration contract recognizes the generated connection-specific pair.
 func TestAddMigrationVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-migration", scenario: "invoice-status-migration", path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", mutant: "-- Wrong migration"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-migration", scenario: "invoice-status-migration", path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", mutant: "-- Wrong migration", wantFailed: "migration-up"})
 }
 
 // TestAddScheduleVerifierCalibration proves the schedule contract rejects work detached from its runtime context.
 func TestAddScheduleVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")", wantFailed: "schedule-shape", wantCompile: true})
 }
 
 // TestAddEventSubscriberVerifierCalibration proves the subscriber contract rejects work detached from its event context.
 func TestAddEventSubscriberVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)", wantFailed: "subscriber-boundary", wantCompile: true})
 }
 
 // TestCreateModelVerifierCalibration proves the model contract requires the database-derived field shape.
 func TestCreateModelVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress", wantFailed: "model-shape"})
 }
 
 // TestAddNamedAppRouteVerifierCalibration proves additional-App routing stays attached to the selected App.
 func TestAddNamedAppRouteVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-app-route", scenario: "admin-audit-route", path: "internal/audits/controller.go", old: "/api/v1/audits", mutant: "/api/v1/wrong"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-app-route", scenario: "admin-audit-route", path: "internal/audits/controller.go", old: "/api/v1/audits", mutant: "/api/v1/wrong", wantFailed: "admin-route-visible"})
 }
 
 // TestAddNamedResourceVerifierCalibration proves named queues are resolved through their generated manager accessor.
 func TestAddNamedResourceVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-resource", scenario: "named-reports-queue", path: "internal/invoices/report_dispatcher.go", old: "manager.Reports()", mutant: "manager.Default()"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-resource", scenario: "named-reports-queue", path: "internal/invoices/report_dispatcher.go", old: "manager.Reports()", mutant: "manager.Default()", wantFailed: "named-queue-injection"})
 }
 
 // TestAddNamedCacheVerifierCalibration proves named caches are resolved through their generated manager accessor.
 func TestAddNamedCacheVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-cache", scenario: "named-profiles-cache", path: "internal/invoices/profile_cache.go", old: "manager.Profiles()", mutant: "manager.Default()"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-cache", scenario: "named-profiles-cache", path: "internal/invoices/profile_cache.go", old: "manager.Profiles()", mutant: "manager.Default()", wantFailed: "named-cache-injection"})
 }
 
 // TestAddNamedStorageVerifierCalibration proves named storage is resolved through its generated manager accessor.
 func TestAddNamedStorageVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-storage", scenario: "named-avatar-storage", path: "internal/invoices/avatar_storage.go", old: "manager.Avatars()", mutant: "manager.Default()"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-named-storage", scenario: "named-avatar-storage", path: "internal/invoices/avatar_storage.go", old: "manager.Avatars()", mutant: "manager.Default()", wantFailed: "named-storage-injection"})
 }
 
 // TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set.
 func TestRepairWireProviderVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry", wantFailed: "provider-registration"})
 }
 
 // TestBuildJSONAPIFeatureVerifierCalibration proves the complete API contract rejects lookup detached from request cancellation.
 func TestBuildJSONAPIFeatureVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "build-json-api-feature", scenario: "json-api-route", path: "internal/users/controller.go", old: "c.service.Find(ctx.Context(), ctx.Param(\"id\"))", mutant: "c.service.Find(context.Background(), ctx.Param(\"id\"))"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "build-json-api-feature",
+		scenario:    "json-api-route",
+		path:        "internal/users/controller.go",
+		old:         "c.service.Find(ctx.Context(), ctx.Param(\"id\"))",
+		mutant:      "c.service.Find(context.Background(), ctx.Param(\"id\"))",
+		additional:  []evaluationMutation{{old: `"errors"`, mutant: "\"context\"\n\t\"errors\""}},
+		wantFailed:  "users-application-boundary",
+		wantCompile: true,
+	})
 }
 
 // TestAddCachedRepositoryVerifierCalibration proves cache-aside lookup uses the requested named cache.
 func TestAddCachedRepositoryVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-cached-repository", scenario: "cached-user-profile", path: "app/wire/inject_services_app.go", old: "manager.Profiles()", mutant: "manager.Default()"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-cached-repository", scenario: "cached-user-profile", path: "app/wire/inject_services_app.go", old: "manager.Profiles()", mutant: "manager.Default()", wantFailed: "profiles-cache-registration"})
 }
 
 // TestAddUploadWorkflowVerifierCalibration proves upload storage resolves through the requested named disk.
 func TestAddUploadWorkflowVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-upload-workflow", scenario: "file-upload-storage", path: "app/wire/inject_services_app.go", old: "manager.Uploads()", mutant: "manager.Default()"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-upload-workflow", scenario: "file-upload-storage", path: "app/wire/inject_services_app.go", old: "manager.Uploads()", mutant: "manager.Default()", wantFailed: "uploads-storage-registration"})
 }
 
 // TestPublishDomainEventVerifierCalibration proves the published fact retains its reviewed topic identity.
 func TestPublishDomainEventVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "publish-domain-event", scenario: "users-created-event", path: "internal/events/user_created_event.go", old: `"users.created"`, mutant: `"users.wrong"`})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "publish-domain-event", scenario: "users-created-event", path: "internal/events/user_created_event.go", old: `"users.created"`, mutant: `"users.wrong"`, wantFailed: "typed-user-event"})
 }
 
 // TestDispatchEventFollowupJobVerifierCalibration proves queued report work retains its typed routing identity.
 func TestDispatchEventFollowupJobVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "dispatch-event-followup-job", scenario: "reports-generate-job", path: "internal/reports/generate_job.go", old: `"reports:generate"`, mutant: `"reports:wrong"`})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "dispatch-event-followup-job",
+		scenario:   "reports-generate-job",
+		path:       "internal/reports/generate_job.go",
+		old:        "UserID string",
+		mutant:     "Email string",
+		additional: []evaluationMutation{
+			{old: "UserID: userID", mutant: "Email: userID"},
+			{old: "payload.UserID", mutant: "payload.Email"},
+		},
+		wantFailed:  "typed-report-job",
+		wantCompile: true,
+	})
 }
 
 // TestScheduleExistingJobVerifierCalibration proves scheduled dispatch remains attached to the caller's runtime context.
 func TestScheduleExistingJobVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "schedule-existing-job", scenario: "reports-daily-schedule", path: "internal/reports/daily_schedule.go", old: "return s.runner.Run(ctx)", mutant: "return s.runner.Run(context.Background())"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "schedule-existing-job", scenario: "reports-daily-schedule", path: "internal/reports/daily_schedule.go", old: "return s.runner.Run(ctx)", mutant: "return s.runner.Run(context.Background())", wantFailed: "scheduled-job-dispatch", wantCompile: true})
 }
 
 // TestCreateAdditionalAppVerifierCalibration proves the additional App remains declared in Project configuration.
 func TestCreateAdditionalAppVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-additional-app", scenario: "create-statuspage-app", path: "cmd/statuspage/main.go", old: "wire.LaunchApplication()", mutant: "wire.LaunchMissing()"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-additional-app", scenario: "create-statuspage-app", path: "cmd/statuspage/main.go", old: "wire.LaunchApplication()", mutant: "_ = wire.LaunchApplication", wantFailed: "statuspage-entrypoint", wantCompile: true})
 }
 
 // TestAddAppLifecycleHookVerifierCalibration proves readiness work preserves startup cancellation.
 func TestAddAppLifecycleHookVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-lifecycle-hook", scenario: "invoice-readiness-hook", path: "app/lifecycle.go", old: "registry.invoices.Find(ctx, \"readiness\")", mutant: "registry.invoices.Find(context.Background(), \"readiness\")"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-lifecycle-hook", scenario: "invoice-readiness-hook", path: "app/lifecycle.go", old: "registry.invoices.Find(ctx, \"readiness\")", mutant: "registry.invoices.Find(context.Background(), \"readiness\")", wantFailed: "application-readiness-hook", wantCompile: true})
 }
 
 // TestAddOutboundHTTPIntegrationVerifierCalibration proves remote calls preserve caller cancellation.
 func TestAddOutboundHTTPIntegrationVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-outbound-http-integration", scenario: "tax-rate-http-integration", path: "internal/taxrates/client.go", old: "httpx.GetCtx[Rate](client.http, ctx,", mutant: "httpx.GetCtx[Rate](client.http, context.Background(),"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-outbound-http-integration", scenario: "tax-rate-http-integration", path: "internal/taxrates/client.go", old: "httpx.GetCtx[Rate](client.http, ctx,", mutant: "httpx.GetCtx[Rate](client.http, context.Background(),", wantFailed: "typed-http-client", wantCompile: true})
 }
 
 // TestAddValidatedWriteEndpointVerifierCalibration proves valid invoice creation preserves request cancellation.
 func TestAddValidatedWriteEndpointVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-validated-write-endpoint", scenario: "create-invoice-validation", path: "internal/invoices/controller.go", old: "controller.service.Create(request.Context(), input)", mutant: "controller.service.Create(context.Background(), input)"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-validated-write-endpoint",
+		scenario:    "create-invoice-validation",
+		path:        "internal/invoices/controller.go",
+		old:         "controller.service.Create(request.Context(), input)",
+		mutant:      "controller.service.Create(context.Background(), input)",
+		additional:  []evaluationMutation{{old: `"errors"`, mutant: "\"context\"\n\t\"errors\""}},
+		wantFailed:  "validated-request-boundary",
+		wantCompile: true,
+	})
 }
 
 // TestAddRouteMiddlewareVerifierCalibration proves middleware configuration uses the reviewed environment key.
 func TestAddRouteMiddlewareVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-route-middleware", scenario: "invoice-token-middleware", path: "app/wire/inject_http_controllers_app.go", old: `env.Get("INVOICE_HTTP_TOKEN", "invoice-secret")`, mutant: `env.Get("WRONG_TOKEN", "invoice-secret")`})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-route-middleware", scenario: "invoice-token-middleware", path: "app/wire/inject_http_controllers_app.go", old: `env.Get("INVOICE_HTTP_TOKEN", "")`, mutant: `env.Get("INVOICE_HTTP_TOKEN", "invoice-secret")`, wantFailed: "resolved-token-provider", wantCompile: true})
 }
 
 // TestAddDatabaseTransactionVerifierCalibration proves the transaction retains the caller's cancellation boundary.
 func TestAddDatabaseTransactionVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-database-transaction", scenario: "account-transfer-transaction", path: "internal/accounts/service.go", old: "service.accounts.WithTransaction(ctx,", mutant: "service.accounts.WithTransaction(context.Background(),"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-database-transaction", scenario: "account-transfer-transaction", path: "internal/accounts/service.go", old: "service.accounts.WithTransaction(ctx,", mutant: "service.accounts.WithTransaction(context.Background(),", wantFailed: "atomic-transfer-service", wantCompile: true})
 }
 
 // TestAddMailWorkflowVerifierCalibration proves delivery retains the caller's cancellation boundary.
 func TestAddMailWorkflowVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-mail-workflow", scenario: "invoice-receipt-mail", path: "internal/invoices/receipt_mailer.go", old: "Send(ctx)", mutant: "Send(context.Background())"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-mail-workflow", scenario: "invoice-receipt-mail", path: "internal/invoices/receipt_mailer.go", old: "Send(ctx)", mutant: "Send(context.Background())", wantFailed: "receipt-mail-service", wantCompile: true})
 }
 
 // TestProtectRouteWithAuthVerifierCalibration proves removing the protected invoice route fails observable route verification.
 func TestProtectRouteWithAuthVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "protect-route-with-auth", scenario: "protect-invoice-route", path: "app/routes.go", old: "\t\tinvoicesController.Routes(),\n", mutant: "\t\t// invoice route removed\n"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "protect-route-with-auth",
+		scenario:   "protect-invoice-route",
+		path:       "app/routes.go",
+		old:        "\t\tinvoicesController.Routes(),\n",
+		mutant:     "",
+		additional: []evaluationMutation{{
+			old:    "\t\tauthController.Routes(),\n",
+			mutant: "\t\tauthController.Routes(),\n\t\tinvoicesController.Routes(),\n",
+		}},
+		wantFailed:  "generated-auth-composition",
+		wantCompile: true,
+	})
 }
 
 // testMajorSurfaceVerifierCalibration exercises one contract independently so the integration runner can shard the complete portfolio.
@@ -466,16 +517,44 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		t.Fatalf("mutant target %q count = %d", test.old, strings.Count(string(body), test.old))
 	}
 	mutant := strings.Replace(string(body), test.old, test.mutant, 1)
+	for _, mutation := range test.additional {
+		if strings.Count(mutant, mutation.old) != 1 {
+			t.Fatalf("additional mutant target %q count = %d", mutation.old, strings.Count(mutant, mutation.old))
+		}
+		mutant = strings.Replace(mutant, mutation.old, mutation.mutant, 1)
+	}
 	if err := os.WriteFile(path, []byte(mutant), 0o644); err != nil {
 		t.Fatalf("write mutant: %v", err)
 	}
-	mutantResult, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
+	if test.wantCompile {
+		command := exec.CommandContext(t.Context(), "go", "test", "-run", "^$", "./...")
+		command.Dir = projectRoot
+		command.Env = append([]string(nil), environment...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("semantic mutant must compile: %v\n%s", err, output)
+		}
+	}
+	mutantChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
+	mutantResult, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: mutantChanges})
 	if err != nil {
 		t.Fatalf("Verify(mutant): %v", err)
 	}
 	if mutantResult.FrameworkOutcome.Status != eval.EndpointFailed {
 		t.Fatalf("mutant outcome = %#v; checks = %#v", mutantResult.FrameworkOutcome, mutantResult.Checks)
 	}
+	if !evaluationCheckFailed(mutantResult.Checks, test.wantFailed) {
+		t.Fatalf("mutant checks = %#v, want %q to fail", mutantResult.Checks, test.wantFailed)
+	}
+}
+
+// evaluationCheckFailed reports whether calibration failed for its intended semantic invariant rather than incidental compilation.
+func evaluationCheckFailed(checks []eval.EndpointResult, id string) bool {
+	for _, check := range checks {
+		if check.ID == id && check.Status == eval.EndpointFailed {
+			return true
+		}
+	}
+	return false
 }
 
 // evaluationProjectChanges projects real prepared-to-golden file changes into the Atlas ownership contract.
