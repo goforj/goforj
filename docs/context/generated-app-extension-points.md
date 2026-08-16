@@ -89,6 +89,14 @@ Project-specific env values live in the rendered app.
 
 Framework-wide env conventions belong in GoForj templates and runtime code.
 
+The generated environment contract has distinct ownership boundaries:
+
+- `.env` is private local state
+- `.env.example` is a safe committed inventory
+- `.env.testing` is a safe committed test profile
+
+Generation synchronizes the committed contracts from local state while redacting secrets and preserving project-owned entries. Extensions should add their keys to `.env`; they should not create a competing `.env.test` convention. Use process environment variables for CI-only or live integration credentials because they override `goforj/env` file values.
+
 Recent practical lesson:
 
 - `.env` changes during `forj dev` are a supervisor/watcher concern, not just an app runtime concern

@@ -798,6 +798,30 @@ func TestLauncherEnvironmentExcludesCLIDefaults(t *testing.T) {
 	}
 }
 
+// TestShouldAutoInitializeEnvironmentKeepsLifecycleOwnershipExplicit verifies only commands that consume a Project bootstrap missing local configuration.
+func TestShouldAutoInitializeEnvironmentKeepsLifecycleOwnershipExplicit(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "root help", args: nil, want: true},
+		{name: "build", args: []string{"build"}, want: true},
+		{name: "dev", args: []string{"--dev", "dev"}, want: true},
+		{name: "explicit init", args: []string{"env:init"}},
+		{name: "read only check", args: []string{"env:check"}},
+		{name: "render", args: []string{"render"}},
+		{name: "new", args: []string{"new", "project"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shouldAutoInitializeEnvironment(test.args); got != test.want {
+				t.Fatalf("shouldAutoInitializeEnvironment(%v) = %t, want %t", test.args, got, test.want)
+			}
+		})
+	}
+}
+
 func TestDelegatedAppEnvRespectsCommandPrefixOverride(t *testing.T) {
 	previousPrefix, hadPrefix := os.LookupEnv("FORJ_COMMAND_PREFIX")
 	defer restoreEnv("FORJ_COMMAND_PREFIX", previousPrefix, hadPrefix)

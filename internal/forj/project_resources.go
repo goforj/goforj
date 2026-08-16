@@ -122,7 +122,7 @@ func (p *ProjectRenderer) publishPendingResourceEnvironment() error {
 	if !p.resources.pendingEnvironmentWrite {
 		return nil
 	}
-	err := p.writeEnvironmentFile(p.workspace.path(".env"), p.resources.pendingEnvironment, 0o644)
+	err := p.writeEnvironmentFile(p.workspace.path(".env"), p.resources.pendingEnvironment, 0o600)
 	if err := p.workspace.logicalError(err); err != nil {
 		return fmt.Errorf("write resource environment: %w", err)
 	}
