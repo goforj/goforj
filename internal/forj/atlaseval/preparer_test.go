@@ -179,6 +179,36 @@ func TestPreparerCapabilitiesAdvertiseOnlyImplementedSchema(t *testing.T) {
 	}
 }
 
+// TestPromotedEvaluationsResolveLiveScenarioPrefixes prevents Atlas promotion from outrunning GoForj's executable fixture catalog.
+func TestPromotedEvaluationsResolveLiveScenarioPrefixes(t *testing.T) {
+	ids, err := eval.PromotedEvaluationIDs("")
+	if err != nil {
+		t.Fatalf("PromotedEvaluationIDs(): %v", err)
+	}
+	for _, id := range ids {
+		t.Run(id, func(t *testing.T) {
+			definition, err := eval.LoadPromotedDefinition(id)
+			if err != nil {
+				t.Fatalf("LoadPromotedDefinition(): %v", err)
+			}
+			request := eval.PreparationRequest{
+				ScenarioID:      definition.ProjectScenario,
+				DestinationRoot: filepath.Join(t.TempDir(), "project"),
+				ForjExecutable:  os.Args[0],
+				OrchestrationID: "catalog-" + id,
+				Environment:     os.Environ(),
+			}
+			plan, err := (Preparer{}).Resolve(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Resolve(): %v", err)
+			}
+			if plan.ScenarioID != definition.ProjectScenario || plan.ScenarioSchema != 2 || !plan.TargetOmitted {
+				t.Fatalf("plan = %#v", plan)
+			}
+		})
+	}
+}
+
 // TestPreparerRequiresHostGuidanceMaterializer prevents evaluations from quietly falling back to an adapter-owned approximation of durable guidance.
 func TestPreparerRequiresHostGuidanceMaterializer(t *testing.T) {
 	preparer := Preparer{}

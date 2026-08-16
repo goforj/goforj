@@ -1,0 +1,209 @@
+schema_version: 2
+id: account-transfer-transaction
+title: Account Transfer Transaction
+description: Add an atomic account transfer through a transaction-bound repository.
+app:
+  module_name: example.com/transactioneval
+  doc_module_name: your/module
+  components:
+    database_sqlite: true
+markdown:
+  intro: |
+    Add an account transfer whose debit and credit commit or roll back together.
+  before: |
+    the App has a generated SQLite connection but no account workflow.
+  after: |
+    the service owns the transaction boundary and repository calls share the transaction handle.
+  files:
+    - internal/accounts/account.go
+    - internal/accounts/repository.go
+    - internal/accounts/service.go
+    - internal/accounts/service_test.go
+    - app/wire/inject_services_app.go
+steps:
+  - id: add-account-model
+    title: Add the account model
+    write:
+      path: internal/accounts/account.go
+      language: go
+      content: |
+        // Package accounts owns atomic account workflows and persistence.
+        package accounts
+
+        // Account is the balance changed by an atomic transfer.
+        type Account struct {
+                ID           string `gorm:"primaryKey"`
+                BalanceCents int64
+        }
+  - id: add-account-repository
+    title: Add the transaction-bound repository
+    write:
+      path: internal/accounts/repository.go
+      language: go
+      content: |
+        // Package accounts owns atomic account workflows and persistence.
+        package accounts
+
+        import (
+                "context"
+                "errors"
+                "fmt"
+
+                "example.com/transactioneval/internal/database"
+                "gorm.io/gorm"
+        )
+
+        // ErrAccountNotFound reports that an account identifier does not exist.
+        var ErrAccountNotFound = errors.New("account not found")
+
+        // Repository owns account persistence through one database handle.
+        type Repository struct {
+                db *gorm.DB
+        }
+
+        // NewRepository resolves the generated default database connection.
+        func NewRepository(connections *database.Connections) (*Repository, error) {
+                db, err := connections.Default()
+                if err != nil {
+                        return nil, err
+                }
+                return newRepository(db), nil
+        }
+
+        // newRepository keeps transaction-bound construction inside the package.
+        func newRepository(db *gorm.DB) *Repository {
+                return &Repository{db: db}
+        }
+
+        // WithTransaction gives the workflow a repository bound to one transaction handle.
+        func (repository *Repository) WithTransaction(ctx context.Context, callback func(*Repository) error) error {
+                return repository.db.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
+                        return callback(newRepository(transaction))
+                })
+        }
+
+        // AdjustBalance changes exactly one account balance.
+        func (repository *Repository) AdjustBalance(ctx context.Context, id string, delta int64) error {
+                result := repository.db.WithContext(ctx).
+                        Model(&Account{}).
+                        Where("id = ?", id).
+                        UpdateColumn("balance_cents", gorm.Expr("balance_cents + ?", delta))
+                if result.Error != nil {
+                        return result.Error
+                }
+                if result.RowsAffected != 1 {
+                        return fmt.Errorf("%w: %s", ErrAccountNotFound, id)
+                }
+                return nil
+        }
+  - id: add-transfer-service
+    title: Own the transaction in the service
+    write:
+      path: internal/accounts/service.go
+      language: go
+      content: |
+        // Package accounts owns atomic account workflows and persistence.
+        package accounts
+
+        import (
+                "context"
+                "errors"
+        )
+
+        // Service owns account transfer policy.
+        type Service struct {
+                accounts *Repository
+        }
+
+        // NewService constructs the account service with its required repository.
+        func NewService(accounts *Repository) *Service {
+                return &Service{accounts: accounts}
+        }
+
+        // Transfer moves a positive amount between two accounts atomically.
+        func (service *Service) Transfer(ctx context.Context, fromID string, toID string, amountCents int64) error {
+                if amountCents <= 0 {
+                        return errors.New("transfer amount must be positive")
+                }
+                return service.accounts.WithTransaction(ctx, func(accounts *Repository) error {
+                        if err := accounts.AdjustBalance(ctx, fromID, -amountCents); err != nil {
+                                return err
+                        }
+                        return accounts.AdjustBalance(ctx, toID, amountCents)
+                })
+        }
+  - id: test-transfer-rollback
+    title: Prove commit and rollback behavior
+    write:
+      path: internal/accounts/service_test.go
+      language: go
+      content: |
+        // Package accounts owns atomic account workflows and persistence.
+        package accounts
+
+        import (
+                "context"
+                "testing"
+
+                "gorm.io/driver/sqlite"
+                "gorm.io/gorm"
+        )
+
+        // TestTransferCommitsOrRollsBack proves both writes share one transaction.
+        func TestTransferCommitsOrRollsBack(t *testing.T) {
+                db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+                if err != nil {
+                        t.Fatalf("open database: %v", err)
+                }
+                if err := db.AutoMigrate(&Account{}); err != nil {
+                        t.Fatalf("migrate accounts: %v", err)
+                }
+                if err := db.Create(&[]Account{{ID: "from", BalanceCents: 1000}, {ID: "to", BalanceCents: 250}}).Error; err != nil {
+                        t.Fatalf("seed accounts: %v", err)
+                }
+
+                service := NewService(newRepository(db))
+                if err := service.Transfer(context.Background(), "from", "to", 200); err != nil {
+                        t.Fatalf("Transfer(): %v", err)
+                }
+                assertBalance(t, db, "from", 800)
+                assertBalance(t, db, "to", 450)
+
+                if err := service.Transfer(context.Background(), "from", "missing", 100); err == nil {
+                        t.Fatal("Transfer() accepted a missing destination")
+                }
+                assertBalance(t, db, "from", 800)
+        }
+
+        // assertBalance keeps the test focused on durable state outside the transaction callback.
+        func assertBalance(t *testing.T, db *gorm.DB, id string, want int64) {
+                t.Helper()
+                var account Account
+                if err := db.First(&account, "id = ?", id).Error; err != nil {
+                        t.Fatalf("find %s: %v", id, err)
+                }
+                if account.BalanceCents != want {
+                        t.Fatalf("balance %s = %d, want %d", id, account.BalanceCents, want)
+                }
+        }
+  - id: import-account-providers
+    title: Import account providers
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/transactioneval/internal/runtime\"\n"
+      new: "\t\"example.com/transactioneval/internal/accounts\"\n\t\"example.com/transactioneval/internal/runtime\"\n"
+  - id: provide-account-services
+    title: Provide account services
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\taccounts.NewRepository,\n\taccounts.NewService,\n\tapp.NewLifecycleRegistry,\n"
+  - id: tidy-account-dependencies
+    title: Resolve account persistence dependencies
+    command: [go, mod, tidy]
+checks:
+  - command: [go, test, ./internal/accounts]
+  - command: [forj, build]
+  - command: [go, test, ./...]

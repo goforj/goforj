@@ -1,3 +1,4 @@
+schema_version: 2
 id: reports-daily-schedule
 title: Reports Daily Schedule
 description: Schedule reports:daily recurring work that dispatches existing reports:generate jobs.
@@ -60,18 +61,18 @@ markdown:
   file_groups:
     - title: Reports feature
       files:
-        - internal/reports/daily.go
-        - internal/reports/daily_test.go
+      - internal/reports/daily.go
+      - internal/reports/daily_test.go
     - title: Users repository
       files:
-        - internal/users/repository.go
+      - internal/users/repository.go
     - title: Scheduler
       files:
-        - internal/reports/daily_schedule.go
-        - app/wire/inject_schedules_app.go
+      - internal/reports/daily_schedule.go
+      - app/wire/inject_schedules_app.go
     - title: App wiring
       files:
-        - app/wire/inject_services_app.go
+      - app/wire/inject_services_app.go
   manual_check_title: Verify the Schedule
   manual_check: |
     For a fast local check, first edit `DailySchedule.Interval` in `internal/reports/daily_schedule.go` to use a short interval:
@@ -127,7 +128,8 @@ markdown:
   next_steps:
     - "Next, follow the full API, event, job, schedule, metrics, inspects, Lighthouse, and log path in [Runtime Observability](/scenarios/runtime-observability)."
 steps:
-  - title: Add a Daily Runner
+  - id: add-a-daily-runner
+    title: Add a Daily Runner
     explain: |
       Create `internal/reports/daily.go`.
 
@@ -186,7 +188,8 @@ steps:
                 return nil
         }
 
-  - title: Add Daily Targets to the Repository
+  - id: add-daily-targets-to-the-repository
+    title: Add Daily Targets to the Repository
     explain: |
       Extend `MemoryUserRepository` so the schedule can ask the repository for due report targets.
     replace:
@@ -199,7 +202,8 @@ steps:
 
         "{{module}}/internal/reports"
 
-  - title: Implement Daily Target Lookup
+  - id: implement-daily-target-lookup
+    title: Implement Daily Target Lookup
     explain: |
       Keep target selection behind the repository boundary.
     replace:
@@ -247,13 +251,14 @@ steps:
         	return targets, nil
         }
 
-  - title: Scaffold the Daily Schedule
+  - id: scaffold-the-daily-schedule
+    title: Scaffold the Daily Schedule
     explain: |
       Use the App-owned generator so the schedule enters the existing `AppSchedules` collection without replacing the App registry or any schedules already registered there.
-    run:
-      run: ["forj", "make:schedule", "reports:daily", "--every", "24h", "--no-open"]
+    command: ["forj", "make:schedule", "reports:daily", "--every", "24h", "--no-open"]
 
-  - title: Connect the Schedule to the Runner
+  - id: connect-the-schedule-to-the-runner
+    title: Connect the Schedule to the Runner
     explain: |
       Replace the new App-owned schedule scaffold with its real dependency and handler. Its constructor is already present in `app/wire/inject_schedules_app.go`, so Wire supplies `DailyRunner` when it builds the schedule collection.
     write:
@@ -293,7 +298,8 @@ steps:
                 return s.runner.Run(ctx)
         }
 
-  - title: Wire the Runner
+  - id: wire-the-runner
+    title: Wire the Runner
     explain: |
       The previous scenario already binds the report job to `ReportQueue`. Add the daily runner and bind the user repository to daily target lookup.
     replace:
@@ -306,7 +312,8 @@ steps:
                 reports.NewDailyRunner,
                 wire.Bind(new(reports.DailyTargetRepository), new(*users.MemoryUserRepository)),
 
-  - title: Test the Runner
+  - id: test-the-runner
+    title: Test the Runner
     explain: |
       Create `internal/reports/daily_test.go`.
 
@@ -365,7 +372,6 @@ steps:
                 }
         }
 
-verify:
-  commands:
-    - run: ["forj", "build"]
-    - run: ["go", "test", "./..."]
+checks:
+  - command: ["forj", "build"]
+  - command: ["go", "test", "./..."]

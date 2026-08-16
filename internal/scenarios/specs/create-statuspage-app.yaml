@@ -1,0 +1,33 @@
+schema_version: 2
+id: create-statuspage-app
+title: Create Status Page App
+description: Add an independently runnable status page App to an existing Project.
+app:
+  module_name: example.com/statuspageeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Add a second App for public status traffic while keeping the default App intact.
+  before: |
+    the Project has only its default App.
+  after: |
+    the Project has an independently runnable statuspage App with its own command, wiring, routes, and development watcher.
+  files:
+    - .goforj.yml
+    - cmd/statuspage/main.go
+    - app/statuspage/routes.go
+    - app/statuspage/wire/wire.go
+  common_mistakes:
+    - Do not create the App directory structure by hand.
+    - Do not replace the default App's route or Wire registries.
+steps:
+  - id: create-statuspage-app
+    title: Create the status page App
+    explain: Use the App generator so configuration, entrypoint, wiring, and development watchers remain consistent.
+    command: [forj, make:app, statuspage, --components, web-api, --dev-run, run]
+checks:
+  - command: [forj, statuspage, build]
+  - command: [forj, statuspage, route:list]
+  - command: [go, test, ./...]

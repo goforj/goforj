@@ -331,6 +331,76 @@ func TestRepairWireProviderVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry"})
 }
 
+// TestBuildJSONAPIFeatureVerifierCalibration proves the complete API contract rejects lookup detached from request cancellation.
+func TestBuildJSONAPIFeatureVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "build-json-api-feature", scenario: "json-api-route", path: "internal/users/controller.go", old: "c.service.Find(ctx.Context(), ctx.Param(\"id\"))", mutant: "c.service.Find(context.Background(), ctx.Param(\"id\"))"})
+}
+
+// TestAddCachedRepositoryVerifierCalibration proves cache-aside lookup uses the requested named cache.
+func TestAddCachedRepositoryVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-cached-repository", scenario: "cached-user-profile", path: "app/wire/inject_services_app.go", old: "manager.Profiles()", mutant: "manager.Default()"})
+}
+
+// TestAddUploadWorkflowVerifierCalibration proves upload storage resolves through the requested named disk.
+func TestAddUploadWorkflowVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-upload-workflow", scenario: "file-upload-storage", path: "app/wire/inject_services_app.go", old: "manager.Uploads()", mutant: "manager.Default()"})
+}
+
+// TestPublishDomainEventVerifierCalibration proves the published fact retains its reviewed topic identity.
+func TestPublishDomainEventVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "publish-domain-event", scenario: "users-created-event", path: "internal/events/user_created_event.go", old: `"users.created"`, mutant: `"users.wrong"`})
+}
+
+// TestDispatchEventFollowupJobVerifierCalibration proves queued report work retains its typed routing identity.
+func TestDispatchEventFollowupJobVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "dispatch-event-followup-job", scenario: "reports-generate-job", path: "internal/reports/generate_job.go", old: `"reports:generate"`, mutant: `"reports:wrong"`})
+}
+
+// TestScheduleExistingJobVerifierCalibration proves scheduled dispatch remains attached to the caller's runtime context.
+func TestScheduleExistingJobVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "schedule-existing-job", scenario: "reports-daily-schedule", path: "internal/reports/daily_schedule.go", old: "return s.runner.Run(ctx)", mutant: "return s.runner.Run(context.Background())"})
+}
+
+// TestCreateAdditionalAppVerifierCalibration proves the additional App remains declared in Project configuration.
+func TestCreateAdditionalAppVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-additional-app", scenario: "create-statuspage-app", path: "cmd/statuspage/main.go", old: "wire.LaunchApplication()", mutant: "wire.LaunchMissing()"})
+}
+
+// TestAddAppLifecycleHookVerifierCalibration proves readiness work preserves startup cancellation.
+func TestAddAppLifecycleHookVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-lifecycle-hook", scenario: "invoice-readiness-hook", path: "app/lifecycle.go", old: "registry.invoices.Find(ctx, \"readiness\")", mutant: "registry.invoices.Find(context.Background(), \"readiness\")"})
+}
+
+// TestAddOutboundHTTPIntegrationVerifierCalibration proves remote calls preserve caller cancellation.
+func TestAddOutboundHTTPIntegrationVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-outbound-http-integration", scenario: "tax-rate-http-integration", path: "internal/taxrates/client.go", old: "httpx.GetCtx[Rate](client.http, ctx,", mutant: "httpx.GetCtx[Rate](client.http, context.Background(),"})
+}
+
+// TestAddValidatedWriteEndpointVerifierCalibration proves valid invoice creation preserves request cancellation.
+func TestAddValidatedWriteEndpointVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-validated-write-endpoint", scenario: "create-invoice-validation", path: "internal/invoices/controller.go", old: "controller.service.Create(request.Context(), input)", mutant: "controller.service.Create(context.Background(), input)"})
+}
+
+// TestAddRouteMiddlewareVerifierCalibration proves middleware configuration uses the reviewed environment key.
+func TestAddRouteMiddlewareVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-route-middleware", scenario: "invoice-token-middleware", path: "app/wire/inject_http_controllers_app.go", old: `env.Get("INVOICE_HTTP_TOKEN", "invoice-secret")`, mutant: `env.Get("WRONG_TOKEN", "invoice-secret")`})
+}
+
+// TestAddDatabaseTransactionVerifierCalibration proves the transaction retains the caller's cancellation boundary.
+func TestAddDatabaseTransactionVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-database-transaction", scenario: "account-transfer-transaction", path: "internal/accounts/service.go", old: "service.accounts.WithTransaction(ctx,", mutant: "service.accounts.WithTransaction(context.Background(),"})
+}
+
+// TestAddMailWorkflowVerifierCalibration proves delivery retains the caller's cancellation boundary.
+func TestAddMailWorkflowVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-mail-workflow", scenario: "invoice-receipt-mail", path: "internal/invoices/receipt_mailer.go", old: "Send(ctx)", mutant: "Send(context.Background())"})
+}
+
+// TestProtectRouteWithAuthVerifierCalibration proves removing the protected invoice route fails observable route verification.
+func TestProtectRouteWithAuthVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "protect-route-with-auth", scenario: "protect-invoice-route", path: "app/routes.go", old: "\t\tinvoicesController.Routes(),\n", mutant: "\t\t// invoice route removed\n"})
+}
+
 // testMajorSurfaceVerifierCalibration exercises one contract independently so the integration runner can shard the complete portfolio.
 func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) {
 	t.Helper()
