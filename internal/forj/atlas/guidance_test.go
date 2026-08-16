@@ -1,6 +1,7 @@
 package atlas
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,36 @@ func TestReconcileGuidanceIntentUsesEveryTarget(t *testing.T) {
 		content := readGuidanceTestFile(t, agent.GuidelinesPath(root))
 		if !strings.Contains(content, "<!-- "+files.DefaultMarker+":start -->") {
 			t.Fatalf("%s projection missing managed marker", agent.Name())
+		}
+	}
+}
+
+// TestReconcileGuidanceIntentRejectsTargetsBeforeMutation keeps configuration and native projections on one failure boundary.
+func TestReconcileGuidanceIntentRejectsTargetsBeforeMutation(t *testing.T) {
+	root := writeGuidanceTestProject(t)
+	configurationPath := filepath.Join(root, ".goforj.yml")
+	before, err := os.ReadFile(configurationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ReconcileGuidanceIntent(root, install.GuidanceReconciliation{
+		Version: install.GuidanceReconciliationVersion,
+		Enabled: false,
+		Targets: []string{"unsupported"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported agent "unsupported"`) {
+		t.Fatalf("ReconcileGuidanceIntent() error = %v, want unsupported target", err)
+	}
+	after, err := os.ReadFile(configurationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("configuration changed after rejected target:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	for _, agent := range agents.Builtins() {
+		if _, err := os.Stat(agent.GuidelinesPath(root)); !os.IsNotExist(err) {
+			t.Fatalf("rejected target changed %s projection: %v", agent.Name(), err)
 		}
 	}
 }
