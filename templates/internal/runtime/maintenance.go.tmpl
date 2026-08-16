@@ -60,7 +60,7 @@ func maintenanceSnapshotFresh(snapshot *maintenanceSnapshot, path string, now ti
 	return snapshot != nil && snapshot.path == path && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval
 }
 
-// MaintenancePath returns the App-scoped local state file used by down and up.
+// MaintenancePath returns the App-scoped local state file used by maintenance commands.
 func MaintenancePath() string {
 	appName := CurrentApp().Name
 	if appName == "" {
