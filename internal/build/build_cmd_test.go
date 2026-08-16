@@ -924,6 +924,18 @@ func TestBuildProgressReporterNoopsWithoutTTY(t *testing.T) {
 	}
 }
 
+// TestAppHelpBuildTransientProgressScopesClearingToHelp verifies ordinary builds retain their durable completion line.
+func TestAppHelpBuildTransientProgressScopesClearingToHelp(t *testing.T) {
+	t.Setenv("FORJ_COMMAND_ORIGIN", AppHelpCommandOrigin)
+	if !appHelpBuildTransientProgress() {
+		t.Fatal("expected App help build origin to enable transient progress")
+	}
+	t.Setenv("FORJ_COMMAND_ORIGIN", "dev_command")
+	if appHelpBuildTransientProgress() {
+		t.Fatal("expected non-help build origin to keep durable progress")
+	}
+}
+
 // TestBuildArgsDoNotInjectLaunchState verifies executable behavior is derived
 // from generated app source rather than artifact-specific linker values.
 func TestBuildArgsDoNotInjectLaunchState(t *testing.T) {
