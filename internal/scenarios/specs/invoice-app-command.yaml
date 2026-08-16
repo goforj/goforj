@@ -1,0 +1,62 @@
+schema_version: 2
+id: invoice-app-command
+title: Invoice App Command
+description: Add a context-aware invoice lookup command through the App command generator and registration points.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    cli: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: scaffold-invoice-command
+    title: Scaffold the invoice command
+    command: [forj, make:command, invoices:show]
+  - id: implement-invoice-command
+    title: Invoke the invoice service
+    write:
+      path: internal/invoices/show_cmd.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its application entry points.
+        package invoices
+
+        import (
+                "context"
+                "fmt"
+        )
+
+        // ShowCmd prints one invoice through the existing application boundary.
+        type ShowCmd struct {
+                ID string `arg:"" help:"Invoice ID"`
+                service *Service
+        }
+
+        // Signature keeps the public command name with its implementation.
+        func (*ShowCmd) Signature() string {
+                return `name:"invoices:show" help:"Show an invoice"`
+        }
+
+        // NewShowCmd exposes the invoice service dependency to Wire.
+        func NewShowCmd(service *Service) *ShowCmd {
+                return &ShowCmd{service: service}
+        }
+
+        // Run propagates Kong's command context into invoice lookup.
+        func (command *ShowCmd) Run(ctx context.Context) error {
+                invoice, err := command.service.Find(ctx, command.ID)
+                if err != nil {
+                        return err
+                }
+                fmt.Printf("%s %d\n", invoice.ID, invoice.TotalCents)
+                return nil
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
+  - command: [forj, invoices:show, inv-42]
+    contains: [inv-42, "12500"]

@@ -1,0 +1,55 @@
+schema_version: 2
+id: admin-audit-route
+title: Admin Audit Route
+description: Add an audit endpoint to an additional admin App without changing the default App registry.
+app:
+  module_name: example.com/admineval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  steps:
+    - id: create-admin-app
+      title: Create the additional admin App
+      command: [forj, make:app, admin, --components, web-api, --dev-run, run]
+  checks:
+    - command: [forj, admin, route:list]
+steps:
+  - id: scaffold-admin-audit-controller
+    title: Scaffold the controller in the admin App
+    command: [forj, admin, make:controller, audits]
+  - id: implement-admin-audit-controller
+    title: Return the admin audit response
+    write:
+      path: internal/audits/controller.go
+      language: go
+      content: |
+        // Package audits owns the admin audit transport.
+        package audits
+
+        import (
+                "net/http"
+
+                "github.com/goforj/web"
+        )
+
+        // Controller exposes admin audit routes.
+        type Controller struct{}
+
+        // NewController provides the audit controller to the selected App.
+        func NewController() *Controller { return &Controller{} }
+
+        // Routes returns the admin-owned audit endpoint.
+        func (controller *Controller) Routes() []web.Route {
+                return []web.Route{web.NewRoute(http.MethodGet, "/api/v1/audits", controller.Index)}
+        }
+
+        // Index returns a minimal audit response.
+        func (*Controller) Index(request web.Context) error {
+                return request.JSON(http.StatusOK, map[string]any{"audits": []any{}})
+        }
+checks:
+  - command: [forj, admin, build]
+  - command: [go, test, ./...]
+  - command: [forj, admin, route:list]
+    contains: [/api/v1/audits]
