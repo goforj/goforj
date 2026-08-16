@@ -2,6 +2,7 @@ package atlas
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/goforj/atlas/eval"
+	"github.com/goforj/goforj/project"
 )
 
 // TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey keeps retained manifests verifiable across invocations.
@@ -32,6 +34,56 @@ func TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("artifact key mode = %o, want 600", info.Mode().Perm())
 	}
+}
+
+// TestMaterializeEvaluationGuidanceUsesProductionDurablePath keeps evaluation treatments on the same config and marker path used by rendering.
+func TestMaterializeEvaluationGuidanceUsesProductionDurablePath(t *testing.T) {
+	root := t.TempDir()
+	if err := writeProjectGuidanceConfig(filepath.Join(root, ".goforj.yml"), &project.Config{ProjectName: "evaluation-test"}); err != nil {
+		t.Fatal(err)
+	}
+	prepared := evaluationPreparedProject{result: eval.PreparationResult{ProjectRoot: root}}
+	agents, err := materializeEvaluationGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileAgents}, project.AgentGuidanceBaseline)
+	if err != nil {
+		t.Fatalf("materializeEvaluationGuidance(agents): %v", err)
+	}
+	if !strings.Contains(string(agents.Files["AGENTS.md"]), "<!-- goforj-atlas:start -->") {
+		t.Fatalf("agents guidance = %q, want production marker", agents.Files["AGENTS.md"])
+	}
+	config, err := project.LoadProjectConfigAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Render.AgentGuidance != project.AgentGuidanceBaseline {
+		t.Fatalf("agent guidance = %q, want baseline", config.Render.AgentGuidance)
+	}
+	none, err := materializeEvaluationGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileNone}, project.AgentGuidanceNone)
+	if err != nil {
+		t.Fatalf("materializeEvaluationGuidance(none): %v", err)
+	}
+	if len(none.Files) != 0 {
+		t.Fatalf("none guidance files = %#v", none.Files)
+	}
+	if content, readErr := os.ReadFile(filepath.Join(root, "AGENTS.md")); readErr == nil && strings.Contains(string(content), "<!-- goforj-atlas:start -->") {
+		t.Fatalf("none treatment retained managed guidance: %s", content)
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("read none guidance: %v", readErr)
+	}
+}
+
+// evaluationPreparedProject supplies the prepared root needed to test the production durable guidance callback.
+type evaluationPreparedProject struct {
+	result eval.PreparationResult
+}
+
+// Result returns the prepared Project identity.
+func (project evaluationPreparedProject) Result() eval.PreparationResult {
+	return project.result
+}
+
+// Close has no resources because this fixture only represents an existing Project root.
+func (evaluationPreparedProject) Close(context.Context) error {
+	return nil
 }
 
 // TestLoadEvalRedactionSecretsExtractsCredentialTokens keeps auth.json values out of retained evaluation diagnostics.
