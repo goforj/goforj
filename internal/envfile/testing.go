@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const testingContractHeader = "# Test environment. Safe to commit; process variables override these values."
+const testingContractHeader = "# Automatically loaded by goforj/env when running tests. Safe to commit; process variables override these values."
 
 // MergeTesting derives a runnable test profile from the safe environment contract while preserving project-owned test values.
 func MergeTesting(existing []byte, example []byte) []byte {
