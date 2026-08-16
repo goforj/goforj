@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
-	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 func TestNormalizeLogEntrySignatureIgnoresDynamicFields(t *testing.T) {
@@ -408,7 +407,7 @@ func TestSinkDedupeInterleavedEntriesSummarizeIndependently(t *testing.T) {
 
 func TestSinkDedupeEmitsSummaryOnWindowRollover(t *testing.T) {
 	t.Setenv(logDedupeEnabledEnv, "true")
-	t.Setenv(logDedupeWindowMSEnv, "5")
+	t.Setenv(logDedupeWindowMSEnv, "5000")
 	t.Setenv(logDedupeBurstEnv, "1")
 	t.Setenv(logDedupeSummaryEveryEnv, "1000")
 
@@ -434,7 +433,12 @@ func TestSinkDedupeEmitsSummaryOnWindowRollover(t *testing.T) {
 		t.Fatalf("second event should be suppressed without summary")
 	}
 
-	time.Sleep(10 * time.Millisecond)
+	// Advancing the observed state keeps this test independent of scheduler load while exercising the same rollover path.
+	d.mu.Lock()
+	for _, state := range d.entries {
+		state.windowStart = state.windowStart.Add(-2 * d.window)
+	}
+	d.mu.Unlock()
 
 	emit, summary = d.filter(entry)
 	if !emit {
