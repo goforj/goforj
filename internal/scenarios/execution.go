@@ -9,6 +9,7 @@ import (
 	"go/format"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -32,18 +33,23 @@ type scenarioWorkspace struct {
 
 // scenarioExecution keeps the invariant collaborators for every dependency, step, and verification command in one run.
 type scenarioExecution struct {
-	context     context.Context
-	logger      *logger.AppLogger
-	workspace   scenarioWorkspace
-	forjExec    string
-	tools       map[string]string
-	toolDigest  string
-	environment []string
+	context         context.Context
+	logger          *logger.AppLogger
+	workspace       scenarioWorkspace
+	forjExec        string
+	tools           map[string]string
+	toolEnvironment map[string]map[string]string
+	toolDigest      string
+	environment     []string
 }
 
 const scenarioCommandTimeout = 3 * time.Minute
 
 const scenarioCommandOutputLimit = 1 << 20
+
+var createScenarioToolRoot = func() (string, error) {
+	return os.MkdirTemp("", "forj-scenario-tools-")
+}
 
 // runScenario executes one selected scenario against the same validated catalog used to select it.
 func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) error {
@@ -368,13 +374,17 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 	if len(environment) == 0 {
 		environment = scenarioProcessEnv()
 	}
+	environmentMap := scenarioEnvironmentMap(environment)
+	for key, value := range execution.toolEnvironment[command.Run[0]] {
+		environmentMap[scenarioEnvironmentKey(key)] = value
+	}
 	output := newScenarioOutputBuffer(command.Contains)
 	supervisor := devwatch.NewSupervisor(devwatch.SupervisorOptions{})
 	defer supervisor.Close()
 	_, err := supervisor.Run(ctx, "scenario command", devwatch.Command{
 		Args:       args,
 		Dir:        execution.workspace.root,
-		Env:        scenarioEnvironmentMap(environment),
+		Env:        environmentMap,
 		ReplaceEnv: true,
 		Stdout:     &output,
 		Stderr:     &output,
@@ -497,6 +507,20 @@ func scenarioEnvironmentMap(environment []string) map[string]string {
 	return values
 }
 
+// scenarioEnvironmentSlice converts a normalized replacement environment back to exec's key=value form.
+func scenarioEnvironmentSlice(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	environment := make([]string, 0, len(keys))
+	for _, key := range keys {
+		environment = append(environment, key+"="+values[key])
+	}
+	return environment
+}
+
 // scenarioEnvironmentKey mirrors Windows process lookup, where environment variable names are case-insensitive.
 func scenarioEnvironmentKey(key string) string {
 	if runtime.GOOS == "windows" {
@@ -518,7 +542,7 @@ func (execution scenarioExecution) snapshotTools() (scenarioExecution, error) {
 	if err := execution.contextErr(); err != nil {
 		return scenarioExecution{}, err
 	}
-	root, err := os.MkdirTemp("", "forj-scenario-tools-")
+	root, err := createScenarioToolRoot()
 	if err != nil {
 		return scenarioExecution{}, fmt.Errorf("create scenario tool root: %w", err)
 	}
@@ -530,6 +554,7 @@ func (execution scenarioExecution) snapshotTools() (scenarioExecution, error) {
 	}()
 	execution.workspace.toolRoot = root
 	tools := make(map[string]string, len(execution.tools))
+	toolEnvironment := make(map[string]map[string]string)
 	digests := make(map[string]string, len(execution.tools))
 	for name, source := range execution.tools {
 		if err := execution.contextErr(); err != nil {
@@ -537,6 +562,13 @@ func (execution scenarioExecution) snapshotTools() (scenarioExecution, error) {
 		}
 		if err := validateScenarioToolName(name); err != nil {
 			return scenarioExecution{}, err
+		}
+		var goRoot string
+		if name == "go" {
+			goRoot, err = resolveScenarioGoRoot(execution.context, source, execution.environment)
+			if err != nil {
+				return scenarioExecution{}, fmt.Errorf("resolve Go runtime for tool snapshot: %w", err)
+			}
 		}
 		destination := filepath.Join(root, name+filepath.Ext(source))
 		if err := copyScenarioExecutable(source, destination); err != nil {
@@ -548,16 +580,64 @@ func (execution scenarioExecution) snapshotTools() (scenarioExecution, error) {
 			return scenarioExecution{}, fmt.Errorf("verify tool %q snapshot: %w", name, err)
 		}
 		digests[name] = digest
+		if goRoot != "" {
+			if err := verifyScenarioGoRoot(execution.context, destination, execution.environment, goRoot); err != nil {
+				return scenarioExecution{}, fmt.Errorf("verify Go runtime for tool snapshot: %w", err)
+			}
+			toolEnvironment[name] = map[string]string{"GOROOT": goRoot}
+		}
 	}
 	if execution.toolDigest != "" && execution.toolDigest != digestScenarioTools(digests) {
 		return scenarioExecution{}, fmt.Errorf("scenario tool bytes changed before execution")
 	}
 	execution.tools = tools
+	execution.toolEnvironment = toolEnvironment
 	if forj := tools["forj"]; forj != "" {
 		execution.forjExec = forj
 	}
 	success = true
 	return execution, nil
+}
+
+// resolveScenarioGoRoot captures the installed runtime root required by a copied Go executable.
+func resolveScenarioGoRoot(ctx context.Context, executable string, environment []string) (string, error) {
+	return scenarioGoRoot(ctx, executable, environment, "")
+}
+
+// verifyScenarioGoRoot proves the copied Go executable resolves the same runtime when explicitly bound to its captured root.
+func verifyScenarioGoRoot(ctx context.Context, executable string, environment []string, goRoot string) error {
+	got, err := scenarioGoRoot(ctx, executable, environment, goRoot)
+	if err != nil {
+		return err
+	}
+	if got != goRoot {
+		return fmt.Errorf("Go runtime root %q does not match captured root %q", got, goRoot)
+	}
+	return nil
+}
+
+// scenarioGoRoot runs only the pinned Go executable to bind its runtime root before scenario commands begin.
+func scenarioGoRoot(ctx context.Context, executable string, environment []string, goRoot string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	commandContext, cancel := context.WithTimeout(ctx, scenarioCommandTimeout)
+	defer cancel()
+	values := scenarioEnvironmentMap(environment)
+	if goRoot != "" {
+		values[scenarioEnvironmentKey("GOROOT")] = goRoot
+	}
+	command := exec.CommandContext(commandContext, executable, "env", "GOROOT")
+	command.Env = scenarioEnvironmentSlice(values)
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("run %q env GOROOT: %w", executable, err)
+	}
+	root := strings.TrimSpace(string(output))
+	if root == "" || !filepath.IsAbs(root) {
+		return "", fmt.Errorf("Go executable %q returned invalid GOROOT %q", executable, root)
+	}
+	return root, nil
 }
 
 // digestScenarioTools uses the same stable name-and-byte identity as preparation resolution.
