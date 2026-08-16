@@ -292,7 +292,16 @@ func TestAddAppCommandVerifierCalibration(t *testing.T) {
 
 // TestAddJobVerifierCalibration proves the job contract requires its typed payload identity.
 func TestAddJobVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string", wantFailed: "typed-job"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-job",
+		scenario:    "invoice-receipt-job",
+		path:        "internal/invoices/receipt_job.go",
+		old:         "InvoiceID string",
+		mutant:      "Reference string",
+		additional:  []evaluationMutation{{old: "payload.InvoiceID", mutant: "payload.Reference"}},
+		wantFailed:  "typed-job",
+		wantCompile: true,
+	})
 }
 
 // TestAddMigrationVerifierCalibration proves the migration contract recognizes the generated connection-specific pair.
