@@ -40,15 +40,6 @@ func main() {
 	launcher.Capture()
 	args := os.Args[1:]
 	inGeneratedApp := isGeneratedAppDir()
-	if inGeneratedApp && shouldAutoInitializeEnvironment(environmentInitializationArgs(args, inGeneratedApp)) {
-		created, initErr := envcontract.Initialize(".")
-		if initErr != nil && !errors.Is(initErr, envcontract.ErrExampleMissing) {
-			console.Fatalf("initializing local environment: %v", initErr)
-		}
-		if created {
-			console.Successf("Created .env with fresh local secrets")
-		}
-	}
 
 	// Default environment
 	setCLIDefaultEnv("APP_ENV", "local")
@@ -145,6 +136,9 @@ func main() {
 		console.Fatalf("%v", err)
 	}
 	app.RootCmd().RootCmd.BuildCmd.Args = buildPassthroughArgs(app.RootCmd().RootCmd.BuildCmd.Args)
+	if err := initializeParsedEnvironment(args, app.RootCmd(), inGeneratedApp); err != nil {
+		console.Fatalf("initializing local environment: %v", err)
+	}
 
 	// Execute command
 	err = ctx.Run()
@@ -156,25 +150,66 @@ func main() {
 	}
 }
 
-// environmentInitializationArgs resolves an App prefix before deciding whether the underlying framework command may create local state.
-func environmentInitializationArgs(args []string, inGeneratedApp bool) []string {
-	if _, remaining, ok := resolveAppPrefix(args, inGeneratedApp); ok {
-		return remaining
+// initializeParsedEnvironment creates local state only after Kong has validated the requested command and flags.
+func initializeParsedEnvironment(args []string, root *cmd.RootCmd, inGeneratedApp bool) error {
+	if readOnlyCLIRequest(args) || strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == build.AppHelpCommandOrigin {
+		return nil
 	}
-	return args
+	command := firstCLICommand(args)
+	switch command {
+	case "build", "generate", "dev", "run":
+		// These are the natural project entry points that require a usable local environment.
+	default:
+		return nil
+	}
+	projectRoot := "."
+	switch command {
+	case "build":
+		projectRoot = root.RootCmd.BuildCmd.Root
+	case "run":
+		projectRoot = root.RootCmd.RunCmd.Root
+	default:
+		if !inGeneratedApp {
+			return nil
+		}
+	}
+	if !isGeneratedAppRoot(projectRoot) {
+		return nil
+	}
+	return initializeEnvironmentAt(projectRoot)
 }
 
-// shouldAutoInitializeEnvironment keeps explicit initialization and rendering in control of their own file lifecycle.
-func shouldAutoInitializeEnvironment(args []string) bool {
+// initializeEnvironmentAt creates one private local file and reports the onboarding action without exposing values.
+func initializeEnvironmentAt(root string) error {
+	created, err := envcontract.Initialize(root)
+	if err != nil {
+		return err
+	}
+	if created {
+		console.Successf("Created .env with fresh local secrets")
+	}
+	return nil
+}
+
+// firstCLICommand finds the parsed command token after inherited boolean flags.
+func firstCLICommand(args []string) string {
 	for _, argument := range args {
 		argument = strings.TrimSpace(argument)
 		if argument == "" || strings.HasPrefix(argument, "-") {
 			continue
 		}
-		switch argument {
-		case "env:init", "env:set", "env:check", "new", "render", "help":
+		return argument
+	}
+	return ""
+}
+
+// readOnlyCLIRequest recognizes help and version requests anywhere before a passthrough boundary.
+func readOnlyCLIRequest(args []string) bool {
+	for _, argument := range args {
+		switch strings.TrimSpace(argument) {
+		case "--":
 			return false
-		default:
+		case "--help", "-h", "help", "--version":
 			return true
 		}
 	}
@@ -982,7 +1017,12 @@ func shouldForceDelegatedAppColor(stdoutTTY bool) bool {
 
 // isGeneratedAppDir reports whether the current directory looks like a generated App root.
 func isGeneratedAppDir() bool {
-	return regularFileExists(".goforj.yml") && regularFileExists("go.mod")
+	return isGeneratedAppRoot(".")
+}
+
+// isGeneratedAppRoot reports whether a selected command root contains the generated project markers.
+func isGeneratedAppRoot(root string) bool {
+	return regularFileExists(filepath.Join(root, ".goforj.yml")) && regularFileExists(filepath.Join(root, "go.mod"))
 }
 
 // regularFileExists reports whether path exists and is not a directory.

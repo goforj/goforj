@@ -8,6 +8,15 @@ import (
 	"github.com/goforj/goforj/internal/envfile"
 )
 
+// TestValidatePortableDocumentRejectsAmbiguousKeys verifies commit-boundary transforms fail closed on broader parser syntax.
+func TestValidatePortableDocumentRejectsAmbiguousKeys(t *testing.T) {
+	for _, source := range []string{"SERVICE.API_KEY=value\n", "1PASSWORD_TOKEN=value\n", "Δ_TOKEN=value\n"} {
+		if err := envfile.ValidatePortableDocument([]byte(source)); err == nil {
+			t.Fatalf("ValidatePortableDocument(%q) error = nil, want rejection", source)
+		}
+	}
+}
+
 // TestLookupUsesDotenvSemantics verifies exports, quotes, interpolation, and final-assignment precedence remain parser-owned.
 func TestLookupUsesDotenvSemantics(t *testing.T) {
 	lines := strings.Split("HOST=cache.internal\nexport CACHE_URL=redis://${HOST}:6379\nCACHE_URL='redis://override:6379' # owner override", "\n")

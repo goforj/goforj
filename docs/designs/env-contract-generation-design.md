@@ -26,11 +26,11 @@ Process environment variables retain precedence over dotenv files. CI can theref
 
 ## Developer Workflow
 
-A `forj` command that needs the local runtime environment automatically creates a missing `.env` from `.env.example`. Read-only help, version, and environment-check commands do not create it. This makes a clone runnable without a manual copy step. Initialization:
+The natural project entry points `forj build`, `forj generate`, `forj dev`, and `forj run` automatically create a missing `.env` from `.env.example` after command validation. Read-only help, version, environment checks, invalid commands, and unrelated tooling do not create it. This makes a clone runnable without requiring knowledge of a separate setup command. Initialization:
 
 - never replaces an existing `.env`
 - creates the file with private permissions where supported
-- generates fresh `APP_KEY`, diagnostics, Lighthouse, and JWT secrets
+- generates fresh values for the framework-owned signing and diagnostic keys present in the Project contract
 - leaves application-specific credentials blank
 - never prints generated values
 
@@ -54,38 +54,41 @@ Environment synchronization has one lifecycle owner: generation. `forj generate`
 
 Synchronization is stable and writes only when output changed:
 
-1. Merge `.env` into `.env.example`.
-2. Redact secret-looking values before crossing the committed boundary.
-3. Preserve existing comments, ordering, and project-owned keys conservatively.
+1. Merge exact framework-owned keys from `.env` into `.env.example`.
+2. Blank secret-looking values and all newly discovered application values before crossing the committed boundary.
+3. Preserve existing committed comments, ordering, and project-owned values conservatively.
 4. Derive `.env.testing` from the safe example.
-5. Replace changed files atomically through same-directory temporary files.
+5. Serialize same-project updates, then replace changed files through same-directory temporary files and roll back the example if test-profile publication fails.
 
 The implementation does not prune unknown keys automatically. Removing project-owned configuration is a developer decision; the framework synchronizes framework-owned keys and adds missing contract entries.
 
 ## Secret Boundary
 
-Secret-like names such as tokens, passwords, private keys, credentials, DSNs, API keys, personal access tokens, and webhooks are blank in `.env.example`. Redaction covers both `KEY=value` and dotenv-supported `KEY: value` assignments.
+Secret-like names such as tokens, passwords, private keys, credentials, DSNs, API keys, personal access tokens, and webhooks are blank in `.env.example`. Redaction covers both `KEY=value` and dotenv-supported `KEY: value` assignments, decoded multiline credential URLs, and inline comments attached to redacted assignments. Active keys outside GoForj's portable letters/digits/underscores grammar stop synchronization instead of bypassing the transform.
+
+Name classification is defense in depth rather than the only publication boundary. A key that appears in `.env` but not `.env.example` is published with a blank value regardless of its name. To share a non-secret application default, add that value explicitly to the reviewed `.env.example`; later synchronization preserves it instead of replacing it from private local state.
 
 An existing `.env.testing` without GoForj's managed marker may contain historically private test credentials. Synchronization refuses to rewrite or expose that file. Move values that must remain private into `.env`, remove the legacy `.env.testing`, and run `forj generate` to create the committed deterministic profile.
 
 `.env.testing` uses conspicuously public deterministic values for framework credentials. Examples include `DB_PASSWORD=test` and named `goforj-public-testing-*` signing values. Unknown application secrets remain blank. These values are test fixtures, not deployment credentials.
 
-Secret classification is intentionally conservative but cannot replace a dedicated secret scanner. Contract files remain reviewable source files, and real deployment credentials must be supplied through the deployment environment or a secret provider.
+Contract files remain reviewable source files, and a repository secret scanner should still run in CI. Real deployment credentials must be supplied through the deployment environment or a secret provider.
 
 ## Test Defaults
 
 The generated testing profile favors isolation and local execution:
 
 - `APP_ENV=testing`
-- database and service hosts use `127.0.0.1`
+- `DB_HOST`, `REDIS_HOST`, and `MAIL_SMTP_HOST` use `127.0.0.1`
+- NATS and RabbitMQ URLs use the generated local container service names
 - database usernames and passwords use `test`
 - database names gain a `_testing` suffix
 - SQLite files gain `_testing` before `.db`, `.sqlite`, or `.sqlite3`
 - framework signing values are deterministic and explicitly public
 - bootstrap credentials and unknown secret-like values remain blank
-- non-sensitive project values are copied from `.env.example`
+- explicitly committed non-sensitive project values are copied from `.env.example`
 
-Project-owned safe values already present in `.env.testing` are preserved. Framework-owned values are refreshed so component and renderer changes cannot leave the test profile stale.
+Project-owned safe values already present in `.env.testing` are preserved, including names that happen to begin with common framework words. Only the exact rendered framework inventory and its named-App overlays are refreshed or pruned, so component and renderer changes cannot leave framework test settings stale.
 
 ## CI Workflow
 
