@@ -86,19 +86,21 @@ func (evaluationPreparedProject) Close(context.Context) error {
 	return nil
 }
 
-// TestLoadEvalRedactionSecretsExtractsCredentialTokens keeps auth.json values out of retained evaluation diagnostics.
-func TestLoadEvalRedactionSecretsExtractsCredentialTokens(t *testing.T) {
+// TestFrozenEvalCredentialRedactsExactAuthority keeps the credential used by both treatments aligned with terminal redaction.
+func TestFrozenEvalCredentialRedactsExactAuthority(t *testing.T) {
 	credential := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(credential, []byte(`{"auth":{"access_token":"access-token-value","token":"token-value"},"provider":{"refresh_token":"refresh-token-value","OPENAI_API_KEY":"api-key-value"}}`), 0o600); err != nil {
+	body := []byte(`{"auth":{"access_token":"access-token-value","token":"token-value"},"provider":{"refresh_token":"refresh-token-value","OPENAI_API_KEY":"api-key-value"}}`)
+	if err := os.WriteFile(credential, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	secrets, err := loadEvalRedactionSecrets(credential)
+	frozen, err := eval.LoadCodexCredential(credential)
 	if err != nil {
 		t.Fatal(err)
 	}
+	redactor := frozen.Redactor(eval.NewRedactor(nil))
 	for _, want := range []string{"access-token-value", "token-value", "refresh-token-value", "api-key-value"} {
-		if !containsString(secrets, want) {
-			t.Fatalf("redaction secrets = %q, want %q", secrets, want)
+		if strings.Contains(redactor.Text(string(body)), want) {
+			t.Fatalf("frozen credential redaction retained %q", want)
 		}
 	}
 }
