@@ -153,7 +153,7 @@ func TestPreparerRejectsMaterialBaseEnvironmentDrift(t *testing.T) {
 	}
 	baseEnvironment := testPreparationEnvironment(t, "first", "off")
 	baseEnvironment = append(baseEnvironment, "APP_ENV=production")
-	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), baseEnvironment, nil)
+	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), baseEnvironment, nil, nil)
 	plan, err := preparer.Resolve(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -176,6 +176,30 @@ func TestPreparerCapabilitiesAdvertiseOnlyImplementedSchema(t *testing.T) {
 	if len(capabilities.ScenarioSchemaVersions) != 1 || capabilities.ScenarioSchemaVersions[0] != 2 {
 		t.Fatalf("scenario schemas = %v", capabilities.ScenarioSchemaVersions)
 	}
+}
+
+// TestPreparerRequiresHostGuidanceMaterializer prevents evaluations from quietly falling back to an adapter-owned approximation of durable guidance.
+func TestPreparerRequiresHostGuidanceMaterializer(t *testing.T) {
+	preparer := Preparer{}
+	_, err := preparer.MaterializeGuidance(context.Background(), materializedPreparedProject{result: eval.PreparationResult{ProjectRoot: t.TempDir()}}, eval.Guidance{Profile: eval.GuidanceProfileAgents})
+	if err == nil || !strings.Contains(err.Error(), "durable guidance materializer") {
+		t.Fatalf("MaterializeGuidance() error = %v, want missing host materializer", err)
+	}
+}
+
+// materializedPreparedProject supplies only the prepared root needed to exercise host guidance delegation.
+type materializedPreparedProject struct {
+	result eval.PreparationResult
+}
+
+// Result returns the fixture's prepared Project identity.
+func (project materializedPreparedProject) Result() eval.PreparationResult {
+	return project.result
+}
+
+// Close has no resources because this fixture models an already owned Project.
+func (materializedPreparedProject) Close(context.Context) error {
+	return nil
 }
 
 // TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths preserves base reuse without hiding configuration drift.

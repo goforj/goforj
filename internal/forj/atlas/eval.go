@@ -3,7 +3,6 @@ package atlas
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,10 +15,10 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/goforj/atlas/eval"
 	"github.com/goforj/goforj/internal/forj/atlaseval"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 )
 
@@ -57,10 +56,6 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 
 // run executes the comparison with a caller-owned lifecycle so cancellation reaches every evaluation resource.
 func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
-	definition, err := eval.LoadPromotedDefinition(command.Evaluation)
-	if err != nil {
-		return err
-	}
 	forjExecutable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve current Forj executable: %w", err)
@@ -92,11 +87,6 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	defer func() {
 		runErr = errors.Join(runErr, removeEvaluationWorkRoot(workRoot))
 	}()
-	for _, directory := range []string{"backend", "verifier"} {
-		if err := os.MkdirAll(filepath.Join(workRoot, directory), 0o700); err != nil {
-			return err
-		}
-	}
 	baseEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, "base"), forjExecutable)
 	if err != nil {
 		return err
@@ -109,57 +99,33 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
-	verifierEnvironment := append([]string(nil), noneEnvironment...)
-	verifierCommands := eval.VerifierCommands{
-		WorkRoot:       filepath.Join(workRoot, "verifier"),
-		GoExecutable:   goExecutable,
-		ForjExecutable: forjExecutable,
-		Environment:    verifierEnvironment,
-	}
-	registry, err := eval.NewRegistry(eval.PromotedWorkflows(), eval.PromotedVerifiers(verifierCommands))
-	if err != nil {
-		return err
-	}
-	agent, err := eval.NewCodexAgent(eval.CodexOptions{
-		Executable:       command.CodexExecutable,
-		Model:            command.Model,
-		ModelProvider:    command.ModelProvider,
-		CredentialSource: credential,
+	redactor := eval.NewRedactor(redactionSecrets)
+	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance)
+	defer func() {
+		runErr = errors.Join(runErr, preparer.Close(context.Background()))
+	}()
+	diagnostic, err := eval.NewLocalGuidanceDiagnostic(eval.LocalGuidanceDiagnosticOptions{
+		WorkRoot:            workRoot,
+		ArtifactRoot:        artifactRoot,
+		ArtifactKey:         artifactKey,
+		Redactor:            redactor,
+		Preparer:            preparer,
+		Codex:               eval.CodexOptions{Executable: command.CodexExecutable, Model: command.Model, ModelProvider: command.ModelProvider, CredentialSource: credential},
+		GoExecutable:        goExecutable,
+		ForjExecutable:      forjExecutable,
+		VerifierEnvironment: append([]string(nil), noneEnvironment...),
+		Runtime:             evaluationRuntimeIdentity(),
 	})
 	if err != nil {
 		return err
 	}
-	redactor := eval.NewRedactor(redactionSecrets)
-	artifacts, err := eval.NewArtifactStore(artifactRoot, artifactKey, redactor)
-	if err != nil {
-		return err
-	}
-	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil)
-	defer func() {
-		runErr = errors.Join(runErr, preparer.Close(context.Background()))
-	}()
-	runner := eval.Runner{
-		Registry:  registry,
-		Preparer:  preparer,
-		Backend:   eval.UnconfinedLocal{WorkRoot: filepath.Join(workRoot, "backend")},
-		Agent:     agent,
-		Guidance:  eval.ProjectGuidanceResolver{},
-		Artifacts: artifacts,
-	}
-	trialID, err := newEvaluationTrialID()
-	if err != nil {
-		return err
-	}
-	result, diagnosticErr := runner.RunGuidanceDiagnostic(ctx, eval.GuidanceDiagnosticRequest{
-		LogicalTrialID:  trialID,
-		Definition:      definition,
+	result, diagnosticErr := diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
+		EvaluationID:    command.Evaluation,
 		DestinationRoot: filepath.Join(workRoot, "projects"),
-		ForjExecutable:  forjExecutable,
 		Environments: map[string][]string{
 			eval.GuidanceProfileNone:   noneEnvironment,
 			eval.GuidanceProfileAgents: agentsEnvironment,
 		},
-		Runtime: evaluationRuntimeIdentity(),
 	})
 	body, err := marshalRedactedEvaluation(result, redactor)
 	if err != nil {
@@ -217,6 +183,35 @@ func atlasSoftwareIdentity() eval.SoftwareIdentity {
 		return identity
 	}
 	return identity
+}
+
+// materializeEvaluationGuidance uses the production render setting and native guidance reconciliation path so evaluation treatments cannot drift from normal Projects.
+func materializeEvaluationGuidance(_ context.Context, prepared eval.PreparedProject, guidance eval.Guidance, selection project.AgentGuidance) (eval.Guidance, error) {
+	if prepared == nil || strings.TrimSpace(prepared.Result().ProjectRoot) == "" {
+		return eval.Guidance{}, fmt.Errorf("prepared Project is required")
+	}
+	root := prepared.Result().ProjectRoot
+	config, err := project.LoadProjectConfigAt(root)
+	if err != nil {
+		return eval.Guidance{}, fmt.Errorf("load prepared Project configuration: %w", err)
+	}
+	config.Render.AgentGuidance = selection
+	if err := writeProjectGuidanceConfig(filepath.Join(root, ".goforj.yml"), config); err != nil {
+		return eval.Guidance{}, fmt.Errorf("persist evaluation guidance selection: %w", err)
+	}
+	if _, err := ReconcileAgentGuidance(root, selection); err != nil {
+		return eval.Guidance{}, fmt.Errorf("reconcile evaluation guidance: %w", err)
+	}
+	result := eval.Guidance{Profile: guidance.Profile, Skills: append([]string(nil), guidance.Skills...), MCP: append([]string(nil), guidance.MCP...), Files: map[string][]byte{}}
+	if selection != project.AgentGuidanceBaseline {
+		return result, nil
+	}
+	body, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		return eval.Guidance{}, fmt.Errorf("read managed evaluation guidance: %w", err)
+	}
+	result.Files["AGENTS.md"] = body
+	return result, nil
 }
 
 // removeEvaluationWorkRoot restores traversal only inside the command-owned root so read-only module caches remain disposable.
@@ -485,13 +480,4 @@ func installEvaluationForj(toolsDir, source string) error {
 	_, copyErr := io.Copy(output, input)
 	closeErr := output.Close()
 	return errors.Join(copyErr, closeErr)
-}
-
-// newEvaluationTrialID creates a sortable safe identifier without treating wall-clock time as unique.
-func newEvaluationTrialID() (string, error) {
-	random := make([]byte, 6)
-	if _, err := rand.Read(random); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("trial-%s-%s", time.Now().UTC().Format("20060102t150405"), hex.EncodeToString(random)), nil
 }

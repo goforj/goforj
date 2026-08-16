@@ -4,9 +4,11 @@ package atlaseval
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,7 +62,7 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	trialBuildCache := filepath.Join(workRoot, "trial-gocache")
 	baseEnvironment := testkit.ProcessGoEnv("", map[string]string{"GOCACHE": baseBuildCache})
 	trialEnvironment := testkit.ProcessGoEnv("", map[string]string{"GOCACHE": trialBuildCache})
-	preparer := NewPreparer(baseRoot, baseEnvironment, nil)
+	preparer := NewPreparer(baseRoot, baseEnvironment, nil, nil)
 	t.Cleanup(func() {
 		if err := preparer.Close(context.Background()); err != nil {
 			t.Fatalf("Close preparer: %v", err)
@@ -115,10 +117,22 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	}
 }
 
-// TestPreparerMaterializesDurableGuidanceTreatment proves evaluation guidance uses the same render setting and managed marker retained by normal projects.
-func TestPreparerMaterializesDurableGuidanceTreatment(t *testing.T) {
+// TestPreparerDelegatesDurableGuidanceTreatment proves the scenario adapter delegates native instruction ownership to its host.
+func TestPreparerDelegatesDurableGuidanceTreatment(t *testing.T) {
 	workRoot := t.TempDir()
-	preparer := NewPreparer(filepath.Join(workRoot, "bases"), testkit.ProcessGoEnv("", nil), nil)
+	var selections []project.AgentGuidance
+	preparer := NewPreparer(filepath.Join(workRoot, "bases"), testkit.ProcessGoEnv("", nil), nil, func(_ context.Context, prepared eval.PreparedProject, guidance eval.Guidance, selection project.AgentGuidance) (eval.Guidance, error) {
+		selections = append(selections, selection)
+		if prepared == nil || prepared.Result().ProjectRoot == "" {
+			return eval.Guidance{}, errors.New("prepared Project is required")
+		}
+		result := guidance
+		result.Files = map[string][]byte{}
+		if selection == project.AgentGuidanceBaseline {
+			result.Files["AGENTS.md"] = []byte("<!-- host-managed -->")
+		}
+		return result, nil
+	})
 	t.Cleanup(func() { _ = preparer.Close(context.Background()) })
 	request := eval.PreparationRequest{
 		ScenarioID:      "invoice-http-route",
@@ -141,15 +155,8 @@ func TestPreparerMaterializesDurableGuidanceTreatment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaterializeGuidance(agents): %v", err)
 	}
-	if string(agents.Files["AGENTS.md"]) == "" || !strings.Contains(string(agents.Files["AGENTS.md"]), "<!-- goforj-atlas:start -->") {
-		t.Fatalf("agents guidance did not retain managed marker: %q", agents.Files["AGENTS.md"])
-	}
-	config, err := project.LoadProjectConfigAt(prepared.Result().ProjectRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.Render.AgentGuidance != project.AgentGuidanceBaseline {
-		t.Fatalf("render agent guidance = %q, want baseline", config.Render.AgentGuidance)
+	if string(agents.Files["AGENTS.md"]) == "" || !strings.Contains(string(agents.Files["AGENTS.md"]), "<!-- host-managed -->") {
+		t.Fatalf("agents guidance did not retain host materialization: %q", agents.Files["AGENTS.md"])
 	}
 	if prepared.Result().BaselineTree != before {
 		t.Fatalf("guidance treatment changed pre-guidance preparation identity: %s != %s", prepared.Result().BaselineTree, before)
@@ -161,18 +168,8 @@ func TestPreparerMaterializesDurableGuidanceTreatment(t *testing.T) {
 	if len(none.Files) != 0 {
 		t.Fatalf("none guidance files = %#v", none.Files)
 	}
-	config, err = project.LoadProjectConfigAt(prepared.Result().ProjectRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.Render.AgentGuidance != project.AgentGuidanceNone {
-		t.Fatalf("render agent guidance = %q, want none", config.Render.AgentGuidance)
-	}
-	content, err := os.ReadFile(filepath.Join(prepared.Result().ProjectRoot, "AGENTS.md"))
-	if err == nil && strings.Contains(string(content), "<!-- goforj-atlas:start -->") {
-		t.Fatalf("none treatment retained managed guidance: %s", content)
-	} else if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read none guidance: %v", err)
+	if !slices.Equal(selections, []project.AgentGuidance{project.AgentGuidanceBaseline, project.AgentGuidanceNone}) {
+		t.Fatalf("guidance selections = %v", selections)
 	}
 }
 
