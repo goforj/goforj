@@ -132,6 +132,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Register(",
+		"func (m *Manager) Rebuild() error",
 		"func (m *Manager) Dispatch(",
 		"func (m *Manager) WithContext(",
 		"func recordJobPayload(",
@@ -209,6 +210,43 @@ func TestGeneratedAccessors(t *testing.T) {
 	if !handledCritical {
 		t.Fatal("named Dispatch did not use the registered critical queue runtime")
 	}
+	rebuiltHandled := false
+	mgr.Register("jobs:rebuilt", func(context.Context, queue.Message) error {
+		rebuiltHandled = true
+		return nil
+	})
+	nestedHandled := false
+	mgr.Register("jobs:nested", func(context.Context, queue.Message) error {
+		nestedHandled = true
+		return nil
+	})
+	mgr.Register("jobs:parent", func(context.Context, queue.Message) error {
+		_, err := mgr.Dispatch(queue.NewJob("jobs:nested"))
+		return err
+	})
+	t.Setenv("QUEUE_DRIVER", "sync")
+	if err := mgr.Rebuild(); err != nil {
+		t.Fatalf("Rebuild returned error: %v", err)
+	}
+	if got := mgr.Default().Driver(); got != "sync" {
+		t.Fatalf("rebuilt Default driver = %q, want sync", got)
+	}
+	if err := mgr.Default().StartWorkers(t.Context()); err != nil {
+		t.Fatalf("start rebuilt workers: %v", err)
+	}
+	if _, err := mgr.Dispatch(queue.NewJob("jobs:rebuilt")); err != nil {
+		t.Fatalf("rebuilt Dispatch returned error: %v", err)
+	}
+	if !rebuiltHandled {
+		t.Fatal("Rebuild did not restore registered handlers")
+	}
+	if _, err := mgr.Dispatch(queue.NewJob("jobs:parent")); err != nil {
+		t.Fatalf("nested Dispatch returned error: %v", err)
+	}
+	if !nestedHandled {
+		t.Fatal("rebuilt handler could not dispatch follow-up work")
+	}
+	t.Setenv("QUEUE_DRIVER", "null")
 	if got := mgr.defaultQueueName; got != "default" {
 		t.Fatalf("default queue name = %q, want default", got)
 	}

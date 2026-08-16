@@ -75,13 +75,27 @@ func TestMaintenanceModeKeepsOperationalRoutesReachable(t *testing.T) {
 
 // TestMaintenanceModeDisabledPreservesApplicationTraffic verifies the default environment adds no availability gate.
 func TestMaintenanceModeDisabledPreservesApplicationTraffic(t *testing.T) {
+	t.Chdir(t.TempDir())
 	t.Setenv("APP_ENV", "testing")
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+	t.Setenv("FORJ_APP", "app")
 	server := newMaintenanceTestServer(t)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
 	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusNoContent, recorder.Code)
+
+	require.NoError(t, runtime.EnableMaintenance())
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+
+	require.NoError(t, runtime.DisableMaintenance())
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
+	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
 }

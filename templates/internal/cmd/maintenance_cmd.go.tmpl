@@ -1,0 +1,55 @@
+package cmd
+
+import (
+	"fmt"
+
+	"github.com/goforj/console"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// DownCmd places the selected App into maintenance mode without booting its dependency graph.
+type DownCmd struct{}
+
+// Signature defines CLI metadata for the down command.
+func (*DownCmd) Signature() string {
+	return `name:"down" help:"Put this app into maintenance mode" goforj:"preboot"`
+}
+
+// NewDownCmd creates a maintenance down command.
+func NewDownCmd() *DownCmd {
+	return &DownCmd{}
+}
+
+// Run enables maintenance mode.
+func (*DownCmd) Run() error {
+	if err := runtime.EnableMaintenance(); err != nil {
+		return fmt.Errorf("enable maintenance mode: %w", err)
+	}
+	console.Success("Application is now in maintenance mode")
+	return nil
+}
+
+// UpCmd returns the selected App to normal operation without booting its dependency graph.
+type UpCmd struct{}
+
+// Signature defines CLI metadata for the up command.
+func (*UpCmd) Signature() string {
+	return `name:"up" help:"Bring this app out of maintenance mode" goforj:"preboot"`
+}
+
+// NewUpCmd creates a maintenance up command.
+func NewUpCmd() *UpCmd {
+	return &UpCmd{}
+}
+
+// Run disables command-managed maintenance mode.
+func (*UpCmd) Run() error {
+	if err := runtime.DisableMaintenance(); err != nil {
+		return fmt.Errorf("disable maintenance mode: %w", err)
+	}
+	if runtime.MaintenanceEnabled() {
+		return fmt.Errorf("maintenance mode remains enabled by APP_MAINTENANCE_ENABLED")
+	}
+	console.Success("Application is now live")
+	return nil
+}

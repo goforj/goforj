@@ -1,0 +1,90 @@
+package schedules
+
+import (
+	"testing"
+
+	"github.com/goforj/scheduler/v2"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// TestSyncMaintenancePauseTracksLiveState verifies maintenance pauses future launches and releases only the pause it owns.
+func TestSyncMaintenancePauseTracksLiveState(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	t.Setenv("FORJ_APP", "app")
+	engine, err := scheduler.NewWithError()
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	owned, err := syncMaintenancePause(engine, false)
+	if err != nil {
+		t.Fatalf("sync normal state: %v", err)
+	}
+	if owned || engine.IsPausedAll() {
+		t.Fatal("normal state unexpectedly paused scheduler")
+	}
+	if err := runtime.EnableMaintenance(); err != nil {
+		t.Fatalf("enable maintenance: %v", err)
+	}
+	owned, err = syncMaintenancePause(engine, owned)
+	if err != nil {
+		t.Fatalf("sync maintenance state: %v", err)
+	}
+	if !owned || !engine.IsPausedAll() {
+		t.Fatal("maintenance did not pause scheduler")
+	}
+	if err := engine.ResumeAll(); err != nil {
+		t.Fatalf("resume scheduler during maintenance: %v", err)
+	}
+	owned, err = syncMaintenancePause(engine, owned)
+	if err != nil {
+		t.Fatalf("restore maintenance pause: %v", err)
+	}
+	if !owned || !engine.IsPausedAll() {
+		t.Fatal("maintenance did not restore its scheduler pause")
+	}
+	if err := runtime.DisableMaintenance(); err != nil {
+		t.Fatalf("disable maintenance: %v", err)
+	}
+	owned, err = syncMaintenancePause(engine, owned)
+	if err != nil {
+		t.Fatalf("sync resumed state: %v", err)
+	}
+	if owned || engine.IsPausedAll() {
+		t.Fatal("maintenance-owned pause was not released")
+	}
+}
+
+// TestSyncMaintenancePausePreservesIndependentPause verifies up does not resume a scheduler that was already paused.
+func TestSyncMaintenancePausePreservesIndependentPause(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	t.Setenv("FORJ_APP", "app")
+	engine, err := scheduler.NewWithError()
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	if err := engine.PauseAll(); err != nil {
+		t.Fatalf("pause scheduler: %v", err)
+	}
+	if err := runtime.EnableMaintenance(); err != nil {
+		t.Fatalf("enable maintenance: %v", err)
+	}
+	owned, err := syncMaintenancePause(engine, false)
+	if err != nil {
+		t.Fatalf("sync maintenance state: %v", err)
+	}
+	if owned {
+		t.Fatal("maintenance claimed an existing scheduler pause")
+	}
+	if err := runtime.DisableMaintenance(); err != nil {
+		t.Fatalf("disable maintenance: %v", err)
+	}
+	owned, err = syncMaintenancePause(engine, owned)
+	if err != nil {
+		t.Fatalf("sync resumed state: %v", err)
+	}
+	if owned || !engine.IsPausedAll() {
+		t.Fatal("independent scheduler pause was cleared")
+	}
+}
