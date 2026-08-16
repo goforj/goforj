@@ -411,15 +411,22 @@ func (r *ScheduleRegistry) Register(s *scheduler.Scheduler) error {
 	}
 
 	composedHelp := runForj(t, "--help")
-	for _, want := range []string{"GoForj CLI", "app usage", "forj <app> <command>"} {
+	for _, want := range []string{"App binary not found; running forj build", "GoForj CLI", "app usage", "forj <app> <command>", "make:command", "route:list", "make:job", "make:queue", "make:subscriber"} {
 		if !strings.Contains(composedHelp, want) {
 			t.Fatalf("expected root help to include %s, got:\n%s", want, composedHelp)
 		}
 	}
-	for _, unexpected := range []string{"make:command", "route:list", "make:job", "make:queue", "make:subscriber", "Framework Commands", "Application Commands", "Generators", "Migrations", "Unknown commands are delegated to this app.", "────"} {
+	for _, unexpected := range []string{"Framework Commands", "Application Commands", "Generators", "Migrations", "Unknown commands are delegated to this app.", "────"} {
 		if strings.Contains(composedHelp, unexpected) {
-			t.Fatalf("expected read-only root help not to include %s, got:\n%s", unexpected, composedHelp)
+			t.Fatalf("expected root help not to include %s, got:\n%s", unexpected, composedHelp)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "bin", "app")); err != nil {
+		t.Fatalf("expected first root help to build the default App: %v", err)
+	}
+	warmHelp := runForj(t, "--help")
+	if strings.Contains(warmHelp, "App binary not found") {
+		t.Fatalf("expected existing App binary to keep later help read-only, got:\n%s", warmHelp)
 	}
 
 	sourceRoutes := runForj(t, "route:list")
@@ -627,18 +634,23 @@ func TestMakeAppBuildsNamedAppAfterFullRender(t *testing.T) {
 		}
 	}
 	rootHelp := runForj(t, "--help")
-	for _, want := range []string{"GoForj CLI", "app usage", "forj <app> <command>"} {
+	for _, want := range []string{"App binary not found; running forj build", "App binary not found; running forj billing build", "GoForj CLI", "app usage", "forj <app> <command>", "testapp ·"} {
 		if !strings.Contains(rootHelp, want) {
 			t.Fatalf("expected root help to include %q, got:\n%s", want, rootHelp)
 		}
 	}
-	if strings.Contains(rootHelp, "testapp ·") {
-		t.Fatalf("expected root help not to build unavailable App help, got:\n%s", rootHelp)
+	for _, appName := range []string{"app", "billing"} {
+		if _, err := os.Stat(filepath.Join(projectDir, "bin", appName)); err != nil {
+			t.Fatalf("expected first root help to build %s App: %v", appName, err)
+		}
 	}
 	if strings.Contains(rootHelp, "App:") {
 		t.Fatalf("expected root help to omit app labels, got:\n%s", rootHelp)
 	}
-	runForj(t, "build", "-o", "./bin/billing", "./cmd/billing")
+	warmHelp := runForj(t, "--help")
+	if strings.Contains(warmHelp, "App binary not found") {
+		t.Fatalf("expected existing App binaries to keep later help read-only, got:\n%s", warmHelp)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

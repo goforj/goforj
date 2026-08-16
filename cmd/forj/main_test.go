@@ -371,6 +371,101 @@ func TestConventionalAppHelpSkipsNonGeneratedProjects(t *testing.T) {
 	}
 }
 
+// TestEnsureGeneratedAppHelpBinariesBuildsMissingSourceAppsOnce verifies help bootstraps only absent App binaries.
+func TestEnsureGeneratedAppHelpBinariesBuildsMissingSourceAppsOnce(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	writeSourceApp(t, "app")
+	writeSourceApp(t, "admin")
+	writeSourceApp(t, "existing")
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "existing"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var built []string
+	buildApp := func(appName string) error {
+		built = append(built, appName)
+		return os.WriteFile(filepath.Join("bin", appName), []byte("binary"), 0o755)
+	}
+	apps := []string{"admin", "app", "binary-only", "existing"}
+	if err := ensureGeneratedAppHelpBinaries(apps, buildApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGeneratedAppHelpBinaries(apps, buildApp); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"admin", "app"}
+	if !reflect.DeepEqual(built, want) {
+		t.Fatalf("built Apps = %#v, want %#v", built, want)
+	}
+}
+
+// TestEnsureGeneratedAppHelpBinariesRequiresPublishedBinary prevents successful no-op builds from hiding App help.
+func TestEnsureGeneratedAppHelpBinariesRequiresPublishedBinary(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	writeSourceApp(t, "app")
+	err := ensureGeneratedAppHelpBinaries([]string{"app"}, func(string) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "completed without producing bin/app") {
+		t.Fatalf("missing build output error = %v", err)
+	}
+}
+
+// TestEnsureGeneratedAppHelpBinariesReportsBuildFailure preserves the failed public invocation in diagnostics.
+func TestEnsureGeneratedAppHelpBinariesReportsBuildFailure(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+
+	writeSourceApp(t, "admin")
+	buildErr := errors.New("compile failed")
+	err := ensureGeneratedAppHelpBinaries([]string{"admin"}, func(string) error { return buildErr })
+	if !errors.Is(err, buildErr) || !strings.Contains(err.Error(), "forj admin build") {
+		t.Fatalf("build failure = %v", err)
+	}
+}
+
+// TestAppHelpBuildArgsUsesPublicAppRouting verifies default and named Apps use their normal build commands.
+func TestAppHelpBuildArgsUsesPublicAppRouting(t *testing.T) {
+	tests := []struct {
+		name    string
+		appName string
+		want    []string
+	}{
+		{name: "default", appName: "app", want: []string{"build"}},
+		{name: "named", appName: "admin", want: []string{"admin", "build"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := appHelpBuildArgs(test.appName); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("build args = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// TestWithAppHelpBuildOriginReplacesInheritedOrigin prevents parent workflow policy from leaking into help builds.
+func TestWithAppHelpBuildOriginReplacesInheritedOrigin(t *testing.T) {
+	env := withAppHelpBuildOrigin([]string{
+		"PATH=/tmp/bin",
+		"FORJ_COMMAND_ORIGIN=dev_command",
+		"APP_ENV=local",
+	})
+	want := []string{
+		"PATH=/tmp/bin",
+		"APP_ENV=local",
+		"FORJ_COMMAND_ORIGIN=" + build.AppHelpCommandOrigin,
+	}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("App help build environment = %#v, want %#v", env, want)
+	}
+}
+
 func TestRunAppHelpForAppUsesExistingBinary(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
