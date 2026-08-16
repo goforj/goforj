@@ -136,6 +136,11 @@ func (i HelpFormatItem) Description() string { return i.Desc }
 // FilterValue satisfies the Bubbles list item contract even though filtering is disabled.
 func (i HelpFormatItem) FilterValue() string { return i.Label }
 
+type starterKitOptionRow struct {
+	Label   string
+	Enabled bool
+}
+
 type atlasMode string
 
 const (
@@ -1144,14 +1149,13 @@ func (m model) View() string {
 	if m.stage >= StageStarterKit && m.starterKitApplicable {
 		starterKitSummary := m.selectedStarterKitSummary()
 		if m.stage == StageStarterKit {
-			componentLibrary := m.selectedComponentLibrarySummary()
 			panels = append(panels, m.panelWithTitle("Starter Kit", lipgloss.JoinVertical(
 				lipgloss.Left,
 				m.renderStarterKitList(m.termWidth),
 				"",
-				normalStyle.Render("Component library: "+componentLibrary),
+				m.renderStarterKitOptions(),
 			), m.termWidth, true))
-			actions = []string{"Space to toggle component library", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+			actions = []string{"Space to toggle option", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 		} else {
 			panels = append(panels, m.panelWithTitle("Starter Kit", normalStyle.Render(starterKitSummary), m.termWidth, false))
 		}
@@ -1477,6 +1481,32 @@ func (m model) renderStarterKitList(termWidth int) string {
 		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// renderStarterKitOptions renders kit-specific choices as radio inputs that can grow into additional option rows.
+func (m model) renderStarterKitOptions() string {
+	if m.highlightedStarterKit() == project.StarterKitNone {
+		return helpStyle.Render("Options · Not applicable")
+	}
+
+	lines := []string{normalStyle.Render("Options")}
+	options := []starterKitOptionRow{
+		{Label: "Component library", Enabled: m.componentLibrary},
+	}
+	for _, option := range options {
+		onMarker := normalStyle.Render("○")
+		offMarker := listFocusedNameStyle.Render("●")
+		if option.Enabled {
+			onMarker = listFocusedNameStyle.Render("●")
+			offMarker = normalStyle.Render("○")
+		}
+		lines = append(lines,
+			"  "+normalStyle.Render(option.Label),
+			"    "+onMarker+" On",
+			"    "+offMarker+" Off",
+		)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 // renderAtlasModeList keeps the render atlas mode list representation consistent.
