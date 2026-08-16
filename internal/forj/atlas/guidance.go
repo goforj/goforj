@@ -14,6 +14,7 @@ import (
 	"github.com/goforj/atlas/config"
 	"github.com/goforj/atlas/files"
 	"github.com/goforj/atlas/guidelines"
+	"github.com/goforj/atlas/install"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
@@ -81,11 +82,49 @@ func ReconcileAgentGuidance(root string, selection project.AgentGuidance) (Recon
 	if err != nil {
 		return ReconcileGuidanceResult{}, err
 	}
+	return reconcileAgentGuidanceTargets(root, selection, targets)
+}
+
+// ReconcileGuidanceIntent applies Atlas's versioned native-guidance request through GoForj's atomic writer.
+func ReconcileGuidanceIntent(root string, intent install.GuidanceReconciliation) (ReconcileGuidanceResult, error) {
+	if intent.Version != install.GuidanceReconciliationVersion {
+		return ReconcileGuidanceResult{}, fmt.Errorf("unsupported Atlas guidance reconciliation version %d", intent.Version)
+	}
+	selection := project.AgentGuidanceNone
+	if intent.Enabled {
+		selection = project.AgentGuidanceBaseline
+	}
+	projectConfig, err := project.LoadProjectConfigAt(root)
+	if err != nil {
+		return ReconcileGuidanceResult{}, fmt.Errorf("load Project configuration: %w", err)
+	}
+	if projectConfig.Render.AgentGuidance != selection || !projectConfig.Render.HasAgentGuidance() {
+		projectConfig.Render.AgentGuidance = selection
+		if err := writeProjectGuidanceConfig(filepath.Join(root, ".goforj.yml"), projectConfig); err != nil {
+			return ReconcileGuidanceResult{}, fmt.Errorf("persist agent guidance: %w", err)
+		}
+	}
+	return reconcileAgentGuidanceTargets(root, selection, intent.Targets)
+}
+
+// reconcileAgentGuidanceTargets applies one validated target selection without allowing Atlas to write native files.
+func reconcileAgentGuidanceTargets(root string, selection project.AgentGuidance, targets []string) (ReconcileGuidanceResult, error) {
+	if !selection.Valid() {
+		return ReconcileGuidanceResult{}, fmt.Errorf("unsupported agent guidance %q", selection)
+	}
+	selectedTargets := slices.Clone(targets)
+	slices.Sort(selectedTargets)
+	selectedTargets = slices.Compact(selectedTargets)
+	for _, name := range selectedTargets {
+		if _, ok := agents.ByName(name); !ok {
+			return ReconcileGuidanceResult{}, fmt.Errorf("Atlas guidance selects unsupported agent %q", name)
+		}
+	}
 	content := guidelines.Compose(Project(root))
 	result := ReconcileGuidanceResult{}
 	for _, agent := range agents.Builtins() {
 		path := agent.GuidelinesPath(root)
-		selected := selection == project.AgentGuidanceBaseline && slices.Contains(targets, agent.Name())
+		selected := selection == project.AgentGuidanceBaseline && slices.Contains(selectedTargets, agent.Name())
 		changed, removed, err := reconcileGuidanceFile(path, selected, content)
 		if err != nil {
 			return result, fmt.Errorf("reconcile %s guidance: %w", agent.Name(), err)
@@ -163,7 +202,7 @@ func reconcileGuidanceFile(path string, selected bool, generated string) (bool, 
 	return true, false, nil
 }
 
-// writeGuidanceAtomically prevents a render interruption from publishing a partial instruction file.
+// writeGuidanceAtomically prevents an interrupted projection from publishing partial native instructions.
 func writeGuidanceAtomically(path string, content []byte, mode fs.FileMode) error {
 	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
@@ -189,7 +228,7 @@ func writeGuidanceAtomically(path string, content []byte, mode fs.FileMode) erro
 	return os.Rename(temporaryPath, path)
 }
 
-// writeProjectGuidanceConfig uses the same complete-file publication boundary as ordinary rendering.
+// writeProjectGuidanceConfig uses the renderer's complete-file publication boundary.
 func writeProjectGuidanceConfig(path string, cfg *project.Config) error {
 	var content bytes.Buffer
 	encoder := yaml.NewEncoder(&content)
