@@ -1682,10 +1682,16 @@ Every attempt records one `agent_outcome`:
 - `cancelled`: an operator stopped the run.
 
 It also records one `evaluation_status`: `valid`, `valid_abstention`,
-`not_evaluated`, `ineligible`, `fixture_error`, or `evaluator_error`, plus
+`diagnostic`, `not_evaluated`, `ineligible`, `fixture_error`, or
+`evaluator_error`, plus
 structured capture, verification, and cleanup failures. Valid evaluations carry
 separate `framework_outcome`, `workflow_conformance`, and optional combined
 `contract` endpoint results.
+
+`diagnostic` means the run completed for local troubleshooting or harness
+calibration but its backend could not establish every authoritative evidence
+capability. Diagnostic endpoint results remain ineligible and never enter
+effectiveness denominators.
 
 A provider, adapter, cancellation, or timeout failure before the first action
 is `not_evaluated`. After the first action it is non-retryable: complete trusted
