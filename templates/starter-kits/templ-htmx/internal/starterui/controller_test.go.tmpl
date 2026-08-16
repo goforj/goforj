@@ -52,6 +52,7 @@ func TestStarterUILoginPageRenders(t *testing.T) {
 	}
 }
 
+{{- if .ComponentLibrary }}
 func TestStarterUIDataPageIncludesLocalTableController(t *testing.T) {
 {{- if and .Components.Auth .Components.HasDatabase }}
 	fixture := newStarterUITestAuthFixture(t)
@@ -77,6 +78,7 @@ func TestStarterUIDataPageIncludesLocalTableController(t *testing.T) {
 		t.Fatalf("data page missing local table controller:\n%s", body)
 	}
 }
+{{- end }}
 
 {{- if and .Components.Auth .Components.HasDatabase }}
 func TestStarterUIUnauthenticatedPageRedirectsToLogin(t *testing.T) {
@@ -100,6 +102,7 @@ func TestStarterUIUnauthenticatedPageRedirectsToLogin(t *testing.T) {
 	}
 }
 
+{{- if .ComponentLibrary }}
 func TestStarterUIUnauthenticatedHTMXPageRedirectsToLogin(t *testing.T) {
 	fixture := newStarterUITestAuthFixture(t)
 	controller := NewController(fixture.Service)
@@ -118,6 +121,7 @@ func TestStarterUIUnauthenticatedHTMXPageRedirectsToLogin(t *testing.T) {
 		t.Fatalf("HX-Redirect = %q, want /login", redirect)
 	}
 }
+{{- end }}
 
 type starterUITestAuthFixture struct {
 	Service  *auth.Service

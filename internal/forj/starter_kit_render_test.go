@@ -137,7 +137,7 @@ func TestScaffoldStarterKitsWithoutComponentLibrary(t *testing.T) {
 			check: func(t *testing.T) {
 				assertFileOmits(t, filepath.Join(starterKitFrontendDir(), "src", "router.ts"), "/components")
 				assertFileOmits(t, filepath.Join(starterKitFrontendDir(), "src", "lib", "navigation.ts"), "title: 'Components'")
-				assertFileContains(t, filepath.Join(starterKitFrontendDir(), "src", "views", "DashboardView.vue"), "Empty dashboard canvas")
+				assertStarterKitFileContains(t, filepath.Join(starterKitFrontendDir(), "src", "views", "DashboardView.vue"), "Empty dashboard canvas")
 				if _, err := os.Stat(filepath.Join(starterKitFrontendDir(), "src", "views", "components")); !os.IsNotExist(err) {
 					t.Fatalf("Vue showcase views should be omitted, stat error = %v", err)
 				}
@@ -150,7 +150,7 @@ func TestScaffoldStarterKitsWithoutComponentLibrary(t *testing.T) {
 				path := filepath.Join(starterKitFrontendDir(), "src", "App.tsx")
 				assertFileOmits(t, path, `path="/components`)
 				assertFileOmits(t, path, "function ComponentsOverviewView")
-				assertFileContains(t, path, "Empty dashboard canvas")
+				assertStarterKitFileContains(t, path, "Empty dashboard canvas")
 			},
 		},
 		{
@@ -158,7 +158,7 @@ func TestScaffoldStarterKitsWithoutComponentLibrary(t *testing.T) {
 			starterKit: project.StarterKitTemplHTMX,
 			check: func(t *testing.T) {
 				assertFileOmits(t, filepath.Join("internal", "starterui", "controller.go"), `"/components`)
-				assertFileContains(t, filepath.Join("internal", "starterui", "dashboard.templ"), "Empty dashboard canvas")
+				assertStarterKitFileContains(t, filepath.Join("internal", "starterui", "dashboard.templ"), "Empty dashboard canvas")
 				if _, err := os.Stat(filepath.Join("internal", "starterui", "components_views.templ")); !os.IsNotExist(err) {
 					t.Fatalf("templ showcase views should be omitted, stat error = %v", err)
 				}
@@ -226,15 +226,15 @@ func TestDisablingComponentLibraryPreservesEditedShowcaseFiles(t *testing.T) {
 	if err := renderer.scaffoldStarterKitForApp(project.DefaultApp(), project.StarterKitVue, true); err != nil {
 		t.Fatalf("scaffold disabled starter kit: %v", err)
 	}
-	assertFileContains(t, edited, "owner customization")
+	assertStarterKitFileContains(t, edited, "owner customization")
 	unchanged := filepath.Join(starterKitFrontendDir(), "src", "views", "components", "ComponentsFormsView.vue")
 	if _, err := os.Stat(unchanged); !os.IsNotExist(err) {
 		t.Fatalf("unchanged showcase file should be removed, stat error = %v", err)
 	}
 }
 
-// assertFileContains verifies a generated file retains a required starter-kit surface.
-func assertFileContains(t *testing.T, path, expected string) {
+// assertStarterKitFileContains verifies a generated file retains a required starter-kit surface.
+func assertStarterKitFileContains(t *testing.T, path, expected string) {
 	t.Helper()
 	content, err := os.ReadFile(path)
 	if err != nil {
