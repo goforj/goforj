@@ -22,6 +22,8 @@ const (
 	DevBuildPhasePrepare = "prepare"
 	// DevBuildPhaseCompile indexes and compiles an App from an already prepared project snapshot.
 	DevBuildPhaseCompile = "compile"
+	// AppHelpCommandOrigin identifies a build whose successful progress should clear before root help renders.
+	AppHelpCommandOrigin = "app_help"
 )
 
 // Cmd runs the forj build pipeline.
@@ -72,7 +74,7 @@ func (c *Cmd) Run() error {
 	if err != nil {
 		return err
 	}
-	options := RunOptions{Timings: c.Timings, SkipWire: c.SkipWire, APIIndexStrict: c.APIIndexStrict, BuildTags: buildTags}
+	options := RunOptions{Timings: c.Timings, SkipWire: c.SkipWire, APIIndexStrict: c.APIIndexStrict, BuildTags: buildTags, TransientProgress: appHelpBuildTransientProgress()}
 	if strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == "dev_command" {
 		switch strings.TrimSpace(os.Getenv(DevBuildPhaseEnvironment)) {
 		case DevBuildPhasePrepare:
@@ -94,6 +96,11 @@ func (c *Cmd) Run() error {
 		return c.printProfile()
 	}
 	return nil
+}
+
+// appHelpBuildTransientProgress keeps one-time help preparation from leaving a completed build line above help.
+func appHelpBuildTransientProgress() bool {
+	return strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == AppHelpCommandOrigin
 }
 
 // buildBinary compiles and publishes the selected App beneath the pipeline's validated project root.

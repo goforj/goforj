@@ -99,9 +99,15 @@ func main() {
 				console.Fatalf("%v", err)
 			}
 		} else {
+			var apps []string
+			if inGeneratedApp {
+				apps = conventionalAppHelpApps(inGeneratedApp)
+				if err := ensureGeneratedAppHelpBinaries(apps, runAppHelpBuild); err != nil {
+					console.Fatalf("preparing App help: %v", err)
+				}
+			}
 			printRootHelp(parser)
 			if inGeneratedApp {
-				apps := conventionalAppHelpApps(inGeneratedApp)
 				printAppUsageHelp(apps)
 				if err := printGeneratedAppHelp(apps); err != nil {
 					if code, ok := build.ChildExitCode(err); ok {
@@ -350,6 +356,62 @@ func appendConventionalAppHelpApp(apps *[]string, seen map[string]struct{}, appN
 	}
 	seen[appName] = struct{}{}
 	*apps = append(*apps, appName)
+}
+
+// ensureGeneratedAppHelpBinaries builds source-owned Apps only when their help binary is absent.
+func ensureGeneratedAppHelpBinaries(apps []string, buildApp func(string) error) error {
+	for _, appName := range apps {
+		binPath := filepath.Join(".", "bin", appName)
+		if regularFileExists(binPath) || !isConventionalSourceApp(appName) {
+			continue
+		}
+		invocation := appHelpBuildInvocation(appName)
+		console.Infof("App binary not found; running %s", invocation)
+		if err := buildApp(appName); err != nil {
+			return fmt.Errorf("%s: %w", invocation, err)
+		}
+		if !regularFileExists(binPath) {
+			return fmt.Errorf("%s completed without producing %s", invocation, filepath.ToSlash(binPath))
+		}
+	}
+	return nil
+}
+
+// runAppHelpBuild invokes the normal App-scoped build path in an isolated process.
+func runAppHelpBuild(appName string) error {
+	command := exec.Command(os.Args[0], appHelpBuildArgs(appName)...)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	command.Env = withAppHelpBuildOrigin(appCommandEnv(appName))
+	return command.Run()
+}
+
+// withAppHelpBuildOrigin marks only the bootstrap subprocess while replacing any inherited command origin.
+func withAppHelpBuildOrigin(env []string) []string {
+	const key = "FORJ_COMMAND_ORIGIN"
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, prefix+build.AppHelpCommandOrigin)
+}
+
+// appHelpBuildArgs returns the public build invocation for a missing App binary.
+func appHelpBuildArgs(appName string) []string {
+	if strings.TrimSpace(appName) == project.DefaultAppName {
+		return []string{"build"}
+	}
+	return []string{strings.TrimSpace(appName), "build"}
+}
+
+// appHelpBuildInvocation formats the command shown before a first-help build.
+func appHelpBuildInvocation(appName string) string {
+	return "forj " + strings.Join(appHelpBuildArgs(appName), " ")
 }
 
 // isConventionalSourceApp reports whether cmd/<app>/main.go defines an app.
