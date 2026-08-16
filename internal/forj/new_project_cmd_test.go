@@ -415,6 +415,13 @@ func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
 			t.Fatalf("selected Codex projection %s: %v", path, err)
 		}
 	}
+	guidance, err := os.ReadFile(filepath.Join(target, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read selected Codex guidance: %v", err)
+	}
+	if !strings.Contains(string(guidance), "can stand on its own") {
+		t.Fatalf("selected Codex guidance omitted package-boundary guidance:\n%s", guidance)
+	}
 	for _, path := range []string{
 		"CLAUDE.md",
 		"GEMINI.md",
