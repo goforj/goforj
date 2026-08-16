@@ -24,6 +24,7 @@ type PrepareOptions struct {
 	Keep               bool
 	ScenarioID         string
 	ForjExec           string
+	ToolExecutables    map[string]string
 	Environment        []string
 	ExpectedPlanDigest string
 }
@@ -152,6 +153,7 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		logger:      options.Logger,
 		workspace:   workspace,
 		forjExec:    forjExecutable,
+		tools:       copyScenarioTools(options.ToolExecutables),
 		environment: append([]string(nil), options.Environment...),
 	}
 	if err := execution.prepare(plan); err != nil {
@@ -176,6 +178,24 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		BaselineTree:    baselineTree,
 		workspace:       workspace,
 	}, nil
+}
+
+// ResolvePreparationTools resolves every executable used by a live preparation prefix against its explicit environment.
+func ResolvePreparationTools(forjExecutable string, environment []string) (map[string]string, string, error) {
+	forjPath, forjDigest, err := resolveScenarioExecutable(forjExecutable)
+	if err != nil {
+		return nil, "", err
+	}
+	goPath, goDigest, err := resolveScenarioTool("go", environment)
+	if err != nil {
+		return nil, "", err
+	}
+	tools := map[string]string{"forj": forjPath, "go": goPath}
+	hash := sha256.New()
+	for _, identity := range []string{"forj\x00" + forjDigest, "go\x00" + goDigest} {
+		fmt.Fprintf(hash, "%s\x00", identity)
+	}
+	return tools, fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
 
 // preparationScenarioDigests records the complete dependency closure followed by the selected target scenario.
@@ -229,6 +249,41 @@ func resolveScenarioExecutable(candidate string) (string, string, error) {
 // ResolveExecutable returns the exact regular-file identity used by live scenario preparation.
 func ResolveExecutable(candidate string) (string, string, error) {
 	return resolveScenarioExecutable(candidate)
+}
+
+// resolveScenarioTool resolves one PATH-selected regular executable from the supplied process environment.
+func resolveScenarioTool(name string, environment []string) (string, string, error) {
+	pathValue := ""
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key == "PATH" {
+			pathValue = value
+			break
+		}
+	}
+	if pathValue == "" {
+		return "", "", fmt.Errorf("resolve tool %q: PATH is required", name)
+	}
+	for _, directory := range filepath.SplitList(pathValue) {
+		candidate := filepath.Join(directory, name)
+		path, digest, err := resolveScenarioExecutable(candidate)
+		if err == nil {
+			return path, digest, nil
+		}
+	}
+	return "", "", fmt.Errorf("resolve tool %q from PATH", name)
+}
+
+// copyScenarioTools prevents a caller from changing command selection after preparation begins.
+func copyScenarioTools(tools map[string]string) map[string]string {
+	if tools == nil {
+		return nil
+	}
+	result := make(map[string]string, len(tools))
+	for name, path := range tools {
+		result[name] = path
+	}
+	return result
 }
 
 // Close releases the temporary Project when the caller did not request retention.

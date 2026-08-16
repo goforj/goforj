@@ -56,6 +56,10 @@ func (preparer Preparer) Resolve(_ context.Context, request eval.PreparationRequ
 	if err != nil {
 		return eval.ResolvedPreparationPlan{}, err
 	}
+	_, toolchainDigest, err := scenarios.ResolvePreparationTools(request.ForjExecutable, request.Environment)
+	if err != nil {
+		return eval.ResolvedPreparationPlan{}, err
+	}
 	resolved, err := scenarios.ResolvePreparation(scenarios.ResolveOptions{
 		SpecDir:    preparer.SpecDir,
 		ScenarioID: request.ScenarioID,
@@ -68,7 +72,7 @@ func (preparer Preparer) Resolve(_ context.Context, request eval.PreparationRequ
 		ResolutionID:         request.OrchestrationID,
 		ScenarioID:           resolved.ScenarioID,
 		ScenarioSchema:       resolved.SchemaVersion,
-		PlanDigest:           preparationPlanDigest(resolved.PlanDigest, forjDigest, environmentDigest),
+		PlanDigest:           preparationPlanDigest(resolved.PlanDigest, forjDigest, toolchainDigest, environmentDigest),
 		ScenarioPlanDigest:   resolved.PlanDigest,
 		CatalogDigest:        resolved.CatalogDigest,
 		ForjDigest:           forjDigest,
@@ -157,7 +161,11 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 		if baseRequest.Environment == nil {
 			return nil, fmt.Errorf("evaluation base environment is required")
 		}
-		if preparationEnvironmentDigest(baseRequest.Environment) != plan.EnvironmentDigest {
+		basePlan, err := preparer.Resolve(ctx, baseRequest)
+		if err != nil {
+			return nil, err
+		}
+		if !samePreparationPlan(plan, basePlan) {
 			return nil, fmt.Errorf("evaluation base environment does not match the resolved material environment")
 		}
 		base, err = preparer.materializeScenario(ctx, baseRequest, plan, preparer.BaseRoot, false)
@@ -169,10 +177,10 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 	return scenarios.ClonePrepared(base, request.DestinationRoot)
 }
 
-// preparationPlanDigest binds the scenario prefix to the exact executable and material environment selected before mutation.
-func preparationPlanDigest(scenarioPlanDigest, forjDigest, environmentDigest string) string {
+// preparationPlanDigest binds the scenario prefix to the exact executable, toolchain, and material environment selected before mutation.
+func preparationPlanDigest(scenarioPlanDigest, forjDigest, toolchainDigest, environmentDigest string) string {
 	hash := sha256.New()
-	fmt.Fprintf(hash, "scenario\x00%s\x00forj\x00%s\x00environment\x00%s\x00", scenarioPlanDigest, forjDigest, environmentDigest)
+	fmt.Fprintf(hash, "scenario\x00%s\x00forj\x00%s\x00toolchain\x00%s\x00environment\x00%s\x00", scenarioPlanDigest, forjDigest, toolchainDigest, environmentDigest)
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil))
 }
 
@@ -182,7 +190,6 @@ func preparationEnvironmentDigest(environment []string) string {
 		"GOCACHE":    true,
 		"GOMODCACHE": true,
 		"GOPATH":     true,
-		"GOWORK":     true,
 		"HOME":       true,
 		"PATH":       true,
 	}
@@ -224,6 +231,10 @@ func (preparer Preparer) materializeScenario(ctx context.Context, request eval.P
 	if appLogger == nil {
 		appLogger = logger.NewSilentLogger()
 	}
+	tools, _, err := scenarios.ResolvePreparationTools(request.ForjExecutable, request.Environment)
+	if err != nil {
+		return nil, err
+	}
 	return scenarios.Prepare(ctx, scenarios.PrepareOptions{
 		Logger:             appLogger,
 		SpecDir:            preparer.SpecDir,
@@ -231,6 +242,7 @@ func (preparer Preparer) materializeScenario(ctx context.Context, request eval.P
 		Keep:               keep,
 		ScenarioID:         request.ScenarioID,
 		ForjExec:           request.ForjExecutable,
+		ToolExecutables:    tools,
 		Environment:        append([]string(nil), request.Environment...),
 		ExpectedPlanDigest: plan.ScenarioPlanDigest,
 	})

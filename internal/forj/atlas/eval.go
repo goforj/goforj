@@ -357,6 +357,14 @@ func loadOrCreateEvalArtifactKey(root string) ([]byte, error) {
 
 // evaluationEnvironment gives both treatments identical private Go caches and disables workspace leakage.
 func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
+	goExecutable, err := exec.LookPath("go")
+	if err != nil {
+		return nil, fmt.Errorf("resolve Go executable: %w", err)
+	}
+	goExecutable, err = filepath.Abs(goExecutable)
+	if err != nil {
+		return nil, fmt.Errorf("resolve absolute Go executable: %w", err)
+	}
 	goCache := filepath.Join(workRoot, "gocache")
 	moduleCache := filepath.Join(workRoot, "gomodcache")
 	goPath := filepath.Join(workRoot, "gopath")
@@ -374,7 +382,7 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 		"GOPATH":     goPath,
 		"GOWORK":     "off",
 		"HOME":       home,
-		"PATH":       toolsDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH":       toolsDir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
 	}
 	base := baseEvaluationEnvironment()
 	environment := make([]string, 0, len(base)+len(overrides))
