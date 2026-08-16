@@ -1,11 +1,31 @@
+# Build and runtime
 bin/
 .forj-dev.lock
 _data/
 storage/
+*.log
+
+# Dependencies
+node_modules/
+
+# Environment
 .env
+.env.backup
 .env.host
 .env.local
 .env.staging
 .env.production
 .env.testing
 !.env.example
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Editors and local tools
+/.codex/
+/.cursor/
+/.idea/
+/.nova/
+/.vscode/
+/.zed/
