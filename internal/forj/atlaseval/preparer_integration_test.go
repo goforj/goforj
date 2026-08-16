@@ -175,8 +175,69 @@ func TestPreparerDelegatesDurableGuidanceTreatment(t *testing.T) {
 	}
 }
 
-// TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies proves diagnostic success, mutation rejection, and layout neutrality.
-func TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies(t *testing.T) {
+// invoiceHTTPVerifierFixture keeps the real Project, verifier, and materialization inputs together across independent calibration tests.
+type invoiceHTTPVerifierFixture struct {
+	projectRoot    string
+	verifier       *eval.AddHTTPControllerVerifier
+	forjExecutable string
+	environment    []string
+}
+
+// TestInvoiceHTTPGoldenVerifierCalibration proves the diagnostic accepts the generated controller while retaining its evidence limitation.
+func TestInvoiceHTTPGoldenVerifierCalibration(t *testing.T) {
+	fixture := prepareInvoiceHTTPVerifierFixture(t)
+	result, err := fixture.verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: fixture.projectRoot})
+	if err != nil {
+		t.Fatalf("Verify(): %v", err)
+	}
+	if result.FrameworkOutcome.Status != eval.EndpointIneligible {
+		t.Fatalf("framework outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
+	}
+	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointIneligible) {
+		t.Fatalf("shared-process behavior check did not retain its evidence limitation: %#v", result.Checks)
+	}
+}
+
+// TestInvoiceHTTPMutantVerifierCalibration proves the hidden behavior oracle rejects a plausible wrong response.
+func TestInvoiceHTTPMutantVerifierCalibration(t *testing.T) {
+	fixture := prepareInvoiceHTTPVerifierFixture(t)
+	controllerPath := filepath.Join(fixture.projectRoot, "internal", "invoices", "controller.go")
+	controller, err := os.ReadFile(controllerPath)
+	if err != nil {
+		t.Fatalf("read controller: %v", err)
+	}
+	mutant := strings.Replace(string(controller), "return request.JSON(http.StatusOK, invoice)", `return request.JSON(http.StatusOK, map[string]string{"id": "wrong"})`, 1)
+	if mutant == string(controller) {
+		t.Fatal("invoice behavior mutant did not apply")
+	}
+	if err := os.WriteFile(controllerPath, []byte(mutant), 0o644); err != nil {
+		t.Fatalf("write controller mutant: %v", err)
+	}
+	result, err := fixture.verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: fixture.projectRoot})
+	if err != nil {
+		t.Fatalf("Verify(mutant): %v", err)
+	}
+	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointFailed) {
+		t.Fatalf("independent behavior oracle accepted wrong response: %#v", result.Checks)
+	}
+}
+
+// TestInvoiceHTTPTransportVerifierCalibration proves the semantic contract accepts an independently valid transport package layout.
+func TestInvoiceHTTPTransportVerifierCalibration(t *testing.T) {
+	fixture := prepareInvoiceHTTPVerifierFixture(t)
+	materializeTransportInvoiceController(t, fixture.projectRoot, fixture.forjExecutable, fixture.environment)
+	result, err := fixture.verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: fixture.projectRoot})
+	if err != nil {
+		t.Fatalf("Verify(transport family): %v", err)
+	}
+	if result.FrameworkOutcome.Status != eval.EndpointIneligible || !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointIneligible) {
+		t.Fatalf("transport-package implementation family failed: outcome=%#v checks=%#v", result.FrameworkOutcome, result.Checks)
+	}
+}
+
+// prepareInvoiceHTTPVerifierFixture builds one real scenario per top-level calibration so the integration runner can shard each family independently.
+func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture {
+	t.Helper()
 	workRoot := t.TempDir()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	environment := testkit.IntegrationGoProcessEnv(t, nil)
@@ -203,46 +264,7 @@ func TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies(t *testi
 		ForjExecutable: forjExecutable,
 		Environment:    environment,
 	})
-	result, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
-	if err != nil {
-		t.Fatalf("Verify(): %v", err)
-	}
-	if result.FrameworkOutcome.Status != eval.EndpointIneligible {
-		t.Fatalf("framework outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
-	}
-	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointIneligible) {
-		t.Fatalf("shared-process behavior check did not retain its evidence limitation: %#v", result.Checks)
-	}
-	controllerPath := filepath.Join(projectRoot, "internal", "invoices", "controller.go")
-	controller, err := os.ReadFile(controllerPath)
-	if err != nil {
-		t.Fatalf("read controller: %v", err)
-	}
-	mutant := strings.Replace(string(controller), "return request.JSON(http.StatusOK, invoice)", `return request.JSON(http.StatusOK, map[string]string{"id": "wrong"})`, 1)
-	if mutant == string(controller) {
-		t.Fatal("invoice behavior mutant did not apply")
-	}
-	if err := os.WriteFile(controllerPath, []byte(mutant), 0o644); err != nil {
-		t.Fatalf("write controller mutant: %v", err)
-	}
-	mutantResult, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
-	if err != nil {
-		t.Fatalf("Verify(mutant): %v", err)
-	}
-	if !evaluationCheckHasStatus(mutantResult.Checks, "invoice-behavior", eval.EndpointFailed) {
-		t.Fatalf("independent behavior oracle accepted wrong response: %#v", mutantResult.Checks)
-	}
-	if err := os.WriteFile(controllerPath, controller, 0o644); err != nil {
-		t.Fatalf("restore controller: %v", err)
-	}
-	materializeTransportInvoiceController(t, projectRoot, forjExecutable, environment)
-	transportResult, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
-	if err != nil {
-		t.Fatalf("Verify(transport family): %v", err)
-	}
-	if transportResult.FrameworkOutcome.Status != eval.EndpointIneligible || !evaluationCheckHasStatus(transportResult.Checks, "invoice-behavior", eval.EndpointIneligible) {
-		t.Fatalf("transport-package implementation family failed: outcome=%#v checks=%#v", transportResult.FrameworkOutcome, transportResult.Checks)
-	}
+	return invoiceHTTPVerifierFixture{projectRoot: projectRoot, verifier: verifier, forjExecutable: forjExecutable, environment: environment}
 }
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
