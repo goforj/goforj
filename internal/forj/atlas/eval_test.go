@@ -62,6 +62,16 @@ func TestValidateEvaluationTrialsBoundsModelSpend(t *testing.T) {
 	}
 }
 
+// TestEvaluationTaskKindPreservesExplicitFiltering keeps all distinct from the promoted task-kind values.
+func TestEvaluationTaskKindPreservesExplicitFiltering(t *testing.T) {
+	if got := evaluationTaskKind("all"); got != "" {
+		t.Fatalf("evaluationTaskKind(all) = %q, want no filter", got)
+	}
+	if got := evaluationTaskKind("feature"); got != eval.TaskFeature {
+		t.Fatalf("evaluationTaskKind(feature) = %q, want %q", got, eval.TaskFeature)
+	}
+}
+
 // TestEvaluationProfilesRejectsUnsupportedTreatmentsBeforeSetup keeps invocation policy explicit and side-effect free.
 func TestEvaluationProfilesRejectsUnsupportedTreatmentsBeforeSetup(t *testing.T) {
 	profiles, err := evaluationProfiles([]string{eval.GuidanceProfileAgents, eval.GuidanceProfileAgents, eval.GuidanceProfileNone})

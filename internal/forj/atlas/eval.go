@@ -84,7 +84,7 @@ func (*EvalListCmd) Run() error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%-28s  %-8s  %s\n", definition.ID, definition.Suite, definition.Summary)
+		fmt.Printf("%-28s  %-10s  %-8s  %s\n", definition.ID, definition.TaskKind, definition.Suite, definition.Summary)
 	}
 	return nil
 }
@@ -130,6 +130,7 @@ func (command *EvalReportCmd) Run() error {
 // EvalSuiteCmd runs every promoted evaluation in one suite with shared preparation caches and frozen authority.
 type EvalSuiteCmd struct {
 	Suite           string `arg:"" help:"Promoted evaluation suite" default:"core"`
+	Kind            string `help:"Limit the suite to one measurement kind" enum:"all,scaffold,feature,repair,abstention" default:"all"`
 	Model           string `help:"Exact Codex model identity" required:""`
 	ModelProvider   string `name:"model-provider" help:"Codex model provider" default:"openai"`
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
@@ -147,17 +148,28 @@ func (*EvalSuiteCmd) Signature() string {
 func (command *EvalSuiteCmd) Run() (runErr error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ids, err := eval.PromotedEvaluationIDs(command.Suite)
+	ids, err := eval.PromotedEvaluationIDsMatching(eval.EvaluationFilter{
+		Suite:    command.Suite,
+		TaskKind: evaluationTaskKind(command.Kind),
+	})
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
-		return fmt.Errorf("evaluation suite %q is empty or unknown", command.Suite)
+		return fmt.Errorf("evaluation suite %q with kind %q is empty or unknown", command.Suite, command.Kind)
 	}
 	return runEvaluationComparisons(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
 		Credential: command.Credential, Artifacts: command.Artifacts,
 	}, ids, command.Trials)
+}
+
+// evaluationTaskKind converts the CLI's explicit all selection into an unrestricted catalog filter.
+func evaluationTaskKind(kind string) eval.EvaluationTaskKind {
+	if kind == "all" {
+		return ""
+	}
+	return eval.EvaluationTaskKind(kind)
 }
 
 // evaluationInvocation contains the authority and runtime options shared by compare and suite execution.
