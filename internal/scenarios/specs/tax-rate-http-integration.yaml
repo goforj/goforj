@@ -1,0 +1,132 @@
+schema_version: 2
+id: tax-rate-http-integration
+title: Tax Rate HTTP Integration
+description: Add a context-aware outbound HTTP integration behind an application-owned client.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Add a typed tax-rate client without leaking HTTP mechanics into invoice services.
+  before: |
+    invoice behavior has no outbound integration.
+  after: |
+    a focused client owns the remote contract and preserves caller cancellation.
+  files:
+    - internal/taxrates/client.go
+    - internal/taxrates/client_test.go
+    - app/wire/inject_services_app.go
+steps:
+  - id: add-httpx-dependency
+    title: Add the HTTP client dependency
+    command: [go, get, github.com/goforj/httpx/v2@v2.0.1]
+  - id: add-tax-rate-client
+    title: Add the tax rate client
+    write:
+      path: internal/taxrates/client.go
+      language: go
+      content: |
+        // Package taxrates owns the remote tax-rate contract and HTTP translation.
+        package taxrates
+
+        import (
+                "context"
+                "fmt"
+                "net/url"
+                "strings"
+
+                "github.com/goforj/httpx/v2"
+        )
+
+        // Rate is the application-facing representation returned by the tax service.
+        type Rate struct {
+                Country string  `json:"country"`
+                Percent float64 `json:"percent"`
+        }
+
+        // Client keeps outbound transport details outside invoice behavior.
+        type Client struct {
+                http *httpx.Client
+        }
+
+        // NewClient applies the remote base URL once so callers provide only domain inputs.
+        func NewClient(baseURL string) *Client {
+                return &Client{http: httpx.New(httpx.BaseURL(strings.TrimRight(baseURL, "/")))}
+        }
+
+        // Find returns a typed rate while preserving the caller's cancellation boundary.
+        func (client *Client) Find(ctx context.Context, country string) (Rate, error) {
+                rate, err := httpx.GetCtx[Rate](client.http, ctx, "/rates/"+url.PathEscape(country))
+                if err != nil {
+                        return Rate{}, fmt.Errorf("load tax rate for %s: %w", country, err)
+                }
+                return rate, nil
+        }
+  - id: test-tax-rate-client
+    title: Test the HTTP boundary
+    write:
+      path: internal/taxrates/client_test.go
+      language: go
+      content: |
+        // Package taxrates owns the remote tax-rate contract and HTTP translation.
+        package taxrates
+
+        import (
+                "context"
+                "fmt"
+                "net/http"
+                "net/http/httptest"
+                "testing"
+        )
+
+        // TestClientFindsTaxRate proves the remote contract without external network access.
+        func TestClientFindsTaxRate(t *testing.T) {
+                server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+                        if request.URL.Path != "/rates/US" {
+                                t.Fatalf("path = %q", request.URL.Path)
+                        }
+                        response.Header().Set("Content-Type", "application/json")
+                        _, _ = fmt.Fprint(response, `{"country":"US","percent":7.25}`)
+                }))
+                t.Cleanup(server.Close)
+
+                rate, err := NewClient(server.URL).Find(context.Background(), "US")
+                if err != nil {
+                        t.Fatalf("Find(): %v", err)
+                }
+                if rate.Country != "US" || rate.Percent != 7.25 {
+                        t.Fatalf("rate = %#v", rate)
+                }
+        }
+  - id: import-tax-rate-client
+    title: Import the integration provider
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+      new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/taxrates\"\n\n\t\"github.com/goforj/env/v2\"\n"
+  - id: provide-tax-rate-client
+    title: Provide the integration client
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\tprovideTaxRateClient,\n\tapp.NewLifecycleRegistry,\n"
+  - id: define-tax-rate-provider
+    title: Read integration configuration at the provider boundary
+    append:
+      path: app/wire/inject_services_app.go
+      language: go
+      content: |
+
+        // provideTaxRateClient keeps deployment configuration outside application behavior.
+        func provideTaxRateClient() *taxrates.Client {
+                return taxrates.NewClient(env.Get("TAX_RATE_BASE_URL", "http://127.0.0.1:9000"))
+        }
+checks:
+  - command: [go, test, ./internal/taxrates]
+  - command: [forj, build]
+  - command: [go, test, ./...]

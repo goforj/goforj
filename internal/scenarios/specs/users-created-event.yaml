@@ -1,3 +1,4 @@
+schema_version: 2
 id: users-created-event
 title: Users Created Event
 description: Publish a typed users.created event and handle it with a lifecycle-registered subscriber.
@@ -55,27 +56,27 @@ markdown:
   file_groups:
     - title: Configuration
       files:
-        - .env
+      - .env
     - title: Events
       files:
-        - internal/events/user_created_event.go
+      - internal/events/user_created_event.go
     - title: Users feature
       files:
-        - internal/users/repository.go
-        - internal/users/events.go
-        - internal/users/service.go
-        - internal/users/service_test.go
-        - internal/users/controller.go
-        - internal/users/controller_test.go
+      - internal/users/repository.go
+      - internal/users/events.go
+      - internal/users/service.go
+      - internal/users/service_test.go
+      - internal/users/controller.go
+      - internal/users/controller_test.go
     - title: Notifications
       files:
-        - internal/notifications/service.go
-        - internal/notifications/subscribers.go
-        - internal/notifications/subscribers_test.go
+      - internal/notifications/service.go
+      - internal/notifications/subscribers.go
+      - internal/notifications/subscribers_test.go
     - title: Lifecycle and wiring
       files:
-        - app/lifecycle.go
-        - app/wire/inject_services_app.go
+      - app/lifecycle.go
+      - app/wire/inject_services_app.go
   generated_files:
     intro: "The event generator updates manager files, and the rendered App includes the tested concurrent logger implementation."
     files:
@@ -137,13 +138,14 @@ markdown:
   next_steps:
     - "Next, dispatch queue-backed work from an event subscriber with [Reports Generate Job](/scenarios/reports-generate-job)."
 steps:
-  - title: Refresh Event Resources
+  - id: refresh-event-resources
+    title: Refresh Event Resources
     explain: |
       The generated environment already selects the in-process event driver for local development. Run the build pipeline so your App exposes `app.Bus()` and `app.Events()`.
-    run:
-      run: ["forj", "build"]
+    command: ["forj", "build"]
 
-  - title: Add the Event
+  - id: add-the-event
+    title: Add the Event
     explain: |
       Create `internal/events/user_created_event.go`.
 
@@ -169,7 +171,8 @@ steps:
                 return UserCreatedTopic
         }
 
-  - title: Extend the Repository
+  - id: extend-the-repository
+    title: Extend the Repository
     explain: |
       Replace `internal/users/repository.go`.
 
@@ -303,7 +306,8 @@ steps:
                 return "users:" + id + ":profile"
         }
 
-  - title: Add an Event Publisher Boundary
+  - id: add-an-event-publisher-boundary
+    title: Add an Event Publisher Boundary
     explain: |
       Create `internal/users/events.go`.
 
@@ -345,7 +349,8 @@ steps:
                 })
         }
 
-  - title: Publish from the Service
+  - id: publish-from-the-service
+    title: Publish from the Service
     explain: |
       Replace `internal/users/service.go`.
 
@@ -436,7 +441,8 @@ steps:
                 return user, nil
         }
 
-  - title: Add the Notification Handler
+  - id: add-the-notification-handler
+    title: Add the Notification Handler
     explain: |
       Create `internal/notifications/service.go`.
 
@@ -463,7 +469,8 @@ steps:
                 return nil
         }
 
-  - title: Add Subscriber Registration
+  - id: add-subscriber-registration
+    title: Add Subscriber Registration
     explain: |
       Create `internal/notifications/subscribers.go`.
 
@@ -504,7 +511,8 @@ steps:
                 })
         }
 
-  - title: Test Subscriber Delivery
+  - id: test-subscriber-delivery
+    title: Test Subscriber Delivery
     explain: |
       Create `internal/notifications/subscribers_test.go`.
 
@@ -586,7 +594,8 @@ steps:
                 }
         }
 
-  - title: Register Subscribers in the Lifecycle
+  - id: register-subscribers-in-the-lifecycle
+    title: Register Subscribers in the Lifecycle
     explain: |
       Update `app/lifecycle.go`.
 
@@ -645,7 +654,8 @@ steps:
                 return r.notificationSubscription.Close()
         }
 
-  - title: Update the Controller
+  - id: update-the-controller
+    title: Update the Controller
     explain: |
       Update `internal/users/controller.go` so it supports both `GET /users/:id` and `POST /users`.
     write:
@@ -726,7 +736,8 @@ steps:
                 return ctx.JSON(http.StatusCreated, user)
         }
 
-  - title: Wire the Event Boundary and Subscriber
+  - id: wire-the-event-boundary-and-subscriber
+    title: Wire the Event Boundary and Subscriber
     explain: |
       Add the event publisher and notification subscriber providers.
     replace:
@@ -739,7 +750,8 @@ steps:
                 "{{module}}/internal/notifications"
                 "{{module}}/internal/runtime"
 
-  - title: Add Event Providers
+  - id: add-event-providers
+    title: Add Event Providers
     explain: |
       `provideEventBus` exposes the generated default event bus to the application publisher. Wire also binds `notifications.Service` to the handler interface required by subscriber registration.
     replace:
@@ -756,7 +768,8 @@ steps:
                 wire.Bind(new(notifications.UserCreatedHandler), new(*notifications.Service)),
                 notifications.NewSubscribers,
 
-  - title: Add the Event Bus Provider
+  - id: add-the-event-bus-provider
+    title: Add the Event Bus Provider
     explain: |
       Wire can now satisfy `users.NewUserEventPublisher`.
     replace:
@@ -774,7 +787,8 @@ steps:
         // provideUserRepository preserves the service boundary while Wire composes its concrete cache-aside implementation.
         func provideUserRepository(source *users.MemoryUserRepository, profileCache *cache.Cache) users.UserRepository {
 
-  - title: Update the Service Test
+  - id: update-the-service-test
+    title: Update the Service Test
     explain: |
       The test uses a small event boundary fake. It does not need to start the event bus or the App runtime.
     write:
@@ -863,7 +877,8 @@ steps:
                 }
         }
 
-  - title: Test User Route Registration
+  - id: test-user-route-registration
+    title: Test User Route Registration
     explain: |
       Create `internal/users/controller_test.go`.
 
@@ -894,10 +909,9 @@ steps:
                 t.Fatal("POST /users route is not registered")
         }
 
-verify:
-  commands:
-    - run: ["forj", "build"]
-    - run: ["go", "test", "./..."]
-    - run: ["forj", "route:list"]
-      contains:
-        - "/api/v1/users"
+checks:
+  - command: ["forj", "build"]
+  - command: ["go", "test", "./..."]
+  - command: ["forj", "route:list"]
+    contains:
+      - "/api/v1/users"
