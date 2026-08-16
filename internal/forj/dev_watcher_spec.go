@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/goforj/internal/appassets"
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
@@ -29,6 +30,7 @@ type devCompiledWatcher struct {
 	Name                 string
 	Kind                 devWatcherKind
 	App                  string
+	Asset                string
 	Command              devwatch.Command
 	Postpone             bool
 	Restart              bool
@@ -403,10 +405,33 @@ func compileStructuredSPA(app project.App, name string, spa project.DevSPA, buil
 		onSuccess = append(onSuccess, build.ID)
 	}
 	return devCompiledWatcher{
-		Watch: compiledWatch.spec, ID: id, Name: watchName, Kind: devWatcherSPABuild, App: app.Name,
+		Watch: compiledWatch.spec, ID: id, Name: watchName, Kind: devWatcherSPABuild, App: app.Name, Asset: name,
 		Command: devwatch.Command{Shell: command, Dir: root}, Postpone: true,
 		WatchChanges: true, OnSuccess: onSuccess,
 	}, nil
+}
+
+// recordDevSPABuild shares successful watcher output without making dev availability depend on local cache state.
+func recordDevSPABuild(projectRoot string, watcher devCompiledWatcher) {
+	if watcher.Kind != devWatcherSPABuild || watcher.Legacy {
+		return
+	}
+	_ = appassets.Record(projectRoot, appassets.Asset{
+		App:     watcher.App,
+		Name:    watcher.Asset,
+		Root:    watcher.Command.Dir,
+		Prepare: devSPAInstallCommand(watcher.Command.Shell),
+		Command: watcher.Command.Shell,
+	})
+}
+
+// devSPAInstallCommand keeps npm-backed dev receipts compatible with the build pipeline's dependency phase.
+func devSPAInstallCommand(buildCommand string) string {
+	fields := strings.Fields(buildCommand)
+	if len(fields) > 0 && fields[0] == "npm" {
+		return generatedFrontendNPMInstallCommand
+	}
+	return ""
 }
 
 // compileCustomDevWatcher preserves scalar wgo grammar and opts list-shaped watches into native matchers.

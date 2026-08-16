@@ -1051,6 +1051,9 @@ func (t *devWatcherTask) runCommand() {
 		return
 	}
 	success := err == nil && exit.OK()
+	if success && t.spec.Kind == devWatcherSPABuild {
+		recordDevSPABuild(".", t.spec)
+	}
 	if success && t.spec.Kind == devWatcherAppBuild {
 		err = publishDevBuildReadyStamp(project.AppForName(t.spec.App))
 		if err != nil {
