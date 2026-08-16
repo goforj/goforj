@@ -32,6 +32,7 @@ type scenarioExecution struct {
 	logger      *logger.AppLogger
 	workspace   scenarioWorkspace
 	forjExec    string
+	tools       map[string]string
 	environment []string
 }
 
@@ -302,7 +303,9 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 		return fmt.Errorf("command is required")
 	}
 	args := append([]string{}, command.Run...)
-	if args[0] == "forj" {
+	if tool := execution.tools[args[0]]; tool != "" {
+		args[0] = tool
+	} else if args[0] == "forj" {
 		args[0] = execution.forjExec
 	}
 	parent := execution.context
