@@ -90,6 +90,10 @@ func ReconcileGuidanceIntent(root string, intent install.GuidanceReconciliation)
 	if intent.Version != install.GuidanceReconciliationVersion {
 		return ReconcileGuidanceResult{}, fmt.Errorf("unsupported Atlas guidance reconciliation version %d", intent.Version)
 	}
+	targets, err := validatedGuidanceTargets(intent.Targets)
+	if err != nil {
+		return ReconcileGuidanceResult{}, err
+	}
 	selection := project.AgentGuidanceNone
 	if intent.Enabled {
 		selection = project.AgentGuidanceBaseline
@@ -104,7 +108,7 @@ func ReconcileGuidanceIntent(root string, intent install.GuidanceReconciliation)
 			return ReconcileGuidanceResult{}, fmt.Errorf("persist agent guidance: %w", err)
 		}
 	}
-	return reconcileAgentGuidanceTargets(root, selection, intent.Targets)
+	return reconcileAgentGuidanceTargets(root, selection, targets)
 }
 
 // reconcileAgentGuidanceTargets applies one validated target selection without allowing Atlas to write native files.
@@ -112,13 +116,9 @@ func reconcileAgentGuidanceTargets(root string, selection project.AgentGuidance,
 	if !selection.Valid() {
 		return ReconcileGuidanceResult{}, fmt.Errorf("unsupported agent guidance %q", selection)
 	}
-	selectedTargets := slices.Clone(targets)
-	slices.Sort(selectedTargets)
-	selectedTargets = slices.Compact(selectedTargets)
-	for _, name := range selectedTargets {
-		if _, ok := agents.ByName(name); !ok {
-			return ReconcileGuidanceResult{}, fmt.Errorf("Atlas guidance selects unsupported agent %q", name)
-		}
+	selectedTargets, err := validatedGuidanceTargets(targets)
+	if err != nil {
+		return ReconcileGuidanceResult{}, err
 	}
 	content := guidelines.Compose(Project(root))
 	result := ReconcileGuidanceResult{}
@@ -137,6 +137,19 @@ func reconcileAgentGuidanceTargets(root string, selection project.AgentGuidance,
 		}
 	}
 	return result, nil
+}
+
+// validatedGuidanceTargets rejects unsupported projections before callers mutate durable project state.
+func validatedGuidanceTargets(targets []string) ([]string, error) {
+	selectedTargets := slices.Clone(targets)
+	slices.Sort(selectedTargets)
+	selectedTargets = slices.Compact(selectedTargets)
+	for _, name := range selectedTargets {
+		if _, ok := agents.ByName(name); !ok {
+			return nil, fmt.Errorf("Atlas guidance selects unsupported agent %q", name)
+		}
+	}
+	return selectedTargets, nil
 }
 
 // guidanceTargets uses committed Atlas selection and a stable Codex fallback instead of host discovery.
