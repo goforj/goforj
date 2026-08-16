@@ -26,6 +26,8 @@ import (
 // EvalCmd groups opt-in live-agent evaluation commands.
 type EvalCmd struct {
 	Compare EvalCompareCmd `cmd:""`
+	List    EvalListCmd    `cmd:""`
+	Suite   EvalSuiteCmd   `cmd:""`
 }
 
 // Signature returns the Kong metadata for EvalCmd.
@@ -43,6 +45,71 @@ type EvalCompareCmd struct {
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
 }
 
+// EvalListCmd lists the promoted evaluation catalog without starting an agent.
+type EvalListCmd struct{}
+
+// Signature returns the Kong metadata for EvalListCmd.
+func (*EvalListCmd) Signature() string {
+	return `name:"list" help:"List promoted Atlas evaluations"`
+}
+
+// Run prints stable evaluation IDs with their suite and purpose.
+func (*EvalListCmd) Run() error {
+	ids, err := eval.PromotedEvaluationIDs("")
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		definition, err := eval.LoadPromotedDefinition(id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%-28s  %-8s  %s\n", definition.ID, definition.Suite, definition.Summary)
+	}
+	return nil
+}
+
+// EvalSuiteCmd runs every promoted evaluation in one suite with shared preparation caches and frozen authority.
+type EvalSuiteCmd struct {
+	Suite           string `arg:"" help:"Promoted evaluation suite" default:"core"`
+	Model           string `help:"Exact Codex model identity" required:""`
+	ModelProvider   string `name:"model-provider" help:"Codex model provider" default:"openai"`
+	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
+	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
+	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+}
+
+// Signature returns the Kong metadata for EvalSuiteCmd.
+func (*EvalSuiteCmd) Signature() string {
+	return `name:"suite" help:"Run every promoted evaluation in a suite"`
+}
+
+// Run executes every suite member through one frozen credential and shared Project preparation cache.
+func (command *EvalSuiteCmd) Run() (runErr error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ids, err := eval.PromotedEvaluationIDs(command.Suite)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("evaluation suite %q is empty or unknown", command.Suite)
+	}
+	return runEvaluationComparisons(ctx, evaluationInvocation{
+		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
+		Credential: command.Credential, Artifacts: command.Artifacts,
+	}, ids)
+}
+
+// evaluationInvocation contains the authority and runtime options shared by compare and suite execution.
+type evaluationInvocation struct {
+	Model           string
+	ModelProvider   string
+	CodexExecutable string
+	Credential      string
+	Artifacts       string
+}
+
 // Signature returns the Kong metadata for EvalCompareCmd.
 func (*EvalCompareCmd) Signature() string {
 	return `name:"compare" help:"Compare no guidance with canonical AGENTS.md guidance"`
@@ -57,6 +124,14 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 
 // run executes the comparison with a caller-owned lifecycle so cancellation reaches every evaluation resource.
 func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
+	return runEvaluationComparisons(ctx, evaluationInvocation{
+		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
+		Credential: command.Credential, Artifacts: command.Artifacts,
+	}, []string{command.Evaluation})
+}
+
+// runEvaluationComparisons shares frozen credentials, tool resolution, caches, and verifier infrastructure across one invocation.
+func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocation, evaluationIDs []string) (runErr error) {
 	forjExecutable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve current Forj executable: %w", err)
@@ -65,7 +140,7 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("resolve Go executable: %w", err)
 	}
-	credential, err := resolveEvalCredential(command.Credential)
+	credential, err := resolveEvalCredential(invocation.Credential)
 	if err != nil {
 		return err
 	}
@@ -74,7 +149,7 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 		return err
 	}
 	redactor := frozenCredential.Redactor(eval.NewRedactor(nil))
-	artifactRoot, err := resolveEvalArtifactRoot(command.Artifacts)
+	artifactRoot, err := resolveEvalArtifactRoot(invocation.Artifacts)
 	if err != nil {
 		return err
 	}
@@ -111,7 +186,7 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 		ArtifactKey:         artifactKey,
 		Redactor:            redactor,
 		Preparer:            preparer,
-		Codex:               eval.CodexOptions{Executable: command.CodexExecutable, Model: command.Model, ModelProvider: command.ModelProvider, Credential: frozenCredential},
+		Codex:               eval.CodexOptions{Executable: invocation.CodexExecutable, Model: invocation.Model, ModelProvider: invocation.ModelProvider, Credential: frozenCredential},
 		GoExecutable:        goExecutable,
 		ForjExecutable:      forjExecutable,
 		VerifierEnvironment: append([]string(nil), noneEnvironment...),
@@ -120,29 +195,40 @@ func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
-	result, diagnosticErr := diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
-		EvaluationID:    command.Evaluation,
-		DestinationRoot: filepath.Join(workRoot, "projects"),
-		Environments: map[string][]string{
-			eval.GuidanceProfileNone:   noneEnvironment,
-			eval.GuidanceProfileAgents: agentsEnvironment,
-		},
-	})
-	body, err := marshalRedactedEvaluation(result, redactor)
+	results := make([]eval.GuidanceDiagnosticResult, 0, len(evaluationIDs))
+	var attemptErrors []error
+	for _, evaluationID := range evaluationIDs {
+		result, diagnosticErr := diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
+			EvaluationID:    evaluationID,
+			DestinationRoot: filepath.Join(workRoot, "projects"),
+			Environments: map[string][]string{
+				eval.GuidanceProfileNone:   noneEnvironment,
+				eval.GuidanceProfileAgents: agentsEnvironment,
+			},
+		})
+		results = append(results, result)
+		for _, attempt := range result.Attempts {
+			if attempt.Error != "" {
+				attemptErrors = append(attemptErrors, fmt.Errorf("%s/%s treatment: %s", evaluationID, attempt.Profile, redactor.Text(attempt.Error)))
+			}
+		}
+		if diagnosticErr != nil {
+			attemptErrors = append(attemptErrors, fmt.Errorf("%s: %s", evaluationID, redactor.Text(diagnosticErr.Error())))
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	var output any = results
+	if len(results) == 1 {
+		output = results[0]
+	}
+	body, err := marshalRedactedEvaluation(output, redactor)
 	if err != nil {
 		return err
 	}
 	fmt.Println(string(body))
 	fmt.Printf("Artifacts: %s\n", artifactRoot)
-	var attemptErrors []error
-	for _, attempt := range result.Attempts {
-		if attempt.Error != "" {
-			attemptErrors = append(attemptErrors, fmt.Errorf("%s treatment: %s", attempt.Profile, redactor.Text(attempt.Error)))
-		}
-	}
-	if diagnosticErr != nil {
-		attemptErrors = append(attemptErrors, errors.New(redactor.Text(diagnosticErr.Error())))
-	}
 	return errors.Join(attemptErrors...)
 }
 

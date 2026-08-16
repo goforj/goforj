@@ -1,0 +1,17 @@
+schema_version: 2
+id: unknown-invoice-reconciliation
+title: Unknown Invoice Reconciliation Shape
+description: Present an invoice domain without enough product intent to choose a command, job, or schedule safely.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    cli: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

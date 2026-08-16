@@ -1,0 +1,58 @@
+schema_version: 2
+id: named-avatar-storage
+title: Named Avatar Storage
+description: Configure a named avatar disk and select its generated accessor through dependency injection.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    storage: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: configure-avatar-storage
+    title: Configure the named disk
+    append:
+      path: .env
+      language: dotenv
+      content: |
+
+        STORAGE_AVATARS_DRIVER=local
+        STORAGE_AVATARS_ROOT=storage/app/avatars
+  - id: generate-storage-accessors
+    title: Generate the named accessor
+    command: [forj, generate, --storage]
+  - id: add-avatar-storage
+    title: Select the generated accessor through the manager
+    write:
+      path: internal/invoices/avatar_storage.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its storage selection.
+        package invoices
+
+        import (
+                "example.com/invoiceeval/internal/storages"
+                "github.com/goforj/storage"
+        )
+
+        // AvatarStorage owns the App-facing avatar disk selection.
+        type AvatarStorage struct{ storage storage.Storage }
+
+        // NewAvatarStorage injects the storage manager and selects the generated named accessor.
+        func NewAvatarStorage(manager *storages.Manager) *AvatarStorage {
+                return &AvatarStorage{storage: manager.Avatars()}
+        }
+  - id: register-avatar-storage
+    title: Register the application storage owner
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tinvoices.NewService,\n"
+      new: "\tinvoices.NewService,\n\tinvoices.NewAvatarStorage,\n"
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]

@@ -243,6 +243,122 @@ func TestInvoiceHTTPVerifierCalibratesBehaviorAndImplementationFamilies(t *testi
 	}
 }
 
+// TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants calibrates every promoted framework contract against executable GoForj scenarios.
+func TestMajorSurfaceVerifiersAcceptGoldenProjectsAndRejectTargetedMutants(t *testing.T) {
+	tests := []struct {
+		evaluation string
+		scenario   string
+		path       string
+		old        string
+		mutant     string
+	}{
+		{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)"},
+		{evaluation: "add-job", scenario: "invoice-receipt-job", path: "internal/invoices/receipt_job.go", old: "InvoiceID string", mutant: "Reference string"},
+		{evaluation: "add-schedule", scenario: "invoice-reconcile-schedule", path: "internal/invoices/reconcile_schedule.go", old: "schedule.service.Find(ctx, \"inv-42\")", mutant: "schedule.service.Find(context.Background(), \"inv-42\")"},
+		{evaluation: "add-event-subscriber", scenario: "invoice-paid-subscriber", path: "internal/invoices/paid_subscriber.go", old: "subscriber.service.Find(ctx, event.InvoiceID)", mutant: "subscriber.service.Find(context.Background(), event.InvoiceID)"},
+		{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress"},
+		{evaluation: "add-named-app-route", scenario: "admin-audit-route", path: "internal/audits/controller.go", old: "/api/v1/audits", mutant: "/api/v1/wrong"},
+		{evaluation: "add-named-resource", scenario: "named-reports-queue", path: "internal/invoices/report_dispatcher.go", old: "manager.Reports()", mutant: "manager.Default()"},
+		{evaluation: "add-named-cache", scenario: "named-profiles-cache", path: "internal/invoices/profile_cache.go", old: "manager.Profiles()", mutant: "manager.Default()"},
+		{evaluation: "add-named-storage", scenario: "named-avatar-storage", path: "internal/invoices/avatar_storage.go", old: "manager.Avatars()", mutant: "manager.Default()"},
+		{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry"},
+	}
+	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
+	environment := testkit.IntegrationGoProcessEnv(t, nil)
+	runner := eval.VerifierCommands{WorkRoot: t.TempDir(), ForjExecutable: forjExecutable, Environment: environment}
+	registry, err := eval.NewRegistry(eval.PromotedWorkflows(), eval.PromotedVerifiers(runner))
+	if err != nil {
+		t.Fatalf("NewRegistry(): %v", err)
+	}
+	for _, test := range tests {
+		t.Run(test.evaluation, func(t *testing.T) {
+			workRoot := t.TempDir()
+			if err := scenarios.Validate(scenarios.ValidateOptions{Logger: logger.NewAppLogger(), WorkDir: workRoot, Keep: true, IDs: []string{test.scenario}, ForjExec: forjExecutable, Environment: environment}); err != nil {
+				t.Fatalf("build %s scenario: %v", test.scenario, err)
+			}
+			projectRoot := findEvaluationScenarioRoot(t, workRoot, test.scenario)
+			definition, err := eval.LoadPromotedDefinition(test.evaluation)
+			if err != nil {
+				t.Fatalf("LoadPromotedDefinition(): %v", err)
+			}
+			resolved, err := registry.Resolve(definition)
+			if err != nil {
+				t.Fatalf("Resolve(): %v", err)
+			}
+			result, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
+			if err != nil {
+				t.Fatalf("Verify(): %v", err)
+			}
+			if result.FrameworkOutcome.Status != eval.EndpointPassed {
+				t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
+			}
+			path := filepath.Join(projectRoot, filepath.FromSlash(test.path))
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read mutant target: %v", err)
+			}
+			if strings.Count(string(body), test.old) != 1 {
+				t.Fatalf("mutant target %q count = %d", test.old, strings.Count(string(body), test.old))
+			}
+			mutant := strings.Replace(string(body), test.old, test.mutant, 1)
+			if err := os.WriteFile(path, []byte(mutant), 0o644); err != nil {
+				t.Fatalf("write mutant: %v", err)
+			}
+			mutantResult, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot})
+			if err != nil {
+				t.Fatalf("Verify(mutant): %v", err)
+			}
+			if mutantResult.FrameworkOutcome.Status != eval.EndpointFailed {
+				t.Fatalf("mutant outcome = %#v; checks = %#v", mutantResult.FrameworkOutcome, mutantResult.Checks)
+			}
+		})
+	}
+}
+
+// TestUnknownFrameworkShapeCalibratesSafeAbstention proves the ambiguous fixture accepts a precise question and rejects speculative edits.
+func TestUnknownFrameworkShapeCalibratesSafeAbstention(t *testing.T) {
+	workRoot := t.TempDir()
+	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
+	environment := testkit.IntegrationGoProcessEnv(t, nil)
+	if err := scenarios.Validate(scenarios.ValidateOptions{Logger: logger.NewAppLogger(), WorkDir: workRoot, Keep: true, IDs: []string{"unknown-invoice-reconciliation"}, ForjExec: forjExecutable, Environment: environment}); err != nil {
+		t.Fatalf("build unknown framework scenario: %v", err)
+	}
+	projectRoot := findEvaluationScenarioRoot(t, workRoot, "unknown-invoice-reconciliation")
+	verifier := eval.NewSafeAbstentionVerifier()
+	response := `ATLAS_CLARIFICATION {"decision":"execution_mode","question":"Should reconciliation run as a command, job, or schedule?","options":["command","job","schedule"]}`
+	result, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, FinalResponse: response})
+	if err != nil {
+		t.Fatalf("Verify(): %v", err)
+	}
+	if result.FrameworkOutcome.Status != eval.EndpointPassed || result.Abstention == nil || result.Abstention.Status != eval.EndpointPassed {
+		t.Fatalf("golden outcome = %#v", result)
+	}
+	mutant, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, FinalResponse: response, Changes: []eval.ProjectChange{{Path: "internal/invoices/reconcile.go"}}})
+	if err != nil {
+		t.Fatalf("Verify(mutant): %v", err)
+	}
+	if mutant.FrameworkOutcome.Status != eval.EndpointFailed || mutant.Abstention == nil || mutant.Abstention.Status != eval.EndpointFailed {
+		t.Fatalf("mutant outcome = %#v", mutant)
+	}
+}
+
+// findEvaluationScenarioRoot locates the retained workspace for one scenario without depending on its random suffix.
+func findEvaluationScenarioRoot(t *testing.T, root string, scenario string) string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read scenario root: %v", err)
+	}
+	prefix := scenario + "-"
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			return filepath.Join(root, entry.Name())
+		}
+	}
+	t.Fatalf("scenario workspace %q is absent", scenario)
+	return ""
+}
+
 // materializeTransportInvoiceController converts the golden family into the independently observed transport-package family.
 func materializeTransportInvoiceController(t *testing.T, root string, forjExecutable string, environment []string) {
 	t.Helper()

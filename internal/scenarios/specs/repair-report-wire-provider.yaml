@@ -1,0 +1,80 @@
+schema_version: 2
+id: repair-report-wire-provider
+title: Repair Report Wire Provider
+description: Diagnose a missing report service provider and repair the App-owned Wire set without editing generated output.
+app:
+  module_name: example.com/wireeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  steps:
+    - id: scaffold-report-controller
+      title: Scaffold the report controller
+      command: [forj, make:controller, reports]
+    - id: add-report-service
+      title: Add the report application service
+      write:
+        path: internal/reports/service.go
+        language: go
+        content: |
+          // Package reports owns report behavior and transport.
+          package reports
+
+          // Service owns report application behavior.
+          type Service struct{}
+
+          // NewService provides report behavior to the App graph.
+          func NewService() *Service { return &Service{} }
+    - id: require-report-service
+      title: Make the controller depend on the missing provider
+      write:
+        path: internal/reports/controller.go
+        language: go
+        content: |
+          // Package reports owns report behavior and transport.
+          package reports
+
+          import (
+                  "net/http"
+
+                  "github.com/goforj/web"
+          )
+
+          // Controller exposes report routes.
+          type Controller struct{ service *Service }
+
+          // NewController requires the intentionally missing service provider.
+          func NewController(service *Service) *Controller { return &Controller{service: service} }
+
+          // Routes returns the report endpoint.
+          func (controller *Controller) Routes() []web.Route {
+                  return []web.Route{web.NewRoute(http.MethodGet, "/api/v1/reports", controller.Index)}
+          }
+
+          // Index returns a minimal report response.
+          func (*Controller) Index(request web.Context) error {
+                  return request.JSON(http.StatusOK, map[string]any{"reports": []any{}})
+          }
+  checks:
+    - command: [go, test, ./internal/reports]
+steps:
+  - id: register-report-service
+    title: Register the missing provider in the App-owned set
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/wireeval/internal/runtime\"\n"
+      new: "\t\"example.com/wireeval/internal/reports\"\n\t\"example.com/wireeval/internal/runtime\"\n"
+  - id: provide-report-service
+    title: Add the service constructor
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\treports.NewService,\n\tapp.NewLifecycleRegistry,\n"
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
+  - command: [forj, route:list]
+    contains: [/api/v1/reports]
