@@ -12,6 +12,7 @@ func TestMergeTestingCreatesSafeRunnableProfile(t *testing.T) {
 	example := []byte("# App\nAPP_ENV=local\nAPP_KEY=\nAPI_JWT_SECRET_KEY=\nDB_HOST=mysql\nDB_DATABASE=app\nDB_USERNAME=postgres\nDB_PASSWORD=\nMAIL_RESEND_API_KEY=\nFEATURE_FLAG=true\n")
 	got := string(envfile.MergeTesting(nil, example))
 	for _, want := range []string{
+		"# Automatically loaded by goforj/env when running tests.",
 		"APP_ENV=testing",
 		"APP_KEY=base64:",
 		"API_JWT_SECRET_KEY=goforj-public-testing-jwt-signing-key",
