@@ -47,7 +47,7 @@ func NewEnvSetCmd() *EnvSetCmd {
 	return &EnvSetCmd{readSecret: console.AskSecret}
 }
 
-// Run prompts without echo and refreshes the safe committed contracts after publication.
+// Run prompts without echo and updates only the private local environment.
 func (c *EnvSetCmd) Run() error {
 	key := strings.TrimSpace(c.Key)
 	if !envfile.IsValidKey(key) {

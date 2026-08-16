@@ -46,11 +46,11 @@ Use hidden terminal input for a local value so it does not enter shell history o
 forj env:set DISCORD_TOKEN
 ```
 
-The command updates `.env`, refreshes the safe contracts, and reports only the key name.
+The command updates `.env` and reports only the key name. The next generation lifecycle refreshes the safe contracts.
 
 ## Synchronization
 
-Environment synchronization is part of the existing generation lifecycle. `forj generate`, `forj build`, and `forj dev` refresh the contracts without an additional flag or separate build workflow. Rendering a project does the same.
+Environment synchronization has one lifecycle owner: generation. `forj generate` refreshes the contracts directly, while `forj build`, `forj dev`, and project rendering receive the same behavior through their generation phase. Those callers do not independently synchronize the contracts.
 
 Synchronization is stable and writes only when output changed:
 

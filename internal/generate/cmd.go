@@ -115,12 +115,9 @@ func (c *Cmd) run(tidy moduleTidyRunner) error {
 	if err != nil {
 		return err
 	}
-	run, err := runGenerationTasks(input, selection)
+	run, err := runGenerationLifecycle(input, selection)
 	if err != nil {
 		return err
-	}
-	if _, err := envcontract.Sync("."); err != nil {
-		return fmt.Errorf("sync environment contracts: %w", err)
 	}
 	if run.dependencyTaskRan {
 		if err := tidy("."); err != nil {
@@ -141,14 +138,10 @@ func generateProjectFiles(projectDir string, selection GenerationSelection, tidy
 	if err != nil {
 		return GenerationResult{}, err
 	}
-	run, err := runGenerationTasks(input, selection)
+	run, err := runGenerationLifecycle(input, selection)
 	result := GenerationResult{TotalFiles: run.totalFiles, ChangedFiles: run.changedFiles}
 	if err != nil {
 		return result, err
-	}
-	_, err = envcontract.Sync(projectDir)
-	if err != nil {
-		return result, fmt.Errorf("sync environment contracts: %w", err)
 	}
 	if run.dependencyFilesChanged {
 		if err := tidy(projectDir); err != nil {
@@ -156,6 +149,18 @@ func generateProjectFiles(projectDir string, selection GenerationSelection, tidy
 		}
 	}
 	return result, nil
+}
+
+// runGenerationLifecycle keeps environment contract synchronization at the generation boundary shared by direct, build, and dev workflows.
+func runGenerationLifecycle(input generationInput, selection GenerationSelection) (generationRun, error) {
+	run, err := runGenerationTasks(input, selection)
+	if err != nil {
+		return run, err
+	}
+	if _, err := envcontract.Sync(input.projectDir); err != nil {
+		return run, fmt.Errorf("sync environment contracts: %w", err)
+	}
+	return run, nil
 }
 
 // generationSelection returns the command-line flags as one named selection value.

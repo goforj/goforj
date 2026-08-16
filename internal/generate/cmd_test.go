@@ -12,6 +12,35 @@ func skipModuleTidy(string) error {
 	return nil
 }
 
+// TestGenerateProjectFilesSynchronizesEnvironmentContracts verifies every build caller receives contract publication through generation itself.
+func TestGenerateProjectFilesSynchronizesEnvironmentContracts(t *testing.T) {
+	root := t.TempDir()
+	local := "APP_ENV=local\nAPP_KEY=private-key\nDB_DATABASE=app\nDB_PASSWORD=private-password\n"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(local), 0o600); err != nil {
+		t.Fatalf("write environment: %v", err)
+	}
+
+	if _, err := generateProjectFiles(root, GenerationSelection{}, skipModuleTidy); err != nil {
+		t.Fatalf("generate project files: %v", err)
+	}
+	for _, name := range []string{".env.example", ".env.testing"} {
+		content, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.Contains(string(content), "private-key") || strings.Contains(string(content), "private-password") {
+			t.Fatalf("%s exposed local credentials:\n%s", name, content)
+		}
+	}
+	testingEnvironment, err := os.ReadFile(filepath.Join(root, ".env.testing"))
+	if err != nil {
+		t.Fatalf("read testing environment: %v", err)
+	}
+	if !strings.Contains(string(testingEnvironment), "APP_ENV=testing") || !strings.Contains(string(testingEnvironment), "DB_DATABASE=app_testing") {
+		t.Fatalf("testing environment omitted deterministic defaults:\n%s", testingEnvironment)
+	}
+}
+
 func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {

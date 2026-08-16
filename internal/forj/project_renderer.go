@@ -24,7 +24,6 @@ import (
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/devservices"
-	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
@@ -504,15 +503,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return fmt.Errorf("write environment example: %w", err)
 				}
 				p.stats.recordCreated(".env.example")
-				environmentResult, err := envcontract.Sync(p.workspace.path())
-				if err != nil {
-					return fmt.Errorf("sync environment contracts: %w", err)
-				}
-				if environmentResult.TestingChanged {
-					p.stats.recordCreated(".env.testing")
-				} else {
-					p.stats.recordSkipped(".env.testing (current)")
-				}
 				if err := p.workspace.ensureGitignoreEnvironmentRules(); err != nil {
 					return fmt.Errorf("update environment ignore rules: %w", err)
 				}
