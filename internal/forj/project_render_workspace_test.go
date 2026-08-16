@@ -42,6 +42,25 @@ func TestProjectRenderWorkspaceLogicalErrorPreservesWrappedContext(t *testing.T)
 	}
 }
 
+// TestProjectRenderWorkspaceRejectsEnvironmentSymlinks prevents render-time environment updates from escaping the project root.
+func TestProjectRenderWorkspaceRejectsEnvironmentSymlinks(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := resolveProjectRenderWorkspace(root)
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.env")
+	if err := os.WriteFile(target, []byte("APP_KEY=outside\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, ".env")); err != nil {
+		t.Skipf("create environment symlink: %v", err)
+	}
+	if err := workspace.rejectEnvironmentSpecialFile(".env"); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("rejectEnvironmentSpecialFile() error = %v", err)
+	}
+}
+
 // currentProjectRenderWorkspace resolves the caller's test directory explicitly so zero-value workspace use cannot hide global cwd coupling.
 func currentProjectRenderWorkspace(t *testing.T) projectRenderWorkspace {
 	t.Helper()

@@ -107,6 +107,21 @@ func (w projectRenderWorkspace) readFile(parts ...string) ([]byte, error) {
 	return data, w.logicalError(err)
 }
 
+// rejectEnvironmentSpecialFile prevents environment reads or updates from following symlinks outside the project.
+func (w projectRenderWorkspace) rejectEnvironmentSpecialFile(path string) error {
+	info, err := os.Lstat(w.path(path))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return w.logicalError(err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("inspect %s: expected a regular file", filepath.Clean(path))
+	}
+	return nil
+}
+
 // writeFile publishes one logical project file while keeping generated paths relative everywhere else.
 func (w projectRenderWorkspace) writeFile(path string, data []byte, mode fs.FileMode) error {
 	return w.logicalError(os.WriteFile(w.path(path), data, mode))

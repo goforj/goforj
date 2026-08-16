@@ -68,6 +68,10 @@ func TestAssignmentParsersKeepSemanticAndSourceScanningDistinct(t *testing.T) {
 	if !ok || key != "CACHE_DRIVER" {
 		t.Fatalf("ScanKey() = %q, %t", key, ok)
 	}
+	key, ok = envfile.ScanKey("CUSTOM_TOKEN: yaml-style-secret")
+	if !ok || key != "CUSTOM_TOKEN" {
+		t.Fatalf("ScanKey() YAML assignment = %q, %t", key, ok)
+	}
 }
 
 // TestEncodeValueRoundTripsLiteralSecretCharacters verifies stored input cannot become interpolation or another assignment.

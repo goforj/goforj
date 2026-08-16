@@ -137,10 +137,16 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 	const examplePath = ".env.example"
 	path := ownerPath
 	ownerExists := true
+	if err := p.workspace.rejectEnvironmentSpecialFile(path); err != nil {
+		return err
+	}
 	source, err := p.workspace.readFile(path)
 	if os.IsNotExist(err) {
 		path = examplePath
 		ownerExists = false
+		if err := p.workspace.rejectEnvironmentSpecialFile(path); err != nil {
+			return err
+		}
 		source, err = p.workspace.readFile(path)
 		if os.IsNotExist(err) {
 			return nil

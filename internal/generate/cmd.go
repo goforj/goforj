@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/internal/envcontract"
+	"github.com/goforj/goforj/internal/envfile"
+	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -157,10 +160,59 @@ func runGenerationLifecycle(input generationInput, selection GenerationSelection
 	if err != nil {
 		return run, err
 	}
-	if _, err := envcontract.Sync(input.projectDir); err != nil {
+	example, err := generationEnvironmentExample(input.projectDir)
+	if err != nil {
+		return run, err
+	}
+	if _, err := envcontract.SyncWithExample(input.projectDir, example); err != nil {
 		return run, fmt.Errorf("sync environment contracts: %w", err)
 	}
 	return run, nil
+}
+
+// generationEnvironmentExample removes obsolete framework-owned keys before the contract pair is atomically derived by generation.
+func generationEnvironmentExample(projectDir string) ([]byte, error) {
+	path := filepath.Join(projectDir, ".env.example")
+	info, err := os.Lstat(path)
+	if err == nil && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read environment example: expected a regular file")
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect environment example: %w", err)
+	}
+	example, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read environment example: %w", err)
+	}
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return example, nil
+		}
+		return nil, fmt.Errorf("load environment generation config: %w", err)
+	}
+	runtimeApps := projectlayout.RuntimeApps(projectDir, config)
+	example, _ = resourceenv.RemoveGeneratedAssignments(example, project.ProjectComponents(config), runtimeApps)
+	lines := strings.Split(string(example), "\n")
+	remove := make(map[string]bool)
+	for name, app := range config.Apps {
+		if project.NormalizeConfiguredAppComponents(config, app.Components).Cache {
+			continue
+		}
+		prefix := project.AppEnvironmentPrefix(name)
+		if prefix != "" {
+			remove[prefix+"_CACHE_DRIVER"] = true
+		}
+	}
+	filtered := lines[:0]
+	for _, line := range lines {
+		key, ok := envfile.ScanKey(line)
+		if ok && remove[key] {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return []byte(strings.Join(filtered, "\n")), nil
 }
 
 // generationSelection returns the command-line flags as one named selection value.

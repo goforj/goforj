@@ -805,10 +805,13 @@ func TestShouldAutoInitializeEnvironmentKeepsLifecycleOwnershipExplicit(t *testi
 		args []string
 		want bool
 	}{
-		{name: "root help", args: nil, want: true},
+		{name: "root help", args: nil},
+		{name: "root help flag", args: []string{"--help"}},
+		{name: "version flag", args: []string{"--version"}},
 		{name: "build", args: []string{"build"}, want: true},
 		{name: "dev", args: []string{"--dev", "dev"}, want: true},
 		{name: "explicit init", args: []string{"env:init"}},
+		{name: "secret entry initializes after validation", args: []string{"env:set", "APP_KEY"}},
 		{name: "read only check", args: []string{"env:check"}},
 		{name: "render", args: []string{"render"}},
 		{name: "new", args: []string{"new", "project"}},
@@ -819,6 +822,21 @@ func TestShouldAutoInitializeEnvironmentKeepsLifecycleOwnershipExplicit(t *testi
 				t.Fatalf("shouldAutoInitializeEnvironment(%v) = %t, want %t", test.args, got, test.want)
 			}
 		})
+	}
+}
+
+// TestEnvironmentInitializationArgsResolvesAppPrefixes keeps prefixed read-only commands from creating local state before dispatch.
+func TestEnvironmentInitializationArgsResolvesAppPrefixes(t *testing.T) {
+	defer chdirTemp(t)()
+	writeGeneratedAppMarker(t)
+	writeSourceApp(t, "billing")
+
+	got := environmentInitializationArgs([]string{"billing", "env:check"}, true)
+	if !reflect.DeepEqual(got, []string{"env:check"}) {
+		t.Fatalf("environmentInitializationArgs() = %v, want [env:check]", got)
+	}
+	if shouldAutoInitializeEnvironment(got) {
+		t.Fatal("app-prefixed env:check requested local initialization")
 	}
 }
 

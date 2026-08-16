@@ -1729,6 +1729,11 @@ func TestDevEnvFilesChangedDetectsCreateUpdateAndDelete(t *testing.T) {
 	}
 
 	envPath := filepath.Join(dir, ".env")
+	for _, generated := range []string{".env.example", ".env.testing"} {
+		if err := os.WriteFile(filepath.Join(dir, generated), []byte("GENERATED=1\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", generated, err)
+		}
+	}
 	if err := os.WriteFile(envPath, []byte("FEATURE=1\n"), 0o644); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
@@ -1738,6 +1743,9 @@ func TestDevEnvFilesChangedDetectsCreateUpdateAndDelete(t *testing.T) {
 	}
 	if !devEnvFilesChanged(initial, created) {
 		t.Fatal("expected create to change env snapshot")
+	}
+	if len(created) != 1 {
+		t.Fatalf("generated contracts entered dev environment snapshot: %#v", created)
 	}
 
 	time.Sleep(2 * time.Millisecond)

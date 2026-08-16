@@ -100,11 +100,11 @@ Useful generated files worth inspecting when behavior diverges:
 
 Rendered projects use a synchronized three-file contract:
 
-- `.env` is ignored, private local state; source-aware `forj` commands create it from `.env.example` when missing
+- `.env` is ignored, private local state; commands that need the runtime environment create it from `.env.example` when missing
 - `.env.example` is the committed safe inventory
-- `.env.testing` is the committed deterministic profile loaded by `goforj/env` during tests
+- `.env.testing` is the committed deterministic profile selected when tests load `goforj/env`
 
-Use `forj env:set KEY` to enter a local secret without putting its value in shell history. The next `forj generate`, `forj build`, or `forj dev` run synchronizes both committed files through the shared generation lifecycle. CI can run `forj env:check` on a clean checkout to detect drift without creating `.env`, then run tests using `.env.testing`; process variables remain the override path for live-service credentials.
+Use `forj env:set KEY` to enter a local secret without putting its value in shell history. The next `forj generate`, `forj build`, or `forj dev` run synchronizes both committed files through the shared generation lifecycle. CI can run `forj env:check` on a clean checkout to verify the committed pair without creating `.env`; process variables remain the override path for live-service credentials. An unmanaged legacy `.env.testing` must be reviewed and removed before GoForj creates the committed profile, preventing previously private test values from being silently migrated.
 
 ## Integration Test Reality
 
