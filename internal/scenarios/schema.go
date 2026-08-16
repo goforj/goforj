@@ -3,7 +3,9 @@ package scenarios
 import (
 	"bytes"
 	"fmt"
+	"go/format"
 	"io"
+	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -241,12 +243,21 @@ func normalizeScenarioV2Steps(path string, wires []scenarioStepV2) ([]ScenarioSt
 			actions++
 		}
 		if wire.Write != nil {
+			if err := validateScenarioFileChange(fieldPath+".write", *wire.Write); err != nil {
+				return nil, err
+			}
 			actions++
 		}
 		if wire.Append != nil {
+			if err := validateScenarioFileChange(fieldPath+".append", *wire.Append); err != nil {
+				return nil, err
+			}
 			actions++
 		}
 		if wire.Replace != nil {
+			if err := validateScenarioReplace(fieldPath+".replace", *wire.Replace); err != nil {
+				return nil, err
+			}
 			actions++
 		}
 		if actions != 1 {
@@ -285,14 +296,66 @@ func validateScenarioCommand(fieldPath string, arguments []string) error {
 	if executable == "" {
 		return fmt.Errorf("%s executable is required", fieldPath)
 	}
-	if separator := strings.LastIndexAny(executable, `/\`); separator >= 0 {
-		executable = executable[separator+1:]
+	base := executable
+	if separator := strings.LastIndexAny(base, `/\\`); separator >= 0 {
+		base = base[separator+1:]
 	}
-	switch strings.ToLower(executable) {
+	switch strings.ToLower(base) {
 	case "sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe":
 		return fmt.Errorf("%s must not invoke a shell interpreter", fieldPath)
 	}
+	if strings.ContainsAny(executable, `/\\`) {
+		return fmt.Errorf("%s executable must be a tool name, not a path", fieldPath)
+	}
 	return nil
+}
+
+// validateScenarioFileChange rejects unsafe or malformed v2 source before a workspace exists.
+func validateScenarioFileChange(fieldPath string, change ScenarioFileChange) error {
+	if err := validateScenarioFilePath(fieldPath+".path", change.Path); err != nil {
+		return err
+	}
+	if change.Content == "" {
+		return fmt.Errorf("%s.content is required", fieldPath)
+	}
+	if scenarioGoSource(change.Path, change.Language) {
+		if _, err := format.Source([]byte(change.Content)); err != nil {
+			return fmt.Errorf("%s.content: invalid Go source: %w", fieldPath, err)
+		}
+	}
+	return nil
+}
+
+// validateScenarioReplace ensures a replacement remains an explicit, meaningful transition.
+func validateScenarioReplace(fieldPath string, change ScenarioReplace) error {
+	if err := validateScenarioFilePath(fieldPath+".path", change.Path); err != nil {
+		return err
+	}
+	if change.Old == "" {
+		return fmt.Errorf("%s.old is required", fieldPath)
+	}
+	if change.New == "" {
+		return fmt.Errorf("%s.new is required", fieldPath)
+	}
+	if change.Old == change.New {
+		return fmt.Errorf("%s.new must differ from old", fieldPath)
+	}
+	return nil
+}
+
+// validateScenarioFilePath uses slash semantics so external catalogs are safe on every host OS.
+func validateScenarioFilePath(fieldPath, value string) error {
+	clean := path.Clean(strings.ReplaceAll(strings.TrimSpace(value), `\\`, "/"))
+	volumePath := len(clean) >= 3 && ((clean[0] >= 'a' && clean[0] <= 'z') || (clean[0] >= 'A' && clean[0] <= 'Z')) && clean[1] == ':' && clean[2] == '/'
+	if clean == "." || clean == "" || strings.ContainsRune(clean, 0) || strings.HasPrefix(clean, "/") || volumePath || clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("%s %q must be a relative path beneath the scenario root", fieldPath, value)
+	}
+	return nil
+}
+
+// scenarioGoSource recognizes Go edits even when a catalog omitted presentation language metadata.
+func scenarioGoSource(filePath, language string) bool {
+	return strings.EqualFold(strings.TrimSpace(language), "go") || strings.HasSuffix(strings.ToLower(filePath), ".go")
 }
 
 // validateScenarioStepIDs keeps preparation and target actions addressable across narrative edits.

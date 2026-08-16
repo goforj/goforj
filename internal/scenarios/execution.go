@@ -8,12 +8,12 @@ import (
 	"go/format"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/goforj/console"
+	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
@@ -38,23 +38,29 @@ type scenarioExecution struct {
 
 const scenarioCommandTimeout = 3 * time.Minute
 
+const scenarioCommandOutputLimit = 1 << 20
+
 // runScenario executes one selected scenario against the same validated catalog used to select it.
 func runScenario(options ValidateOptions, catalog scenarioCatalog, spec ScenarioSpec, forjExec string) error {
+	plan, ok := catalog.plans[spec.ID]
+	if !ok {
+		return fmt.Errorf("scenario plan %q is unavailable", spec.ID)
+	}
+	tools, _, err := resolveScenarioPlanTools(forjExec, options.Environment, plan, true)
+	if err != nil {
+		return err
+	}
 	workspace, err := createScenarioWorkspace(options, spec)
 	if err != nil {
 		return err
 	}
-
 	execution := scenarioExecution{
 		context:     context.Background(),
 		logger:      options.Logger,
 		workspace:   workspace,
 		forjExec:    forjExec,
+		tools:       tools,
 		environment: append([]string(nil), options.Environment...),
-	}
-	plan, ok := catalog.plans[spec.ID]
-	if !ok {
-		return workspace.cleanupAfter(fmt.Errorf("scenario plan %q is unavailable", spec.ID))
 	}
 	console.Actionf("scenario %s", spec.ID)
 	runErr := workspace.cleanupAfter(execution.run(plan))
@@ -303,27 +309,36 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 		return fmt.Errorf("command is required")
 	}
 	args := append([]string{}, command.Run...)
-	if tool := execution.tools[args[0]]; tool != "" {
-		args[0] = tool
-	} else if args[0] == "forj" {
-		args[0] = execution.forjExec
+	tool := execution.tools[args[0]]
+	if tool == "" && args[0] == "forj" {
+		tool = execution.forjExec
 	}
+	if tool == "" {
+		return fmt.Errorf("command executable %q is not bound to a resolved tool", args[0])
+	}
+	args[0] = tool
 	parent := execution.context
 	if parent == nil {
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(parent, scenarioCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir = execution.workspace.root
-	cmd.Env = execution.environment
-	if len(cmd.Env) == 0 {
-		cmd.Env = scenarioProcessEnv()
+	environment := execution.environment
+	if len(environment) == 0 {
+		environment = scenarioProcessEnv()
 	}
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Run(); err != nil {
+	var output scenarioOutputBuffer
+	supervisor := devwatch.NewSupervisor(devwatch.SupervisorOptions{})
+	defer supervisor.Close()
+	_, err := supervisor.Run(ctx, "scenario command", devwatch.Command{
+		Args:       args,
+		Dir:        execution.workspace.root,
+		Env:        scenarioEnvironmentMap(environment),
+		ReplaceEnv: true,
+		Stdout:     &output,
+		Stderr:     &output,
+	})
+	if err != nil {
 		text := strings.TrimSpace(output.String())
 		if text == "" {
 			text = err.Error()
@@ -340,6 +355,48 @@ func (execution scenarioExecution) runCommand(command ScenarioCommand, label str
 		}
 	}
 	return nil
+}
+
+// scenarioOutputBuffer bounds diagnostic retention while allowing commands to stream indefinitely.
+type scenarioOutputBuffer struct {
+	buffer    bytes.Buffer
+	truncated bool
+}
+
+// Write retains at most the scenario diagnostic limit to prevent a failed command exhausting runner memory.
+func (buffer *scenarioOutputBuffer) Write(content []byte) (int, error) {
+	remaining := scenarioCommandOutputLimit - buffer.buffer.Len()
+	if remaining <= 0 {
+		buffer.truncated = true
+		return len(content), nil
+	}
+	if len(content) > remaining {
+		_, _ = buffer.buffer.Write(content[:remaining])
+		buffer.truncated = true
+		return len(content), nil
+	}
+	_, _ = buffer.buffer.Write(content)
+	return len(content), nil
+}
+
+// String makes truncation visible in diagnostics without changing command success semantics.
+func (buffer *scenarioOutputBuffer) String() string {
+	if !buffer.truncated {
+		return buffer.buffer.String()
+	}
+	return buffer.buffer.String() + "\n[scenario command output truncated]"
+}
+
+// scenarioEnvironmentMap translates an explicit environment slice to the supervisor's replacement environment.
+func scenarioEnvironmentMap(environment []string) map[string]string {
+	values := make(map[string]string, len(environment))
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return values
 }
 
 // scenarioProcessEnv isolates Go caches so scenario subprocesses do not depend on a developer's global cache state.

@@ -56,7 +56,7 @@ func (preparer Preparer) Resolve(_ context.Context, request eval.PreparationRequ
 	if err != nil {
 		return eval.ResolvedPreparationPlan{}, err
 	}
-	_, toolchainDigest, err := scenarios.ResolvePreparationTools(request.ForjExecutable, request.Environment)
+	_, toolchainDigest, err := scenarios.ResolveScenarioPreparationTools(request.ForjExecutable, request.Environment, scenarios.ResolveOptions{SpecDir: preparer.SpecDir, ScenarioID: request.ScenarioID})
 	if err != nil {
 		return eval.ResolvedPreparationPlan{}, err
 	}
@@ -231,7 +231,7 @@ func (preparer Preparer) materializeScenario(ctx context.Context, request eval.P
 	if appLogger == nil {
 		appLogger = logger.NewSilentLogger()
 	}
-	tools, _, err := scenarios.ResolvePreparationTools(request.ForjExecutable, request.Environment)
+	tools, _, err := scenarios.ResolveScenarioPreparationTools(request.ForjExecutable, request.Environment, scenarios.ResolveOptions{SpecDir: preparer.SpecDir, ScenarioID: request.ScenarioID})
 	if err != nil {
 		return nil, err
 	}

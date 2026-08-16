@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goforj/goforj/internal/logger"
 )
 
 // scenarioWriteCloser exposes independent write and close failures for file-lifecycle tests.
@@ -166,5 +168,29 @@ func TestWriteFileRejectsInvalidGo(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "format broken.go") {
 		t.Fatalf("writeFile() error = %v, want formatting failure", err)
+	}
+}
+
+// TestScenarioOutputBufferBoundsDiagnostics keeps noisy commands from retaining unbounded output.
+func TestScenarioOutputBufferBoundsDiagnostics(t *testing.T) {
+	buffer := scenarioOutputBuffer{}
+	content := strings.Repeat("x", scenarioCommandOutputLimit+1)
+	if _, err := buffer.Write([]byte(content)); err != nil {
+		t.Fatalf("write output: %v", err)
+	}
+	if got := len(buffer.buffer.Bytes()); got != scenarioCommandOutputLimit {
+		t.Fatalf("retained output = %d, want %d", got, scenarioCommandOutputLimit)
+	}
+	if !strings.Contains(buffer.String(), "output truncated") {
+		t.Fatalf("bounded output did not identify truncation: %q", buffer.String())
+	}
+}
+
+// TestRunCommandRejectsUnboundExecutable prevents later PATH lookup from changing a resolved scenario.
+func TestRunCommandRejectsUnboundExecutable(t *testing.T) {
+	execution := scenarioExecution{workspace: scenarioWorkspace{root: t.TempDir()}, logger: logger.NewSilentLogger()}
+	err := execution.runCommand(ScenarioCommand{Run: []string{"unbound-tool"}}, "unbound")
+	if err == nil || !strings.Contains(err.Error(), "not bound to a resolved tool") {
+		t.Fatalf("runCommand() error = %v, want unbound tool rejection", err)
 	}
 }
