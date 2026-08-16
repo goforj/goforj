@@ -1,4 +1,5 @@
 <template>
+  <!-- goforj:component-library:on:start -->
   <section class="grid gap-6">
     <!--
       No gradient and no extra elevation. Every token in this theme is chroma 0,
@@ -64,8 +65,18 @@
       </CardContent>
     </Card>
   </section>
+  <!-- goforj:component-library:end -->
+  <!-- goforj:component-library:off:start -->
+  <section class="dashboard-canvas" aria-label="Empty dashboard canvas">
+    <div class="dashboard-canvas-grid">
+      <div v-for="index in 3" :key="index" class="dashboard-placeholder" />
+    </div>
+    <div class="dashboard-placeholder dashboard-placeholder-large" />
+  </section>
+  <!-- goforj:component-library:end -->
 </template>
 
+<!-- goforj:component-library:on:start -->
 <script setup lang="ts">
 import { Database, Layers3, ShieldCheck } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
@@ -89,3 +100,4 @@ const cards = [
   },
 ]
 </script>
+<!-- goforj:component-library:end -->

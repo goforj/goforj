@@ -37,11 +37,12 @@ var appWizardRunner = runAppWizard
 
 // RenderOptions controls the narrow render used by make:app.
 type RenderOptions struct {
-	Components    project.Components
-	StarterKit    project.StarterKit
-	HelpFormat    project.HelpFormat
-	DevRunCommand string
-	SkipWire      bool
+	Components        project.Components
+	StarterKit        project.StarterKit
+	StarterKitOptions *project.StarterKitOptions
+	HelpFormat        project.HelpFormat
+	DevRunCommand     string
+	SkipWire          bool
 }
 
 // RemoveResult describes what changed during a make:app removal.
@@ -68,14 +69,15 @@ type Cmd struct {
 	logger   *logger.AppLogger
 	renderer Renderer
 
-	Name       string `arg:"" optional:"" help:"App name, such as admin or statuspage"`
-	Components string `name:"components" help:"Comma-separated app components, such as web-api,jobs"`
-	Without    string `name:"without" help:"Comma-separated app components to remove from the default app selection"`
-	StarterKit string `name:"starter-kit" help:"Frontend starter kit for apps with Web UI"`
-	HelpFormat string `name:"help-format" help:"Help output format for app CLI commands: framework, external_cli, or guided"`
-	DevRun     string `name:"dev-run" help:"Command for forj dev to run through this app binary, such as run or queue:work"`
-	SkipWire   bool   `name:"skip-wire" help:"Render files without running Wire generation"`
-	Remove     bool   `name:"remove" help:"Remove the conventional files and metadata for an app"`
+	Name             string `arg:"" optional:"" help:"App name, such as admin or statuspage"`
+	Components       string `name:"components" help:"Comma-separated app components, such as web-api,jobs"`
+	Without          string `name:"without" help:"Comma-separated app components to remove from the default app selection"`
+	StarterKit       string `name:"starter-kit" help:"Frontend starter kit for apps with Web UI"`
+	ComponentLibrary string `name:"component-library" help:"Include the selected starter kit's component showcase: on or off"`
+	HelpFormat       string `name:"help-format" help:"Help output format for app CLI commands: framework, external_cli, or guided"`
+	DevRun           string `name:"dev-run" help:"Command for forj dev to run through this app binary, such as run or queue:work"`
+	SkipWire         bool   `name:"skip-wire" help:"Render files without running Wire generation"`
+	Remove           bool   `name:"remove" help:"Remove the conventional files and metadata for an app"`
 }
 
 // Signature exposes make:app as a framework-owned app creation command.
@@ -217,6 +219,21 @@ func (c *Cmd) appSelection(config *project.Config) (RenderOptions, error) {
 	if err := project.ValidateStarterKitContract(starterKit, components); err != nil {
 		return RenderOptions{}, err
 	}
+	componentLibrary := config.Render.StarterKitOptions.ComponentLibraryEnabled()
+	if strings.TrimSpace(c.ComponentLibrary) != "" {
+		switch strings.ToLower(strings.TrimSpace(c.ComponentLibrary)) {
+		case "on":
+			componentLibrary = true
+		case "off":
+			componentLibrary = false
+		default:
+			return RenderOptions{}, fmt.Errorf("invalid component library %q; use on or off", c.ComponentLibrary)
+		}
+	}
+	var starterKitOptions *project.StarterKitOptions
+	if starterKit != project.StarterKitNone && !componentLibrary {
+		starterKitOptions = project.NewStarterKitOptions(false)
+	}
 	if err := components.ValidateRenderContract(); err != nil {
 		return RenderOptions{}, err
 	}
@@ -225,10 +242,11 @@ func (c *Cmd) appSelection(config *project.Config) (RenderOptions, error) {
 		helpFormat = project.NormalizeHelpFormat(config.Render.HelpFormat)
 	}
 	return RenderOptions{
-		Components:    components,
-		StarterKit:    starterKit,
-		HelpFormat:    helpFormat,
-		DevRunCommand: strings.TrimSpace(c.DevRun),
+		Components:        components,
+		StarterKit:        starterKit,
+		StarterKitOptions: starterKitOptions,
+		HelpFormat:        helpFormat,
+		DevRunCommand:     strings.TrimSpace(c.DevRun),
 	}, nil
 }
 
@@ -245,6 +263,7 @@ func (c *Cmd) hasExplicitSelection() bool {
 	return strings.TrimSpace(c.Components) != "" ||
 		strings.TrimSpace(c.Without) != "" ||
 		strings.TrimSpace(c.StarterKit) != "" ||
+		strings.TrimSpace(c.ComponentLibrary) != "" ||
 		strings.TrimSpace(c.HelpFormat) != "" ||
 		strings.TrimSpace(c.DevRun) != ""
 }

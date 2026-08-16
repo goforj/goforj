@@ -97,6 +97,7 @@ func TestSetAppConfigDoesNotPromoteNamedCapabilitiesIntoDefaultApp(t *testing.T)
 		"reporting",
 		project.Components{CLI: true, WebAPI: true, DatabasePostgres: true, Jobs: true},
 		project.StarterKitNone,
+		nil,
 		project.HelpFormatFramework,
 	)
 	if err != nil {
@@ -127,6 +128,7 @@ func TestSetAppConfigNormalizesImplicitDatabaseAgainstDefaultApp(t *testing.T) {
 		"accounts",
 		project.Components{CLI: true, Auth: true},
 		project.StarterKitNone,
+		nil,
 		project.HelpFormatFramework,
 	)
 	if err != nil {

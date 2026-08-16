@@ -255,6 +255,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { title: "Dashboard", path: "/", icon: LayoutDashboard },
+  // goforj:component-library:on:start
   {
     title: "Components",
     path: "/components",
@@ -267,17 +268,20 @@ const navItems: NavItem[] = [
       { title: "Data", path: "/components/data" },
     ],
   },
+  // goforj:component-library:end
 ]
 
 const publicRoutes = new Set(["/login", "/register", "/forgot-password", "/reset-password", "/verify-email"])
 
 function routeTitle(pathname: string) {
   if (pathname === "/") return "Dashboard"
+  // goforj:component-library:on:start
   if (pathname.startsWith("/components/overview")) return "Components Overview"
   if (pathname.startsWith("/components/forms")) return "Components Forms"
   if (pathname.startsWith("/components/navigation")) return "Components Navigation"
   if (pathname.startsWith("/components/overlays")) return "Components Overlays"
   if (pathname.startsWith("/components/data")) return "Components Data"
+  // goforj:component-library:end
   if (pathname.startsWith("/settings/profile")) return "Profile settings"
   if (pathname.startsWith("/settings/password")) return "Password settings"
   if (pathname.startsWith("/settings/appearance")) return "Appearance settings"
@@ -386,12 +390,14 @@ export function App() {
         <div className="content">
           <Routes>
             <Route path="/" element={<DashboardView />} />
+            {/* goforj:component-library:on:start */}
             <Route path="/components" element={<Navigate to="/components/overview" replace />} />
             <Route path="/components/overview" element={<ComponentsOverviewView />} />
             <Route path="/components/forms" element={<ComponentsFormsView />} />
             <Route path="/components/navigation" element={<ComponentsNavigationView />} />
             <Route path="/components/overlays" element={<ComponentsOverlaysView />} />
             <Route path="/components/data" element={<ComponentsDataView />} />
+            {/* goforj:component-library:end */}
             <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
             <Route path="/settings/profile" element={<SettingsProfileView user={user} onUser={setUser} />} />
             <Route path="/settings/password" element={<SettingsPasswordView />} />
@@ -415,11 +421,13 @@ export function App() {
 function CommandMenu({ open, onClose, onSelect }: { open: boolean; onClose: () => void; onSelect: (path: string) => void }) {
   const commands = [
     { group: "Pages", title: "Dashboard", description: "Open the generated application overview.", path: "/", shortcut: "G D", icon: LayoutDashboard },
+    // goforj:component-library:on:start
     { group: "Components", title: "Components overview", description: "Review the local React component reference.", path: "/components/overview", shortcut: "G C", icon: Blocks },
     { group: "Components", title: "Forms", description: "Inputs, validation, checkout, settings, and token entry examples.", path: "/components/forms", shortcut: "G F", icon: Workflow },
     { group: "Components", title: "Navigation", description: "Menus, command patterns, panes, tabs, and scroll surfaces.", path: "/components/navigation", shortcut: "G N", icon: LayoutTemplate },
     { group: "Components", title: "Overlays", description: "Dialogs, sheets, popovers, drawers, and row actions.", path: "/components/overlays", shortcut: "G O", icon: MousePointerClick },
     { group: "Components", title: "Data", description: "Tables, filters, metrics, pagination, dates, and reporting examples.", path: "/components/data", shortcut: "G T", icon: Database },
+    // goforj:component-library:end
     { group: "Settings", title: "Profile settings", description: "Edit the current generated auth profile.", path: "/settings/profile", shortcut: "S P", icon: User },
     { group: "Settings", title: "Password settings", description: "Change the account password.", path: "/settings/password", shortcut: "S W", icon: KeyRound },
     { group: "Settings", title: "Appearance settings", description: "Choose light, dark, or system theme.", path: "/settings/appearance", shortcut: "S A", icon: Palette },
@@ -925,6 +933,7 @@ function VerifyEmailView({ onVerified }: { onVerified: (user: AuthUser) => void 
 }
 
 function DashboardView() {
+  // goforj:component-library:on:start
   return (
     <section className="page-stack">
       <HeroCard
@@ -948,8 +957,22 @@ function DashboardView() {
       </section>
     </section>
   )
+  // goforj:component-library:end
+  // goforj:component-library:off:start
+  return (
+    <section className="dashboard-canvas" aria-label="Empty dashboard canvas">
+      <div className="dashboard-canvas-grid">
+        <div className="dashboard-placeholder" />
+        <div className="dashboard-placeholder" />
+        <div className="dashboard-placeholder" />
+      </div>
+      <div className="dashboard-placeholder dashboard-placeholder-large" />
+    </section>
+  )
+  // goforj:component-library:end
 }
 
+// goforj:component-library:on:start
 function ComponentsOverviewView() {
   const sections = [
     { title: "Forms", path: "/components/forms", icon: Workflow, description: "Validation, field wrappers, selects, tags, OTP, and staged setup flows.", highlights: ["Validated forms", "Combobox and selects", "Tags, OTP, and PIN inputs"] },
@@ -1689,6 +1712,7 @@ function ComponentsDataView() {
   )
 }
 
+// goforj:component-library:end
 function SettingsProfileView({ user, onUser }: { user: AuthUser; onUser: (user: AuthUser) => void }) {
   const [name, setName] = useState(displayName(user))
   const [email, setEmail] = useState(user.email)

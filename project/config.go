@@ -142,10 +142,11 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components           Components `yaml:"components" json:"components"`
-	StarterKit           StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat           HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
-	GoForjVersion        string     `yaml:"goforj_version" json:"goforj_version"`
+	Components           Components         `yaml:"components" json:"components"`
+	StarterKit           StarterKit         `yaml:"starter_kit" json:"starter_kit"`
+	StarterKitOptions    *StarterKitOptions `yaml:"starter_kit_options,omitempty" json:"starter_kit_options,omitempty"`
+	HelpFormat           HelpFormat         `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	GoForjVersion        string             `yaml:"goforj_version" json:"goforj_version"`
 	legacyQueueDriverSet bool
 	legacyQueueDriver    string
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
@@ -191,9 +192,10 @@ func (c *RenderConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // AppConfig records optional per-app participation in project-level capabilities.
 type AppConfig struct {
-	Components Components `yaml:"components" json:"components"`
-	StarterKit StarterKit `yaml:"starter_kit" json:"starter_kit"`
-	HelpFormat HelpFormat `yaml:"help_format,omitempty" json:"help_format,omitempty"`
+	Components        Components         `yaml:"components" json:"components"`
+	StarterKit        StarterKit         `yaml:"starter_kit" json:"starter_kit"`
+	StarterKitOptions *StarterKitOptions `yaml:"starter_kit_options,omitempty" json:"starter_kit_options,omitempty"`
+	HelpFormat        HelpFormat         `yaml:"help_format,omitempty" json:"help_format,omitempty"`
 	// Extra preserves App settings introduced by newer GoForj versions during config migration.
 	Extra map[string]any `yaml:",inline" json:"-"`
 }

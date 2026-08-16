@@ -1039,6 +1039,26 @@ func TestVueStarterKitSelectionPersists(t *testing.T) {
 	}
 }
 
+// TestStarterKitComponentLibraryCanBeDisabled verifies the wizard persists the nested opt-out without changing the starter-kit scalar.
+func TestStarterKitComponentLibraryCanBeDisabled(t *testing.T) {
+	m := initialModel()
+	m.stage = StageStarterKit
+	m.config.Render.Components.WebUI = true
+	selectStarterKitRow(t, &m, project.StarterKitVue)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.config.Render.StarterKit != project.StarterKitVue {
+		t.Fatalf("starter kit = %q, want vue", m.config.Render.StarterKit)
+	}
+	if m.config.Render.StarterKitOptions.ComponentLibraryEnabled() {
+		t.Fatal("component library = true, want false")
+	}
+}
+
 func TestAtlasRecommendedMovesToProjectPath(t *testing.T) {
 	m := initialModel()
 	m.stage = StageAtlasSupport

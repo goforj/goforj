@@ -79,19 +79,20 @@ const (
 )
 
 type appWizardModel struct {
-	appName        string
-	stage          appWizardStage
-	componentList  list.Model
-	helpFormatList list.Model
-	starterKitList list.Model
-	devRunInput    textinput.Model
-	available      project.Components
-	components     project.Components
-	helpFormat     project.HelpFormat
-	starterKit     project.StarterKit
-	devRunEnabled  bool
-	cancelled      bool
-	termWidth      int
+	appName          string
+	stage            appWizardStage
+	componentList    list.Model
+	helpFormatList   list.Model
+	starterKitList   list.Model
+	devRunInput      textinput.Model
+	available        project.Components
+	components       project.Components
+	helpFormat       project.HelpFormat
+	starterKit       project.StarterKit
+	componentLibrary bool
+	devRunEnabled    bool
+	cancelled        bool
+	termWidth        int
 }
 
 // runAppWizard selects one complete App creation shape or returns the shared cancellation sentinel.
@@ -109,8 +110,14 @@ func runAppWizard(appName string, config *project.Config) (RenderOptions, error)
 		return RenderOptions{}, errAppCreationCancelled
 	}
 	return RenderOptions{
-		Components:    model.components,
-		StarterKit:    model.starterKit,
+		Components: model.components,
+		StarterKit: model.starterKit,
+		StarterKitOptions: func() *project.StarterKitOptions {
+			if model.starterKit == project.StarterKitNone || model.componentLibrary {
+				return nil
+			}
+			return project.NewStarterKitOptions(false)
+		}(),
 		HelpFormat:    model.helpFormat,
 		DevRunCommand: model.devRunCommand(),
 	}, nil
@@ -153,18 +160,19 @@ func initialAppWizardModel(appName string, config *project.Config) appWizardMode
 	devRunInput.Width = 64
 	devRunInput.Focus()
 	return appWizardModel{
-		appName:        appName,
-		stage:          appWizardComponents,
-		componentList:  componentList,
-		helpFormatList: helpFormatList,
-		starterKitList: starterKitList,
-		devRunInput:    devRunInput,
-		available:      available,
-		components:     components,
-		helpFormat:     helpFormat,
-		starterKit:     starterKit,
-		devRunEnabled:  components.HasRuntime(),
-		termWidth:      132,
+		appName:          appName,
+		stage:            appWizardComponents,
+		componentList:    componentList,
+		helpFormatList:   helpFormatList,
+		starterKitList:   starterKitList,
+		devRunInput:      devRunInput,
+		available:        available,
+		components:       components,
+		helpFormat:       helpFormat,
+		starterKit:       starterKit,
+		componentLibrary: config.Render.StarterKitOptions.ComponentLibraryEnabled(),
+		devRunEnabled:    components.HasRuntime(),
+		termWidth:        132,
 	}
 }
 
@@ -245,6 +253,12 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stage = appWizardHelpFormat
 				return m, nil
 			}
+			if msg.String() == " " {
+				if m.highlightedStarterKit() != project.StarterKitNone {
+					m.componentLibrary = !m.componentLibrary
+				}
+				return m, nil
+			}
 			if msg.String() == "enter" {
 				m.applyStarterKitSelection()
 				m.stage = appWizardDevRun
@@ -313,8 +327,9 @@ func (m appWizardModel) View() string {
 		actions = []string{"Space to toggle", "A select all", "C select none", "Enter to continue", "Esc to cancel"}
 	case appWizardStarterKit:
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
-		panels = append(panels, wizardPanel("Starter Kit", m.renderStarterKitList(), m.termWidth, true))
-		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		componentLibrary := m.selectedComponentLibrarySummary()
+		panels = append(panels, wizardPanel("Starter Kit", lipgloss.JoinVertical(lipgloss.Left, m.renderStarterKitList(), "", "Component library: "+componentLibrary), m.termWidth, true))
+		actions = []string{"Space to toggle component library", "Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case appWizardHelpFormat:
 		panels = append(panels, wizardPanel("Components", wizardPrimaryStyle.Render(componentNames), m.termWidth, false))
 		panels = append(panels, m.renderHelpFormatStage())
@@ -328,6 +343,7 @@ func (m appWizardModel) View() string {
 			{"App", m.appName},
 			{"Components", componentNames},
 			{"Starter kit", m.selectedStarterKitSummary()},
+			{"Component library", m.selectedComponentLibrarySummary()},
 			{"Help format", m.selectedHelpFormatSummary()},
 			{"Dev run", m.selectedDevRunSummary()},
 		}), m.termWidth, true))
@@ -681,10 +697,10 @@ func (m appWizardModel) selectedHelpFormatSummary() string {
 	return "Framework"
 }
 
-// selectedStarterKitSummary reports the effective starter kit for the confirmation panel.
-func (m appWizardModel) selectedStarterKitSummary() string {
+// highlightedStarterKit reports the committed or previewed starter-kit selection.
+func (m appWizardModel) highlightedStarterKit() project.StarterKit {
 	if !m.components.WebUI {
-		return "None"
+		return project.StarterKitNone
 	}
 	starterKit := m.starterKit
 	if m.stage == appWizardStarterKit {
@@ -695,10 +711,27 @@ func (m appWizardModel) selectedStarterKitSummary() string {
 			}
 		}
 	}
+	return starterKit
+}
+
+// selectedStarterKitSummary reports the effective starter kit for the confirmation panel.
+func (m appWizardModel) selectedStarterKitSummary() string {
+	starterKit := m.highlightedStarterKit()
 	if definition, ok := project.StarterKitDefinitionByKey(starterKit); ok {
 		return definition.Label
 	}
 	return "None"
+}
+
+// selectedComponentLibrarySummary reports whether the selected starter kit includes its showcase.
+func (m appWizardModel) selectedComponentLibrarySummary() string {
+	if m.highlightedStarterKit() == project.StarterKitNone {
+		return "Not applicable"
+	}
+	if m.componentLibrary {
+		return "On"
+	}
+	return "Off"
 }
 
 // selectedDevRunSummary reports whether forj dev will manage the app and with which command.

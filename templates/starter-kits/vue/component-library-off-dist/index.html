@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/goforj-tile-light.svg" type="image/svg+xml" data-theme-icon />
+    <script>
+      const theme = localStorage.getItem('theme')
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      const dark = theme === 'dark' || ((!theme || theme === 'system') && systemDark)
+      document.documentElement.classList.toggle('dark', dark)
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+      document.querySelector('[data-theme-icon]').href = dark ? '/goforj-tile-dark.svg' : '/goforj-tile-light.svg'
+    </script>
+    <title>App</title>
+    <script type="module" crossorigin src="/assets/index-UJwS_HEO.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/runtime-core.esm-bundler-CIxmKYxc.js">
+    <link rel="modulepreload" crossorigin href="/assets/runtime-dom.esm-bundler-CK6iAQ-p.js">
+    <link rel="modulepreload" crossorigin href="/assets/Primitive-CyzOqlWz.js">
+    <link rel="modulepreload" crossorigin href="/assets/useForwardExpose-DrJr4kwS.js">
+    <link rel="modulepreload" crossorigin href="/assets/RovingFocusGroup-DCiceG3g.js">
+    <link rel="modulepreload" crossorigin href="/assets/createLucideIcon-OFn65_FT.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-uh5yAtJz.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
