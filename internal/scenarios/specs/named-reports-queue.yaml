@@ -1,0 +1,54 @@
+schema_version: 2
+id: named-reports-queue
+title: Named Reports Queue
+description: Configure a named reports queue and inject its generated accessor into application behavior.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    jobs: true
+    web_api: true
+prepare:
+  checks:
+    - command: [go, test, ./internal/invoices]
+steps:
+  - id: configure-reports-queue
+    title: Configure the named queue
+    command: [forj, make:queue, reports, --workers, "2"]
+  - id: generate-queue-accessors
+    title: Generate the named accessor
+    command: [forj, generate, --queue]
+  - id: add-report-dispatcher
+    title: Inject the queue manager and select the named queue
+    write:
+      path: internal/invoices/report_dispatcher.go
+      language: go
+      content: |
+        // Package invoices owns invoice behavior and its report dispatch boundary.
+        package invoices
+
+        import (
+                "example.com/invoiceeval/internal/queues"
+                "github.com/goforj/queue"
+        )
+
+        // ReportDispatcher owns the App-facing reports queue selection.
+        type ReportDispatcher struct {
+                queue *queue.Queue
+        }
+
+        // NewReportDispatcher injects the queue manager and selects the generated named accessor.
+        func NewReportDispatcher(manager *queues.Manager) *ReportDispatcher {
+                return &ReportDispatcher{queue: manager.Reports()}
+        }
+  - id: register-report-dispatcher
+    title: Register the application service
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tinvoices.NewService,\n"
+      new: "\tinvoices.NewService,\n\tinvoices.NewReportDispatcher,\n"
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
