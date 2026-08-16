@@ -80,13 +80,39 @@ func runtimeAppNames(apps []runtimeAppMetadata) []string {
 	return names
 }
 
-func TestGeneratedGitignoreIgnoresRuntimeStorage(t *testing.T) {
+// TestGeneratedGitignoreCoversProjectLocalArtifacts verifies generated projects exclude common local-only files without hiding tracked build outputs.
+func TestGeneratedGitignoreCoversProjectLocalArtifacts(t *testing.T) {
 	data, err := templatesFS.ReadFile(".gitignore.tmpl")
 	if err != nil {
 		t.Fatalf("read gitignore template: %v", err)
 	}
-	if !strings.Contains(string(data), "storage/\n") {
-		t.Fatalf("expected generated gitignore to ignore runtime storage:\n%s", data)
+
+	patterns := make(map[string]bool)
+	for _, pattern := range strings.Split(string(data), "\n") {
+		patterns[pattern] = true
+	}
+	for _, expected := range []string{
+		"storage/",
+		"*.log",
+		"node_modules/",
+		".env.backup",
+		".DS_Store",
+		"Thumbs.db",
+		"/.codex/",
+		"/.cursor/",
+		"/.idea/",
+		"/.nova/",
+		"/.vscode/",
+		"/.zed/",
+	} {
+		if !patterns[expected] {
+			t.Errorf("generated gitignore missing %q", expected)
+		}
+	}
+	for _, tracked := range []string{"dist/", "vendor/"} {
+		if patterns[tracked] {
+			t.Errorf("generated gitignore unexpectedly hides trackable path %q", tracked)
+		}
 	}
 }
 
