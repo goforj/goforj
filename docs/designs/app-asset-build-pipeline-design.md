@@ -2,11 +2,11 @@
 
 ## Status
 
-- Design status: proposed
+- Design status: implementation started with a thin metadata-snapshot slice
 - Planning date: 2026-07-28
 - Target repository: `goforj`
 - Primary scope: `forj build`, App-owned frontend assets, incremental build state, `forj dev`, multi-App Projects, and starter-kit release workflows
-- Related package boundaries: `internal/build`, a proposed `internal/appassets` package, `internal/forj`, and `project`
+- Related package boundaries: `internal/build`, `internal/appassets`, `internal/forj`, and `project`
 
 ## Summary
 
@@ -19,10 +19,10 @@ This does not mean every `forj build` should launch Node.
 The recommended model is:
 
 1. App-owned asset builds become part of the App build graph rather than a `forj dev`-only concern.
-2. `forj build` prepares only the selected App's configured assets.
-3. A successful asset build records a content fingerprint.
-4. An unchanged build verifies the fingerprint and skips dependency installation and asset tooling without launching Node.
-5. `forj dev` uses the same asset preparer and successful-build record, while retaining its optimized watcher and multi-SPA coordination.
+2. `forj build` prepares every SPA declared beneath `dev.apps` so all embedded frontends are fresh.
+3. A successful asset build records a deterministic metadata snapshot of its source and output trees.
+4. An unchanged build verifies the snapshot and skips asset tooling without launching Node.
+5. Successful `forj dev` SPA builds share the same record while retaining their optimized watcher and multi-SPA coordination.
 6. Asset failure prevents Go compilation, so a successful `forj build` cannot publish a binary with known-stale embedded assets.
 
 The normal release command becomes:
@@ -35,24 +35,64 @@ Low-level `go build` remains available when a user intentionally wants to compil
 
 ## Decision
 
+### Thin Initial Slice
+
+The first implementation deliberately avoids the generalized build graph and
+user-facing asset modes described later in this proposal. It uses the existing
+`dev.apps.<app>.spas` ownership for every configured App and keeps the user
+contract to one command:
+
+```text
+forj build
+```
+
+After a successful SPA build, GoForj streams relative paths, sizes,
+modification times, modes, and symlink targets into canonical SHA-256 metadata
+digests for the SPA input and `dist` output trees. A later build recursively
+recomputes those fixed-size digests, pruning
+`node_modules` and `dist` from the input walk before descent. Added, removed,
+renamed, or metadata-changed files rebuild the SPA. Missing, corrupt, or stale
+state also rebuilds it. Receipt publication occurs only after the configured
+command succeeds and `dist` contains output.
+
+When a stale SPA uses npm, the asset stage first runs the same quiet incremental
+`npm install` command emitted for development setup. An unchanged SPA skips both
+dependency setup and its build command, while a clean checkout or changed
+lockfile cannot reach the build with missing or stale dependencies.
+
+After generation and templ stabilize shared inputs, SPA preparation starts in
+parallel with Wire and remains independent while API indexing follows Wire.
+This avoids indexing Go packages while `wire_gen.go` is being rewritten. The
+final Go compile waits for all three, and any failure prevents binary and
+API-index publication.
+
+Receipts live under `bin/.forj-build-cache/spas/<app>/<asset>.json`, alongside
+the existing ignored build cache rather than Project source.
+
+This slice does not read every source file's contents and adds no cache flags or
+new Project configuration. Successful `forj dev` SPA builds update the same
+receipt on a best-effort basis. The broader content-fingerprint, explicit build
+graph, and asset-mode design below remains deferred until real measurements or
+custom frontend requirements justify that complexity.
+
 Adopt an incremental App asset stage in `forj build`.
 
 Do not:
 
 - run every configured asset command on every Go build;
 - infer npm merely because Web UI is enabled;
-- treat file modification times as sufficient freshness proof;
+- treat one aggregate or latest modification time as sufficient freshness proof;
 - keep production asset ownership permanently under `dev.apps`;
 - silently reinterpret arbitrary legacy development watchers as production build steps; or
 - publish a Go binary after a required asset build fails.
 
 The default mode should be `auto`: build missing or stale assets and otherwise take a Node-free fast path.
 
-## Current Behavior
+## Behavior Before the Thin Slice
 
 ### `forj build`
 
-The current pipeline is:
+The pipeline was:
 
 ```text
 generate
@@ -63,7 +103,7 @@ generate
   -> publish API index
 ```
 
-The pipeline has no frontend preparation stage.
+The pipeline had no frontend preparation stage.
 
 Generated Web UI entrypoints embed:
 
@@ -71,7 +111,7 @@ Generated Web UI entrypoints embed:
 //go:embed all:frontend/dist/*
 ```
 
-As a result, a standalone `forj build` trusts whatever is already present in `frontend/dist`. A clean Project works because starter output or a placeholder exists, but a successful build does not prove that embedded assets reflect current frontend source.
+As a result, a standalone `forj build` trusted whatever was already present in `frontend/dist`. A clean Project worked because starter output or a placeholder existed, but a successful build did not prove that embedded assets reflected current frontend source.
 
 ### `forj dev`
 
@@ -86,11 +126,11 @@ frontend source change
 
 On startup, generated npm-backed starter kits run dependency setup, build their configured SPAs, build the App, and then start the runtime. During steady state, multiple changed SPAs owned by one App join into one App build. A failed SPA build suppresses that publication wave.
 
-This behavior is correct, but it exists only inside the development lifecycle.
+This behavior was correct, but it existed only inside the development lifecycle.
 
 ### Release and CI
 
-Users currently have to reproduce part of the dev graph manually:
+Users had to reproduce part of the dev graph manually:
 
 ```bash
 cd cmd/app/frontend

@@ -58,10 +58,10 @@ func NewCmd(logger *logger.AppLogger, apiIndex apiindex.Preparer) *Cmd {
 
 // Signature returns CLI metadata for the complete build pipeline.
 func (*Cmd) Signature() string {
-	return `name:"build" help:"Run generate, API indexing, then go build" group:"build"`
+	return `name:"build" help:"Build an App and all configured frontend assets" group:"build"`
 }
 
-// Run generates project source, prepares API artifacts, and publishes them only after compilation succeeds.
+// Run refreshes project source and frontend assets, then publishes API artifacts only after compilation succeeds.
 func (c *Cmd) Run() error {
 	root, err := resolveProjectRoot(c.Root)
 	if err != nil {

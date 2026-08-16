@@ -11,8 +11,125 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/apiindex"
+	"github.com/goforj/goforj/internal/appassets"
 	"github.com/goforj/goforj/internal/logger"
 )
+
+// TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency verifies assets overlap both Go phases while API indexing waits for Wire.
+func TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency(t *testing.T) {
+	root := t.TempDir()
+	entered := make(chan string, 3)
+	releaseAssets := make(chan struct{})
+	releaseWire := make(chan struct{})
+	pipeline := NewPipeline(logger.NewSilentLogger(), recordingAPIIndexPreparer{prepare: func(apiindex.Options) (apiindex.Preparation, error) {
+		entered <- "api-index"
+		return apiindex.Preparation{Status: "prepared"}, nil
+	}})
+	pipeline.prepareAssets = func(string, []appassets.Asset) (string, error) {
+		entered <- "assets"
+		<-releaseAssets
+		return "current", nil
+	}
+	pipeline.prepareWire = func(string) (string, error) {
+		entered <- "wire"
+		<-releaseWire
+		return "generated", nil
+	}
+	type preparationResult struct {
+		status string
+		err    error
+	}
+	done := make(chan preparationResult, 1)
+	go func() {
+		status, _, err := pipeline.prepareAssetsWireAndAPIIndex(root, []appassets.Asset{{App: "app", Name: "frontend"}}, true, false)
+		done <- preparationResult{status: status, err: err}
+	}()
+
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case phase := <-entered:
+			seen[phase] = true
+		case <-time.After(pipelineAPIIndexTestTimeout):
+			close(releaseAssets)
+			close(releaseWire)
+			t.Fatalf("parallel preparation started only %v", seen)
+		}
+	}
+	if !seen["assets"] || !seen["wire"] || seen["api-index"] {
+		close(releaseAssets)
+		close(releaseWire)
+		t.Fatalf("initial parallel phases = %v, want assets and Wire only", seen)
+	}
+	close(releaseWire)
+	select {
+	case phase := <-entered:
+		if phase != "api-index" {
+			close(releaseAssets)
+			t.Fatalf("phase after Wire = %q, want api-index", phase)
+		}
+	case <-time.After(pipelineAPIIndexTestTimeout):
+		close(releaseAssets)
+		t.Fatal("API index did not start after Wire")
+	}
+	select {
+	case result := <-done:
+		close(releaseAssets)
+		t.Fatalf("preparation completed before assets joined: %+v", result)
+	default:
+	}
+	close(releaseAssets)
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("prepare assets and API index: %v", result.err)
+		}
+		if result.status != "assets current, wire generated, api-index prepared" {
+			t.Fatalf("parallel preparation status = %q", result.status)
+		}
+	case <-time.After(pipelineAPIIndexTestTimeout):
+		t.Fatal("parallel preparation did not join")
+	}
+}
+
+// TestPipelineDiscardsParallelAPIIndexCandidateAfterAssetFailure preserves the final publication boundary across concurrent preparation.
+func TestPipelineDiscardsParallelAPIIndexCandidateAfterAssetFailure(t *testing.T) {
+	root := t.TempDir()
+	config := "dev:\n  apps:\n    app:\n      spas:\n        frontend: ./frontend\n"
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write Project config: %v", err)
+	}
+	assetErr := errors.New("asset preparation failed")
+	published := 0
+	discarded := 0
+	candidate := recordingAPIIndexCandidate{
+		publish: func() error {
+			published++
+			return nil
+		},
+		discard: func() error {
+			discarded++
+			return nil
+		},
+	}
+	pipeline := NewPipeline(logger.NewSilentLogger(), recordingAPIIndexPreparer{prepare: func(apiindex.Options) (apiindex.Preparation, error) {
+		return apiindex.Preparation{Candidate: candidate, Status: "prepared"}, nil
+	}})
+	pipeline.prepareAssets = func(string, []appassets.Asset) (string, error) {
+		return "", assetErr
+	}
+	finalCalled := false
+	err := pipeline.Run(root, "build", Step{Name: "final", Run: func(string) (string, error) {
+		finalCalled = true
+		return "", nil
+	}}, RunOptions{SkipWire: true})
+	if !errors.Is(err, assetErr) {
+		t.Fatalf("pipeline error = %v, want asset failure", err)
+	}
+	if finalCalled || published != 0 || discarded != 1 {
+		t.Fatalf("failed parallel preparation: final=%t published=%d discarded=%d", finalCalled, published, discarded)
+	}
+}
 
 // pipelineAPIIndexTestTimeout bounds synchronization failures without making ordinary pipeline work timing-dependent.
 const pipelineAPIIndexTestTimeout = 5 * time.Second
