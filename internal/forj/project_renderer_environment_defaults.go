@@ -22,6 +22,9 @@ func (assignment environmentAssignment) exists() bool {
 
 // ensureEnvironmentDefaults fills missing framework values while leaving concrete owner assignments byte-for-byte intact.
 func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
+	if err := p.workspace.rejectEnvironmentSpecialFile(path); err != nil {
+		return err
+	}
 	content, err := p.workspace.readFile(path)
 	if err != nil {
 		return err
@@ -106,7 +109,7 @@ func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
 	if updated == text {
 		return nil
 	}
-	return p.workspace.writeFileAtomically(path, []byte(updated), 0o644)
+	return p.workspace.writeFileAtomically(path, []byte(updated), 0o600)
 }
 
 // finalEnvironmentAssignment follows dotenv override precedence while ignoring comments and similarly named keys.

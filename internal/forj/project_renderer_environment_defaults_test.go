@@ -20,7 +20,7 @@ func TestEnsureEnvironmentDefaultsIgnoresCommentedAndSimilarKeys(t *testing.T) {
 		sourceLines = append(sourceLines, "# "+key+"=commented", "MY_"+key+"=similar")
 	}
 	source := strings.Join(append(sourceLines, ""), "\n")
-	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(source), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(source), 0o644); err != nil {
 		t.Fatalf("write owner environment: %v", err)
 	}
 
@@ -29,6 +29,10 @@ func TestEnsureEnvironmentDefaultsIgnoresCommentedAndSimilarKeys(t *testing.T) {
 		t.Fatalf("ensure environment defaults: %v", err)
 	}
 	updated := readEnvironmentDefaultsFile(t, root)
+	info, err := os.Stat(filepath.Join(root, ".env"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("owner environment mode = %v, %v; want 0600", info, err)
+	}
 	lines := strings.Split(updated, "\n")
 	for _, key := range keys {
 		if assignment := finalEnvironmentAssignment(lines, key); !assignment.exists() {

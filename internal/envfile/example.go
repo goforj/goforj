@@ -155,10 +155,14 @@ func isSensitiveKey(key string) bool {
 		"CONNECTION_STRING",
 		"ENCRYPTION_KEY",
 		"SIGNING_KEY",
+		"WEBHOOK",
 	} {
 		if strings.Contains(normalized, marker) {
 			return true
 		}
+	}
+	if normalized == "PAT" || strings.HasSuffix(normalized, "_PAT") {
+		return true
 	}
 	return isCredentialBearingURL(normalized)
 }

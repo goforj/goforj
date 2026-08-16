@@ -26,6 +26,9 @@ const (
 // ErrExampleMissing reports that a local environment cannot be initialized without its committed contract.
 var ErrExampleMissing = errors.New(".env.example is missing")
 
+// ErrUnmanagedTestingContract protects previously private testing configuration from silent migration into a committed file.
+var ErrUnmanagedTestingContract = errors.New("existing .env.testing is not managed by GoForj; move any private values to .env, remove .env.testing, then run forj generate")
+
 // SyncResult reports which committed contracts changed without exposing their contents.
 type SyncResult struct {
 	ExampleChanged bool
@@ -39,18 +42,28 @@ func (r SyncResult) Changed() bool {
 
 // Sync updates the safe example and runnable testing contracts from the local environment when it exists.
 func Sync(root string) (SyncResult, error) {
+	return syncContracts(root, nil)
+}
+
+// SyncWithExample updates both contracts after the generation lifecycle has removed obsolete framework-owned example entries.
+func SyncWithExample(root string, existingExample []byte) (SyncResult, error) {
+	return syncContracts(root, &existingExample)
+}
+
+// syncContracts publishes a consistent contract pair from one local snapshot and one optional prepared example.
+func syncContracts(root string, preparedExample *[]byte) (SyncResult, error) {
 	root, err := absoluteRoot(root)
 	if err != nil {
 		return SyncResult{}, err
 	}
-	local, err := os.ReadFile(filepath.Join(root, localEnvironmentName))
+	local, err := readRegularFile(filepath.Join(root, localEnvironmentName))
 	if os.IsNotExist(err) {
 		return SyncResult{}, nil
 	}
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("read %s: %w", localEnvironmentName, err)
 	}
-	example, testing, err := expectedContracts(root, local)
+	example, testing, err := expectedContracts(root, local, preparedExample)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -72,25 +85,25 @@ func Check(root string) error {
 	if err != nil {
 		return err
 	}
-	local, localErr := os.ReadFile(filepath.Join(root, localEnvironmentName))
+	local, localErr := readRegularFile(filepath.Join(root, localEnvironmentName))
 	if localErr != nil && !os.IsNotExist(localErr) {
 		return fmt.Errorf("read %s: %w", localEnvironmentName, localErr)
 	}
 	if os.IsNotExist(localErr) {
-		local, err = os.ReadFile(filepath.Join(root, exampleEnvironmentName))
+		local, err = readRegularFile(filepath.Join(root, exampleEnvironmentName))
 		if err != nil {
 			return fmt.Errorf("read %s: %w", exampleEnvironmentName, err)
 		}
 	}
-	example, testing, err := expectedContracts(root, local)
+	example, testing, err := expectedContracts(root, local, nil)
 	if err != nil {
 		return err
 	}
 	stale := make([]string, 0, 2)
-	if current, readErr := os.ReadFile(filepath.Join(root, exampleEnvironmentName)); readErr != nil || !bytes.Equal(current, example) {
+	if current, readErr := readRegularFile(filepath.Join(root, exampleEnvironmentName)); readErr != nil || !bytes.Equal(current, example) {
 		stale = append(stale, exampleEnvironmentName)
 	}
-	if current, readErr := os.ReadFile(filepath.Join(root, testingEnvironmentName)); readErr != nil || !bytes.Equal(current, testing) {
+	if current, readErr := readRegularFile(filepath.Join(root, testingEnvironmentName)); readErr != nil || !bytes.Equal(current, testing) {
 		stale = append(stale, testingEnvironmentName)
 	}
 	if len(stale) > 0 {
@@ -106,12 +119,18 @@ func Initialize(root string) (bool, error) {
 		return false, err
 	}
 	localPath := filepath.Join(root, localEnvironmentName)
-	if _, err := os.Stat(localPath); err == nil {
+	if info, err := os.Lstat(localPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return false, fmt.Errorf("inspect %s: expected a regular file", localEnvironmentName)
+		}
+		if err := os.Chmod(localPath, 0o600); err != nil {
+			return false, fmt.Errorf("secure %s permissions: %w", localEnvironmentName, err)
+		}
 		return false, nil
 	} else if !os.IsNotExist(err) {
 		return false, fmt.Errorf("inspect %s: %w", localEnvironmentName, err)
 	}
-	example, err := os.ReadFile(filepath.Join(root, exampleEnvironmentName))
+	example, err := readRegularFile(filepath.Join(root, exampleEnvironmentName))
 	if os.IsNotExist(err) {
 		return false, ErrExampleMissing
 	}
@@ -166,7 +185,7 @@ func SetLocal(root string, key string, value string) error {
 		return err
 	}
 	path := filepath.Join(root, localEnvironmentName)
-	content, err := os.ReadFile(path)
+	content, err := readRegularFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", localEnvironmentName, err)
 	}
@@ -180,20 +199,29 @@ func SetLocal(root string, key string, value string) error {
 }
 
 // expectedContracts derives both safe outputs while preserving their current project-owned additions.
-func expectedContracts(root string, local []byte) ([]byte, []byte, error) {
-	existingExample, err := readOptional(filepath.Join(root, exampleEnvironmentName))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read %s: %w", exampleEnvironmentName, err)
+func expectedContracts(root string, local []byte, preparedExample *[]byte) ([]byte, []byte, error) {
+	existingExample := []byte(nil)
+	if preparedExample != nil {
+		existingExample = *preparedExample
+	} else {
+		var err error
+		existingExample, err = readOptional(filepath.Join(root, exampleEnvironmentName))
+		if err != nil {
+			return nil, nil, fmt.Errorf("read %s: %w", exampleEnvironmentName, err)
+		}
 	}
 	example := envfile.MergeExample(existingExample, local)
 	existingTesting, err := readOptional(filepath.Join(root, testingEnvironmentName))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read %s: %w", testingEnvironmentName, err)
 	}
+	if len(existingTesting) > 0 && !envfile.IsManagedTestingContract(existingTesting) {
+		return nil, nil, ErrUnmanagedTestingContract
+	}
 	return example, envfile.MergeTesting(existingTesting, example), nil
 }
 
-// materializeLocal fills only framework-owned secret blanks and leaves application credentials for the developer.
+// materializeLocal replaces framework-owned secrets with fresh values and leaves application credentials for the developer.
 func materializeLocal(example []byte) ([]byte, error) {
 	lines := strings.Split(string(example), "\n")
 	generators := map[string]func() (string, error){
@@ -209,8 +237,8 @@ func materializeLocal(example []byte) ([]byte, error) {
 		},
 	}
 	for key, generate := range generators {
-		value, found := envfile.Lookup(lines, key)
-		if !found || strings.TrimSpace(value) != "" {
+		_, found := envfile.Lookup(lines, key)
+		if !found {
 			continue
 		}
 		generated, err := generate()
@@ -245,11 +273,23 @@ func absoluteRoot(root string) (string, error) {
 
 // readOptional returns an absent contract as empty input without hiding other filesystem failures.
 func readOptional(path string) ([]byte, error) {
-	content, err := os.ReadFile(path)
+	content, err := readRegularFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	return content, err
+}
+
+// readRegularFile rejects environment symlinks and special files before their contents can cross a project trust boundary.
+func readRegularFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("expected a regular file")
+	}
+	return os.ReadFile(path)
 }
 
 // writeIfChanged avoids timestamp churn when the committed contract is already current.

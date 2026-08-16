@@ -2,6 +2,8 @@
 package envcontract_test
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +47,58 @@ func TestInitializeCreatesPrivateLocalEnvironment(t *testing.T) {
 	}
 }
 
+// TestInitializeReplacesCommittedFrameworkSecrets verifies cloned projects never trust repository-known signing material.
+func TestInitializeReplacesCommittedFrameworkSecrets(t *testing.T) {
+	root := t.TempDir()
+	example := "APP_KEY=known-app-key\nAPP_DIAG_TOKEN=known-diag-token\nAPI_JWT_SECRET_KEY=known-jwt-key\n"
+	if err := os.WriteFile(filepath.Join(root, ".env.example"), []byte(example), 0o644); err != nil {
+		t.Fatalf("write example: %v", err)
+	}
+	if _, err := envcontract.Initialize(root); err != nil {
+		t.Fatalf("Initialize() error: %v", err)
+	}
+	local, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatalf("read local environment: %v", err)
+	}
+	for _, known := range []string{"known-app-key", "known-diag-token", "known-jwt-key"} {
+		if strings.Contains(string(local), known) {
+			t.Fatalf("local environment trusted committed secret %q:\n%s", known, local)
+		}
+	}
+}
+
+// TestInitializeTightensExistingLocalPermissions verifies upgrades repair historically public local environment files.
+func TestInitializeTightensExistingLocalPermissions(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".env")
+	if err := os.WriteFile(path, []byte("APP_ENV=local\n"), 0o644); err != nil {
+		t.Fatalf("write local environment: %v", err)
+	}
+	if _, err := envcontract.Initialize(root); err != nil {
+		t.Fatalf("Initialize() error: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("local environment mode = %v, %v; want 0600", info, err)
+	}
+}
+
+// TestSyncRejectsEnvironmentSymlinks prevents repository paths from importing files outside the project contract.
+func TestSyncRejectsEnvironmentSymlinks(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.env")
+	if err := os.WriteFile(target, []byte("CUSTOM_TOKEN=outside-secret\n"), 0o600); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, ".env")); err != nil {
+		t.Skipf("create environment symlink: %v", err)
+	}
+	if _, err := envcontract.Sync(root); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("Sync() error = %v, want regular-file rejection", err)
+	}
+}
+
 // TestSyncPublishesSafeExampleAndTestingContracts verifies local credentials never cross the committed boundary.
 func TestSyncPublishesSafeExampleAndTestingContracts(t *testing.T) {
 	root := t.TempDir()
@@ -77,6 +131,27 @@ func TestSyncPublishesSafeExampleAndTestingContracts(t *testing.T) {
 	}
 	if err := envcontract.Check(root); err != nil {
 		t.Fatalf("Check() after sync: %v", err)
+	}
+}
+
+// TestSyncRejectsUnmanagedTestingContract protects ignored legacy credentials from silent destructive migration.
+func TestSyncRejectsUnmanagedTestingContract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("APP_ENV=local\n"), 0o600); err != nil {
+		t.Fatalf("write local environment: %v", err)
+	}
+	legacy := []byte("CUSTOM_TOKEN=private-test-token\n")
+	path := filepath.Join(root, ".env.testing")
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatalf("write legacy testing environment: %v", err)
+	}
+	_, err := envcontract.Sync(root)
+	if !errors.Is(err, envcontract.ErrUnmanagedTestingContract) {
+		t.Fatalf("Sync() error = %v, want ErrUnmanagedTestingContract", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || !bytes.Equal(after, legacy) {
+		t.Fatalf("legacy testing environment changed: %q, %v", after, readErr)
 	}
 }
 

@@ -29,7 +29,6 @@ import (
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
-	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
 	"gopkg.in/yaml.v3"
@@ -480,29 +479,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err := p.writeEnvironmentTemplates([]string{localEnvTemplate}); err != nil {
 					return err
 				}
-				environment, err := p.workspace.readFile(".env")
-				if err != nil {
-					return fmt.Errorf("read environment contract source: %w", err)
-				}
-				existingExample, err := p.workspace.readFile(".env.example")
-				if err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("read existing environment example: %w", err)
-				}
-				existingExample, _ = removeDisabledAppCacheDriverDefaults(
-					existingExample,
-					p.config,
-					projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
-				)
-				existingExample, _ = resourceenv.RemoveGeneratedAssignments(
-					existingExample,
-					projectComponents,
-					projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config),
-				)
-				mergedExample := envfile.MergeExample(existingExample, environment)
-				if err := p.workspace.writeEnvironmentExample(mergedExample, 0o644); err != nil {
-					return fmt.Errorf("write environment example: %w", err)
-				}
-				p.stats.recordCreated(".env.example")
 				if err := p.workspace.ensureGitignoreEnvironmentRules(); err != nil {
 					return fmt.Errorf("update environment ignore rules: %w", err)
 				}
@@ -1906,6 +1882,9 @@ func (w projectRenderWorkspace) upsertEnvDefaults(path string, defaults map[stri
 	if len(defaults) == 0 {
 		return nil
 	}
+	if err := w.rejectEnvironmentSpecialFile(path); err != nil {
+		return err
+	}
 	data, err := w.readFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -1923,13 +1902,19 @@ func (w projectRenderWorkspace) upsertEnvDefaults(path string, defaults map[stri
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return w.writeFile(path, []byte(content), 0o600)
+	if err := w.writeFile(path, []byte(content), 0o600); err != nil {
+		return err
+	}
+	return w.logicalError(os.Chmod(w.path(path), 0o600))
 }
 
 // upsertAppEnvDefaults groups app overrides so multi-app env files remain readable.
 func (w projectRenderWorkspace) upsertAppEnvDefaults(path string, appName string, prefix string, defaults map[string]string) error {
 	if len(defaults) == 0 {
 		return nil
+	}
+	if err := w.rejectEnvironmentSpecialFile(path); err != nil {
+		return err
 	}
 	data, err := w.readFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -2848,7 +2833,9 @@ func writeProjectConfig(path string, cfg *project.Config) error {
 func writeFileAtomically(path string, data []byte, defaultMode fs.FileMode) error {
 	mode := defaultMode.Perm()
 	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
+		if defaultMode.Perm() != 0o600 {
+			mode = info.Mode().Perm()
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
