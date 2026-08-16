@@ -6,6 +6,44 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// EncodeValue returns one dotenv-safe assignment value without exposing it through shell interpolation.
+func EncodeValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	if strings.IndexFunc(value, requiresQuotedDotenvValue) < 0 {
+		return value
+	}
+	encoded, err := godotenv.Marshal(map[string]string{"VALUE": value})
+	if err != nil {
+		return "\"\""
+	}
+	_, encodedValue, found := strings.Cut(encoded, "=")
+	if !found {
+		return "\"\""
+	}
+	return encodedValue
+}
+
+// IsValidKey reports whether a name belongs to the portable dotenv key subset used by GoForj.
+func IsValidKey(key string) bool {
+	if key == "" || !isKeyStart(key[0]) {
+		return false
+	}
+	for index := 1; index < len(key); index++ {
+		if !isKeyPart(key[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// requiresQuotedDotenvValue prevents whitespace, comments, interpolation, or escapes from changing the supplied value.
+func requiresQuotedDotenvValue(character rune) bool {
+	return !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9' || strings.ContainsRune("._:/@,+-=", character))
+}
+
 // Lookup returns the final concrete assignment for a key using dotenv override semantics.
 func Lookup(lines []string, want string) (string, bool) {
 	values, err := godotenv.Unmarshal(strings.Join(lines, "\n"))

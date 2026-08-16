@@ -45,6 +45,9 @@ type RootCmd struct {
 	ScenarioGenerateCmd       ScenarioGenerateCmd             `cmd:""`
 	ScenarioTestCmd           ScenarioTestCmd                 `cmd:""`
 	RenderCmd                 RenderCmd                       `cmd:""`
+	EnvInitCmd                EnvInitCmd                      `cmd:""`
+	EnvSetCmd                 EnvSetCmd                       `cmd:""`
+	EnvCheckCmd               EnvCheckCmd                     `cmd:""`
 	RunCmd                    build.RunCmd                    `cmd:""`
 	BackupPlanCmd             backup.PlanCmd                  `cmd:""`
 	BackupListCmd             backup.ListCmd                  `cmd:""`
@@ -97,6 +100,9 @@ func NewRootCmd(
 		ScenarioGenerateCmd:       scenarios.generate,
 		ScenarioTestCmd:           scenarios.test,
 		RenderCmd:                 authoring.render,
+		EnvInitCmd:                authoring.envInit,
+		EnvSetCmd:                 authoring.envSet,
+		EnvCheckCmd:               authoring.envCheck,
 		RunCmd:                    runtime.run,
 		BackupPlanCmd:             backups.plan,
 		BackupListCmd:             backups.list,

@@ -24,6 +24,7 @@ import (
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/devservices"
+	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/forj/makeapp"
 	"github.com/goforj/goforj/internal/generate"
@@ -503,6 +504,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return fmt.Errorf("write environment example: %w", err)
 				}
 				p.stats.recordCreated(".env.example")
+				environmentResult, err := envcontract.Sync(p.workspace.path())
+				if err != nil {
+					return fmt.Errorf("sync environment contracts: %w", err)
+				}
+				if environmentResult.TestingChanged {
+					p.stats.recordCreated(".env.testing")
+				} else {
+					p.stats.recordSkipped(".env.testing (current)")
+				}
 				if err := p.workspace.ensureGitignoreEnvironmentRules(); err != nil {
 					return fmt.Errorf("update environment ignore rules: %w", err)
 				}
@@ -1923,7 +1933,7 @@ func (w projectRenderWorkspace) upsertEnvDefaults(path string, defaults map[stri
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return w.writeFile(path, []byte(content), 0o644)
+	return w.writeFile(path, []byte(content), 0o600)
 }
 
 // upsertAppEnvDefaults groups app overrides so multi-app env files remain readable.
@@ -2315,7 +2325,7 @@ func ensureGitignoreEnvironmentRules(path string) error {
 		seen[strings.TrimSpace(line)] = true
 	}
 	changed := false
-	for _, rule := range []string{".env", ".env.host", ".env.local", ".env.staging", ".env.production", ".env.testing", "!.env.example"} {
+	for _, rule := range []string{".env", ".env.host", ".env.local", ".env.staging", ".env.production", "!.env.example", "!.env.testing"} {
 		if seen[rule] {
 			continue
 		}
@@ -3619,7 +3629,7 @@ func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath
 
 // renderTemplateFile renders ordinary scaffold files while transactional environment files use the atomic variant.
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
-	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, false)
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, false, 0o644)
 }
 
 // renderTemplateIfMissing preserves owner files while surfacing filesystem failures that are not simple absence.
@@ -3636,7 +3646,12 @@ func (p *ProjectRenderer) renderTemplateIfMissing(destPath string, tmpl string, 
 
 // renderTemplateFileAtomically renders a template through a same-directory replacement file.
 func (p *ProjectRenderer) renderTemplateFileAtomically(destPath, tmpl string, data any) error {
-	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true)
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true, 0o644)
+}
+
+// renderPrivateTemplateFileAtomically creates new local environment files without granting group or world access.
+func (p *ProjectRenderer) renderPrivateTemplateFileAtomically(destPath, tmpl string, data any) error {
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true, 0o600)
 }
 
 // parseProjectTemplate composes catalog fragments only for the generated Compose surface.
@@ -3689,7 +3704,7 @@ func developerServiceTemplateName(definition devservices.Definition, section str
 }
 
 // renderTemplateFileWithAtomicWrite shares rendering while reserving atomic replacement for transactional files.
-func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl string, data any, atomic bool) error {
+func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl string, data any, atomic bool, mode fs.FileMode) error {
 	tmplBytes, err := templatesFS.ReadFile(tmpl)
 	if err != nil {
 		return err
@@ -3727,7 +3742,7 @@ func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl strin
 		return err
 	}
 	if atomic {
-		if err := p.workspace.writeFileAtomically(destPath, newContent, 0o644); err != nil {
+		if err := p.workspace.writeFileAtomically(destPath, newContent, mode); err != nil {
 			return err
 		}
 	} else {
@@ -3962,7 +3977,7 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 func (p *ProjectRenderer) writeEnvironmentTemplates(tmpls []string) error {
 	for _, path := range tmpls {
 		dest := strings.TrimSuffix(path, ".tmpl")
-		if err := p.renderTemplateFileAtomically(dest, path, p.config); err != nil {
+		if err := p.renderPrivateTemplateFileAtomically(dest, path, p.config); err != nil {
 			return err
 		}
 	}

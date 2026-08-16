@@ -96,6 +96,16 @@ Useful generated files worth inspecting when behavior diverges:
 - generated `internal/schedules/lighthouse.go`
 - generated `app/schedules.go`
 
+## Working With Environment Contracts
+
+Rendered projects use a synchronized three-file contract:
+
+- `.env` is ignored, private local state; source-aware `forj` commands create it from `.env.example` when missing
+- `.env.example` is the committed safe inventory
+- `.env.testing` is the committed deterministic profile loaded by `goforj/env` during tests
+
+Use `forj env:set KEY` to enter a local secret without putting its value in shell history. Normal `forj generate`, `forj build`, and `forj dev` runs synchronize both committed files. CI can run `forj env:check` on a clean checkout to detect drift without creating `.env`, then run tests using `.env.testing`; process variables remain the override path for live-service credentials.
+
 ## Integration Test Reality
 
 Some of the most valuable GoForj failures are in `internal/forj` integration tests, not the small unit tests.
