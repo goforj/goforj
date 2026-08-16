@@ -506,7 +506,7 @@ func evaluationSupportToolNames() []string {
 	if runtime.GOOS == "windows" {
 		return []string{"wire"}
 	}
-	return []string{"bash", "cat", "git", "head", "ls", "sed", "wire"}
+	return []string{"bash", "cat", "git", "head", "ls", "node", "sed", "wire"}
 }
 
 // baseEvaluationEnvironment retains only process settings needed by portable tools and excludes ambient credentials and user configuration.
