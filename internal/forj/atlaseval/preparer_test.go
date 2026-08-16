@@ -52,8 +52,9 @@ func TestPreparerRejectsExecutableOrEnvironmentDrift(t *testing.T) {
 		DestinationRoot: filepath.Join(t.TempDir(), "projects"),
 		ForjExecutable:  forjExecutable,
 		OrchestrationID: "trial-01:none",
-		Environment:     []string{"APP_ENV=test"},
+		Environment:     testPreparationEnvironment(t, "first", "off"),
 	}
+	goExecutable := filepath.Join(strings.TrimPrefix(baseRequest.Environment[0], "PATH="), "go")
 	for _, test := range []struct {
 		name   string
 		mutate func(*eval.PreparationRequest) error
@@ -67,13 +68,30 @@ func TestPreparerRejectsExecutableOrEnvironmentDrift(t *testing.T) {
 		{
 			name: "environment",
 			mutate: func(request *eval.PreparationRequest) error {
-				request.Environment = []string{"APP_ENV=production"}
+				request.Environment = testPreparationEnvironment(t, "first", "off")
+				request.Environment = append(request.Environment, "APP_ENV=production")
+				return nil
+			},
+		},
+		{
+			name: "go executable",
+			mutate: func(_ *eval.PreparationRequest) error {
+				return os.WriteFile(goExecutable, []byte("second"), 0o700)
+			},
+		},
+		{
+			name: "GOWORK",
+			mutate: func(request *eval.PreparationRequest) error {
+				request.Environment = testPreparationEnvironment(t, "first", "workspace.go.work")
 				return nil
 			},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := os.WriteFile(forjExecutable, []byte("first"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(goExecutable, []byte("first"), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			request := baseRequest
@@ -84,6 +102,13 @@ func TestPreparerRejectsExecutableOrEnvironmentDrift(t *testing.T) {
 			}
 			if err := test.mutate(&request); err != nil {
 				t.Fatal(err)
+			}
+			current, err := (Preparer{}).Resolve(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.PlanDigest == plan.PlanDigest {
+				t.Fatal("material preparation drift retained the same cache identity")
 			}
 			_, err = (Preparer{}).Prepare(context.Background(), request, plan)
 			if err == nil || !strings.Contains(err.Error(), "inputs changed") {
@@ -124,9 +149,11 @@ func TestPreparerRejectsMaterialBaseEnvironmentDrift(t *testing.T) {
 		DestinationRoot: destination,
 		ForjExecutable:  os.Args[0],
 		OrchestrationID: "trial-01:none",
-		Environment:     []string{"APP_ENV=test"},
+		Environment:     testPreparationEnvironment(t, "first", "off"),
 	}
-	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), []string{"APP_ENV=production"}, nil)
+	baseEnvironment := testPreparationEnvironment(t, "first", "off")
+	baseEnvironment = append(baseEnvironment, "APP_ENV=production")
+	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), baseEnvironment, nil)
 	plan, err := preparer.Resolve(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +180,8 @@ func TestPreparerCapabilitiesAdvertiseOnlyImplementedSchema(t *testing.T) {
 
 // TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths preserves base reuse without hiding configuration drift.
 func TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths(t *testing.T) {
-	left := []string{"APP_ENV=test", "GOCACHE=/tmp/left", "GOPATH=/tmp/left-go", "HOME=/tmp/left-home", "PATH=/left/bin"}
-	right := []string{"PATH=/right/bin", "HOME=/tmp/right-home", "GOPATH=/tmp/right-go", "GOCACHE=/tmp/right", "APP_ENV=test"}
+	left := []string{"APP_ENV=test", "GOCACHE=/tmp/left", "GOPATH=/tmp/left-go", "HOME=/tmp/left-home", "PATH=/left/bin", "GOWORK=off"}
+	right := []string{"PATH=/right/bin", "HOME=/tmp/right-home", "GOPATH=/tmp/right-go", "GOCACHE=/tmp/right", "APP_ENV=test", "GOWORK=off"}
 	if preparationEnvironmentDigest(left) != preparationEnvironmentDigest(right) {
 		t.Fatal("attempt-private paths changed the preparation environment identity")
 	}
@@ -162,4 +189,20 @@ func TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths(t *testing
 	if preparationEnvironmentDigest(left) == preparationEnvironmentDigest(right) {
 		t.Fatal("material environment drift retained the same preparation identity")
 	}
+	right[4] = "APP_ENV=test"
+	right[5] = "GOWORK=workspace.go.work"
+	if preparationEnvironmentDigest(left) == preparationEnvironmentDigest(right) {
+		t.Fatal("GOWORK drift retained the same preparation identity")
+	}
+}
+
+// testPreparationEnvironment supplies one explicit PATH-selected Go executable for preparation identity tests.
+func testPreparationEnvironment(t *testing.T, goContents, goWork string) []string {
+	t.Helper()
+	tools := t.TempDir()
+	goExecutable := filepath.Join(tools, "go")
+	if err := os.WriteFile(goExecutable, []byte(goContents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return []string{"PATH=" + tools, "APP_ENV=test", "GOWORK=" + goWork}
 }
