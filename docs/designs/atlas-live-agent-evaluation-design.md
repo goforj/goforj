@@ -2590,8 +2590,8 @@ reachability. Persistent caching is not an MVP acceptance requirement.
 
 1. Which sandbox implementation should provide the first authoritative CI
    backend: a container runtime, VM runner, or another enforceable boundary?
-2. Which Codex execution surface exposes the stable non-interactive behavior
-   required by the first adapter?
+2. How should the authoritative backend broker Codex app-server transport so
+   provider authority never enters the candidate process boundary?
 3. Which backend event capabilities are required to support behavioral gates
    rather than artifact-only scoring?
 4. Where should historical scorecards live so model drift can be inspected
@@ -2600,16 +2600,14 @@ reachability. Persistent caching is not an MVP acceptance requirement.
    an acceptable release cost?
 6. Should `docs-only` use an embedded pinned documentation bundle or a brokered
    local endpoint backed by the same bundle?
-7. Which existing GoForj `ScenarioSpec` should provide the closest starting
-   state for each initial live evaluation, and where are new scenario IDs
-   genuinely required?
-8. Which protected store and review process should own holdout prompts,
+7. Which protected store and review process should own holdout prompts,
    fixtures, and hidden oracles without making guidance development opaque?
 
-## Recommended First Slice
+## Implemented Diagnostic Slice And Next Gate
 
-Start with one narrow vertical slice. This is an implementation checklist, not
-another YAML format:
+The local diagnostic slice began with the controller evaluation below and now
+supports the complete promoted core portfolio. This remains an implementation
+contract, not another YAML format:
 
 ```text
 evaluation: add-http-controller
@@ -2620,8 +2618,8 @@ agent: Codex
 guidance: none | agents
 project: pinned GoForj ScenarioSpec, HTTP + SQLite, one App
 trials: manually selected
-diagnostic: --intent diagnostic --backend unconfined-local
-authoritative: --intent authoritative --backend container-ci
+diagnostic backend: unconfined-local
+authoritative backend: not implemented; container-ci is the intended first candidate
 framework_outcome:
   correct App
   no wire_gen.go edit
@@ -2637,13 +2635,13 @@ workflow_conformance:
   proportionate validation
 ```
 
-The local slice validates orchestration, real-agent execution, diagnostic
+The implemented local slice validates orchestration, real-agent execution, diagnostic
 adapter events, and calibrated Project verification without claiming trusted
 action evidence or security isolation. Generator compliance remains ineligible
-there. The same slice must then pass with qualified observation in the
-authoritative sandbox before its results can support guidance or release
-claims. Persistent caching, additional scenarios, and Atlas capability slices
-follow that working vertical path.
+there. The next gate is to run the same versioned contracts with qualified
+observation inside the authoritative sandbox before its results can support
+guidance or release claims. Persistent caching, additional scenarios, and
+Atlas capability slices follow that authoritative vertical path.
 
 The local `forj atlas:eval compare` command must require an explicitly supplied
 disposable, revocable Codex credential. Copying that credential into private
