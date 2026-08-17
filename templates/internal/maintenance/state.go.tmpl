@@ -53,30 +53,41 @@ func NewState() (*State, error) {
 	if driver == "" {
 		driver = driverMemory
 	}
-	state := &State{driver: driver}
 	switch driver {
 	case driverMemory:
-		return state, nil
+		return &State{driver: driver}, nil
 	case driverCache:
-{{- if .ProjectComponents.Cache }}
-		cacheManager, err := caches.NewManager()
-		if err != nil {
-			return nil, fmt.Errorf("maintenance: build generated cache stores: %w", err)
-		}
-		storeName := strings.TrimSpace(env.Get("APP_MAINTENANCE_STORE", "default"))
-		store := cacheManager.Named(storeName)
-		if store == nil {
-			return nil, fmt.Errorf("maintenance: cache store %q is not generated", storeName)
-		}
-		state.store = store
-		return state, nil
-{{- else }}
 		return nil, fmt.Errorf("maintenance: cache driver requires the Cache component")
-{{- end }}
 	default:
 		return nil, fmt.Errorf("maintenance: unsupported driver %q; expected memory or cache", driver)
 	}
 }
+
+{{- if .ProjectComponents.Cache }}
+// NewStateWithCacheManager builds maintenance state from the cache manager already owned by the App runtime.
+func NewStateWithCacheManager(cacheManager *caches.Manager) (*State, error) {
+	driver := strings.ToLower(strings.TrimSpace(env.Get("APP_MAINTENANCE_DRIVER", driverMemory)))
+	if driver == "" {
+		driver = driverMemory
+	}
+	switch driver {
+	case driverMemory:
+		return &State{driver: driver}, nil
+	case driverCache:
+		storeName := strings.TrimSpace(env.Get("APP_MAINTENANCE_STORE", "default"))
+		store := cacheManager.Default()
+		if storeName != "default" {
+			store = cacheManager.Named(storeName)
+		}
+		if store == nil {
+			return nil, fmt.Errorf("maintenance: cache store %q is not generated", storeName)
+		}
+		return &State{driver: driver, store: store}, nil
+	default:
+		return nil, fmt.Errorf("maintenance: unsupported driver %q; expected memory or cache", driver)
+	}
+}
+{{- end }}
 
 // Driver reports the configured maintenance mechanism.
 func (s *State) Driver() string {
