@@ -254,38 +254,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: framework 1/16
-            args: framework --shard=1/16
-          - name: framework 2/16
-            args: framework --shard=2/16
-          - name: framework 3/16
-            args: framework --shard=3/16
-          - name: framework 4/16
-            args: framework --shard=4/16
-          - name: framework 5/16
-            args: framework --shard=5/16
-          - name: framework 6/16
-            args: framework --shard=6/16
-          - name: framework 7/16
-            args: framework --shard=7/16
-          - name: framework 8/16
-            args: framework --shard=8/16
-          - name: framework 9/16
-            args: framework --shard=9/16
-          - name: framework 10/16
-            args: framework --shard=10/16
-          - name: framework 11/16
-            args: framework --shard=11/16
-          - name: framework 12/16
-            args: framework --shard=12/16
-          - name: framework 13/16
-            args: framework --shard=13/16
-          - name: framework 14/16
-            args: framework --shard=14/16
-          - name: framework 15/16
-            args: framework --shard=15/16
-          - name: framework 16/16
-            args: framework --shard=16/16
+          - name: framework 1/24
+            args: framework --shard=1/24
+          - name: framework 2/24
+            args: framework --shard=2/24
+          - name: framework 3/24
+            args: framework --shard=3/24
+          - name: framework 4/24
+            args: framework --shard=4/24
+          - name: framework 5/24
+            args: framework --shard=5/24
+          - name: framework 6/24
+            args: framework --shard=6/24
+          - name: framework 7/24
+            args: framework --shard=7/24
+          - name: framework 8/24
+            args: framework --shard=8/24
+          - name: framework 9/24
+            args: framework --shard=9/24
+          - name: framework 10/24
+            args: framework --shard=10/24
+          - name: framework 11/24
+            args: framework --shard=11/24
+          - name: framework 12/24
+            args: framework --shard=12/24
+          - name: framework 13/24
+            args: framework --shard=13/24
+          - name: framework 14/24
+            args: framework --shard=14/24
+          - name: framework 15/24
+            args: framework --shard=15/24
+          - name: framework 16/24
+            args: framework --shard=16/24
+          - name: framework 17/24
+            args: framework --shard=17/24
+          - name: framework 18/24
+            args: framework --shard=18/24
+          - name: framework 19/24
+            args: framework --shard=19/24
+          - name: framework 20/24
+            args: framework --shard=20/24
+          - name: framework 21/24
+            args: framework --shard=21/24
+          - name: framework 22/24
+            args: framework --shard=22/24
+          - name: framework 23/24
+            args: framework --shard=23/24
+          - name: framework 24/24
+            args: framework --shard=24/24
           - name: multi-app
             args: framework --framework-profile=multiapp
           - name: rendered sqlite
