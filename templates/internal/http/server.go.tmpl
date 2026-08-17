@@ -24,6 +24,7 @@ import (
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/maintenance"
 	"{{.GoModuleName}}/internal/inspects"
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -43,6 +44,7 @@ type Server struct {
 	spaAccessLogs      bool
 	spas               []Spa
 	appTimeouts        *runtime.Timeouts
+	maintenance        *maintenance.State
 	maintenancePage    []byte
 {{- if .ProjectComponents.Storage }}
 	storage         *storages.Manager
@@ -61,6 +63,7 @@ func NewServer(
 	groups []web.RouteGroup,
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
+	maintenanceState *maintenance.State,
 {{- if .ProjectComponents.Storage }}
 	storage *storages.Manager,
 {{- end }}
@@ -81,6 +84,7 @@ func NewServer(
 		spaAccessLogs:      env.GetBool("HTTP_SPA_ACCESS_LOG_ENABLED", "false"),
 		spas:               append([]Spa(nil), GetSpas()...),
 		appTimeouts:        appTimeouts,
+		maintenance:        maintenanceState,
 		maintenancePage:    maintenanceHTML(env.Get("APP_NAME", "App")),
 {{- if .ProjectComponents.Storage }}
 		storage:         storage,
@@ -97,8 +101,9 @@ func NewServer(
 
 // frameworkRouteGroups keeps project-wide route types available while optional App dependencies decide whether they contribute routes.
 func (s *Server) frameworkRouteGroups() []web.RouteGroup {
-	groups := make([]web.RouteGroup, 0, 2)
+	groups := make([]web.RouteGroup, 0, 3)
 	groups = append(groups, s.healthRoutes()...)
+	groups = append(groups, s.maintenanceRoutes()...)
 	groups = append(groups, s.swaggerRoutes()...)
 {{- if .ProjectComponents.Metrics }}
 	groups = append(groups, s.metricsRoutes()...)

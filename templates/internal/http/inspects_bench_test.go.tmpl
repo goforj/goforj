@@ -124,6 +124,7 @@ func newInspectBenchmarkServer(b *testing.B, inspectEnabled bool, handler func(w
 		},
 		nil,
 		nil,
+		newTestMaintenanceState(b),
 {{- if .ProjectComponents.Storage }}
 		nil,
 {{- end }}

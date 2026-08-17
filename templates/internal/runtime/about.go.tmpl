@@ -10,7 +10,6 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str/v2"
 	"gopkg.in/yaml.v3"
-	"{{.GoModuleName}}/internal/maintenance"
 )
 
 var (
@@ -224,7 +223,6 @@ type AboutEnvironment struct {
 	Module        string `json:"module"`
 	Environment   string `json:"environment"`
 	Debug         bool   `json:"debug"`
-	Maintenance   bool   `json:"maintenance"`
 	GoVersion     string `json:"go_version"`
 	GoForjVersion string `json:"goforj_version"`
 }
@@ -332,7 +330,6 @@ func (s *AboutService) Build() AboutReport {
 			Module:        "{{.GoModuleName}}",
 			Environment:   env.Get("APP_ENV", "local"),
 			Debug:         env.Get("APP_DEBUG", "0") != "0",
-			Maintenance:   maintenance.Enabled(),
 			GoVersion:     goruntime.Version(),
 			GoForjVersion: aboutForjVersion(),
 		},
@@ -406,7 +403,6 @@ func (s *AboutService) sections(report AboutReport, appComponents AppComponents)
 				{Key: "Module", Value: report.Environment.Module},
 				{Key: "Environment", Value: report.Environment.Environment},
 				{Key: "Debug", Value: aboutEnabled(report.Environment.Debug)},
-				{Key: "Maintenance", Value: aboutEnabled(report.Environment.Maintenance)},
 				{Key: "Go", Value: report.Environment.GoVersion},
 				{Key: "GoForj Version", Value: report.Environment.GoForjVersion},
 			},

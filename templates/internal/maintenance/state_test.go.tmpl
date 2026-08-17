@@ -1,293 +1,153 @@
 package maintenance
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
-	"time"
 )
 
-// resetMaintenanceCacheForTest keeps package-global refresh state from crossing test working directories.
-func resetMaintenanceCacheForTest(t *testing.T) {
-	t.Helper()
-	maintenanceCache.snapshot.Store(nil)
-	t.Cleanup(func() { maintenanceCache.snapshot.Store(nil) })
-}
-
-// BenchmarkEnabledDisabledWarm tracks the per-request maintenance check when the generated default state is disabled and cached.
+// BenchmarkEnabledDisabledWarm protects the request-path cost of the default memory backend.
 func BenchmarkEnabledDisabledWarm(b *testing.B) {
-	b.Chdir(b.TempDir())
 	b.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	b.Setenv("APP_RUNTIME_STATE_DIR", "./_data/runtime")
-	b.Setenv("FORJ_APP", "app")
-	maintenanceCache.snapshot.Store(nil)
-	b.Cleanup(func() { maintenanceCache.snapshot.Store(nil) })
-	if Enabled() {
-		b.Fatal("maintenance unexpectedly enabled")
-	}
+	b.Setenv("APP_MAINTENANCE_DRIVER", "memory")
+	state := newTestState(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
-		Enabled()
+	for range b.N {
+		_, _ = state.Enabled()
 	}
 }
 
-// TestMaintenanceStateRoundTrip verifies command-managed state is App-scoped, durable, and immediately observable.
-func TestMaintenanceStateRoundTrip(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
+// TestMemoryStateRoundTrip verifies the dependency-free default changes live process state.
+func TestMemoryStateRoundTrip(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	t.Setenv("FORJ_APP", "app")
-
-	if Enabled() {
-		t.Fatal("maintenance unexpectedly enabled")
+	t.Setenv("APP_MAINTENANCE_DRIVER", "memory")
+	state := newTestState(t)
+	if enabled, err := state.Enabled(); err != nil || enabled {
+		t.Fatalf("initial Enabled() = %v, %v", enabled, err)
 	}
-	if err := Enable(); err != nil {
-		t.Fatalf("enable maintenance: %v", err)
+	if err := state.Enable(); err != nil {
+		t.Fatalf("Enable() error = %v", err)
 	}
-	if !Enabled() {
-		t.Fatal("maintenance state was not observed")
+	if enabled, err := state.Enabled(); err != nil || !enabled {
+		t.Fatalf("enabled Enabled() = %v, %v", enabled, err)
 	}
-	info, err := os.Stat(filepath.Join("_data", "runtime", "app", "maintenance.json"))
-	if err != nil {
-		t.Fatalf("stat maintenance state: %v", err)
+	if err := state.Disable(); err != nil {
+		t.Fatalf("Disable() error = %v", err)
 	}
-	if info.Mode().Perm()&0o022 != 0 {
-		t.Fatalf("maintenance state permissions = %o, want read-only outside the owner", info.Mode().Perm())
-	}
-	if err := Disable(); err != nil {
-		t.Fatalf("disable maintenance: %v", err)
-	}
-	if Enabled() {
-		t.Fatal("maintenance remained enabled")
+	if enabled, err := state.Enabled(); err != nil || enabled {
+		t.Fatalf("disabled Enabled() = %v, %v", enabled, err)
 	}
 }
 
-// TestMaintenanceDisabledWarmPathDoesNotAllocate protects the HTTP admission hot path from path or filesystem work.
-func TestMaintenanceDisabledWarmPathDoesNotAllocate(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
+// TestMemoryEnabledDoesNotAllocate protects the disabled request path from hidden per-request work.
+func TestMemoryEnabledDoesNotAllocate(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	t.Setenv("APP_RUNTIME_STATE_DIR", t.TempDir())
-	t.Setenv("FORJ_APP", "app")
-	invalidateMaintenanceCache(false)
-	var enabled bool
-	allocations := testing.AllocsPerRun(1000, func() {
-		enabled = Enabled()
-	})
-	if enabled {
-		t.Fatal("maintenance unexpectedly enabled")
-	}
-	if allocations != 0 {
-		t.Fatalf("warm disabled maintenance check allocations = %.2f, want 0", allocations)
+	t.Setenv("APP_MAINTENANCE_DRIVER", "memory")
+	state := newTestState(t)
+	if allocations := testing.AllocsPerRun(1000, func() {
+		_, _ = state.Enabled()
+	}); allocations != 0 {
+		t.Fatalf("Enabled() allocations = %v, want 0", allocations)
 	}
 }
 
-// TestMaintenanceEnablePreservesSharedDirectoryPermissions verifies operator-owned ACL and group modes are not rewritten.
-func TestMaintenanceEnablePreservesSharedDirectoryPermissions(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows ACLs are not represented by Unix permission bits")
+// TestEnvironmentOverrideRemainsAuthoritative verifies deployment policy cannot be cleared by a control request.
+func TestEnvironmentOverrideRemainsAuthoritative(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "memory")
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	state := newTestState(t)
+	if err := state.Disable(); err != nil {
+		t.Fatalf("Disable() error = %v", err)
 	}
-	root := t.TempDir()
-	stateDir := filepath.Join(root, "app")
-	if err := os.Mkdir(stateDir, 0o770); err != nil {
-		t.Fatalf("create shared state directory: %v", err)
-	}
-	if err := os.Chmod(stateDir, 0o2770); err != nil {
-		t.Fatalf("configure shared state directory: %v", err)
-	}
-	t.Setenv("APP_RUNTIME_STATE_DIR", root)
-	t.Setenv("FORJ_APP", "app")
-	t.Cleanup(func() { _ = Disable() })
-	before, err := os.Stat(stateDir)
-	if err != nil {
-		t.Fatalf("stat shared state directory before enable: %v", err)
-	}
-	if err := Enable(); err != nil {
-		t.Fatalf("enable maintenance: %v", err)
-	}
-	after, err := os.Stat(stateDir)
-	if err != nil {
-		t.Fatalf("stat shared state directory after enable: %v", err)
-	}
-	if after.Mode().Perm() != before.Mode().Perm() || after.Mode()&os.ModeSetgid != before.Mode()&os.ModeSetgid {
-		t.Fatalf("shared state directory mode changed from %v to %v", before.Mode(), after.Mode())
+	if enabled, err := state.Enabled(); err != nil || !enabled {
+		t.Fatalf("Enabled() = %v, %v", enabled, err)
 	}
 }
 
-// TestMaintenanceEnableRejectsStateSymlinks verifies the marker cannot redirect command writes outside its App directory.
-func TestMaintenanceEnableRejectsStateSymlinks(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation requires environment-specific Windows privileges")
-	}
-	root := t.TempDir()
-	target := t.TempDir()
-	if err := os.Symlink(target, filepath.Join(root, "app")); err != nil {
-		t.Fatalf("create state directory symlink: %v", err)
-	}
-	t.Setenv("APP_RUNTIME_STATE_DIR", root)
-	t.Setenv("FORJ_APP", "app")
-	if err := Enable(); err == nil {
-		t.Fatal("enable followed a symlinked App state directory")
-	}
-}
-
-// TestMaintenanceEnableIsConcurrentAndIdempotent verifies competing command processes converge on one valid marker.
-func TestMaintenanceEnableIsConcurrentAndIdempotent(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
+// TestMemoryStateSupportsConcurrentHTTPChecks verifies control requests and request checks do not race.
+func TestMemoryStateSupportsConcurrentHTTPChecks(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "memory")
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	t.Setenv("FORJ_APP", "app")
-	t.Cleanup(func() { _ = Disable() })
-	const callers = 8
-	errors := make(chan error, callers)
+	state := newTestState(t)
 	var group sync.WaitGroup
-	for range callers {
+	for range 16 {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			errors <- Enable()
+			for range 100 {
+				_ = state.Enable()
+				_, _ = state.Enabled()
+				_ = state.Disable()
+			}
 		}()
 	}
 	group.Wait()
-	close(errors)
-	for err := range errors {
-		if err != nil {
-			t.Fatalf("concurrent enable: %v", err)
-		}
-	}
-	if !Enabled() {
-		t.Fatal("concurrent enable did not publish maintenance state")
+}
+
+// TestNewStateRejectsUnknownDriver keeps configuration failures explicit at startup.
+func TestNewStateRejectsUnknownDriver(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "mystery")
+	_, err := NewState()
+	if err == nil {
+		t.Fatal("NewState() accepted unknown driver")
 	}
 }
 
-// TestMaintenanceStateReportsFilesystemFailures verifies commands surface unusable shared state storage.
-func TestMaintenanceStateReportsFilesystemFailures(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	root := t.TempDir()
-	blockingPath := filepath.Join(root, "not-a-directory")
-	if err := os.WriteFile(blockingPath, []byte("blocked"), 0o600); err != nil {
-		t.Fatalf("write blocking file: %v", err)
-	}
-	t.Setenv("APP_RUNTIME_STATE_DIR", blockingPath)
-	t.Setenv("FORJ_APP", "app")
-	if err := Enable(); err == nil {
-		t.Fatal("enable succeeded with an unusable shared state root")
-	}
-
-	marker := filepath.Join(root, "runtime", "app", "maintenance.json")
-	if err := os.MkdirAll(filepath.Join(marker, "child"), 0o755); err != nil {
-		t.Fatalf("create non-removable marker directory: %v", err)
-	}
-	t.Setenv("APP_RUNTIME_STATE_DIR", filepath.Join(root, "runtime"))
-	if err := Disable(); err == nil {
-		t.Fatal("disable succeeded with a non-removable marker directory")
-	}
-}
-
-// TestMaintenancePathUsesConfiguredSharedRoot verifies split runtimes can coordinate from different working directories.
-func TestMaintenancePathUsesConfiguredSharedRoot(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	sharedRoot := filepath.Join(t.TempDir(), "runtime-state")
-	t.Chdir(t.TempDir())
-	t.Setenv("FORJ_APP", "app")
-	t.Setenv("APP_RUNTIME_STATE_DIR", sharedRoot)
-	if got := Path(); got != filepath.Join(sharedRoot, "app", "maintenance.json") {
-		t.Fatalf("configured maintenance path = %q", got)
-	}
-}
-
-// TestMaintenanceStateObservesExternalProcessWrites verifies split runtimes refresh shared filesystem state without a restart.
-func TestMaintenanceStateObservesExternalProcessWrites(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
+{{- if .ProjectComponents.Cache }}
+// TestCacheStateUsesGeneratedNamedStore verifies the maintenance store is selected through the cache manager.
+func TestCacheStateUsesGeneratedNamedStore(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
+	t.Setenv("APP_MAINTENANCE_STORE", "default")
+	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	t.Setenv("FORJ_APP", "app")
-	if Enabled() {
-		t.Fatal("maintenance unexpectedly enabled")
+	state := newTestState(t)
+	if err := state.Enable(); err != nil {
+		t.Fatalf("Enable() error = %v", err)
 	}
-	path := Path()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatalf("mkdir external state: %v", err)
+	if enabled, err := state.Enabled(); err != nil || !enabled {
+		t.Fatalf("Enabled() = %v, %v", enabled, err)
 	}
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		t.Fatalf("write external state: %v", err)
-	}
-	time.Sleep(maintenanceRefreshInterval + 10*time.Millisecond)
-	if !Enabled() {
-		t.Fatal("external maintenance state was not observed")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("remove external state: %v", err)
-	}
-	time.Sleep(maintenanceRefreshInterval + 10*time.Millisecond)
-	if Enabled() {
-		t.Fatal("external maintenance removal was not observed")
+	if err := state.Disable(); err != nil {
+		t.Fatalf("Disable() error = %v", err)
 	}
 }
 
-// TestMaintenanceEnvironmentForcesState verifies deployment configuration remains authoritative over local commands.
-func TestMaintenanceEnvironmentForcesState(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
-	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
-	t.Setenv("FORJ_APP", "app")
-	if err := Disable(); err != nil {
-		t.Fatalf("disable command state: %v", err)
-	}
-	if !Enabled() {
-		t.Fatal("environment-enforced maintenance was disabled")
+// TestCacheStateRejectsUnknownNamedStore prevents silent fallback to the default cache resource.
+func TestCacheStateRejectsUnknownNamedStore(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
+	t.Setenv("APP_MAINTENANCE_STORE", "missing")
+	if _, err := NewState(); err == nil {
+		t.Fatal("NewState() accepted unknown named store")
 	}
 }
 
-// TestMaintenancePathSeparatesNamedApps verifies one App can enter maintenance without changing a sibling App.
-func TestMaintenancePathSeparatesNamedApps(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
+// TestCacheStateSharesGeneratedStore verifies separate runtimes observe one configured cache backend.
+func TestCacheStateSharesGeneratedStore(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
+	t.Setenv("APP_MAINTENANCE_STORE", "default")
+	t.Setenv("CACHE_DRIVER", "file")
+	t.Setenv("CACHE_FILE_DIR", t.TempDir())
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-{{- range .RuntimeApps }}
-{{- if ne .Name "app" }}
-	t.Run("{{ .Name }}", func(t *testing.T) {
-		namedApp := "{{ .Name }}"
-		t.Setenv("FORJ_APP", namedApp)
-		if err := Enable(); err != nil {
-			t.Fatalf("enable named App maintenance: %v", err)
-		}
-		if got := Path(); got != filepath.Join("_data", "runtime", namedApp, "maintenance.json") {
-			t.Fatalf("named App maintenance path = %q", got)
-		}
-		t.Setenv("FORJ_APP", "app")
-		if Enabled() {
-			t.Fatal("default App inherited named App command state")
-		}
-	})
-{{- end }}
-{{- end }}
-}
-
-// TestMaintenancePathAcceptsGeneratedAppSlugs verifies Apps added after initial project creation receive their own state namespace.
-func TestMaintenancePathAcceptsGeneratedAppSlugs(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
-	t.Setenv("FORJ_APP", "customer-portal")
-	if got := Path(); got != filepath.Join("_data", "runtime", "customer-portal", "maintenance.json") {
-		t.Fatalf("maintenance path for generated App = %q", got)
+	first := newTestState(t)
+	second := newTestState(t)
+	if err := first.Enable(); err != nil {
+		t.Fatalf("Enable() error = %v", err)
+	}
+	if enabled, err := second.Enabled(); err != nil || !enabled {
+		t.Fatalf("second Enabled() = %v, %v", enabled, err)
+	}
+	if err := second.Disable(); err != nil {
+		t.Fatalf("Disable() error = %v", err)
 	}
 }
+{{- end }}
 
-// TestMaintenancePathRejectsUnsafeAppIdentity verifies internal callers cannot turn process identity into a path traversal.
-func TestMaintenancePathRejectsUnsafeAppIdentity(t *testing.T) {
-	resetMaintenanceCacheForTest(t)
-	t.Chdir(t.TempDir())
-	for _, appName := range []string{"../outside", `..\\outside`, "/tmp/outside", "UPPER", "leading-", "-trailing"} {
-		t.Run(appName, func(t *testing.T) {
-			t.Setenv("FORJ_APP", appName)
-			if got := Path(); got != filepath.Join("_data", "runtime", "app", "maintenance.json") {
-				t.Fatalf("maintenance path for unknown App %q = %q", appName, got)
-			}
-		})
+// newTestState builds the template variant used by the rendered component set.
+func newTestState(tb testing.TB) *State {
+	tb.Helper()
+	state, err := NewState()
+	if err != nil {
+		tb.Fatalf("NewState() error = %v", err)
 	}
+	return state
 }

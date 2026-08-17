@@ -20,6 +20,7 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
+	"{{.GoModuleName}}/internal/maintenance"
 {{- if .Components.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
@@ -37,6 +38,7 @@ var httpServerSet = wire.NewSet(
 	http.NewRuntime,
 	http.NewServeCmd,
 	http.NewServer,
+	maintenance.NewState,
 	provideReadinessChecks,
 	lighthouse.NewHub,
 )
