@@ -77,10 +77,14 @@ steps:
                 if id == "" || id == "missing" {
                         return Invoice{}, ErrInvoiceNotFound
                 }
+                totalCents := int64(12500)
+                if id == "inv-99" {
+                        totalCents = 9900
+                }
                 return Invoice{
                         ID:         id,
                         CustomerID: "customer-42",
-                        TotalCents: 12500,
+                        TotalCents: totalCents,
                         Status:     "open",
                 }, nil
         }
