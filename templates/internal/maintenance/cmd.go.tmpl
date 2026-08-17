@@ -1,10 +1,19 @@
 package maintenance
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/goforj/console"
+	"github.com/goforj/env/v2"
 )
+
+const maintenanceControlTimeout = 5 * time.Second
 
 // EnableCmd places the selected App into maintenance mode without booting its dependency graph.
 type EnableCmd struct{}
@@ -19,9 +28,9 @@ func NewEnableCmd() *EnableCmd {
 	return &EnableCmd{}
 }
 
-// Run enables maintenance mode.
+// Run asks the running HTTP process to enable maintenance mode.
 func (*EnableCmd) Run() error {
-	if err := Enable(); err != nil {
+	if err := requestTransition("enable"); err != nil {
 		return fmt.Errorf("enable maintenance mode: %w", err)
 	}
 	console.Success("Application is now in maintenance mode")
@@ -41,14 +50,66 @@ func NewDisableCmd() *DisableCmd {
 	return &DisableCmd{}
 }
 
-// Run disables command-managed maintenance mode.
+// Run asks the running HTTP process to disable command-managed maintenance mode.
 func (*DisableCmd) Run() error {
-	if err := Disable(); err != nil {
+	if err := requestTransition("disable"); err != nil {
 		return fmt.Errorf("disable maintenance mode: %w", err)
-	}
-	if Enabled() {
-		return fmt.Errorf("maintenance mode remains enabled by APP_MAINTENANCE_ENABLED")
 	}
 	console.Success("Application is now live")
 	return nil
+}
+
+// requestTransition sends control through the running process so the default memory backend remains useful.
+func requestTransition(action string) error {
+	endpoint, err := controlEndpoint(action)
+	if err != nil {
+		return err
+	}
+	token := strings.TrimSpace(env.Get("APP_DIAG_TOKEN", ""))
+	if token == "" {
+		return fmt.Errorf("APP_DIAG_TOKEN is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maintenanceControlTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: maintenanceControlTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	detail := strings.TrimSpace(string(body))
+	if detail == "" {
+		detail = response.Status
+	}
+	return fmt.Errorf("maintenance endpoint returned %s: %s", response.Status, detail)
+}
+
+// controlEndpoint validates APP_URL before attaching the framework-owned control path.
+func controlEndpoint(action string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(env.Get("APP_URL", "")))
+	if err != nil {
+		return "", err
+	}
+	if base.Scheme != "http" && base.Scheme != "https" || base.Host == "" {
+		return "", fmt.Errorf("APP_URL must be an absolute HTTP or HTTPS URL")
+	}
+	if base.User != nil || base.RawQuery != "" || base.Fragment != "" {
+		return "", fmt.Errorf("APP_URL must not contain credentials, a query, or a fragment")
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/-/maintenance/" + action
+	return base.String(), nil
 }

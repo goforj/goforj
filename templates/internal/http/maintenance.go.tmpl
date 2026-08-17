@@ -8,7 +8,6 @@ import (
 
 	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/lighthouse"
-	"{{.GoModuleName}}/internal/maintenance"
 )
 
 const maintenanceHTMLTemplate = `<!doctype html>
@@ -64,15 +63,58 @@ func maintenanceHTML(appName string) []byte {
 func (s *Server) maintenanceMode() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if !maintenance.Enabled() {
+			if s.maintenancePathAllowed(r) {
 				return next(r)
 			}
-			if s.maintenancePathAllowed(r) {
+			enabled, err := s.maintenance.Enabled()
+			if err == nil && !enabled {
 				return next(r)
 			}
 			return s.maintenanceResponse(r)
 		}
 	}
+}
+
+// maintenanceRoutes exposes the authenticated control plane used by the generated CLI commands.
+func (s *Server) maintenanceRoutes() []web.RouteGroup {
+	return []web.RouteGroup{
+		web.NewRouteGroup(
+			"",
+			[]web.Route{
+				web.NewRoute(http.MethodPost, "/-/maintenance/enable", s.enableMaintenance),
+				web.NewRoute(http.MethodPost, "/-/maintenance/disable", s.disableMaintenance),
+			},
+		),
+	}
+}
+
+// enableMaintenance changes the backend only after diagnostic-token authorization.
+func (s *Server) enableMaintenance(r web.Context) error {
+	if !diagnosticsAuthorized(r) {
+		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+	}
+	if err := s.maintenance.Enable(); err != nil {
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "maintenance": true})
+}
+
+// disableMaintenance clears command-managed state without overriding deployment policy.
+func (s *Server) disableMaintenance(r web.Context) error {
+	if !diagnosticsAuthorized(r) {
+		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+	}
+	if err := s.maintenance.Disable(); err != nil {
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	enabled, err := s.maintenance.Enabled()
+	if err != nil {
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if enabled {
+		return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "maintenance remains enabled by APP_MAINTENANCE_ENABLED"})
+	}
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "maintenance": false})
 }
 
 // maintenancePathAllowed keeps mounted operational surfaces observable without exempting application-owned lookalikes.
@@ -85,6 +127,8 @@ func (s *Server) maintenancePathAllowed(r web.Context) bool {
 	switch path {
 	case "/-/health", "/-/ready":
 		return request.Method == http.MethodGet || request.Method == http.MethodHead
+	case "/-/maintenance/enable", "/-/maintenance/disable":
+		return request.Method == http.MethodPost
 	case "/metrics":
 {{- if .ProjectComponents.Metrics }}
 		return s.metrics != nil && (request.Method == http.MethodGet || request.Method == http.MethodHead)

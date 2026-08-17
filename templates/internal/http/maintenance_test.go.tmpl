@@ -142,17 +142,44 @@ func TestMaintenanceModeDisabledPreservesApplicationTraffic(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
 
-	require.NoError(t, maintenance.Enable())
+	setTestMaintenance(t, server, "enable", http.StatusOK)
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 
-	require.NoError(t, maintenance.Disable())
+	setTestMaintenance(t, server, "disable", http.StatusOK)
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
+// TestMaintenanceControlRequiresDiagnosticToken prevents unauthenticated callers from changing availability.
+func TestMaintenanceControlRequiresDiagnosticToken(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	server := newMaintenanceTestServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/enable", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+
+	applicationRequest := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
+	applicationRecorder := httptest.NewRecorder()
+	server.ServeHTTP(applicationRecorder, applicationRequest)
+	require.Equal(t, http.StatusNoContent, applicationRecorder.Code)
+}
+
+// TestMaintenanceDisableCannotOverrideEnvironmentPolicy keeps deployment ownership authoritative.
+func TestMaintenanceDisableCannotOverrideEnvironmentPolicy(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	server := newMaintenanceTestServer(t)
+	setTestMaintenance(t, server, "disable", http.StatusConflict)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }
 
 // TestMaintenanceModeLetsInflightRequestsFinish verifies enabling maintenance gates admission without canceling accepted work.
@@ -162,7 +189,6 @@ func TestMaintenanceModeLetsInflightRequestsFinish(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
 	t.Setenv("FORJ_APP", "app")
-	t.Cleanup(func() { _ = maintenance.Disable() })
 	started := make(chan struct{})
 	release := make(chan struct{})
 	groups := []web.RouteGroup{
@@ -182,7 +208,7 @@ func TestMaintenanceModeLetsInflightRequestsFinish(t *testing.T) {
 		result <- recorder.Code
 	}()
 	<-started
-	require.NoError(t, maintenance.Enable())
+	setTestMaintenance(t, server, "enable", http.StatusOK)
 	close(release)
 	assert.Equal(t, http.StatusNoContent, <-result)
 
@@ -207,13 +233,14 @@ func newMaintenanceTestServer(t *testing.T) http.Handler {
 // newMaintenanceTestServerWithGroups builds a maintenance server with explicit application routes and operator dependencies.
 func newMaintenanceTestServerWithGroups(t *testing.T, groups []web.RouteGroup, consoleHub *lighthouse.Hub) http.Handler {
 	t.Helper()
-	require.NoError(t, maintenance.Disable())
+	t.Setenv("APP_DIAG_TOKEN", "maintenance-test-token")
 	server := NewServer(
 		logger.NewSilentLogger(),
 		runtime.NewTimeouts(),
 		groups,
 		[]ReadinessCheck{},
 		consoleHub,
+		newTestMaintenanceState(t),
 {{- if .ProjectComponents.Storage }}
 		nil,
 {{- end }}
@@ -225,4 +252,27 @@ func newMaintenanceTestServerWithGroups(t *testing.T, groups []web.RouteGroup, c
 	adapter, err := server.bootstrap("")
 	require.NoError(t, err)
 	return adapter
+}
+
+// setTestMaintenance exercises the same authenticated endpoint used by generated commands.
+func setTestMaintenance(t *testing.T, server http.Handler, action string, wantStatus int) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/"+action, nil)
+	request.Header.Set("Authorization", "Bearer maintenance-test-token")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != wantStatus {
+		t.Fatalf("maintenance %s status = %d, want %d: %s", action, recorder.Code, wantStatus, recorder.Body.String())
+	}
+}
+
+// newTestMaintenanceState builds the HTTP template variant without weakening required production wiring.
+func newTestMaintenanceState(tb testing.TB) *maintenance.State {
+	tb.Helper()
+	tb.Setenv("APP_MAINTENANCE_DRIVER", "memory")
+	state, err := maintenance.NewState()
+	if err != nil {
+		tb.Fatalf("NewState() error = %v", err)
+	}
+	return state
 }

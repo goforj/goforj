@@ -14,7 +14,7 @@ import (
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
 	"{{.GoModuleName}}/internal/makecmd"
-{{- if .Components.HasRuntime }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/maintenance"
 {{- end }}
 {{- if .Components.HasDatabase }}
@@ -53,7 +53,7 @@ type RootCmd struct {
 	MakeJobCmd       makecmd.JobCmd       `cmd:""`
 {{- end }}
 	MakeMigrationCmd makecmd.MigrationCmd `cmd:""`
-{{- if .Components.HasRuntime }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 	MaintenanceEnableCmd  maintenance.EnableCmd  `cmd:""`
 	MaintenanceDisableCmd maintenance.DisableCmd `cmd:""`
 {{- end }}
@@ -117,7 +117,7 @@ func NewRootCmd(
 	makeJobCmd *makecmd.JobCmd,
 {{- end }}
 	makeMigrationCmd *makecmd.MigrationCmd,
-{{- if .Components.HasRuntime }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 	maintenanceEnableCmd *maintenance.EnableCmd,
 	maintenanceDisableCmd *maintenance.DisableCmd,
 {{- end }}
@@ -179,7 +179,7 @@ func NewRootCmd(
 		MakeJobCmd:       *makeJobCmd,
 {{- end }}
 		MakeMigrationCmd: *makeMigrationCmd,
-{{- if .Components.HasRuntime }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 		MaintenanceEnableCmd:  *maintenanceEnableCmd,
 		MaintenanceDisableCmd: *maintenanceDisableCmd,
 {{- end }}

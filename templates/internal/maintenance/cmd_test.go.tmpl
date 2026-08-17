@@ -1,38 +1,58 @@
 package maintenance
 
 import (
-	"os"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
-// TestMaintenanceCommandsRoundTrip verifies the preboot commands update shared runtime state.
-func TestMaintenanceCommandsRoundTrip(t *testing.T) {
-	t.Chdir(t.TempDir())
-	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	t.Setenv("FORJ_APP", "app")
+// TestMaintenanceCommandsUseAuthenticatedControlEndpoint verifies memory transitions reach the running process.
+func TestMaintenanceCommandsUseAuthenticatedControlEndpoint(t *testing.T) {
+	actions := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer diag-token" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q", r.Method)
+		}
+		actions <- r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("APP_URL", server.URL)
+	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 	if err := (&EnableCmd{}).Run(); err != nil {
 		t.Fatalf("maintenance enable: %v", err)
 	}
-	if !Enabled() {
-		t.Fatal("maintenance:enable did not enable maintenance")
+	if got := <-actions; got != "/-/maintenance/enable" {
+		t.Fatalf("enable path = %q", got)
 	}
 	if err := (&DisableCmd{}).Run(); err != nil {
 		t.Fatalf("maintenance disable: %v", err)
 	}
-	if Enabled() {
-		t.Fatal("maintenance:disable did not disable maintenance")
-	}
-	if _, err := os.Stat(Path()); !os.IsNotExist(err) {
-		t.Fatalf("maintenance file remained after disable: %v", err)
+	if got := <-actions; got != "/-/maintenance/disable" {
+		t.Fatalf("disable path = %q", got)
 	}
 }
 
-// TestMaintenanceDisableCommandCannotOverrideEnvironment verifies operators receive a clear error when deployment configuration owns maintenance state.
-func TestMaintenanceDisableCommandCannotOverrideEnvironment(t *testing.T) {
-	t.Chdir(t.TempDir())
-	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
-	t.Setenv("FORJ_APP", "app")
+// TestMaintenanceCommandReportsControlFailure keeps remote policy and backend errors visible to operators.
+func TestMaintenanceCommandReportsControlFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "maintenance remains environment-enforced", http.StatusConflict)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("APP_URL", server.URL)
+	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 	if err := (&DisableCmd{}).Run(); err == nil {
-		t.Fatal("maintenance:disable unexpectedly overrode APP_MAINTENANCE_ENABLED")
+		t.Fatal("maintenance:disable unexpectedly ignored endpoint failure")
+	}
+}
+
+// TestControlEndpointRejectsCredentialBearingURLs prevents diagnostic tokens from being sent to ambiguous targets.
+func TestControlEndpointRejectsCredentialBearingURLs(t *testing.T) {
+	t.Setenv("APP_URL", "https://user:password@example.com")
+	if _, err := controlEndpoint("enable"); err == nil {
+		t.Fatal("controlEndpoint accepted URL credentials")
 	}
 }

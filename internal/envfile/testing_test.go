@@ -139,13 +139,15 @@ func TestMergeTestingPreservesPrefixedApplicationValues(t *testing.T) {
 
 // TestMergeTestingIsolatesMaintenanceMode prevents deployment or local command state from taking the test suite offline.
 func TestMergeTestingIsolatesMaintenanceMode(t *testing.T) {
-	example := []byte("APP_MAINTENANCE_ENABLED=true\nAPP_RUNTIME_STATE_DIR=./_data/runtime\nBILLING_APP_MAINTENANCE_ENABLED=true\nBILLING_APP_RUNTIME_STATE_DIR=/srv/runtime\n")
+	example := []byte("APP_MAINTENANCE_ENABLED=true\nAPP_MAINTENANCE_DRIVER=cache\nAPP_MAINTENANCE_STORE=operations\nBILLING_APP_MAINTENANCE_ENABLED=true\nBILLING_APP_MAINTENANCE_DRIVER=cache\nBILLING_APP_MAINTENANCE_STORE=operations\n")
 	got := string(envfile.MergeTesting(nil, example))
 	for _, want := range []string{
 		"APP_MAINTENANCE_ENABLED=false",
-		"APP_RUNTIME_STATE_DIR=./_data/runtime-testing",
+		"APP_MAINTENANCE_DRIVER=memory",
+		"APP_MAINTENANCE_STORE=default",
 		"BILLING_APP_MAINTENANCE_ENABLED=false",
-		"BILLING_APP_RUNTIME_STATE_DIR=./_data/runtime-testing",
+		"BILLING_APP_MAINTENANCE_DRIVER=memory",
+		"BILLING_APP_MAINTENANCE_STORE=default",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("MergeTesting() omitted %q:\n%s", want, got)

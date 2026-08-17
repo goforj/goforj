@@ -70,7 +70,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 		t.Fatalf("GET /api/v1/hello status = %d, want %d\n%s", helloResp.StatusCode, http.StatusOK, handle.Output())
 	}
 
-	runRenderedMaintenanceCommand(t, projectDir, binPath, nil, "maintenance:enable")
+	runRenderedMaintenanceCommand(t, projectDir, binPath, map[string]string{"APP_URL": baseURL}, "maintenance:enable")
 	time.Sleep(150 * time.Millisecond)
 	maintenanceResp, err := http.Get(baseURL + "/api/v1/hello")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	if maintenanceResp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("GET /api/v1/hello during maintenance status = %d, want %d\n%s", maintenanceResp.StatusCode, http.StatusServiceUnavailable, handle.Output())
 	}
-	runRenderedMaintenanceCommand(t, projectDir, binPath, nil, "maintenance:disable")
+	runRenderedMaintenanceCommand(t, projectDir, binPath, map[string]string{"APP_URL": baseURL}, "maintenance:disable")
 	time.Sleep(150 * time.Millisecond)
 	resumedResp, err := http.Get(baseURL + "/api/v1/hello")
 	if err != nil {
@@ -113,9 +113,9 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 		"# TYPE http_requests_total counter",
 		"# TYPE http_requests_inflight gauge",
 		"# TYPE http_request_duration_seconds histogram",
-		`http_requests_total{app="app",source="http"} 3`,
+		`http_requests_total{app="app",source="http"} 5`,
 		`http_requests_inflight{app="app",source="http"} 0`,
-		`http_request_duration_seconds_count{app="app",source="http"} 3`,
+		`http_request_duration_seconds_count{app="app",source="http"} 5`,
 		`http_requests_by_route_total{app="app",source="http",method="GET",route="/api/v1/hello",status="200"} 2`,
 		`http_requests_by_route_total{app="app",source="http",method="GET",route="/api/v1/hello",status="503"} 1`,
 		`http_request_duration_by_route_seconds_count{app="app",source="http",method="GET",route="/api/v1/hello"} 3`,
@@ -124,13 +124,13 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 			t.Fatalf("GET /metrics missing %q\nbody:\n%s", token, text)
 		}
 	}
-	if !strings.Contains(text, `http_requests_total{app="app",source="http"} 3`) {
+	if !strings.Contains(text, `http_requests_total{app="app",source="http"} 5`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from request count\nbody:\n%s", text)
 	}
 	if !strings.Contains(text, `http_requests_inflight{app="app",source="http"} 0`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from inflight gauge\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_request_duration_seconds_count{app="app",source="http"} 3`) {
+	if !strings.Contains(text, `http_request_duration_seconds_count{app="app",source="http"} 5`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from latency histogram\nbody:\n%s", text)
 	}
 	if !strings.Contains(text, `http_requests_by_route_total{app="app",source="http",method="GET",route="/api/v1/hello",status="200"} 2`) {

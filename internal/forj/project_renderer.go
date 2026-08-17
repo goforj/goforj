@@ -670,7 +670,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Maintenance Components Rendering",
-			enabled: input.renderAll || projectComponents.HasRuntime(),
+			enabled: projectComponents.WebAPI || projectComponents.WebUI,
 			templates: []string{
 				"internal/maintenance/state.go.tmpl",
 				"internal/maintenance/state_test.go.tmpl",

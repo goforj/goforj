@@ -157,4 +157,4 @@ binds the server to `0.0.0.0:8080`.
 
 Run `./bin/app maintenance:enable` to put the running App into maintenance mode and `./bin/app maintenance:disable` to restore it. Browser and starter-kit requests receive a self-contained maintenance page, while API requests receive a JSON `503 Service Unavailable` response. Requests already inside an application handler may finish.
 
-Mounted `GET` and `HEAD` health, readiness, metrics, and Lighthouse endpoints remain available so operators can distinguish planned maintenance from a failed process. Application-owned lookalike routes do not bypass maintenance. See `internal/runtime/README.md` for split HTTP runtime storage, permissions, additional Apps, and the environment-enforced deployment override.
+Mounted `GET` and `HEAD` health, readiness, metrics, and Lighthouse endpoints remain available so operators can distinguish planned maintenance from a failed process. Application-owned lookalike routes do not bypass maintenance. See `internal/runtime/README.md` for memory and named-cache backends, replicas, additional Apps, and the environment-enforced deployment override.

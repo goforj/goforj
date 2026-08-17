@@ -158,7 +158,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs", "./internal/http", "./internal/logger")
+	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs", "./internal/http", "./internal/logger", "./internal/maintenance")
 	cmd.Dir = projectDir
 	cmd.Env = testkit.ProcessGoEnv("", nil)
 	var out bytes.Buffer

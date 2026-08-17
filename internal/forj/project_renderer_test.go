@@ -178,7 +178,7 @@ replace github.com/goforj/cache => ../cache
 
 	pending, skipped, err := coreModulesNeedingSync(goModPath, []string{
 		"github.com/goforj/web@v0.5.2",
-		"github.com/goforj/queue@v0.2.2-0.20260817000747-3b99da924c15",
+		"github.com/goforj/queue@v0.2.1",
 		"github.com/goforj/cache@" + coredeps.MustVersionFor("github.com/goforj/cache"),
 		"github.com/goforj/storage@" + coredeps.MustVersionFor("github.com/goforj/storage"),
 	})
@@ -187,7 +187,7 @@ replace github.com/goforj/cache => ../cache
 	}
 
 	want := []string{
-		"github.com/goforj/queue@v0.2.2-0.20260817000747-3b99da924c15",
+		"github.com/goforj/queue@v0.2.1",
 		"github.com/goforj/storage@" + coredeps.MustVersionFor("github.com/goforj/storage"),
 	}
 	if !reflect.DeepEqual(pending, want) {
@@ -622,10 +622,7 @@ func TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands(t *test
 	if err := renderer.renderApp(project.DefaultNamedApp("billing")); err != nil {
 		t.Fatalf("render named App fixture: %v", err)
 	}
-	commandPaths := []string{
-		filepath.Join(root, "app", "commands.go"),
-		filepath.Join(root, "app", "billing", "commands.go"),
-	}
+	commandPaths := []string{filepath.Join(root, "app", "commands.go")}
 	for _, path := range commandPaths {
 		source, err := os.ReadFile(path)
 		if err != nil {
@@ -641,10 +638,7 @@ func TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands(t *test
 	for _, path := range commandPaths {
 		assertProjectRendererFileContains(t, path, "// user customization")
 	}
-	for _, path := range []string{
-		filepath.Join(root, "app", "root_cmd.go"),
-		filepath.Join(root, "app", "billing", "root_cmd.go"),
-	} {
+	for _, path := range []string{filepath.Join(root, "app", "root_cmd.go")} {
 		assertProjectRendererFileContains(t, path,
 			`/internal/maintenance"`,
 			"MaintenanceEnableCmd  maintenance.EnableCmd",
@@ -653,7 +647,7 @@ func TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands(t *test
 	}
 }
 
-// TestExplicitRuntimeComponentRenderIncludesMaintenancePrerequisite verifies every incremental runtime path receives the shared package.
+// TestExplicitRuntimeComponentRenderIncludesMaintenancePrerequisite verifies each incremental HTTP path receives the shared package.
 func TestExplicitRuntimeComponentRenderIncludesMaintenancePrerequisite(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -661,8 +655,6 @@ func TestExplicitRuntimeComponentRenderIncludesMaintenancePrerequisite(t *testin
 	}{
 		{name: "web api", components: project.Components{WebAPI: true}},
 		{name: "web ui", components: project.Components{WebUI: true}},
-		{name: "jobs", components: project.Components{Jobs: true}},
-		{name: "scheduler", components: project.Components{Scheduler: true}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

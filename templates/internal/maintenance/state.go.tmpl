@@ -1,175 +1,169 @@
 package maintenance
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+{{- if .ProjectComponents.Cache }}
+	"github.com/goforj/cache"
+{{- end }}
 	"github.com/goforj/env/v2"
+{{- if .ProjectComponents.Cache }}
+	"{{.GoModuleName}}/internal/caches"
+{{- end }}
 )
 
-const maintenanceRefreshInterval = 100 * time.Millisecond
+const (
+	driverMemory = "memory"
+	driverCache  = "cache"
 
-var maintenanceCache struct {
-	mu       sync.Mutex
-	snapshot atomic.Pointer[maintenanceSnapshot]
+	maintenanceCacheKey = "goforj:maintenance"
+	// Cache stores require a TTL, so use a bounded horizon that behaves as persistent operational state in practice.
+	maintenanceCacheTTL = 100 * 365 * 24 * time.Hour
+	maintenanceRefreshInterval = 100 * time.Millisecond
+)
+
+// State owns the maintenance status observed by one HTTP runtime.
+type State struct {
+	driver string
+	memory atomic.Bool
+{{- if .ProjectComponents.Cache }}
+	store *cache.Cache
+{{- end }}
+	mu sync.Mutex
+	snapshot atomic.Pointer[stateSnapshot]
 }
 
-type maintenanceSnapshot struct {
-	root      string
-	app       string
-	enabled   bool
+// stateSnapshot keeps cache-backed request checks off the network for a short, bounded interval.
+type stateSnapshot struct {
+	enabled bool
 	checkedAt time.Time
 }
 
-type maintenanceFile struct {
-	App       string    `json:"app"`
-	EnabledAt time.Time `json:"enabled_at"`
-}
-
-// Enabled reports whether the selected App is globally in maintenance mode.
-func Enabled() bool {
-	if env.GetBool("APP_MAINTENANCE_ENABLED", "false") {
-		return true
+// NewState builds the configured maintenance backend.
+//
+// APP_MAINTENANCE_DRIVER selects the maintenance mechanism. When it is cache,
+// APP_MAINTENANCE_STORE selects one of the named stores generated under internal/caches;
+// the selected store keeps its own CACHE_* driver and connection configuration.
+func NewState() (*State, error) {
+	driver := strings.ToLower(strings.TrimSpace(env.Get("APP_MAINTENANCE_DRIVER", driverMemory)))
+	if driver == "" {
+		driver = driverMemory
 	}
-	root := os.Getenv("APP_RUNTIME_STATE_DIR")
-	app := currentAppName()
-	now := time.Now()
-	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, root, app, now) {
-		return snapshot.enabled
-	}
-	maintenanceCache.mu.Lock()
-	defer maintenanceCache.mu.Unlock()
-	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, root, app, now) {
-		return snapshot.enabled
-	}
-	path := Path()
-	_, err := os.Stat(path)
-	snapshot := &maintenanceSnapshot{
-		root:      root,
-		app:       app,
-		enabled:   err == nil || !errors.Is(err, os.ErrNotExist),
-		checkedAt: now,
-	}
-	maintenanceCache.snapshot.Store(snapshot)
-	return snapshot.enabled
-}
-
-// maintenanceSnapshotFresh reports whether the lock-free observation remains valid for the selected App.
-func maintenanceSnapshotFresh(snapshot *maintenanceSnapshot, root, app string, now time.Time) bool {
-	return snapshot != nil && snapshot.root == root && snapshot.app == app && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval
-}
-
-// Path returns the App-scoped local state file used by maintenance commands.
-func Path() string {
-	root := strings.TrimSpace(env.Get("APP_RUNTIME_STATE_DIR", ""))
-	if root == "" {
-		root = filepath.Join("_data", "runtime")
-	}
-	return filepath.Join(root, currentAppName(), "maintenance.json")
-}
-
-// Enable atomically publishes maintenance state for every runtime sharing the App data directory.
-func Enable() error {
-	path := Path()
-	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
-		return fmt.Errorf("maintenance state path %q is not a regular file", path)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	stateDir := filepath.Dir(path)
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return err
-	}
-	if info, err := os.Lstat(stateDir); err != nil {
-		return err
-	} else if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("maintenance state directory %q is not a regular directory", stateDir)
-	}
-	payload, err := json.Marshal(maintenanceFile{App: currentAppName(), EnabledAt: time.Now().UTC()})
-	if err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(stateDir, ".maintenance-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0o644); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(append(payload, '\n')); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		if _, statErr := os.Stat(path); statErr == nil {
-			invalidateMaintenanceCache(true)
-			return nil
+	state := &State{driver: driver}
+	switch driver {
+	case driverMemory:
+		return state, nil
+	case driverCache:
+{{- if .ProjectComponents.Cache }}
+		cacheManager, err := caches.NewManager()
+		if err != nil {
+			return nil, fmt.Errorf("maintenance: build generated cache stores: %w", err)
 		}
-		return err
+		storeName := strings.TrimSpace(env.Get("APP_MAINTENANCE_STORE", "default"))
+		store := cacheManager.Named(storeName)
+		if store == nil {
+			return nil, fmt.Errorf("maintenance: cache store %q is not generated", storeName)
+		}
+		state.store = store
+		return state, nil
+{{- else }}
+		return nil, fmt.Errorf("maintenance: cache driver requires the Cache component")
+{{- end }}
+	default:
+		return nil, fmt.Errorf("maintenance: unsupported driver %q; expected memory or cache", driver)
 	}
-	invalidateMaintenanceCache(true)
-	return nil
 }
 
-// Disable removes command-managed state while preserving an environment-enforced deployment policy.
-func Disable() error {
-	path := Path()
-	err := os.Remove(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	invalidateMaintenanceCache(false)
-	return nil
+// Driver reports the configured maintenance mechanism.
+func (s *State) Driver() string {
+	return s.driver
 }
 
-// currentAppName resolves the process identity already selected by the generated launch path.
+// Enabled reports whether HTTP traffic should be gated.
+func (s *State) Enabled() (bool, error) {
+	if env.GetBool("APP_MAINTENANCE_ENABLED", "false") {
+		return true, nil
+	}
+	if s.driver == driverMemory {
+		return s.memory.Load(), nil
+	}
+	now := time.Now()
+	if snapshot := s.snapshot.Load(); snapshot != nil && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval {
+		return snapshot.enabled, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if snapshot := s.snapshot.Load(); snapshot != nil && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval {
+		return snapshot.enabled, nil
+	}
+{{- if .ProjectComponents.Cache }}
+	value, found, err := s.store.GetString(s.cacheKey())
+	if err != nil {
+		return false, err
+	}
+	enabled := found && value == "enabled"
+	s.snapshot.Store(&stateSnapshot{enabled: enabled, checkedAt: now})
+	return enabled, nil
+{{- else }}
+	return false, fmt.Errorf("maintenance: cache driver requires the Cache component")
+{{- end }}
+}
+
+// Enable gates HTTP traffic through the configured backend.
+func (s *State) Enable() error {
+	if s.driver == driverMemory {
+		s.memory.Store(true)
+		return nil
+	}
+{{- if .ProjectComponents.Cache }}
+	if err := s.store.SetString(s.cacheKey(), "enabled", maintenanceCacheTTL); err != nil {
+		return err
+	}
+	s.invalidate(true)
+	return nil
+{{- else }}
+	return fmt.Errorf("maintenance: cache driver requires the Cache component")
+{{- end }}
+}
+
+// Disable restores HTTP traffic unless the environment override remains active.
+func (s *State) Disable() error {
+	if s.driver == driverMemory {
+		s.memory.Store(false)
+		return nil
+	}
+{{- if .ProjectComponents.Cache }}
+	if err := s.store.Delete(s.cacheKey()); err != nil {
+		return err
+	}
+	s.invalidate(false)
+	return nil
+{{- else }}
+	return fmt.Errorf("maintenance: cache driver requires the Cache component")
+{{- end }}
+}
+
+// cacheKey isolates additional Apps even when they intentionally share one named cache store.
+func (s *State) cacheKey() string {
+	return maintenanceCacheKey + ":" + currentAppName()
+}
+
+// currentAppName resolves the App identity selected by the generated launch path.
 func currentAppName() string {
-	appName := strings.TrimSpace(env.Get("FORJ_APP", "app"))
-	if !validAppName(appName) {
+	name := strings.TrimSpace(env.Get("FORJ_APP", "app"))
+	if name == "" {
 		return "app"
 	}
-	return appName
+	return name
 }
 
-// validAppName accepts generated App slugs while preventing state path traversal from internal callers.
-func validAppName(name string) bool {
-	if name == "" || name[0] == '-' || name[len(name)-1] == '-' {
-		return false
-	}
-	for _, character := range name {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// invalidateMaintenanceCache makes same-process commands and tests observe their writes immediately.
-func invalidateMaintenanceCache(enabled bool) {
-	maintenanceCache.mu.Lock()
-	maintenanceCache.snapshot.Store(&maintenanceSnapshot{
-		root:      os.Getenv("APP_RUNTIME_STATE_DIR"),
-		app:       currentAppName(),
-		enabled:   enabled,
-		checkedAt: time.Now(),
-	})
-	maintenanceCache.mu.Unlock()
+// invalidate makes a successful control request visible to the current process immediately.
+func (s *State) invalidate(enabled bool) {
+	s.mu.Lock()
+	s.snapshot.Store(&stateSnapshot{enabled: enabled, checkedAt: time.Now()})
+	s.mu.Unlock()
 }

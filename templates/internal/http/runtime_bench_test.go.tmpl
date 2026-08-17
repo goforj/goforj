@@ -132,6 +132,7 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 		nil,
 		nil,
 		nil,
+		newTestMaintenanceState(b),
 {{- if .ProjectComponents.Storage }}
 		nil,
 {{- end }}

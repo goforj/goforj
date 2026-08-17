@@ -168,7 +168,7 @@ func TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
 // bootstrapSwaggerTestServer centralizes framework setup so route assertions stay focused on Swagger behavior.
 func bootstrapSwaggerTestServer(t *testing.T) http.Handler {
 	t.Helper()
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil,{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 	return e
