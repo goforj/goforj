@@ -666,7 +666,7 @@ func mysqlCreateDatabasesScript(names []string) string {
 
 // postgresCreateDatabasesScript creates every needed Postgres database after the service is ready.
 func postgresCreateDatabasesScript(names []string) string {
-	return `until pg_isready -h "postgres" -p 5432; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$db\";"; done`
+	return `export PGPASSWORD="$POSTGRES_PASSWORD"; until pg_isready -h "postgres" -p 5432; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$db\";"; done`
 }
 
 // runDevTasks centralizes run dev tasks behavior so callers follow the same contract.
