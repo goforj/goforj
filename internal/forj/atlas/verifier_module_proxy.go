@@ -146,13 +146,6 @@ func (proxy *verifierModuleProxy) Close() error {
 
 // serveHTTP limits the proxy to GET and HEAD requests for regular, non-symlinked files below the trusted download root.
 func (proxy *verifierModuleProxy) serveHTTP(writer http.ResponseWriter, request *http.Request) {
-	select {
-	case proxy.requests <- struct{}{}:
-		defer func() { <-proxy.requests }()
-	default:
-		http.Error(writer, "service unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
 		writer.Header().Set("Allow", "GET, HEAD")
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
@@ -160,6 +153,13 @@ func (proxy *verifierModuleProxy) serveHTTP(writer http.ResponseWriter, request 
 	}
 	if request.URL.Path == "/"+proxy.prefix+"/health" {
 		writer.WriteHeader(http.StatusNoContent)
+		return
+	}
+	select {
+	case proxy.requests <- struct{}{}:
+		defer func() { <-proxy.requests }()
+	default:
+		http.Error(writer, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	prefix := "/" + proxy.prefix + "/"
