@@ -204,6 +204,9 @@ func applyCompiledEnvMap(raw string, force bool) error {
 		return err
 	}
 	for _, pair := range pairs {
+		if pair.key == "FORJ_APP" {
+			continue
+		}
 		if !force {
 			if _, ok := os.LookupEnv(pair.key); ok {
 				continue

@@ -527,10 +527,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/runtime/source.go.tmpl",
 				"internal/runtime/apps.go.tmpl",
 				"internal/runtime/apps_test.go.tmpl",
-				"internal/maintenance/state.go.tmpl",
-				"internal/maintenance/state_test.go.tmpl",
-				"internal/maintenance/cmd.go.tmpl",
-				"internal/maintenance/cmd_test.go.tmpl",
 				"internal/runtime/runtime_host.go.tmpl",
 				"internal/runtime/runtime_host_test.go.tmpl",
 				"internal/runtime/timeouts.go.tmpl",
@@ -671,6 +667,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return nil
 				}()...,
 			),
+		},
+		{
+			title:   "Maintenance Components Rendering",
+			enabled: input.renderAll || projectComponents.HasRuntime(),
+			templates: []string{
+				"internal/maintenance/state.go.tmpl",
+				"internal/maintenance/state_test.go.tmpl",
+				"internal/maintenance/cmd.go.tmpl",
+				"internal/maintenance/cmd_test.go.tmpl",
+			},
 		},
 		{
 			title:   "Dev Console Components Rendering",
@@ -1025,7 +1031,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/schedules/lighthouse.go.tmpl",
 				"internal/schedules/runtime.go.tmpl",
 				"internal/schedules/scheduler.go.tmpl",
-				"internal/schedules/maintenance_test.go.tmpl",
 				"internal/schedules/app_schedules.go.tmpl",
 				"internal/schedules/cmd.go.tmpl",
 				"internal/schedules/registration.go.tmpl",

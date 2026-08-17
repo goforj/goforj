@@ -110,17 +110,7 @@ func (p *InspectPublisher) Start(ctx context.Context) {
 			if record != nil {
 				batch = append(batch, record)
 			}
-			for len(batch) < p.flushBatchSize {
-				select {
-				case record = <-p.buffer:
-					if record != nil {
-						batch = append(batch, record)
-					}
-				default:
-					goto maybeFlush
-				}
-			}
-		maybeFlush:
+			batch = p.drainBufferedRecords(batch)
 			if len(batch) >= p.flushBatchSize && !flush() {
 				continue
 			}
@@ -130,6 +120,21 @@ func (p *InspectPublisher) Start(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// drainBufferedRecords fills the current batch without blocking the publisher loop.
+func (p *InspectPublisher) drainBufferedRecords(batch []*inspects.Record) []*inspects.Record {
+	for len(batch) < p.flushBatchSize {
+		select {
+		case record := <-p.buffer:
+			if record != nil {
+				batch = append(batch, record)
+			}
+		default:
+			return batch
+		}
+	}
+	return batch
 }
 
 func (p *InspectPublisher) flush(batch []*inspects.Record) bool {

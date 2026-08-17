@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/goforj/web"
+	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/maintenance"
 )
 
@@ -66,7 +67,7 @@ func (s *Server) maintenanceMode() web.Middleware {
 			if !maintenance.Enabled() {
 				return next(r)
 			}
-			if maintenancePathAllowed(r) {
+			if s.maintenancePathAllowed(r) {
 				return next(r)
 			}
 			return s.maintenanceResponse(r)
@@ -74,19 +75,27 @@ func (s *Server) maintenanceMode() web.Middleware {
 	}
 }
 
-// maintenancePathAllowed keeps planned downtime observable without exposing application routes.
-func maintenancePathAllowed(r web.Context) bool {
+// maintenancePathAllowed keeps mounted operational surfaces observable without exempting application-owned lookalikes.
+func (s *Server) maintenancePathAllowed(r web.Context) bool {
 	request := r.Request()
 	if request == nil || request.URL == nil {
 		return false
 	}
 	path := request.URL.Path
 	switch path {
-	case "/-/health", "/-/ready", "/metrics":
-		return true
-	default:
-		return strings.HasPrefix(path, "/lighthouse/")
+	case "/-/health", "/-/ready":
+		return request.Method == http.MethodGet || request.Method == http.MethodHead
+	case "/metrics":
+{{- if .ProjectComponents.Metrics }}
+		return s.metrics != nil && (request.Method == http.MethodGet || request.Method == http.MethodHead)
+{{- else }}
+		return false
+{{- end }}
 	}
+	if !lighthouse.Enabled() || s.consoleHub == nil {
+		return false
+	}
+	return lighthouse.MaintenanceRouteAllowed(request.Method, path)
 }
 
 // maintenanceResponse negotiates a stable machine response without making browser starter kits render API JSON.

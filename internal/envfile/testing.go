@@ -103,6 +103,8 @@ func testingValue(key string, value string, values map[string]string) string {
 		return "testing"
 	case "APP_MAINTENANCE_ENABLED":
 		return "false"
+	case "APP_RUNTIME_STATE_DIR":
+		return "./_data/runtime-testing"
 	case "APP_KEY":
 		return "base64:" + base64.StdEncoding.EncodeToString([]byte("goforj-public-testing-key-000001"))
 	case "APP_DIAG_TOKEN":
@@ -140,7 +142,7 @@ func testingValue(key string, value string, values map[string]string) string {
 // testingPolicyKey applies root policies to app-prefixed forms such as BILLING_DB_PASSWORD.
 func testingPolicyKey(key string) string {
 	for _, candidate := range []string{
-		"APP_ENV", "APP_KEY", "APP_DIAG_TOKEN", "APP_MAINTENANCE_ENABLED", "LIGHTHOUSE_SECRET", "API_JWT_SECRET_KEY",
+		"APP_ENV", "APP_KEY", "APP_DIAG_TOKEN", "APP_MAINTENANCE_ENABLED", "APP_RUNTIME_STATE_DIR", "LIGHTHOUSE_SECRET", "API_JWT_SECRET_KEY",
 		"AUTH_BOOTSTRAP_USERNAME", "AUTH_BOOTSTRAP_EMAIL", "AUTH_BOOTSTRAP_PASSWORD",
 		"DB_HOST", "REDIS_HOST", "MAIL_SMTP_HOST", "DB_USERNAME", "DB_PASSWORD", "DB_ROOT_PASSWORD",
 		"QUEUE_ACCESS_KEY", "QUEUE_SECRET_KEY", "DB_DATABASE", "DB_SQLITE_DATABASE",
@@ -197,8 +199,8 @@ func isFrameworkTestingKey(key string) bool {
 var frameworkContractKeys = map[string]bool{
 	"API_HTTP_HOST": true, "API_HTTP_PORT": true, "API_JWT_SECRET_KEY": true, "API_SWAGGER_ENABLED": true,
 	"APP_DEBUG": true, "APP_DIAG_TOKEN": true, "APP_ENV": true, "APP_KEY": true, "APP_LOG_FORMAT": true,
-	"APP_MAINTENANCE_ENABLED": true,
-	"APP_LOG_TIME":            true, "APP_NAME": true, "APP_URL": true, "AUTH_BOOTSTRAP_EMAIL": true,
+	"APP_MAINTENANCE_ENABLED": true, "APP_RUNTIME_STATE_DIR": true,
+	"APP_LOG_TIME": true, "APP_NAME": true, "APP_URL": true, "AUTH_BOOTSTRAP_EMAIL": true,
 	"AUTH_BOOTSTRAP_PASSWORD": true, "AUTH_BOOTSTRAP_USERNAME": true, "CACHE_ADDRESSES": true,
 	"CACHE_DRIVER": true, "CACHE_ENDPOINT": true, "CACHE_REGION": true, "CACHE_SESSIONS_DRIVER": true,
 	"CACHE_SETTINGS_DRIVER": true, "CACHE_SUPPORTED_DRIVERS": true, "CACHE_URL": true, "COMPOSE_PROFILES": true,

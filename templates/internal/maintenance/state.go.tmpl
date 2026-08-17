@@ -3,6 +3,7 @@ package maintenance
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,8 @@ var maintenanceCache struct {
 }
 
 type maintenanceSnapshot struct {
-	path      string
+	root      string
+	app       string
 	enabled   bool
 	checkedAt time.Time
 }
@@ -36,19 +38,22 @@ func Enabled() bool {
 	if env.GetBool("APP_MAINTENANCE_ENABLED", "false") {
 		return true
 	}
-	path := Path()
+	root := os.Getenv("APP_RUNTIME_STATE_DIR")
+	app := currentAppName()
 	now := time.Now()
-	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, path, now) {
+	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, root, app, now) {
 		return snapshot.enabled
 	}
 	maintenanceCache.mu.Lock()
 	defer maintenanceCache.mu.Unlock()
-	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, path, now) {
+	if snapshot := maintenanceCache.snapshot.Load(); maintenanceSnapshotFresh(snapshot, root, app, now) {
 		return snapshot.enabled
 	}
+	path := Path()
 	_, err := os.Stat(path)
 	snapshot := &maintenanceSnapshot{
-		path:      path,
+		root:      root,
+		app:       app,
 		enabled:   err == nil || !errors.Is(err, os.ErrNotExist),
 		checkedAt: now,
 	}
@@ -57,38 +62,47 @@ func Enabled() bool {
 }
 
 // maintenanceSnapshotFresh reports whether the lock-free observation remains valid for the selected App.
-func maintenanceSnapshotFresh(snapshot *maintenanceSnapshot, path string, now time.Time) bool {
-	return snapshot != nil && snapshot.path == path && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval
+func maintenanceSnapshotFresh(snapshot *maintenanceSnapshot, root, app string, now time.Time) bool {
+	return snapshot != nil && snapshot.root == root && snapshot.app == app && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval
 }
 
 // Path returns the App-scoped local state file used by maintenance commands.
 func Path() string {
-	return filepath.Join("_data", "runtime", currentAppName(), "maintenance.json")
+	root := strings.TrimSpace(env.Get("APP_RUNTIME_STATE_DIR", ""))
+	if root == "" {
+		root = filepath.Join("_data", "runtime")
+	}
+	return filepath.Join(root, currentAppName(), "maintenance.json")
 }
 
 // Enable atomically publishes maintenance state for every runtime sharing the App data directory.
 func Enable() error {
 	path := Path()
-	if _, err := os.Stat(path); err == nil {
-		invalidateMaintenanceCache(path, true)
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("maintenance state path %q is not a regular file", path)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	stateDir := filepath.Dir(path)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
+	}
+	if info, err := os.Lstat(stateDir); err != nil {
+		return err
+	} else if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("maintenance state directory %q is not a regular directory", stateDir)
 	}
 	payload, err := json.Marshal(maintenanceFile{App: currentAppName(), EnabledAt: time.Now().UTC()})
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".maintenance-*")
+	temporary, err := os.CreateTemp(stateDir, ".maintenance-*")
 	if err != nil {
 		return err
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := temporary.Chmod(0o644); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -105,12 +119,12 @@ func Enable() error {
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
 		if _, statErr := os.Stat(path); statErr == nil {
-			invalidateMaintenanceCache(path, true)
+			invalidateMaintenanceCache(true)
 			return nil
 		}
 		return err
 	}
-	invalidateMaintenanceCache(path, true)
+	invalidateMaintenanceCache(true)
 	return nil
 }
 
@@ -121,22 +135,41 @@ func Disable() error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	invalidateMaintenanceCache(path, false)
+	invalidateMaintenanceCache(false)
 	return nil
 }
 
 // currentAppName resolves the process identity already selected by the generated launch path.
 func currentAppName() string {
 	appName := strings.TrimSpace(env.Get("FORJ_APP", "app"))
-	if appName == "" {
+	if !validAppName(appName) {
 		return "app"
 	}
 	return appName
 }
 
+// validAppName accepts generated App slugs while preventing state path traversal from internal callers.
+func validAppName(name string) bool {
+	if name == "" || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, character := range name {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // invalidateMaintenanceCache makes same-process commands and tests observe their writes immediately.
-func invalidateMaintenanceCache(path string, enabled bool) {
+func invalidateMaintenanceCache(enabled bool) {
 	maintenanceCache.mu.Lock()
-	maintenanceCache.snapshot.Store(&maintenanceSnapshot{path: path, enabled: enabled, checkedAt: time.Now()})
+	maintenanceCache.snapshot.Store(&maintenanceSnapshot{
+		root:      os.Getenv("APP_RUNTIME_STATE_DIR"),
+		app:       currentAppName(),
+		enabled:   enabled,
+		checkedAt: time.Now(),
+	})
 	maintenanceCache.mu.Unlock()
 }

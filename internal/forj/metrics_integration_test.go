@@ -141,6 +141,17 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	}
 }
 
+// runRenderedMaintenanceCommand invokes the App binary that owns the live HTTP maintenance state.
+func runRenderedMaintenanceCommand(t *testing.T, projectDir, binPath string, env map[string]string, command string) {
+	t.Helper()
+	cmd := exec.Command(binPath, command)
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, env)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run %s: %v\n%s", command, err, output)
+	}
+}
+
 func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 	projectDir := t.TempDir()
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
