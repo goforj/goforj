@@ -39,6 +39,7 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 		},
 		nil,
 		nil,
+		newTestMaintenanceState(t),
 {{- if .ProjectComponents.Storage }}
 		nil,
 {{- end }}

@@ -14,7 +14,7 @@ import (
 
 func TestMetricsEndpoint(t *testing.T) {
 	metricsManager := metrics.NewManager()
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil,{{- if .ProjectComponents.Storage }} nil,{{- end }} nil, metricsManager)
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil, metricsManager)
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 

@@ -66,18 +66,18 @@ func (r *LifecycleRegistry) Shutdown(ctx context.Context) error {
 
 ## Maintenance Lifecycle
 
-The framework-owned `maintenance:enable` and `maintenance:disable` commands change the selected App without booting its dependency graph. A running process observes command state within roughly 100ms:
+The framework-owned `maintenance:enable` and `maintenance:disable` commands call an authenticated control endpoint on the selected App without booting its dependency graph:
 
 - HTTP rejects new application requests with `503`; requests already inside an application handler may finish.
 - Queue workers and scheduled tasks continue normally. Maintenance mode controls web availability only.
 
-The default command state is `<APP_RUNTIME_STATE_DIR>/<app>/maintenance.json`. `APP_RUNTIME_STATE_DIR` defaults to `./_data/runtime`. Additional Apps have separate marker files and therefore separate maintenance state.
+`APP_MAINTENANCE_DRIVER=memory` is the dependency-free default and changes the HTTP process reached through `APP_URL`. `APP_MAINTENANCE_DRIVER=cache` shares state through a generated cache resource. `APP_MAINTENANCE_STORE` names that resource, such as `default` or `operations`; the resource keeps its existing `CACHE_*` driver and connection configuration.
 
-Combined runtimes and split HTTP processes observe the same marker automatically when they resolve `APP_RUNTIME_STATE_DIR` to the same shared filesystem directory. In containers, configure an absolute path backed by one shared volume. The filesystem must support atomic same-directory rename. HTTP service users need read and traversal access; the user that runs maintenance commands also needs create, rename, and delete access. Generated directories are not group/world writable and marker files contain operational state, not secrets, so use an ACL or deliberate ownership policy when commands and runtimes use different OS users.
+Memory mode is intentionally process-local. Replicated HTTP deployments should use the cache driver with a distributed named store so every replica observes the same App-scoped key. The control endpoint requires `Authorization: Bearer $APP_DIAG_TOKEN` and does not follow redirects, preventing the diagnostic token from being forwarded to a different host.
 
-`APP_MAINTENANCE_ENABLED=true` is a per-process deployment override. It is authoritative over the marker, so `maintenance:disable` cannot make that HTTP process live; clear the environment setting and restart or redeploy it. Keep the value consistent across split HTTP processes unless intentionally applying maintenance to only one process.
+`APP_MAINTENANCE_ENABLED=true` is a per-process deployment override. It is authoritative over command-managed state, so `maintenance:disable` cannot make that HTTP process live; clear the environment setting and restart or redeploy it.
 
-Generated `.env.testing` uses `./_data/runtime-testing` so a local maintenance marker cannot accidentally pause integration tests.
+Generated `.env.testing` forces the memory driver and disables maintenance so shared deployment state cannot pause tests.
 
 ## Apps and Runtime Ports
 
