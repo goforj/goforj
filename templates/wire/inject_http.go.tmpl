@@ -38,7 +38,11 @@ var httpServerSet = wire.NewSet(
 	http.NewRuntime,
 	http.NewServeCmd,
 	http.NewServer,
+{{- if .Components.Cache }}
+	maintenance.NewStateWithCacheManager,
+{{- else }}
 	maintenance.NewState,
+{{- end }}
 	provideReadinessChecks,
 	lighthouse.NewHub,
 )
