@@ -67,11 +67,11 @@ func (s *Server) maintenanceMode() web.Middleware {
 			if maintenanceControlPath(r) && !maintenanceControlLocal(r) {
 				return r.NoContent(http.StatusNotFound)
 			}
-			if s.maintenancePathAllowed(r) {
-				return next(r)
-			}
 			enabled, err := s.maintenance.Enabled()
 			if err == nil && !enabled {
+				return next(r)
+			}
+			if s.maintenancePathAllowed(r) {
 				return next(r)
 			}
 			return s.maintenanceResponse(r)
