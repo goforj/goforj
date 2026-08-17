@@ -3,6 +3,7 @@ package http
 import (
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"strings"
 
@@ -90,7 +91,7 @@ func (s *Server) maintenanceRoutes() []web.RouteGroup {
 
 // enableMaintenance changes the backend only after diagnostic-token authorization.
 func (s *Server) enableMaintenance(r web.Context) error {
-	if !diagnosticsAuthorized(r) {
+	if !maintenanceControlLocal(r) || !diagnosticsAuthorized(r) {
 		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 	}
 	if err := s.maintenance.Enable(); err != nil {
@@ -101,7 +102,7 @@ func (s *Server) enableMaintenance(r web.Context) error {
 
 // disableMaintenance clears command-managed state without overriding deployment policy.
 func (s *Server) disableMaintenance(r web.Context) error {
-	if !diagnosticsAuthorized(r) {
+	if !maintenanceControlLocal(r) || !diagnosticsAuthorized(r) {
 		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 	}
 	if err := s.maintenance.Disable(); err != nil {
@@ -115,6 +116,20 @@ func (s *Server) disableMaintenance(r web.Context) error {
 		return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "maintenance remains enabled by APP_MAINTENANCE_ENABLED"})
 	}
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "maintenance": false})
+}
+
+// maintenanceControlLocal confines availability mutations to an operator inside the runtime network namespace.
+func maintenanceControlLocal(r web.Context) bool {
+	request := r.Request()
+	if request == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 // maintenancePathAllowed keeps mounted operational surfaces observable without exempting application-owned lookalikes.

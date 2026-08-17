@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/goforj/console"
 	"github.com/goforj/env/v2"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 const maintenanceControlTimeout = 5 * time.Second
@@ -98,18 +101,17 @@ func requestTransition(action string) error {
 	return fmt.Errorf("maintenance endpoint returned %s: %s", response.Status, detail)
 }
 
-// controlEndpoint validates APP_URL before attaching the framework-owned control path.
+// controlEndpoint keeps availability controls inside the selected App's network namespace.
 func controlEndpoint(action string) (string, error) {
-	base, err := url.Parse(strings.TrimSpace(env.Get("APP_URL", "")))
-	if err != nil {
-		return "", err
+	port := runtime.HTTPPort()
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", fmt.Errorf("HTTP port %q must be between 1 and 65535", port)
 	}
-	if base.Scheme != "http" && base.Scheme != "https" || base.Host == "" {
-		return "", fmt.Errorf("APP_URL must be an absolute HTTP or HTTPS URL")
+	base := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort("127.0.0.1", port),
+		Path:   "/-/maintenance/" + action,
 	}
-	if base.User != nil || base.RawQuery != "" || base.Fragment != "" {
-		return "", fmt.Errorf("APP_URL must not contain credentials, a query, or a fragment")
-	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/-/maintenance/" + action
 	return base.String(), nil
 }
