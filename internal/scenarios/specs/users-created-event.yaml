@@ -163,7 +163,6 @@ steps:
         // UserCreated carries only the identity needed by downstream reactions so the event remains portable across drivers.
         type UserCreated struct {
                 UserID string `json:"user_id"`
-                Email  string `json:"email"`
         }
 
         // Topic binds UserCreated to its routing key without adding transport metadata to the payload.
@@ -345,7 +344,6 @@ steps:
         func (p *UserEventPublisher) PublishCreated(ctx context.Context, user User) error {
                 return p.bus.WithContext(ctx).Publish(events.UserCreated{
                         UserID: user.ID,
-                        Email:  user.Email,
                 })
         }
 
@@ -465,7 +463,7 @@ steps:
         }
 
         // HandleUserCreated keeps the subscriber thin while leaving background execution to a queue-backed implementation.
-        func (s *Service) HandleUserCreated(_ context.Context, _ string, _ string) error {
+        func (s *Service) HandleUserCreated(_ context.Context, _ string) error {
                 return nil
         }
 
@@ -491,7 +489,7 @@ steps:
         // UserCreatedHandler keeps event delivery independent from the reaction's concrete implementation.
         type UserCreatedHandler interface {
                 // HandleUserCreated receives the stable identity carried by the application event.
-                HandleUserCreated(ctx context.Context, userID string, email string) error
+                HandleUserCreated(ctx context.Context, userID string) error
         }
 
         // Subscribers owns event registration so subscription lifetime remains part of the App lifecycle.
@@ -507,7 +505,7 @@ steps:
         // Register translates the typed event into the application-facing user-created reaction.
         func (s *Subscribers) Register(ctx context.Context, bus events.Bus) (events.Subscription, error) {
                 return bus.WithContext(ctx).Subscribe(func(ctx context.Context, event events.UserCreated) error {
-                        return s.handler.HandleUserCreated(ctx, event.UserID, event.Email)
+                        return s.handler.HandleUserCreated(ctx, event.UserID)
                 })
         }
 
@@ -535,14 +533,12 @@ steps:
         type recordingUserCreatedHandler struct {
                 calls  int
                 userID string
-                email  string
         }
 
         // HandleUserCreated captures one delivery without introducing notification behavior into the subscriber test.
-        func (handler *recordingUserCreatedHandler) HandleUserCreated(_ context.Context, userID string, email string) error {
+        func (handler *recordingUserCreatedHandler) HandleUserCreated(_ context.Context, userID string) error {
                 handler.calls++
                 handler.userID = userID
-                handler.email = email
                 return nil
         }
 
@@ -578,7 +574,6 @@ steps:
 
                 if err := bus.WithContext(ctx).Publish(events.UserCreated{
                         UserID: "43",
-                        Email:  "grace@example.test",
                 }); err != nil {
                         t.Fatalf("publish user created: %v", err)
                 }
@@ -588,9 +583,6 @@ steps:
                 }
                 if received.userID != "43" {
                         t.Fatalf("handler user id = %q, want %q", received.userID, "43")
-                }
-                if received.email != "grace@example.test" {
-                        t.Fatalf("handler email = %q, want %q", received.email, "grace@example.test")
                 }
         }
 
