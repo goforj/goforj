@@ -546,9 +546,9 @@ func TestPublishDomainEventVerifierCalibration(t *testing.T) {
 		old:        `"users.created"`,
 		mutant:     `"users.wrong"`,
 		behavior: &evaluationBehaviorMutation{
-			path:       "internal/notifications/subscribers.go",
-			old:        "event.UserID, event.Email",
-			mutant:     "event.UserID, event.UserID",
+			path:       "internal/users/events.go",
+			old:        "UserID: user.ID",
+			mutant:     `UserID: ""`,
 			wantFailed: "domain-event-behavior",
 		},
 		alternates: []evaluationFileMutation{
@@ -628,8 +628,8 @@ func TestAddAppLifecycleHookVerifierCalibration(t *testing.T) {
 		wantCompile: true,
 		behavior: &evaluationBehaviorMutation{
 			path:       "app/lifecycle.go",
-			old:        `registry.invoices.Find(ctx, "readiness")`,
-			mutant:     `registry.invoices.Find(ctx, "wrong")`,
+			old:        `return fmt.Errorf("check invoice readiness: %w", err)`,
+			mutant:     `return nil`,
 			wantFailed: "application-readiness-behavior",
 		},
 		alternates: []evaluationFileMutation{
@@ -720,8 +720,8 @@ func TestAddMailWorkflowVerifierCalibration(t *testing.T) {
 		wantCompile: true,
 		behavior: &evaluationBehaviorMutation{
 			path:       "internal/invoices/receipt_mailer.go",
-			old:        `"Invoice " + invoice.ID`,
-			mutant:     `"Receipt " + invoice.ID`,
+			old:        `To(email, "")`,
+			mutant:     `To("billing@example.test", "")`,
 			wantFailed: "receipt-mail-behavior",
 		},
 		alternates: []evaluationFileMutation{
