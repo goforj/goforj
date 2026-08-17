@@ -1411,9 +1411,11 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 
 // evaluationTools is one command-owned immutable executable snapshot shared by job-private environments.
 type evaluationTools struct {
-	digest string
-	dir    string
-	mu     *sync.Mutex
+	digest         string
+	dir            string
+	goRoot         string
+	goRootIdentity os.FileInfo
+	mu             *sync.Mutex
 }
 
 // Executable returns one command-owned verifier executable from the closed tool snapshot.
@@ -1441,14 +1443,14 @@ func newEvaluationTools(directory, forjExecutable string) (evaluationTools, erro
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return evaluationTools{}, err
 	}
-	digest, err := installEvaluationTools(directory, forjExecutable)
+	digest, goRoot, goRootIdentity, err := installEvaluationTools(directory, forjExecutable)
 	if err != nil {
 		return evaluationTools{}, err
 	}
 	if err := os.Chmod(directory, 0o500); err != nil {
 		return evaluationTools{}, fmt.Errorf("seal evaluation tool snapshot: %w", err)
 	}
-	return evaluationTools{dir: directory, digest: digest, mu: &sync.Mutex{}}, nil
+	return evaluationTools{dir: directory, digest: digest, goRoot: goRoot, goRootIdentity: goRootIdentity, mu: &sync.Mutex{}}, nil
 }
 
 // Verify detects same-user mutations to the shared tool snapshot before they can contaminate another job.
@@ -1463,6 +1465,10 @@ func (tools evaluationTools) Verify() error {
 	}
 	if digest != tools.digest {
 		return evaluationCommandFatalError{cause: fmt.Errorf("evaluation tool snapshot changed during diagnostic execution")}
+	}
+	goRootIdentity, err := os.Lstat(tools.goRoot)
+	if err != nil || !goRootIdentity.IsDir() || goRootIdentity.Mode()&os.ModeSymlink != 0 || !os.SameFile(tools.goRootIdentity, goRootIdentity) {
+		return evaluationCommandFatalError{cause: fmt.Errorf("evaluation Go runtime changed during diagnostic execution")}
 	}
 	return nil
 }
@@ -1506,6 +1512,7 @@ func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]s
 		"GOPROXY":                 "https://proxy.golang.org,direct",
 		"GOSUMDB":                 "sum.golang.org",
 		"GOTOOLCHAIN":             "local",
+		"GOROOT":                  tools.goRoot,
 		"GOWORK":                  "off",
 		"HOME":                    home,
 		"GOTMPDIR":                temporary,
@@ -1533,34 +1540,64 @@ func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]s
 }
 
 // installEvaluationTools snapshots the small command surface agents need without exposing the supervisor's complete PATH.
-func installEvaluationTools(toolsDir, forjExecutable string) (string, error) {
+func installEvaluationTools(toolsDir, forjExecutable string) (string, string, os.FileInfo, error) {
 	hash := sha256.New()
 	goExecutable, err := exec.LookPath("go")
 	if err != nil {
-		return "", fmt.Errorf("resolve evaluation tool %q: %w", "go", err)
+		return "", "", nil, fmt.Errorf("resolve evaluation tool %q: %w", "go", err)
+	}
+	goRoot, goRootIdentity, err := resolveEvaluationGoRoot(goExecutable)
+	if err != nil {
+		return "", "", nil, err
 	}
 	goDigest, err := installEvaluationTool(toolsDir, "go", goExecutable)
 	if err != nil {
-		return "", fmt.Errorf("install evaluation tool %q: %w", "go", err)
+		return "", "", nil, fmt.Errorf("install evaluation tool %q: %w", "go", err)
 	}
 	fmt.Fprintf(hash, "go\x00%s\x00", goDigest)
 	forjDigest, err := installEvaluationTool(toolsDir, "forj", forjExecutable)
 	if err != nil {
-		return "", err
+		return "", "", nil, err
 	}
 	fmt.Fprintf(hash, "forj\x00%s\x00", forjDigest)
 	for _, name := range evaluationSupportToolNames() {
 		path, err := exec.LookPath(name)
 		if err != nil {
-			return "", fmt.Errorf("resolve evaluation tool %q: %w", name, err)
+			return "", "", nil, fmt.Errorf("resolve evaluation tool %q: %w", name, err)
 		}
 		digest, err := installEvaluationTool(toolsDir, name, path)
 		if err != nil {
-			return "", fmt.Errorf("install evaluation tool %q: %w", name, err)
+			return "", "", nil, fmt.Errorf("install evaluation tool %q: %w", name, err)
 		}
 		fmt.Fprintf(hash, "%s\x00%s\x00", name, digest)
 	}
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), goRoot, goRootIdentity, nil
+}
+
+// resolveEvaluationGoRoot binds the copied Go launcher to the host runtime tree it requires after PATH is sealed.
+func resolveEvaluationGoRoot(goExecutable string) (string, os.FileInfo, error) {
+	command := exec.Command(goExecutable, "env", "GOROOT")
+	command.Env = os.Environ()
+	body, err := command.Output()
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve evaluation Go runtime: %w", err)
+	}
+	configuredRoot := strings.TrimSpace(string(body))
+	if configuredRoot == "" {
+		return "", nil, fmt.Errorf("evaluation Go runtime path is empty")
+	}
+	root, err := filepath.Abs(configuredRoot)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve evaluation Go runtime path: %w", err)
+	}
+	identity, err := os.Lstat(root)
+	if err != nil || !identity.IsDir() || identity.Mode()&os.ModeSymlink != 0 {
+		if err != nil {
+			return "", nil, fmt.Errorf("inspect evaluation Go runtime: %w", err)
+		}
+		return "", nil, fmt.Errorf("evaluation Go runtime must be a directory without symlinks")
+	}
+	return root, identity, nil
 }
 
 // digestEvaluationTools recomputes the command snapshot identity without copying its executables again.
