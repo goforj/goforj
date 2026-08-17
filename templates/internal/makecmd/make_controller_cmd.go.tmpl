@@ -51,6 +51,9 @@ func (c *ControllerCmd) Run() error {
 	if c.Remove {
 		return c.remove(target)
 	}
+	if c.DryRun {
+		return fmt.Errorf("--dry-run is only supported with --remove")
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
