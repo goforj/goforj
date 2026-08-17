@@ -511,7 +511,7 @@ func TestAddCachedRepositoryVerifierCalibration(t *testing.T) {
 			mutant:     `cache.Set(cacheForRequest, "wrong:"+key, user, profileCacheTTL)`,
 			wantFailed: "cache-aside-behavior",
 		},
-		wantFailed: "profiles-cache-registration",
+		wantFailed: "profiles-cache-access",
 	})
 }
 
