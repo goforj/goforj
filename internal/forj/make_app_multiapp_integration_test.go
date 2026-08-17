@@ -44,6 +44,14 @@ func TestMakeAppMultiAppRuntimeSmoke(t *testing.T) {
 		{name: "billing", packagePath: "./cmd/billing"},
 		{name: "reporting", packagePath: "./cmd/reporting"},
 	})
+	runMakeAppSmokeBinary(t, projectDir, "billing", "maintenance:enable")
+	if _, err := os.Stat(filepath.Join(projectDir, "_data", "runtime", "billing", "maintenance.json")); err != nil {
+		t.Fatalf("named App maintenance marker missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "_data", "runtime", "app", "maintenance.json")); !os.IsNotExist(err) {
+		t.Fatalf("named App maintenance changed default App state: %v", err)
+	}
+	runMakeAppSmokeBinary(t, projectDir, "billing", "maintenance:disable")
 
 	apps := []multiAppRuntimeSpec{
 		{name: "app", httpPort: "3000", metricsPort: "10000", schedulerMetricsPort: "10001", workerMetricsPort: "10002"},

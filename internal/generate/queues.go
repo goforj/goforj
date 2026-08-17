@@ -405,24 +405,18 @@ import "github.com/goforj/queue"
 
 // Default returns the default queue instance derived from QUEUE_* configuration.
 func (m *Manager) Default() *queue.Queue {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	return m.defaultQueue
 }
 
 {{ range .Names }}
 // {{ .Method }} returns the "{{ .Queue }}" queue instance.
 func (m *Manager) {{ .Method }}() *queue.Queue {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	return m.{{ .Queue }}
 }
 {{ end }}
 
 // Instances returns the generated queue instances derived from QUEUE_* configuration.
 func (m *Manager) Instances() []Instance {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	instances := []Instance{
 		{Name: "default", queueName: m.defaultQueueName, Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
 	}
@@ -442,7 +436,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 {{- if .HasSQL }}
 	"os"
@@ -511,15 +504,11 @@ var queueRootKeys = []string{
 
 // Manager owns the queues and worker settings generated from the project's build contract.
 type Manager struct {
-	mu sync.RWMutex
 	defaultQueue *queue.Queue
 	defaultQueueName string
 	defaultWorkers int
 	ctx context.Context
 	inspects *inspects.Manager
-	observer queue.Observer
-	logger queue.Logger
-	handlers map[string]func(context.Context, queue.Message) error
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue
 	{{ .Queue }}QueueName string
@@ -630,14 +619,14 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 		{
 			Name: "queue_default",
 			Check: func(ctx context.Context) error {
-				return m.Default().Ready(ctx)
+				return m.defaultQueue.Ready(ctx)
 			},
 		},
 {{- range .Names }}
 		{
 			Name: "queue_{{ .Queue }}",
 			Check: func(ctx context.Context) error {
-				return m.{{ .Method }}().Ready(ctx)
+				return m.{{ .Queue }}.Ready(ctx)
 			},
 		},
 {{- end }}
@@ -647,47 +636,9 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 
 // Register binds a job handler to every generated queue so workers can consume it from any configured lane.
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
-	if strings.TrimSpace(jobType) == "" || fn == nil {
-		return
-	}
-	m.mu.Lock()
-	m.handlers[jobType] = fn
-	m.mu.Unlock()
 	for _, instance := range m.Instances() {
 		instance.Queue.Register(jobType, m.instrumentJobHandler(jobType, fn))
 	}
-}
-
-// Rebuild replaces drained queue runtimes and restores registered handlers so workers can resume after maintenance.
-func (m *Manager) Rebuild() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	observer := m.observer
-	logger := m.logger
-	inspectManager := m.inspects
-	handlers := make(map[string]func(context.Context, queue.Message) error, len(m.handlers))
-	for jobType, handler := range m.handlers {
-		handlers[jobType] = handler
-	}
-
-	next, err := newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger, inspectManager)
-	if err != nil {
-		return err
-	}
-	for jobType, handler := range handlers {
-		next.Register(jobType, handler)
-	}
-
-	m.defaultQueue = next.defaultQueue
-	m.defaultQueueName = next.defaultQueueName
-	m.defaultWorkers = next.defaultWorkers
-	m.handlers = next.handlers
-{{- range .Names }}
-	m.{{ .Queue }} = next.{{ .Queue }}
-	m.{{ .Queue }}QueueName = next.{{ .Queue }}QueueName
-	m.{{ .Queue }}Workers = next.{{ .Queue }}Workers
-{{- end }}
-	return nil
 }
 
 // instrumentJobHandler applies the shared source and inspect contract at every queue execution boundary.
@@ -713,60 +664,34 @@ func (m *Manager) instrumentJobHandler(jobType string, fn func(context.Context, 
 
 // Dispatch routes generated named resources through their own driver and physical queue configuration.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
-	m.mu.RLock()
-	defaultQueue := m.defaultQueue
-	defaultPhysicalQueue := m.defaultQueueName
-	dispatchContext := m.ctx
-	instances := []Instance{
-		{Name: "default", queueName: m.defaultQueueName, Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
-	}
-{{- range .Names }}
-	instances = append(instances, Instance{Name: "{{ .Queue }}", queueName: m.{{ .Queue }}QueueName, Queue: m.{{ .Queue }}, Workers: m.{{ .Queue }}Workers})
-{{- end }}
-	m.mu.RUnlock()
 	queueName := strings.TrimSpace(queue.DriverOptions(job).QueueName)
 	if queueName == "" || strings.EqualFold(queueName, defaultQueueName) {
-		queueName = strings.TrimSpace(defaultPhysicalQueue)
+		queueName = strings.TrimSpace(m.defaultQueueName)
 		if queueName == "" {
 			queueName = defaultQueueName
 		}
 		job = job.OnQueue(queueName)
-		recordQueuedJobPayload(dispatchContext, job)
-		return defaultQueue.Dispatch(job)
+		recordQueuedJobPayload(m.ctx, job)
+		return m.defaultQueue.Dispatch(job)
 	}
-	recordQueuedJobPayload(dispatchContext, job)
-	for _, instance := range instances {
+	recordQueuedJobPayload(m.ctx, job)
+	for _, instance := range m.Instances() {
 		if !instance.IsDefault && strings.EqualFold(instance.Name, queueName) {
 			return instance.Queue.Dispatch(job.OnQueue(instance.queueName))
 		}
 	}
-	return defaultQueue.Dispatch(job)
+	return m.defaultQueue.Dispatch(job)
 }
 
 // WithContext clones the manager so per-call context binding cannot mutate shared queue handles.
 func (m *Manager) WithContext(ctx context.Context) *Manager {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	handlers := make(map[string]func(context.Context, queue.Message) error, len(m.handlers))
-	for jobType, handler := range m.handlers {
-		handlers[jobType] = handler
-	}
-	clone := &Manager{
-		defaultQueue: m.defaultQueue.WithContext(ctx),
-		defaultQueueName: m.defaultQueueName,
-		defaultWorkers: m.defaultWorkers,
-		ctx: ctx,
-		inspects: m.inspects,
-		observer: m.observer,
-		logger: m.logger,
-		handlers: handlers,
-	}
+	clone := *m
+	clone.ctx = ctx
+	clone.defaultQueue = m.defaultQueue.WithContext(ctx)
 {{- range .Names }}
 	clone.{{ .Queue }} = m.{{ .Queue }}.WithContext(ctx)
-	clone.{{ .Queue }}QueueName = m.{{ .Queue }}QueueName
-	clone.{{ .Queue }}Workers = m.{{ .Queue }}Workers
 {{- end }}
-	return clone
+	return &clone
 }
 
 // newManagerFromEnv keeps default and named queues on the same scoped configuration path.
@@ -780,9 +705,6 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 		defaultQueueName: queueDefaultQueue(string(defaultQueueName), queueScope, queueScope),
 		defaultWorkers: queueWorkerCount(queueScope, queueScope),
 		inspects: inspectManager,
-		observer: observer,
-		logger: logger,
-		handlers: make(map[string]func(context.Context, queue.Message) error),
 	}
 
 {{- range .Names }}

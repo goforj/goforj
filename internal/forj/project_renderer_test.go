@@ -178,7 +178,7 @@ replace github.com/goforj/cache => ../cache
 
 	pending, skipped, err := coreModulesNeedingSync(goModPath, []string{
 		"github.com/goforj/web@v0.5.2",
-		"github.com/goforj/queue@v0.2.1",
+		"github.com/goforj/queue@v0.2.2-0.20260817000747-3b99da924c15",
 		"github.com/goforj/cache@" + coredeps.MustVersionFor("github.com/goforj/cache"),
 		"github.com/goforj/storage@" + coredeps.MustVersionFor("github.com/goforj/storage"),
 	})
@@ -187,7 +187,7 @@ replace github.com/goforj/cache => ../cache
 	}
 
 	want := []string{
-		"github.com/goforj/queue@v0.2.1",
+		"github.com/goforj/queue@v0.2.2-0.20260817000747-3b99da924c15",
 		"github.com/goforj/storage@" + coredeps.MustVersionFor("github.com/goforj/storage"),
 	}
 	if !reflect.DeepEqual(pending, want) {
@@ -592,6 +592,111 @@ func TestRenderWebUIKeepsFrontendInsideTheDefaultApp(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "cmd", "app", "frontend", "dist", "index.html")); err != nil {
 		t.Fatalf("default App frontend placeholder missing: %v", err)
+	}
+}
+
+// TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands verifies existing default and named Apps gain the framework command surface.
+func TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands(t *testing.T) {
+	root := t.TempDir()
+	config := &project.Config{
+		ProjectName:  "MaintenanceUpgrade",
+		GoModuleName: "example.com/maintenance-upgrade",
+		Render: project.RenderConfig{
+			Components: project.Components{WebAPI: true},
+		},
+		Apps: map[string]project.AppConfig{
+			"billing": {Components: project.Components{Jobs: true}},
+		},
+	}
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), data, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	renderer := unitProjectRenderer(t)
+	if err := renderer.Render(ComponentRenderInput{renderAll: true, root: root}); err != nil {
+		t.Fatalf("initial render: %v", err)
+	}
+	if err := renderer.renderApp(project.DefaultNamedApp("billing")); err != nil {
+		t.Fatalf("render named App fixture: %v", err)
+	}
+	commandPaths := []string{
+		filepath.Join(root, "app", "commands.go"),
+		filepath.Join(root, "app", "billing", "commands.go"),
+	}
+	for _, path := range commandPaths {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, append(source, []byte("\n// user customization\n")...), 0o644); err != nil {
+			t.Fatalf("customize %s: %v", path, err)
+		}
+	}
+	if err := renderer.Render(ComponentRenderInput{renderAll: true, root: root}); err != nil {
+		t.Fatalf("upgrade render: %v", err)
+	}
+	for _, path := range commandPaths {
+		assertProjectRendererFileContains(t, path, "// user customization")
+	}
+	for _, path := range []string{
+		filepath.Join(root, "app", "root_cmd.go"),
+		filepath.Join(root, "app", "billing", "root_cmd.go"),
+	} {
+		assertProjectRendererFileContains(t, path,
+			`/internal/maintenance"`,
+			"MaintenanceEnableCmd  maintenance.EnableCmd",
+			"MaintenanceDisableCmd maintenance.DisableCmd",
+		)
+	}
+}
+
+// TestExplicitRuntimeComponentRenderIncludesMaintenancePrerequisite verifies every incremental runtime path receives the shared package.
+func TestExplicitRuntimeComponentRenderIncludesMaintenancePrerequisite(t *testing.T) {
+	tests := []struct {
+		name       string
+		components project.Components
+	}{
+		{name: "web api", components: project.Components{WebAPI: true}},
+		{name: "web ui", components: project.Components{WebUI: true}},
+		{name: "jobs", components: project.Components{Jobs: true}},
+		{name: "scheduler", components: project.Components{Scheduler: true}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			config := &project.Config{
+				ProjectName:  "MaintenanceIncremental",
+				GoModuleName: "example.com/maintenance-incremental",
+				Render: project.RenderConfig{
+					Components: project.Components{CLI: true},
+				},
+			}
+			data, err := yaml.Marshal(config)
+			if err != nil {
+				t.Fatalf("marshal config: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), data, 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			renderer := unitProjectRenderer(t)
+			if err := renderer.Render(ComponentRenderInput{renderAll: true, root: root}); err != nil {
+				t.Fatalf("render base project: %v", err)
+			}
+			if err := renderer.Render(ComponentRenderInput{components: test.components, root: root}); err != nil {
+				t.Fatalf("render explicit component: %v", err)
+			}
+			for _, relativePath := range []string{
+				filepath.Join("internal", "maintenance", "state.go"),
+				filepath.Join("internal", "maintenance", "cmd.go"),
+			} {
+				if _, err := os.Stat(filepath.Join(root, relativePath)); err != nil {
+					t.Fatalf("maintenance prerequisite %s missing: %v", relativePath, err)
+				}
+			}
+		})
 	}
 }
 

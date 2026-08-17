@@ -36,6 +36,36 @@ type ServerConfig struct {
 const lighthouseAuthCookie = "lighthouse_token"
 const lighthouseRouteBase = "/lighthouse"
 
+// RouteBase returns the framework-owned HTTP mount used by Lighthouse and maintenance routing.
+func RouteBase() string {
+	return lighthouseRouteBase
+}
+
+// MaintenanceRouteAllowed reports whether a request targets a framework-owned Lighthouse route.
+func MaintenanceRouteAllowed(method, path string) bool {
+	base := strings.TrimRight(lighthouseRouteBase, "/")
+	if !strings.HasPrefix(path, base) {
+		return false
+	}
+	relative := strings.TrimPrefix(path, base)
+	if method == http.MethodGet || method == http.MethodHead {
+		switch relative {
+		case "", "/", "/login", "/routes", "/schedules", "/queues", "/cache", "/storage", "/benchmarks", "/devwatch", "/config", "/commands", "/env", "/inspect/requests", "/inspect/commands", "/inspect/jobs", "/inspect/schedule", "/logs", "/components", "/api/agents", "/api/local", "/api/storage/download", "/api/env", "/api/goforj", "/api/about", "/api/inspect", "/ws/agent", "/ws/console", "/ws/devwatch":
+			return true
+		}
+		return strings.HasPrefix(relative, "/assets/") || strings.HasPrefix(relative, "/auth/dev/") || strings.HasPrefix(relative, "/api/inspect/")
+	}
+	if method != http.MethodPost {
+		return false
+	}
+	switch relative {
+	case "/auth", "/auth/logout", "/auth/dev-session", "/api/env", "/api/editor", "/api/editor/symbols", "/api/goforj":
+		return true
+	default:
+		return false
+	}
+}
+
 var lighthouseAuthLogMu sync.Mutex
 var lighthouseAuthLastLogAt = map[string]time.Time{}
 var lighthouseDevSessionMu sync.Mutex

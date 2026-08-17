@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/web"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/maintenance"
 {{- if .ProjectComponents.Metrics }}
@@ -64,14 +65,67 @@ func TestMaintenanceModeKeepsOperationalRoutesReachable(t *testing.T) {
 	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
 	server := newMaintenanceTestServer(t)
 
-	for _, path := range []string{"/-/health", "/-/ready", "/metrics", "/lighthouse/ws/agent"} {
-		t.Run(strings.ReplaceAll(path, "/", "_"), func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, path, nil)
+	checks := []struct {
+		path   string
+		status int
+	}{
+		{path: "/-/health", status: http.StatusOK},
+		{path: "/-/ready", status: http.StatusOK},
+		{path: "/lighthouse", status: http.StatusOK},
+{{- if .ProjectComponents.Metrics }}
+		{path: "/metrics", status: http.StatusOK},
+{{- end }}
+	}
+	for _, check := range checks {
+		t.Run(strings.ReplaceAll(check.path, "/", "_"), func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, check.path, nil)
 			recorder := httptest.NewRecorder()
 			server.ServeHTTP(recorder, request)
-			assert.NotEqual(t, http.StatusServiceUnavailable, recorder.Code)
+			assert.Equal(t, check.status, recorder.Code)
 		})
 	}
+}
+
+// TestMaintenanceModeRejectsOperationalLookalikes verifies only mounted framework surfaces bypass the application gate.
+func TestMaintenanceModeRejectsOperationalLookalikes(t *testing.T) {
+	t.Setenv("APP_ENV", "testing")
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_ENABLED", "false")
+	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+	groups := []web.RouteGroup{
+		web.NewRouteGroup("/lighthouse", []web.Route{
+			web.NewRoute(http.MethodGet, "/webhook", func(r web.Context) error {
+				return r.NoContent(http.StatusNoContent)
+			}),
+		}),
+	{{- if not .ProjectComponents.Metrics }}
+		web.NewRouteGroup("", []web.Route{
+			web.NewRoute(http.MethodGet, "/metrics", func(r web.Context) error {
+				return r.NoContent(http.StatusNoContent)
+			}),
+		}),
+	{{- end }}
+	}
+	server := newMaintenanceTestServerWithGroups(t, groups, nil)
+
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/lighthouse/webhook", nil),
+		httptest.NewRequest(http.MethodPost, "/-/ready", nil),
+		httptest.NewRequest(http.MethodPost, "/metrics", nil),
+	{{- if not .ProjectComponents.Metrics }}
+		httptest.NewRequest(http.MethodGet, "/metrics", nil),
+	{{- end }}
+	} {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, request)
+		assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	}
+
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	server = newMaintenanceTestServerWithGroups(t, groups, lighthouse.NewHub())
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/lighthouse/webhook", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }
 
 // TestMaintenanceModeDisabledPreservesApplicationTraffic verifies the default environment adds no availability gate.
@@ -101,6 +155,42 @@ func TestMaintenanceModeDisabledPreservesApplicationTraffic(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, recorder.Code)
 }
 
+// TestMaintenanceModeLetsInflightRequestsFinish verifies enabling maintenance gates admission without canceling accepted work.
+func TestMaintenanceModeLetsInflightRequestsFinish(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_ENV", "testing")
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+	t.Setenv("FORJ_APP", "app")
+	t.Cleanup(func() { _ = maintenance.Disable() })
+	started := make(chan struct{})
+	release := make(chan struct{})
+	groups := []web.RouteGroup{
+		web.NewRouteGroup("/api/v1", []web.Route{
+			web.NewRoute(http.MethodGet, "/blocking", func(r web.Context) error {
+				close(started)
+				<-release
+				return r.NoContent(http.StatusNoContent)
+			}),
+		}),
+	}
+	server := newMaintenanceTestServerWithGroups(t, groups, lighthouse.NewHub())
+	result := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/blocking", nil))
+		result <- recorder.Code
+	}()
+	<-started
+	require.NoError(t, maintenance.Enable())
+	close(release)
+	assert.Equal(t, http.StatusNoContent, <-result)
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/blocking", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+}
+
 // newMaintenanceTestServer builds the real adapter pipeline so middleware order and route bypasses remain covered.
 func newMaintenanceTestServer(t *testing.T) http.Handler {
 	t.Helper()
@@ -111,12 +201,19 @@ func newMaintenanceTestServer(t *testing.T) http.Handler {
 			}),
 		}),
 	}
+	return newMaintenanceTestServerWithGroups(t, groups, lighthouse.NewHub())
+}
+
+// newMaintenanceTestServerWithGroups builds a maintenance server with explicit application routes and operator dependencies.
+func newMaintenanceTestServerWithGroups(t *testing.T, groups []web.RouteGroup, consoleHub *lighthouse.Hub) http.Handler {
+	t.Helper()
+	require.NoError(t, maintenance.Disable())
 	server := NewServer(
 		logger.NewSilentLogger(),
 		runtime.NewTimeouts(),
 		groups,
 		[]ReadinessCheck{},
-		nil,
+		consoleHub,
 {{- if .ProjectComponents.Storage }}
 		nil,
 {{- end }}
