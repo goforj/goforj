@@ -1,6 +1,9 @@
 package maintenance
 
 import (
+	{{- if .ProjectComponents.Cache }}
+	"strings"
+	{{- end }}
 	"sync"
 	"testing"
 
@@ -100,6 +103,7 @@ func TestNewStateRejectsUnknownDriver(t *testing.T) {
 {{- if .ProjectComponents.Cache }}
 // TestCacheStateUsesGeneratedNamedStore verifies the maintenance store is selected through the cache manager.
 func TestCacheStateUsesGeneratedNamedStore(t *testing.T) {
+	t.Setenv("APP_KEY", "cache-state-test-key")
 	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
 	t.Setenv("APP_MAINTENANCE_STORE", "default")
 	t.Setenv("CACHE_DRIVER", "memory")
@@ -118,6 +122,7 @@ func TestCacheStateUsesGeneratedNamedStore(t *testing.T) {
 
 // TestCacheStateRejectsUnknownNamedStore prevents silent fallback to the default cache resource.
 func TestCacheStateRejectsUnknownNamedStore(t *testing.T) {
+	t.Setenv("APP_KEY", "cache-state-test-key")
 	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
 	t.Setenv("APP_MAINTENANCE_STORE", "missing")
 	if _, err := newTestCacheStateResult(t); err == nil {
@@ -125,8 +130,37 @@ func TestCacheStateRejectsUnknownNamedStore(t *testing.T) {
 	}
 }
 
+// TestCacheStateSelectsGeneratedNamedStore verifies configuration resolves through the injected manager rather than constructing another cache graph.
+func TestCacheStateSelectsGeneratedNamedStore(t *testing.T) {
+	t.Setenv("APP_KEY", "cache-state-test-key")
+	manager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	var storeName string
+	for _, name := range manager.Names() {
+		if name != "default" {
+			storeName = name
+			break
+		}
+	}
+	if storeName == "" {
+		t.Skip("rendered cache contract has no named store")
+	}
+	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
+	t.Setenv("APP_MAINTENANCE_STORE", storeName)
+	state, err := NewStateWithCacheManager(manager)
+	if err != nil {
+		t.Fatalf("NewStateWithCacheManager() error = %v", err)
+	}
+	if state.store != manager.Named(storeName) {
+		t.Fatalf("maintenance store %q did not come from the injected manager", storeName)
+	}
+}
+
 // TestCacheStateSharesGeneratedStore verifies separate runtimes observe one configured cache backend.
 func TestCacheStateSharesGeneratedStore(t *testing.T) {
+	t.Setenv("APP_KEY", "cache-state-test-key")
 	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
 	t.Setenv("APP_MAINTENANCE_STORE", "default")
 	t.Setenv("CACHE_DRIVER", "file")
@@ -142,6 +176,35 @@ func TestCacheStateSharesGeneratedStore(t *testing.T) {
 	}
 	if err := second.Disable(); err != nil {
 		t.Fatalf("Disable() error = %v", err)
+	}
+}
+
+// TestCacheStateNamespacesDeployments prevents one environment from changing another environment on shared infrastructure.
+func TestCacheStateNamespacesDeployments(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
+	t.Setenv("APP_MAINTENANCE_STORE", "default")
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("APP_KEY", "shared-app-key")
+	t.Setenv("FORJ_APP", "app")
+	manager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Setenv("APP_ENV", "staging")
+	staging, err := NewStateWithCacheManager(manager)
+	if err != nil {
+		t.Fatalf("staging NewStateWithCacheManager() error = %v", err)
+	}
+	t.Setenv("APP_ENV", "production")
+	production, err := NewStateWithCacheManager(manager)
+	if err != nil {
+		t.Fatalf("production NewStateWithCacheManager() error = %v", err)
+	}
+	if staging.cacheKey() == production.cacheKey() {
+		t.Fatalf("staging and production share maintenance key %q", staging.cacheKey())
+	}
+	if strings.Contains(staging.cacheKey(), "shared-app-key") {
+		t.Fatal("maintenance cache key exposed APP_KEY")
 	}
 }
 

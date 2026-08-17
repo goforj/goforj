@@ -402,7 +402,10 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 
 	workerCmd := exec.CommandContext(ctx, binPath, "queue:work", "--metrics-port", metricsPort)
 	workerCmd.Dir = projectDir
-	workerCmd.Env = testkit.IntegrationProcessEnv(t, queueEnv)
+	// Web maintenance remains enabled throughout the successful job assertion to protect the HTTP-only lifecycle boundary.
+	workerCmd.Env = testkit.IntegrationProcessEnv(t, mergeEnv(queueEnv, map[string]string{
+		"APP_MAINTENANCE_ENABLED": "true",
+	}))
 	worker := &procHandle{
 		name:   "jobs-worker",
 		cmd:    workerCmd,
@@ -487,7 +490,9 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 
 	schedulerCmd := exec.CommandContext(ctx, binPath, "schedule:run", "--metrics-port", schedulerPort)
 	schedulerCmd.Dir = projectDir
+	// A scheduled launch during web maintenance proves availability policy does not pause the scheduler runtime.
 	schedulerCmd.Env = testkit.IntegrationProcessEnv(t, mergeEnv(invalidQueueEnv, map[string]string{
+		"APP_MAINTENANCE_ENABLED":       "true",
 		"MONITOR_POLL_INTERVAL_SECONDS": "1",
 	}))
 	schedulerProc := &procHandle{

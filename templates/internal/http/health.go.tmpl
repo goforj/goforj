@@ -22,13 +22,18 @@ func (s *Server) healthRoutes() []web.RouteGroup {
 			"",
 			[]web.Route{
 				web.NewRoute(http.MethodGet, "/-/health", s.healthStatus),
+				web.NewRoute(http.MethodHead, "/-/health", s.healthStatus),
 				web.NewRoute(http.MethodGet, "/-/ready", s.readinessStatus),
+				web.NewRoute(http.MethodHead, "/-/ready", s.readinessStatus),
 			},
 		),
 	}
 }
 
 func (s *Server) healthStatus(r web.Context) error {
+	if r.Method() == http.MethodHead {
+		return r.NoContent(http.StatusOK)
+	}
 	// The hot health path returns a stable payload, so keep it allocation-light
 	// by reusing a precomputed JSON body instead of rebuilding a map each time.
 	return r.Blob(http.StatusOK, "application/json; charset=UTF-8", healthStatusOKJSON)
@@ -37,6 +42,9 @@ func (s *Server) healthStatus(r web.Context) error {
 func (s *Server) readinessStatus(r web.Context) error {
 	detailed := diagnosticsAuthorized(r)
 	statusCode, payload := s.readinessResponse(r.Context(), detailed, detailed)
+	if r.Method() == http.MethodHead {
+		return r.NoContent(statusCode)
+	}
 	return r.JSON(statusCode, payload)
 }
 

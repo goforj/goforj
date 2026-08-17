@@ -18,12 +18,17 @@ func (s *Server) metricsRoutes() []web.RouteGroup {
 			"",
 			[]web.Route{
 				web.NewRoute(http.MethodGet, "/metrics", s.metricsStatus),
+				web.NewRoute(http.MethodHead, "/metrics", s.metricsStatus),
 			},
 		),
 	}
 }
 
 func (s *Server) metricsStatus(r web.Context) error {
+	if r.Method() == http.MethodHead {
+		r.ResponseWriter().Header().Set("Content-Type", gmetrics.PrometheusContentType)
+		return r.NoContent(http.StatusOK)
+	}
 	var body bytes.Buffer
 	if err := gmetrics.EncodePrometheus(&body, s.metrics.Registry().Snapshot()); err != nil {
 		return r.Text(http.StatusInternalServerError, err.Error())

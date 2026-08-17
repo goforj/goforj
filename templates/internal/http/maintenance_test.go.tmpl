@@ -58,6 +58,22 @@ func TestMaintenanceModeHeadResponseOmitsBody(t *testing.T) {
 	assert.Empty(t, recorder.Body.String())
 }
 
+// TestMaintenanceModeGatesCORSPreflight verifies CORS cannot answer application traffic before maintenance admission.
+func TestMaintenanceModeGatesCORSPreflight(t *testing.T) {
+	t.Setenv("APP_ENV", "testing")
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	t.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+	server := newMaintenanceTestServer(t)
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/hello", nil)
+	request.Header.Set("Origin", "https://example.com")
+	request.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+}
+
 // TestMaintenanceModeKeepsOperationalRoutesReachable verifies planned maintenance does not masquerade as process failure.
 func TestMaintenanceModeKeepsOperationalRoutesReachable(t *testing.T) {
 	t.Setenv("APP_ENV", "testing")
@@ -77,12 +93,21 @@ func TestMaintenanceModeKeepsOperationalRoutesReachable(t *testing.T) {
 {{- end }}
 	}
 	for _, check := range checks {
-		t.Run(strings.ReplaceAll(check.path, "/", "_"), func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, check.path, nil)
-			recorder := httptest.NewRecorder()
-			server.ServeHTTP(recorder, request)
-			assert.Equal(t, check.status, recorder.Code)
-		})
+		methods := []string{http.MethodGet}
+		if check.path == "/-/health" || check.path == "/-/ready" || check.path == "/metrics" {
+			methods = append(methods, http.MethodHead)
+		}
+		for _, method := range methods {
+			t.Run(method+strings.ReplaceAll(check.path, "/", "_"), func(t *testing.T) {
+				request := httptest.NewRequest(method, check.path, nil)
+				recorder := httptest.NewRecorder()
+				server.ServeHTTP(recorder, request)
+				assert.Equal(t, check.status, recorder.Code)
+				if method == http.MethodHead {
+					assert.Empty(t, recorder.Body.String())
+				}
+			})
+		}
 	}
 }
 
@@ -175,13 +200,17 @@ func TestMaintenanceControlRequiresDiagnosticToken(t *testing.T) {
 func TestMaintenanceControlHidesFromNonLoopbackCallers(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	server := newMaintenanceTestServer(t)
-	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/enable", nil)
-	request.RemoteAddr = "192.0.2.10:32100"
-	request.Header.Set("Authorization", "Bearer maintenance-test-token")
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusNotFound, recorder.Code)
-	require.Empty(t, recorder.Body.String())
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPost, http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			request := httptest.NewRequest(method, "/-/maintenance/enable", nil)
+			request.RemoteAddr = "192.0.2.10:32100"
+			request.Header.Set("Authorization", "Bearer maintenance-test-token")
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			require.Equal(t, http.StatusNotFound, recorder.Code)
+			require.Empty(t, recorder.Body.String())
+		})
+	}
 }
 
 // TestMaintenanceControlDoesNotBypassMaintenanceForNonLoopbackCallers prevents the hidden route from revealing itself while traffic is gated.

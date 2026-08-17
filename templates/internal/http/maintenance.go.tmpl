@@ -64,7 +64,7 @@ func maintenanceHTML(appName string) []byte {
 func (s *Server) maintenanceMode() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if maintenanceControlRequest(r) && !maintenanceControlLocal(r) {
+			if maintenanceControlPath(r) && !maintenanceControlLocal(r) {
 				return r.NoContent(http.StatusNotFound)
 			}
 			if s.maintenancePathAllowed(r) {
@@ -79,13 +79,16 @@ func (s *Server) maintenanceMode() web.Middleware {
 	}
 }
 
-// maintenanceControlRequest recognizes only the two framework-owned mutation routes.
+// maintenanceControlPath recognizes the exact control paths before router method handling can reveal them.
+func maintenanceControlPath(r web.Context) bool {
+	request := r.Request()
+	return request.URL.Path == "/-/maintenance/enable" || request.URL.Path == "/-/maintenance/disable"
+}
+
+// maintenanceControlRequest restricts mutation routing to the CLI's POST contract.
 func maintenanceControlRequest(r web.Context) bool {
 	request := r.Request()
-	if request == nil || request.URL == nil || request.Method != http.MethodPost {
-		return false
-	}
-	return request.URL.Path == "/-/maintenance/enable" || request.URL.Path == "/-/maintenance/disable"
+	return maintenanceControlPath(r) && request.Method == http.MethodPost
 }
 
 // maintenanceRoutes exposes the authenticated control plane used by the generated CLI commands.
@@ -139,9 +142,6 @@ func (s *Server) disableMaintenance(r web.Context) error {
 // maintenanceControlLocal confines availability mutations to an operator inside the runtime network namespace.
 func maintenanceControlLocal(r web.Context) bool {
 	request := r.Request()
-	if request == nil {
-		return false
-	}
 	host, _, err := net.SplitHostPort(request.RemoteAddr)
 	if err != nil {
 		return false
@@ -153,9 +153,6 @@ func maintenanceControlLocal(r web.Context) bool {
 // maintenancePathAllowed keeps mounted operational surfaces observable without exempting application-owned lookalikes.
 func (s *Server) maintenancePathAllowed(r web.Context) bool {
 	request := r.Request()
-	if request == nil || request.URL == nil {
-		return false
-	}
 	path := request.URL.Path
 	switch path {
 	case "/-/health", "/-/ready":
@@ -203,12 +200,9 @@ func (s *Server) maintenanceResponse(r web.Context) error {
 
 // maintenanceWantsJSON identifies API paths first and honors explicit JSON clients elsewhere.
 func maintenanceWantsJSON(r web.Context) bool {
-	request := r.Request()
-	if request != nil && request.URL != nil {
-		path := request.URL.Path
-		if path == "/api" || strings.HasPrefix(path, "/api/") {
-			return true
-		}
+	path := r.Request().URL.Path
+	if path == "/api" || strings.HasPrefix(path, "/api/") {
+		return true
 	}
 	return strings.Contains(strings.ToLower(r.Header("Accept")), "application/json")
 }
