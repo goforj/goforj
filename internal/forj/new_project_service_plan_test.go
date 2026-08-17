@@ -116,7 +116,13 @@ func TestPlanNewProjectServiceTasksAddsPostgresWait(t *testing.T) {
 	if len(tasks.Pre) != 2 {
 		t.Fatalf("pre task count = %d, want Compose and Postgres wait", len(tasks.Pre))
 	}
-	if tasks.Pre[1].Name != "Waiting for Database to be ready" || !containsAllNewProjectServiceCommandFragments(tasks.Pre[1].Cmd, "exec -T postgres", "pg_isready") {
+	if tasks.Pre[1].Name != "Waiting for Database to be ready" || !containsAllNewProjectServiceCommandFragments(
+		tasks.Pre[1].Cmd,
+		"exec -T postgres",
+		`export PGPASSWORD="$POSTGRES_PASSWORD"`,
+		"pg_isready",
+		"psql",
+	) {
 		t.Fatalf("Postgres wait task = %#v", tasks.Pre[1])
 	}
 }

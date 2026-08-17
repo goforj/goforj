@@ -851,6 +851,7 @@ func TestCreateDatabaseScriptsIncludeAllDatabases(t *testing.T) {
 
 	postgresScript := postgresCreateDatabasesScript([]string{"app", "reporting"})
 	for _, want := range []string{
+		`export PGPASSWORD="$POSTGRES_PASSWORD"`,
 		`pg_isready`,
 		`for db in app reporting`,
 		`CREATE DATABASE \"$db\";`,
