@@ -4,6 +4,10 @@ title: Reports Generate Job
 description: Dispatch reports:generate work from a users.created subscriber and process it with a queue worker.
 depends_on:
   - users-created-event
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module

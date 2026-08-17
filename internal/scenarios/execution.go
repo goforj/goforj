@@ -47,8 +47,8 @@ const scenarioCommandTimeout = 3 * time.Minute
 
 const scenarioCommandOutputLimit = 1 << 20
 
-var createScenarioToolRoot = func() (string, error) {
-	return os.MkdirTemp("", "forj-scenario-tools-")
+var createScenarioToolRoot = func(parent string) (string, error) {
+	return os.MkdirTemp(parent, ".forj-scenario-tools-")
 }
 
 // runScenario executes one selected scenario against the same validated catalog used to select it.
@@ -83,7 +83,7 @@ func runScenario(options ValidateOptions, catalog scenarioCatalog, spec Scenario
 		return workspace.cleanupAfter(err)
 	}
 	console.Actionf("scenario %s", spec.ID)
-	runErr := workspace.cleanupAfter(execution.run(plan))
+	runErr := execution.workspace.cleanupAfter(execution.run(plan))
 	if options.Keep {
 		console.Infof("scenario workdir: %s", workspace.root)
 	}
@@ -542,7 +542,7 @@ func (execution scenarioExecution) snapshotTools() (scenarioExecution, error) {
 	if err := execution.contextErr(); err != nil {
 		return scenarioExecution{}, err
 	}
-	root, err := createScenarioToolRoot()
+	root, err := createScenarioToolRoot(filepath.Dir(execution.workspace.root))
 	if err != nil {
 		return scenarioExecution{}, fmt.Errorf("create scenario tool root: %w", err)
 	}

@@ -4,6 +4,10 @@ title: Cached User Profile
 description: Add a repository and named cache resource to the JSON API route scenario.
 depends_on:
   - json-api-route
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module

@@ -21,38 +21,50 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestPreparerMaterializesInvoiceStartingState verifies the real CLI reaches a healthy target-free Project.
-func TestPreparerMaterializesInvoiceStartingState(t *testing.T) {
-	request := eval.PreparationRequest{
-		ScenarioID:      "invoice-http-route",
-		DestinationRoot: t.TempDir(),
-		ForjExecutable:  testkit.EnsureIntegrationForjBinary(t),
-		OrchestrationID: "integration-01",
-		Environment:     testkit.ProcessGoEnv("", nil),
-	}
-	preparer := Preparer{}
-	plan, err := preparer.Resolve(context.Background(), request)
+// TestPreparerMaterializesEveryPromotedStartingState verifies every promoted fixture satisfies its declared pre-target contract without invoking target checks.
+func TestPreparerMaterializesEveryPromotedStartingState(t *testing.T) {
+	ids, err := eval.PromotedEvaluationIDs("")
 	if err != nil {
-		t.Fatalf("Resolve(): %v", err)
+		t.Fatalf("PromotedEvaluationIDs(): %v", err)
 	}
-	project, err := preparer.Prepare(context.Background(), request, plan)
-	if err != nil {
-		t.Fatalf("Prepare(): %v", err)
-	}
-	root := project.Result().ProjectRoot
-	t.Cleanup(func() {
-		if err := project.Close(context.Background()); err != nil {
-			t.Fatalf("Close(): %v", err)
-		}
-	})
-	if project.Result().BaselineTree == "" || project.Result().ForjDigest == "" {
-		t.Fatalf("preparation result = %#v", project.Result())
-	}
-	if _, err := os.Stat(filepath.Join(root, "internal", "invoices", "service.go")); err != nil {
-		t.Fatalf("invoice service missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "internal", "invoices", "controller.go")); !os.IsNotExist(err) {
-		t.Fatalf("target controller leaked into preparation: %v", err)
+	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
+	environment := testkit.ProcessGoEnv("", nil)
+	for _, id := range ids {
+		t.Run(id, func(t *testing.T) {
+			definition, err := eval.LoadPromotedDefinition(id)
+			if err != nil {
+				t.Fatalf("LoadPromotedDefinition(): %v", err)
+			}
+			request := eval.PreparationRequest{
+				ScenarioID:      definition.ProjectScenario,
+				DestinationRoot: filepath.Join(t.TempDir(), "project"),
+				ForjExecutable:  forjExecutable,
+				OrchestrationID: "integration-" + id,
+				Environment:     environment,
+			}
+			preparer := Preparer{}
+			plan, err := preparer.Resolve(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Resolve(): %v", err)
+			}
+			if !plan.TargetOmitted {
+				t.Fatalf("plan includes target work: %#v", plan)
+			}
+			project, err := preparer.Prepare(context.Background(), request, plan)
+			if err != nil {
+				t.Fatalf("Prepare(): %v", err)
+			}
+			t.Cleanup(func() { _ = project.Close(context.Background()) })
+			if project.Result().BaselineTree == "" || project.Result().ForjDigest == "" {
+				t.Fatalf("preparation result = %#v", project.Result())
+			}
+			if id == "add-http-controller" {
+				controller := filepath.Join(project.Result().ProjectRoot, "internal", "invoices", "controller.go")
+				if _, err := os.Stat(controller); !os.IsNotExist(err) {
+					t.Fatalf("target controller leaked into preparation: %v", err)
+				}
+			}
+		})
 	}
 }
 
@@ -328,6 +340,7 @@ func TestInvoiceHTTPTransportVerifierCalibration(t *testing.T) {
 // prepareInvoiceHTTPVerifierFixture builds one real scenario per top-level calibration so the integration runner can shard each family independently.
 func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture {
 	t.Helper()
+	t.Parallel()
 	workRoot := t.TempDir()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	environment := testkit.IntegrationGoProcessEnv(t, nil)
@@ -359,16 +372,17 @@ func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture 
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
 type majorSurfaceVerifierCase struct {
-	evaluation  string
-	scenario    string
-	path        string
-	old         string
-	mutant      string
-	additional  []evaluationMutation
-	behavior    *evaluationBehaviorMutation
-	alternates  []evaluationFileMutation
-	wantFailed  string
-	wantCompile bool
+	evaluation           string
+	scenario             string
+	path                 string
+	old                  string
+	mutant               string
+	additional           []evaluationMutation
+	behavior             *evaluationBehaviorMutation
+	alternates           []evaluationFileMutation
+	disconnectedProvider string
+	wantFailed           string
+	wantCompile          bool
 }
 
 // evaluationBehaviorMutation preserves structural evidence while violating the supervisor-owned runtime oracle.
@@ -512,7 +526,8 @@ func TestAddNamedResourceVerifierCalibration(t *testing.T) {
 			{path: "internal/invoices/report_dispatcher.go", old: "ReportDispatcher", replacement: "Dispatcher"},
 			{path: "app/wire/inject_services_app.go", old: "NewReportDispatcher", replacement: "NewDispatcher"},
 		},
-		wantFailed: "named-queue-injection",
+		disconnectedProvider: "invoices.NewService",
+		wantFailed:           "named-queue-injection",
 	})
 }
 
@@ -528,7 +543,8 @@ func TestAddNamedCacheVerifierCalibration(t *testing.T) {
 			{path: "internal/invoices/profile_cache.go", old: "ProfileCache", replacement: "Cache"},
 			{path: "app/wire/inject_services_app.go", old: "NewProfileCache", replacement: "NewCache"},
 		},
-		wantFailed: "named-cache-injection",
+		disconnectedProvider: "invoices.NewService",
+		wantFailed:           "named-cache-injection",
 	})
 }
 
@@ -544,7 +560,8 @@ func TestAddNamedStorageVerifierCalibration(t *testing.T) {
 			{path: "internal/invoices/avatar_storage.go", old: "AvatarStorage", replacement: "Storage"},
 			{path: "app/wire/inject_services_app.go", old: "NewAvatarStorage", replacement: "NewStorage"},
 		},
-		wantFailed: "named-storage-injection",
+		disconnectedProvider: "invoices.NewService",
+		wantFailed:           "named-storage-injection",
 	})
 }
 
@@ -602,6 +619,18 @@ func TestRepairWireProviderVerifierCalibration(t *testing.T) {
 	})
 }
 
+// TestRuntimeObservabilityVerifierCalibration proves a repair enables the inspect manager used by Lighthouse.
+func TestRuntimeObservabilityVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "runtime-observability",
+		scenario:   "runtime-observability",
+		path:       ".env.local",
+		old:        "LIGHTHOUSE_INSPECT_ENABLED=true",
+		mutant:     "LIGHTHOUSE_INSPECT_ENABLED=0",
+		wantFailed: "local-inspect-capture-behavior",
+	})
+}
+
 // TestBuildJSONAPIFeatureVerifierCalibration proves the complete API contract rejects lookup detached from request cancellation.
 func TestBuildJSONAPIFeatureVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
@@ -653,8 +682,8 @@ func TestAddUploadWorkflowVerifierCalibration(t *testing.T) {
 		mutant:     "manager.Default()",
 		behavior: &evaluationBehaviorMutation{
 			path:       "internal/uploads/service.go",
-			old:        "Size:        len(body),",
-			mutant:     "Size:        len(body) + 1,",
+			old:        "s.disk.WithContext(ctx).Put(storedPath, body)",
+			mutant:     "func() error { return nil }()",
 			wantFailed: "upload-workflow-behavior",
 		},
 		alternates: []evaluationFileMutation{
@@ -880,6 +909,7 @@ func TestProtectRouteWithAuthVerifierCalibration(t *testing.T) {
 // testMajorSurfaceVerifierCalibration exercises one contract independently so the integration runner can shard the complete portfolio.
 func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) {
 	t.Helper()
+	t.Parallel()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
 	environment := testkit.IntegrationGoProcessEnv(t, nil)
 	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), environment, logger.NewAppLogger(), nil)
@@ -938,6 +968,9 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}
 		restoreEvaluationAlternates(t, originals)
 	}
+	if test.disconnectedProvider != "" {
+		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
+	}
 	path := filepath.Join(projectRoot, filepath.FromSlash(test.path))
 	if strings.ContainsAny(test.path, "*?[") {
 		matches, globErr := filepath.Glob(path)
@@ -987,6 +1020,48 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 			t.Fatalf("restore structural mutant target: %v", err)
 		}
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior)
+	}
+}
+
+// verifyDisconnectedNamedResourceProvider proves an otherwise compiling Wire edit cannot detach the provider that selects a named resource.
+func verifyDisconnectedNamedResourceProvider(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot, replacement, wantFailed string, environment []string) {
+	t.Helper()
+	wirePath := filepath.Join(projectRoot, "app", "wire", "inject_services_app.go")
+	body, err := os.ReadFile(wirePath)
+	if err != nil {
+		t.Fatalf("read App services Wire: %v", err)
+	}
+	provider := ""
+	for _, candidate := range []string{"NewReportDispatcher", "NewProfileCache", "NewAvatarStorage"} {
+		if strings.Count(string(body), candidate) == 1 {
+			provider = candidate
+			break
+		}
+	}
+	if provider == "" {
+		t.Fatalf("named resource provider is absent from %s", wirePath)
+	}
+	mutant := strings.Replace(string(body), provider, strings.TrimPrefix(replacement, "invoices."), 1)
+	if err := os.WriteFile(wirePath, []byte(mutant), 0o644); err != nil {
+		t.Fatalf("write disconnected App services Wire: %v", err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(wirePath, body, 0o644) })
+	command := exec.CommandContext(t.Context(), "go", "test", "-run", "^$", "./...")
+	command.Dir = projectRoot
+	command.Env = append([]string(nil), environment...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("disconnected provider mutant must compile: %v\n%s", err, output)
+	}
+	changes := evaluationProjectChanges(t, baselineRoot, projectRoot)
+	result, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: changes})
+	if err != nil {
+		t.Fatalf("Verify(disconnected provider): %v", err)
+	}
+	if result.FrameworkOutcome.Status != eval.EndpointFailed || !evaluationCheckFailed(result.Checks, wantFailed) {
+		t.Fatalf("disconnected provider outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
+	}
+	if err := os.WriteFile(wirePath, body, 0o644); err != nil {
+		t.Fatalf("restore App services Wire: %v", err)
 	}
 }
 
