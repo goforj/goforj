@@ -263,8 +263,27 @@ func TestPlanGuidanceIntentReportsRemoval(t *testing.T) {
 	if !slices.Contains(result.Updated, path) || !slices.Contains(result.Removed, path) {
 		t.Fatalf("planned removal = %#v", result)
 	}
+	if !slices.Contains(result.Updated, filepath.Join(root, ".goforj.yml")) {
+		t.Fatalf("planned durable selection = %#v", result)
+	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("plan mutated native guidance: %v", err)
+	}
+}
+
+// TestPlanGuidanceIntentRejectsMalformedProjectConfig matches execution before reporting a usable dry-run plan.
+func TestPlanGuidanceIntentRejectsMalformedProjectConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("render: [invalid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := PlanGuidanceIntent(root, install.GuidanceReconciliation{
+		Version: install.GuidanceReconciliationVersion,
+		Enabled: true,
+		Targets: []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "load Project configuration") {
+		t.Fatalf("PlanGuidanceIntent() error = %v", err)
 	}
 }
 
