@@ -70,7 +70,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 		t.Fatalf("GET /api/v1/hello status = %d, want %d\n%s", helloResp.StatusCode, http.StatusOK, handle.Output())
 	}
 
-	runRenderedMaintenanceCommand(t, projectDir, binPath, map[string]string{"APP_URL": baseURL}, "maintenance:enable")
+	runRenderedMaintenanceCommand(t, projectDir, binPath, map[string]string{"API_HTTP_PORT": httpPort}, "maintenance:enable")
 	time.Sleep(150 * time.Millisecond)
 	maintenanceResp, err := http.Get(baseURL + "/api/v1/hello")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	if maintenanceResp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("GET /api/v1/hello during maintenance status = %d, want %d\n%s", maintenanceResp.StatusCode, http.StatusServiceUnavailable, handle.Output())
 	}
-	runRenderedMaintenanceCommand(t, projectDir, binPath, map[string]string{"APP_URL": baseURL}, "maintenance:disable")
+	runRenderedMaintenanceCommand(t, projectDir, binPath, map[string]string{"API_HTTP_PORT": httpPort}, "maintenance:disable")
 	time.Sleep(150 * time.Millisecond)
 	resumedResp, err := http.Get(baseURL + "/api/v1/hello")
 	if err != nil {
