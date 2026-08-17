@@ -387,10 +387,11 @@ type majorSurfaceVerifierCase struct {
 
 // evaluationBehaviorMutation preserves structural evidence while violating the supervisor-owned runtime oracle.
 type evaluationBehaviorMutation struct {
-	path       string
-	old        string
-	mutant     string
-	wantFailed string
+	path        string
+	old         string
+	mutant      string
+	wantFailed  string
+	wantCompile bool
 }
 
 // evaluationMutation completes a compiling semantic mutant when one replacement cannot preserve source validity.
@@ -849,7 +850,22 @@ func TestAddValidatedWriteEndpointVerifierCalibration(t *testing.T) {
 
 // TestAddRouteMiddlewareVerifierCalibration proves middleware configuration uses the reviewed environment key.
 func TestAddRouteMiddlewareVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-route-middleware", scenario: "invoice-token-middleware", path: "app/wire/inject_http_controllers_app.go", old: `env.Get("INVOICE_HTTP_TOKEN", "")`, mutant: `env.Get("INVOICE_HTTP_TOKEN", "invoice-secret")`, wantFailed: "resolved-token-provider", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-route-middleware",
+		scenario:   "invoice-token-middleware",
+		path:       "app/wire/inject_http_controllers_app.go",
+		old:        `env.Get("INVOICE_HTTP_TOKEN", "")`,
+		mutant:     `env.Get("INVOICE_HTTP_TOKEN", "invoice-secret")`,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/invoices/middleware.go",
+			old:         `Header.Get("X-Invoice-Token")`,
+			mutant:      `Header.Get("X-Invalid-Invoice-Token")`,
+			wantFailed:  "token-policy-behavior",
+			wantCompile: true,
+		},
+		wantFailed:  "resolved-token-provider",
+		wantCompile: true,
+	})
 }
 
 // TestAddDatabaseTransactionVerifierCalibration proves the transaction retains the caller's cancellation boundary.
@@ -895,18 +911,15 @@ func TestAddMailWorkflowVerifierCalibration(t *testing.T) {
 	})
 }
 
-// TestProtectRouteWithAuthVerifierCalibration proves removing the protected invoice route fails observable route verification.
+// TestProtectRouteWithAuthVerifierCalibration proves invoices cannot be detached from the generated auth route group.
 func TestProtectRouteWithAuthVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
 		evaluation: "protect-route-with-auth",
 		scenario:   "protect-invoice-route",
 		path:       "app/routes.go",
-		old:        "\t\tinvoicesController.Routes(),\n",
-		mutant:     "",
-		additional: []evaluationMutation{{
-			old:    "\t\tauthController.Routes(),\n",
-			mutant: "\t\tauthController.Routes(),\n\t\tinvoicesController.Routes(),\n",
-		}},
+		old:        "\tgroups = append(groups, web.NewRouteGroup(\"/api/v1\", protectedRoutes, authService.RequireAuth))\n",
+		mutant: "\tgroups = append(groups, web.NewRouteGroup(\"/api/v1\", protectedRoutes))\n" +
+			"\tgroups = append(groups, web.NewRouteGroup(\"/hello\", helloController.Routes(), authService.RequireAuth))\n",
 		wantFailed:  "generated-auth-composition",
 		wantCompile: true,
 	})
@@ -1025,7 +1038,7 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			t.Fatalf("restore structural mutant target: %v", err)
 		}
-		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior)
+		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
 	}
 }
 
@@ -1072,7 +1085,7 @@ func verifyDisconnectedNamedResourceProvider(t *testing.T, verifier eval.Verifie
 }
 
 // verifyEvaluationBehaviorMutant proves the executable oracle catches a compiling implementation with valid structural evidence.
-func verifyEvaluationBehaviorMutant(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot string, mutation evaluationBehaviorMutation) {
+func verifyEvaluationBehaviorMutant(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot string, mutation evaluationBehaviorMutation, environment []string) {
 	t.Helper()
 	path := filepath.Join(projectRoot, filepath.FromSlash(mutation.path))
 	body, err := os.ReadFile(path)
@@ -1085,6 +1098,14 @@ func verifyEvaluationBehaviorMutant(t *testing.T, verifier eval.Verifier, baseli
 	mutant := strings.Replace(string(body), mutation.old, mutation.mutant, 1)
 	if err := os.WriteFile(path, []byte(mutant), 0o644); err != nil {
 		t.Fatalf("write behavior mutant: %v", err)
+	}
+	if mutation.wantCompile {
+		command := exec.CommandContext(t.Context(), "go", "test", "-run", "^$", "./...")
+		command.Dir = projectRoot
+		command.Env = append([]string(nil), environment...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("behavior mutant must compile: %v\n%s", err, output)
+		}
 	}
 	result, err := verifier.Verify(t.Context(), eval.VerificationInput{
 		ProjectRoot: projectRoot,
