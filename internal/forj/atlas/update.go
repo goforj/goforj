@@ -31,25 +31,32 @@ func (*UpdateCmd) Signature() string {
 // Run executes the Atlas update workflow.
 func (c *UpdateCmd) Run() error {
 	ctx := context.Background()
-	opts := install.Options{
+	request := install.HostRequest{
 		Root:          ".",
 		Project:       Project("."),
 		Agents:        c.Agent,
 		AllAgents:     c.AllAgents,
 		Discover:      c.Discover,
+		Guidelines:    c.Guidelines,
+		Skills:        c.Skills,
+		MCP:           c.MCP,
 		NoInteraction: c.NoInteraction,
 		DryRun:        c.DryRun,
 	}
-	applySurfaceSelections(&opts, c.Guidelines, c.Skills, c.MCP)
-	result, err := install.NewUpdater().Update(ctx, opts)
+	hostResult, err := install.NewHostUpdater().Update(ctx, request)
+	result := install.Result{Agents: hostResult.Agents, Files: hostResult.Files}
 	if err != nil {
 		return err
 	}
 	if c.DryRun {
+		result, err = includePlannedGuidance(".", result, hostResult.Guidance)
+		if err != nil {
+			return err
+		}
 		printResult("Would update Atlas", result)
 		return nil
 	}
-	if _, err := reconcileInstalledGuidance(".", result); err != nil {
+	if _, err := reconcileInstalledGuidance(".", hostResult.Guidance); err != nil {
 		return err
 	}
 	printResult("Updated Atlas", result)

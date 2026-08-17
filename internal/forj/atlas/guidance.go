@@ -87,16 +87,9 @@ func ReconcileAgentGuidance(root string, selection project.AgentGuidance) (Recon
 
 // ReconcileGuidanceIntent applies Atlas's versioned native-guidance request through GoForj's atomic writer.
 func ReconcileGuidanceIntent(root string, intent install.GuidanceReconciliation) (ReconcileGuidanceResult, error) {
-	if intent.Version != install.GuidanceReconciliationVersion {
-		return ReconcileGuidanceResult{}, fmt.Errorf("unsupported Atlas guidance reconciliation version %d", intent.Version)
-	}
-	targets, err := validatedGuidanceTargets(intent.Targets)
+	selection, targets, err := resolveGuidanceIntent(intent)
 	if err != nil {
 		return ReconcileGuidanceResult{}, err
-	}
-	selection := project.AgentGuidanceNone
-	if intent.Enabled {
-		selection = project.AgentGuidanceBaseline
 	}
 	projectConfig, err := project.LoadProjectConfigAt(root)
 	if err != nil {
@@ -109,6 +102,47 @@ func ReconcileGuidanceIntent(root string, intent install.GuidanceReconciliation)
 		}
 	}
 	return reconcileAgentGuidanceTargets(root, selection, targets)
+}
+
+// PlanGuidanceIntent reports native guidance changes without mutating Project state.
+func PlanGuidanceIntent(root string, intent install.GuidanceReconciliation) (ReconcileGuidanceResult, error) {
+	selection, targets, err := resolveGuidanceIntent(intent)
+	if err != nil {
+		return ReconcileGuidanceResult{}, err
+	}
+	content := guidelines.Compose(Project(root))
+	result := ReconcileGuidanceResult{}
+	for _, agent := range agents.Builtins() {
+		path := agent.GuidelinesPath(root)
+		selected := selection == project.AgentGuidanceBaseline && slices.Contains(targets, agent.Name())
+		changed, removed, err := planGuidanceFile(path, selected, content)
+		if err != nil {
+			return result, fmt.Errorf("plan %s guidance: %w", agent.Name(), err)
+		}
+		if changed {
+			result.Updated = append(result.Updated, path)
+		}
+		if removed {
+			result.Removed = append(result.Removed, path)
+		}
+	}
+	return result, nil
+}
+
+// resolveGuidanceIntent validates Atlas's versioned request before any host mutation.
+func resolveGuidanceIntent(intent install.GuidanceReconciliation) (project.AgentGuidance, []string, error) {
+	if intent.Version != install.GuidanceReconciliationVersion {
+		return "", nil, fmt.Errorf("unsupported Atlas guidance reconciliation version %d", intent.Version)
+	}
+	targets, err := validatedGuidanceTargets(intent.Targets)
+	if err != nil {
+		return "", nil, err
+	}
+	selection := project.AgentGuidanceNone
+	if intent.Enabled {
+		selection = project.AgentGuidanceBaseline
+	}
+	return selection, targets, nil
 }
 
 // reconcileAgentGuidanceTargets applies one validated target selection without allowing Atlas to write native files.
@@ -213,6 +247,23 @@ func reconcileGuidanceFile(path string, selected bool, generated string) (bool, 
 		return false, false, err
 	}
 	return true, false, nil
+}
+
+// planGuidanceFile compares one native projection without publishing its next state.
+func planGuidanceFile(path string, selected bool, generated string) (bool, bool, error) {
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, false, err
+	}
+	current := string(existing)
+	next := files.RemoveMarkerBlock(current, files.DefaultMarker)
+	if selected {
+		next = files.MergeMarkerBlock(current, files.DefaultMarker, generated)
+	}
+	if next == current {
+		return false, false, nil
+	}
+	return true, strings.TrimSpace(next) == "" && err == nil, nil
 }
 
 // writeGuidanceAtomically prevents an interrupted projection from publishing partial native instructions.
