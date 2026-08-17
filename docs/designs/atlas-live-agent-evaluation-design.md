@@ -2829,8 +2829,10 @@ observation inside the authoritative sandbox before its results can support
 guidance or release claims. Persistent caching, additional scenarios, and
 Atlas capability slices follow that authoritative vertical path.
 
-The local runner copies and hashes the selected Go launcher, then resolves and
-records the host `GOROOT` it needs after `PATH` is sealed. It detects replacement
+The local runner copies and hashes the selected Go launcher, then resolves the
+host `GOROOT` it needs after `PATH` is sealed. Retained metadata records that
+copied launcher's reported `go version`, launcher digest, and a path-free
+`GOROOT` identity rather than the GoForj build's runtime. It detects replacement
 of that runtime directory during a command, but same-identity content mutation
 remains possible under the shared host identity. This is diagnostic provenance,
 not the immutable execution closure required from the Phase 3 backend.

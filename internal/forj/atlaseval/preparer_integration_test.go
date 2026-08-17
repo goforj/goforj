@@ -445,17 +445,17 @@ func TestAddJobVerifierCalibration(t *testing.T) {
 	})
 }
 
-// TestAddMigrationVerifierCalibration proves the migration contract accepts alternate empty comments while rejecting executable schema changes.
+// TestAddMigrationVerifierCalibration proves the migration contract accepts formatting variants while rejecting the wrong schema effect.
 func TestAddMigrationVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
 		evaluation: "add-migration",
 		scenario:   "invoice-status-migration",
 		path:       "migrations/*_add_status_to_invoices.up.sql",
-		old:        "-- Up migration (sqlite)",
-		mutant:     "CREATE TABLE invoice_statuses (id text);",
+		old:        "status",
+		mutant:     "state",
 		alternates: []evaluationFileMutation{
-			{path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", replacement: "-- Status migration reserved for later schema work"},
-			{path: "migrations/*_add_status_to_invoices.down.sql", old: "-- Down migration (sqlite)", replacement: "-- Reverse migration intentionally has no schema work yet"},
+			{path: "migrations/*_add_status_to_invoices.up.sql", old: "ALTER TABLE invoices ADD COLUMN status TEXT NOT NULL DEFAULT 'open';", replacement: "ALTER TABLE \"invoices\" ADD IF NOT EXISTS `status` TEXT;"},
+			{path: "migrations/*_add_status_to_invoices.down.sql", old: "ALTER TABLE invoices DROP COLUMN status;", replacement: "ALTER TABLE [invoices] DROP status;"},
 		},
 		wantFailed: "migration-up",
 	})
@@ -522,9 +522,11 @@ func TestAddNamedResourceVerifierCalibration(t *testing.T) {
 		path:       "internal/invoices/report_dispatcher.go",
 		old:        "manager.Reports()",
 		mutant:     "manager.Default()",
-		alternates: []evaluationFileMutation{
-			{path: "internal/invoices/report_dispatcher.go", old: "ReportDispatcher", replacement: "Dispatcher"},
-			{path: "app/wire/inject_services_app.go", old: "NewReportDispatcher", replacement: "NewDispatcher"},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/report_dispatcher.go",
+			old:        `queue.NewJob("reports:generate")`,
+			mutant:     `queue.NewJob("reports:wrong")`,
+			wantFailed: "named-queue-behavior",
 		},
 		disconnectedProvider: "invoices.NewService",
 		wantFailed:           "named-queue-injection",
@@ -539,9 +541,11 @@ func TestAddNamedCacheVerifierCalibration(t *testing.T) {
 		path:       "internal/invoices/profile_cache.go",
 		old:        "manager.Profiles()",
 		mutant:     "manager.Default()",
-		alternates: []evaluationFileMutation{
-			{path: "internal/invoices/profile_cache.go", old: "ProfileCache", replacement: "Cache"},
-			{path: "app/wire/inject_services_app.go", old: "NewProfileCache", replacement: "NewCache"},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/profile_cache.go",
+			old:        "SetString(key, value, 0)",
+			mutant:     `SetString("wrong:"+key, value, 0)`,
+			wantFailed: "named-cache-behavior",
 		},
 		disconnectedProvider: "invoices.NewService",
 		wantFailed:           "named-cache-injection",
@@ -556,9 +560,11 @@ func TestAddNamedStorageVerifierCalibration(t *testing.T) {
 		path:       "internal/invoices/avatar_storage.go",
 		old:        "manager.Avatars()",
 		mutant:     "manager.Default()",
-		alternates: []evaluationFileMutation{
-			{path: "internal/invoices/avatar_storage.go", old: "AvatarStorage", replacement: "Storage"},
-			{path: "app/wire/inject_services_app.go", old: "NewAvatarStorage", replacement: "NewStorage"},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/avatar_storage.go",
+			old:        "Put(path, body)",
+			mutant:     `Put("wrong/"+path, body)`,
+			wantFailed: "named-storage-behavior",
 		},
 		disconnectedProvider: "invoices.NewService",
 		wantFailed:           "named-storage-injection",
