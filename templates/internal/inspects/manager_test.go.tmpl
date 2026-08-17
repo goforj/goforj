@@ -611,10 +611,18 @@ func TestRecordHTTPExchangeFromHeadersNormalizesInspectEvent(t *testing.T) {
 		"api.example.com",
 		"/v1/users",
 		`{"name":"alice"}`,
-		http.Header{"Content-Type": []string{"application/json"}},
+		http.Header{
+			"Authorization": []string{"Bearer maintenance-test-token"},
+			"Content-Type":  []string{"application/json"},
+			"Cookie":        []string{"session=private"},
+			"X-Api-Key":     []string{"private-api-key"},
+		},
 		`{"name":"alice"}`,
 		201,
-		http.Header{"Content-Type": []string{"application/json"}},
+		http.Header{
+			"Content-Type": []string{"application/json"},
+			"Set-Cookie":   []string{"session=private"},
+		},
 		`{"id":"u_123"}`,
 	)
 	inspectID := recorder.InspectID()
@@ -635,11 +643,21 @@ func TestRecordHTTPExchangeFromHeadersNormalizesInspectEvent(t *testing.T) {
 	if event.HTTP == nil {
 		t.Fatal("expected http payload")
 	}
-	if got := len(event.HTTP.RequestHeadersRaw); got != 1 {
-		t.Fatalf("request header count = %d, want 1", got)
+	if got := len(event.HTTP.RequestHeadersRaw); got != 4 {
+		t.Fatalf("request header count = %d, want 4", got)
 	}
-	if got := len(event.HTTP.ResponseHeaders); got != 1 {
-		t.Fatalf("response header count = %d, want 1", got)
+	if got := len(event.HTTP.ResponseHeaders); got != 2 {
+		t.Fatalf("response header count = %d, want 2", got)
+	}
+	for _, headers := range [][]HTTPHeader{event.HTTP.RequestHeadersRaw, event.HTTP.ResponseHeaders} {
+		for _, header := range headers {
+			if sensitiveHTTPHeaderForInspect(header.Name) && header.Value != "[redacted]" {
+				t.Fatalf("sensitive header %q retained value %q", header.Name, header.Value)
+			}
+			if header.Name == "Content-Type" && header.Value != "application/json" {
+				t.Fatalf("safe header %q was changed to %q", header.Name, header.Value)
+			}
+		}
 	}
 }
 

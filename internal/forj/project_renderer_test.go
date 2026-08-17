@@ -569,9 +569,8 @@ func TestRenderWebUIKeepsFrontendInsideTheDefaultApp(t *testing.T) {
 		GoModuleName: "example.com/frontend-layout",
 		Render: project.RenderConfig{
 			Components: project.Components{
-				CLI:    true,
-				WebAPI: true,
-				WebUI:  true,
+				CLI:   true,
+				WebUI: true,
 			},
 		},
 	}
@@ -593,6 +592,7 @@ func TestRenderWebUIKeepsFrontendInsideTheDefaultApp(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "cmd", "app", "frontend", "dist", "index.html")); err != nil {
 		t.Fatalf("default App frontend placeholder missing: %v", err)
 	}
+	assertProjectRendererFileContains(t, filepath.Join(root, ".env"), "APP_DIAG_TOKEN=")
 }
 
 // TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands verifies existing default and named Apps gain the framework command surface.
@@ -622,6 +622,21 @@ func TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands(t *test
 	if err := renderer.renderApp(project.DefaultNamedApp("billing")); err != nil {
 		t.Fatalf("render named App fixture: %v", err)
 	}
+	environmentPath := filepath.Join(root, ".env")
+	environment, err := os.ReadFile(environmentPath)
+	if err != nil {
+		t.Fatalf("read initial environment: %v", err)
+	}
+	legacyLines := make([]string, 0)
+	for _, line := range strings.Split(string(environment), "\n") {
+		if strings.HasPrefix(line, "APP_MAINTENANCE_") {
+			continue
+		}
+		legacyLines = append(legacyLines, line)
+	}
+	if err := os.WriteFile(environmentPath, []byte(strings.Join(legacyLines, "\n")), 0o600); err != nil {
+		t.Fatalf("write legacy environment fixture: %v", err)
+	}
 	commandPaths := []string{filepath.Join(root, "app", "commands.go")}
 	for _, path := range commandPaths {
 		source, err := os.ReadFile(path)
@@ -643,6 +658,17 @@ func TestRenderUpgradeAddsMaintenanceCommandsWithoutReplacingAppCommands(t *test
 			`/internal/maintenance"`,
 			"MaintenanceEnableCmd  maintenance.EnableCmd",
 			"MaintenanceDisableCmd maintenance.DisableCmd",
+		)
+	}
+	for _, path := range []string{
+		filepath.Join(root, ".env"),
+		filepath.Join(root, ".env.example"),
+		filepath.Join(root, ".env.testing"),
+	} {
+		assertProjectRendererFileContains(t, path,
+			"APP_MAINTENANCE_ENABLED=",
+			"APP_MAINTENANCE_DRIVER=",
+			"APP_MAINTENANCE_STORE=",
 		)
 	}
 }

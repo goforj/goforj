@@ -33,6 +33,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 			UpdatedAt:    "2026-01-01 00:00:00 UTC",
 			Render: project.RenderConfig{
 				Components: project.Components{
+					Cache:          true,
 					WebAPI:         true,
 					WebUI:          true,
 					Scheduler:      true,
@@ -41,6 +42,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 					DemoApp:        true,
 				},
 			},
+		},
+		EnvOverrides: map[string]string{
+			"CACHE_OPERATIONS_DRIVER": "memory",
 		},
 	})
 

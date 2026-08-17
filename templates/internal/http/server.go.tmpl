@@ -415,8 +415,8 @@ func (s *Server) mountSinglePageApplications(router web.Router) error {
 func (s *Server) routerMounts() []web.RouterMount {
 	mounts := []web.RouterMount{
 		s.mountSinglePageApplications,
-		s.mountCors,
 		s.mountRuntimeMiddleware,
+		s.mountCors,
 	}
 	if s.consoleHub != nil && lighthouse.Enabled() {
 		mounts = append(mounts, func(router web.Router) error {

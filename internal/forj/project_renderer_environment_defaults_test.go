@@ -80,12 +80,43 @@ func TestEnsureEnvironmentDefaultsGatesCapabilitySecrets(t *testing.T) {
 	}
 }
 
+// TestEnsureEnvironmentDefaultsAddsHTTPMaintenanceContract verifies existing WebUI projects gain credentials and explicit maintenance defaults.
+func TestEnsureEnvironmentDefaultsAddsHTTPMaintenanceContract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("APP_KEY=owner-app-key\n"), 0o600); err != nil {
+		t.Fatalf("write owner environment: %v", err)
+	}
+
+	renderer := environmentDefaultsRenderer(t, root, project.Components{WebUI: true})
+	if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
+		t.Fatalf("ensure environment defaults: %v", err)
+	}
+	updated := readEnvironmentDefaultsFile(t, root)
+	lines := strings.Split(updated, "\n")
+	for key, want := range map[string]string{
+		"APP_MAINTENANCE_ENABLED": "false",
+		"APP_MAINTENANCE_DRIVER":  "memory",
+		"APP_MAINTENANCE_STORE":   "default",
+	} {
+		assignment := finalEnvironmentAssignment(lines, key)
+		if !assignment.exists() || assignment.value != want {
+			t.Fatalf("%s assignment = %#v, want %q:\n%s", key, assignment, want, updated)
+		}
+	}
+	if assignment := finalEnvironmentAssignment(lines, "APP_DIAG_TOKEN"); !assignment.exists() || assignment.value == "" {
+		t.Fatalf("generated APP_DIAG_TOKEN assignment missing:\n%s", updated)
+	}
+}
+
 // TestEnsureEnvironmentDefaultsPreservesOwnerSyntaxAndDeduplicatesLighthouseSecret verifies parsed assignments are recognized without rewriting owner formatting.
 func TestEnsureEnvironmentDefaultsPreservesOwnerSyntaxAndDeduplicatesLighthouseSecret(t *testing.T) {
 	root := t.TempDir()
 	source := strings.Join([]string{
 		" export APP_KEY = 'owner-app-key'",
 		"export APP_DIAG_TOKEN = \"owner-diagnostic-token\"",
+		"APP_MAINTENANCE_ENABLED=false",
+		"APP_MAINTENANCE_DRIVER=memory",
+		"APP_MAINTENANCE_STORE=default",
 		"export LIGHTHOUSE_URL = 'wss://owner.example/ws'",
 		" export LIGHTHOUSE_SECRET = 'owner-secret'",
 		"# LIGHTHOUSE_SECRET=commented-placeholder",
@@ -155,6 +186,9 @@ func completeOwnerEnvironment(jwtLines ...string) string {
 	lines := []string{
 		"APP_KEY=owner-app-key",
 		"APP_DIAG_TOKEN=owner-diagnostic-token",
+		"APP_MAINTENANCE_ENABLED=false",
+		"APP_MAINTENANCE_DRIVER=memory",
+		"APP_MAINTENANCE_STORE=default",
 		"LIGHTHOUSE_SECRET=owner-secret",
 	}
 	lines = append(lines, jwtLines...)

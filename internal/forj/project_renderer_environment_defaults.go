@@ -35,11 +35,18 @@ func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
 
 	appKey := finalEnvironmentAssignment(lines, "APP_KEY")
 	appDiagToken := finalEnvironmentAssignment(lines, "APP_DIAG_TOKEN")
+	maintenanceEnabled := finalEnvironmentAssignment(lines, "APP_MAINTENANCE_ENABLED")
+	maintenanceDriver := finalEnvironmentAssignment(lines, "APP_MAINTENANCE_DRIVER")
+	maintenanceStore := finalEnvironmentAssignment(lines, "APP_MAINTENANCE_STORE")
 	lighthouseSecret := finalEnvironmentAssignment(lines, "LIGHTHOUSE_SECRET")
 	jwtSecret := finalEnvironmentAssignment(lines, "API_JWT_SECRET_KEY")
 	isOwnerEnvironment := path == ".env"
 	components := project.ProjectComponents(p.config)
-	needsAppDiagToken := isOwnerEnvironment && components.WebAPI && !appDiagToken.exists()
+	hasHTTPRuntime := components.WebAPI || components.WebUI
+	needsAppDiagToken := isOwnerEnvironment && hasHTTPRuntime && !appDiagToken.exists()
+	needsMaintenanceEnabled := isOwnerEnvironment && hasHTTPRuntime && !maintenanceEnabled.exists()
+	needsMaintenanceDriver := isOwnerEnvironment && hasHTTPRuntime && !maintenanceDriver.exists()
+	needsMaintenanceStore := isOwnerEnvironment && hasHTTPRuntime && !maintenanceStore.exists()
 	needsSecret := isOwnerEnvironment && components.HasRuntime() && !lighthouseSecret.exists()
 	needsKey := isOwnerEnvironment && !appKey.exists()
 	needsJWTSecret := isOwnerEnvironment && components.Auth && (!jwtSecret.exists() || strings.TrimSpace(jwtSecret.value) == "" || strings.TrimSpace(jwtSecret.value) == "xxx")
@@ -48,7 +55,7 @@ func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
 	if isOwnerEnvironment && p.config.Render.Components.Grafana {
 		lines, needsGrafanaPortDefault = migrateGeneratedEnvDefault(lines, "GRAFANA_PORT", "3001", "13001")
 	}
-	if !(duplicateSecretRemoved || needsAppDiagToken || needsSecret || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
+	if !(duplicateSecretRemoved || needsAppDiagToken || needsMaintenanceEnabled || needsMaintenanceDriver || needsMaintenanceStore || needsSecret || needsGrafanaPortDefault || needsKey || needsJWTSecret) {
 		return nil
 	}
 
@@ -87,6 +94,15 @@ func (p *ProjectRenderer) ensureEnvironmentDefaults(path string) error {
 	}
 	if needsAppDiagToken {
 		writeLines = append(writeLines, "APP_DIAG_TOKEN="+appDiagTokenValue)
+	}
+	if needsMaintenanceEnabled {
+		writeLines = append(writeLines, "APP_MAINTENANCE_ENABLED=false")
+	}
+	if needsMaintenanceDriver {
+		writeLines = append(writeLines, "APP_MAINTENANCE_DRIVER=memory")
+	}
+	if needsMaintenanceStore {
+		writeLines = append(writeLines, "APP_MAINTENANCE_STORE=default")
 	}
 	if needsSecret {
 		writeLines = append(writeLines, "LIGHTHOUSE_SECRET="+lighthouseSecretValue)
