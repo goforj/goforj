@@ -73,7 +73,10 @@ func copyScenarioFile(source, destination string, mode os.FileMode) error {
 		return errors.Join(err, input.Close())
 	}
 	_, copyErr := io.Copy(output, input)
-	return errors.Join(copyErr, input.Close(), output.Close())
+	inputCloseErr := input.Close()
+	outputCloseErr := output.Close()
+	modeErr := os.Chmod(destination, mode)
+	return errors.Join(copyErr, inputCloseErr, outputCloseErr, modeErr)
 }
 
 // removeScenarioTree restores directory traversal only within the owned root so read-only fixtures remain disposable.
