@@ -2,6 +2,7 @@ package atlaseval
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,55 @@ import (
 
 	"github.com/goforj/atlas/eval"
 )
+
+// TestPreparerPrepareStopsBeforeMutationWhenCanceled keeps canceled requests from creating a destination Project.
+func TestPreparerPrepareStopsBeforeMutationWhenCanceled(t *testing.T) {
+	request := eval.PreparationRequest{
+		ScenarioID: "invoice-http-route", DestinationRoot: filepath.Join(t.TempDir(), "project"),
+		ForjExecutable: os.Args[0], OrchestrationID: "canceled-before-entry", Environment: os.Environ(),
+	}
+	preparer := Preparer{}
+	plan, err := preparer.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := preparer.Prepare(ctx, request, plan); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Prepare() error = %v, want context cancellation", err)
+	}
+	if _, err := os.Stat(request.DestinationRoot); !os.IsNotExist(err) {
+		t.Fatalf("canceled preparation created destination: %v", err)
+	}
+}
+
+// TestPreparerPrepareStopsWhenCanceledBehindCacheLock keeps warm-cache waiters from cloning after cancellation.
+func TestPreparerPrepareStopsWhenCanceledBehindCacheLock(t *testing.T) {
+	request := eval.PreparationRequest{
+		ScenarioID: "invoice-http-route", DestinationRoot: filepath.Join(t.TempDir(), "project"),
+		ForjExecutable: os.Args[0], OrchestrationID: "canceled-cache-waiter", Environment: os.Environ(),
+	}
+	preparer := NewPreparer(filepath.Join(t.TempDir(), "bases"), os.Environ(), nil, nil)
+	plan, err := preparer.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparer.cache.mu.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, prepareErr := preparer.Prepare(ctx, request, plan)
+		done <- prepareErr
+	}()
+	cancel()
+	preparer.cache.mu.Unlock()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Prepare() error = %v, want context cancellation", err)
+	}
+	if _, err := os.Stat(request.DestinationRoot); !os.IsNotExist(err) {
+		t.Fatalf("canceled cache waiter created destination: %v", err)
+	}
+}
 
 // TestPreparerResolveReturnsStableAtlasContract verifies resolution is attributable and mutation-free.
 func TestPreparerResolveReturnsStableAtlasContract(t *testing.T) {
@@ -235,8 +285,8 @@ func (materializedPreparedProject) Close(context.Context) error {
 
 // TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths preserves base reuse without hiding configuration drift.
 func TestPreparationEnvironmentDigestIgnoresOnlyAttemptIsolationPaths(t *testing.T) {
-	left := []string{"APP_ENV=test", "GOCACHE=/tmp/left", "GOPATH=/tmp/left-go", "HOME=/tmp/left-home", "PATH=/left/bin", "GOWORK=off"}
-	right := []string{"PATH=/right/bin", "HOME=/tmp/right-home", "GOPATH=/tmp/right-go", "GOCACHE=/tmp/right", "APP_ENV=test", "GOWORK=off"}
+	left := []string{"APP_ENV=test", "GOCACHE=/tmp/left", "GOPATH=/tmp/left-go", "HOME=/tmp/left-home", "PATH=/left/bin", "GOWORK=off", "GOTMPDIR=/tmp/left-go-tmp", "TMPDIR=/tmp/left-tmp", "TMP=/tmp/left-tmp", "TEMP=/tmp/left-tmp"}
+	right := []string{"PATH=/right/bin", "HOME=/tmp/right-home", "GOPATH=/tmp/right-go", "GOCACHE=/tmp/right", "APP_ENV=test", "GOWORK=off", "GOTMPDIR=/tmp/right-go-tmp", "TMPDIR=/tmp/right-tmp", "TMP=/tmp/right-tmp", "TEMP=/tmp/right-tmp"}
 	if preparationEnvironmentDigest(left) != preparationEnvironmentDigest(right) {
 		t.Fatal("attempt-private paths changed the preparation environment identity")
 	}

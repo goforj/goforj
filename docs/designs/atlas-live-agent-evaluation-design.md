@@ -298,8 +298,18 @@ forj atlas:eval suite core \
   --kind feature \
   --model gpt-5.6-sol \
   --credential /path/to/disposable-auth.json \
+  --workers 4 \
   --trials 3
 ```
+
+`--workers` runs complete `none`/`agents` pairs concurrently while keeping the
+two treatments in each pair sequential. The command owns immutable prepared
+bases; distinct base plans receive private writable preparation environments,
+and every worker owns separate Project, verifier, home, temporary, and Go cache
+state. Final results retain catalog order rather than completion order. The
+option speeds up unconfined diagnostics only. Different paths prevent ordinary
+collisions, but they are not a same-user security boundary: authoritative
+concurrent execution remains blocked on the isolated Phase 3 backend.
 
 ### Inspect a retained run
 

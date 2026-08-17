@@ -60,9 +60,8 @@ func TestPreparerMaterializesInvoiceStartingState(t *testing.T) {
 func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	workRoot := t.TempDir()
 	baseRoot := filepath.Join(workRoot, "bases")
-	baseBuildCache := filepath.Join(workRoot, "base-gocache")
 	trialBuildCache := filepath.Join(workRoot, "trial-gocache")
-	baseEnvironment := testkit.ProcessGoEnv("", map[string]string{"GOCACHE": baseBuildCache})
+	baseEnvironment := testkit.ProcessGoEnv("", nil)
 	trialEnvironment := testkit.ProcessGoEnv("", map[string]string{"GOCACHE": trialBuildCache})
 	preparer := NewPreparer(baseRoot, baseEnvironment, nil, nil)
 	t.Cleanup(func() {
@@ -106,9 +105,20 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	if none.Result().ProjectRoot == agents.Result().ProjectRoot {
 		t.Fatal("paired treatments shared one mutable Project")
 	}
+	preparer.cache.mu.Lock()
+	baseCount := len(preparer.cache.bases)
+	preparer.cache.mu.Unlock()
+	if baseCount != 1 {
+		t.Fatalf("prepared base count = %d, want one command-local materialization", baseCount)
+	}
 	if none.Result().BaselineTree != agents.Result().BaselineTree {
 		t.Fatalf("paired baseline trees differ: %s != %s", none.Result().BaselineTree, agents.Result().BaselineTree)
 	}
+	planEnvironment, err := preparer.baseEnvironmentForPlan(plan.PlanDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseBuildCache := integrationEnvironmentValues(planEnvironment)["GOCACHE"]
 	if entries, err := os.ReadDir(baseBuildCache); err != nil || len(entries) == 0 {
 		t.Fatalf("base preparation did not use its private build cache: entries=%v error=%v", entries, err)
 	}
@@ -117,6 +127,80 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	} else if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("read candidate build cache: %v", err)
 	}
+}
+
+// TestPreparerDistinctPlansUseSeparateWritableBaseEnvironments keeps concurrent base materializations from sharing mutable process state.
+func TestPreparerDistinctPlansUseSeparateWritableBaseEnvironments(t *testing.T) {
+	workRoot := t.TempDir()
+	preparer := NewPreparer(filepath.Join(workRoot, "bases"), testkit.ProcessGoEnv("", nil), nil, nil)
+	t.Cleanup(func() {
+		if err := preparer.Close(context.Background()); err != nil {
+			t.Errorf("close preparer: %v", err)
+		}
+	})
+	requests := []eval.PreparationRequest{
+		{ScenarioID: "invoice-http-route", DestinationRoot: filepath.Join(workRoot, "http-route"), ForjExecutable: testkit.EnsureIntegrationForjBinary(t), OrchestrationID: "distinct-http", Environment: testkit.ProcessGoEnv("", nil)},
+		{ScenarioID: "invoice-domain", DestinationRoot: filepath.Join(workRoot, "domain"), ForjExecutable: testkit.EnsureIntegrationForjBinary(t), OrchestrationID: "distinct-domain", Environment: testkit.ProcessGoEnv("", nil)},
+	}
+	plans := make([]eval.ResolvedPreparationPlan, len(requests))
+	for index, request := range requests {
+		plan, err := preparer.Resolve(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plans[index] = plan
+	}
+	type preparedResult struct {
+		project eval.PreparedProject
+		err     error
+	}
+	results := make(chan preparedResult, len(requests))
+	for index := range requests {
+		go func(index int) {
+			project, err := preparer.Prepare(context.Background(), requests[index], plans[index])
+			results <- preparedResult{project: project, err: err}
+		}(index)
+	}
+	for range requests {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		t.Cleanup(func() { _ = result.project.Close(context.Background()) })
+	}
+	first, err := preparer.baseEnvironmentForPlan(plans[0].PlanDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := preparer.baseEnvironmentForPlan(plans[1].PlanDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValues := integrationEnvironmentValues(first)
+	secondValues := integrationEnvironmentValues(second)
+	for _, key := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "HOME", "GOTMPDIR", "TMPDIR", "TMP", "TEMP"} {
+		if firstValues[key] == secondValues[key] {
+			t.Fatalf("%s shared distinct-plan writable state: %q", key, firstValues[key])
+		}
+		if _, err := os.Stat(firstValues[key]); err != nil {
+			t.Fatalf("first %s does not exist: %v", key, err)
+		}
+		if _, err := os.Stat(secondValues[key]); err != nil {
+			t.Fatalf("second %s does not exist: %v", key, err)
+		}
+	}
+}
+
+// integrationEnvironmentValues converts process environment entries into a lookup map for integration assertions.
+func integrationEnvironmentValues(environment []string) map[string]string {
+	values := make(map[string]string, len(environment))
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return values
 }
 
 // TestPreparerDelegatesDurableGuidanceTreatment proves the scenario adapter delegates native instruction ownership to its host.

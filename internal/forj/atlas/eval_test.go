@@ -3,11 +3,14 @@ package atlas
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/goforj/atlas/eval"
@@ -59,6 +62,318 @@ func TestValidateEvaluationTrialsBoundsModelSpend(t *testing.T) {
 		if err := validateEvaluationTrials(trials); err == nil {
 			t.Fatalf("validateEvaluationTrials(%d) succeeded", trials)
 		}
+	}
+}
+
+// TestValidateEvaluationWorkersBoundsConcurrentAgentSessions keeps suite fan-out bounded and explicit.
+func TestValidateEvaluationWorkersBoundsConcurrentAgentSessions(t *testing.T) {
+	for _, workers := range []int{1, 8} {
+		if err := validateEvaluationWorkers(workers); err != nil {
+			t.Fatalf("validateEvaluationWorkers(%d): %v", workers, err)
+		}
+	}
+	for _, workers := range []int{0, 9} {
+		if err := validateEvaluationWorkers(workers); err == nil {
+			t.Fatalf("validateEvaluationWorkers(%d) succeeded", workers)
+		}
+	}
+}
+
+// TestEvaluationComparisonScheduleRetainsPlannedOrderAfterOutOfOrderCompletion keeps worker timing out of result ordering.
+func TestEvaluationComparisonScheduleRetainsPlannedOrderAfterOutOfOrderCompletion(t *testing.T) {
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	results := make([]string, len(jobs))
+	completion := make([]int, 0, len(jobs))
+	var lock sync.Mutex
+	release := make([]chan struct{}, len(jobs))
+	finished := make([]chan struct{}, len(jobs))
+	for index := range jobs {
+		release[index] = make(chan struct{})
+		finished[index] = make(chan struct{})
+	}
+	var ready sync.WaitGroup
+	ready.Add(len(jobs))
+	done := make(chan struct{})
+	go func() {
+		runEvaluationComparisonSchedule(context.Background(), jobs, len(jobs), func(index int, job evaluationComparisonJob, _ int) {
+			ready.Done()
+			<-release[index]
+			results[index] = job.evaluationID + "/" + string(rune('0'+job.trial))
+			lock.Lock()
+			completion = append(completion, index)
+			lock.Unlock()
+			close(finished[index])
+		})
+		close(done)
+	}()
+	ready.Wait()
+	for index := len(jobs) - 1; index >= 0; index-- {
+		close(release[index])
+		<-finished[index]
+	}
+	<-done
+	if slices.Equal(completion, []int{0, 1, 2, 3}) {
+		t.Fatalf("completion order = %v, want out-of-order completion", completion)
+	}
+	if got, want := results, []string{"catalog-a/1", "catalog-a/2", "catalog-b/1", "catalog-b/2"}; !slices.Equal(got, want) {
+		t.Fatalf("stored result order = %v, want %v", got, want)
+	}
+}
+
+// TestEvaluationComparisonScheduleStopsDispatchAfterCancellation keeps queued paired trials from starting after interruption.
+func TestEvaluationComparisonScheduleStopsDispatchAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	var executed []int
+	var lock sync.Mutex
+	runEvaluationComparisonSchedule(ctx, jobs, 1, func(index int, _ evaluationComparisonJob, _ int) {
+		lock.Lock()
+		executed = append(executed, index)
+		lock.Unlock()
+		cancel()
+	})
+	if got, want := executed, []int{0}; !slices.Equal(got, want) {
+		t.Fatalf("executed jobs = %v, want %v", got, want)
+	}
+}
+
+// TestRunEvaluationComparisonJobsOrdersOutOfOrderWorkerResults keeps terminal output independent from completion timing.
+func TestRunEvaluationComparisonJobsOrdersOutOfOrderWorkerResults(t *testing.T) {
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	release := make([]chan struct{}, len(jobs))
+	completed := make([]chan struct{}, len(jobs))
+	started := make(chan int, len(jobs))
+	for index := range jobs {
+		release[index] = make(chan struct{})
+		completed[index] = make(chan struct{})
+	}
+	type output struct {
+		results []eval.GuidanceDiagnosticResult
+		errors  []error
+	}
+	done := make(chan output, 1)
+	go func() {
+		results, runErrors := runEvaluationComparisonJobs(context.Background(), nil, jobs, len(jobs), 2, func(_ context.Context, job evaluationComparisonJob, _ int) (eval.GuidanceDiagnosticResult, []error) {
+			index := (job.trial - 1) + map[string]int{"catalog-a": 0, "catalog-b": 2}[job.evaluationID]
+			started <- index
+			<-release[index]
+			close(completed[index])
+			return eval.GuidanceDiagnosticResult{LogicalTrialID: string(rune('a' + index))}, []error{fmt.Errorf("error-%d", index)}
+		})
+		done <- output{results: results, errors: runErrors}
+	}()
+	for range jobs {
+		<-started
+	}
+	for index := len(jobs) - 1; index >= 0; index-- {
+		close(release[index])
+		<-completed[index]
+	}
+	got := <-done
+	if trialIDs := []string{got.results[0].LogicalTrialID, got.results[1].LogicalTrialID, got.results[2].LogicalTrialID, got.results[3].LogicalTrialID}; !slices.Equal(trialIDs, []string{"a", "b", "c", "d"}) {
+		t.Fatalf("result order = %v", trialIDs)
+	}
+	if messages := []string{got.errors[0].Error(), got.errors[1].Error(), got.errors[2].Error(), got.errors[3].Error()}; !slices.Equal(messages, []string{"error-0", "error-1", "error-2", "error-3"}) {
+		t.Fatalf("error order = %v", messages)
+	}
+}
+
+// TestRunEvaluationComparisonJobsOmitsUndispatchedResultsAfterCancellation keeps interrupted output free of zero-value slots.
+func TestRunEvaluationComparisonJobsOmitsUndispatchedResultsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	results, runErrors := runEvaluationComparisonJobs(ctx, nil, jobs, 1, 2, func(_ context.Context, job evaluationComparisonJob, _ int) (eval.GuidanceDiagnosticResult, []error) {
+		cancel()
+		return eval.GuidanceDiagnosticResult{LogicalTrialID: job.evaluationID}, nil
+	})
+	if got, want := len(results), 1; got != want || results[0].LogicalTrialID != "catalog-a" {
+		t.Fatalf("results = %#v", results)
+	}
+	if !errors.Is(errors.Join(runErrors...), context.Canceled) {
+		t.Fatalf("run errors = %v, want context cancellation", runErrors)
+	}
+}
+
+// TestRunEvaluationComparisonJobsNeverReusesActiveWorker keeps each worker execution single-threaded.
+func TestRunEvaluationComparisonJobsNeverReusesActiveWorker(t *testing.T) {
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	active := make([]bool, 2)
+	started := make(chan struct{}, len(active))
+	release := make(chan struct{})
+	var lock sync.Mutex
+	done := make(chan []error, 1)
+	go func() {
+		_, runErrors := runEvaluationComparisonJobs(context.Background(), nil, jobs, len(active), 2, func(_ context.Context, job evaluationComparisonJob, worker int) (eval.GuidanceDiagnosticResult, []error) {
+			lock.Lock()
+			if active[worker] {
+				lock.Unlock()
+				return eval.GuidanceDiagnosticResult{}, []error{fmt.Errorf("worker %d reused concurrently", worker)}
+			}
+			active[worker] = true
+			lock.Unlock()
+			started <- struct{}{}
+			<-release
+			lock.Lock()
+			active[worker] = false
+			lock.Unlock()
+			return eval.GuidanceDiagnosticResult{LogicalTrialID: job.evaluationID}, nil
+		})
+		done <- runErrors
+	}()
+	for range active {
+		<-started
+	}
+	close(release)
+	if runErrors := <-done; len(runErrors) != 0 {
+		t.Fatalf("run errors = %v", runErrors)
+	}
+}
+
+// TestRunEvaluationComparisonsWithWorkersStopsBeforeAuthoritySetup keeps cancellation from loading credentials or creating artifacts.
+func TestRunEvaluationComparisonsWithWorkersStopsBeforeAuthoritySetup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runEvaluationComparisonsWithWorkers(ctx, evaluationInvocation{}, []string{"catalog-a"}, 1, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEvaluationComparisonsWithWorkers() error = %v, want context cancellation", err)
+	}
+}
+
+// TestEvaluationProgressKeepsCountersMonotonicAfterOutOfOrderCompletion keeps concurrent status useful without promising catalog order.
+func TestEvaluationProgressKeepsCountersMonotonicAfterOutOfOrderCompletion(t *testing.T) {
+	var output bytes.Buffer
+	progress := newEvaluationProgress(&output, 2, 1)
+	first := evaluationComparisonJob{evaluationID: "catalog-a", trial: 1}
+	second := evaluationComparisonJob{evaluationID: "catalog-b", trial: 1}
+	progress.started(first)
+	progress.started(second)
+	progress.finished(second)
+	progress.finished(first)
+	if got, want := output.String(), "[1/2] catalog-a · trial 1/1\n[2/2] catalog-b · trial 1/1\n[1/2] catalog-b · finished\n[2/2] catalog-a · finished\n"; got != want {
+		t.Fatalf("progress output = %q, want %q", got, want)
+	}
+}
+
+// TestNewEvaluationAuthorityFreezesCredentialRedaction keeps later source mutations out of worker authority.
+func TestNewEvaluationAuthorityFreezesCredentialRedaction(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	credential := filepath.Join(root, "auth.json")
+	if err := os.WriteFile(credential, []byte(`{"access_token":"first-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := newEvaluationAuthority(evaluationInvocation{Credential: credential, Artifacts: filepath.Join(root, "artifacts")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := authority.Close(); err != nil {
+			t.Errorf("close evaluation authority: %v", err)
+		}
+	})
+	if err := os.WriteFile(credential, []byte(`{"access_token":"later-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	redacted := authority.redactor.Text("first-secret later-secret")
+	if strings.Contains(redacted, "first-secret") || !strings.Contains(redacted, "later-secret") {
+		t.Fatalf("frozen authority redaction = %q", redacted)
+	}
+}
+
+// TestNewEvaluationWorkRootUsesUserCacheOutsideArtifacts keeps long-running evaluations out of system temporary and artifact-key storage.
+func TestNewEvaluationWorkRootUsesUserCacheOutsideArtifacts(t *testing.T) {
+	artifactRoot := filepath.Join(t.TempDir(), "artifacts")
+	if err := os.Mkdir(artifactRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot := filepath.Join(t.TempDir(), "cache")
+	workRoot, err := newEvaluationWorkRootAt(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := filepath.Dir(workRoot), filepath.Join(cacheRoot, "goforj", "atlas-evaluation-work"); got != want {
+		t.Fatalf("work state root = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(workRoot, artifactRoot+string(filepath.Separator)) {
+		t.Fatalf("work root %q is inside retained artifacts", workRoot)
+	}
+	if err := removeEvaluationWorkRoot(workRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(workRoot); !os.IsNotExist(err) {
+		t.Fatalf("work root survived cleanup: %v", err)
+	}
+}
+
+// TestResolveEvaluationWorkStateRootRejectsUnsafeExistingTargets keeps disposable state inside a private owned directory.
+func TestResolveEvaluationWorkStateRootRejectsUnsafeExistingTargets(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, root, stateRoot string)
+	}{
+		{
+			name: "regular file",
+			setup: func(t *testing.T, _ string, stateRoot string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(stateRoot), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(stateRoot, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "symbolic link",
+			setup: func(t *testing.T, root, stateRoot string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(stateRoot), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(root, "target"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "target"), stateRoot); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "wrong permissions",
+			setup: func(t *testing.T, _ string, stateRoot string) {
+				t.Helper()
+				if err := os.MkdirAll(stateRoot, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && test.name != "regular file" {
+				t.Skip("POSIX symlink and permission checks do not apply on Windows")
+			}
+			root := t.TempDir()
+			stateRoot := filepath.Join(root, "goforj", "atlas-evaluation-work")
+			test.setup(t, root, stateRoot)
+			if _, err := resolveEvaluationWorkStateRootAt(root); err == nil {
+				t.Fatal("resolveEvaluationWorkStateRoot() accepted unsafe target")
+			}
+		})
+	}
+}
+
+// TestCleanupEvaluationSetupFailureRetainsCleanupError keeps partial construction cleanup failures observable.
+func TestCleanupEvaluationSetupFailureRetainsCleanupError(t *testing.T) {
+	setupErr := errors.New("setup failed")
+	cleanupErr := errors.New("cleanup failed")
+	err := cleanupEvaluationSetupFailureWith("partial-root", setupErr, func(string) error { return cleanupErr })
+	if !errors.Is(err, setupErr) {
+		t.Fatalf("cleanup error = %v, want setup error", err)
+	}
+	if !errors.Is(err, cleanupErr) {
+		t.Fatalf("cleanup error = %v, want cleanup failure", err)
 	}
 }
 
@@ -281,9 +596,19 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := environmentValues(environment)
-	for key, suffix := range map[string]string{"GOCACHE": "gocache", "GOMODCACHE": "gomodcache", "GOPATH": "gopath", "HOME": "home"} {
+	for key, suffix := range map[string]string{"GOCACHE": "gocache", "GOMODCACHE": "gomodcache", "GOPATH": "gopath", "HOME": "home", "GOTMPDIR": "tmp", "TEMP": "tmp", "TMP": "tmp", "TMPDIR": "tmp"} {
 		if values[key] != filepath.Join(root, "attempt", suffix) {
 			t.Fatalf("%s = %q", key, values[key])
+		}
+	}
+	secondEnvironment, err := evaluationEnvironment(filepath.Join(root, "second-attempt"), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondValues := environmentValues(secondEnvironment)
+	for _, key := range []string{"GOTMPDIR", "TEMP", "TMP", "TMPDIR"} {
+		if values[key] == secondValues[key] {
+			t.Fatalf("%s shared temporary state: %q", key, values[key])
 		}
 	}
 	if values["GOWORK"] != "off" {
@@ -344,6 +669,16 @@ func TestEvaluationSupportToolsIncludeCodexInterpreter(t *testing.T) {
 	}
 	if !slices.Contains(evaluationSupportToolNames(), "node") {
 		t.Fatal("evaluation support tools omit the Codex Node interpreter")
+	}
+}
+
+// TestEvaluationSupportToolsIncludePortableShell protects generated tests that invoke the POSIX shell by name.
+func TestEvaluationSupportToolsIncludePortableShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("generated Windows tests do not invoke the POSIX shell")
+	}
+	if !slices.Contains(evaluationSupportToolNames(), "sh") {
+		t.Fatal("evaluation support tools omit the POSIX shell")
 	}
 }
 
