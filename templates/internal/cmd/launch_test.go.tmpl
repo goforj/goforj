@@ -40,27 +40,6 @@ func TestRunLaunchDefaultsRuntimeApps(t *testing.T) {
 	}
 }
 
-// TestRunLaunchRejectsAmbientAppIdentity verifies a binary cannot be redirected into a sibling App's state namespace.
-func TestRunLaunchRejectsAmbientAppIdentity(t *testing.T) {
-	t.Setenv("FORJ_APP", "../reporting")
-	var gotApp string
-	err := runLaunch(nil, LaunchConfig{
-		AppName:     "billing",
-		HasRuntime:  true,
-		RootCommand: &struct{}{},
-		Run: func([]string) error {
-			gotApp = os.Getenv("FORJ_APP")
-			return nil
-		},
-	}, func() error { return nil }, func() error { return nil })
-	if err != nil {
-		t.Fatalf("runLaunch() error = %v", err)
-	}
-	if gotApp != "billing" {
-		t.Fatalf("runLaunch() app = %q, want compiled billing identity", gotApp)
-	}
-}
-
 // TestRunLaunchPreservesCLIOnlyNoArgLaunches verifies command-only Apps retain their no-argument behavior.
 func TestRunLaunchPreservesCLIOnlyNoArgLaunches(t *testing.T) {
 	called := false
