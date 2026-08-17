@@ -261,6 +261,26 @@ func TestMultiAppOnly(t *testing.T) {}
 	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 8)
 }
 
+// TestSelectIntegrationTestTargetsIsolatesTopLevelTests protects independent timeout and failure reporting for expensive black-box tests.
+func TestSelectIntegrationTestTargetsIsolatesTopLevelTests(t *testing.T) {
+	tests := []integrationTestName{
+		{packagePath: "example.com/project", name: "TestFirst"},
+		{packagePath: "example.com/project", name: "TestSecond"},
+	}
+	targets, selectedCount, err := selectIntegrationTestTargets(tests, frameworkShard{number: 1, total: 1})
+	if err != nil {
+		t.Fatalf("select integration tests: %v", err)
+	}
+	if selectedCount != 2 || len(targets) != 2 {
+		t.Fatalf("selected integration tests = %d across %d targets, want two independent targets", selectedCount, len(targets))
+	}
+	for index, target := range targets {
+		if target.packagePath != "example.com/project" || len(target.testNames) != 1 || target.testNames[0] != tests[index].name {
+			t.Fatalf("target %d = %#v, want isolated %#v", index, target, tests[index])
+		}
+	}
+}
+
 // writeIntegrationDiscoveryFixture writes one Go discovery fixture inside a test-owned temporary module.
 func writeIntegrationDiscoveryFixture(t *testing.T, path, source string) {
 	t.Helper()
@@ -350,7 +370,7 @@ func assertIntegrationShardsCoverTestsOnce(t *testing.T, tests []integrationTest
 			}
 		}
 		if counted != selectedCount {
-			t.Fatalf("integration shard %d selected count = %d, grouped %d", shardNumber, selectedCount, counted)
+			t.Fatalf("integration shard %d selected count = %d, targeted %d", shardNumber, selectedCount, counted)
 		}
 	}
 	if len(seen) != len(tests) {
