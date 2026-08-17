@@ -380,6 +380,7 @@ type majorSurfaceVerifierCase struct {
 	additional           []evaluationMutation
 	behavior             *evaluationBehaviorMutation
 	alternates           []evaluationFileMutation
+	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
 	wantFailed           string
 	wantCompile          bool
@@ -405,6 +406,12 @@ type evaluationFileMutation struct {
 	path        string
 	old         string
 	replacement string
+}
+
+// evaluationPathRename moves a valid source without changing its package behavior.
+type evaluationPathRename struct {
+	from string
+	to   string
 }
 
 // TestAddAppCommandVerifierCalibration proves the App command contract accepts its golden Project and rejects lost cancellation.
@@ -478,6 +485,7 @@ func TestAddScheduleVerifierCalibration(t *testing.T) {
 			mutant:     `schedule.service.Find(ctx, "missing")`,
 			wantFailed: "reconcile-schedule-behavior",
 		},
+		alternateRenames: []evaluationPathRename{{from: "app/wire/inject_schedules_app.go", to: "app/wire/schedules.go"}},
 	})
 }
 
@@ -716,6 +724,9 @@ func TestPublishDomainEventVerifierCalibration(t *testing.T) {
 			wantFailed: "domain-event-behavior",
 		},
 		alternates: []evaluationFileMutation{
+			{path: "internal/events/user_created_event.go", old: "UserCreated", replacement: "UserCreatedEvent"},
+			{path: "internal/users/events.go", old: "events.UserCreated", replacement: "events.UserCreatedEvent"},
+			{path: "internal/notifications/subscribers.go", old: "events.UserCreated", replacement: "events.UserCreatedEvent"},
 			{path: "internal/notifications/subscribers.go", old: "func (s *Subscribers) Register", replacement: "func (subscribers *Subscribers) Register"},
 			{path: "internal/notifications/subscribers.go", old: "s.handler.HandleUserCreated", replacement: "subscribers.handler.HandleUserCreated"},
 		},
@@ -772,6 +783,7 @@ func TestScheduleExistingJobVerifierCalibration(t *testing.T) {
 			{path: "internal/reports/daily.go", old: "r.targets", replacement: "runner.targets"},
 			{path: "internal/reports/daily.go", old: "r.queue", replacement: "runner.queue"},
 		},
+		alternateRenames: []evaluationPathRename{{from: "internal/reports/daily.go", to: "internal/reports/daily_runner.go"}},
 	})
 }
 
@@ -987,6 +999,23 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}
 		restoreEvaluationAlternates(t, originals)
 	}
+	if len(test.alternateRenames) > 0 {
+		func() {
+			restore := applyEvaluationRenames(t, projectRoot, test.alternateRenames)
+			defer restore()
+			alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
+			alternateResult, verifyErr := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: alternateChanges})
+			if verifyErr != nil {
+				t.Fatalf("Verify(relocated alternate): %v", verifyErr)
+			}
+			if alternateResult.FrameworkOutcome.Status != eval.EndpointPassed {
+				t.Fatalf("relocated alternate outcome = %#v; checks = %#v", alternateResult.FrameworkOutcome, alternateResult.Checks)
+			}
+			if test.behavior != nil && !evaluationCheckHasStatus(alternateResult.Checks, test.behavior.wantFailed, eval.EndpointPassed) {
+				t.Fatalf("relocated alternate behavior = %#v", alternateResult.Checks)
+			}
+		}()
+	}
 	if test.disconnectedProvider != "" {
 		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
 	}
@@ -1162,6 +1191,26 @@ func restoreEvaluationAlternates(t *testing.T, originals map[string][]byte) {
 	for path, body := range originals {
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			t.Fatalf("restore alternate target %q: %v", path, err)
+		}
+	}
+}
+
+// applyEvaluationRenames relocates source files to prove package-wide contracts do not depend on golden filenames.
+func applyEvaluationRenames(t *testing.T, projectRoot string, renames []evaluationPathRename) func() {
+	t.Helper()
+	for _, rename := range renames {
+		from := filepath.Join(projectRoot, filepath.FromSlash(rename.from))
+		to := filepath.Join(projectRoot, filepath.FromSlash(rename.to))
+		if err := os.Rename(from, to); err != nil {
+			t.Fatalf("rename alternate %q to %q: %v", rename.from, rename.to, err)
+		}
+	}
+	return func() {
+		for index := len(renames) - 1; index >= 0; index-- {
+			rename := renames[index]
+			if err := os.Rename(filepath.Join(projectRoot, filepath.FromSlash(rename.to)), filepath.Join(projectRoot, filepath.FromSlash(rename.from))); err != nil {
+				t.Fatalf("restore renamed alternate %q: %v", rename.from, err)
+			}
 		}
 	}
 }
