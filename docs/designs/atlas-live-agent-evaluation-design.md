@@ -278,7 +278,11 @@ forj atlas:eval run add-http-controller \
 The current command is deliberately diagnostic and uses the unconfined local
 backend. It accepts only the implemented `none` and `agents` profiles. It does
 not accept an authoritative intent or backend selection until Phase 3 can
-enforce those claims.
+enforce those claims. Local cleanup owns the direct process and, on Linux,
+periodically samples descendant ancestry for qualified termination. A process
+that changes ancestry between samples can escape that diagnostic tracker, and
+other hosts do not claim descendant observation; the retained cleanup result is
+therefore operational evidence, not proof of complete process containment.
 
 ### Compare guidance profiles
 
@@ -308,25 +312,37 @@ forj atlas:eval suite core \
 
 `--workers` runs complete `none`/`agents` pairs concurrently while keeping the
 two treatments in each pair sequential. The command serializes trusted base
-construction through one command-owned dependency seed that candidate code can
-never write. Every treatment and verifier still owns separate Project, home,
+construction through one command-owned dependency seed that is never exposed
+as writable configuration to candidate processes. Every treatment and verifier still owns separate Project, home,
 temporary, and writable Go cache state. Final results retain catalog order
 rather than completion order. `--workers` speeds up unconfined diagnostics
 only. Different paths prevent ordinary
 collisions, but they are not a same-user security boundary: authoritative
-concurrent execution remains blocked on the isolated Phase 3 backend.
+concurrent execution remains blocked on the isolated Phase 3 backend. A
+same-UID unconfined process can still discover and mutate host paths despite
+the loopback proxy, so the local topology is an operational safety measure,
+not an integrity boundary.
 
 Before creating authority or starting agents, the CLI verifies free space on
-the work-state volume using a conservative one GiB command allowance plus one
-GiB for each worker that can actually receive a job. A filtered one-evaluation
-suite therefore budgets one worker even when the caller requests eight. The
+the work-state volume using a conservative peak-scratch estimate. Each worker
+is charged for three bounded two-GiB trees (candidate, sealed input, and
+verifier clone) plus three private one-GiB caches. Shared state is charged one
+GiB for the dependency seed, one retained two-GiB preparation base per active
+worker, and one serialized base that may be materializing before an idle base
+is evicted. That produces a 14-GiB estimate for one effective worker and 47
+GiB for four. A filtered
+one-evaluation suite therefore budgets one worker even when the caller requests
+eight. This is an admission estimate rather than a filesystem reservation; the
 guard is deliberately actionable: reduce `--workers` or free space rather than
 allowing concurrent Go caches to fail midway through evidence collection.
 Command roots hold an OS-level exclusive lease for their full lifetime. Crash
-recovery prunes only old, correctly marked roots whose lease can be acquired;
-elapsed time alone never makes a supported long-running suite disposable. The
-scan and each cleanup pass are bounded so a corrupted backlog cannot turn
-startup into an unbounded directory walk.
+recovery prunes only correctly marked roots whose lease can be acquired;
+elapsed time alone never makes a supported long-running suite disposable. A
+verified inactive root is atomically moved to a private quarantine name before
+recursive removal so cleanup does not continue through its original pathname.
+The scan is capped at 1,024 entries and each command removes at most eight roots,
+reporting the remainder as deferred so a backlog cannot turn startup into an
+unbounded directory walk.
 
 ### Inspect a retained run
 
@@ -1000,10 +1016,19 @@ platform.
 Go module, Go build, and package-manager download caches should remain separate
 from the immutable Project-base cache. Agent trials and verifier phases use
 independent writable caches. After trusted preparation, verifier phases may
-read its checksum-backed Go module archives as a local proxy and copy required
-modules into their own private caches; missing modules fall through to the
-declared upstream. This avoids repeated network downloads without letting a
-candidate write state consumed by another verifier phase. A trusted
+read its checksum-backed Go module archives through an authority-scoped,
+random-prefix loopback proxy and copy required modules into their own private
+caches; missing modules fall through to the explicitly declared upstream
+`GOPROXY` through a private supervisor client; verifier children receive only
+the loopback URL, never the upstream address or credentials. This avoids
+repeated network downloads without letting a candidate write state consumed by
+another verifier phase. The loopback prefix limits ordinary proxy access but is
+not an OS security boundary for same-UID, unconfined candidate processes;
+authoritative use still requires host isolation. A trusted
+HTTP(S) proxy chain retains Go's comma and pipe fallback semantics. A trailing
+`direct` entry is deliberately not delegated to candidate-controlled VCS
+commands; private cold dependencies therefore require a declared supervisor
+HTTP module proxy or trusted preparation before the attempt starts. A trusted
 dependency-acquisition phase may likewise hydrate private caches before
 baseline capture through pinned, checksum-enforcing proxies or declared local
 fixture endpoints. Network `off` means no undeclared external egress; it does
@@ -1849,6 +1874,8 @@ failure layered on every agent outcome.
 The promoted core suite should stay focused while covering the highest-leverage
 framework decisions. Its current 30 evaluations are focused framework
 diagnostics, not representative evidence or macro guidance-efficacy guidance.
+The separate `unknown-framework-shape` calibration case remains discoverable
+without entering comparative core runs.
 Adding a surface requires a versioned workflow, semantic verifier, executable
 GoForj scenario, golden calibration, and proportional behavioral or
 incident-targeted mutant coverage.
@@ -1944,19 +1971,27 @@ the supported full build path in its disposable clone and compares regenerated
 Wire output to the checked-in file, so stale or manually edited derived output
 fails without mutating candidate artifacts.
 
+### `runtime-observability`
+
+Use the runtime-observability scenario as a bounded repair of disabled local
+inspect capture. Require generated metrics discovery, enabled local inspect capture, and
+operator documentation that connects HTTP, jobs, and scheduler executions to
+Lighthouse. The verifier uses build, tests, and route discovery only; it does
+not start Docker, a long-running runtime, or external services. Golden
+calibration proves the repaired surfaces compose, while the seeded disabled
+configuration proves Lighthouse readiness through a supervisor-owned runtime
+configuration probe rather than a documentation spelling check.
+
 ### `unknown-framework-shape`
 
-Treat this as a separate safe-abstention scenario rather than ordinary feature
-completion. Require bounded evidence gathering, no unsupported framework API,
-no out-of-scope mutation, and either a specific clarification question or an
-evidence-backed direct implementation permitted by the scenario oracle.
-
-In noninteractive mode, accepted clarification is the terminal `abstained`
-state. The scenario must define a machine-checkable clarification schema and
-require trusted final-response capture. After the agent emits that response it
-must exit successfully without waiting for a user turn. The verifier checks the
-evidence-gathering budget and independently confirms the allowed no-mutation
-scope.
+Keep this as calibration rather than an ordinary feature or comparative core
+measurement. The unconfined local backend can prove no mutation and capture an
+exact terminal question, but it cannot independently prove which Project files
+the candidate inspected. Giving the prompt a machine-readable answer schema
+would disclose the verifier's expected decision and options instead of
+measuring discovery. Promotion therefore waits for a confined backend with
+trusted file-read evidence; until then the case exercises the abstention parser,
+no-mutation boundary, and calibration fixtures only.
 
 ### Application-shaped capstones
 

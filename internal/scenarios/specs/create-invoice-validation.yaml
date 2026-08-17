@@ -3,6 +3,10 @@ id: create-invoice-validation
 title: Create Invoice Validation
 description: Add a validated invoice write endpoint with stable public errors.
 depends_on: [invoice-http-route]
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module

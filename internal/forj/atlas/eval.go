@@ -26,19 +26,25 @@ import (
 )
 
 const (
-	evaluationArtifactRootMarker   = ".atlas-evaluation-artifacts"
-	evaluationArtifactRootIdentity = "goforj-atlas-evaluation-artifacts/v1\n"
-	evaluationWorkRootMarker       = ".atlas-evaluation-work"
-	evaluationWorkRootIdentity     = "goforj-atlas-evaluation-work/v1\n"
-	evaluationWorkRootLease        = ".lease"
-	// Age bounds crash residue retention; the held lease, rather than elapsed time, proves whether a command is still active.
-	evaluationStaleWorkRootAge        = 7 * 24 * time.Hour
+	evaluationArtifactRootMarker      = ".atlas-evaluation-artifacts"
+	evaluationArtifactRootIdentity    = "goforj-atlas-evaluation-artifacts/v1\n"
+	evaluationWorkRootMarker          = ".atlas-evaluation-work"
+	evaluationWorkRootIdentity        = "goforj-atlas-evaluation-work/v1\n"
+	evaluationWorkRootLease           = ".lease"
 	evaluationStaleWorkRootScanLimit  = 1024
 	evaluationStaleWorkRootPruneLimit = 8
+	evaluationStaleWorkQuarantine     = ".prune-"
 	maxEvaluationCredentialSize       = 1 << 20
 	maxEvaluationArtifactKeySize      = 64 << 10
-	minimumEvaluationFreeBytesFixed   = uint64(1 << 30)
-	minimumEvaluationFreeBytesWorker  = uint64(1 << 30)
+	// Atlas bounds each candidate tree at 2 GiB. A treatment can retain its candidate,
+	// sealed input, and one verifier clone simultaneously; private Go caches need a
+	// separate allowance. Concurrent workers can materialize distinct command-owned
+	// bases, while idle retention remains bounded independently.
+	evaluationCandidateTreeBytes  = uint64(2 << 30)
+	evaluationTreatmentTreeCopies = uint64(3)
+	evaluationPrivateCacheBytes   = uint64(1 << 30)
+	evaluationSharedCacheBytes    = uint64(1 << 30)
+	evaluationPrivateCacheCopies  = uint64(3)
 )
 
 // EvalCmd groups opt-in live-agent evaluation commands.
@@ -253,6 +259,7 @@ type evaluationInvocation struct {
 	Artifacts       string
 	ArtifactKey     string
 	Progress        io.Writer
+	PairWorkers     int
 }
 
 // Signature returns the Kong metadata for EvalCompareCmd.
@@ -299,9 +306,11 @@ func runEvaluationComparisonsWithWorkers(ctx context.Context, invocation evaluat
 		return fmt.Errorf("at least one evaluation is required")
 	}
 	workers = effectiveEvaluationWorkers(workers, len(jobs))
+	invocation.PairWorkers = workers
 	if err := ensureEvaluationDiskCapacity(workers); err != nil {
 		return err
 	}
+	printEvaluationScratchAdmission(invocation.Progress, workers)
 	authority, err := newEvaluationAuthority(invocation)
 	if err != nil {
 		return err
@@ -347,7 +356,7 @@ func validateEvaluationIDs(evaluationIDs []string) error {
 	return nil
 }
 
-// ensureEvaluationDiskCapacity fails before authority or agents start when worker-private Projects and caches cannot fit safely.
+// ensureEvaluationDiskCapacity fails before authority or agents start when the bounded candidate copies and private caches cannot fit safely.
 func ensureEvaluationDiskCapacity(workers int) error {
 	cacheRoot, err := os.UserCacheDir()
 	if err != nil {
@@ -363,11 +372,33 @@ func ensureEvaluationDiskCapacity(workers int) error {
 	return validateEvaluationDiskCapacity(cacheRoot, available, workers)
 }
 
+// evaluationScratchBudget estimates peak scratch from bounded prepared bases plus the none, agents, and verifier trees and caches each worker can retain at once.
+func evaluationScratchBudget(workers int) uint64 {
+	shared := evaluationPreparedBaseTreeCopies(workers)*evaluationCandidateTreeBytes + evaluationSharedCacheBytes
+	perWorker := evaluationTreatmentTreeCopies*evaluationCandidateTreeBytes + evaluationPrivateCacheCopies*evaluationPrivateCacheBytes
+	return shared + uint64(workers)*perWorker
+}
+
+// evaluationPreparedBaseTreeCopies charges one retained base per worker plus the single serialized base that may be materializing before eviction.
+func evaluationPreparedBaseTreeCopies(workers int) uint64 {
+	return uint64(workers + 1)
+}
+
+// printEvaluationScratchAdmission makes the conservative peak scratch estimate visible before workers begin; it is not a filesystem reservation.
+func printEvaluationScratchAdmission(writer io.Writer, workers int) {
+	if writer == nil {
+		return
+	}
+	shared := evaluationPreparedBaseTreeCopies(workers)*evaluationCandidateTreeBytes + evaluationSharedCacheBytes
+	perWorker := evaluationTreatmentTreeCopies*evaluationCandidateTreeBytes + evaluationPrivateCacheCopies*evaluationPrivateCacheBytes
+	fmt.Fprintf(writer, "Evaluation scratch estimate · %d workers · up to %d GiB shared + %d GiB per worker = %d GiB peak\n", workers, shared>>30, perWorker>>30, evaluationScratchBudget(workers)>>30)
+}
+
 // validateEvaluationDiskCapacity applies the conservative aggregate scratch budget independently from platform filesystem calls.
 func validateEvaluationDiskCapacity(cacheRoot string, available uint64, workers int) error {
-	required := minimumEvaluationFreeBytesFixed + uint64(workers)*minimumEvaluationFreeBytesWorker
+	required := evaluationScratchBudget(workers)
 	if available < required {
-		return fmt.Errorf("evaluation workers require at least %d GiB free in %s; %.2f GiB is available (reduce --workers or free disk space)", required>>30, cacheRoot, float64(available)/(1<<30))
+		return fmt.Errorf("evaluation scratch estimate requires at least %d GiB free in %s; %.2f GiB is available (reduce --workers or free disk space)", required>>30, cacheRoot, float64(available)/(1<<30))
 	}
 	return nil
 }
@@ -400,17 +431,22 @@ func evaluationComparisonJobs(evaluationIDs []string, trials int) []evaluationCo
 
 // runEvaluationComparisonJobs stores each worker outcome at its planned position, keeping command output reproducible.
 func runEvaluationComparisonJobs(ctx context.Context, progress io.Writer, jobs []evaluationComparisonJob, workerCount, trials int, run func(context.Context, evaluationComparisonJob, int) (eval.GuidanceDiagnosticResult, []error)) ([]eval.GuidanceDiagnosticResult, []error) {
+	commandContext, stop := context.WithCancel(ctx)
+	defer stop()
 	results := make([]eval.GuidanceDiagnosticResult, len(jobs))
 	completed := make([]bool, len(jobs))
 	errorsByJob := make([][]error, len(jobs))
 	reporter := newEvaluationProgress(progress, len(jobs), trials)
-	runEvaluationComparisonSchedule(ctx, jobs, workerCount, func(index int, job evaluationComparisonJob, worker int) {
+	runEvaluationComparisonSchedule(commandContext, jobs, workerCount, func(index int, job evaluationComparisonJob, worker int) {
 		reporter.started(job)
-		result, jobErrors := run(ctx, job, worker)
+		result, jobErrors := run(commandContext, job, worker)
 		results[index] = result
 		completed[index] = true
 		errorsByJob[index] = jobErrors
 		reporter.finished(job)
+		if evaluationCommandFatal(jobErrors) {
+			stop()
+		}
 	})
 	orderedResults := make([]eval.GuidanceDiagnosticResult, 0, len(jobs))
 	var attemptErrors []error
@@ -426,6 +462,29 @@ func runEvaluationComparisonJobs(ctx context.Context, progress io.Writer, jobs [
 	return orderedResults, attemptErrors
 }
 
+// evaluationCommandFatal reports failures that invalidate the shared execution surface or make further writes unsafe.
+func evaluationCommandFatal(causes []error) bool {
+	for _, err := range causes {
+		var fatal evaluationCommandFatalError
+		if errors.As(err, &fatal) || eval.IsResourceExhaustion(err) {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluationCommandFatalCause marks space exhaustion as command-wide while preserving its filesystem identity for callers.
+func evaluationCommandFatalCause(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	var fatal evaluationCommandFatalError
+	if errors.As(cause, &fatal) || !eval.IsResourceExhaustion(cause) {
+		return cause
+	}
+	return evaluationCommandFatalError{cause: cause}
+}
+
 // runEvaluationComparisonJob owns one pair's writable state from preflight through cleanup and postflight integrity checks.
 func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecution, tools evaluationTools, job evaluationComparisonJob) (eval.GuidanceDiagnosticResult, []error) {
 	if err := tools.Verify(); err != nil {
@@ -437,12 +496,18 @@ func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecut
 	}
 	environments, err := newEvaluationJobEnvironments(jobRoot, tools)
 	if err != nil {
-		return eval.GuidanceDiagnosticResult{}, []error{errors.Join(err, removeEvaluationWorkRoot(jobRoot))}
+		return eval.GuidanceDiagnosticResult{}, []error{evaluationCommandFatalCause(errors.Join(err, removeEvaluationWorkRoot(jobRoot)))}
+	}
+	if err := execution.verifierModuleProxyHealthy(ctx); err != nil {
+		return eval.GuidanceDiagnosticResult{}, []error{evaluationCommandFatalCause(errors.Join(err, removeEvaluationWorkRoot(jobRoot)))}
 	}
 	result, diagnosticErr := execution.diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
 		EvaluationID: job.evaluationID, DestinationRoot: filepath.Join(jobRoot, "projects"), Environments: environments,
+		TreatmentBoundary: func(boundaryContext context.Context) error {
+			return errors.Join(tools.Verify(), execution.verifierModuleProxyHealthy(boundaryContext))
+		},
 	})
-	diagnosticErr = errors.Join(diagnosticErr, removeEvaluationWorkRoot(jobRoot), tools.Verify())
+	diagnosticErr = evaluationCommandFatalCause(errors.Join(diagnosticErr, removeEvaluationWorkRoot(jobRoot), tools.Verify(), execution.verifierModuleProxyHealthy(context.Background())))
 	return result, evaluationComparisonErrors(job, result, diagnosticErr, execution.redactor)
 }
 
@@ -465,7 +530,14 @@ func evaluationComparisonErrors(job evaluationComparisonJob, result eval.Guidanc
 	var attemptErrors []error
 	for _, attempt := range result.Attempts {
 		if attempt.Error != "" {
-			attemptErrors = append(attemptErrors, fmt.Errorf("%s/%s treatment: %s", job.evaluationID, attempt.Profile, redactor.Text(attempt.Error)))
+			cause := attempt.Cause
+			if cause == nil {
+				cause = errors.New(attempt.Error)
+			}
+			attemptErrors = append(attemptErrors, evaluationDiagnosticError{
+				message: fmt.Sprintf("%s/%s treatment: %s", job.evaluationID, attempt.Profile, redactor.Text(attempt.Error)),
+				cause:   cause,
+			})
 		}
 	}
 	if diagnosticErr != nil {
@@ -599,7 +671,11 @@ func runEvaluationTreatments(ctx context.Context, invocation evaluationInvocatio
 		}
 		environment, environmentErr := newEvaluationTreatmentEnvironment(jobRoot, profile, authority.tools)
 		if environmentErr != nil {
-			attemptErrors = append(attemptErrors, errors.Join(environmentErr, removeEvaluationWorkRoot(jobRoot)))
+			attemptErrors = append(attemptErrors, evaluationCommandFatalCause(errors.Join(environmentErr, removeEvaluationWorkRoot(jobRoot))))
+			break
+		}
+		if err := execution.verifierModuleProxyHealthy(ctx); err != nil {
+			attemptErrors = append(attemptErrors, evaluationCommandFatalCause(errors.Join(err, removeEvaluationWorkRoot(jobRoot))))
 			break
 		}
 		attempt, attemptErr := execution.diagnostic.RunTreatment(ctx, eval.LocalDiagnosticTreatmentRequest{
@@ -608,10 +684,13 @@ func runEvaluationTreatments(ctx context.Context, invocation evaluationInvocatio
 			DestinationRoot: filepath.Join(jobRoot, "projects"),
 			Environment:     environment,
 		})
-		attemptErr = errors.Join(attemptErr, removeEvaluationWorkRoot(jobRoot), authority.tools.Verify())
+		attemptErr = evaluationCommandFatalCause(errors.Join(attemptErr, removeEvaluationWorkRoot(jobRoot), authority.tools.Verify(), execution.verifierModuleProxyHealthy(context.Background())))
 		results = append(results, attempt)
 		if attemptErr != nil {
 			attemptErrors = append(attemptErrors, redactedEvaluationFailure(evaluationID+"/"+profile+" treatment", attemptErr, execution.redactor))
+			if evaluationCommandFatal([]error{attemptErr}) {
+				break
+			}
 		}
 		if ctx.Err() != nil {
 			break
@@ -625,16 +704,15 @@ func runEvaluationTreatments(ctx context.Context, invocation evaluationInvocatio
 
 // evaluationAuthority freezes the retained artifact authority and Codex credential once for an invocation.
 type evaluationAuthority struct {
-	artifactKey    []byte
-	artifactRoot   string
-	credential     eval.CodexCredential
-	forjExecutable string
-	goExecutable   string
-	preparer       *atlaseval.Preparer
-	tools          evaluationTools
-	redactor       eval.Redactor
-	workRoot       string
-	work           *evaluationWorkRoot
+	artifactKey  []byte
+	artifactRoot string
+	credential   eval.CodexCredential
+	preparer     *atlaseval.Preparer
+	tools        evaluationTools
+	moduleProxy  *verifierModuleProxy
+	redactor     eval.Redactor
+	workRoot     string
+	work         *evaluationWorkRoot
 }
 
 // newEvaluationAuthority resolves command-wide immutable inputs before workers create their private state.
@@ -642,10 +720,6 @@ func newEvaluationAuthority(invocation evaluationInvocation) (authority evaluati
 	forjExecutable, err := os.Executable()
 	if err != nil {
 		return evaluationAuthority{}, fmt.Errorf("resolve current Forj executable: %w", err)
-	}
-	goExecutable, err := exec.LookPath("go")
-	if err != nil {
-		return evaluationAuthority{}, fmt.Errorf("resolve Go executable: %w", err)
 	}
 	credential, err := readEvalCredential(invocation.Credential)
 	if err != nil {
@@ -677,11 +751,15 @@ func newEvaluationAuthority(invocation evaluationInvocation) (authority evaluati
 	if err != nil {
 		return evaluationAuthority{}, err
 	}
-	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance)
+	moduleProxy, err := newVerifierModuleProxy(baseEnvironment)
+	if err != nil {
+		return evaluationAuthority{}, err
+	}
+	preparer := atlaseval.NewPreparerWithCapacity(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance, invocation.PairWorkers)
 	return evaluationAuthority{
 		artifactKey: artifactKey, artifactRoot: artifactRoot, credential: credential,
-		forjExecutable: forjExecutable, goExecutable: goExecutable, preparer: preparer, tools: tools,
-		redactor: credential.Redactor(eval.NewRedactor(nil)), workRoot: workRoot, work: work,
+		preparer: preparer, tools: tools, moduleProxy: moduleProxy,
+		redactor: credential.Redactor(eval.NewRedactor([]string{string(artifactKey)})), workRoot: workRoot, work: work,
 	}, nil
 }
 
@@ -690,16 +768,28 @@ func (authority *evaluationAuthority) Close() error {
 	if authority == nil {
 		return nil
 	}
-	return errors.Join(authority.preparer.Close(context.Background()), authority.work.Close())
+	return errors.Join(authority.moduleProxy.Close(), authority.preparer.Close(context.Background()), authority.work.Close())
 }
 
 // evaluationExecution owns one worker's diagnostic, writable project clones, verifier state, home, temporary files, and Go caches.
 type evaluationExecution struct {
 	diagnostic   evaluationComparisonDiagnostic
+	moduleProxy  *verifierModuleProxy
 	workRoot     string
 	artifactRoot string
 	redactor     eval.Redactor
 	work         *evaluationWorkRoot
+}
+
+// verifierModuleProxyHealthy keeps the shared verifier dependency surface live across treatment boundaries.
+func (execution *evaluationExecution) verifierModuleProxyHealthy(ctx context.Context) error {
+	if execution == nil {
+		return errors.New("evaluation execution is required")
+	}
+	if execution.moduleProxy == nil {
+		return nil
+	}
+	return execution.moduleProxy.Healthy(ctx)
 }
 
 // evaluationComparisonDiagnostic keeps worker orchestration testable without weakening the concrete Atlas diagnostic used in production.
@@ -736,7 +826,7 @@ func newEvaluationExecution(invocation evaluationInvocation, authority evaluatio
 	if _, err := evaluationProfiles(profiles); err != nil {
 		return nil, err
 	}
-	work, err := newEvaluationWorkRoot()
+	work, err := newEvaluationWorkRootWithoutCleanup()
 	if err != nil {
 		return nil, err
 	}
@@ -754,9 +844,10 @@ func newEvaluationExecution(invocation evaluationInvocation, authority evaluatio
 		Redactor:            authority.redactor,
 		Preparer:            authority.preparer,
 		Codex:               eval.CodexOptions{Executable: invocation.CodexExecutable, Model: invocation.Model, ModelProvider: invocation.ModelProvider, Credential: authority.credential},
-		GoExecutable:        authority.goExecutable,
-		ForjExecutable:      authority.forjExecutable,
+		GoExecutable:        authority.tools.Executable("go"),
+		ForjExecutable:      authority.tools.Executable("forj"),
 		VerifierEnvironment: append([]string(nil), authority.preparer.BaseEnvironment...),
+		VerifierModuleProxy: authority.moduleProxy.URL(),
 		Runtime:             evaluationRuntimeIdentity(),
 	})
 	if err != nil {
@@ -764,7 +855,7 @@ func newEvaluationExecution(invocation evaluationInvocation, authority evaluatio
 	}
 	return &evaluationExecution{
 		diagnostic: diagnostic, workRoot: workRoot, artifactRoot: authority.artifactRoot,
-		redactor: authority.redactor, work: work,
+		moduleProxy: authority.moduleProxy, redactor: authority.redactor, work: work,
 	}, nil
 }
 
@@ -777,21 +868,45 @@ func newEvaluationWorkRoot() (*evaluationWorkRoot, error) {
 	return newEvaluationWorkRootAt(cacheRoot)
 }
 
+// newEvaluationWorkRootWithoutCleanup creates a leased worker root without repeating command-start recovery work.
+func newEvaluationWorkRootWithoutCleanup() (*evaluationWorkRoot, error) {
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve evaluation work-state cache: %w", err)
+	}
+	return newEvaluationWorkRootAtWithoutCleanup(cacheRoot)
+}
+
 // newEvaluationWorkRootAt creates one disposable command workspace below an explicit cache root.
 func newEvaluationWorkRootAt(cacheRoot string) (*evaluationWorkRoot, error) {
 	workStateRoot, err := resolveEvaluationWorkStateRootAt(cacheRoot)
 	if err != nil {
 		return nil, err
 	}
-	if err := pruneStaleEvaluationWorkRoots(workStateRoot, time.Now()); err != nil {
-		return nil, err
-	}
-	root, err := os.MkdirTemp(workStateRoot, "command-")
+	cleanup, err := pruneStaleEvaluationWorkRoots(workStateRoot, time.Now())
 	if err != nil {
 		return nil, err
 	}
-	if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
-		return nil, errors.Join(err, os.RemoveAll(root))
+	if cleanup.deferred > 0 {
+		fmt.Fprintf(os.Stderr, "Evaluation cleanup deferred %d stale work roots after removing %d; recovery will continue on the next command.\n", cleanup.deferred, cleanup.removed)
+	}
+	return newEvaluationWorkRootInStateRoot(workStateRoot)
+}
+
+// newEvaluationWorkRootAtWithoutCleanup supports worker allocation after command-start recovery has established the shared state root.
+func newEvaluationWorkRootAtWithoutCleanup(cacheRoot string) (*evaluationWorkRoot, error) {
+	workStateRoot, err := resolveEvaluationWorkStateRootAt(cacheRoot)
+	if err != nil {
+		return nil, err
+	}
+	return newEvaluationWorkRootInStateRoot(workStateRoot)
+}
+
+// newEvaluationWorkRootInStateRoot publishes a leased, owned workspace below an already-resolved state root.
+func newEvaluationWorkRootInStateRoot(workStateRoot string) (*evaluationWorkRoot, error) {
+	root, err := os.MkdirTemp(workStateRoot, "command-")
+	if err != nil {
+		return nil, err
 	}
 	lease, err := openEvaluationWorkRootLease(root, true)
 	if err != nil {
@@ -799,6 +914,11 @@ func newEvaluationWorkRootAt(cacheRoot string) (*evaluationWorkRoot, error) {
 	}
 	if err := lockEvaluationLease(lease); err != nil {
 		return nil, errors.Join(err, lease.Close(), removeEvaluationWorkRoot(root))
+	}
+	// Publishing ownership only after the lease is held prevents a concurrent
+	// crash-recovery scan from mistaking a newly created root for abandoned work.
+	if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		return nil, errors.Join(err, unlockEvaluationLease(lease), lease.Close(), removeEvaluationWorkRoot(root))
 	}
 	return &evaluationWorkRoot{path: root, lease: lease}, nil
 }
@@ -846,61 +966,109 @@ func resolveEvaluationWorkStateRootAt(cacheRoot string) (string, error) {
 	return workStateRoot, nil
 }
 
+// staleEvaluationWorkCleanup reports bounded crash-recovery work and residue deferred to a later command.
+type staleEvaluationWorkCleanup struct {
+	removed  int
+	deferred int
+}
+
 // pruneStaleEvaluationWorkRoots removes a bounded number of abandoned owned roots after an exclusive lease proves they are inactive.
-func pruneStaleEvaluationWorkRoots(workStateRoot string, now time.Time) error {
+func pruneStaleEvaluationWorkRoots(workStateRoot string, _ time.Time) (staleEvaluationWorkCleanup, error) {
+	cleanup := staleEvaluationWorkCleanup{}
 	directory, err := os.Open(workStateRoot)
 	if err != nil {
-		return fmt.Errorf("open evaluation work-state root: %w", err)
+		return cleanup, fmt.Errorf("open evaluation work-state root: %w", err)
 	}
 	entries, readErr := directory.Readdir(evaluationStaleWorkRootScanLimit + 1)
 	closeErr := directory.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return errors.Join(fmt.Errorf("scan stale evaluation work roots: %w", readErr), closeErr)
+		return cleanup, errors.Join(fmt.Errorf("scan stale evaluation work roots: %w", readErr), closeErr)
 	}
 	if closeErr != nil {
-		return closeErr
+		return cleanup, closeErr
 	}
 	if len(entries) > evaluationStaleWorkRootScanLimit {
-		return fmt.Errorf("evaluation work-state root exceeds %d entries; inspect and remove abandoned owned roots before retrying", evaluationStaleWorkRootScanLimit)
+		return cleanup, fmt.Errorf("evaluation work-state root exceeds %d entries; inspect and remove abandoned owned roots before retrying", evaluationStaleWorkRootScanLimit)
 	}
-	removed := 0
 	for _, entry := range entries {
-		if removed >= evaluationStaleWorkRootPruneLimit || !entry.IsDir() || !strings.HasPrefix(entry.Name(), "command-") {
+		if !entry.IsDir() || (!strings.HasPrefix(entry.Name(), "command-") && !strings.HasPrefix(entry.Name(), evaluationStaleWorkQuarantine+"command-")) {
 			continue
 		}
 		root := filepath.Join(workStateRoot, entry.Name())
+		rootDirectory, err := os.Open(root)
+		if err != nil {
+			continue
+		}
+		rootIdentity, err := rootDirectory.Stat()
+		if err != nil || !rootIdentity.IsDir() {
+			_ = rootDirectory.Close()
+			continue
+		}
 		markerPath := filepath.Join(root, evaluationWorkRootMarker)
 		marker, err := os.Lstat(markerPath)
-		if err != nil || !marker.Mode().IsRegular() || marker.Mode()&os.ModeSymlink != 0 || now.Sub(marker.ModTime()) < evaluationStaleWorkRootAge {
+		if err != nil || !marker.Mode().IsRegular() || marker.Mode()&os.ModeSymlink != 0 {
+			_ = rootDirectory.Close()
 			continue
 		}
 		if err := verifyEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+			_ = rootDirectory.Close()
 			continue
 		}
 		lease, err := openEvaluationWorkRootLease(root, false)
 		if err != nil {
+			_ = rootDirectory.Close()
 			continue
 		}
 		locked, lockErr := tryLockEvaluationLease(lease)
 		if lockErr != nil {
 			_ = lease.Close()
-			return fmt.Errorf("inspect stale evaluation work root %q lease: %w", entry.Name(), lockErr)
+			_ = rootDirectory.Close()
+			return cleanup, fmt.Errorf("inspect stale evaluation work root %q lease: %w", entry.Name(), lockErr)
 		}
 		if !locked {
 			_ = lease.Close()
+			_ = rootDirectory.Close()
 			continue
 		}
-		unlockErr := unlockEvaluationLease(lease)
-		closeErr := lease.Close()
-		if err := errors.Join(unlockErr, closeErr); err != nil {
-			return fmt.Errorf("release stale evaluation work root %q lease: %w", entry.Name(), err)
+		if cleanup.removed >= evaluationStaleWorkRootPruneLimit {
+			releaseErr := errors.Join(unlockEvaluationLease(lease), lease.Close(), rootDirectory.Close())
+			if releaseErr != nil {
+				return cleanup, fmt.Errorf("release stale evaluation work root %q lease: %w", entry.Name(), releaseErr)
+			}
+			cleanup.deferred++
+			continue
 		}
-		if err := removeEvaluationWorkRoot(root); err != nil {
-			return fmt.Errorf("remove stale evaluation work root %q: %w", entry.Name(), err)
+		pathIdentity, pathErr := os.Lstat(root)
+		if pathErr != nil || !os.SameFile(rootIdentity, pathIdentity) {
+			_ = unlockEvaluationLease(lease)
+			_ = lease.Close()
+			_ = rootDirectory.Close()
+			continue
 		}
-		removed++
+		quarantine := root
+		if !strings.HasPrefix(entry.Name(), evaluationStaleWorkQuarantine) {
+			quarantine = filepath.Join(workStateRoot, fmt.Sprintf("%s%s-%d", evaluationStaleWorkQuarantine, entry.Name(), time.Now().UnixNano()))
+			if err := os.Rename(root, quarantine); err != nil {
+				_ = unlockEvaluationLease(lease)
+				_ = lease.Close()
+				_ = rootDirectory.Close()
+				return cleanup, fmt.Errorf("quarantine stale evaluation work root %q: %w", entry.Name(), err)
+			}
+		}
+		quarantineIdentity, identityErr := os.Lstat(quarantine)
+		releaseErr := errors.Join(unlockEvaluationLease(lease), lease.Close(), rootDirectory.Close())
+		if releaseErr != nil {
+			return cleanup, fmt.Errorf("release stale evaluation work root %q lease: %w", entry.Name(), releaseErr)
+		}
+		if identityErr != nil || !os.SameFile(rootIdentity, quarantineIdentity) {
+			return cleanup, fmt.Errorf("quarantined evaluation work root %q changed identity", entry.Name())
+		}
+		if err := removeEvaluationWorkRoot(quarantine); err != nil {
+			return cleanup, fmt.Errorf("remove stale evaluation work root %q: %w", entry.Name(), err)
+		}
+		cleanup.removed++
 	}
-	return nil
+	return cleanup, nil
 }
 
 // evaluationProfiles validates and de-duplicates the diagnostic treatment set before creating persistent artifacts.
@@ -1245,6 +1413,27 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 type evaluationTools struct {
 	digest string
 	dir    string
+	mu     *sync.Mutex
+}
+
+// Executable returns one command-owned verifier executable from the closed tool snapshot.
+func (tools evaluationTools) Executable(name string) string {
+	return filepath.Join(tools.dir, name)
+}
+
+// evaluationCommandFatalError identifies a failure that must stop dispatching independent evaluations.
+type evaluationCommandFatalError struct {
+	cause error
+}
+
+// Error returns the shared-resource failure without changing its causal identity.
+func (failure evaluationCommandFatalError) Error() string {
+	return failure.cause.Error()
+}
+
+// Unwrap retains the underlying filesystem or integrity failure for diagnostics and errors.Is.
+func (failure evaluationCommandFatalError) Unwrap() error {
+	return failure.cause
 }
 
 // newEvaluationTools snapshots the fixed command surface once before concurrent diagnostics begin.
@@ -1259,17 +1448,21 @@ func newEvaluationTools(directory, forjExecutable string) (evaluationTools, erro
 	if err := os.Chmod(directory, 0o500); err != nil {
 		return evaluationTools{}, fmt.Errorf("seal evaluation tool snapshot: %w", err)
 	}
-	return evaluationTools{dir: directory, digest: digest}, nil
+	return evaluationTools{dir: directory, digest: digest, mu: &sync.Mutex{}}, nil
 }
 
 // Verify detects same-user mutations to the shared tool snapshot before they can contaminate another job.
 func (tools evaluationTools) Verify() error {
+	if tools.mu != nil {
+		tools.mu.Lock()
+		defer tools.mu.Unlock()
+	}
 	digest, err := digestEvaluationTools(tools.dir)
 	if err != nil {
-		return err
+		return evaluationCommandFatalError{cause: fmt.Errorf("inspect evaluation tool snapshot: %w", err)}
 	}
 	if digest != tools.digest {
-		return fmt.Errorf("evaluation tool snapshot changed during diagnostic execution")
+		return evaluationCommandFatalError{cause: fmt.Errorf("evaluation tool snapshot changed during diagnostic execution")}
 	}
 	return nil
 }
@@ -1297,14 +1490,6 @@ func newEvaluationTreatmentEnvironment(root, profile string, tools evaluationToo
 
 // evaluationEnvironmentWithTools gives one treatment private writable state while reusing the command-owned tool snapshot.
 func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]string, error) {
-	goExecutable, err := exec.LookPath("go")
-	if err != nil {
-		return nil, fmt.Errorf("resolve Go executable: %w", err)
-	}
-	goExecutable, err = filepath.Abs(goExecutable)
-	if err != nil {
-		return nil, fmt.Errorf("resolve absolute Go executable: %w", err)
-	}
 	goCache := filepath.Join(workRoot, "gocache")
 	moduleCache := filepath.Join(workRoot, "gomodcache")
 	goPath := filepath.Join(workRoot, "gopath")
@@ -1324,7 +1509,7 @@ func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]s
 		"GOWORK":                  "off",
 		"HOME":                    home,
 		"GOTMPDIR":                temporary,
-		"PATH":                    tools.dir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
+		"PATH":                    tools.dir,
 		"TEMP":                    temporary,
 		"TMP":                     temporary,
 		"TMPDIR":                  temporary,
@@ -1350,6 +1535,15 @@ func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]s
 // installEvaluationTools snapshots the small command surface agents need without exposing the supervisor's complete PATH.
 func installEvaluationTools(toolsDir, forjExecutable string) (string, error) {
 	hash := sha256.New()
+	goExecutable, err := exec.LookPath("go")
+	if err != nil {
+		return "", fmt.Errorf("resolve evaluation tool %q: %w", "go", err)
+	}
+	goDigest, err := installEvaluationTool(toolsDir, "go", goExecutable)
+	if err != nil {
+		return "", fmt.Errorf("install evaluation tool %q: %w", "go", err)
+	}
+	fmt.Fprintf(hash, "go\x00%s\x00", goDigest)
 	forjDigest, err := installEvaluationTool(toolsDir, "forj", forjExecutable)
 	if err != nil {
 		return "", err
@@ -1382,7 +1576,24 @@ func digestEvaluationTools(toolsDir string) (string, error) {
 		return "", fmt.Errorf("evaluation tool snapshot directory became writable")
 	}
 	hash := sha256.New()
-	for _, name := range append([]string{"forj"}, evaluationSupportToolNames()...) {
+	want := append([]string{"go", "forj"}, evaluationSupportToolNames()...)
+	entries, err := os.ReadDir(toolsDir)
+	if err != nil {
+		return "", fmt.Errorf("list evaluation tool snapshot: %w", err)
+	}
+	if len(entries) != len(want) {
+		return "", fmt.Errorf("evaluation tool snapshot contains unexpected entries")
+	}
+	wantedEntries := make(map[string]struct{}, len(want))
+	for _, name := range want {
+		wantedEntries[evaluationToolFileName(name)] = struct{}{}
+	}
+	for _, entry := range entries {
+		if _, ok := wantedEntries[entry.Name()]; !ok {
+			return "", fmt.Errorf("evaluation tool snapshot contains unexpected entry %q", entry.Name())
+		}
+	}
+	for _, name := range want {
 		path := filepath.Join(toolsDir, evaluationToolFileName(name))
 		info, err := os.Lstat(path)
 		if err != nil {

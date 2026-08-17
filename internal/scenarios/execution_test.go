@@ -283,7 +283,10 @@ func TestSnapshotToolsRejectsReplacementAfterResolution(t *testing.T) {
 func TestSnapshotToolsCleansFailedPrivateToolRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tools")
 	previous := createScenarioToolRoot
-	createScenarioToolRoot = func() (string, error) {
+	createScenarioToolRoot = func(parent string) (string, error) {
+		if parent == "" {
+			t.Fatal("tool snapshot parent is empty")
+		}
 		if err := os.Mkdir(root, 0o700); err != nil {
 			return "", err
 		}
@@ -299,6 +302,67 @@ func TestSnapshotToolsCleansFailedPrivateToolRoot(t *testing.T) {
 	}
 	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
 		t.Fatalf("failed snapshot tool root remains: %v", statErr)
+	}
+}
+
+// TestSnapshotToolsUsesWorkspaceParent keeps disposable executable copies inside the caller-owned command tree.
+func TestSnapshotToolsUsesWorkspaceParent(t *testing.T) {
+	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Mkdir(workspaceRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "forj")
+	if err := os.WriteFile(source, []byte("selected bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := (scenarioExecution{
+		workspace: scenarioWorkspace{root: workspaceRoot, removeAfter: true},
+		tools:     map[string]string{"forj": source},
+	}).snapshotTools()
+	if err != nil {
+		t.Fatalf("snapshotTools(): %v", err)
+	}
+	if got, want := filepath.Dir(execution.workspace.toolRoot), filepath.Dir(workspaceRoot); got != want {
+		t.Fatalf("tool snapshot parent = %q, want %q", got, want)
+	}
+	prepared := &PreparedScenario{workspace: execution.workspace}
+	if err := prepared.Close(); err != nil {
+		t.Fatalf("PreparedScenario.Close(): %v", err)
+	}
+	if _, statErr := os.Stat(execution.workspace.toolRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("prepared scenario tool snapshot remains: %v", statErr)
+	}
+}
+
+// TestScenarioWorkspaceCleanupOwnsSuccessfulToolSnapshot ensures a successful run releases the private executable copies as well as its project tree.
+func TestScenarioWorkspaceCleanupOwnsSuccessfulToolSnapshot(t *testing.T) {
+	toolRoot := filepath.Join(t.TempDir(), "tools")
+	if err := os.Mkdir(toolRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace := scenarioWorkspace{root: t.TempDir(), toolRoot: toolRoot, removeAfter: true}
+	if err := workspace.cleanupAfter(nil); err != nil {
+		t.Fatalf("cleanupAfter(): %v", err)
+	}
+	if _, err := os.Stat(toolRoot); !os.IsNotExist(err) {
+		t.Fatalf("successful tool snapshot remains: %v", err)
+	}
+}
+
+// TestScenarioWorkspaceCleanupOwnsToolSnapshotAfterRunError ensures primary failures do not bypass tool-snapshot cleanup.
+func TestScenarioWorkspaceCleanupOwnsToolSnapshotAfterRunError(t *testing.T) {
+	toolRoot := filepath.Join(t.TempDir(), "tools")
+	if err := os.Mkdir(toolRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace := scenarioWorkspace{root: t.TempDir(), toolRoot: toolRoot, removeAfter: true}
+	runErr := errors.New("scenario failed")
+	err := workspace.cleanupAfter(runErr)
+	if !errors.Is(err, runErr) {
+		t.Fatalf("cleanupAfter() error = %v, want primary failure", err)
+	}
+	if _, statErr := os.Stat(toolRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("failed run tool snapshot remains: %v", statErr)
 	}
 }
 

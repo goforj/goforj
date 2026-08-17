@@ -11,10 +11,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/goforj/atlas/eval"
+	"github.com/goforj/goforj/internal/scenarios"
 	"github.com/goforj/goforj/project"
 )
 
@@ -222,6 +224,32 @@ func TestRunEvaluationComparisonJobsOmitsUndispatchedResultsAfterCancellation(t 
 	}
 }
 
+// TestRunEvaluationComparisonJobsStopsDispatchAfterCommandFatal keeps a shared tool or disk failure from spending more independent evaluations.
+func TestRunEvaluationComparisonJobsStopsDispatchAfterCommandFatal(t *testing.T) {
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	var ran int
+	results, runErrors := runEvaluationComparisonJobs(context.Background(), nil, jobs, 1, 2, func(_ context.Context, job evaluationComparisonJob, _ int) (eval.GuidanceDiagnosticResult, []error) {
+		ran++
+		return eval.GuidanceDiagnosticResult{LogicalTrialID: job.evaluationID}, []error{fmt.Errorf("write evaluation scratch: %w", syscall.ENOSPC)}
+	})
+	if got, want := ran, 1; got != want {
+		t.Fatalf("dispatched jobs = %d, want %d after ENOSPC", got, want)
+	}
+	if got, want := len(results), 1; got != want {
+		t.Fatalf("results = %d, want %d", got, want)
+	}
+	if !errors.Is(errors.Join(runErrors...), syscall.ENOSPC) {
+		t.Fatalf("run errors = %v, want ENOSPC", runErrors)
+	}
+	var fatal evaluationCommandFatalError
+	if !errors.As(evaluationCommandFatalCause(fmt.Errorf("write evaluation scratch: %w", syscall.ENOSPC)), &fatal) {
+		t.Fatal("ENOSPC was not marked command-fatal")
+	}
+	if !evaluationCommandFatal([]error{evaluationCommandFatalError{cause: errors.New("tool snapshot changed")}}) {
+		t.Fatal("tool integrity failure was not command-fatal")
+	}
+}
+
 // TestRunEvaluationComparisonJobsNeverReusesActiveWorker keeps each worker execution single-threaded.
 func TestRunEvaluationComparisonJobsNeverReusesActiveWorker(t *testing.T) {
 	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
@@ -259,12 +287,36 @@ func TestRunEvaluationComparisonJobsNeverReusesActiveWorker(t *testing.T) {
 
 // TestValidateEvaluationDiskCapacityScalesWithWorkers keeps high concurrency from starting with insufficient aggregate scratch space.
 func TestValidateEvaluationDiskCapacityScalesWithWorkers(t *testing.T) {
-	required := minimumEvaluationFreeBytesFixed + 4*minimumEvaluationFreeBytesWorker
+	required := evaluationScratchBudget(4)
 	if err := validateEvaluationDiskCapacity("/cache", required, 4); err != nil {
 		t.Fatalf("exact capacity rejected: %v", err)
 	}
 	if err := validateEvaluationDiskCapacity("/cache", required-1, 4); err == nil || !strings.Contains(err.Error(), "reduce --workers") {
 		t.Fatalf("capacity error = %v, want actionable worker guidance", err)
+	}
+}
+
+// TestEvaluationScratchBudgetAccountsForEveryPeakTree proves admission includes the candidate, sealed input, verifier clone, shared base, and caches.
+func TestEvaluationScratchBudgetAccountsForEveryPeakTree(t *testing.T) {
+	const workers = 1
+	if got, want := evaluationScratchBudget(workers), uint64(14<<30); got != want {
+		t.Fatalf("evaluationScratchBudget(%d) = %d GiB, want %d GiB", workers, got>>30, want>>30)
+	}
+	var output bytes.Buffer
+	printEvaluationScratchAdmission(&output, workers)
+	if got, want := output.String(), "Evaluation scratch estimate · 1 workers · up to 5 GiB shared + 9 GiB per worker = 14 GiB peak\n"; got != want {
+		t.Fatalf("scratch estimate = %q, want %q", got, want)
+	}
+}
+
+// TestEvaluationScratchBudgetChargesDistinctConcurrentBases prevents worker concurrency from outgrowing the idle-base retention estimate.
+func TestEvaluationScratchBudgetChargesDistinctConcurrentBases(t *testing.T) {
+	const workers = 4
+	if got, want := evaluationPreparedBaseTreeCopies(workers), uint64(workers+1); got != want {
+		t.Fatalf("prepared base trees = %d, want %d", got, want)
+	}
+	if got, want := evaluationScratchBudget(workers), uint64(47<<30); got != want {
+		t.Fatalf("evaluationScratchBudget(%d) = %d GiB, want %d GiB", workers, got>>30, want>>30)
 	}
 }
 
@@ -402,6 +454,73 @@ func TestRunEvaluationComparisonJobPreservesResultWhenPostflightFails(t *testing
 	}
 }
 
+// TestEvaluationComparisonErrorsPreservesAttemptResourceFailure keeps Atlas error identity command-fatal after redacted collation.
+func TestEvaluationComparisonErrorsPreservesAttemptResourceFailure(t *testing.T) {
+	cause := fmt.Errorf("persist artifact: %w", syscall.ENOSPC)
+	result := eval.GuidanceDiagnosticResult{Attempts: []eval.GuidanceDiagnosticAttempt{{
+		Profile: eval.GuidanceProfileNone,
+		Error:   cause.Error(),
+		Cause:   cause,
+	}}}
+	runErrors := evaluationComparisonErrors(evaluationComparisonJob{evaluationID: "add-http-controller", trial: 1}, result, nil, eval.NewRedactor(nil))
+	if !errors.Is(errors.Join(runErrors...), syscall.ENOSPC) || !evaluationCommandFatal(runErrors) {
+		t.Fatalf("comparison errors = %v, want command-fatal ENOSPC identity", runErrors)
+	}
+}
+
+// TestRunEvaluationComparisonJobsStopsAfterAtlasResourceFailure proves a real paired-attempt cause crosses Atlas and halts later dispatch.
+func TestRunEvaluationComparisonJobsStopsAfterAtlasResourceFailure(t *testing.T) {
+	root := t.TempDir()
+	tools := testEvaluationTools(t, filepath.Join(root, "tools"))
+	var calls int
+	execution := &evaluationExecution{
+		workRoot: filepath.Join(root, "worker"),
+		redactor: eval.NewRedactor(nil),
+		diagnostic: fakeEvaluationComparisonDiagnostic{run: func(context.Context, eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error) {
+			calls++
+			cause := fmt.Errorf("finalize evidence: %w", syscall.ENOSPC)
+			return eval.GuidanceDiagnosticResult{Attempts: []eval.GuidanceDiagnosticAttempt{{Profile: eval.GuidanceProfileNone, Error: cause.Error(), Cause: cause}}}, cause
+		}},
+	}
+	jobs := evaluationComparisonJobs([]string{"add-http-controller", "add-job", "add-schedule"}, 1)
+	_, runErrors := runEvaluationComparisonJobs(context.Background(), nil, jobs, 1, 1, func(ctx context.Context, job evaluationComparisonJob, _ int) (eval.GuidanceDiagnosticResult, []error) {
+		return runEvaluationComparisonJob(ctx, execution, tools, job)
+	})
+	if calls != 1 {
+		t.Fatalf("diagnostic calls = %d, want 1 after shared resource exhaustion", calls)
+	}
+	if !errors.Is(errors.Join(runErrors...), syscall.ENOSPC) || !evaluationCommandFatal(runErrors) {
+		t.Fatalf("run errors = %v, want command-fatal ENOSPC", runErrors)
+	}
+}
+
+// TestRunEvaluationComparisonJobChecksToolsBetweenTreatments keeps a transient shared-tool mutation from reaching treatment two.
+func TestRunEvaluationComparisonJobChecksToolsBetweenTreatments(t *testing.T) {
+	root := t.TempDir()
+	tools := testEvaluationTools(t, filepath.Join(root, "tools"))
+	execution := &evaluationExecution{
+		workRoot: filepath.Join(root, "worker"),
+		redactor: eval.NewRedactor(nil),
+		diagnostic: fakeEvaluationComparisonDiagnostic{run: func(ctx context.Context, request eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error) {
+			if request.TreatmentBoundary == nil {
+				return eval.GuidanceDiagnosticResult{}, errors.New("missing treatment boundary")
+			}
+			path := tools.Executable("forj")
+			if err := os.Chmod(path, 0o700); err != nil {
+				return eval.GuidanceDiagnosticResult{}, err
+			}
+			if err := os.WriteFile(path, []byte("mutated"), 0o500); err != nil {
+				return eval.GuidanceDiagnosticResult{}, err
+			}
+			return eval.GuidanceDiagnosticResult{}, request.TreatmentBoundary(ctx)
+		}},
+	}
+	_, runErrors := runEvaluationComparisonJob(context.Background(), execution, tools, evaluationComparisonJob{evaluationID: "add-http-controller", trial: 1})
+	if !evaluationCommandFatal(runErrors) || !strings.Contains(errors.Join(runErrors...).Error(), "tool snapshot") {
+		t.Fatalf("run errors = %v, want command-fatal treatment-boundary failure", runErrors)
+	}
+}
+
 // TestEvaluationJobRootRejectsTraversalBeforeCleanup keeps untrusted CLI IDs from escaping the leased command root.
 func TestEvaluationJobRootRejectsTraversalBeforeCleanup(t *testing.T) {
 	workRoot := filepath.Join(t.TempDir(), "worker")
@@ -430,7 +549,7 @@ func testEvaluationTools(t *testing.T, directory string) evaluationTools {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range append([]string{"forj"}, evaluationSupportToolNames()...) {
+	for _, name := range append([]string{"go", "forj"}, evaluationSupportToolNames()...) {
 		if err := os.WriteFile(filepath.Join(directory, evaluationToolFileName(name)), []byte(name), 0o500); err != nil {
 			t.Fatal(err)
 		}
@@ -443,7 +562,80 @@ func testEvaluationTools(t *testing.T, directory string) evaluationTools {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = removeEvaluationWorkRoot(directory) })
-	return evaluationTools{dir: directory, digest: digest}
+	return evaluationTools{dir: directory, digest: digest, mu: &sync.Mutex{}}
+}
+
+// TestPromotedPreparationPlansResolveAgainstProductionToolSnapshot prevents a portable scenario from depending on an executable unavailable to live evaluations.
+func TestPromotedPreparationPlansResolveAgainstProductionToolSnapshot(t *testing.T) {
+	tools := testEvaluationTools(t, filepath.Join(t.TempDir(), "tools"))
+	environment, err := evaluationEnvironmentWithTools(filepath.Join(t.TempDir(), "attempt"), tools)
+	if err != nil {
+		t.Fatalf("evaluationEnvironmentWithTools(): %v", err)
+	}
+	ids, err := eval.PromotedEvaluationIDs("")
+	if err != nil {
+		t.Fatalf("PromotedEvaluationIDs(): %v", err)
+	}
+	for _, id := range ids {
+		definition, err := eval.LoadPromotedDefinition(id)
+		if err != nil {
+			t.Fatalf("LoadPromotedDefinition(%q): %v", id, err)
+		}
+		if _, _, err := scenarios.ResolveScenarioPreparationTools(tools.Executable("forj"), environment, scenarios.ResolveOptions{ScenarioID: definition.ProjectScenario}); err != nil {
+			t.Errorf("resolve production tools for %q: %v", id, err)
+		}
+	}
+}
+
+// TestEvaluationToolsRejectsUnexpectedEntries keeps PATH authority closed when a treatment can write as the same UID.
+func TestEvaluationToolsRejectsUnexpectedEntries(t *testing.T) {
+	tools := testEvaluationTools(t, filepath.Join(t.TempDir(), "tools"))
+	if err := os.Chmod(tools.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tools.dir, "unexpected"), []byte("shadow"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tools.dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.Verify(); err == nil || !strings.Contains(err.Error(), "unexpected") {
+		t.Fatalf("Verify() error = %v, want unexpected-entry rejection", err)
+	}
+}
+
+// TestEvaluationToolsRejectsGoShadow prevents an altered Go command from silently replacing the pinned toolchain.
+func TestEvaluationToolsRejectsGoShadow(t *testing.T) {
+	tools := testEvaluationTools(t, filepath.Join(t.TempDir(), "tools"))
+	path := filepath.Join(tools.dir, evaluationToolFileName("go"))
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("shadow"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.Verify(); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("Verify() error = %v, want Go shadow rejection", err)
+	}
+}
+
+// TestEvaluationToolsVerifyIsConcurrentSafe covers worker preflight and postflight checks sharing one snapshot.
+func TestEvaluationToolsVerifyIsConcurrentSafe(t *testing.T) {
+	tools := testEvaluationTools(t, filepath.Join(t.TempDir(), "tools"))
+	var workers sync.WaitGroup
+	for range 16 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			if err := tools.Verify(); err != nil {
+				t.Errorf("Verify(): %v", err)
+			}
+		}()
+	}
+	workers.Wait()
 }
 
 // TestRunEvaluationComparisonsWithWorkersStopsBeforeAuthoritySetup keeps cancellation from loading credentials or creating artifacts.
@@ -495,8 +687,8 @@ func TestNewEvaluationAuthorityFreezesCredentialRedaction(t *testing.T) {
 	if err := os.WriteFile(credential, []byte(`{"access_token":"later-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	redacted := authority.redactor.Text("first-secret later-secret")
-	if strings.Contains(redacted, "first-secret") || !strings.Contains(redacted, "later-secret") {
+	redacted := authority.redactor.Text("first-secret 0123456789abcdef0123456789abcdef later-secret")
+	if strings.Contains(redacted, "first-secret") || strings.Contains(redacted, "0123456789abcdef0123456789abcdef") || !strings.Contains(redacted, "later-secret") {
 		t.Fatalf("frozen authority redaction = %q", redacted)
 	}
 }
@@ -530,13 +722,13 @@ func TestNewEvaluationWorkRootUsesUserCacheOutsideArtifacts(t *testing.T) {
 	}
 }
 
-// TestPruneStaleEvaluationWorkRootsRemovesOnlyOldOwnedRoots keeps crash recovery bounded and preserves foreign or recent cache content.
-func TestPruneStaleEvaluationWorkRootsRemovesOnlyOldOwnedRoots(t *testing.T) {
+// TestPruneStaleEvaluationWorkRootsRemovesInactiveOwnedRootsImmediately keeps crash recovery from retaining safe-to-remove residue.
+func TestPruneStaleEvaluationWorkRootsRemovesInactiveOwnedRootsImmediately(t *testing.T) {
 	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := func(name, identity string, age time.Duration) string {
+	create := func(name, identity string) string {
 		t.Helper()
 		root := filepath.Join(stateRoot, name)
 		if err := os.Mkdir(root, 0o700); err != nil {
@@ -544,10 +736,6 @@ func TestPruneStaleEvaluationWorkRootsRemovesOnlyOldOwnedRoots(t *testing.T) {
 		}
 		if identity != "" {
 			if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, identity); err != nil {
-				t.Fatal(err)
-			}
-			when := time.Now().Add(-age)
-			if err := os.Chtimes(filepath.Join(root, evaluationWorkRootMarker), when, when); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -560,30 +748,45 @@ func TestPruneStaleEvaluationWorkRootsRemovesOnlyOldOwnedRoots(t *testing.T) {
 		}
 		return root
 	}
-	old := create("command-old", evaluationWorkRootIdentity, evaluationStaleWorkRootAge+time.Hour)
-	recent := create("command-recent", evaluationWorkRootIdentity, time.Hour)
-	foreign := create("command-foreign", "", evaluationStaleWorkRootAge+time.Hour)
-	wrong := create("command-wrong", "somebody-else\n", evaluationStaleWorkRootAge+time.Hour)
-	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+	inactive := create("command-inactive", evaluationWorkRootIdentity)
+	foreign := create("command-foreign", "")
+	wrong := create("command-wrong", "somebody-else\n")
+	initializing := filepath.Join(stateRoot, "command-initializing")
+	if err := os.Mkdir(initializing, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(old); !os.IsNotExist(err) {
-		t.Fatalf("old owned root survived pruning: %v", err)
+	initializingLease, err := openEvaluationWorkRootLease(initializing, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, path := range []string{recent, foreign, wrong} {
+	if err := lockEvaluationLease(initializingLease); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = unlockEvaluationLease(initializingLease)
+		_ = initializingLease.Close()
+		_ = removeEvaluationWorkRoot(initializing)
+	})
+	if _, err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(inactive); !os.IsNotExist(err) {
+		t.Fatalf("inactive owned root survived pruning: %v", err)
+	}
+	for _, path := range []string{foreign, wrong, initializing} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("preserved root %q: %v", path, err)
 		}
 	}
 }
 
-// TestPruneStaleEvaluationWorkRootsBoundsEachCleanupPass prevents one startup from recursively deleting an unbounded cache backlog.
-func TestPruneStaleEvaluationWorkRootsBoundsEachCleanupPass(t *testing.T) {
+// TestPruneStaleEvaluationWorkRootsBoundsCleanupPass keeps crash recovery useful without turning startup into an unbounded delete.
+func TestPruneStaleEvaluationWorkRootsBoundsCleanupPass(t *testing.T) {
 	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < evaluationStaleWorkRootPruneLimit+3; index++ {
+	for index := 0; index < 11; index++ {
 		root := filepath.Join(stateRoot, fmt.Sprintf("command-old-%02d", index))
 		if err := os.Mkdir(root, 0o700); err != nil {
 			t.Fatal(err)
@@ -598,34 +801,59 @@ func TestPruneStaleEvaluationWorkRootsBoundsEachCleanupPass(t *testing.T) {
 		if err := lease.Close(); err != nil {
 			t.Fatal(err)
 		}
-		when := time.Now().Add(-evaluationStaleWorkRootAge - time.Hour)
-		if err := os.Chtimes(filepath.Join(root, evaluationWorkRootMarker), when, when); err != nil {
-			t.Fatal(err)
-		}
 	}
-	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+	cleanup, err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(stateRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got, want := cleanup.removed, evaluationStaleWorkRootPruneLimit; got != want {
+		t.Fatalf("removed stale roots = %d, want %d", got, want)
+	}
+	if got, want := cleanup.deferred, 3; got != want {
+		t.Fatalf("deferred stale roots = %d, want %d", got, want)
+	}
 	if got, want := len(entries), 3; got != want {
-		t.Fatalf("remaining stale roots = %d, want %d", got, want)
-	}
-	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	entries, err = os.ReadDir(stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("stale roots remained after a second bounded pass: %d", len(entries))
+		t.Fatalf("inactive roots remaining = %d, want %d", got, want)
 	}
 }
 
-// TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot proves elapsed time cannot make another live command disposable.
+// TestPruneStaleEvaluationWorkRootsRecoversQuarantinedRoot keeps an interrupted prior cleanup bounded and resumable.
+func TestPruneStaleEvaluationWorkRootsRecoversQuarantinedRoot(t *testing.T) {
+	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(stateRoot, evaluationStaleWorkQuarantine+"command-interrupted-1")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := openEvaluationWorkRootLease(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cleanup, err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup.removed != 1 || cleanup.deferred != 0 {
+		t.Fatalf("cleanup = %#v, want one recovered quarantine", cleanup)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("quarantined root survived recovery: %v", err)
+	}
+}
+
+// TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot proves a live command remains protected without an age delay.
 func TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot(t *testing.T) {
 	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
 	if err != nil {
@@ -636,10 +864,6 @@ func TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
-		t.Fatal(err)
-	}
-	when := time.Now().Add(-evaluationStaleWorkRootAge - time.Hour)
-	if err := os.Chtimes(filepath.Join(root, evaluationWorkRootMarker), when, when); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := openEvaluationWorkRootLease(root, true)
@@ -654,7 +878,7 @@ func TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot(t *testing.T) {
 		_ = lease.Close()
 		_ = removeEvaluationWorkRoot(root)
 	}()
-	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+	if _, err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(root); err != nil {
@@ -673,7 +897,7 @@ func TestPruneStaleEvaluationWorkRootsBoundsDirectoryScan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("prune error = %v, want bounded scan rejection", err)
 	}
 }
@@ -1035,8 +1259,8 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 		t.Fatal("ambient credential-like environment reached the evaluation process")
 	}
 	toolsDir := filepath.Join(root, "attempt", "tools")
-	if !strings.HasPrefix(values["PATH"], toolsDir+string(os.PathListSeparator)) {
-		t.Fatalf("PATH = %q", values["PATH"])
+	if values["PATH"] != toolsDir {
+		t.Fatalf("PATH = %q, want only sealed tools", values["PATH"])
 	}
 	name := "forj"
 	if runtime.GOOS == "windows" {

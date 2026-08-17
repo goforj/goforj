@@ -33,16 +33,26 @@ type GuidanceMaterializer func(context.Context, eval.PreparedProject, eval.Guida
 
 // preparationCache owns immutable command-local bases shared only by paired trial clones.
 type preparationCache struct {
-	mu          sync.Mutex
-	bases       map[string]*scenarios.PreparedScenario
-	inflight    map[string]*preparationFlight
-	active      int
-	idle        chan struct{}
-	closed      bool
-	cleaning    bool
-	cleanupDone chan struct{}
-	cleanupErr  error
+	mu           sync.Mutex
+	bases        map[string]*scenarios.PreparedScenario
+	baseUsers    map[string]int
+	baseOrder    []string
+	inflight     map[string]*preparationFlight
+	active       int
+	idle         chan struct{}
+	closed       bool
+	cleaning     bool
+	cleanupDone  chan struct{}
+	cleanupErr   error
+	evictionErr  error
+	evictionDone chan struct{}
+	closeBase    func(*scenarios.PreparedScenario) error
+	afterFlight  func()
+	capacity     int
 }
+
+// MaximumRetainedPreparationBases bounds command-local immutable bases while retaining one base for every supported pair worker.
+const MaximumRetainedPreparationBases = 8
 
 // preparationFlight publishes one plan's immutable base to same-plan waiters.
 type preparationFlight struct {
@@ -53,6 +63,11 @@ type preparationFlight struct {
 
 // NewPreparer enables command-local immutable-base reuse under an explicitly owned root.
 func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger, materializer GuidanceMaterializer) *Preparer {
+	return NewPreparerWithCapacity(baseRoot, baseEnvironment, appLogger, materializer, 1)
+}
+
+// NewPreparerWithCapacity retains at most one immutable base per pair worker so useful reuse scales without reserving the eight-worker maximum.
+func NewPreparerWithCapacity(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger, materializer GuidanceMaterializer, capacity int) *Preparer {
 	baseGate := make(chan struct{}, 1)
 	baseGate <- struct{}{}
 	return &Preparer{
@@ -60,18 +75,29 @@ func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.Ap
 		BaseEnvironment: append([]string(nil), baseEnvironment...),
 		Logger:          appLogger,
 		Guidance:        materializer,
-		cache:           newPreparationCache(),
+		cache:           newPreparationCacheWithCapacity(capacity),
 		baseGate:        baseGate,
 	}
 }
 
 // newPreparationCache creates command-local base ownership with independent in-flight plans.
 func newPreparationCache() *preparationCache {
+	return newPreparationCacheWithCapacity(MaximumRetainedPreparationBases)
+}
+
+// newPreparationCacheWithCapacity clamps internal retention to the supported pair-worker range.
+func newPreparationCacheWithCapacity(capacity int) *preparationCache {
+	capacity = min(max(capacity, 1), MaximumRetainedPreparationBases)
 	cache := &preparationCache{
 		bases:       map[string]*scenarios.PreparedScenario{},
+		baseUsers:   map[string]int{},
 		inflight:    map[string]*preparationFlight{},
 		idle:        make(chan struct{}),
 		cleanupDone: make(chan struct{}),
+		capacity:    capacity,
+		closeBase: func(base *scenarios.PreparedScenario) error {
+			return base.Close()
+		},
 	}
 	close(cache.idle)
 	return cache
@@ -200,6 +226,7 @@ func (preparer *Preparer) Close(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	var bases map[string]*scenarios.PreparedScenario
+	var evictionErr error
 	for {
 		preparer.cache.mu.Lock()
 		preparer.cache.closed = true
@@ -212,6 +239,10 @@ func (preparer *Preparer) Close(ctx context.Context) error {
 			preparer.cache.cleaning = true
 			bases = preparer.cache.bases
 			preparer.cache.bases = nil
+			preparer.cache.baseUsers = nil
+			preparer.cache.baseOrder = nil
+			evictionErr = preparer.cache.evictionErr
+			preparer.cache.evictionErr = nil
 			preparer.cache.mu.Unlock()
 			break
 		}
@@ -223,7 +254,7 @@ func (preparer *Preparer) Close(ctx context.Context) error {
 		case <-idle:
 		}
 	}
-	go finishPreparationCleanup(preparer.cache, bases)
+	go finishPreparationCleanup(preparer.cache, bases, evictionErr)
 	return waitForPreparationCleanup(ctx, preparer.cache, preparer.cache.cleanupDone)
 }
 
@@ -241,8 +272,8 @@ func waitForPreparationCleanup(ctx context.Context, cache *preparationCache, don
 }
 
 // finishPreparationCleanup publishes one durable result even when the caller's shutdown context expires first.
-func finishPreparationCleanup(cache *preparationCache, bases map[string]*scenarios.PreparedScenario) {
-	var cleanupErrors []error
+func finishPreparationCleanup(cache *preparationCache, bases map[string]*scenarios.PreparedScenario, priorErr error) {
+	cleanupErrors := []error{priorErr}
 	for _, base := range bases {
 		cleanupErrors = append(cleanupErrors, base.Close())
 	}
@@ -277,7 +308,7 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 		return nil, err
 	}
 	defer release()
-	return scenarios.ClonePrepared(base, request.DestinationRoot)
+	return scenarios.ClonePreparedContext(ctx, base, request.DestinationRoot)
 }
 
 // materializeBase serializes trusted base construction so every verifier sees the command-warmed module seed.
@@ -299,10 +330,28 @@ func (cache *preparationCache) acquire(ctx context.Context, key string, material
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	cache.mu.Lock()
-	if err := ctx.Err(); err != nil {
-		cache.mu.Unlock()
-		return nil, nil, err
+	for {
+		cache.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			cache.mu.Unlock()
+			return nil, nil, err
+		}
+		if cache.evictionDone != nil {
+			done := cache.evictionDone
+			cache.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-done:
+				continue
+			}
+		}
+		if cache.evictionErr != nil {
+			err := fmt.Errorf("evaluation preparation cache is poisoned: %w", cache.evictionErr)
+			cache.mu.Unlock()
+			return nil, nil, err
+		}
+		break
 	}
 	if cache.closed {
 		cache.mu.Unlock()
@@ -320,49 +369,149 @@ func (cache *preparationCache) acquire(ctx context.Context, key string, material
 		}
 		cache.mu.Unlock()
 	})
-	if base := cache.bases[key]; base != nil {
-		cache.mu.Unlock()
-		return base, release, nil
-	}
-	if flight := cache.inflight[key]; flight != nil {
-		cache.mu.Unlock()
-		select {
-		case <-ctx.Done():
+	for {
+		if err := ctx.Err(); err != nil {
+			cache.mu.Unlock()
 			release()
-			return nil, nil, ctx.Err()
-		case <-flight.done:
-			if err := ctx.Err(); err != nil {
-				release()
-				return nil, nil, err
-			}
-			if flight.err != nil {
-				release()
-				return nil, nil, flight.err
-			}
-			return flight.base, release, nil
+			return nil, nil, err
 		}
+		if cache.evictionDone != nil {
+			done := cache.evictionDone
+			cache.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				release()
+				return nil, nil, ctx.Err()
+			case <-done:
+				cache.mu.Lock()
+				continue
+			}
+		}
+		if cache.evictionErr != nil {
+			err := fmt.Errorf("evaluation preparation cache is poisoned: %w", cache.evictionErr)
+			cache.mu.Unlock()
+			release()
+			return nil, nil, err
+		}
+		if base := cache.bases[key]; base != nil {
+			cache.baseUsers[key]++
+			cache.mu.Unlock()
+			return base, cache.release(key, release), nil
+		}
+		if flight := cache.inflight[key]; flight != nil {
+			cache.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				release()
+				return nil, nil, ctx.Err()
+			case <-flight.done:
+				if cache.afterFlight != nil {
+					cache.afterFlight()
+				}
+				if err := ctx.Err(); err != nil {
+					release()
+					return nil, nil, err
+				}
+				if flight.err != nil {
+					release()
+					return nil, nil, flight.err
+				}
+				cache.mu.Lock()
+				continue
+			}
+		}
+		flight := &preparationFlight{done: make(chan struct{})}
+		cache.inflight[key] = flight
+		cache.mu.Unlock()
+		base, err := materialize()
+		cache.mu.Lock()
+		var evicted *scenarios.PreparedScenario
+		if err == nil {
+			cache.bases[key] = base
+			cache.baseUsers[key]++
+			cache.baseOrder = append(cache.baseOrder, key)
+			evicted = cache.beginEvictionLocked()
+		}
+		flight.base, flight.err = base, err
+		delete(cache.inflight, key)
+		close(flight.done)
+		cache.mu.Unlock()
+		if err != nil {
+			release()
+			return nil, nil, err
+		}
+		releaseKey := cache.release(key, release)
+		if err := ctx.Err(); err != nil {
+			releaseKey()
+			return nil, nil, err
+		}
+		if evicted != nil {
+			cache.closeEvictedBase(evicted)
+		}
+		return base, releaseKey, nil
 	}
-	flight := &preparationFlight{done: make(chan struct{})}
-	cache.inflight[key] = flight
-	cache.mu.Unlock()
-	base, err := materialize()
-	cache.mu.Lock()
-	if err == nil {
-		cache.bases[key] = base
-	}
-	flight.base, flight.err = base, err
-	delete(cache.inflight, key)
-	close(flight.done)
-	cache.mu.Unlock()
-	if err != nil {
+}
+
+// release drops a clone's read lease so an older idle base can be reclaimed by a later distinct plan.
+func (cache *preparationCache) release(key string, release func()) func() {
+	return sync.OnceFunc(func() {
+		cache.mu.Lock()
+		cache.baseUsers[key]--
+		evicted := cache.beginEvictionLocked()
+		cache.mu.Unlock()
+		cache.closeEvictedBase(evicted)
 		release()
-		return nil, nil, err
+	})
+}
+
+// closeEvictedBase releases evicted bases outside the cache lock and poisons the cache if accounting can no longer be trusted.
+func (cache *preparationCache) closeEvictedBase(base *scenarios.PreparedScenario) {
+	for base != nil {
+		err := cache.closeBase(base)
+		cache.mu.Lock()
+		if err != nil {
+			cache.evictionErr = errors.Join(cache.evictionErr, fmt.Errorf("remove evicted evaluation preparation base: %w", err))
+			close(cache.evictionDone)
+			cache.evictionDone = nil
+			cache.mu.Unlock()
+			return
+		}
+		base = cache.evictRetainedBaseLocked()
+		if base == nil {
+			close(cache.evictionDone)
+			cache.evictionDone = nil
+		}
+		cache.mu.Unlock()
 	}
-	if err := ctx.Err(); err != nil {
-		release()
-		return nil, nil, err
+}
+
+// beginEvictionLocked starts one eviction sequence so no later acquisition observes successful deletion before it happens.
+func (cache *preparationCache) beginEvictionLocked() *scenarios.PreparedScenario {
+	if cache.evictionDone != nil {
+		return nil
 	}
-	return base, release, nil
+	base := cache.evictRetainedBaseLocked()
+	if base != nil {
+		cache.evictionDone = make(chan struct{})
+	}
+	return base
+}
+
+// evictRetainedBaseLocked removes one idle base from cache accounting while the caller owns the eviction sequence.
+func (cache *preparationCache) evictRetainedBaseLocked() *scenarios.PreparedScenario {
+	for attempts := len(cache.baseOrder); len(cache.bases) > cache.capacity && attempts > 0; attempts-- {
+		key := cache.baseOrder[0]
+		cache.baseOrder = cache.baseOrder[1:]
+		if cache.baseUsers[key] != 0 {
+			cache.baseOrder = append(cache.baseOrder, key)
+			continue
+		}
+		base := cache.bases[key]
+		delete(cache.bases, key)
+		delete(cache.baseUsers, key)
+		return base
+	}
+	return nil
 }
 
 // preparationPlanDigest binds the scenario prefix to the exact executable, toolchain, and material environment selected before mutation.

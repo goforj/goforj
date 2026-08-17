@@ -401,7 +401,7 @@ func TestCompileScenarioPlanOrdersDependencyDiamondOnce(t *testing.T) {
 		{ID: "base", Prepare: ScenarioPreparation{Steps: []ScenarioStep{step("base-prepare")}}, Steps: []ScenarioStep{step("base-target")}},
 		{ID: "cache", DependsOn: []string{"base"}, Steps: []ScenarioStep{step("cache-target")}},
 		{ID: "events", DependsOn: []string{"base"}, Steps: []ScenarioStep{step("events-target")}},
-		{ID: "app", DependsOn: []string{"cache", "events"}, Prepare: ScenarioPreparation{Steps: []ScenarioStep{step("app-prepare")}}, Steps: []ScenarioStep{step("app-target")}},
+		{ID: "app", DependsOn: []string{"cache", "events"}, Prepare: ScenarioPreparation{Steps: []ScenarioStep{step("app-prepare")}, Checks: []ScenarioCommand{{Run: []string{"check-app-start"}}}}, Steps: []ScenarioStep{step("app-target")}},
 	}
 	byID := make(map[string]ScenarioSpec, len(specs))
 	for _, spec := range specs {
@@ -421,6 +421,13 @@ func TestCompileScenarioPlanOrdersDependencyDiamondOnce(t *testing.T) {
 	}
 	if len(plan.preparationSteps) != 1 || plan.preparationSteps[0].step.ID != "app-prepare" || len(plan.targetSteps) != 1 || plan.targetSteps[0].step.ID != "app-target" {
 		t.Fatalf("selected plan stages = %#v / %#v", plan.preparationSteps, plan.targetSteps)
+	}
+	var checks []string
+	for _, command := range plan.startingChecks {
+		checks = append(checks, command.Run[0])
+	}
+	if got, want := strings.Join(checks, ","), "check-app-start"; got != want {
+		t.Fatalf("starting checks = %q, want %q", got, want)
 	}
 }
 

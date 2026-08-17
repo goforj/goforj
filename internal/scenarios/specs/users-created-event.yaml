@@ -4,6 +4,10 @@ title: Users Created Event
 description: Publish a typed users.created event and handle it with a lifecycle-registered subscriber.
 depends_on:
   - file-upload-storage
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module

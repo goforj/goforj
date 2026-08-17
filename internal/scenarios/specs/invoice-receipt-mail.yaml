@@ -3,6 +3,10 @@ id: invoice-receipt-mail
 title: Invoice Receipt Mail
 description: Send invoice receipts through the generated mail manager from an application service.
 depends_on: [invoice-domain]
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module

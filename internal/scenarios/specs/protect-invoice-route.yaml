@@ -3,6 +3,10 @@ id: protect-invoice-route
 title: Protect Invoice Route
 description: Move an existing invoice route behind generated Auth middleware.
 depends_on: [invoice-http-route]
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module

@@ -3,6 +3,10 @@ id: invoice-token-middleware
 title: Invoice Token Middleware
 description: Protect an invoice route with application-owned middleware and resolved configuration.
 depends_on: [invoice-http-route]
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module

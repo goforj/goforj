@@ -171,16 +171,16 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		return nil, workspace.cleanupAfter(err)
 	}
 	if err := execution.prepare(plan); err != nil {
-		return nil, workspace.cleanupAfter(err)
+		return nil, execution.workspace.cleanupAfter(err)
 	}
 
 	config := scenarioProjectConfig(plan.spec)
-	baselineTree, err := digestScenarioTree(workspace.root)
+	baselineTree, err := digestScenarioTreeContext(ctx, execution.workspace.root)
 	if err != nil {
-		return nil, workspace.cleanupAfter(err)
+		return nil, execution.workspace.cleanupAfter(err)
 	}
 	return &PreparedScenario{
-		Root:            workspace.root,
+		Root:            execution.workspace.root,
 		ScenarioID:      plan.spec.ID,
 		SchemaVersion:   plan.spec.SchemaVersion,
 		ProjectConfig:   config,
@@ -191,7 +191,7 @@ func Prepare(ctx context.Context, options PrepareOptions) (*PreparedScenario, er
 		ToolDigest:      toolDigest,
 		PlanDigest:      planDigest,
 		BaselineTree:    baselineTree,
-		workspace:       workspace,
+		workspace:       execution.workspace,
 	}, nil
 }
 
@@ -364,6 +364,17 @@ func (prepared *PreparedScenario) Close() error {
 
 // ClonePrepared copies one verified starting state into a separately owned trial workspace.
 func ClonePrepared(prepared *PreparedScenario, workDir string) (*PreparedScenario, error) {
+	return ClonePreparedContext(context.Background(), prepared, workDir)
+}
+
+// ClonePreparedContext copies one verified starting state into a separately owned trial workspace until the context expires.
+func ClonePreparedContext(ctx context.Context, prepared *PreparedScenario, workDir string) (*PreparedScenario, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if prepared == nil || strings.TrimSpace(prepared.Root) == "" {
 		return nil, fmt.Errorf("prepared scenario is required")
 	}
@@ -377,10 +388,10 @@ func ClonePrepared(prepared *PreparedScenario, workDir string) (*PreparedScenari
 	if err != nil {
 		return nil, fmt.Errorf("create cloned scenario workspace: %w", err)
 	}
-	if err := copyScenarioTree(prepared.Root, root); err != nil {
+	if err := copyScenarioTreeContext(ctx, prepared.Root, root); err != nil {
 		return nil, errors.Join(err, removeScenarioTree(root))
 	}
-	digest, err := digestScenarioTree(root)
+	digest, err := digestScenarioTreeContext(ctx, root)
 	if err != nil {
 		return nil, errors.Join(err, removeScenarioTree(root))
 	}
