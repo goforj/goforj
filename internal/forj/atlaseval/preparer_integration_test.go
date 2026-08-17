@@ -156,16 +156,16 @@ func TestPreparerDistinctPlansReuseTheCommandPreparationSeed(t *testing.T) {
 		}
 	}
 	baseEnvironment := testkit.ProcessGoEnv("", baseValues)
-	preparer := NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, nil)
+	requests := []eval.PreparationRequest{
+		{ScenarioID: "invoice-http-route", DestinationRoot: filepath.Join(workRoot, "http-route"), ForjExecutable: testkit.EnsureIntegrationForjBinary(t), OrchestrationID: "distinct-http", Environment: testkit.ProcessGoEnv("", nil)},
+		{ScenarioID: "invoice-domain", DestinationRoot: filepath.Join(workRoot, "domain"), ForjExecutable: testkit.EnsureIntegrationForjBinary(t), OrchestrationID: "distinct-domain", Environment: testkit.ProcessGoEnv("", nil)},
+	}
+	preparer := NewPreparerWithCapacity(filepath.Join(workRoot, "bases"), baseEnvironment, nil, nil, len(requests))
 	t.Cleanup(func() {
 		if err := preparer.Close(context.Background()); err != nil {
 			t.Errorf("close preparer: %v", err)
 		}
 	})
-	requests := []eval.PreparationRequest{
-		{ScenarioID: "invoice-http-route", DestinationRoot: filepath.Join(workRoot, "http-route"), ForjExecutable: testkit.EnsureIntegrationForjBinary(t), OrchestrationID: "distinct-http", Environment: testkit.ProcessGoEnv("", nil)},
-		{ScenarioID: "invoice-domain", DestinationRoot: filepath.Join(workRoot, "domain"), ForjExecutable: testkit.EnsureIntegrationForjBinary(t), OrchestrationID: "distinct-domain", Environment: testkit.ProcessGoEnv("", nil)},
-	}
 	plans := make([]eval.ResolvedPreparationPlan, len(requests))
 	for index, request := range requests {
 		plan, err := preparer.Resolve(context.Background(), request)
