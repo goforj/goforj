@@ -488,8 +488,8 @@ func TestBuildJSONAPIFeatureVerifierCalibration(t *testing.T) {
 		},
 		behavior: &evaluationBehaviorMutation{
 			path:       "internal/users/service.go",
-			old:        `Email: "ada@example.test"`,
-			mutant:     `Email: "wrong@example.test"`,
+			old:        `if id != "42"`,
+			mutant:     `if id == ""`,
 			wantFailed: "json-api-behavior",
 		},
 		wantFailed:  "users-application-boundary",
