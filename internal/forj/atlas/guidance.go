@@ -110,8 +110,15 @@ func PlanGuidanceIntent(root string, intent install.GuidanceReconciliation) (Rec
 	if err != nil {
 		return ReconcileGuidanceResult{}, err
 	}
+	projectConfig, err := project.LoadProjectConfigAt(root)
+	if err != nil {
+		return ReconcileGuidanceResult{}, fmt.Errorf("load Project configuration: %w", err)
+	}
 	content := guidelines.Compose(Project(root))
 	result := ReconcileGuidanceResult{}
+	if projectConfig.Render.AgentGuidance != selection || !projectConfig.Render.HasAgentGuidance() {
+		result.Updated = append(result.Updated, filepath.Join(root, ".goforj.yml"))
+	}
 	for _, agent := range agents.Builtins() {
 		path := agent.GuidelinesPath(root)
 		selected := selection == project.AgentGuidanceBaseline && slices.Contains(targets, agent.Name())
