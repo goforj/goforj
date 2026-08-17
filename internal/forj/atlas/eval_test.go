@@ -62,6 +62,22 @@ func TestValidateEvaluationTrialsBoundsModelSpend(t *testing.T) {
 	}
 }
 
+// TestBuildEvaluationSuitePlanMakesTotalWorkVisible keeps suite scope tied to promoted manifest budgets.
+func TestBuildEvaluationSuitePlanMakesTotalWorkVisible(t *testing.T) {
+	plan, err := buildEvaluationSuitePlan([]string{"add-migration", "unknown-framework-shape"}, 2)
+	if err != nil {
+		t.Fatalf("buildEvaluationSuitePlan(): %v", err)
+	}
+	if plan.evaluations != 2 || plan.attempts != 8 || plan.wallTime.String() != "40m0s" {
+		t.Fatalf("evaluation suite plan = %#v", plan)
+	}
+	var output bytes.Buffer
+	printEvaluationSuitePlan(&output, plan)
+	if got, want := output.String(), "Evaluation suite · 2 evaluations · 8 agent sessions · up to 40m0s\n"; got != want {
+		t.Fatalf("evaluation suite plan output = %q, want %q", got, want)
+	}
+}
+
 // TestEvaluationTaskKindPreservesExplicitFiltering keeps all distinct from the promoted task-kind values.
 func TestEvaluationTaskKindPreservesExplicitFiltering(t *testing.T) {
 	if got := evaluationTaskKind("all"); got != "" {

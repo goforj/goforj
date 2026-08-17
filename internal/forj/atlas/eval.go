@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/goforj/atlas/eval"
 	"github.com/goforj/goforj/internal/forj/atlaseval"
@@ -158,10 +159,46 @@ func (command *EvalSuiteCmd) Run() (runErr error) {
 	if len(ids) == 0 {
 		return fmt.Errorf("evaluation suite %q with kind %q is empty or unknown", command.Suite, command.Kind)
 	}
+	plan, err := buildEvaluationSuitePlan(ids, command.Trials)
+	if err != nil {
+		return err
+	}
+	printEvaluationSuitePlan(os.Stderr, plan)
 	return runEvaluationComparisons(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
-		Credential: command.Credential, Artifacts: command.Artifacts,
+		Credential: command.Credential, Artifacts: command.Artifacts, Progress: os.Stderr,
 	}, ids, command.Trials)
+}
+
+// evaluationSuitePlan makes the cost-bearing scope of one explicit suite invocation visible before authority is loaded.
+type evaluationSuitePlan struct {
+	evaluations int
+	attempts    int
+	wallTime    time.Duration
+}
+
+// buildEvaluationSuitePlan totals the manifest budgets without inventing provider-specific cost estimates.
+func buildEvaluationSuitePlan(evaluationIDs []string, trials int) (evaluationSuitePlan, error) {
+	if err := validateEvaluationTrials(trials); err != nil {
+		return evaluationSuitePlan{}, err
+	}
+	plan := evaluationSuitePlan{
+		evaluations: len(evaluationIDs),
+		attempts:    len(evaluationIDs) * trials * 2,
+	}
+	for _, evaluationID := range evaluationIDs {
+		definition, err := eval.LoadPromotedDefinition(evaluationID)
+		if err != nil {
+			return evaluationSuitePlan{}, err
+		}
+		plan.wallTime += definition.Limits.WallTime * time.Duration(trials*2)
+	}
+	return plan, nil
+}
+
+// printEvaluationSuitePlan reports the bounded work without turning an explicit suite command into another confirmation workflow.
+func printEvaluationSuitePlan(writer io.Writer, plan evaluationSuitePlan) {
+	fmt.Fprintf(writer, "Evaluation suite · %d evaluations · %d agent sessions · up to %s\n", plan.evaluations, plan.attempts, plan.wallTime)
 }
 
 // evaluationTaskKind converts the CLI's explicit all selection into an unrestricted catalog filter.
@@ -179,6 +216,7 @@ type evaluationInvocation struct {
 	CodexExecutable string
 	Credential      string
 	Artifacts       string
+	Progress        io.Writer
 }
 
 // Signature returns the Kong metadata for EvalCompareCmd.
@@ -215,8 +253,13 @@ func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocati
 	}()
 	results := make([]eval.GuidanceDiagnosticResult, 0, len(evaluationIDs)*trials)
 	var attemptErrors []error
+	completed := 0
+	total := len(evaluationIDs) * trials
 	for _, evaluationID := range evaluationIDs {
-		for range trials {
+		for trial := 1; trial <= trials; trial++ {
+			if invocation.Progress != nil {
+				fmt.Fprintf(invocation.Progress, "[%d/%d] %s · trial %d/%d\n", completed+1, total, evaluationID, trial, trials)
+			}
 			result, diagnosticErr := execution.diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
 				EvaluationID:    evaluationID,
 				DestinationRoot: filepath.Join(execution.workRoot, "projects"),
@@ -230,6 +273,10 @@ func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocati
 			}
 			if diagnosticErr != nil {
 				attemptErrors = append(attemptErrors, fmt.Errorf("%s: %s", evaluationID, execution.redactor.Text(diagnosticErr.Error())))
+			}
+			completed++
+			if invocation.Progress != nil {
+				fmt.Fprintf(invocation.Progress, "[%d/%d] %s · finished\n", completed, total, evaluationID)
 			}
 			if ctx.Err() != nil {
 				break
