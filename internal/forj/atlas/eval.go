@@ -704,7 +704,9 @@ type evaluationExecution struct {
 
 // evaluationComparisonDiagnostic keeps worker orchestration testable without weakening the concrete Atlas diagnostic used in production.
 type evaluationComparisonDiagnostic interface {
+	// Run preserves the diagnostic's treatment ordering when pair-level scheduling is unnecessary.
 	Run(context.Context, eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error)
+	// RunTreatment lets workers schedule complete pairs while retaining independently sealed treatment evidence.
 	RunTreatment(context.Context, eval.LocalDiagnosticTreatmentRequest) (eval.GuidanceDiagnosticAttempt, error)
 }
 
