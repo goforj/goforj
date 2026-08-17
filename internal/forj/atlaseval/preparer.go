@@ -17,6 +17,9 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+// ErrPreparationCachePoisoned identifies a failed shared-base eviction that makes further preparation unsafe for this command.
+var ErrPreparationCachePoisoned = errors.New("evaluation preparation cache is poisoned")
+
 // Preparer resolves and materializes trusted GoForj scenario prefixes for Atlas.
 type Preparer struct {
 	SpecDir         string
@@ -307,8 +310,16 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 	if err != nil {
 		return nil, err
 	}
-	defer release()
-	return scenarios.ClonePreparedContext(ctx, base, request.DestinationRoot)
+	prepared, cloneErr := scenarios.ClonePreparedContext(ctx, base, request.DestinationRoot)
+	release()
+	cacheErr := preparer.cache.waitForEviction(ctx)
+	if cacheErr == nil {
+		return prepared, cloneErr
+	}
+	if prepared != nil {
+		return nil, errors.Join(cloneErr, cacheErr, prepared.Close())
+	}
+	return nil, errors.Join(cloneErr, cacheErr)
 }
 
 // materializeBase serializes trusted base construction so every verifier sees the command-warmed module seed.
@@ -347,7 +358,7 @@ func (cache *preparationCache) acquire(ctx context.Context, key string, material
 			}
 		}
 		if cache.evictionErr != nil {
-			err := fmt.Errorf("evaluation preparation cache is poisoned: %w", cache.evictionErr)
+			err := fmt.Errorf("%w: %w", ErrPreparationCachePoisoned, cache.evictionErr)
 			cache.mu.Unlock()
 			return nil, nil, err
 		}
@@ -388,7 +399,7 @@ func (cache *preparationCache) acquire(ctx context.Context, key string, material
 			}
 		}
 		if cache.evictionErr != nil {
-			err := fmt.Errorf("evaluation preparation cache is poisoned: %w", cache.evictionErr)
+			err := fmt.Errorf("%w: %w", ErrPreparationCachePoisoned, cache.evictionErr)
 			cache.mu.Unlock()
 			release()
 			return nil, nil, err
@@ -446,7 +457,10 @@ func (cache *preparationCache) acquire(ctx context.Context, key string, material
 			return nil, nil, err
 		}
 		if evicted != nil {
-			cache.closeEvictedBase(evicted)
+			if err := cache.closeEvictedBase(evicted); err != nil {
+				releaseKey()
+				return nil, nil, err
+			}
 		}
 		return base, releaseKey, nil
 	}
@@ -459,22 +473,23 @@ func (cache *preparationCache) release(key string, release func()) func() {
 		cache.baseUsers[key]--
 		evicted := cache.beginEvictionLocked()
 		cache.mu.Unlock()
-		cache.closeEvictedBase(evicted)
+		_ = cache.closeEvictedBase(evicted)
 		release()
 	})
 }
 
 // closeEvictedBase releases evicted bases outside the cache lock and poisons the cache if accounting can no longer be trusted.
-func (cache *preparationCache) closeEvictedBase(base *scenarios.PreparedScenario) {
+func (cache *preparationCache) closeEvictedBase(base *scenarios.PreparedScenario) error {
 	for base != nil {
 		err := cache.closeBase(base)
 		cache.mu.Lock()
 		if err != nil {
 			cache.evictionErr = errors.Join(cache.evictionErr, fmt.Errorf("remove evicted evaluation preparation base: %w", err))
+			poisoned := fmt.Errorf("%w: %w", ErrPreparationCachePoisoned, cache.evictionErr)
 			close(cache.evictionDone)
 			cache.evictionDone = nil
 			cache.mu.Unlock()
-			return
+			return poisoned
 		}
 		base = cache.evictRetainedBaseLocked()
 		if base == nil {
@@ -482,6 +497,29 @@ func (cache *preparationCache) closeEvictedBase(base *scenarios.PreparedScenario
 			cache.evictionDone = nil
 		}
 		cache.mu.Unlock()
+	}
+	return nil
+}
+
+// waitForEviction keeps a candidate from leaving preparation while a shared-base deletion can still invalidate cache accounting.
+func (cache *preparationCache) waitForEviction(ctx context.Context) error {
+	for {
+		cache.mu.Lock()
+		if cache.evictionErr != nil {
+			err := fmt.Errorf("%w: %w", ErrPreparationCachePoisoned, cache.evictionErr)
+			cache.mu.Unlock()
+			return err
+		}
+		done := cache.evictionDone
+		cache.mu.Unlock()
+		if done == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-done:
+		}
 	}
 }
 

@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/goforj/atlas/eval"
+	"github.com/goforj/goforj/internal/forj/atlaseval"
 	"github.com/goforj/goforj/internal/scenarios"
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/goforj/version"
 )
 
 // TestReadEvalArtifactKeyRequiresExternalPrivateAuthority rejects bundle-controlled and unsafe key files.
@@ -251,6 +253,75 @@ func TestRunEvaluationComparisonJobsStopsDispatchAfterCommandFatal(t *testing.T)
 	}
 }
 
+// TestRunEvaluationComparisonJobsStopsAfterSharedPreparationCacheFailure keeps a poisoned command-wide base cache from spending queued pairs.
+func TestRunEvaluationComparisonJobsStopsAfterSharedPreparationCacheFailure(t *testing.T) {
+	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
+	fatalCause := evaluationCommandFatalCause(atlaseval.ErrPreparationCachePoisoned)
+	started := make(chan int, 2)
+	fatalRelease := make(chan struct{})
+	var ran []int
+	var lock sync.Mutex
+	done := make(chan struct{})
+	var results []eval.GuidanceDiagnosticResult
+	var runErrors []error
+	go func() {
+		results, runErrors = runEvaluationComparisonJobs(context.Background(), nil, jobs, 2, 2, func(ctx context.Context, job evaluationComparisonJob, _ int) (eval.GuidanceDiagnosticResult, []error) {
+			index := (job.trial - 1) + map[string]int{"catalog-a": 0, "catalog-b": 2}[job.evaluationID]
+			lock.Lock()
+			ran = append(ran, index)
+			lock.Unlock()
+			started <- index
+			if index == 0 {
+				<-fatalRelease
+				return eval.GuidanceDiagnosticResult{LogicalTrialID: "fatal"}, []error{fatalCause}
+			}
+			<-ctx.Done()
+			return eval.GuidanceDiagnosticResult{LogicalTrialID: "running"}, []error{errors.New("ordinary candidate failure")}
+		})
+		close(done)
+	}()
+	if got := <-started; got != 0 && got != 1 {
+		t.Fatalf("first started job = %d, want 0 or 1", got)
+	}
+	if got := <-started; got != 0 && got != 1 {
+		t.Fatalf("second started job = %d, want 0 or 1", got)
+	}
+	close(fatalRelease)
+	<-done
+	if !slices.Equal(ran, []int{0, 1}) && !slices.Equal(ran, []int{1, 0}) {
+		t.Fatalf("dispatched jobs = %v, want only already-running pair workers", ran)
+	}
+	if got, want := len(results), 2; got != want {
+		t.Fatalf("results = %d, want %d", got, want)
+	}
+	if messages := []string{runErrors[0].Error(), runErrors[1].Error()}; !slices.Equal(messages, []string{atlaseval.ErrPreparationCachePoisoned.Error(), "ordinary candidate failure"}) {
+		t.Fatalf("error order = %v", messages)
+	}
+	if !evaluationCommandFatal(runErrors) {
+		t.Fatal("poisoned shared preparation cache was not command-fatal")
+	}
+	var fatal evaluationCommandFatalError
+	if !errors.As(errors.Join(runErrors...), &fatal) {
+		t.Fatalf("poisoned shared preparation cache error = %v, want typed command-fatal", runErrors)
+	}
+}
+
+// TestVerifierModuleProxyHealthFailureIsCommandFatal keeps a shared verifier authority outage from being treated as a candidate failure.
+func TestVerifierModuleProxyHealthFailureIsCommandFatal(t *testing.T) {
+	proxy, err := newVerifierModuleProxy([]string{"GOMODCACHE=" + t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = (&evaluationExecution{moduleProxy: proxy}).verifierModuleProxyHealthy(context.Background())
+	var fatal evaluationCommandFatalError
+	if !errors.As(err, &fatal) || !evaluationCommandFatal([]error{err}) {
+		t.Fatalf("module proxy health error = %v, want command-fatal", err)
+	}
+}
+
 // TestRunEvaluationComparisonJobsNeverReusesActiveWorker keeps each worker execution single-threaded.
 func TestRunEvaluationComparisonJobsNeverReusesActiveWorker(t *testing.T) {
 	jobs := evaluationComparisonJobs([]string{"catalog-a", "catalog-b"}, 2)
@@ -294,6 +365,81 @@ func TestValidateEvaluationDiskCapacityScalesWithWorkers(t *testing.T) {
 	}
 	if err := validateEvaluationDiskCapacity("/cache", required-1, 4); err == nil || !strings.Contains(err.Error(), "reduce --workers") {
 		t.Fatalf("capacity error = %v, want actionable worker guidance", err)
+	}
+}
+
+// TestEnsureEvaluationDiskCapacityRecoversOwnedRootsBeforeMeasuring keeps recoverable scratch from rejecting a command before startup cleanup can free it.
+func TestEnsureEvaluationDiskCapacityRecoversOwnedRootsBeforeMeasuring(t *testing.T) {
+	cacheRoot := t.TempDir()
+	stateRoot, err := resolveEvaluationWorkStateRootAt(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(stateRoot, "command-stale")
+	if err := os.Mkdir(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeEvaluationOwnershipMarker(stale, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := openEvaluationWorkRootLease(stale, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	required := evaluationScratchBudget(1)
+	err = ensureEvaluationDiskCapacityAt(cacheRoot, 1, func(string) (uint64, error) {
+		if _, statErr := os.Stat(stale); statErr == nil {
+			return required - 1, nil
+		}
+		return required, nil
+	})
+	if err != nil {
+		t.Fatalf("admission after stale recovery: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale owned root survived admission recovery: %v", err)
+	}
+}
+
+// TestEnsureEvaluationDiskCapacityPreservesActiveAndUnownedRoots keeps admission recovery within leased, authenticated command ownership.
+func TestEnsureEvaluationDiskCapacityPreservesActiveAndUnownedRoots(t *testing.T) {
+	cacheRoot := t.TempDir()
+	stateRoot, err := resolveEvaluationWorkStateRootAt(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(stateRoot, "command-active")
+	if err := os.Mkdir(active, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeEvaluationOwnershipMarker(active, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := openEvaluationWorkRootLease(active, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockEvaluationLease(lease); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = unlockEvaluationLease(lease)
+		_ = lease.Close()
+	})
+	foreign := filepath.Join(stateRoot, "command-foreign")
+	if err := os.Mkdir(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureEvaluationDiskCapacityAt(cacheRoot, 1, func(string) (uint64, error) { return evaluationScratchBudget(1), nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{active, foreign} {
+		if _, err := os.Stat(root); err != nil {
+			t.Fatalf("admission recovery removed preserved root %q: %v", root, err)
+		}
 	}
 }
 
@@ -1452,6 +1598,17 @@ func TestRemoveEvaluationWorkRootHandlesReadOnlyModuleDirectories(t *testing.T) 
 
 // TestEvaluationRuntimeIdentityRecordsReconstructableComponents keeps retained attempts independent from deleted command workspaces.
 func TestEvaluationRuntimeIdentityRecordsReconstructableComponents(t *testing.T) {
+	originalVersion := version.Version
+	originalCommit := version.Commit
+	originalBuildDirty := version.BuildDirty
+	version.Version = "devel"
+	version.Commit = "0123456789012345678901234567890123456789"
+	version.BuildDirty = "true"
+	t.Cleanup(func() {
+		version.Version = originalVersion
+		version.Commit = originalCommit
+		version.BuildDirty = originalBuildDirty
+	})
 	root := t.TempDir()
 	forjSource := filepath.Join(root, evaluationToolFileName("forj-source"))
 	if err := os.WriteFile(forjSource, []byte("forj"), 0o700); err != nil {
@@ -1472,6 +1629,9 @@ func TestEvaluationRuntimeIdentityRecordsReconstructableComponents(t *testing.T)
 	}
 	if identity.Framework.Module != "github.com/goforj/goforj" || identity.Framework.Version == "" || identity.Supervisor.Module != "github.com/goforj/atlas" || identity.Supervisor.Version == "" {
 		t.Fatalf("runtime identity is incomplete: %#v", identity)
+	}
+	if identity.Framework.Commit != version.Commit || !identity.Framework.Dirty {
+		t.Fatalf("framework provenance is incomplete: %#v", identity.Framework)
 	}
 	if identity.GoVersion != tools.goVersion || identity.GoExecutableDigest != tools.goDigest || identity.GoRootDigest != tools.goRootDigest || identity.GOOS != runtime.GOOS || identity.GOARCH != runtime.GOARCH {
 		t.Fatalf("Go runtime identity is incomplete: %#v", identity)

@@ -362,14 +362,23 @@ func ensureEvaluationDiskCapacity(workers int) error {
 	if err != nil {
 		return fmt.Errorf("resolve evaluation work-state cache: %w", err)
 	}
-	if err := os.MkdirAll(cacheRoot, 0o700); err != nil {
-		return fmt.Errorf("create evaluation cache root: %w", err)
+	return ensureEvaluationDiskCapacityAt(cacheRoot, workers, availableEvaluationDiskBytes)
+}
+
+// ensureEvaluationDiskCapacityAt recovers bounded abandoned command roots before measuring the volume that will hold new evaluation state.
+func ensureEvaluationDiskCapacityAt(cacheRoot string, workers int, availableBytes func(string) (uint64, error)) error {
+	workStateRoot, err := resolveEvaluationWorkStateRootAt(cacheRoot)
+	if err != nil {
+		return err
 	}
-	available, err := availableEvaluationDiskBytes(cacheRoot)
+	if err := recoverStaleEvaluationWorkRoots(workStateRoot); err != nil {
+		return err
+	}
+	available, err := availableBytes(workStateRoot)
 	if err != nil {
 		return fmt.Errorf("inspect evaluation work-state capacity: %w", err)
 	}
-	return validateEvaluationDiskCapacity(cacheRoot, available, workers)
+	return validateEvaluationDiskCapacity(workStateRoot, available, workers)
 }
 
 // evaluationScratchBudget estimates peak scratch from bounded prepared bases plus the none, agents, and verifier trees and caches each worker can retain at once.
@@ -466,20 +475,20 @@ func runEvaluationComparisonJobs(ctx context.Context, progress io.Writer, jobs [
 func evaluationCommandFatal(causes []error) bool {
 	for _, err := range causes {
 		var fatal evaluationCommandFatalError
-		if errors.As(err, &fatal) || eval.IsResourceExhaustion(err) {
+		if errors.As(err, &fatal) || eval.IsResourceExhaustion(err) || errors.Is(err, atlaseval.ErrPreparationCachePoisoned) {
 			return true
 		}
 	}
 	return false
 }
 
-// evaluationCommandFatalCause marks space exhaustion as command-wide while preserving its filesystem identity for callers.
+// evaluationCommandFatalCause marks resource exhaustion and known shared-authority failures command-wide while preserving their causal identities.
 func evaluationCommandFatalCause(cause error) error {
 	if cause == nil {
 		return nil
 	}
 	var fatal evaluationCommandFatalError
-	if errors.As(cause, &fatal) || !eval.IsResourceExhaustion(cause) {
+	if errors.As(cause, &fatal) || (!eval.IsResourceExhaustion(cause) && !errors.Is(cause, atlaseval.ErrPreparationCachePoisoned)) {
 		return cause
 	}
 	return evaluationCommandFatalError{cause: cause}
@@ -534,6 +543,7 @@ func evaluationComparisonErrors(job evaluationComparisonJob, result eval.Guidanc
 			if cause == nil {
 				cause = errors.New(attempt.Error)
 			}
+			cause = evaluationCommandFatalCause(cause)
 			attemptErrors = append(attemptErrors, evaluationDiagnosticError{
 				message: fmt.Sprintf("%s/%s treatment: %s", job.evaluationID, attempt.Profile, redactor.Text(attempt.Error)),
 				cause:   cause,
@@ -789,7 +799,10 @@ func (execution *evaluationExecution) verifierModuleProxyHealthy(ctx context.Con
 	if execution.moduleProxy == nil {
 		return nil
 	}
-	return execution.moduleProxy.Healthy(ctx)
+	if err := execution.moduleProxy.Healthy(ctx); err != nil {
+		return evaluationCommandFatalError{cause: err}
+	}
+	return nil
 }
 
 // evaluationComparisonDiagnostic keeps worker orchestration testable without weakening the concrete Atlas diagnostic used in production.
@@ -887,14 +900,22 @@ func newEvaluationWorkRootAt(cacheRoot string) (*evaluationWorkRoot, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := recoverStaleEvaluationWorkRoots(workStateRoot); err != nil {
+		return nil, err
+	}
+	return newEvaluationWorkRootInStateRoot(workStateRoot)
+}
+
+// recoverStaleEvaluationWorkRoots performs bounded lease-protected crash recovery before new work consumes shared scratch capacity.
+func recoverStaleEvaluationWorkRoots(workStateRoot string) error {
 	cleanup, err := pruneStaleEvaluationWorkRoots(workStateRoot, time.Now())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if cleanup.deferred > 0 {
 		fmt.Fprintf(os.Stderr, "Evaluation cleanup deferred %d stale work roots after removing %d; recovery will continue on the next command.\n", cleanup.deferred, cleanup.removed)
 	}
-	return newEvaluationWorkRootInStateRoot(workStateRoot)
+	return nil
 }
 
 // newEvaluationWorkRootAtWithoutCleanup supports worker allocation after command-start recovery has established the shared state root.
@@ -1141,13 +1162,17 @@ func evaluationRuntimeIdentity(tools evaluationTools) (eval.RuntimeIdentity, err
 	if tools.goVersion == "" || tools.goDigest == "" || tools.goRootDigest == "" {
 		return eval.RuntimeIdentity{}, fmt.Errorf("evaluation Go launcher provenance is incomplete")
 	}
+	frameworkVersion, frameworkCommit, frameworkDirty, err := version.EvaluationIdentity()
+	if err != nil {
+		return eval.RuntimeIdentity{}, err
+	}
 	return eval.RuntimeIdentity{
 		Supervisor: atlasSoftwareIdentity(),
 		Framework: eval.SoftwareIdentity{
 			Module:  "github.com/goforj/goforj",
-			Version: version.Version,
-			Commit:  version.Commit,
-			Dirty:   version.Dirty,
+			Version: frameworkVersion,
+			Commit:  frameworkCommit,
+			Dirty:   frameworkDirty,
 		},
 		GoVersion:          tools.goVersion,
 		GoExecutableDigest: tools.goDigest,

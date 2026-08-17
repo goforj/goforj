@@ -326,17 +326,29 @@ func TestPreparationCacheEvictionFailurePoisonsLaterAcquisition(t *testing.T) {
 		}
 		release()
 	}
-	for _, key := range []string{"plan-a", "plan-b", "plan-c", "plan-d", "plan-e", "plan-f", "plan-g", "plan-h", "plan-i"} {
+	for _, key := range []string{"plan-a", "plan-b", "plan-c", "plan-d", "plan-e", "plan-f", "plan-g", "plan-h"} {
 		acquire(key)
 	}
 
 	materialized := false
-	_, _, err := cache.acquire(context.Background(), "plan-j", func() (*scenarios.PreparedScenario, error) {
+	_, _, err := cache.acquire(context.Background(), "plan-i", func() (*scenarios.PreparedScenario, error) {
 		materialized = true
 		return &scenarios.PreparedScenario{}, nil
 	})
-	if !errors.Is(err, evictionErr) {
-		t.Fatalf("later acquire() error = %v, want eviction failure", err)
+	if !errors.Is(err, ErrPreparationCachePoisoned) || !errors.Is(err, evictionErr) {
+		t.Fatalf("poisoning acquire() error = %v, want typed eviction failure", err)
+	}
+	if !materialized {
+		t.Fatal("poisoning acquire did not reach the eviction boundary")
+	}
+
+	materialized = false
+	_, _, err = cache.acquire(context.Background(), "plan-j", func() (*scenarios.PreparedScenario, error) {
+		materialized = true
+		return &scenarios.PreparedScenario{}, nil
+	})
+	if !errors.Is(err, ErrPreparationCachePoisoned) || !errors.Is(err, evictionErr) {
+		t.Fatalf("later acquire() error = %v, want typed eviction failure", err)
 	}
 	if materialized {
 		t.Fatal("later acquire materialized after eviction failure")
@@ -353,6 +365,45 @@ func TestPreparationCacheEvictionFailurePoisonsLaterAcquisition(t *testing.T) {
 	}
 	if err := (&Preparer{cache: cache}).Close(context.Background()); !errors.Is(err, evictionErr) {
 		t.Fatalf("Close() error = %v, want eviction failure", err)
+	}
+}
+
+// TestPreparationCacheWaitForEvictionReportsConcurrentPoison keeps a prepared clone from escaping while another release is deleting shared state.
+func TestPreparationCacheWaitForEvictionReportsConcurrentPoison(t *testing.T) {
+	cache := newPreparationCacheWithCapacity(1)
+	started := make(chan struct{})
+	allowFailure := make(chan struct{})
+	evictionErr := errors.New("remove evicted base")
+	cache.closeBase = func(*scenarios.PreparedScenario) error {
+		close(started)
+		<-allowFailure
+		return evictionErr
+	}
+	acquire := func(key string) func() {
+		t.Helper()
+		_, release, err := cache.acquire(context.Background(), key, func() (*scenarios.PreparedScenario, error) {
+			return &scenarios.PreparedScenario{}, nil
+		})
+		if err != nil {
+			t.Fatalf("acquire(%q): %v", key, err)
+		}
+		return release
+	}
+	releaseA := acquire("plan-a")
+	releaseB := acquire("plan-b")
+	t.Cleanup(releaseB)
+	go releaseA()
+	<-started
+	done := make(chan error, 1)
+	go func() { done <- cache.waitForEviction(context.Background()) }()
+	select {
+	case err := <-done:
+		t.Fatalf("waitForEviction returned before deletion completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(allowFailure)
+	if err := <-done; !errors.Is(err, ErrPreparationCachePoisoned) || !errors.Is(err, evictionErr) {
+		t.Fatalf("waitForEviction() error = %v, want typed eviction failure", err)
 	}
 }
 
