@@ -187,19 +187,33 @@ steps:
                 }
         }
   - id: import-account-providers
-    title: Import account providers
+    title: Import the account service
     replace:
       path: app/wire/inject_services_app.go
       language: go
       old: "\t\"example.com/transactioneval/internal/runtime\"\n"
       new: "\t\"example.com/transactioneval/internal/accounts\"\n\t\"example.com/transactioneval/internal/runtime\"\n"
   - id: provide-account-services
-    title: Provide account services
+    title: Provide the account service
     replace:
       path: app/wire/inject_services_app.go
       language: go
       old: "\tapp.NewLifecycleRegistry,\n"
-      new: "\taccounts.NewRepository,\n\taccounts.NewService,\n\tapp.NewLifecycleRegistry,\n"
+      new: "\taccounts.NewService,\n\tapp.NewLifecycleRegistry,\n"
+  - id: import-account-repository
+    title: Import the account repository
+    replace:
+      path: app/wire/inject_repositories_app.go
+      language: go
+      old: "\t\"github.com/goforj/wire\"\n"
+      new: "\t\"github.com/goforj/wire\"\n\t\"example.com/transactioneval/internal/accounts\"\n"
+  - id: provide-account-repository
+    title: Provide the account repository
+    replace:
+      path: app/wire/inject_repositories_app.go
+      language: go
+      old: "\twire.Value(repositorySetPlaceholder{}),\n"
+      new: "\taccounts.NewRepository,\n"
   - id: tidy-account-dependencies
     title: Resolve account persistence dependencies
     command: [go, mod, tidy]
