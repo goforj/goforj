@@ -183,18 +183,18 @@ type invoiceHTTPVerifierFixture struct {
 	environment    []string
 }
 
-// TestInvoiceHTTPGoldenVerifierCalibration proves the diagnostic accepts the generated controller while retaining its evidence limitation.
+// TestInvoiceHTTPGoldenVerifierCalibration proves the diagnostic executes the hidden behavior probe for the generated controller.
 func TestInvoiceHTTPGoldenVerifierCalibration(t *testing.T) {
 	fixture := prepareInvoiceHTTPVerifierFixture(t)
 	result, err := fixture.verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: fixture.projectRoot})
 	if err != nil {
 		t.Fatalf("Verify(): %v", err)
 	}
-	if result.FrameworkOutcome.Status != eval.EndpointIneligible {
+	if result.FrameworkOutcome.Status != eval.EndpointPassed {
 		t.Fatalf("framework outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
-	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointIneligible) {
-		t.Fatalf("shared-process behavior check did not retain its evidence limitation: %#v", result.Checks)
+	if !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointPassed) {
+		t.Fatalf("hidden behavior probe did not complete: %#v", result.Checks)
 	}
 }
 
@@ -230,7 +230,7 @@ func TestInvoiceHTTPTransportVerifierCalibration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify(transport family): %v", err)
 	}
-	if result.FrameworkOutcome.Status != eval.EndpointIneligible || !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointIneligible) {
+	if result.FrameworkOutcome.Status != eval.EndpointPassed || !evaluationCheckHasStatus(result.Checks, "invoice-behavior", eval.EndpointPassed) {
 		t.Fatalf("transport-package implementation family failed: outcome=%#v checks=%#v", result.FrameworkOutcome, result.Checks)
 	}
 }
@@ -477,12 +477,21 @@ func TestRepairWireProviderVerifierCalibration(t *testing.T) {
 // TestBuildJSONAPIFeatureVerifierCalibration proves the complete API contract rejects lookup detached from request cancellation.
 func TestBuildJSONAPIFeatureVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-		evaluation:  "build-json-api-feature",
-		scenario:    "json-api-route",
-		path:        "internal/users/controller.go",
-		old:         "c.service.Find(ctx.Context(), ctx.Param(\"id\"))",
-		mutant:      "c.service.Find(context.Background(), ctx.Param(\"id\"))",
-		additional:  []evaluationMutation{{old: `"errors"`, mutant: "\"context\"\n\t\"errors\""}},
+		evaluation: "build-json-api-feature",
+		scenario:   "json-api-route",
+		path:       "internal/users/controller.go",
+		old:        "c.service.Find(ctx.Context(), ctx.Param(\"id\"))",
+		mutant:     "c.service.Find(context.Background(), ctx.Param(\"id\"))",
+		additional: []evaluationMutation{{old: `"errors"`, mutant: "\"context\"\n\t\"errors\""}},
+		alternates: []evaluationFileMutation{
+			{path: "internal/users/controller.go", old: "Show", replacement: "Get"},
+		},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/users/service.go",
+			old:        `Email: "ada@example.test"`,
+			mutant:     `Email: "wrong@example.test"`,
+			wantFailed: "json-api-behavior",
+		},
 		wantFailed:  "users-application-boundary",
 		wantCompile: true,
 	})
@@ -508,12 +517,46 @@ func TestAddCachedRepositoryVerifierCalibration(t *testing.T) {
 
 // TestAddUploadWorkflowVerifierCalibration proves upload storage resolves through the requested named disk.
 func TestAddUploadWorkflowVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-upload-workflow", scenario: "file-upload-storage", path: "app/wire/inject_services_app.go", old: "manager.Uploads()", mutant: "manager.Default()", wantFailed: "uploads-storage-registration"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-upload-workflow",
+		scenario:   "file-upload-storage",
+		path:       "app/wire/inject_services_app.go",
+		old:        "manager.Uploads()",
+		mutant:     "manager.Default()",
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/uploads/service.go",
+			old:        "Size:        len(body),",
+			mutant:     "Size:        len(body) + 1,",
+			wantFailed: "upload-workflow-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/uploads/service.go", old: "func (s *Service) Store", replacement: "func (service *Service) Store"},
+			{path: "internal/uploads/service.go", old: "s.disk.WithContext", replacement: "service.disk.WithContext"},
+		},
+		wantFailed: "uploads-storage-registration",
+	})
 }
 
 // TestPublishDomainEventVerifierCalibration proves the published fact retains its reviewed topic identity.
 func TestPublishDomainEventVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "publish-domain-event", scenario: "users-created-event", path: "internal/events/user_created_event.go", old: `"users.created"`, mutant: `"users.wrong"`, wantFailed: "typed-user-event"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "publish-domain-event",
+		scenario:   "users-created-event",
+		path:       "internal/events/user_created_event.go",
+		old:        `"users.created"`,
+		mutant:     `"users.wrong"`,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/notifications/subscribers.go",
+			old:        "event.UserID, event.Email",
+			mutant:     "event.UserID, event.UserID",
+			wantFailed: "domain-event-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/notifications/subscribers.go", old: "func (s *Subscribers) Register", replacement: "func (subscribers *Subscribers) Register"},
+			{path: "internal/notifications/subscribers.go", old: "s.handler.HandleUserCreated", replacement: "subscribers.handler.HandleUserCreated"},
+		},
+		wantFailed: "typed-user-event",
+	})
 }
 
 // TestDispatchEventFollowupJobVerifierCalibration proves queued report work retains its typed routing identity.
@@ -528,6 +571,17 @@ func TestDispatchEventFollowupJobVerifierCalibration(t *testing.T) {
 			{old: "UserID: userID", mutant: "Email: userID"},
 			{old: "payload.UserID", mutant: "payload.Email"},
 		},
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/reports/generate_job.go",
+			old:        "j.service.GenerateForUser(ctx, payload.UserID)",
+			mutant:     `j.service.GenerateForUser(ctx, "missing")`,
+			wantFailed: "event-followup-job-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/reports/generate_job.go", old: "func (j *GenerateJob)", replacement: "func (job *GenerateJob)"},
+			{path: "internal/reports/generate_job.go", old: "j.queues", replacement: "job.queues"},
+			{path: "internal/reports/generate_job.go", old: "j.service", replacement: "job.service"},
+		},
 		wantFailed:  "typed-report-job",
 		wantCompile: true,
 	})
@@ -535,7 +589,26 @@ func TestDispatchEventFollowupJobVerifierCalibration(t *testing.T) {
 
 // TestScheduleExistingJobVerifierCalibration proves scheduled dispatch remains attached to the caller's runtime context.
 func TestScheduleExistingJobVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "schedule-existing-job", scenario: "reports-daily-schedule", path: "internal/reports/daily_schedule.go", old: "return s.runner.Run(ctx)", mutant: "return s.runner.Run(context.Background())", wantFailed: "scheduled-job-dispatch", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "schedule-existing-job",
+		scenario:    "reports-daily-schedule",
+		path:        "internal/reports/daily_schedule.go",
+		old:         "return s.runner.Run(ctx)",
+		mutant:      "return s.runner.Run(context.Background())",
+		wantFailed:  "scheduled-job-dispatch",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/reports/daily.go",
+			old:        "r.queue.Queue(ctx, userID)",
+			mutant:     `r.queue.Queue(ctx, "wrong")`,
+			wantFailed: "daily-schedule-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/reports/daily.go", old: "func (r *DailyRunner) Run", replacement: "func (runner *DailyRunner) Run"},
+			{path: "internal/reports/daily.go", old: "r.targets", replacement: "runner.targets"},
+			{path: "internal/reports/daily.go", old: "r.queue", replacement: "runner.queue"},
+		},
+	})
 }
 
 // TestCreateAdditionalAppVerifierCalibration proves the additional App remains declared in Project configuration.
@@ -545,12 +618,50 @@ func TestCreateAdditionalAppVerifierCalibration(t *testing.T) {
 
 // TestAddAppLifecycleHookVerifierCalibration proves readiness work preserves startup cancellation.
 func TestAddAppLifecycleHookVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-lifecycle-hook", scenario: "invoice-readiness-hook", path: "app/lifecycle.go", old: "registry.invoices.Find(ctx, \"readiness\")", mutant: "registry.invoices.Find(context.Background(), \"readiness\")", wantFailed: "application-readiness-hook", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-app-lifecycle-hook",
+		scenario:    "invoice-readiness-hook",
+		path:        "app/lifecycle.go",
+		old:         "registry.invoices.Find(ctx, \"readiness\")",
+		mutant:      "registry.invoices.Find(context.Background(), \"readiness\")",
+		wantFailed:  "application-readiness-hook",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "app/lifecycle.go",
+			old:        `registry.invoices.Find(ctx, "readiness")`,
+			mutant:     `registry.invoices.Find(ctx, "wrong")`,
+			wantFailed: "application-readiness-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "app/lifecycle.go", old: "invoices *invoices.Service", replacement: "invoiceService *invoices.Service"},
+			{path: "app/lifecycle.go", old: "{invoices: invoices}", replacement: "{invoiceService: invoiceService}"},
+			{path: "app/lifecycle.go", old: "registry.invoices.Find", replacement: "registry.invoiceService.Find"},
+		},
+	})
 }
 
 // TestAddOutboundHTTPIntegrationVerifierCalibration proves remote calls preserve caller cancellation.
 func TestAddOutboundHTTPIntegrationVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-outbound-http-integration", scenario: "tax-rate-http-integration", path: "internal/taxrates/client.go", old: "httpx.GetCtx[Rate](client.http, ctx,", mutant: "httpx.GetCtx[Rate](client.http, context.Background(),", wantFailed: "typed-http-client", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-outbound-http-integration",
+		scenario:    "tax-rate-http-integration",
+		path:        "internal/taxrates/client.go",
+		old:         "httpx.GetCtx[Rate](client.http, ctx,",
+		mutant:      "httpx.GetCtx[Rate](client.http, context.Background(),",
+		wantFailed:  "typed-http-client",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/taxrates/client.go",
+			old:        "return rate, nil",
+			mutant:     "return Rate{}, nil",
+			wantFailed: "tax-rate-http-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/taxrates/client.go", old: "http *httpx.Client", replacement: "transport *httpx.Client"},
+			{path: "internal/taxrates/client.go", old: "{http: httpx.New", replacement: "{transport: httpx.New"},
+			{path: "internal/taxrates/client.go", old: "client.http", replacement: "client.transport"},
+		},
+	})
 }
 
 // TestAddValidatedWriteEndpointVerifierCalibration proves valid invoice creation preserves request cancellation.
@@ -599,7 +710,26 @@ func TestAddDatabaseTransactionVerifierCalibration(t *testing.T) {
 
 // TestAddMailWorkflowVerifierCalibration proves delivery retains the caller's cancellation boundary.
 func TestAddMailWorkflowVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-mail-workflow", scenario: "invoice-receipt-mail", path: "internal/invoices/receipt_mailer.go", old: "Send(ctx)", mutant: "Send(context.Background())", wantFailed: "receipt-mail-service", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation:  "add-mail-workflow",
+		scenario:    "invoice-receipt-mail",
+		path:        "internal/invoices/receipt_mailer.go",
+		old:         "Send(ctx)",
+		mutant:      "Send(context.Background())",
+		wantFailed:  "receipt-mail-service",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/receipt_mailer.go",
+			old:        `"Invoice " + invoice.ID`,
+			mutant:     `"Receipt " + invoice.ID`,
+			wantFailed: "receipt-mail-behavior",
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/invoices/receipt_mailer.go", old: "func (mailer *ReceiptMailer) Send", replacement: "func (sender *ReceiptMailer) Send"},
+			{path: "internal/invoices/receipt_mailer.go", old: "mailer.invoices", replacement: "sender.invoices"},
+			{path: "internal/invoices/receipt_mailer.go", old: "mailer.mail", replacement: "sender.mail"},
+		},
+	})
 }
 
 // TestProtectRouteWithAuthVerifierCalibration proves removing the protected invoice route fails observable route verification.
