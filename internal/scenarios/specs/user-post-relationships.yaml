@@ -50,18 +50,18 @@ steps:
           - "1-many id->posts:user_id"
   - id: generate-post-model
     title: Generate the related post model
-    command: [forj, make:model, posts, --package, content]
+    command: [forj, make:model, posts]
   - id: generate-user-model
     title: Generate the user model with its relationship
-    command: [forj, make:model, users, --package, content]
+    command: [forj, make:model, users]
   - id: test-user-post-relationship
     title: Test the generated relationship contract
     write:
-      path: internal/content/user_test.go
+      path: internal/models/user_test.go
       language: go
       content: |
-        // Package content verifies schema-derived model behavior.
-        package content
+        // Package models verifies schema-derived model behavior.
+        package models
 
         import "testing"
 
