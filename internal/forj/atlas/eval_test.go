@@ -12,42 +12,68 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/goforj/atlas/eval"
 	"github.com/goforj/goforj/project"
 )
 
-// TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey keeps retained manifests verifiable across invocations.
-func TestLoadOrCreateEvalArtifactKeyReusesOnePrivateKey(t *testing.T) {
+// TestReadEvalArtifactKeyRequiresExternalPrivateAuthority rejects bundle-controlled and unsafe key files.
+func TestReadEvalArtifactKeyRequiresExternalPrivateAuthority(t *testing.T) {
 	root := t.TempDir()
-	first, err := loadOrCreateEvalArtifactKey(root)
-	if err != nil {
+	artifactRoot := filepath.Join(root, "artifacts")
+	if err := os.Mkdir(artifactRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	second, err := loadOrCreateEvalArtifactKey(root)
-	if err != nil {
+	keyPath := filepath.Join(root, "artifact.key")
+	key := []byte("0123456789abcdef0123456789abcdef")
+	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 32 || !bytes.Equal(first, second) {
-		t.Fatalf("artifact keys differ: %x != %x", first, second)
+	loaded, err := readEvalArtifactKey(keyPath, artifactRoot)
+	if err != nil || !bytes.Equal(loaded, key) {
+		t.Fatalf("readEvalArtifactKey() = %x, %v", loaded, err)
 	}
-	info, err := os.Stat(filepath.Join(root, ".manifest-key"))
-	if err != nil {
+	forged := filepath.Join(artifactRoot, ".manifest-key")
+	if err := os.WriteFile(forged, key, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
-		t.Fatalf("artifact key mode = %o, want 600", info.Mode().Perm())
+	if _, err := readEvalArtifactKey(forged, artifactRoot); err == nil {
+		t.Fatal("bundle-controlled key was accepted")
 	}
-}
-
-// TestReadEvalArtifactKeyNeverCreatesAuthority keeps report-only commands from changing an artifact root.
-func TestReadEvalArtifactKeyNeverCreatesAuthority(t *testing.T) {
-	root := t.TempDir()
-	if _, err := readEvalArtifactKey(root); err == nil {
-		t.Fatal("readEvalArtifactKey() created or accepted a missing key")
+	if runtime.GOOS != "windows" {
+		linkedRoot := filepath.Join(root, "linked-artifacts")
+		if err := os.Symlink(artifactRoot, linkedRoot); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readEvalArtifactKey(filepath.Join(linkedRoot, ".manifest-key"), artifactRoot); err == nil {
+			t.Fatal("bundle-controlled key behind a parent symlink was accepted")
+		}
 	}
-	if _, err := os.Stat(filepath.Join(root, ".manifest-key")); !os.IsNotExist(err) {
-		t.Fatalf("report key appeared after read: %v", err)
+	if _, err := readEvalArtifactKey(filepath.Join(root, "missing.key"), artifactRoot); err == nil {
+		t.Fatal("missing key was accepted")
+	}
+	if err := os.WriteFile(keyPath, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEvalArtifactKey(keyPath, artifactRoot); err == nil {
+		t.Fatal("short key was accepted")
+	}
+	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(keyPath, filepath.Join(root, "key-link")); err == nil {
+		if _, err := readEvalArtifactKey(filepath.Join(root, "key-link"), artifactRoot); err == nil {
+			t.Fatal("symlink key was accepted")
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(keyPath, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readEvalArtifactKey(keyPath, artifactRoot); err == nil {
+			t.Fatal("world-readable key was accepted")
+		}
 	}
 }
 
@@ -231,6 +257,195 @@ func TestRunEvaluationComparisonJobsNeverReusesActiveWorker(t *testing.T) {
 	}
 }
 
+// TestValidateEvaluationDiskCapacityScalesWithWorkers keeps high concurrency from starting with insufficient aggregate scratch space.
+func TestValidateEvaluationDiskCapacityScalesWithWorkers(t *testing.T) {
+	required := minimumEvaluationFreeBytesFixed + 4*minimumEvaluationFreeBytesWorker
+	if err := validateEvaluationDiskCapacity("/cache", required, 4); err != nil {
+		t.Fatalf("exact capacity rejected: %v", err)
+	}
+	if err := validateEvaluationDiskCapacity("/cache", required-1, 4); err == nil || !strings.Contains(err.Error(), "reduce --workers") {
+		t.Fatalf("capacity error = %v, want actionable worker guidance", err)
+	}
+}
+
+// TestEffectiveEvaluationWorkersCapsIdleCapacity proves a small filtered suite is budgeted for only the workers it can use.
+func TestEffectiveEvaluationWorkersCapsIdleCapacity(t *testing.T) {
+	if got := effectiveEvaluationWorkers(8, 1); got != 1 {
+		t.Fatalf("effective workers = %d, want 1", got)
+	}
+}
+
+// fakeEvaluationComparisonDiagnostic exposes worker requests without starting a real model session.
+type fakeEvaluationComparisonDiagnostic struct {
+	run func(context.Context, eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error)
+}
+
+// Run delegates one paired diagnostic to the test's concurrency or failure probe.
+func (diagnostic fakeEvaluationComparisonDiagnostic) Run(ctx context.Context, request eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error) {
+	return diagnostic.run(ctx, request)
+}
+
+// RunTreatment is unused by comparison tests because pair workers always execute both profiles together.
+func (fakeEvaluationComparisonDiagnostic) RunTreatment(context.Context, eval.LocalDiagnosticTreatmentRequest) (eval.GuidanceDiagnosticAttempt, error) {
+	return eval.GuidanceDiagnosticAttempt{}, errors.New("unexpected single-treatment diagnostic")
+}
+
+// TestRunEvaluationComparisonJobIsolatesConcurrentPairState proves real worker orchestration overlaps pairs without sharing writable roots.
+func TestRunEvaluationComparisonJobIsolatesConcurrentPairState(t *testing.T) {
+	root := t.TempDir()
+	tools := testEvaluationTools(t, filepath.Join(root, "tools"))
+	started := make(chan eval.LocalGuidanceDiagnosticRequest, 2)
+	release := make(chan struct{})
+	requests := make(chan eval.LocalGuidanceDiagnosticRequest, 2)
+	executions := make([]*evaluationExecution, 2)
+	for index := range executions {
+		workerRoot := filepath.Join(root, fmt.Sprintf("worker-%d", index))
+		executions[index] = &evaluationExecution{
+			workRoot: workerRoot,
+			redactor: eval.NewRedactor(nil),
+			diagnostic: fakeEvaluationComparisonDiagnostic{run: func(_ context.Context, request eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error) {
+				started <- request
+				<-release
+				requests <- request
+				return eval.GuidanceDiagnosticResult{LogicalTrialID: request.EvaluationID}, nil
+			}},
+		}
+	}
+	jobs := evaluationComparisonJobs([]string{"add-http-controller", "add-job"}, 1)
+	done := make(chan []error, 1)
+	go func() {
+		_, runErrors := runEvaluationComparisonJobs(context.Background(), nil, jobs, len(executions), 1, func(ctx context.Context, job evaluationComparisonJob, worker int) (eval.GuidanceDiagnosticResult, []error) {
+			return runEvaluationComparisonJob(ctx, executions[worker], tools, job)
+		})
+		done <- runErrors
+	}()
+	first := <-started
+	second := <-started
+	close(release)
+	if runErrors := <-done; len(runErrors) != 0 {
+		t.Fatalf("run errors = %v", runErrors)
+	}
+	if first.DestinationRoot == second.DestinationRoot {
+		t.Fatalf("concurrent jobs shared destination %q", first.DestinationRoot)
+	}
+	seen := map[string]bool{}
+	for range 2 {
+		request := <-requests
+		for _, profile := range []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents} {
+			values := environmentValues(request.Environments[profile])
+			for _, key := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "HOME", "GOTMPDIR"} {
+				if seen[values[key]] {
+					t.Fatalf("concurrent treatment state reused %s=%q", key, values[key])
+				}
+				seen[values[key]] = true
+			}
+		}
+	}
+}
+
+// TestRunEvaluationComparisonJobCleansCanceledState proves interruption cannot retain a worker's writable Project or caches.
+func TestRunEvaluationComparisonJobCleansCanceledState(t *testing.T) {
+	root := t.TempDir()
+	tools := testEvaluationTools(t, filepath.Join(root, "tools"))
+	started := make(chan struct{})
+	execution := &evaluationExecution{
+		workRoot: filepath.Join(root, "worker"),
+		redactor: eval.NewRedactor(nil),
+		diagnostic: fakeEvaluationComparisonDiagnostic{run: func(ctx context.Context, _ eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error) {
+			close(started)
+			<-ctx.Done()
+			return eval.GuidanceDiagnosticResult{}, ctx.Err()
+		}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan []error, 1)
+	go func() {
+		_, runErrors := runEvaluationComparisonJob(ctx, execution, tools, evaluationComparisonJob{evaluationID: "add-http-controller", trial: 1})
+		done <- runErrors
+	}()
+	<-started
+	cancel()
+	if runErrors := <-done; !errors.Is(errors.Join(runErrors...), context.Canceled) {
+		t.Fatalf("run errors = %v, want cancellation", runErrors)
+	}
+	jobRoot := filepath.Join(execution.workRoot, "jobs", "add-http-controller", "trial-1")
+	if _, err := os.Stat(jobRoot); !os.IsNotExist(err) {
+		t.Fatalf("canceled job state survived: %v", err)
+	}
+}
+
+// TestRunEvaluationComparisonJobPreservesResultWhenPostflightFails keeps authenticated diagnostic evidence available for system-defect triage.
+func TestRunEvaluationComparisonJobPreservesResultWhenPostflightFails(t *testing.T) {
+	root := t.TempDir()
+	tools := testEvaluationTools(t, filepath.Join(root, "tools"))
+	want := eval.GuidanceDiagnosticResult{LogicalTrialID: "retained-result"}
+	execution := &evaluationExecution{
+		workRoot: filepath.Join(root, "worker"),
+		redactor: eval.NewRedactor(nil),
+		diagnostic: fakeEvaluationComparisonDiagnostic{run: func(context.Context, eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error) {
+			path := filepath.Join(tools.dir, evaluationToolFileName("forj"))
+			if err := os.Chmod(path, 0o700); err != nil {
+				return eval.GuidanceDiagnosticResult{}, err
+			}
+			if err := os.WriteFile(path, []byte("mutated"), 0o500); err != nil {
+				return eval.GuidanceDiagnosticResult{}, err
+			}
+			return want, nil
+		}},
+	}
+	result, runErrors := runEvaluationComparisonJob(context.Background(), execution, tools, evaluationComparisonJob{evaluationID: "add-http-controller", trial: 1})
+	if result.LogicalTrialID != want.LogicalTrialID {
+		t.Fatalf("result = %#v, want retained diagnostic", result)
+	}
+	if err := errors.Join(runErrors...); err == nil || !strings.Contains(err.Error(), "evaluation tool") {
+		t.Fatalf("run errors = %v, want postflight integrity failure", runErrors)
+	}
+}
+
+// TestEvaluationJobRootRejectsTraversalBeforeCleanup keeps untrusted CLI IDs from escaping the leased command root.
+func TestEvaluationJobRootRejectsTraversalBeforeCleanup(t *testing.T) {
+	workRoot := filepath.Join(t.TempDir(), "worker")
+	victim := filepath.Join(filepath.Dir(workRoot), "victim", "trial-1")
+	if err := os.MkdirAll(victim, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(victim, "keep")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools := testEvaluationTools(t, filepath.Join(filepath.Dir(workRoot), "tools"))
+	execution := &evaluationExecution{workRoot: workRoot, redactor: eval.NewRedactor(nil)}
+	_, runErrors := runEvaluationComparisonJob(context.Background(), execution, tools, evaluationComparisonJob{evaluationID: "../../victim", trial: 1})
+	if len(runErrors) == 0 {
+		t.Fatal("traversal evaluation ID was accepted by worker orchestration")
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("rejected evaluation ID mutated external state: %v", err)
+	}
+}
+
+// testEvaluationTools creates a tiny sealed command surface for worker orchestration tests.
+func testEvaluationTools(t *testing.T, directory string) evaluationTools {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range append([]string{"forj"}, evaluationSupportToolNames()...) {
+		if err := os.WriteFile(filepath.Join(directory, evaluationToolFileName(name)), []byte(name), 0o500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(directory, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := digestEvaluationTools(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = removeEvaluationWorkRoot(directory) })
+	return evaluationTools{dir: directory, digest: digest}
+}
+
 // TestRunEvaluationComparisonsWithWorkersStopsBeforeAuthoritySetup keeps cancellation from loading credentials or creating artifacts.
 func TestRunEvaluationComparisonsWithWorkersStopsBeforeAuthoritySetup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -264,7 +479,11 @@ func TestNewEvaluationAuthorityFreezesCredentialRedaction(t *testing.T) {
 	if err := os.WriteFile(credential, []byte(`{"access_token":"first-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	authority, err := newEvaluationAuthority(evaluationInvocation{Credential: credential, Artifacts: filepath.Join(root, "artifacts")})
+	artifactKey := filepath.Join(root, "artifact.key")
+	if err := os.WriteFile(artifactKey, []byte("0123456789abcdef0123456789abcdef"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := newEvaluationAuthority(evaluationInvocation{Credential: credential, Artifacts: filepath.Join(root, "artifacts"), ArtifactKey: artifactKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,17 +512,169 @@ func TestNewEvaluationWorkRootUsesUserCacheOutsideArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := filepath.Dir(workRoot), filepath.Join(cacheRoot, "goforj", "atlas-evaluation-work"); got != want {
+	if got, want := filepath.Dir(workRoot.path), filepath.Join(cacheRoot, "goforj", "atlas-evaluation-work"); got != want {
 		t.Fatalf("work state root = %q, want %q", got, want)
 	}
-	if strings.HasPrefix(workRoot, artifactRoot+string(filepath.Separator)) {
-		t.Fatalf("work root %q is inside retained artifacts", workRoot)
+	if strings.HasPrefix(workRoot.path, artifactRoot+string(filepath.Separator)) {
+		t.Fatalf("work root %q is inside retained artifacts", workRoot.path)
 	}
-	if err := removeEvaluationWorkRoot(workRoot); err != nil {
+	if err := verifyEvaluationOwnershipMarker(workRoot.path, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		t.Fatalf("work root ownership marker: %v", err)
+	}
+	path := workRoot.path
+	if err := workRoot.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(workRoot); !os.IsNotExist(err) {
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("work root survived cleanup: %v", err)
+	}
+}
+
+// TestPruneStaleEvaluationWorkRootsRemovesOnlyOldOwnedRoots keeps crash recovery bounded and preserves foreign or recent cache content.
+func TestPruneStaleEvaluationWorkRootsRemovesOnlyOldOwnedRoots(t *testing.T) {
+	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(name, identity string, age time.Duration) string {
+		t.Helper()
+		root := filepath.Join(stateRoot, name)
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if identity != "" {
+			if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, identity); err != nil {
+				t.Fatal(err)
+			}
+			when := time.Now().Add(-age)
+			if err := os.Chtimes(filepath.Join(root, evaluationWorkRootMarker), when, when); err != nil {
+				t.Fatal(err)
+			}
+		}
+		lease, err := openEvaluationWorkRootLease(root, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+	old := create("command-old", evaluationWorkRootIdentity, evaluationStaleWorkRootAge+time.Hour)
+	recent := create("command-recent", evaluationWorkRootIdentity, time.Hour)
+	foreign := create("command-foreign", "", evaluationStaleWorkRootAge+time.Hour)
+	wrong := create("command-wrong", "somebody-else\n", evaluationStaleWorkRootAge+time.Hour)
+	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("old owned root survived pruning: %v", err)
+	}
+	for _, path := range []string{recent, foreign, wrong} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("preserved root %q: %v", path, err)
+		}
+	}
+}
+
+// TestPruneStaleEvaluationWorkRootsBoundsEachCleanupPass prevents one startup from recursively deleting an unbounded cache backlog.
+func TestPruneStaleEvaluationWorkRootsBoundsEachCleanupPass(t *testing.T) {
+	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < evaluationStaleWorkRootPruneLimit+3; index++ {
+		root := filepath.Join(stateRoot, fmt.Sprintf("command-old-%02d", index))
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+			t.Fatal(err)
+		}
+		lease, err := openEvaluationWorkRootLease(root, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.Close(); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-evaluationStaleWorkRootAge - time.Hour)
+		if err := os.Chtimes(filepath.Join(root, evaluationWorkRootMarker), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(entries), 3; got != want {
+		t.Fatalf("remaining stale roots = %d, want %d", got, want)
+	}
+	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = os.ReadDir(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stale roots remained after a second bounded pass: %d", len(entries))
+	}
+}
+
+// TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot proves elapsed time cannot make another live command disposable.
+func TestPruneStaleEvaluationWorkRootsPreservesLeasedRoot(t *testing.T) {
+	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(stateRoot, "command-active")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-evaluationStaleWorkRootAge - time.Hour)
+	if err := os.Chtimes(filepath.Join(root, evaluationWorkRootMarker), when, when); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := openEvaluationWorkRootLease(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockEvaluationLease(lease); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = unlockEvaluationLease(lease)
+		_ = lease.Close()
+		_ = removeEvaluationWorkRoot(root)
+	}()
+	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("active leased root was pruned: %v", err)
+	}
+}
+
+// TestPruneStaleEvaluationWorkRootsBoundsDirectoryScan rejects an abnormal backlog without loading it all into memory.
+func TestPruneStaleEvaluationWorkRootsBoundsDirectoryScan(t *testing.T) {
+	stateRoot, err := resolveEvaluationWorkStateRootAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index <= evaluationStaleWorkRootScanLimit; index++ {
+		if err := os.Mkdir(filepath.Join(stateRoot, fmt.Sprintf("foreign-%04d", index)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneStaleEvaluationWorkRoots(stateRoot, time.Now()); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("prune error = %v, want bounded scan rejection", err)
 	}
 }
 
@@ -364,19 +735,6 @@ func TestResolveEvaluationWorkStateRootRejectsUnsafeExistingTargets(t *testing.T
 	}
 }
 
-// TestCleanupEvaluationSetupFailureRetainsCleanupError keeps partial construction cleanup failures observable.
-func TestCleanupEvaluationSetupFailureRetainsCleanupError(t *testing.T) {
-	setupErr := errors.New("setup failed")
-	cleanupErr := errors.New("cleanup failed")
-	err := cleanupEvaluationSetupFailureWith("partial-root", setupErr, func(string) error { return cleanupErr })
-	if !errors.Is(err, setupErr) {
-		t.Fatalf("cleanup error = %v, want setup error", err)
-	}
-	if !errors.Is(err, cleanupErr) {
-		t.Fatalf("cleanup error = %v, want cleanup failure", err)
-	}
-}
-
 // TestBuildEvaluationSuitePlanMakesTotalWorkVisible keeps suite scope tied to promoted manifest budgets.
 func TestBuildEvaluationSuitePlanMakesTotalWorkVisible(t *testing.T) {
 	plan, err := buildEvaluationSuitePlan([]string{"add-migration", "unknown-framework-shape"}, 2)
@@ -423,7 +781,8 @@ func TestEvalReportCmdAuthenticatesSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := []byte("0123456789abcdef0123456789abcdef")
-	if err := os.WriteFile(filepath.Join(root, ".manifest-key"), key, 0o600); err != nil {
+	keyPath := filepath.Join(t.TempDir(), "artifact.key")
+	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store, err := eval.NewArtifactStore(root, key, eval.NewRedactor(nil))
@@ -442,7 +801,7 @@ func TestEvalReportCmdAuthenticatesSummary(t *testing.T) {
 	}
 	directory := filepath.Join(root, "attempt-report")
 	output := captureStdout(t, func() {
-		if err := (&EvalReportCmd{Directory: directory}).Run(); err != nil {
+		if err := (&EvalReportCmd{Directory: directory, ArtifactKey: keyPath}).Run(); err != nil {
 			t.Fatalf("EvalReportCmd.Run(): %v", err)
 		}
 	})
@@ -452,7 +811,7 @@ func TestEvalReportCmdAuthenticatesSummary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "summary.txt"), []byte("tampered\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&EvalReportCmd{Directory: directory}).Run(); err == nil {
+	if err := (&EvalReportCmd{Directory: directory, ArtifactKey: keyPath}).Run(); err == nil {
 		t.Fatal("EvalReportCmd.Run() accepted tampered evidence")
 	}
 }
@@ -526,10 +885,54 @@ func TestFrozenEvalCredentialRedactsExactAuthority(t *testing.T) {
 	}
 }
 
-// TestResolveEvalCredentialRequiresExplicitDisposableSource prevents silent use of a developer's normal Codex login.
-func TestResolveEvalCredentialRequiresExplicitDisposableSource(t *testing.T) {
-	if _, err := resolveEvalCredential(""); err == nil || !strings.Contains(err.Error(), "disposable") {
-		t.Fatalf("resolveEvalCredential() error = %v, want explicit disposable credential requirement", err)
+// TestReadEvalCredentialRequiresExplicitDisposableSource prevents silent use of a developer's normal Codex login.
+func TestReadEvalCredentialRequiresExplicitDisposableSource(t *testing.T) {
+	if _, err := readEvalCredential(""); err == nil || !strings.Contains(err.Error(), "disposable") {
+		t.Fatalf("readEvalCredential() error = %v, want explicit disposable credential requirement", err)
+	}
+}
+
+// TestEscapeEvaluationTerminalTextPreservesLayoutWithoutExecutingCandidateControls protects authenticated report inspection.
+func TestEscapeEvaluationTerminalTextPreservesLayoutWithoutExecutingCandidateControls(t *testing.T) {
+	input := "PASS\n\tresult\x1b]52;c;clipboard\a\rspoof\u202e"
+	want := "PASS\n\tresult\\u001b]52;c;clipboard\\u0007\\u000dspoof\\u202e"
+	if got := escapeEvaluationTerminalText(input); got != want {
+		t.Fatalf("escaped terminal text = %q, want %q", got, want)
+	}
+}
+
+// TestRedactedEvaluationFailurePreservesCancellation keeps single and paired lifecycle handling consistent without leaking diagnostics.
+func TestRedactedEvaluationFailurePreservesCancellation(t *testing.T) {
+	failure := redactedEvaluationFailure("add-http-controller/agents treatment", fmt.Errorf("secret: %w", context.Canceled), eval.NewRedactor([]string{"secret"}))
+	if !errors.Is(failure, context.Canceled) {
+		t.Fatalf("failure = %v, want cancellation identity", failure)
+	}
+	if strings.Contains(failure.Error(), "secret") {
+		t.Fatalf("failure leaked redacted diagnostic: %v", failure)
+	}
+}
+
+// TestResolveEvalArtifactRootUsesAKeylessOwnershipMarker keeps reusable evidence directories distinct from their external authentication authority.
+func TestResolveEvalArtifactRootUsesAKeylessOwnershipMarker(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	resolved, err := resolveEvalArtifactRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != root {
+		t.Fatalf("artifact root = %q, want %q", resolved, root)
+	}
+	if err := verifyEvaluationOwnershipMarker(root, evaluationArtifactRootMarker, evaluationArtifactRootIdentity); err != nil {
+		t.Fatalf("artifact ownership marker: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".manifest-key")); !os.IsNotExist(err) {
+		t.Fatalf("artifact root contains authentication authority: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "attempt-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveEvalArtifactRoot(root); err != nil {
+		t.Fatalf("reuse owned artifact root: %v", err)
 	}
 }
 
@@ -569,6 +972,7 @@ func TestMarshalRedactedEvaluationKeepsSecretsOutOfTerminalJSON(t *testing.T) {
 // TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj keeps host workspaces and the source executable outside agent ownership.
 func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	root := t.TempDir()
+	t.Cleanup(func() { _ = removeEvaluationWorkRoot(root) })
 	hostTools := filepath.Join(root, "host-tools")
 	if err := os.Mkdir(hostTools, 0o755); err != nil {
 		t.Fatal(err)
@@ -659,6 +1063,67 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(toolsDir, tool)); err != nil {
 			t.Fatalf("snapshotted tool %q: %v", tool, err)
 		}
+	}
+}
+
+// TestEvaluationToolsAreSharedReadOnlyAndMutationDetectable keeps concurrency savings from weakening command-surface integrity checks.
+func TestEvaluationToolsAreSharedReadOnlyAndMutationDetectable(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { _ = removeEvaluationWorkRoot(root) })
+	hostTools := filepath.Join(root, "host-tools")
+	if err := os.Mkdir(hostTools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range append([]string{"go"}, evaluationSupportToolNames()...) {
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(hostTools, name), []byte("host-"+name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", hostTools)
+	source := filepath.Join(root, "forj-source")
+	if err := os.WriteFile(source, []byte("forj"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tools, err := newEvaluationTools(filepath.Join(root, "shared-tools"), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.Verify(); err != nil {
+		t.Fatalf("verify sealed tools: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(tools.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o222 != 0 {
+			t.Fatalf("tool directory permissions = %o, want read-only", info.Mode().Perm())
+		}
+	}
+	environments, err := newEvaluationJobEnvironments(filepath.Join(root, "job"), tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	none := environmentValues(environments[eval.GuidanceProfileNone])
+	agents := environmentValues(environments[eval.GuidanceProfileAgents])
+	for _, key := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "HOME", "GOTMPDIR"} {
+		if none[key] == agents[key] {
+			t.Fatalf("%s shared treatment-writable state: %q", key, none[key])
+		}
+	}
+	name := evaluationToolFileName("forj")
+	path := filepath.Join(tools.dir, name)
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("mutated"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.Verify(); err == nil {
+		t.Fatal("mutated shared tool snapshot was accepted")
 	}
 }
 

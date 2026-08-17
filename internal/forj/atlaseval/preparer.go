@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -26,7 +25,7 @@ type Preparer struct {
 	BaseEnvironment []string
 	Guidance        GuidanceMaterializer
 	cache           *preparationCache
-	environmentRoot string
+	baseGate        chan struct{}
 }
 
 // GuidanceMaterializer applies one durable host-specific guidance selection and returns the exact native files visible to the agent.
@@ -34,12 +33,15 @@ type GuidanceMaterializer func(context.Context, eval.PreparedProject, eval.Guida
 
 // preparationCache owns immutable command-local bases shared only by paired trial clones.
 type preparationCache struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	bases    map[string]*scenarios.PreparedScenario
-	inflight map[string]*preparationFlight
-	active   int
-	closed   bool
+	mu          sync.Mutex
+	bases       map[string]*scenarios.PreparedScenario
+	inflight    map[string]*preparationFlight
+	active      int
+	idle        chan struct{}
+	closed      bool
+	cleaning    bool
+	cleanupDone chan struct{}
+	cleanupErr  error
 }
 
 // preparationFlight publishes one plan's immutable base to same-plan waiters.
@@ -51,24 +53,27 @@ type preparationFlight struct {
 
 // NewPreparer enables command-local immutable-base reuse under an explicitly owned root.
 func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger, materializer GuidanceMaterializer) *Preparer {
-	environmentRoot := ""
-	if filepath.IsAbs(baseRoot) {
-		environmentRoot = filepath.Join(baseRoot, ".environment")
-	}
+	baseGate := make(chan struct{}, 1)
+	baseGate <- struct{}{}
 	return &Preparer{
 		BaseRoot:        baseRoot,
 		BaseEnvironment: append([]string(nil), baseEnvironment...),
 		Logger:          appLogger,
 		Guidance:        materializer,
 		cache:           newPreparationCache(),
-		environmentRoot: environmentRoot,
+		baseGate:        baseGate,
 	}
 }
 
 // newPreparationCache creates command-local base ownership with independent in-flight plans.
 func newPreparationCache() *preparationCache {
-	cache := &preparationCache{bases: map[string]*scenarios.PreparedScenario{}, inflight: map[string]*preparationFlight{}}
-	cache.cond = sync.NewCond(&cache.mu)
+	cache := &preparationCache{
+		bases:       map[string]*scenarios.PreparedScenario{},
+		inflight:    map[string]*preparationFlight{},
+		idle:        make(chan struct{}),
+		cleanupDone: make(chan struct{}),
+	}
+	close(cache.idle)
 	return cache
 }
 
@@ -187,50 +192,64 @@ func evaluationGuidanceSelection(profile string) (project.AgentGuidance, error) 
 }
 
 // Close removes every immutable base retained for this command.
-func (preparer *Preparer) Close(context.Context) error {
+func (preparer *Preparer) Close(ctx context.Context) error {
 	if preparer == nil || preparer.cache == nil {
 		return nil
 	}
-	preparer.cache.mu.Lock()
-	if preparer.cache.closed {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var bases map[string]*scenarios.PreparedScenario
+	for {
+		preparer.cache.mu.Lock()
+		preparer.cache.closed = true
+		if preparer.cache.cleaning {
+			done := preparer.cache.cleanupDone
+			preparer.cache.mu.Unlock()
+			return waitForPreparationCleanup(ctx, preparer.cache, done)
+		}
+		if preparer.cache.active == 0 {
+			preparer.cache.cleaning = true
+			bases = preparer.cache.bases
+			preparer.cache.bases = nil
+			preparer.cache.mu.Unlock()
+			break
+		}
+		idle := preparer.cache.idle
 		preparer.cache.mu.Unlock()
-		return nil
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-idle:
+		}
 	}
-	preparer.cache.closed = true
-	for preparer.cache.active > 0 {
-		preparer.cache.cond.Wait()
+	go finishPreparationCleanup(preparer.cache, bases)
+	return waitForPreparationCleanup(ctx, preparer.cache, preparer.cache.cleanupDone)
+}
+
+// waitForPreparationCleanup lets concurrent or retried close calls observe the one cleanup result without racing base destruction.
+func waitForPreparationCleanup(ctx context.Context, cache *preparationCache, done <-chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		cache.mu.Lock()
+		err := cache.cleanupErr
+		cache.mu.Unlock()
+		return err
 	}
-	bases := preparer.cache.bases
-	preparer.cache.bases = nil
-	preparer.cache.mu.Unlock()
+}
+
+// finishPreparationCleanup publishes one durable result even when the caller's shutdown context expires first.
+func finishPreparationCleanup(cache *preparationCache, bases map[string]*scenarios.PreparedScenario) {
 	var cleanupErrors []error
 	for _, base := range bases {
 		cleanupErrors = append(cleanupErrors, base.Close())
 	}
-	if preparer.environmentRoot != "" {
-		cleanupErrors = append(cleanupErrors, removePreparationEnvironmentRoot(preparer.environmentRoot))
-	}
-	return errors.Join(cleanupErrors...)
-}
-
-// removePreparationEnvironmentRoot restores directory traversal before deleting read-only Go module-cache content owned by the preparer.
-func removePreparationEnvironmentRoot(root string) error {
-	if _, err := os.Lstat(root); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	walkErr := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return os.Chmod(path, 0o700)
-		}
-		return nil
-	})
-	return errors.Join(walkErr, os.RemoveAll(root))
+	cache.mu.Lock()
+	cache.cleanupErr = errors.Join(cleanupErrors...)
+	close(cache.cleanupDone)
+	cache.mu.Unlock()
 }
 
 // prepareScenario either materializes directly or clones one command-local verified base.
@@ -244,11 +263,7 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 	key := plan.PlanDigest
 	base, release, err := preparer.cache.acquire(ctx, key, func() (*scenarios.PreparedScenario, error) {
 		baseRequest := request
-		baseEnvironment, err := preparer.baseEnvironmentForPlan(plan.PlanDigest)
-		if err != nil {
-			return nil, err
-		}
-		baseRequest.Environment = baseEnvironment
+		baseRequest.Environment = append([]string(nil), preparer.BaseEnvironment...)
 		basePlan, err := preparer.Resolve(ctx, baseRequest)
 		if err != nil {
 			return nil, err
@@ -256,7 +271,7 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 		if !samePreparationPlan(plan, basePlan) {
 			return nil, fmt.Errorf("evaluation base environment does not match the resolved material environment")
 		}
-		return preparer.materializeScenario(ctx, baseRequest, plan, preparer.BaseRoot, false)
+		return preparer.materializeBase(ctx, baseRequest, plan)
 	})
 	if err != nil {
 		return nil, err
@@ -265,54 +280,18 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 	return scenarios.ClonePrepared(base, request.DestinationRoot)
 }
 
-// baseEnvironmentForPlan gives distinct base materializations separate writable state without changing their shared tool identity.
-func (preparer Preparer) baseEnvironmentForPlan(planDigest string) ([]string, error) {
-	if len(preparer.BaseEnvironment) == 0 {
-		return nil, fmt.Errorf("evaluation base environment is required")
+// materializeBase serializes trusted base construction so every verifier sees the command-warmed module seed.
+func (preparer Preparer) materializeBase(ctx context.Context, request eval.PreparationRequest, plan eval.ResolvedPreparationPlan) (*scenarios.PreparedScenario, error) {
+	if preparer.baseGate == nil {
+		return nil, fmt.Errorf("evaluation preparer base gate is required")
 	}
-	if preparer.environmentRoot == "" {
-		return nil, fmt.Errorf("evaluation base root must be absolute")
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-preparer.baseGate:
 	}
-	digest := strings.TrimPrefix(planDigest, "sha256:")
-	root := filepath.Join(preparer.environmentRoot, digest)
-	paths := []struct {
-		key  string
-		path string
-	}{
-		{key: "GOCACHE", path: filepath.Join(root, "gocache")},
-		{key: "GOMODCACHE", path: filepath.Join(root, "gomodcache")},
-		{key: "GOPATH", path: filepath.Join(root, "gopath")},
-		{key: "HOME", path: filepath.Join(root, "home")},
-		{key: "GOTMPDIR", path: filepath.Join(root, "tmp")},
-		{key: "TMPDIR", path: filepath.Join(root, "tmp")},
-		{key: "TMP", path: filepath.Join(root, "tmp")},
-		{key: "TEMP", path: filepath.Join(root, "tmp")},
-	}
-	for _, entry := range paths {
-		if err := os.MkdirAll(entry.path, 0o700); err != nil {
-			return nil, fmt.Errorf("create evaluation base %s: %w", entry.key, err)
-		}
-	}
-	overrides := make(map[string]string, len(paths))
-	for _, entry := range paths {
-		overrides[entry.key] = entry.path
-	}
-	environment := make([]string, 0, len(preparer.BaseEnvironment)+len(paths))
-	for _, entry := range preparer.BaseEnvironment {
-		key, _, ok := strings.Cut(entry, "=")
-		if value, replace := overrides[key]; ok && replace {
-			environment = append(environment, key+"="+value)
-			delete(overrides, key)
-			continue
-		}
-		environment = append(environment, entry)
-	}
-	for _, entry := range paths {
-		if value, missing := overrides[entry.key]; missing {
-			environment = append(environment, entry.key+"="+value)
-		}
-	}
-	return environment, nil
+	defer func() { preparer.baseGate <- struct{}{} }()
+	return preparer.materializeScenario(ctx, request, plan, preparer.BaseRoot, false)
 }
 
 // acquire retains one active cache user until release and single-flights materialization for matching plan digests.
@@ -329,11 +308,16 @@ func (cache *preparationCache) acquire(ctx context.Context, key string, material
 		cache.mu.Unlock()
 		return nil, nil, fmt.Errorf("evaluation preparer is closed")
 	}
+	if cache.active == 0 {
+		cache.idle = make(chan struct{})
+	}
 	cache.active++
 	release := sync.OnceFunc(func() {
 		cache.mu.Lock()
 		cache.active--
-		cache.cond.Broadcast()
+		if cache.active == 0 {
+			close(cache.idle)
+		}
 		cache.mu.Unlock()
 	})
 	if base := cache.bases[key]; base != nil {
