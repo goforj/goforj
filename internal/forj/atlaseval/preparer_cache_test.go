@@ -157,6 +157,41 @@ func TestPreparationCacheCloseWaitsForInFlightMaterialization(t *testing.T) {
 	}
 }
 
+// TestPreparerCloseCanRetryAfterCanceledWait keeps an interrupted shutdown from permanently abandoning retained bases.
+func TestPreparerCloseCanRetryAfterCanceledWait(t *testing.T) {
+	cache := newPreparationCache()
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	ownerDone := make(chan error, 1)
+	go func() {
+		_, _, err := cache.acquire(context.Background(), "plan", func() (*scenarios.PreparedScenario, error) {
+			started <- struct{}{}
+			<-release
+			return nil, errors.New("materialization stopped")
+		})
+		ownerDone <- err
+	}()
+	<-started
+	preparer := &Preparer{cache: cache}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := preparer.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close() error = %v, want context cancellation", err)
+	}
+	close(release)
+	if err := <-ownerDone; err == nil {
+		t.Fatal("owner materialization succeeded")
+	}
+	if err := preparer.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close(): %v", err)
+	}
+	select {
+	case <-cache.cleanupDone:
+	default:
+		t.Fatal("retry Close() did not finish cleanup")
+	}
+}
+
 // TestPreparerClosePreservesUnownedEnvironmentRoot keeps cleanup limited to paths claimed by NewPreparer.
 func TestPreparerClosePreservesUnownedEnvironmentRoot(t *testing.T) {
 	baseRoot := t.TempDir()
