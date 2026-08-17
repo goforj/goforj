@@ -32,6 +32,7 @@ const (
 // State owns the maintenance status observed by one HTTP runtime.
 type State struct {
 	driver string
+	forced bool
 	memory atomic.Bool
 {{- if .ProjectComponents.Cache }}
 	store *cache.Cache
@@ -55,12 +56,13 @@ type stateSnapshot struct {
 // the selected store keeps its own CACHE_* driver and connection configuration.
 func NewState() (*State, error) {
 	driver := strings.ToLower(strings.TrimSpace(env.Get("APP_MAINTENANCE_DRIVER", driverMemory)))
+	forced := env.GetBool("APP_MAINTENANCE_ENABLED", "false")
 	if driver == "" {
 		driver = driverMemory
 	}
 	switch driver {
 	case driverMemory:
-		return &State{driver: driver}, nil
+		return &State{driver: driver, forced: forced}, nil
 	case driverCache:
 		return nil, fmt.Errorf("maintenance: cache driver requires the Cache component")
 	default:
@@ -72,12 +74,13 @@ func NewState() (*State, error) {
 // NewStateWithCacheManager builds maintenance state from the cache manager already owned by the App runtime.
 func NewStateWithCacheManager(cacheManager *caches.Manager) (*State, error) {
 	driver := strings.ToLower(strings.TrimSpace(env.Get("APP_MAINTENANCE_DRIVER", driverMemory)))
+	forced := env.GetBool("APP_MAINTENANCE_ENABLED", "false")
 	if driver == "" {
 		driver = driverMemory
 	}
 	switch driver {
 	case driverMemory:
-		return &State{driver: driver}, nil
+		return &State{driver: driver, forced: forced}, nil
 	case driverCache:
 		storeName := strings.TrimSpace(env.Get("APP_MAINTENANCE_STORE", "default"))
 		store := cacheManager.Default()
@@ -91,7 +94,7 @@ func NewStateWithCacheManager(cacheManager *caches.Manager) (*State, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &State{driver: driver, store: store, key: key}, nil
+		return &State{driver: driver, forced: forced, store: store, key: key}, nil
 	default:
 		return nil, fmt.Errorf("maintenance: unsupported driver %q; expected memory or cache", driver)
 	}
@@ -105,7 +108,7 @@ func (s *State) Driver() string {
 
 // Enabled reports whether HTTP traffic should be gated.
 func (s *State) Enabled() (bool, error) {
-	if env.GetBool("APP_MAINTENANCE_ENABLED", "false") {
+	if s.forced {
 		return true, nil
 	}
 	if s.driver == driverMemory {
