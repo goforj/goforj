@@ -16,7 +16,6 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/scheduler/v2"
 	"github.com/goforj/str/v2"
-	"{{.GoModuleName}}/internal/maintenance"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -101,30 +100,12 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	if err != nil {
 		return err
 	}
-	maintenancePauseOwned, err := syncMaintenancePause(s.Scheduler, false)
-	if err != nil {
-		return err
-	}
 
+	// start the scheduler
 	s.Scheduler.Start()
 	s.logger.Info().Msg("Scheduler started")
 
-	maintenanceTicker := time.NewTicker(100 * time.Millisecond)
-	defer maintenanceTicker.Stop()
-	var runErr error
-
-maintenanceLoop:
-	for runCtx.Err() == nil {
-		select {
-		case <-runCtx.Done():
-		case <-maintenanceTicker.C:
-			maintenancePauseOwned, err = syncMaintenancePause(s.Scheduler, maintenancePauseOwned)
-			if err != nil {
-				runErr = err
-				break maintenanceLoop
-			}
-		}
-	}
+	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down scheduler")
 
 	shutdownErr := make(chan error, 1)
@@ -137,32 +118,12 @@ maintenanceLoop:
 		err = errors.New("scheduler shutdown timed out")
 	}
 	if err != nil {
-		return errors.Join(runErr, err)
+		return err
 	}
 
 	s.logger.Info().Msg("Scheduler shut down")
 
-	return runErr
-}
-
-// syncMaintenancePause overlays maintenance state without clearing an independently paused scheduler.
-func syncMaintenancePause(engine *scheduler.Scheduler, owned bool) (bool, error) {
-	if maintenance.Enabled() {
-		if engine.IsPausedAll() {
-			return owned, nil
-		}
-		if err := engine.PauseAll(); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	if !owned {
-		return false, nil
-	}
-	if err := engine.ResumeAll(); err != nil {
-		return true, err
-	}
-	return false, nil
+	return nil
 }
 
 // ProvideScheduler creates and configures the underlying scheduler engine.

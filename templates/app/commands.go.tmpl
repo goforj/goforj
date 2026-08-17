@@ -8,9 +8,6 @@ import (
 	"{{.GoModuleName}}/internal/auth"
 {{- end }}
 	"{{.GoModuleName}}/internal/cmd"
-{{- if .Components.HasRuntime }}
-	"{{.GoModuleName}}/internal/maintenance"
-{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
@@ -21,10 +18,6 @@ import (
 type Commands struct {
 	ResourcesCmd cmd.ResourcesCmd `cmd:""`
 	AboutCmd cmd.AboutCmd `cmd:""`
-	{{- if .Components.HasRuntime }}
-	MaintenanceEnableCmd maintenance.EnableCmd `cmd:""`
-	MaintenanceDisableCmd maintenance.DisableCmd `cmd:""`
-	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	AuthCreateUserCmd auth.CreateUserCmd `cmd:""`
 	AuthSetPasswordCmd auth.SetPasswordCmd `cmd:""`
@@ -50,10 +43,6 @@ type Commands struct {
 func NewCommands(
 	resourcesCmd *cmd.ResourcesCmd,
 	aboutCmd *cmd.AboutCmd,
-	{{- if .Components.HasRuntime }}
-	maintenanceEnableCmd *maintenance.EnableCmd,
-	maintenanceDisableCmd *maintenance.DisableCmd,
-	{{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authCreateUserCmd *auth.CreateUserCmd,
 	authSetPasswordCmd *auth.SetPasswordCmd,
@@ -77,10 +66,6 @@ func NewCommands(
 	return &Commands{
 		ResourcesCmd: *resourcesCmd,
 		AboutCmd: *aboutCmd,
-		{{- if .Components.HasRuntime }}
-		MaintenanceEnableCmd: *maintenanceEnableCmd,
-		MaintenanceDisableCmd: *maintenanceDisableCmd,
-		{{- end }}
 		{{- if and .Components.Auth .Components.HasDatabase }}
 		AuthCreateUserCmd: *authCreateUserCmd,
 		AuthSetPasswordCmd: *authSetPasswordCmd,
