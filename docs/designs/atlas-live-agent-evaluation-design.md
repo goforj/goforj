@@ -2829,6 +2829,12 @@ observation inside the authoritative sandbox before its results can support
 guidance or release claims. Persistent caching, additional scenarios, and
 Atlas capability slices follow that authoritative vertical path.
 
+The local runner copies and hashes the selected Go launcher, then resolves and
+records the host `GOROOT` it needs after `PATH` is sealed. It detects replacement
+of that runtime directory during a command, but same-identity content mutation
+remains possible under the shared host identity. This is diagnostic provenance,
+not the immutable execution closure required from the Phase 3 backend.
+
 The local `forj atlas:eval compare` command must require an explicitly supplied
 disposable, revocable Codex credential. Copying that credential into private
 process state prevents ambient configuration from affecting attribution, but

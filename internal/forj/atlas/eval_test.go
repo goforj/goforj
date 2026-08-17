@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -562,7 +563,39 @@ func testEvaluationTools(t *testing.T, directory string) evaluationTools {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = removeEvaluationWorkRoot(directory) })
-	return evaluationTools{dir: directory, digest: digest, mu: &sync.Mutex{}}
+	goRoot := runtime.GOROOT()
+	goRootIdentity, err := os.Lstat(goRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evaluationTools{dir: directory, digest: digest, goRoot: goRoot, goRootIdentity: goRootIdentity, mu: &sync.Mutex{}}
+}
+
+// TestEvaluationEnvironmentRunsSnapshottedGo keeps the copied launcher connected to its resolved runtime tree.
+func TestEvaluationEnvironmentRunsSnapshottedGo(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { _ = removeEvaluationWorkRoot(root) })
+	forjSource := filepath.Join(root, evaluationToolFileName("forj-source"))
+	if err := os.WriteFile(forjSource, []byte("forj"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tools, err := newEvaluationTools(filepath.Join(root, "tools"), forjSource)
+	if err != nil {
+		t.Fatalf("newEvaluationTools(): %v", err)
+	}
+	environment, err := evaluationEnvironmentWithTools(filepath.Join(root, "attempt"), tools)
+	if err != nil {
+		t.Fatalf("evaluationEnvironmentWithTools(): %v", err)
+	}
+	command := exec.Command(tools.Executable("go"), "env", "GOROOT")
+	command.Env = environment
+	body, err := command.Output()
+	if err != nil {
+		t.Fatalf("snapshotted go env GOROOT: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != tools.goRoot {
+		t.Fatalf("snapshotted GOROOT = %q, want %q", body, tools.goRoot)
+	}
 }
 
 // TestPromotedPreparationPlansResolveAgainstProductionToolSnapshot prevents a portable scenario from depending on an executable unavailable to live evaluations.
@@ -1201,7 +1234,7 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 	if err := os.Mkdir(hostTools, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range append([]string{"go"}, evaluationSupportToolNames()...) {
+	for _, name := range evaluationSupportToolNames() {
 		if runtime.GOOS == "windows" {
 			name += ".exe"
 		}
@@ -1209,6 +1242,14 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	goExecutable, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installEvaluationTool(hostTools, "go", goExecutable); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOROOT", runtime.GOROOT())
 	t.Setenv("PATH", hostTools)
 	t.Setenv("ATLAS_EVAL_SECRET", "must-not-leak")
 	t.Setenv("GOENV", filepath.Join(root, "host-go-env"))
@@ -1294,6 +1335,7 @@ func TestEvaluationEnvironmentUsesPrivateCachesAndCopiedForj(t *testing.T) {
 func TestEvaluationToolsAreSharedReadOnlyAndMutationDetectable(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(func() { _ = removeEvaluationWorkRoot(root) })
+	t.Setenv("GOROOT", runtime.GOROOT())
 	hostTools := filepath.Join(root, "host-tools")
 	if err := os.Mkdir(hostTools, 0o755); err != nil {
 		t.Fatal(err)
@@ -1301,6 +1343,16 @@ func TestEvaluationToolsAreSharedReadOnlyAndMutationDetectable(t *testing.T) {
 	for _, name := range append([]string{"go"}, evaluationSupportToolNames()...) {
 		if runtime.GOOS == "windows" {
 			name += ".exe"
+		}
+		if strings.TrimSuffix(name, ".exe") == "go" {
+			source, err := exec.LookPath("go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := installEvaluationTool(hostTools, "go", source); err != nil {
+				t.Fatal(err)
+			}
+			continue
 		}
 		if err := os.WriteFile(filepath.Join(hostTools, name), []byte("host-"+name), 0o700); err != nil {
 			t.Fatal(err)
