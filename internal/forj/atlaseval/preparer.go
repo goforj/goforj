@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,6 +26,7 @@ type Preparer struct {
 	BaseEnvironment []string
 	Guidance        GuidanceMaterializer
 	cache           *preparationCache
+	environmentRoot string
 }
 
 // GuidanceMaterializer applies one durable host-specific guidance selection and returns the exact native files visible to the agent.
@@ -32,20 +34,42 @@ type GuidanceMaterializer func(context.Context, eval.PreparedProject, eval.Guida
 
 // preparationCache owns immutable command-local bases shared only by paired trial clones.
 type preparationCache struct {
-	mu     sync.Mutex
-	bases  map[string]*scenarios.PreparedScenario
-	closed bool
+	mu       sync.Mutex
+	cond     *sync.Cond
+	bases    map[string]*scenarios.PreparedScenario
+	inflight map[string]*preparationFlight
+	active   int
+	closed   bool
+}
+
+// preparationFlight publishes one plan's immutable base to same-plan waiters.
+type preparationFlight struct {
+	done chan struct{}
+	base *scenarios.PreparedScenario
+	err  error
 }
 
 // NewPreparer enables command-local immutable-base reuse under an explicitly owned root.
 func NewPreparer(baseRoot string, baseEnvironment []string, appLogger *logger.AppLogger, materializer GuidanceMaterializer) *Preparer {
+	environmentRoot := ""
+	if filepath.IsAbs(baseRoot) {
+		environmentRoot = filepath.Join(baseRoot, ".environment")
+	}
 	return &Preparer{
 		BaseRoot:        baseRoot,
 		BaseEnvironment: append([]string(nil), baseEnvironment...),
 		Logger:          appLogger,
 		Guidance:        materializer,
-		cache:           &preparationCache{bases: map[string]*scenarios.PreparedScenario{}},
+		cache:           newPreparationCache(),
+		environmentRoot: environmentRoot,
 	}
+}
+
+// newPreparationCache creates command-local base ownership with independent in-flight plans.
+func newPreparationCache() *preparationCache {
+	cache := &preparationCache{bases: map[string]*scenarios.PreparedScenario{}, inflight: map[string]*preparationFlight{}}
+	cache.cond = sync.NewCond(&cache.mu)
+	return cache
 }
 
 // Capabilities reports the live scenario schema supported by this GoForj build.
@@ -91,6 +115,12 @@ func (preparer Preparer) Resolve(_ context.Context, request eval.PreparationRequ
 
 // Prepare materializes the resolved starting state while rejecting request or catalog drift.
 func (preparer Preparer) Prepare(ctx context.Context, request eval.PreparationRequest, plan eval.ResolvedPreparationPlan) (eval.PreparedProject, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := validatePreparationRequest(request); err != nil {
 		return nil, err
 	}
@@ -107,6 +137,9 @@ func (preparer Preparer) Prepare(ctx context.Context, request eval.PreparationRe
 	prepared, err := preparer.prepareScenario(ctx, request, plan)
 	if err != nil {
 		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, closePreparedAfter(prepared, err)
 	}
 	result := eval.PreparationResult{
 		ResolutionID:   plan.ResolutionID,
@@ -159,17 +192,45 @@ func (preparer *Preparer) Close(context.Context) error {
 		return nil
 	}
 	preparer.cache.mu.Lock()
-	defer preparer.cache.mu.Unlock()
 	if preparer.cache.closed {
+		preparer.cache.mu.Unlock()
 		return nil
 	}
 	preparer.cache.closed = true
+	for preparer.cache.active > 0 {
+		preparer.cache.cond.Wait()
+	}
+	bases := preparer.cache.bases
+	preparer.cache.bases = nil
+	preparer.cache.mu.Unlock()
 	var cleanupErrors []error
-	for _, base := range preparer.cache.bases {
+	for _, base := range bases {
 		cleanupErrors = append(cleanupErrors, base.Close())
 	}
-	preparer.cache.bases = nil
+	if preparer.environmentRoot != "" {
+		cleanupErrors = append(cleanupErrors, removePreparationEnvironmentRoot(preparer.environmentRoot))
+	}
 	return errors.Join(cleanupErrors...)
+}
+
+// removePreparationEnvironmentRoot restores directory traversal before deleting read-only Go module-cache content owned by the preparer.
+func removePreparationEnvironmentRoot(root string) error {
+	if _, err := os.Lstat(root); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	walkErr := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	return errors.Join(walkErr, os.RemoveAll(root))
 }
 
 // prepareScenario either materializes directly or clones one command-local verified base.
@@ -180,20 +241,14 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 	if strings.TrimSpace(preparer.BaseRoot) == "" {
 		return nil, fmt.Errorf("evaluation base root is required")
 	}
-	preparer.cache.mu.Lock()
-	defer preparer.cache.mu.Unlock()
-	if preparer.cache.closed {
-		return nil, fmt.Errorf("evaluation preparer is closed")
-	}
 	key := plan.PlanDigest
-	base := preparer.cache.bases[key]
-	if base == nil {
-		var err error
+	base, release, err := preparer.cache.acquire(ctx, key, func() (*scenarios.PreparedScenario, error) {
 		baseRequest := request
-		baseRequest.Environment = append([]string(nil), preparer.BaseEnvironment...)
-		if baseRequest.Environment == nil {
-			return nil, fmt.Errorf("evaluation base environment is required")
+		baseEnvironment, err := preparer.baseEnvironmentForPlan(plan.PlanDigest)
+		if err != nil {
+			return nil, err
 		}
+		baseRequest.Environment = baseEnvironment
 		basePlan, err := preparer.Resolve(ctx, baseRequest)
 		if err != nil {
 			return nil, err
@@ -201,13 +256,129 @@ func (preparer Preparer) prepareScenario(ctx context.Context, request eval.Prepa
 		if !samePreparationPlan(plan, basePlan) {
 			return nil, fmt.Errorf("evaluation base environment does not match the resolved material environment")
 		}
-		base, err = preparer.materializeScenario(ctx, baseRequest, plan, preparer.BaseRoot, false)
-		if err != nil {
-			return nil, err
-		}
-		preparer.cache.bases[key] = base
+		return preparer.materializeScenario(ctx, baseRequest, plan, preparer.BaseRoot, false)
+	})
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	return scenarios.ClonePrepared(base, request.DestinationRoot)
+}
+
+// baseEnvironmentForPlan gives distinct base materializations separate writable state without changing their shared tool identity.
+func (preparer Preparer) baseEnvironmentForPlan(planDigest string) ([]string, error) {
+	if len(preparer.BaseEnvironment) == 0 {
+		return nil, fmt.Errorf("evaluation base environment is required")
+	}
+	if preparer.environmentRoot == "" {
+		return nil, fmt.Errorf("evaluation base root must be absolute")
+	}
+	digest := strings.TrimPrefix(planDigest, "sha256:")
+	root := filepath.Join(preparer.environmentRoot, digest)
+	paths := []struct {
+		key  string
+		path string
+	}{
+		{key: "GOCACHE", path: filepath.Join(root, "gocache")},
+		{key: "GOMODCACHE", path: filepath.Join(root, "gomodcache")},
+		{key: "GOPATH", path: filepath.Join(root, "gopath")},
+		{key: "HOME", path: filepath.Join(root, "home")},
+		{key: "GOTMPDIR", path: filepath.Join(root, "tmp")},
+		{key: "TMPDIR", path: filepath.Join(root, "tmp")},
+		{key: "TMP", path: filepath.Join(root, "tmp")},
+		{key: "TEMP", path: filepath.Join(root, "tmp")},
+	}
+	for _, entry := range paths {
+		if err := os.MkdirAll(entry.path, 0o700); err != nil {
+			return nil, fmt.Errorf("create evaluation base %s: %w", entry.key, err)
+		}
+	}
+	overrides := make(map[string]string, len(paths))
+	for _, entry := range paths {
+		overrides[entry.key] = entry.path
+	}
+	environment := make([]string, 0, len(preparer.BaseEnvironment)+len(paths))
+	for _, entry := range preparer.BaseEnvironment {
+		key, _, ok := strings.Cut(entry, "=")
+		if value, replace := overrides[key]; ok && replace {
+			environment = append(environment, key+"="+value)
+			delete(overrides, key)
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	for _, entry := range paths {
+		if value, missing := overrides[entry.key]; missing {
+			environment = append(environment, entry.key+"="+value)
+		}
+	}
+	return environment, nil
+}
+
+// acquire retains one active cache user until release and single-flights materialization for matching plan digests.
+func (cache *preparationCache) acquire(ctx context.Context, key string, materialize func() (*scenarios.PreparedScenario, error)) (*scenarios.PreparedScenario, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	cache.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		cache.mu.Unlock()
+		return nil, nil, err
+	}
+	if cache.closed {
+		cache.mu.Unlock()
+		return nil, nil, fmt.Errorf("evaluation preparer is closed")
+	}
+	cache.active++
+	release := sync.OnceFunc(func() {
+		cache.mu.Lock()
+		cache.active--
+		cache.cond.Broadcast()
+		cache.mu.Unlock()
+	})
+	if base := cache.bases[key]; base != nil {
+		cache.mu.Unlock()
+		return base, release, nil
+	}
+	if flight := cache.inflight[key]; flight != nil {
+		cache.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			release()
+			return nil, nil, ctx.Err()
+		case <-flight.done:
+			if err := ctx.Err(); err != nil {
+				release()
+				return nil, nil, err
+			}
+			if flight.err != nil {
+				release()
+				return nil, nil, flight.err
+			}
+			return flight.base, release, nil
+		}
+	}
+	flight := &preparationFlight{done: make(chan struct{})}
+	cache.inflight[key] = flight
+	cache.mu.Unlock()
+	base, err := materialize()
+	cache.mu.Lock()
+	if err == nil {
+		cache.bases[key] = base
+	}
+	flight.base, flight.err = base, err
+	delete(cache.inflight, key)
+	close(flight.done)
+	cache.mu.Unlock()
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, nil, err
+	}
+	return base, release, nil
 }
 
 // preparationPlanDigest binds the scenario prefix to the exact executable, toolchain, and material environment selected before mutation.
@@ -222,9 +393,13 @@ func preparationEnvironmentDigest(environment []string) string {
 	ignored := map[string]bool{
 		"GOCACHE":    true,
 		"GOMODCACHE": true,
+		"GOTMPDIR":   true,
 		"GOPATH":     true,
 		"HOME":       true,
 		"PATH":       true,
+		"TEMP":       true,
+		"TMP":        true,
+		"TMPDIR":     true,
 	}
 	values := make([]string, 0, len(environment))
 	for _, entry := range environment {
