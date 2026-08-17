@@ -268,7 +268,7 @@ steps:
     title: Generate the Job
     explain: |
       Use your App's make command to create the job file and add its constructor to job wiring.
-    command: ["forj", "make:job", "reports:generate", "--output-dir", "./internal/jobs"]
+    command: ["forj", "make:job", "reports:generate"]
 
   - id: replace-the-generated-job
     title: Replace the Generated Job
