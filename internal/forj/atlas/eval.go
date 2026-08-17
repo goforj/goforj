@@ -19,7 +19,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/goforj/atlas/agents"
 	"github.com/goforj/atlas/eval"
+	"github.com/goforj/atlas/skills"
 	"github.com/goforj/goforj/internal/forj/atlaseval"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
@@ -49,11 +51,76 @@ const (
 
 // EvalCmd groups opt-in live-agent evaluation commands.
 type EvalCmd struct {
-	Compare EvalCompareCmd `cmd:""`
-	List    EvalListCmd    `cmd:""`
-	Report  EvalReportCmd  `cmd:""`
-	Run     EvalRunCmd     `cmd:""`
-	Suite   EvalSuiteCmd   `cmd:""`
+	Compare  EvalCompareCmd  `cmd:""`
+	Coverage EvalCoverageCmd `cmd:""`
+	List     EvalListCmd     `cmd:""`
+	Report   EvalReportCmd   `cmd:""`
+	Run      EvalRunCmd      `cmd:""`
+	Suite    EvalSuiteCmd    `cmd:""`
+}
+
+// EvalCoverageCmd reports which framework capabilities have promoted evaluation coverage.
+type EvalCoverageCmd struct {
+	Format string `help:"Output format" enum:"table,markdown,json" default:"table"`
+}
+
+// Signature returns the Kong metadata for EvalCoverageCmd.
+func (*EvalCoverageCmd) Signature() string {
+	return `name:"coverage" help:"Report promoted evaluation coverage and planned gaps"`
+}
+
+// Run prints the versioned Atlas coverage catalog without starting an agent.
+func (command *EvalCoverageCmd) Run() error {
+	catalog, err := eval.LoadCoverageCatalog()
+	if err != nil {
+		return err
+	}
+	switch command.Format {
+	case "json":
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(catalog)
+	case "markdown":
+		printEvaluationCoverageMarkdown(os.Stdout, catalog)
+	default:
+		printEvaluationCoverageTable(os.Stdout, catalog)
+	}
+	return nil
+}
+
+// printEvaluationCoverageTable renders a compact terminal inventory with planned gaps visible in place.
+func printEvaluationCoverageTable(writer io.Writer, catalog eval.CoverageCatalog) {
+	areaWidth := len("area")
+	capabilityWidth := len("capability")
+	covered := 0
+	for _, capability := range catalog.Capabilities {
+		areaWidth = max(areaWidth, len(capability.Area))
+		capabilityWidth = max(capabilityWidth, len(capability.ID))
+		if capability.Covered() {
+			covered++
+		}
+	}
+	for _, capability := range catalog.Capabilities {
+		status := "planned"
+		if capability.Covered() {
+			status = "covered"
+		}
+		fmt.Fprintf(writer, "%-*s  %-*s  %-8s  %-8s  %s\n", areaWidth, capability.Area, capabilityWidth, capability.ID, capability.Tier, status, strings.Join(capability.Evaluations, ", "))
+	}
+	fmt.Fprintf(writer, "\nCoverage · %d/%d capabilities · %d planned gaps\n", covered, len(catalog.Capabilities), len(catalog.Capabilities)-covered)
+}
+
+// printEvaluationCoverageMarkdown renders a reviewable report suitable for checked-in benchmark notes and pull requests.
+func printEvaluationCoverageMarkdown(writer io.Writer, catalog eval.CoverageCatalog) {
+	fmt.Fprintln(writer, "| Area | Capability | Tier | Status | Evaluations |")
+	fmt.Fprintln(writer, "| --- | --- | --- | --- | --- |")
+	for _, capability := range catalog.Capabilities {
+		status := "Planned"
+		if capability.Covered() {
+			status = "Covered"
+		}
+		fmt.Fprintf(writer, "| %s | `%s` | %s | %s | %s |\n", capability.Area, capability.ID, capability.Tier, status, strings.Join(capability.Evaluations, ", "))
+	}
 }
 
 // Signature returns the Kong metadata for EvalCmd.
@@ -61,7 +128,7 @@ func (*EvalCmd) Signature() string {
 	return `name:"atlas:eval" help:"Run opt-in Atlas agent evaluations"`
 }
 
-// EvalCompareCmd runs the first diagnostic control-versus-AGENTS comparison.
+// EvalCompareCmd runs one explicit ordered guidance comparison.
 type EvalCompareCmd struct {
 	Evaluation      string `arg:"" help:"Promoted evaluation ID" default:"add-http-controller"`
 	Model           string `help:"Exact Codex model identity" required:""`
@@ -71,12 +138,14 @@ type EvalCompareCmd struct {
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
 	ArtifactKey     string `name:"artifact-key" help:"External manifest authentication key; must be outside artifacts" type:"path" required:""`
 	Trials          int    `help:"Independent paired trials" default:"1"`
+	Control         string `help:"First guidance treatment" enum:"none,agents,agents-skills,atlas" default:"none"`
+	Treatment       string `help:"Second guidance treatment" enum:"none,agents,agents-skills,atlas" default:"agents"`
 }
 
 // EvalRunCmd runs one promoted diagnostic treatment without paying for an unused comparison profile.
 type EvalRunCmd struct {
 	Evaluation      string `arg:"" help:"Promoted evaluation ID" default:"add-http-controller"`
-	Guidance        string `help:"Guidance profile" enum:"none,agents" default:"agents"`
+	Guidance        string `help:"Guidance profile" enum:"none,agents,agents-skills,atlas" default:"agents"`
 	Model           string `help:"Exact Codex model identity" required:""`
 	ModelProvider   string `name:"model-provider" help:"Codex model provider" default:"openai"`
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
@@ -171,6 +240,7 @@ func escapeEvaluationTerminalText(value string) string {
 type EvalSuiteCmd struct {
 	Suite           string `arg:"" help:"Promoted evaluation suite" default:"core"`
 	Kind            string `help:"Limit the suite to one measurement kind" enum:"all,scaffold,feature,repair,abstention" default:"all"`
+	Tier            string `help:"Limit the suite to a cumulative capability tier" enum:"all,smoke,core,extended" default:"all"`
 	Model           string `help:"Exact Codex model identity" required:""`
 	ModelProvider   string `name:"model-provider" help:"Codex model provider" default:"openai"`
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
@@ -179,6 +249,8 @@ type EvalSuiteCmd struct {
 	ArtifactKey     string `name:"artifact-key" help:"External manifest authentication key; must be outside artifacts" type:"path" required:""`
 	Trials          int    `help:"Independent paired trials per evaluation" default:"1"`
 	Workers         int    `help:"Concurrent diagnostic executions; does not provide security isolation" default:"1"`
+	Control         string `help:"First guidance treatment" enum:"none,agents,agents-skills,atlas" default:"none"`
+	Treatment       string `help:"Second guidance treatment" enum:"none,agents,agents-skills,atlas" default:"agents"`
 }
 
 // Signature returns the Kong metadata for EvalSuiteCmd.
@@ -197,6 +269,10 @@ func (command *EvalSuiteCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
+	ids, err = evaluationIDsForTier(ids, command.Tier)
+	if err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return fmt.Errorf("evaluation suite %q with kind %q is empty or unknown", command.Suite, command.Kind)
 	}
@@ -205,10 +281,36 @@ func (command *EvalSuiteCmd) Run() (runErr error) {
 		return err
 	}
 	printEvaluationSuitePlan(os.Stderr, plan)
-	return runEvaluationComparisonsWithWorkers(ctx, evaluationInvocation{
+	return runEvaluationComparisonsWithProfilesWorkers(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
 		Credential: command.Credential, Artifacts: command.Artifacts, ArtifactKey: command.ArtifactKey, Progress: os.Stderr,
-	}, ids, command.Trials, command.Workers)
+	}, ids, command.Trials, command.Workers, []string{command.Control, command.Treatment})
+}
+
+// evaluationIDsForTier intersects a promoted suite with the capability catalog's cumulative portfolio.
+func evaluationIDsForTier(ids []string, tier string) ([]string, error) {
+	if tier == "all" {
+		return append([]string(nil), ids...), nil
+	}
+	catalog, err := eval.LoadCoverageCatalog()
+	if err != nil {
+		return nil, err
+	}
+	covered, err := catalog.EvaluationIDs(eval.CoverageTier(tier))
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool, len(covered))
+	for _, id := range covered {
+		allowed[id] = true
+	}
+	selected := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if allowed[id] {
+			selected = append(selected, id)
+		}
+	}
+	return selected, nil
 }
 
 // evaluationSuitePlan makes the cost-bearing scope of one explicit suite invocation visible before authority is loaded.
@@ -264,7 +366,7 @@ type evaluationInvocation struct {
 
 // Signature returns the Kong metadata for EvalCompareCmd.
 func (*EvalCompareCmd) Signature() string {
-	return `name:"compare" help:"Compare no guidance with canonical AGENTS.md guidance"`
+	return `name:"compare" help:"Compare two guidance profiles"`
 }
 
 // Run executes two fresh diagnostic sessions and prints their machine-readable results.
@@ -276,10 +378,10 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 
 // run executes the comparison with a caller-owned lifecycle so cancellation reaches every evaluation resource.
 func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
-	return runEvaluationComparisons(ctx, evaluationInvocation{
+	return runEvaluationComparisonsWithProfilesWorkers(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
 		Credential: command.Credential, Artifacts: command.Artifacts, ArtifactKey: command.ArtifactKey,
-	}, []string{command.Evaluation}, command.Trials)
+	}, []string{command.Evaluation}, command.Trials, 1, []string{command.Control, command.Treatment})
 }
 
 // runEvaluationComparisons shares frozen credentials, tool resolution, caches, and verifier infrastructure across one invocation.
@@ -289,6 +391,18 @@ func runEvaluationComparisons(ctx context.Context, invocation evaluationInvocati
 
 // runEvaluationComparisonsWithWorkers schedules complete paired trials across separate diagnostic executions.
 func runEvaluationComparisonsWithWorkers(ctx context.Context, invocation evaluationInvocation, evaluationIDs []string, trials, workers int) (runErr error) {
+	return runEvaluationComparisonsWithProfilesWorkers(ctx, invocation, evaluationIDs, trials, workers, []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents})
+}
+
+// runEvaluationComparisonsWithProfilesWorkers schedules explicit ordered treatment pairs across isolated workers.
+func runEvaluationComparisonsWithProfilesWorkers(ctx context.Context, invocation evaluationInvocation, evaluationIDs []string, trials, workers int, profiles []string) (runErr error) {
+	profiles, err := evaluationProfiles(profiles)
+	if err != nil {
+		return err
+	}
+	if len(profiles) != 2 || profiles[0] == profiles[1] {
+		return fmt.Errorf("evaluation comparison requires two distinct guidance profiles")
+	}
 	if err := validateEvaluationTrials(trials); err != nil {
 		return err
 	}
@@ -320,7 +434,7 @@ func runEvaluationComparisonsWithWorkers(ctx context.Context, invocation evaluat
 		if err := ctx.Err(); err != nil {
 			return errors.Join(err, closeEvaluationExecutions(executions), authority.Close())
 		}
-		execution, err := newEvaluationExecution(invocation, authority, []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents})
+		execution, err := newEvaluationExecution(invocation, authority, profiles)
 		if err != nil {
 			return errors.Join(err, closeEvaluationExecutions(executions), authority.Close())
 		}
@@ -333,7 +447,7 @@ func runEvaluationComparisonsWithWorkers(ctx context.Context, invocation evaluat
 		runErr = errors.Join(runErr, closeEvaluationExecutions(executions), authority.Close())
 	}()
 	results, attemptErrors := runEvaluationComparisonJobs(ctx, invocation.Progress, jobs, len(executions), trials, func(ctx context.Context, job evaluationComparisonJob, worker int) (eval.GuidanceDiagnosticResult, []error) {
-		return runEvaluationComparisonJob(ctx, executions[worker], authority.tools, job)
+		return runEvaluationComparisonJob(ctx, executions[worker], authority.tools, job, profiles)
 	})
 	if err := printEvaluationResults(results, authority.redactor, authority.artifactRoot); err != nil {
 		return err
@@ -495,7 +609,11 @@ func evaluationCommandFatalCause(cause error) error {
 }
 
 // runEvaluationComparisonJob owns one pair's writable state from preflight through cleanup and postflight integrity checks.
-func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecution, tools evaluationTools, job evaluationComparisonJob) (eval.GuidanceDiagnosticResult, []error) {
+func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecution, tools evaluationTools, job evaluationComparisonJob, selected ...[]string) (eval.GuidanceDiagnosticResult, []error) {
+	profiles := []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents}
+	if len(selected) == 1 {
+		profiles = selected[0]
+	}
 	if err := tools.Verify(); err != nil {
 		return eval.GuidanceDiagnosticResult{}, []error{err}
 	}
@@ -503,7 +621,7 @@ func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecut
 	if err != nil {
 		return eval.GuidanceDiagnosticResult{}, []error{err}
 	}
-	environments, err := newEvaluationJobEnvironments(jobRoot, tools)
+	environments, err := newEvaluationJobEnvironments(jobRoot, tools, profiles)
 	if err != nil {
 		return eval.GuidanceDiagnosticResult{}, []error{evaluationCommandFatalCause(errors.Join(err, removeEvaluationWorkRoot(jobRoot)))}
 	}
@@ -512,6 +630,7 @@ func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecut
 	}
 	result, diagnosticErr := execution.diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
 		EvaluationID: job.evaluationID, DestinationRoot: filepath.Join(jobRoot, "projects"), Environments: environments,
+		Profiles: profiles,
 		TreatmentBoundary: func(boundaryContext context.Context) error {
 			return errors.Join(tools.Verify(), execution.verifierModuleProxyHealthy(boundaryContext))
 		},
@@ -1101,7 +1220,7 @@ func evaluationProfiles(profiles []string) ([]string, error) {
 	selected := make([]string, 0, len(profiles))
 	seen := make(map[string]bool, len(profiles))
 	for _, profile := range profiles {
-		if profile != eval.GuidanceProfileNone && profile != eval.GuidanceProfileAgents {
+		if !eval.SupportedGuidanceProfile(profile) {
 			return nil, fmt.Errorf("unsupported evaluation guidance profile %q", profile)
 		}
 		if !seen[profile] {
@@ -1207,7 +1326,13 @@ func atlasSoftwareIdentity() eval.SoftwareIdentity {
 }
 
 // materializeEvaluationGuidance uses the production render setting and native guidance reconciliation path so evaluation treatments cannot drift from normal Projects.
-func materializeEvaluationGuidance(_ context.Context, prepared eval.PreparedProject, guidance eval.Guidance, selection project.AgentGuidance) (eval.Guidance, error) {
+func materializeEvaluationGuidance(ctx context.Context, prepared eval.PreparedProject, guidance eval.Guidance, selection project.AgentGuidance) (eval.Guidance, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return eval.Guidance{}, err
+	}
 	if prepared == nil || strings.TrimSpace(prepared.Result().ProjectRoot) == "" {
 		return eval.Guidance{}, fmt.Errorf("prepared Project is required")
 	}
@@ -1227,12 +1352,55 @@ func materializeEvaluationGuidance(_ context.Context, prepared eval.PreparedProj
 	if selection != project.AgentGuidanceBaseline {
 		return result, nil
 	}
-	body, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-	if err != nil {
-		return eval.Guidance{}, fmt.Errorf("read managed evaluation guidance: %w", err)
+	if err := recordEvaluationGuidanceFile(root, "AGENTS.md", result.Files); err != nil {
+		return eval.Guidance{}, err
 	}
-	result.Files["AGENTS.md"] = body
+	if len(guidance.Skills) > 0 {
+		paths, err := skills.Write(skills.WriteOptions{Root: root, Agent: agents.Codex{}, Project: Project(root)})
+		if err != nil {
+			return eval.Guidance{}, fmt.Errorf("write evaluation skills: %w", err)
+		}
+		for _, path := range paths {
+			if err := recordEvaluationGuidanceFile(root, path, result.Files); err != nil {
+				return eval.Guidance{}, err
+			}
+		}
+	}
+	if len(guidance.MCP) > 0 {
+		if len(guidance.MCP) != 1 || guidance.MCP[0] != "goforj-atlas" {
+			return eval.Guidance{}, fmt.Errorf("unsupported evaluation MCP selection %v", guidance.MCP)
+		}
+		codex := agents.Codex{}
+		server := agents.DefaultMCPServerConfig(root)
+		server.Command = prepared.Result().ForjExecutable
+		if strings.TrimSpace(server.Command) == "" {
+			return eval.Guidance{}, fmt.Errorf("prepared GoForj executable is required for Atlas MCP")
+		}
+		if err := codex.WriteMCPConfig(ctx, root, server); err != nil {
+			return eval.Guidance{}, fmt.Errorf("write evaluation MCP configuration: %w", err)
+		}
+		if err := recordEvaluationGuidanceFile(root, codex.MCPConfigPath(root), result.Files); err != nil {
+			return eval.Guidance{}, err
+		}
+	}
 	return result, nil
+}
+
+// recordEvaluationGuidanceFile captures one native projection relative to the prepared Project for treatment attribution.
+func recordEvaluationGuidanceFile(root, path string, files map[string][]byte) error {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("evaluation guidance path %q escapes prepared Project", path)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read evaluation guidance %q: %w", relative, err)
+	}
+	files[filepath.Clean(relative)] = body
+	return nil
 }
 
 // removeEvaluationWorkRoot restores traversal only inside the command-owned root so read-only module caches remain disposable.
@@ -1518,9 +1686,13 @@ func (tools evaluationTools) Verify() error {
 }
 
 // newEvaluationJobEnvironments creates the paired treatment environments owned by one evaluation/trial job.
-func newEvaluationJobEnvironments(root string, tools evaluationTools) (map[string][]string, error) {
-	environments := make(map[string][]string, 2)
-	for _, profile := range []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents} {
+func newEvaluationJobEnvironments(root string, tools evaluationTools, selected ...[]string) (map[string][]string, error) {
+	profiles := []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents}
+	if len(selected) == 1 {
+		profiles = selected[0]
+	}
+	environments := make(map[string][]string, len(profiles))
+	for _, profile := range profiles {
 		environment, err := newEvaluationTreatmentEnvironment(root, profile, tools)
 		if err != nil {
 			return nil, err
@@ -1532,7 +1704,7 @@ func newEvaluationJobEnvironments(root string, tools evaluationTools) (map[strin
 
 // newEvaluationTreatmentEnvironment gives one treatment its own writable process state below its job root.
 func newEvaluationTreatmentEnvironment(root, profile string, tools evaluationTools) ([]string, error) {
-	if profile != eval.GuidanceProfileNone && profile != eval.GuidanceProfileAgents {
+	if !eval.SupportedGuidanceProfile(profile) {
 		return nil, fmt.Errorf("unsupported evaluation guidance profile %q", profile)
 	}
 	return evaluationEnvironmentWithTools(filepath.Join(root, profile), tools)

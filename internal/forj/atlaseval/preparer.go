@@ -215,6 +215,8 @@ func evaluationGuidanceSelection(profile string) (project.AgentGuidance, error) 
 		return project.AgentGuidanceNone, nil
 	case eval.GuidanceProfileAgents:
 		return project.AgentGuidanceBaseline, nil
+	case eval.GuidanceProfileAgentsSkills, eval.GuidanceProfileAtlas:
+		return project.AgentGuidanceBaseline, nil
 	default:
 		return "", fmt.Errorf("unsupported evaluation guidance profile %q", profile)
 	}

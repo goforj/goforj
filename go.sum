@@ -162,6 +162,8 @@ github.com/go-sql-driver/mysql v1.9.3/go.mod h1:qn46aNg1333BRMNU69Lq93t8du/dwxI6
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/goforj/atlas v0.3.2-0.20260817173003-c9f34d93e596 h1:oRGCr8QXGq/umodgKOmuPjCeJsL21M8Zp4ej4mWFuzU=
 github.com/goforj/atlas v0.3.2-0.20260817173003-c9f34d93e596/go.mod h1:z7fbpw5cNkFqEoBlBftN3nckacMb+DJCqBqhn/168a8=
+github.com/goforj/atlas v0.3.2-0.20260817193020-2226d1cff8cb h1:o5GQjZbzQxRyANuhQ4OouKwqzRJ7aYIT5HbnV4sZanU=
+github.com/goforj/atlas v0.3.2-0.20260817193020-2226d1cff8cb/go.mod h1:z7fbpw5cNkFqEoBlBftN3nckacMb+DJCqBqhn/168a8=
 github.com/goforj/cache v0.4.0 h1:d8Mofh8OtQABkuKqnXiH/c4CHxjCRXqwVhou2GapDrw=
 github.com/goforj/cache v0.4.0/go.mod h1:4vCZ2c/sKCprsogMw23X0N/8MMWnmWenhhqVciWAWxM=
 github.com/goforj/cache/cachecore v0.4.0 h1:h5seAIs60q/e+Zbb2DxC0DwGFR4A1jkR2M2fRyMJV/I=

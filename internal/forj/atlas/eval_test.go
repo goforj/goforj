@@ -1164,10 +1164,54 @@ func TestEvaluationTaskKindPreservesExplicitFiltering(t *testing.T) {
 	}
 }
 
+// TestEvaluationIDsForTierBuildsFastRepresentativeSuites keeps live cost controls tied to declared coverage.
+func TestEvaluationIDsForTierBuildsFastRepresentativeSuites(t *testing.T) {
+	all, err := eval.PromotedEvaluationIDs("core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoke, err := evaluationIDsForTier(all, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := evaluationIDsForTier(all, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(smoke) == 0 || len(smoke) >= len(core) || len(core) > len(all) {
+		t.Fatalf("tier sizes = smoke:%d core:%d all:%d", len(smoke), len(core), len(all))
+	}
+	if _, err := evaluationIDsForTier(all, "daily"); err == nil {
+		t.Fatal("unknown evaluation tier was accepted")
+	}
+}
+
+// TestEvaluationCoverageRenderersKeepGapsVisible verifies human reports distinguish measured and planned capabilities.
+func TestEvaluationCoverageRenderersKeepGapsVisible(t *testing.T) {
+	catalog := eval.CoverageCatalog{Capabilities: []eval.CapabilityCoverage{
+		{ID: "generation.controllers", Area: "generation", Tier: eval.CoverageTierSmoke, Evaluations: []string{"add-http-controller"}},
+		{ID: "runtime.maintenance", Area: "runtime", Tier: eval.CoverageTierExtended},
+	}}
+	var table bytes.Buffer
+	printEvaluationCoverageTable(&table, catalog)
+	for _, token := range []string{"generation.controllers", "covered", "runtime.maintenance", "planned"} {
+		if !strings.Contains(table.String(), token) {
+			t.Fatalf("coverage table missing %q:\n%s", token, table.String())
+		}
+	}
+	var markdown bytes.Buffer
+	printEvaluationCoverageMarkdown(&markdown, catalog)
+	for _, token := range []string{"| Area | Capability |", "`generation.controllers`", "Covered", "Planned"} {
+		if !strings.Contains(markdown.String(), token) {
+			t.Fatalf("coverage markdown missing %q:\n%s", token, markdown.String())
+		}
+	}
+}
+
 // TestEvaluationProfilesRejectsUnsupportedTreatmentsBeforeSetup keeps invocation policy explicit and side-effect free.
 func TestEvaluationProfilesRejectsUnsupportedTreatmentsBeforeSetup(t *testing.T) {
-	profiles, err := evaluationProfiles([]string{eval.GuidanceProfileAgents, eval.GuidanceProfileAgents, eval.GuidanceProfileNone})
-	if err != nil || !slices.Equal(profiles, []string{eval.GuidanceProfileAgents, eval.GuidanceProfileNone}) {
+	profiles, err := evaluationProfiles([]string{eval.GuidanceProfileAgents, eval.GuidanceProfileAgentsSkills, eval.GuidanceProfileAtlas, eval.GuidanceProfileAgents})
+	if err != nil || !slices.Equal(profiles, []string{eval.GuidanceProfileAgents, eval.GuidanceProfileAgentsSkills, eval.GuidanceProfileAtlas}) {
 		t.Fatalf("evaluationProfiles() = %v, %v", profiles, err)
 	}
 	for _, profiles := range [][]string{nil, {"skills"}} {
@@ -1225,7 +1269,7 @@ func TestMaterializeEvaluationGuidanceUsesProductionDurablePath(t *testing.T) {
 	if err := writeProjectGuidanceConfig(filepath.Join(root, ".goforj.yml"), &project.Config{ProjectName: "evaluation-test"}); err != nil {
 		t.Fatal(err)
 	}
-	prepared := evaluationPreparedProject{result: eval.PreparationResult{ProjectRoot: root}}
+	prepared := evaluationPreparedProject{result: eval.PreparationResult{ProjectRoot: root, ForjExecutable: "/tools/forj"}}
 	agents, err := materializeEvaluationGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileAgents}, project.AgentGuidanceBaseline)
 	if err != nil {
 		t.Fatalf("materializeEvaluationGuidance(agents): %v", err)
@@ -1240,6 +1284,22 @@ func TestMaterializeEvaluationGuidanceUsesProductionDurablePath(t *testing.T) {
 	if config.Render.AgentGuidance != project.AgentGuidanceBaseline {
 		t.Fatalf("agent guidance = %q, want baseline", config.Render.AgentGuidance)
 	}
+	atlasGuidance, err := materializeEvaluationGuidance(context.Background(), prepared, eval.Guidance{
+		Profile: eval.GuidanceProfileAtlas,
+		Skills:  []string{"goforj-app-architecture"},
+		MCP:     []string{"goforj-atlas"},
+	}, project.AgentGuidanceBaseline)
+	if err != nil {
+		t.Fatalf("materializeEvaluationGuidance(atlas): %v", err)
+	}
+	for _, path := range []string{"AGENTS.md", filepath.Join(".agents", "skills", "goforj-app-architecture", "SKILL.md"), filepath.Join(".codex", "config.toml")} {
+		if len(atlasGuidance.Files[path]) == 0 {
+			t.Fatalf("atlas guidance missing %q: %#v", path, atlasGuidance.Files)
+		}
+	}
+	if !strings.Contains(string(atlasGuidance.Files[filepath.Join(".codex", "config.toml")]), `/tools/forj`) {
+		t.Fatalf("Atlas MCP config did not use the sealed GoForj executable: %s", atlasGuidance.Files[filepath.Join(".codex", "config.toml")])
+	}
 	none, err := materializeEvaluationGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileNone}, project.AgentGuidanceNone)
 	if err != nil {
 		t.Fatalf("materializeEvaluationGuidance(none): %v", err)
@@ -1251,6 +1311,19 @@ func TestMaterializeEvaluationGuidanceUsesProductionDurablePath(t *testing.T) {
 		t.Fatalf("none treatment retained managed guidance: %s", content)
 	} else if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatalf("read none guidance: %v", readErr)
+	}
+}
+
+// TestMaterializeEvaluationGuidanceRequiresPreparedMCPExecutable prevents a treatment from falling back to mutable PATH state.
+func TestMaterializeEvaluationGuidanceRequiresPreparedMCPExecutable(t *testing.T) {
+	root := t.TempDir()
+	if err := writeProjectGuidanceConfig(filepath.Join(root, ".goforj.yml"), &project.Config{ProjectName: "evaluation-test"}); err != nil {
+		t.Fatal(err)
+	}
+	prepared := evaluationPreparedProject{result: eval.PreparationResult{ProjectRoot: root}}
+	_, err := materializeEvaluationGuidance(context.Background(), prepared, eval.Guidance{Profile: eval.GuidanceProfileAtlas, MCP: []string{"goforj-atlas"}}, project.AgentGuidanceBaseline)
+	if err == nil || !strings.Contains(err.Error(), "prepared GoForj executable") {
+		t.Fatalf("materializeEvaluationGuidance() error = %v", err)
 	}
 }
 

@@ -762,6 +762,25 @@ func TestDispatchEventFollowupJobVerifierCalibration(t *testing.T) {
 	})
 }
 
+// TestAddResilientJobVerifierCalibration proves retry-safe report work keeps explicit attempt and timeout policy at its queue boundary.
+func TestAddResilientJobVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-resilient-job",
+		scenario:   "reports-generate-job",
+		path:       "internal/reports/generate_job.go",
+		old:        "Retry(3).",
+		mutant:     "",
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/reports/generate_job.go",
+			old:        "j.service.GenerateForUser(ctx, payload.UserID)",
+			mutant:     `j.service.GenerateForUser(ctx, "missing")`,
+			wantFailed: "resilient-job-behavior",
+		},
+		wantFailed:  "retry-safe-report-job",
+		wantCompile: true,
+	})
+}
+
 // TestScheduleExistingJobVerifierCalibration proves scheduled dispatch remains attached to the caller's runtime context.
 func TestScheduleExistingJobVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
