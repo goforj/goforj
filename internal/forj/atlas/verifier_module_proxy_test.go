@@ -205,3 +205,31 @@ func TestVerifierModuleProxyHealthCloseAndConcurrentReads(t *testing.T) {
 		t.Fatal("Healthy() after Close() succeeded")
 	}
 }
+
+// TestVerifierModuleProxyHealthBypassesDownloadSaturation keeps a live shared authority from looking failed while verifier downloads occupy its bounded request slots.
+func TestVerifierModuleProxyHealthBypassesDownloadSaturation(t *testing.T) {
+	proxy, err := newVerifierModuleProxy([]string{"GOMODCACHE=" + t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = proxy.Close() })
+	for range cap(proxy.requests) {
+		proxy.requests <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for range cap(proxy.requests) {
+			<-proxy.requests
+		}
+	})
+	if err := proxy.Healthy(context.Background()); err != nil {
+		t.Fatalf("Healthy() during download saturation: %v", err)
+	}
+	response, err := verifierModuleProxyHealthClient.Get(proxy.URL() + "/example.com/module/@v/v1.0.0.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("saturated download status = %d, want %d", response.StatusCode, http.StatusServiceUnavailable)
+	}
+}

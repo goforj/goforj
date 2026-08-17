@@ -15,6 +15,22 @@ install: ##@build Build lighthouse assets and install goforj.
 	cd $(LIGHTHOUSE_UI_DIR) && npm run build
 	go install ./cmd/forj
 
+EVAL_RUNNER ?= /tmp/forj-eval
+
+eval-runner: ##@build Build a provenance-stamped runner for paid Atlas evaluations.
+	@set -eu; \
+	eval_commit="$$(git rev-parse HEAD)"; \
+	if test -n "$$(git status --porcelain)"; then echo "eval-runner requires a clean checkout" >&2; exit 1; fi; \
+	eval_output="$(EVAL_RUNNER)"; \
+	case "$$eval_output" in /*) ;; *) eval_output="$$PWD/$$eval_output" ;; esac; \
+	eval_source="$$(mktemp -d)"; \
+	trap 'rm -rf "$$eval_source"' EXIT; \
+	git archive --output "$$eval_source/source.tar" "$$eval_commit"; \
+	tar -xf "$$eval_source/source.tar" -C "$$eval_source"; \
+	rm "$$eval_source/source.tar"; \
+	cd "$$eval_source"; \
+	go build -buildvcs=false -trimpath -ldflags "-X github.com/goforj/goforj/version.Version=devel -X github.com/goforj/goforj/version.Commit=$$eval_commit -X github.com/goforj/goforj/version.BuildDirty=false" -o "$$eval_output" ./cmd/forj
+
 deps: ##@build Link template node_modules to cache and install UI dependencies.
 	mkdir -p $(DEMO_NODE_CACHE_DIR)
 	mkdir -p $(LIGHTHOUSE_NODE_CACHE_DIR)
