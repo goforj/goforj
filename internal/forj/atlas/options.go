@@ -18,37 +18,46 @@ type InstallOptions struct {
 	DryRun        bool
 }
 
-// RunInstall writes Atlas guidance, skills, and MCP config for a rendered project.
+// RunInstall writes Atlas-owned files and reconciles native guidance through GoForj.
 func RunInstall(ctx context.Context, opts InstallOptions) (install.Result, error) {
 	root := firstNonEmpty(opts.Root, ".")
-	installOptions := install.Options{
+	request := install.HostRequest{
 		Root:          root,
 		Project:       Project(root),
 		Agents:        opts.Agents,
 		AllAgents:     opts.AllAgents,
+		Guidelines:    opts.Guidelines,
+		Skills:        opts.Skills,
+		MCP:           opts.MCP,
 		NoInteraction: opts.NoInteraction,
 		DryRun:        opts.DryRun,
 	}
-	applySurfaceSelections(&installOptions, opts.Guidelines, opts.Skills, opts.MCP)
-	result, err := install.NewInstaller().Install(ctx, installOptions)
-	if err != nil || opts.DryRun {
+	hostResult, err := install.NewHostInstaller().Install(ctx, request)
+	result := install.Result{Agents: hostResult.Agents, Files: hostResult.Files}
+	if err != nil {
 		return result, err
 	}
-	_, err = reconcileInstalledGuidance(root, result)
+	if opts.DryRun {
+		return includePlannedGuidance(root, result, hostResult.Guidance)
+	}
+	_, err = reconcileInstalledGuidance(root, hostResult.Guidance)
 	if err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-// applySurfaceSelections preserves omitted CLI flags while forwarding explicit enable and disable choices to Atlas.
-func applySurfaceSelections(opts *install.Options, guidelines *bool, skills *bool, mcp *bool) {
-	opts.GuidelinesSelection = guidelines
-	opts.SkillsSelection = skills
-	opts.MCPSelection = mcp
+// includePlannedGuidance adds host-owned native projections to Atlas dry-run output.
+func includePlannedGuidance(root string, result install.Result, intent install.GuidanceReconciliation) (install.Result, error) {
+	plan, err := PlanGuidanceIntent(root, intent)
+	if err != nil {
+		return result, err
+	}
+	result.Files = append(result.Files, plan.Updated...)
+	return result, nil
 }
 
 // reconcileInstalledGuidance applies Atlas's typed request through GoForj's native projection writer.
-func reconcileInstalledGuidance(root string, result install.Result) (ReconcileGuidanceResult, error) {
-	return ReconcileGuidanceIntent(root, result.Guidance)
+func reconcileInstalledGuidance(root string, intent install.GuidanceReconciliation) (ReconcileGuidanceResult, error) {
+	return ReconcileGuidanceIntent(root, intent)
 }
