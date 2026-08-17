@@ -126,12 +126,12 @@ steps:
 
         // Find centralizes lookup rules so transports do not duplicate input behavior.
         func (*Service) Find(_ context.Context, id string) (User, error) {
-                if id == "" {
+                if id != "42" {
                         return User{}, ErrUserNotFound
                 }
 
                 return User{
-                        ID:    id,
+                        ID:    "42",
                         Name:  "Ada Lovelace",
                         Email: "ada@example.test",
                 }, nil
