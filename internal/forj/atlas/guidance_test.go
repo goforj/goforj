@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -220,6 +221,50 @@ func TestRunInstallSynchronizesDurableGuidance(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(err) {
 		t.Fatalf("skills-only install retained managed AGENTS.md: %v", err)
+	}
+}
+
+// TestRunInstallDryRunReportsNativeGuidanceWithoutWritingIt keeps host-owned changes visible in the plan.
+func TestRunInstallDryRunReportsNativeGuidanceWithoutWritingIt(t *testing.T) {
+	root := writeGuidanceTestProject(t)
+	result, err := RunInstall(t.Context(), InstallOptions{
+		Root:       root,
+		Agents:     []string{"codex"},
+		Guidelines: boolValue(true),
+		DryRun:     true,
+	})
+	if err != nil {
+		t.Fatalf("RunInstall(): %v", err)
+	}
+	path := filepath.Join(root, "AGENTS.md")
+	if !slices.Contains(result.Files, path) {
+		t.Fatalf("planned files = %#v, want %s", result.Files, path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("dry run wrote native guidance: %v", err)
+	}
+}
+
+// TestPlanGuidanceIntentReportsRemoval keeps disabled native projections visible without mutating them.
+func TestPlanGuidanceIntentReportsRemoval(t *testing.T) {
+	root := writeGuidanceTestProject(t)
+	path := filepath.Join(root, "AGENTS.md")
+	if err := os.WriteFile(path, []byte(files.Block(files.DefaultMarker, "managed")+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	result, err := PlanGuidanceIntent(root, install.GuidanceReconciliation{
+		Version: install.GuidanceReconciliationVersion,
+		Enabled: false,
+		Targets: []string{"codex"},
+	})
+	if err != nil {
+		t.Fatalf("PlanGuidanceIntent(): %v", err)
+	}
+	if !slices.Contains(result.Updated, path) || !slices.Contains(result.Removed, path) {
+		t.Fatalf("planned removal = %#v", result)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("plan mutated native guidance: %v", err)
 	}
 }
 
