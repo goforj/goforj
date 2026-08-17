@@ -60,3 +60,5 @@ checks:
   - command: [go, test, ./...]
   - command: [forj, invoices:show, inv-42]
     contains: [inv-42, "12500"]
+  - command: [forj, invoices:show, inv-99]
+    contains: [inv-99, "9900"]

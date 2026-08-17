@@ -394,7 +394,21 @@ type evaluationFileMutation struct {
 
 // TestAddAppCommandVerifierCalibration proves the App command contract accepts its golden Project and rejects lost cancellation.
 func TestAddAppCommandVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-app-command", scenario: "invoice-app-command", path: "internal/invoices/show_cmd.go", old: "command.service.Find(ctx, command.ID)", mutant: "command.service.Find(context.Background(), command.ID)", wantFailed: "command-shape", wantCompile: true})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-app-command",
+		scenario:   "invoice-app-command",
+		path:       "internal/invoices/show_cmd.go",
+		old:        "command.service.Find(ctx, command.ID)",
+		mutant:     "command.service.Find(context.Background(), command.ID)",
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/invoices/show_cmd.go",
+			old:        `fmt.Printf("%s %d\n", invoice.ID, invoice.TotalCents)`,
+			mutant:     `_ = invoice; fmt.Printf("%s %d\n", command.ID, 12500)`,
+			wantFailed: "command-behavior-variable",
+		},
+		wantFailed:  "command-shape",
+		wantCompile: true,
+	})
 }
 
 // TestAddJobVerifierCalibration proves the job contract requires its typed payload identity.
