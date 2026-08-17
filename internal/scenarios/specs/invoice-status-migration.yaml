@@ -1,7 +1,7 @@
 schema_version: 2
 id: invoice-status-migration
 title: Invoice Status Migration
-description: Scaffold a default-connection migration pair for an upcoming invoice status schema change.
+description: Add an invoice status column through a default-connection migration pair.
 app:
   module_name: example.com/migrationeval
   doc_module_name: your/module
@@ -12,9 +12,18 @@ prepare:
   checks:
     - command: [forj, build]
 steps:
-  - id: scaffold-invoice-status-migration
-    title: Scaffold the migration pair
-    command: [forj, make:migration, add_status_to_invoices]
+  - id: add-invoice-status-column
+    title: Add the invoice status column
+    write:
+      path: migrations/2026_01_01_000000_add_status_to_invoices.up.sql
+      content: |
+        ALTER TABLE invoices ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
+  - id: remove-invoice-status-column
+    title: Remove the invoice status column
+    write:
+      path: migrations/2026_01_01_000000_add_status_to_invoices.down.sql
+      content: |
+        ALTER TABLE invoices DROP COLUMN status;
 checks:
   - command: [forj, build]
   - command: [go, test, ./...]

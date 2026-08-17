@@ -29,6 +29,10 @@ steps:
         package invoices
 
         import (
+                "context"
+                "encoding/json"
+                "fmt"
+
                 "example.com/invoiceeval/internal/queues"
                 "github.com/goforj/queue"
         )
@@ -41,6 +45,19 @@ steps:
         // NewReportDispatcher injects the queue manager and selects the generated named accessor.
         func NewReportDispatcher(manager *queues.Manager) *ReportDispatcher {
                 return &ReportDispatcher{queue: manager.Reports()}
+        }
+
+        // Dispatch queues one report generation request through the selected reports queue.
+        func (dispatcher *ReportDispatcher) Dispatch(ctx context.Context, invoiceID string) error {
+                if invoiceID == "" {
+                        return fmt.Errorf("invoice ID is required")
+                }
+                payload, err := json.Marshal(invoiceID)
+                if err != nil {
+                        return fmt.Errorf("encode report request: %w", err)
+                }
+                _, err = dispatcher.queue.WithContext(ctx).Dispatch(queue.NewJob("reports:generate").Payload(payload))
+                return err
         }
   - id: register-report-dispatcher
     title: Register the application service

@@ -34,6 +34,8 @@ steps:
         package invoices
 
         import (
+                "context"
+
                 "example.com/invoiceeval/internal/caches"
                 "github.com/goforj/cache"
         )
@@ -44,6 +46,11 @@ steps:
         // NewProfileCache injects the cache manager and selects the generated named accessor.
         func NewProfileCache(manager *caches.Manager) *ProfileCache {
                 return &ProfileCache{cache: manager.Profiles()}
+        }
+
+        // Store persists one profile value through the selected profiles cache.
+        func (profiles *ProfileCache) Store(ctx context.Context, key, value string) error {
+                return profiles.cache.WithContext(ctx).SetString(key, value, 0)
         }
   - id: register-profile-cache
     title: Register the application cache owner

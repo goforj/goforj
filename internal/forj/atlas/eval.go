@@ -837,6 +837,10 @@ func newEvaluationExecution(invocation evaluationInvocation, authority evaluatio
 		}
 	}()
 	// Verifiers may read prepared module archives, so their seed must never come from agent-writable treatment state.
+	runtime, err := evaluationRuntimeIdentity(authority.tools)
+	if err != nil {
+		return nil, err
+	}
 	diagnostic, err := eval.NewLocalGuidanceDiagnostic(eval.LocalGuidanceDiagnosticOptions{
 		WorkRoot:            workRoot,
 		ArtifactRoot:        authority.artifactRoot,
@@ -848,7 +852,7 @@ func newEvaluationExecution(invocation evaluationInvocation, authority evaluatio
 		ForjExecutable:      authority.tools.Executable("forj"),
 		VerifierEnvironment: append([]string(nil), authority.preparer.BaseEnvironment...),
 		VerifierModuleProxy: authority.moduleProxy.URL(),
-		Runtime:             evaluationRuntimeIdentity(),
+		Runtime:             runtime,
 	})
 	if err != nil {
 		return nil, err
@@ -1130,7 +1134,13 @@ func printEvaluationResults[T any](results []T, redactor eval.Redactor, artifact
 }
 
 // evaluationRuntimeIdentity makes retained diagnostics reconstructable after command-owned binaries and workspaces are removed.
-func evaluationRuntimeIdentity() eval.RuntimeIdentity {
+func evaluationRuntimeIdentity(tools evaluationTools) (eval.RuntimeIdentity, error) {
+	if err := tools.Verify(); err != nil {
+		return eval.RuntimeIdentity{}, err
+	}
+	if tools.goVersion == "" || tools.goDigest == "" || tools.goRootDigest == "" {
+		return eval.RuntimeIdentity{}, fmt.Errorf("evaluation Go launcher provenance is incomplete")
+	}
 	return eval.RuntimeIdentity{
 		Supervisor: atlasSoftwareIdentity(),
 		Framework: eval.SoftwareIdentity{
@@ -1139,10 +1149,12 @@ func evaluationRuntimeIdentity() eval.RuntimeIdentity {
 			Commit:  version.Commit,
 			Dirty:   version.Dirty,
 		},
-		GoVersion: runtime.Version(),
-		GOOS:      runtime.GOOS,
-		GOARCH:    runtime.GOARCH,
-	}
+		GoVersion:          tools.goVersion,
+		GoExecutableDigest: tools.goDigest,
+		GoRootDigest:       tools.goRootDigest,
+		GOOS:               runtime.GOOS,
+		GOARCH:             runtime.GOARCH,
+	}, nil
 }
 
 // atlasSoftwareIdentity reports the exact dependency selected into the current GoForj binary.
@@ -1413,7 +1425,10 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 type evaluationTools struct {
 	digest         string
 	dir            string
+	goDigest       string
+	goVersion      string
 	goRoot         string
+	goRootDigest   string
 	goRootIdentity os.FileInfo
 	mu             *sync.Mutex
 }
@@ -1443,14 +1458,18 @@ func newEvaluationTools(directory, forjExecutable string) (evaluationTools, erro
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return evaluationTools{}, err
 	}
-	digest, goRoot, goRootIdentity, err := installEvaluationTools(directory, forjExecutable)
+	digest, goDigest, goRoot, goRootIdentity, err := installEvaluationTools(directory, forjExecutable)
 	if err != nil {
 		return evaluationTools{}, err
 	}
 	if err := os.Chmod(directory, 0o500); err != nil {
 		return evaluationTools{}, fmt.Errorf("seal evaluation tool snapshot: %w", err)
 	}
-	return evaluationTools{dir: directory, digest: digest, goRoot: goRoot, goRootIdentity: goRootIdentity, mu: &sync.Mutex{}}, nil
+	goVersion, err := evaluationGoVersion(filepath.Join(directory, evaluationToolFileName("go")), goRoot)
+	if err != nil {
+		return evaluationTools{}, err
+	}
+	return evaluationTools{dir: directory, digest: digest, goDigest: goDigest, goVersion: goVersion, goRoot: goRoot, goRootDigest: digestEvaluationGoRoot(goRoot), goRootIdentity: goRootIdentity, mu: &sync.Mutex{}}, nil
 }
 
 // Verify detects same-user mutations to the shared tool snapshot before they can contaminate another job.
@@ -1540,38 +1559,59 @@ func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]s
 }
 
 // installEvaluationTools snapshots the small command surface agents need without exposing the supervisor's complete PATH.
-func installEvaluationTools(toolsDir, forjExecutable string) (string, string, os.FileInfo, error) {
+func installEvaluationTools(toolsDir, forjExecutable string) (string, string, string, os.FileInfo, error) {
 	hash := sha256.New()
 	goExecutable, err := exec.LookPath("go")
 	if err != nil {
-		return "", "", nil, fmt.Errorf("resolve evaluation tool %q: %w", "go", err)
+		return "", "", "", nil, fmt.Errorf("resolve evaluation tool %q: %w", "go", err)
 	}
 	goRoot, goRootIdentity, err := resolveEvaluationGoRoot(goExecutable)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", "", nil, err
 	}
 	goDigest, err := installEvaluationTool(toolsDir, "go", goExecutable)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("install evaluation tool %q: %w", "go", err)
+		return "", "", "", nil, fmt.Errorf("install evaluation tool %q: %w", "go", err)
 	}
 	fmt.Fprintf(hash, "go\x00%s\x00", goDigest)
 	forjDigest, err := installEvaluationTool(toolsDir, "forj", forjExecutable)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", "", nil, err
 	}
 	fmt.Fprintf(hash, "forj\x00%s\x00", forjDigest)
 	for _, name := range evaluationSupportToolNames() {
 		path, err := exec.LookPath(name)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("resolve evaluation tool %q: %w", name, err)
+			return "", "", "", nil, fmt.Errorf("resolve evaluation tool %q: %w", name, err)
 		}
 		digest, err := installEvaluationTool(toolsDir, name, path)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("install evaluation tool %q: %w", name, err)
+			return "", "", "", nil, fmt.Errorf("install evaluation tool %q: %w", name, err)
 		}
 		fmt.Fprintf(hash, "%s\x00%s\x00", name, digest)
 	}
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), goRoot, goRootIdentity, nil
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), goDigest, goRoot, goRootIdentity, nil
+}
+
+// evaluationGoVersion returns the version reported by the exact copied launcher used by candidate and verifier commands.
+func evaluationGoVersion(goExecutable, goRoot string) (string, error) {
+	command := exec.Command(goExecutable, "version")
+	command.Env = append(os.Environ(), "GOROOT="+goRoot, "GOTOOLCHAIN=local")
+	body, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("inspect evaluation Go launcher version: %w", err)
+	}
+	version := strings.TrimSpace(string(body))
+	if version == "" {
+		return "", fmt.Errorf("evaluation Go launcher version is empty")
+	}
+	return version, nil
+}
+
+// digestEvaluationGoRoot retains a path-free identifier for the selected Go runtime tree.
+func digestEvaluationGoRoot(goRoot string) string {
+	hash := sha256.Sum256([]byte("goforj-evaluation-go-root/v1\x00" + goRoot))
+	return fmt.Sprintf("sha256:%x", hash[:])
 }
 
 // resolveEvaluationGoRoot binds the copied Go launcher to the host runtime tree it requires after PATH is sealed.
