@@ -3,6 +3,10 @@ package maintenance
 import (
 	"sync"
 	"testing"
+
+{{- if .ProjectComponents.Cache }}
+	"{{.GoModuleName}}/internal/caches"
+{{- end }}
 )
 
 // BenchmarkEnabledDisabledWarm protects the request-path cost of the default memory backend.
@@ -100,7 +104,7 @@ func TestCacheStateUsesGeneratedNamedStore(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_STORE", "default")
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	state := newTestState(t)
+	state := newTestCacheState(t)
 	if err := state.Enable(); err != nil {
 		t.Fatalf("Enable() error = %v", err)
 	}
@@ -116,7 +120,7 @@ func TestCacheStateUsesGeneratedNamedStore(t *testing.T) {
 func TestCacheStateRejectsUnknownNamedStore(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_DRIVER", "cache")
 	t.Setenv("APP_MAINTENANCE_STORE", "missing")
-	if _, err := NewState(); err == nil {
+	if _, err := newTestCacheStateResult(t); err == nil {
 		t.Fatal("NewState() accepted unknown named store")
 	}
 }
@@ -128,8 +132,8 @@ func TestCacheStateSharesGeneratedStore(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "file")
 	t.Setenv("CACHE_FILE_DIR", t.TempDir())
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
-	first := newTestState(t)
-	second := newTestState(t)
+	first := newTestCacheState(t)
+	second := newTestCacheState(t)
 	if err := first.Enable(); err != nil {
 		t.Fatalf("Enable() error = %v", err)
 	}
@@ -139,6 +143,26 @@ func TestCacheStateSharesGeneratedStore(t *testing.T) {
 	if err := second.Disable(); err != nil {
 		t.Fatalf("Disable() error = %v", err)
 	}
+}
+
+// newTestCacheState builds cache-backed state with the same generated manager injected by production wiring.
+func newTestCacheState(tb testing.TB) *State {
+	tb.Helper()
+	state, err := newTestCacheStateResult(tb)
+	if err != nil {
+		tb.Fatalf("NewStateWithCacheManager() error = %v", err)
+	}
+	return state
+}
+
+// newTestCacheStateResult preserves constructor errors for validation tests.
+func newTestCacheStateResult(tb testing.TB) (*State, error) {
+	tb.Helper()
+	manager, err := caches.NewManager()
+	if err != nil {
+		return nil, err
+	}
+	return NewStateWithCacheManager(manager)
 }
 {{- end }}
 

@@ -71,7 +71,7 @@ The framework-owned `maintenance:enable` and `maintenance:disable` commands call
 - HTTP rejects new application requests with `503`; requests already inside an application handler may finish.
 - Queue workers and scheduled tasks continue normally. Maintenance mode controls web availability only.
 
-`APP_MAINTENANCE_DRIVER=memory` is the dependency-free local default and changes the HTTP process listening on `127.0.0.1` at the selected App's configured HTTP port. Production deployments should use `APP_MAINTENANCE_DRIVER=cache` with a distributed generated cache resource so maintenance survives process replacement and reaches every replica. `APP_MAINTENANCE_STORE` names that resource, such as `default` or `operations`; the resource keeps its existing `CACHE_*` driver and connection configuration.
+`APP_MAINTENANCE_DRIVER=memory` is the dependency-free local default and changes the HTTP process listening on `127.0.0.1` at the selected App's configured HTTP port. Production deployments should use `APP_MAINTENANCE_DRIVER=cache` with a distributed generated cache resource so maintenance survives process replacement and reaches every replica. Maintenance reuses the cache manager already owned by the App runtime. `APP_MAINTENANCE_STORE` selects from that manager, defaults to its `default` store, and can name another generated resource such as `operations`; the resource keeps its existing `CACHE_*` driver and connection configuration.
 
 Memory mode is intentionally process-local and should not be used as production maintenance state. The control endpoint accepts only loopback callers, requires `Authorization: Bearer $APP_DIAG_TOKEN`, and does not follow redirects.
 
