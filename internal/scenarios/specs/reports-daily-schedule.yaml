@@ -4,6 +4,10 @@ title: Reports Daily Schedule
 description: Schedule reports:daily recurring work that dispatches existing reports:generate jobs.
 depends_on:
   - reports-generate-job
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module

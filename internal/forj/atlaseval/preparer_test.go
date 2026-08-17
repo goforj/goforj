@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/goforj/atlas/eval"
+	"github.com/goforj/goforj/internal/scenarios"
 )
 
 // TestPreparerPrepareStopsBeforeMutationWhenCanceled keeps canceled requests from creating a destination Project.
@@ -256,6 +257,32 @@ func TestPromotedEvaluationsResolveLiveScenarioPrefixes(t *testing.T) {
 				t.Fatalf("plan = %#v", plan)
 			}
 		})
+	}
+}
+
+// TestRuntimeObservabilityProductionPreparationUsesCrossPlatformTools keeps the embedded production scenario free of platform-specific shell dependencies before its tools are snapshotted for execution.
+func TestRuntimeObservabilityProductionPreparationUsesCrossPlatformTools(t *testing.T) {
+	request := eval.PreparationRequest{
+		ScenarioID:      "runtime-observability",
+		DestinationRoot: filepath.Join(t.TempDir(), "project"),
+		ForjExecutable:  os.Args[0],
+		OrchestrationID: "runtime-observability-tools",
+		Environment:     os.Environ(),
+	}
+	if _, err := (Preparer{}).Resolve(context.Background(), request); err != nil {
+		t.Fatalf("Resolve(): %v", err)
+	}
+	tools, _, err := scenarios.ResolveScenarioPreparationTools(request.ForjExecutable, request.Environment, scenarios.ResolveOptions{ScenarioID: request.ScenarioID})
+	if err != nil {
+		t.Fatalf("ResolveScenarioPreparationTools(): %v", err)
+	}
+	for _, name := range []string{"forj", "go", "wire"} {
+		if tools[name] == "" {
+			t.Fatalf("resolved tools = %#v, missing %q", tools, name)
+		}
+	}
+	if tools["grep"] != "" {
+		t.Fatalf("runtime observability resolved platform-specific grep: %#v", tools)
 	}
 }
 

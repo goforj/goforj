@@ -3,6 +3,10 @@ id: tax-rate-http-integration
 title: Tax Rate HTTP Integration
 description: Add a context-aware outbound HTTP integration behind an application-owned client.
 depends_on: [invoice-domain]
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module

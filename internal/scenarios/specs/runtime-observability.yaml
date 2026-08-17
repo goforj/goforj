@@ -1,8 +1,20 @@
+schema_version: 2
 id: runtime-observability
 title: Runtime Observability
 description: Follow a GoForj workflow through routes, logs, metrics, inspects, Lighthouse, workers, and scheduler runs.
 depends_on:
   - reports-daily-schedule
+prepare:
+  steps:
+    - id: disable-local-inspect-capture
+      title: Seed disabled local inspect capture
+      replace:
+        path: .env.local
+        old: LIGHTHOUSE_INSPECT_ENABLED=true
+        new: LIGHTHOUSE_INSPECT_ENABLED=false
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/scenarioapp
   doc_module_name: your/module
@@ -225,15 +237,17 @@ markdown:
     - "[Inspects](/operations/inspects) explains execution records."
     - "[Lighthouse](/operations/lighthouse) explains the operator UI."
     - "[Production Checklist](/operations/deployment-basics#production-checklist) collects production readiness checks."
-steps: []
-verify:
-  commands:
-    - run: ["forj", "build"]
-    - run: ["go", "test", "./..."]
-    - run: ["grep", "-Fx", "LIGHTHOUSE_INSPECT_ENABLED=true", ".env.local"]
-      contains:
-        - "LIGHTHOUSE_INSPECT_ENABLED=true"
-    - run: ["forj", "route:list"]
-      contains:
-        - "/api/v1/users"
-        - "/metrics"
+steps:
+  - id: enable-local-inspect-capture
+    title: Enable local inspect capture
+    replace:
+      path: .env.local
+      old: LIGHTHOUSE_INSPECT_ENABLED=false
+      new: LIGHTHOUSE_INSPECT_ENABLED=true
+checks:
+  - command: ["forj", "build"]
+  - command: ["go", "test", "./..."]
+  - command: ["forj", "route:list"]
+    contains:
+      - "/api/v1/users"
+      - "/metrics"

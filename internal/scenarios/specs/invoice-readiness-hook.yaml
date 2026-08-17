@@ -3,6 +3,10 @@ id: invoice-readiness-hook
 title: Invoice Readiness Hook
 description: Add an App readiness check through the existing lifecycle registry.
 depends_on: [invoice-domain]
+prepare:
+  checks:
+    - command: ["forj", "build"]
+    - command: ["go", "test", "./..."]
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module
