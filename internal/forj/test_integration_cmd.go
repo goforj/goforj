@@ -330,29 +330,18 @@ func (executor integrationExecutor) frameworkIntegrationTestTargets(baselineTags
 	return selectIntegrationTestTargets(testNames, shard)
 }
 
-// selectIntegrationTestTargets partitions package-qualified test names without duplicating equal names across packages.
+// selectIntegrationTestTargets partitions package-qualified test names and gives each top-level test an independent timeout budget.
 func selectIntegrationTestTargets(testNames []integrationTestName, shard frameworkShard) ([]integrationTestTarget, int, error) {
 	if shard.total > len(testNames) {
 		return nil, 0, fmt.Errorf("framework shard count %d exceeds %d integration tests", shard.total, len(testNames))
 	}
-	selected := make(map[string][]string)
-	selectedCount := 0
+	targets := make([]integrationTestTarget, 0, (len(testNames)+shard.total-1)/shard.total)
 	for index, testName := range testNames {
 		if index%shard.total == shard.number-1 {
-			selected[testName.packagePath] = append(selected[testName.packagePath], testName.name)
-			selectedCount++
+			targets = append(targets, integrationTestTarget{packagePath: testName.packagePath, testNames: []string{testName.name}})
 		}
 	}
-	packagePaths := make([]string, 0, len(selected))
-	for packagePath := range selected {
-		packagePaths = append(packagePaths, packagePath)
-	}
-	sort.Strings(packagePaths)
-	targets := make([]integrationTestTarget, 0, len(packagePaths))
-	for _, packagePath := range packagePaths {
-		targets = append(targets, integrationTestTarget{packagePath: packagePath, testNames: selected[packagePath]})
-	}
-	return targets, selectedCount, nil
+	return targets, len(targets), nil
 }
 
 // makeIntegrationTestPattern produces an exact Go test filter for one package's selected top-level tests.
