@@ -1452,12 +1452,32 @@ func TestRemoveEvaluationWorkRootHandlesReadOnlyModuleDirectories(t *testing.T) 
 
 // TestEvaluationRuntimeIdentityRecordsReconstructableComponents keeps retained attempts independent from deleted command workspaces.
 func TestEvaluationRuntimeIdentityRecordsReconstructableComponents(t *testing.T) {
-	identity := evaluationRuntimeIdentity()
+	root := t.TempDir()
+	forjSource := filepath.Join(root, evaluationToolFileName("forj-source"))
+	if err := os.WriteFile(forjSource, []byte("forj"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tools, err := newEvaluationTools(filepath.Join(root, "tools"), forjSource)
+	if err != nil {
+		t.Fatalf("newEvaluationTools(): %v", err)
+	}
+	t.Cleanup(func() {
+		if runtime.GOOS != "windows" {
+			_ = os.Chmod(tools.dir, 0o700)
+		}
+	})
+	identity, err := evaluationRuntimeIdentity(tools)
+	if err != nil {
+		t.Fatalf("evaluationRuntimeIdentity(): %v", err)
+	}
 	if identity.Framework.Module != "github.com/goforj/goforj" || identity.Framework.Version == "" || identity.Supervisor.Module != "github.com/goforj/atlas" || identity.Supervisor.Version == "" {
 		t.Fatalf("runtime identity is incomplete: %#v", identity)
 	}
-	if identity.GoVersion == "" || identity.GOOS != runtime.GOOS || identity.GOARCH != runtime.GOARCH {
+	if identity.GoVersion != tools.goVersion || identity.GoExecutableDigest != tools.goDigest || identity.GoRootDigest != tools.goRootDigest || identity.GOOS != runtime.GOOS || identity.GOARCH != runtime.GOARCH {
 		t.Fatalf("Go runtime identity is incomplete: %#v", identity)
+	}
+	if strings.Contains(identity.GoRootDigest, tools.goRoot) {
+		t.Fatalf("Go runtime identity exposed its host path: %#v", identity)
 	}
 }
 

@@ -35,6 +35,8 @@ steps:
         package invoices
 
         import (
+                "context"
+
                 "example.com/invoiceeval/internal/storages"
                 "github.com/goforj/storage"
         )
@@ -45,6 +47,11 @@ steps:
         // NewAvatarStorage injects the storage manager and selects the generated named accessor.
         func NewAvatarStorage(manager *storages.Manager) *AvatarStorage {
                 return &AvatarStorage{storage: manager.Avatars()}
+        }
+
+        // Store persists avatar bytes through the selected avatars disk.
+        func (avatars *AvatarStorage) Store(ctx context.Context, path string, body []byte) error {
+                return avatars.storage.WithContext(ctx).Put(path, body)
         }
   - id: register-avatar-storage
     title: Register the application storage owner
