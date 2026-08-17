@@ -1545,12 +1545,28 @@ func appendHTTPHeaders(out []HTTPHeader, headers http.Header) []HTTPHeader {
 		if len(values) > 1 {
 			value = strings.Join(values, ", ")
 		}
+		if sensitiveHTTPHeaderForInspect(key) {
+			value = "[redacted]"
+		}
 		out = append(out, HTTPHeader{
 			Name:  key,
 			Value: value,
 		})
 	}
 	return out
+}
+
+// sensitiveHTTPHeaderForInspect prevents authentication material from entering persisted or published diagnostics.
+func sensitiveHTTPHeaderForInspect(name string) bool {
+	for _, segment := range strings.FieldsFunc(strings.ToLower(name), func(character rune) bool {
+		return character == '-' || character == '_'
+	}) {
+		switch segment {
+		case "authorization", "authentication", "cookie", "key", "password", "secret", "token":
+			return true
+		}
+	}
+	return false
 }
 
 func maxInt64(a, b int64) int64 {

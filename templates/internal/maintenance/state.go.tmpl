@@ -1,6 +1,9 @@
 package maintenance
 
 import (
+	{{- if .ProjectComponents.Cache }}
+	"crypto/sha256"
+	{{- end }}
 	"fmt"
 	"strings"
 	"sync"
@@ -32,6 +35,7 @@ type State struct {
 	memory atomic.Bool
 {{- if .ProjectComponents.Cache }}
 	store *cache.Cache
+	key   string
 {{- end }}
 	mu sync.Mutex
 	snapshot atomic.Pointer[stateSnapshot]
@@ -40,6 +44,7 @@ type State struct {
 // stateSnapshot keeps cache-backed request checks off the network for a short, bounded interval.
 type stateSnapshot struct {
 	enabled bool
+	err error
 	checkedAt time.Time
 }
 
@@ -82,7 +87,11 @@ func NewStateWithCacheManager(cacheManager *caches.Manager) (*State, error) {
 		if store == nil {
 			return nil, fmt.Errorf("maintenance: cache store %q is not generated", storeName)
 		}
-		return &State{driver: driver, store: store}, nil
+		key, err := configuredCacheKey()
+		if err != nil {
+			return nil, err
+		}
+		return &State{driver: driver, store: store, key: key}, nil
 	default:
 		return nil, fmt.Errorf("maintenance: unsupported driver %q; expected memory or cache", driver)
 	}
@@ -104,20 +113,21 @@ func (s *State) Enabled() (bool, error) {
 	}
 	now := time.Now()
 	if snapshot := s.snapshot.Load(); snapshot != nil && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval {
-		return snapshot.enabled, nil
+		return snapshot.enabled, snapshot.err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if snapshot := s.snapshot.Load(); snapshot != nil && now.Sub(snapshot.checkedAt) < maintenanceRefreshInterval {
-		return snapshot.enabled, nil
+		return snapshot.enabled, snapshot.err
 	}
 {{- if .ProjectComponents.Cache }}
 	value, found, err := s.store.GetString(s.cacheKey())
 	if err != nil {
+		s.snapshot.Store(&stateSnapshot{err: err, checkedAt: time.Now()})
 		return false, err
 	}
 	enabled := found && value == "enabled"
-	s.snapshot.Store(&stateSnapshot{enabled: enabled, checkedAt: now})
+	s.snapshot.Store(&stateSnapshot{enabled: enabled, checkedAt: time.Now()})
 	return enabled, nil
 {{- else }}
 	return false, fmt.Errorf("maintenance: cache driver requires the Cache component")
@@ -158,9 +168,24 @@ func (s *State) Disable() error {
 {{- end }}
 }
 
-// cacheKey isolates additional Apps even when they intentionally share one named cache store.
+{{- if .ProjectComponents.Cache }}
+// cacheKey returns the deployment-specific key captured when the cache backend is constructed.
 func (s *State) cacheKey() string {
-	return maintenanceCacheKey + ":" + currentAppName()
+	return s.key
+}
+
+// configuredCacheKey isolates shared cache infrastructure without exposing APP_KEY in backend metadata.
+func configuredCacheKey() (string, error) {
+	appKey := strings.TrimSpace(env.Get("APP_KEY", ""))
+	if appKey == "" {
+		return "", fmt.Errorf("maintenance: APP_KEY is required for cache state isolation")
+	}
+	environment := strings.TrimSpace(env.Get("APP_ENV", "local"))
+	if environment == "" {
+		environment = "local"
+	}
+	digest := sha256.Sum256([]byte(appKey + "\x00" + environment + "\x00" + currentAppName()))
+	return fmt.Sprintf("%s:%x", maintenanceCacheKey, digest[:16]), nil
 }
 
 // currentAppName resolves the App identity selected by the generated launch path.
@@ -171,6 +196,7 @@ func currentAppName() string {
 	}
 	return name
 }
+{{- end }}
 
 // invalidate makes a successful control request visible to the current process immediately.
 func (s *State) invalidate(enabled bool) {

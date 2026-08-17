@@ -88,6 +88,10 @@ func TestRenderedMultiAppRuntimesUseDeterministicPorts(t *testing.T) {
 		)
 	}
 	assertRuntimeReadiness(t, checks)
+
+	for _, app := range apps {
+		assertAppMaintenanceLifecycle(t, projectDir, app, apps, procs)
+	}
 }
 
 type multiAppRuntimeSpec struct {
@@ -238,6 +242,46 @@ func assertAppHTTPRuntimeReady(app multiAppRuntimeSpec, proc *procHandle) error 
 // assertAppMetricsRuntimeReady checks a non-HTTP runtime's dedicated metrics listener.
 func assertAppMetricsRuntimeReady(name string, port string, proc *procHandle) error {
 	return waitForHTTPStatus(proc, "http://127.0.0.1:"+port+"/metrics", http.StatusOK, 10*time.Second)
+}
+
+// assertAppMaintenanceLifecycle verifies commands target one App while every background runtime and sibling App remains available.
+func assertAppMaintenanceLifecycle(t *testing.T, projectDir string, selected multiAppRuntimeSpec, apps []multiAppRuntimeSpec, procs []*procHandle) {
+	t.Helper()
+	binPath := filepath.Join(projectDir, "bin", selected.name)
+	enable := exec.Command(binPath, "maintenance:enable")
+	enable.Dir = projectDir
+	enable.Env = testkit.IntegrationProcessEnv(t, nil)
+	if output, err := enable.CombinedOutput(); err != nil {
+		t.Fatalf("enable %s maintenance: %v\n%s", selected.name, err, output)
+	}
+
+	for _, app := range apps {
+		wantStatus := http.StatusOK
+		if app.name == selected.name {
+			wantStatus = http.StatusServiceUnavailable
+		}
+		proc := findRuntimeProc(t, procs, app.name+" http")
+		if err := waitForHTTPStatus(proc, "http://127.0.0.1:"+app.httpPort+"/api/v1/hello", wantStatus, 10*time.Second); err != nil {
+			t.Fatalf("%s HTTP state while %s is maintained: %v", app.name, selected.name, err)
+		}
+	}
+	if err := assertAppMetricsRuntimeReady(selected.name+" scheduler", selected.schedulerMetricsPort, findRuntimeProc(t, procs, selected.name+" scheduler")); err != nil {
+		t.Fatalf("%s scheduler during maintenance: %v", selected.name, err)
+	}
+	if err := assertAppMetricsRuntimeReady(selected.name+" worker", selected.workerMetricsPort, findRuntimeProc(t, procs, selected.name+" worker")); err != nil {
+		t.Fatalf("%s worker during maintenance: %v", selected.name, err)
+	}
+
+	disable := exec.Command(binPath, "maintenance:disable")
+	disable.Dir = projectDir
+	disable.Env = testkit.IntegrationProcessEnv(t, nil)
+	if output, err := disable.CombinedOutput(); err != nil {
+		t.Fatalf("disable %s maintenance: %v\n%s", selected.name, err, output)
+	}
+	proc := findRuntimeProc(t, procs, selected.name+" http")
+	if err := waitForHTTPStatus(proc, "http://127.0.0.1:"+selected.httpPort+"/api/v1/hello", http.StatusOK, 10*time.Second); err != nil {
+		t.Fatalf("restore %s HTTP traffic: %v", selected.name, err)
+	}
 }
 
 // assertRuntimeReadiness runs listener checks concurrently because every runtime has already been started.

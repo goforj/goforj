@@ -73,7 +73,13 @@ The framework-owned `maintenance:enable` and `maintenance:disable` commands call
 
 `APP_MAINTENANCE_DRIVER=memory` is the dependency-free local default and changes the HTTP process listening on `127.0.0.1` at the selected App's configured HTTP port. Production deployments should use `APP_MAINTENANCE_DRIVER=cache` with a distributed generated cache resource so maintenance survives process replacement and reaches every replica. Maintenance reuses the cache manager already owned by the App runtime. `APP_MAINTENANCE_STORE` selects from that manager, defaults to its `default` store, and can name another generated resource such as `operations`; the resource keeps its existing `CACHE_*` driver and connection configuration.
 
+Cache-backed state is namespaced by a one-way digest of `APP_KEY`, `APP_ENV`, and the selected App name. Deployments can safely share cache infrastructure without exposing `APP_KEY` in backend keys or changing one another's maintenance state.
+
 Memory mode is intentionally process-local and should not be used as production maintenance state. The control endpoint accepts only loopback callers, returns the same empty `404 Not Found` as an absent route to outside callers, requires `Authorization: Bearer $APP_DIAG_TOKEN`, and does not follow redirects.
+
+If a reverse proxy or sidecar reaches the App over loopback, deny `/-/maintenance/*` at that proxy. The App can only identify the immediate socket peer, so public traffic relayed from a loopback peer is no longer distinguishable from the local CLI.
+
+Rotating `APP_KEY` or changing `APP_ENV` changes the cache namespace. If cache-backed maintenance is active during either change, enable it again after the rollout reaches the new namespace.
 
 `APP_MAINTENANCE_ENABLED=true` is a per-process deployment override. It is authoritative over command-managed state, so `maintenance:disable` cannot make that HTTP process live; clear the environment setting and restart or redeploy it.
 
