@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestControllerCmdRejectsCreateDryRun(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	cmd := &ControllerCmd{Name: "Invoices:Show", OutputDir: defaultControllerOutputDir, DryRun: true}
+	err := cmd.Run()
+	if err == nil || err.Error() != "--dry-run is only supported with --remove" {
+		t.Fatalf("Run() error = %v", err)
+	}
+	assertMakeCmdTestFileMissing(t, filepath.Join("internal", "invoices", "show", "controller.go"))
+}
+
 func TestControllerCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
