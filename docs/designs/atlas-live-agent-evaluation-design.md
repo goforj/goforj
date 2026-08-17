@@ -1624,10 +1624,16 @@ or absolute-path invocation.
 
 Black-box behavior, such as a seeded request and persistence assertion, should
 complement AST and build checks. The verifier installs those probes only in its
-private clone after removing candidate tests. Each probe is calibrated with a
-compiling mutant that preserves the structural evidence while violating the
-runtime invariant. Verifier mutation tests run without a live model and belong
-in ordinary CI.
+private clone after removing candidate-authored tests. Immutable tests captured
+before the agent receives the Project are restored so established Project
+behavior remains part of verification. Each hidden probe runs beside a
+randomized supervisor-owned completion test; a successful process exit is not
+accepted unless that completion marker is observed. Each probe is
+calibrated with a compiling mutant that preserves the structural evidence while
+violating the runtime invariant. Verifier mutation tests run without a live
+model and belong in ordinary CI. The marker catches ordinary premature process
+exit; it is not an adversarial proof because unconfined candidate code can
+inspect the clone. Authoritative claims still require the isolated backend.
 
 At least two valid implementations for each core target should differ in
 nonessential names or structure, such as an existing domain service versus a
@@ -1693,10 +1699,12 @@ Quality signals can include:
 - completed within reasonable command and time budgets.
 
 Candidate-authored tests are retained as sealed Project evidence and reported
-as a quality signal when the prompt calls for focused coverage. They are
-removed from verifier execution before supervisor-owned probes and Project
-commands run, so a candidate test can demonstrate engineering discipline but
-cannot become its own correctness oracle.
+as a quality signal only when they parse and declare a real Go test function.
+They are removed from verifier execution before supervisor-owned probes and
+Project commands run, so a candidate test can demonstrate engineering
+discipline but cannot become its own correctness oracle. Tests captured in the
+trusted fixture baseline are restored separately and continue to protect
+behavior that existed before the measured attempt.
 
 Reports should expose raw counts rather than only one composite number.
 
