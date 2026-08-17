@@ -114,11 +114,7 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	if none.Result().BaselineTree != agents.Result().BaselineTree {
 		t.Fatalf("paired baseline trees differ: %s != %s", none.Result().BaselineTree, agents.Result().BaselineTree)
 	}
-	planEnvironment, err := preparer.baseEnvironmentForPlan(plan.PlanDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseBuildCache := integrationEnvironmentValues(planEnvironment)["GOCACHE"]
+	baseBuildCache := integrationEnvironmentValues(preparer.BaseEnvironment)["GOCACHE"]
 	if entries, err := os.ReadDir(baseBuildCache); err != nil || len(entries) == 0 {
 		t.Fatalf("base preparation did not use its private build cache: entries=%v error=%v", entries, err)
 	}
@@ -129,10 +125,26 @@ func TestPreparerClonesOneIdenticalBaseForPairedTreatments(t *testing.T) {
 	}
 }
 
-// TestPreparerDistinctPlansUseSeparateWritableBaseEnvironments keeps concurrent base materializations from sharing mutable process state.
-func TestPreparerDistinctPlansUseSeparateWritableBaseEnvironments(t *testing.T) {
+// TestPreparerDistinctPlansReuseTheCommandPreparationSeed proves serialized bases warm one trusted cache without touching treatment caches.
+func TestPreparerDistinctPlansReuseTheCommandPreparationSeed(t *testing.T) {
 	workRoot := t.TempDir()
-	preparer := NewPreparer(filepath.Join(workRoot, "bases"), testkit.ProcessGoEnv("", nil), nil, nil)
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(workRoot, func(path string, entry os.DirEntry, err error) error {
+			if err == nil && entry.IsDir() {
+				return os.Chmod(path, 0o700)
+			}
+			return err
+		})
+	})
+	baseValues := map[string]string{}
+	for _, key := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "HOME", "GOTMPDIR", "TMPDIR", "TMP", "TEMP"} {
+		baseValues[key] = filepath.Join(workRoot, strings.ToLower(key))
+		if err := os.MkdirAll(baseValues[key], 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	baseEnvironment := testkit.ProcessGoEnv("", baseValues)
+	preparer := NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, nil)
 	t.Cleanup(func() {
 		if err := preparer.Close(context.Background()); err != nil {
 			t.Errorf("close preparer: %v", err)
@@ -168,25 +180,19 @@ func TestPreparerDistinctPlansUseSeparateWritableBaseEnvironments(t *testing.T) 
 		}
 		t.Cleanup(func() { _ = result.project.Close(context.Background()) })
 	}
-	first, err := preparer.baseEnvironmentForPlan(plans[0].PlanDigest)
-	if err != nil {
-		t.Fatal(err)
+	preparer.cache.mu.Lock()
+	baseCount := len(preparer.cache.bases)
+	preparer.cache.mu.Unlock()
+	if baseCount != len(requests) {
+		t.Fatalf("prepared base count = %d, want %d distinct plans", baseCount, len(requests))
 	}
-	second, err := preparer.baseEnvironmentForPlan(plans[1].PlanDigest)
-	if err != nil {
-		t.Fatal(err)
+	if entries, err := os.ReadDir(baseValues["GOCACHE"]); err != nil || len(entries) == 0 {
+		t.Fatalf("distinct preparations did not warm the command build cache: entries=%v error=%v", entries, err)
 	}
-	firstValues := integrationEnvironmentValues(first)
-	secondValues := integrationEnvironmentValues(second)
-	for _, key := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "HOME", "GOTMPDIR", "TMPDIR", "TMP", "TEMP"} {
-		if firstValues[key] == secondValues[key] {
-			t.Fatalf("%s shared distinct-plan writable state: %q", key, firstValues[key])
-		}
-		if _, err := os.Stat(firstValues[key]); err != nil {
-			t.Fatalf("first %s does not exist: %v", key, err)
-		}
-		if _, err := os.Stat(secondValues[key]); err != nil {
-			t.Fatalf("second %s does not exist: %v", key, err)
+	for _, request := range requests {
+		requestValues := integrationEnvironmentValues(request.Environment)
+		if requestValues["GOCACHE"] == baseValues["GOCACHE"] {
+			t.Fatal("treatment environment unexpectedly owns the trusted preparation cache")
 		}
 	}
 }
@@ -411,9 +417,20 @@ func TestAddJobVerifierCalibration(t *testing.T) {
 	})
 }
 
-// TestAddMigrationVerifierCalibration proves the migration contract recognizes the generated connection-specific pair.
+// TestAddMigrationVerifierCalibration proves the migration contract accepts alternate empty comments while rejecting executable schema changes.
 func TestAddMigrationVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "add-migration", scenario: "invoice-status-migration", path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", mutant: "-- Wrong migration", wantFailed: "migration-up"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "add-migration",
+		scenario:   "invoice-status-migration",
+		path:       "migrations/*_add_status_to_invoices.up.sql",
+		old:        "-- Up migration (sqlite)",
+		mutant:     "CREATE TABLE invoice_statuses (id text);",
+		alternates: []evaluationFileMutation{
+			{path: "migrations/*_add_status_to_invoices.up.sql", old: "-- Up migration (sqlite)", replacement: "-- Status migration reserved for later schema work"},
+			{path: "migrations/*_add_status_to_invoices.down.sql", old: "-- Down migration (sqlite)", replacement: "-- Reverse migration intentionally has no schema work yet"},
+		},
+		wantFailed: "migration-up",
+	})
 }
 
 // TestAddScheduleVerifierCalibration proves the schedule contract rejects work detached from its runtime context.
@@ -553,9 +570,22 @@ func TestServeCacheableImageVerifierCalibration(t *testing.T) {
 	})
 }
 
-// TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set.
+// TestRepairWireProviderVerifierCalibration proves a repaired service provider remains in the intended Wire set and generated output is not hand-edited.
 func TestRepairWireProviderVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "repair-wire-provider", scenario: "repair-report-wire-provider", path: "app/wire/inject_services_app.go", old: "reports.NewService", mutant: "app.NewLifecycleRegistry", wantFailed: "provider-registration"})
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "repair-wire-provider",
+		scenario:   "repair-report-wire-provider",
+		path:       "app/wire/inject_services_app.go",
+		old:        "reports.NewService",
+		mutant:     "app.NewLifecycleRegistry",
+		wantFailed: "provider-registration",
+		behavior: &evaluationBehaviorMutation{
+			path:       "app/wire/wire_gen.go",
+			old:        "// Code generated by Wire. DO NOT EDIT.",
+			mutant:     "// manually edited Wire output",
+			wantFailed: "wire-output-parity",
+		},
+	})
 }
 
 // TestBuildJSONAPIFeatureVerifierCalibration proves the complete API contract rejects lookup detached from request cancellation.
@@ -979,6 +1009,13 @@ func applyEvaluationAlternates(t *testing.T, projectRoot string, mutations []eva
 	originals := make(map[string][]byte, len(mutations))
 	for _, mutation := range mutations {
 		candidatePath := filepath.Join(projectRoot, filepath.FromSlash(mutation.path))
+		if strings.ContainsAny(mutation.path, "*?[") {
+			matches, err := filepath.Glob(candidatePath)
+			if err != nil || len(matches) != 1 {
+				t.Fatalf("alternate target %q matches = %v, error = %v", mutation.path, matches, err)
+			}
+			candidatePath = matches[0]
+		}
 		body, exists := originals[candidatePath]
 		if !exists {
 			var err error

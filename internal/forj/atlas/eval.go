@@ -2,7 +2,6 @@ package atlas
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -18,11 +17,28 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/goforj/atlas/eval"
 	"github.com/goforj/goforj/internal/forj/atlaseval"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
+)
+
+const (
+	evaluationArtifactRootMarker   = ".atlas-evaluation-artifacts"
+	evaluationArtifactRootIdentity = "goforj-atlas-evaluation-artifacts/v1\n"
+	evaluationWorkRootMarker       = ".atlas-evaluation-work"
+	evaluationWorkRootIdentity     = "goforj-atlas-evaluation-work/v1\n"
+	evaluationWorkRootLease        = ".lease"
+	// Age bounds crash residue retention; the held lease, rather than elapsed time, proves whether a command is still active.
+	evaluationStaleWorkRootAge        = 7 * 24 * time.Hour
+	evaluationStaleWorkRootScanLimit  = 1024
+	evaluationStaleWorkRootPruneLimit = 8
+	maxEvaluationCredentialSize       = 1 << 20
+	maxEvaluationArtifactKeySize      = 64 << 10
+	minimumEvaluationFreeBytesFixed   = uint64(1 << 30)
+	minimumEvaluationFreeBytesWorker  = uint64(1 << 30)
 )
 
 // EvalCmd groups opt-in live-agent evaluation commands.
@@ -47,6 +63,7 @@ type EvalCompareCmd struct {
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
 	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+	ArtifactKey     string `name:"artifact-key" help:"External manifest authentication key; must be outside artifacts" type:"path" required:""`
 	Trials          int    `help:"Independent paired trials" default:"1"`
 }
 
@@ -59,12 +76,14 @@ type EvalRunCmd struct {
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
 	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+	ArtifactKey     string `name:"artifact-key" help:"External manifest authentication key; must be outside artifacts" type:"path" required:""`
 	Trials          int    `help:"Independent trials" default:"1"`
 }
 
 // EvalReportCmd authenticates and prints one retained attempt summary.
 type EvalReportCmd struct {
-	Directory string `arg:"" help:"Retained attempt artifact directory" type:"path"`
+	Directory   string `arg:"" help:"Retained attempt artifact directory" type:"path"`
+	ArtifactKey string `name:"artifact-key" help:"External manifest authentication key" type:"path" required:""`
 }
 
 // EvalListCmd lists the promoted evaluation catalog without starting an agent.
@@ -102,7 +121,7 @@ func (command *EvalRunCmd) Run() (runErr error) {
 	defer stop()
 	return runEvaluationTreatments(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
-		Credential: command.Credential, Artifacts: command.Artifacts,
+		Credential: command.Credential, Artifacts: command.Artifacts, ArtifactKey: command.ArtifactKey,
 	}, command.Evaluation, command.Guidance, command.Trials)
 }
 
@@ -117,7 +136,7 @@ func (command *EvalReportCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	key, err := readEvalArtifactKey(filepath.Dir(directory))
+	key, err := readEvalArtifactKey(command.ArtifactKey, filepath.Dir(directory))
 	if err != nil {
 		return err
 	}
@@ -125,8 +144,21 @@ func (command *EvalReportCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	fmt.Print(summary)
+	fmt.Print(escapeEvaluationTerminalText(summary))
 	return nil
+}
+
+// escapeEvaluationTerminalText renders authenticated candidate-derived text without allowing terminal control or format sequences to execute.
+func escapeEvaluationTerminalText(value string) string {
+	var output strings.Builder
+	for _, character := range value {
+		if character == '\n' || character == '\t' || !unicode.IsControl(character) && !unicode.Is(unicode.Cf, character) {
+			output.WriteRune(character)
+			continue
+		}
+		fmt.Fprintf(&output, "\\u%04x", character)
+	}
+	return output.String()
 }
 
 // EvalSuiteCmd runs every promoted evaluation in one suite with frozen authority and bounded concurrent diagnostics.
@@ -138,6 +170,7 @@ type EvalSuiteCmd struct {
 	CodexExecutable string `name:"codex" help:"Codex executable or PATH name" default:"codex"`
 	Credential      string `help:"Disposable, revocable Codex auth.json source for this unconfined diagnostic" type:"path" required:""`
 	Artifacts       string `help:"Supervisor-owned artifact directory" type:"path"`
+	ArtifactKey     string `name:"artifact-key" help:"External manifest authentication key; must be outside artifacts" type:"path" required:""`
 	Trials          int    `help:"Independent paired trials per evaluation" default:"1"`
 	Workers         int    `help:"Concurrent diagnostic executions; does not provide security isolation" default:"1"`
 }
@@ -168,7 +201,7 @@ func (command *EvalSuiteCmd) Run() (runErr error) {
 	printEvaluationSuitePlan(os.Stderr, plan)
 	return runEvaluationComparisonsWithWorkers(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
-		Credential: command.Credential, Artifacts: command.Artifacts, Progress: os.Stderr,
+		Credential: command.Credential, Artifacts: command.Artifacts, ArtifactKey: command.ArtifactKey, Progress: os.Stderr,
 	}, ids, command.Trials, command.Workers)
 }
 
@@ -218,6 +251,7 @@ type evaluationInvocation struct {
 	CodexExecutable string
 	Credential      string
 	Artifacts       string
+	ArtifactKey     string
 	Progress        io.Writer
 }
 
@@ -237,7 +271,7 @@ func (command *EvalCompareCmd) Run() (runErr error) {
 func (command *EvalCompareCmd) run(ctx context.Context) (runErr error) {
 	return runEvaluationComparisons(ctx, evaluationInvocation{
 		Model: command.Model, ModelProvider: command.ModelProvider, CodexExecutable: command.CodexExecutable,
-		Credential: command.Credential, Artifacts: command.Artifacts,
+		Credential: command.Credential, Artifacts: command.Artifacts, ArtifactKey: command.ArtifactKey,
 	}, []string{command.Evaluation}, command.Trials)
 }
 
@@ -254,18 +288,24 @@ func runEvaluationComparisonsWithWorkers(ctx context.Context, invocation evaluat
 	if err := validateEvaluationWorkers(workers); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateEvaluationIDs(evaluationIDs); err != nil {
+		return err
+	}
 	jobs := evaluationComparisonJobs(evaluationIDs, trials)
 	if len(jobs) == 0 {
 		return fmt.Errorf("at least one evaluation is required")
 	}
-	if err := ctx.Err(); err != nil {
+	workers = effectiveEvaluationWorkers(workers, len(jobs))
+	if err := ensureEvaluationDiskCapacity(workers); err != nil {
 		return err
 	}
 	authority, err := newEvaluationAuthority(invocation)
 	if err != nil {
 		return err
 	}
-	workers = min(workers, len(jobs))
 	executions := make([]*evaluationExecution, 0, workers)
 	for range workers {
 		if err := ctx.Err(); err != nil {
@@ -284,16 +324,52 @@ func runEvaluationComparisonsWithWorkers(ctx context.Context, invocation evaluat
 		runErr = errors.Join(runErr, closeEvaluationExecutions(executions), authority.Close())
 	}()
 	results, attemptErrors := runEvaluationComparisonJobs(ctx, invocation.Progress, jobs, len(executions), trials, func(ctx context.Context, job evaluationComparisonJob, worker int) (eval.GuidanceDiagnosticResult, []error) {
-		execution := executions[worker]
-		result, diagnosticErr := execution.diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
-			EvaluationID: job.evaluationID, DestinationRoot: filepath.Join(execution.workRoot, "projects"), Environments: execution.environments,
-		})
-		return result, evaluationComparisonErrors(job, result, diagnosticErr, execution.redactor)
+		return runEvaluationComparisonJob(ctx, executions[worker], authority.tools, job)
 	})
 	if err := printEvaluationResults(results, authority.redactor, authority.artifactRoot); err != nil {
 		return err
 	}
 	return errors.Join(attemptErrors...)
+}
+
+// effectiveEvaluationWorkers prevents resource planning from charging for workers that have no job to execute.
+func effectiveEvaluationWorkers(requested, jobs int) int {
+	return min(requested, jobs)
+}
+
+// validateEvaluationIDs resolves every promoted contract before capacity checks or command-owned filesystem mutation.
+func validateEvaluationIDs(evaluationIDs []string) error {
+	for _, evaluationID := range evaluationIDs {
+		if _, err := evaluationJobRoot(".", evaluationID, 1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureEvaluationDiskCapacity fails before authority or agents start when worker-private Projects and caches cannot fit safely.
+func ensureEvaluationDiskCapacity(workers int) error {
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return fmt.Errorf("resolve evaluation work-state cache: %w", err)
+	}
+	if err := os.MkdirAll(cacheRoot, 0o700); err != nil {
+		return fmt.Errorf("create evaluation cache root: %w", err)
+	}
+	available, err := availableEvaluationDiskBytes(cacheRoot)
+	if err != nil {
+		return fmt.Errorf("inspect evaluation work-state capacity: %w", err)
+	}
+	return validateEvaluationDiskCapacity(cacheRoot, available, workers)
+}
+
+// validateEvaluationDiskCapacity applies the conservative aggregate scratch budget independently from platform filesystem calls.
+func validateEvaluationDiskCapacity(cacheRoot string, available uint64, workers int) error {
+	required := minimumEvaluationFreeBytesFixed + uint64(workers)*minimumEvaluationFreeBytesWorker
+	if available < required {
+		return fmt.Errorf("evaluation workers require at least %d GiB free in %s; %.2f GiB is available (reduce --workers or free disk space)", required>>30, cacheRoot, float64(available)/(1<<30))
+	}
+	return nil
 }
 
 // closeEvaluationExecutions releases every successfully constructed worker before returning a setup error.
@@ -350,6 +426,40 @@ func runEvaluationComparisonJobs(ctx context.Context, progress io.Writer, jobs [
 	return orderedResults, attemptErrors
 }
 
+// runEvaluationComparisonJob owns one pair's writable state from preflight through cleanup and postflight integrity checks.
+func runEvaluationComparisonJob(ctx context.Context, execution *evaluationExecution, tools evaluationTools, job evaluationComparisonJob) (eval.GuidanceDiagnosticResult, []error) {
+	if err := tools.Verify(); err != nil {
+		return eval.GuidanceDiagnosticResult{}, []error{err}
+	}
+	jobRoot, err := evaluationJobRoot(execution.workRoot, job.evaluationID, job.trial)
+	if err != nil {
+		return eval.GuidanceDiagnosticResult{}, []error{err}
+	}
+	environments, err := newEvaluationJobEnvironments(jobRoot, tools)
+	if err != nil {
+		return eval.GuidanceDiagnosticResult{}, []error{errors.Join(err, removeEvaluationWorkRoot(jobRoot))}
+	}
+	result, diagnosticErr := execution.diagnostic.Run(ctx, eval.LocalGuidanceDiagnosticRequest{
+		EvaluationID: job.evaluationID, DestinationRoot: filepath.Join(jobRoot, "projects"), Environments: environments,
+	})
+	diagnosticErr = errors.Join(diagnosticErr, removeEvaluationWorkRoot(jobRoot), tools.Verify())
+	return result, evaluationComparisonErrors(job, result, diagnosticErr, execution.redactor)
+}
+
+// evaluationJobRoot resolves only promoted IDs as one path component before any writable state or recursive cleanup exists.
+func evaluationJobRoot(workRoot, evaluationID string, trial int) (string, error) {
+	if filepath.Base(evaluationID) != evaluationID || !filepath.IsLocal(evaluationID) || evaluationID == "." {
+		return "", fmt.Errorf("evaluation ID %q must be one local path component", evaluationID)
+	}
+	if _, err := eval.LoadPromotedDefinition(evaluationID); err != nil {
+		return "", err
+	}
+	if trial < 1 {
+		return "", fmt.Errorf("evaluation trial must be positive")
+	}
+	return filepath.Join(workRoot, "jobs", evaluationID, fmt.Sprintf("trial-%d", trial)), nil
+}
+
 // evaluationComparisonErrors redacts all paired-treatment and diagnostic failures before stable collation.
 func evaluationComparisonErrors(job evaluationComparisonJob, result eval.GuidanceDiagnosticResult, diagnosticErr error, redactor eval.Redactor) []error {
 	var attemptErrors []error
@@ -359,9 +469,30 @@ func evaluationComparisonErrors(job evaluationComparisonJob, result eval.Guidanc
 		}
 	}
 	if diagnosticErr != nil {
-		attemptErrors = append(attemptErrors, fmt.Errorf("%s: %s", job.evaluationID, redactor.Text(diagnosticErr.Error())))
+		attemptErrors = append(attemptErrors, redactedEvaluationFailure(job.evaluationID, diagnosticErr, redactor))
 	}
 	return attemptErrors
+}
+
+// redactedEvaluationFailure keeps lifecycle identity without exposing the original diagnostic text.
+func redactedEvaluationFailure(prefix string, cause error, redactor eval.Redactor) error {
+	return evaluationDiagnosticError{message: fmt.Sprintf("%s: %s", prefix, redactor.Text(cause.Error())), cause: cause}
+}
+
+// evaluationDiagnosticError preserves cancellation identity while exposing only redacted text to command output.
+type evaluationDiagnosticError struct {
+	message string
+	cause   error
+}
+
+// Error returns the terminal-safe diagnostic message.
+func (failure evaluationDiagnosticError) Error() string {
+	return failure.message
+}
+
+// Unwrap retains lifecycle sentinels for cancellation and timeout handling.
+func (failure evaluationDiagnosticError) Unwrap() error {
+	return failure.cause
 }
 
 // evaluationProgress serializes monotonic command progress while workers complete in arbitrary order.
@@ -437,6 +568,12 @@ func runEvaluationTreatments(ctx context.Context, invocation evaluationInvocatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := validateEvaluationIDs([]string{evaluationID}); err != nil {
+		return err
+	}
+	if err := ensureEvaluationDiskCapacity(1); err != nil {
+		return err
+	}
 	authority, err := newEvaluationAuthority(invocation)
 	if err != nil {
 		return err
@@ -451,15 +588,30 @@ func runEvaluationTreatments(ctx context.Context, invocation evaluationInvocatio
 	results := make([]eval.GuidanceDiagnosticAttempt, 0, trials)
 	var attemptErrors []error
 	for range trials {
+		if err := authority.tools.Verify(); err != nil {
+			attemptErrors = append(attemptErrors, err)
+			break
+		}
+		jobRoot, rootErr := evaluationJobRoot(execution.workRoot, evaluationID, len(results)+1)
+		if rootErr != nil {
+			attemptErrors = append(attemptErrors, rootErr)
+			break
+		}
+		environment, environmentErr := newEvaluationTreatmentEnvironment(jobRoot, profile, authority.tools)
+		if environmentErr != nil {
+			attemptErrors = append(attemptErrors, errors.Join(environmentErr, removeEvaluationWorkRoot(jobRoot)))
+			break
+		}
 		attempt, attemptErr := execution.diagnostic.RunTreatment(ctx, eval.LocalDiagnosticTreatmentRequest{
 			EvaluationID:    evaluationID,
 			GuidanceProfile: profile,
-			DestinationRoot: filepath.Join(execution.workRoot, "projects"),
-			Environment:     execution.environments[profile],
+			DestinationRoot: filepath.Join(jobRoot, "projects"),
+			Environment:     environment,
 		})
+		attemptErr = errors.Join(attemptErr, removeEvaluationWorkRoot(jobRoot), authority.tools.Verify())
 		results = append(results, attempt)
 		if attemptErr != nil {
-			attemptErrors = append(attemptErrors, fmt.Errorf("%s/%s treatment: %s", evaluationID, profile, execution.redactor.Text(attemptErr.Error())))
+			attemptErrors = append(attemptErrors, redactedEvaluationFailure(evaluationID+"/"+profile+" treatment", attemptErr, execution.redactor))
 		}
 		if ctx.Err() != nil {
 			break
@@ -479,8 +631,10 @@ type evaluationAuthority struct {
 	forjExecutable string
 	goExecutable   string
 	preparer       *atlaseval.Preparer
+	tools          evaluationTools
 	redactor       eval.Redactor
 	workRoot       string
+	work           *evaluationWorkRoot
 }
 
 // newEvaluationAuthority resolves command-wide immutable inputs before workers create their private state.
@@ -493,11 +647,7 @@ func newEvaluationAuthority(invocation evaluationInvocation) (authority evaluati
 	if err != nil {
 		return evaluationAuthority{}, fmt.Errorf("resolve Go executable: %w", err)
 	}
-	credentialPath, err := resolveEvalCredential(invocation.Credential)
-	if err != nil {
-		return evaluationAuthority{}, err
-	}
-	credential, err := eval.LoadCodexCredential(credentialPath)
+	credential, err := readEvalCredential(invocation.Credential)
 	if err != nil {
 		return evaluationAuthority{}, err
 	}
@@ -505,28 +655,33 @@ func newEvaluationAuthority(invocation evaluationInvocation) (authority evaluati
 	if err != nil {
 		return evaluationAuthority{}, err
 	}
-	artifactKey, err := loadOrCreateEvalArtifactKey(artifactRoot)
+	artifactKey, err := readEvalArtifactKey(invocation.ArtifactKey, artifactRoot)
 	if err != nil {
 		return evaluationAuthority{}, err
 	}
-	workRoot, err := newEvaluationWorkRoot()
+	work, err := newEvaluationWorkRoot()
 	if err != nil {
 		return evaluationAuthority{}, err
 	}
+	workRoot := work.path
 	defer func() {
 		if runErr != nil {
-			runErr = cleanupEvaluationSetupFailure(workRoot, runErr)
+			runErr = errors.Join(runErr, work.Close())
 		}
 	}()
-	baseEnvironment, err := evaluationEnvironment(filepath.Join(workRoot, "base"), forjExecutable)
+	tools, err := newEvaluationTools(filepath.Join(workRoot, "tools"), forjExecutable)
+	if err != nil {
+		return evaluationAuthority{}, err
+	}
+	baseEnvironment, err := evaluationEnvironmentWithTools(filepath.Join(workRoot, "base"), tools)
 	if err != nil {
 		return evaluationAuthority{}, err
 	}
 	preparer := atlaseval.NewPreparer(filepath.Join(workRoot, "bases"), baseEnvironment, nil, materializeEvaluationGuidance)
 	return evaluationAuthority{
 		artifactKey: artifactKey, artifactRoot: artifactRoot, credential: credential,
-		forjExecutable: forjExecutable, goExecutable: goExecutable, preparer: preparer,
-		redactor: credential.Redactor(eval.NewRedactor(nil)), workRoot: workRoot,
+		forjExecutable: forjExecutable, goExecutable: goExecutable, preparer: preparer, tools: tools,
+		redactor: credential.Redactor(eval.NewRedactor(nil)), workRoot: workRoot, work: work,
 	}, nil
 }
 
@@ -535,41 +690,60 @@ func (authority *evaluationAuthority) Close() error {
 	if authority == nil {
 		return nil
 	}
-	return errors.Join(authority.preparer.Close(context.Background()), removeEvaluationWorkRoot(authority.workRoot))
+	return errors.Join(authority.preparer.Close(context.Background()), authority.work.Close())
 }
 
 // evaluationExecution owns one worker's diagnostic, writable project clones, verifier state, home, temporary files, and Go caches.
 type evaluationExecution struct {
-	diagnostic   *eval.LocalGuidanceDiagnostic
+	diagnostic   evaluationComparisonDiagnostic
 	workRoot     string
 	artifactRoot string
-	environments map[string][]string
 	redactor     eval.Redactor
+	work         *evaluationWorkRoot
+}
+
+// evaluationComparisonDiagnostic keeps worker orchestration testable without weakening the concrete Atlas diagnostic used in production.
+type evaluationComparisonDiagnostic interface {
+	Run(context.Context, eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error)
+	RunTreatment(context.Context, eval.LocalDiagnosticTreatmentRequest) (eval.GuidanceDiagnosticAttempt, error)
+}
+
+// evaluationWorkRoot keeps the command workspace leased until every process and cleanup step has finished.
+type evaluationWorkRoot struct {
+	path  string
+	lease *os.File
+}
+
+// Close releases the liveness lease before removing the command-owned workspace.
+func (root *evaluationWorkRoot) Close() error {
+	if root == nil {
+		return nil
+	}
+	if root.lease == nil {
+		return removeEvaluationWorkRoot(root.path)
+	}
+	unlockErr := unlockEvaluationLease(root.lease)
+	closeErr := root.lease.Close()
+	removeErr := removeEvaluationWorkRoot(root.path)
+	root.lease = nil
+	return errors.Join(unlockErr, closeErr, removeErr)
 }
 
 // newEvaluationExecution creates only one worker's private treatment environments from the invocation's frozen authority.
 func newEvaluationExecution(invocation evaluationInvocation, authority evaluationAuthority, profiles []string) (execution *evaluationExecution, runErr error) {
-	selectedProfiles, err := evaluationProfiles(profiles)
+	if _, err := evaluationProfiles(profiles); err != nil {
+		return nil, err
+	}
+	work, err := newEvaluationWorkRoot()
 	if err != nil {
 		return nil, err
 	}
-	workRoot, err := newEvaluationWorkRoot()
-	if err != nil {
-		return nil, err
-	}
+	workRoot := work.path
 	defer func() {
 		if runErr != nil {
-			runErr = cleanupEvaluationSetupFailure(workRoot, runErr)
+			runErr = errors.Join(runErr, work.Close())
 		}
 	}()
-	environments := make(map[string][]string, len(selectedProfiles))
-	for _, profile := range selectedProfiles {
-		environment, environmentErr := evaluationEnvironment(filepath.Join(workRoot, profile), authority.forjExecutable)
-		if environmentErr != nil {
-			return nil, environmentErr
-		}
-		environments[profile] = environment
-	}
 	// Verifiers may read prepared module archives, so their seed must never come from agent-writable treatment state.
 	diagnostic, err := eval.NewLocalGuidanceDiagnostic(eval.LocalGuidanceDiagnosticOptions{
 		WorkRoot:            workRoot,
@@ -588,36 +762,67 @@ func newEvaluationExecution(invocation evaluationInvocation, authority evaluatio
 	}
 	return &evaluationExecution{
 		diagnostic: diagnostic, workRoot: workRoot, artifactRoot: authority.artifactRoot,
-		environments: environments, redactor: authority.redactor,
+		redactor: authority.redactor, work: work,
 	}, nil
 }
 
-// cleanupEvaluationSetupFailure preserves cleanup errors alongside the setup error that caused a disposable root to be abandoned.
-func cleanupEvaluationSetupFailure(root string, setupErr error) error {
-	return cleanupEvaluationSetupFailureWith(root, setupErr, removeEvaluationWorkRoot)
-}
-
-// cleanupEvaluationSetupFailureWith retains a setup failure and the result of removing its partially initialized root.
-func cleanupEvaluationSetupFailureWith(root string, setupErr error, remove func(string) error) error {
-	return errors.Join(setupErr, remove(root))
-}
-
 // newEvaluationWorkRoot creates a disposable command workspace in the user cache, independent from retained artifacts and system temporary cleanup.
-func newEvaluationWorkRoot() (string, error) {
+func newEvaluationWorkRoot() (*evaluationWorkRoot, error) {
 	cacheRoot, err := os.UserCacheDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve evaluation work-state cache: %w", err)
+		return nil, fmt.Errorf("resolve evaluation work-state cache: %w", err)
 	}
 	return newEvaluationWorkRootAt(cacheRoot)
 }
 
 // newEvaluationWorkRootAt creates one disposable command workspace below an explicit cache root.
-func newEvaluationWorkRootAt(cacheRoot string) (string, error) {
+func newEvaluationWorkRootAt(cacheRoot string) (*evaluationWorkRoot, error) {
 	workStateRoot, err := resolveEvaluationWorkStateRootAt(cacheRoot)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return os.MkdirTemp(workStateRoot, "command-")
+	if err := pruneStaleEvaluationWorkRoots(workStateRoot, time.Now()); err != nil {
+		return nil, err
+	}
+	root, err := os.MkdirTemp(workStateRoot, "command-")
+	if err != nil {
+		return nil, err
+	}
+	if err := writeEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+		return nil, errors.Join(err, os.RemoveAll(root))
+	}
+	lease, err := openEvaluationWorkRootLease(root, true)
+	if err != nil {
+		return nil, errors.Join(err, removeEvaluationWorkRoot(root))
+	}
+	if err := lockEvaluationLease(lease); err != nil {
+		return nil, errors.Join(err, lease.Close(), removeEvaluationWorkRoot(root))
+	}
+	return &evaluationWorkRoot{path: root, lease: lease}, nil
+}
+
+// openEvaluationWorkRootLease opens an owned regular lease file without following a final symlink.
+func openEvaluationWorkRootLease(root string, create bool) (*os.File, error) {
+	path := filepath.Join(root, evaluationWorkRootLease)
+	flags := os.O_RDWR
+	if create {
+		flags |= os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open evaluation work-root lease: %w", err)
+	}
+	info, statErr := file.Stat()
+	pathInfo, pathErr := os.Lstat(path)
+	if statErr != nil || pathErr != nil || !info.Mode().IsRegular() || pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, pathInfo) {
+		_ = file.Close()
+		return nil, fmt.Errorf("evaluation work-root lease must be one stable regular file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		_ = file.Close()
+		return nil, fmt.Errorf("evaluation work-root lease must not be group or world accessible")
+	}
+	return file, nil
 }
 
 // resolveEvaluationWorkStateRootAt creates and verifies the private cache subtree below one explicit user-cache root.
@@ -637,6 +842,63 @@ func resolveEvaluationWorkStateRootAt(cacheRoot string) (string, error) {
 		return "", fmt.Errorf("evaluation work-state root permissions must be 0700")
 	}
 	return workStateRoot, nil
+}
+
+// pruneStaleEvaluationWorkRoots removes a bounded number of abandoned owned roots after an exclusive lease proves they are inactive.
+func pruneStaleEvaluationWorkRoots(workStateRoot string, now time.Time) error {
+	directory, err := os.Open(workStateRoot)
+	if err != nil {
+		return fmt.Errorf("open evaluation work-state root: %w", err)
+	}
+	entries, readErr := directory.Readdir(evaluationStaleWorkRootScanLimit + 1)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return errors.Join(fmt.Errorf("scan stale evaluation work roots: %w", readErr), closeErr)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if len(entries) > evaluationStaleWorkRootScanLimit {
+		return fmt.Errorf("evaluation work-state root exceeds %d entries; inspect and remove abandoned owned roots before retrying", evaluationStaleWorkRootScanLimit)
+	}
+	removed := 0
+	for _, entry := range entries {
+		if removed >= evaluationStaleWorkRootPruneLimit || !entry.IsDir() || !strings.HasPrefix(entry.Name(), "command-") {
+			continue
+		}
+		root := filepath.Join(workStateRoot, entry.Name())
+		markerPath := filepath.Join(root, evaluationWorkRootMarker)
+		marker, err := os.Lstat(markerPath)
+		if err != nil || !marker.Mode().IsRegular() || marker.Mode()&os.ModeSymlink != 0 || now.Sub(marker.ModTime()) < evaluationStaleWorkRootAge {
+			continue
+		}
+		if err := verifyEvaluationOwnershipMarker(root, evaluationWorkRootMarker, evaluationWorkRootIdentity); err != nil {
+			continue
+		}
+		lease, err := openEvaluationWorkRootLease(root, false)
+		if err != nil {
+			continue
+		}
+		locked, lockErr := tryLockEvaluationLease(lease)
+		if lockErr != nil {
+			_ = lease.Close()
+			return fmt.Errorf("inspect stale evaluation work root %q lease: %w", entry.Name(), lockErr)
+		}
+		if !locked {
+			_ = lease.Close()
+			continue
+		}
+		unlockErr := unlockEvaluationLease(lease)
+		closeErr := lease.Close()
+		if err := errors.Join(unlockErr, closeErr); err != nil {
+			return fmt.Errorf("release stale evaluation work root %q lease: %w", entry.Name(), err)
+		}
+		if err := removeEvaluationWorkRoot(root); err != nil {
+			return fmt.Errorf("remove stale evaluation work root %q: %w", entry.Name(), err)
+		}
+		removed++
+	}
+	return nil
 }
 
 // evaluationProfiles validates and de-duplicates the diagnostic treatment set before creating persistent artifacts.
@@ -663,7 +925,7 @@ func (execution *evaluationExecution) Close() error {
 	if execution == nil {
 		return nil
 	}
-	return removeEvaluationWorkRoot(execution.workRoot)
+	return execution.work.Close()
 }
 
 // validateEvaluationTrials bounds accidental model spend while keeping repeated experiments explicit.
@@ -786,20 +1048,20 @@ func removeEvaluationWorkRoot(root string) error {
 	return errors.Join(walkErr, os.RemoveAll(root))
 }
 
-// resolveEvalCredential requires an explicit disposable credential so diagnostics never silently inherit a developer's normal login.
-func resolveEvalCredential(candidate string) (string, error) {
+// readEvalCredential freezes one explicit private credential so later path changes cannot substitute normal developer authority.
+func readEvalCredential(candidate string) (eval.CodexCredential, error) {
 	if strings.TrimSpace(candidate) == "" {
-		return "", fmt.Errorf("Codex credential is required; pass a disposable, revocable auth.json with --credential")
+		return eval.CodexCredential{}, fmt.Errorf("Codex credential is required; pass a disposable, revocable auth.json with --credential")
 	}
-	path, err := filepath.Abs(candidate)
+	file, err := readPrivateEvaluationFile(candidate, "Codex credential", maxEvaluationCredentialSize)
 	if err != nil {
-		return "", err
+		return eval.CodexCredential{}, err
 	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("Codex credential %q is not a regular file", path)
+	credential, err := eval.NewCodexCredential(file.body)
+	if err != nil {
+		return eval.CodexCredential{}, err
 	}
-	return path, nil
+	return credential, nil
 }
 
 // resolveEvalArtifactRoot selects a retained private directory outside every disposable agent Project.
@@ -820,6 +1082,9 @@ func resolveEvalArtifactRoot(candidate string) (string, error) {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return "", fmt.Errorf("create evaluation artifact root: %w", err)
 		}
+		if err := writeEvaluationOwnershipMarker(path, evaluationArtifactRootMarker, evaluationArtifactRootIdentity); err != nil {
+			return "", errors.Join(err, os.Remove(path))
+		}
 		return path, nil
 	}
 	if err != nil {
@@ -835,11 +1100,14 @@ func resolveEvalArtifactRoot(candidate string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read evaluation artifact root: %w", err)
 	}
-	if len(entries) > 0 {
-		marker, err := os.Lstat(filepath.Join(path, ".manifest-key"))
-		if err != nil || !marker.Mode().IsRegular() {
-			return "", fmt.Errorf("non-empty evaluation artifact root is not owned by Atlas evaluation")
+	if len(entries) == 0 {
+		if err := writeEvaluationOwnershipMarker(path, evaluationArtifactRootMarker, evaluationArtifactRootIdentity); err != nil {
+			return "", err
 		}
+		return path, nil
+	}
+	if err := verifyEvaluationOwnershipMarker(path, evaluationArtifactRootMarker, evaluationArtifactRootIdentity); err != nil {
+		return "", fmt.Errorf("non-empty evaluation artifact root is not owned by Atlas evaluation: %w", err)
 	}
 	return path, nil
 }
@@ -857,55 +1125,176 @@ func marshalRedactedEvaluation(value any, redactor eval.Redactor) ([]byte, error
 	return json.MarshalIndent(redactor.JSONValue(decoded), "", "  ")
 }
 
-// loadOrCreateEvalArtifactKey keeps retained manifests verifiable across diagnostic commands.
-func loadOrCreateEvalArtifactKey(root string) ([]byte, error) {
-	path := filepath.Join(root, ".manifest-key")
-	key, err := os.ReadFile(path)
-	if err == nil {
-		if len(key) != 32 {
-			return nil, fmt.Errorf("evaluation artifact key has invalid length")
-		}
-		return key, nil
-	}
-	if !os.IsNotExist(err) {
-		return nil, err
-	}
-	key = make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+// readEvalArtifactKey freezes an external authentication key before an artifact operation begins.
+func readEvalArtifactKey(path, artifactRoot string) ([]byte, error) {
+	keyFile, err := readPrivateEvaluationFile(path, "evaluation artifact key", maxEvaluationArtifactKeySize)
 	if err != nil {
-		if os.IsExist(err) {
-			existing, readErr := os.ReadFile(path)
-			if readErr == nil && len(existing) == 32 {
-				return existing, nil
-			}
-		}
 		return nil, err
 	}
-	_, writeErr := file.Write(key)
-	closeErr := file.Close()
-	if err := errors.Join(writeErr, closeErr); err != nil {
-		return nil, errors.Join(err, os.Remove(path))
-	}
-	return key, nil
-}
-
-// readEvalArtifactKey loads the existing root key without creating trust material while reporting retained evidence.
-func readEvalArtifactKey(root string) ([]byte, error) {
-	key, err := os.ReadFile(filepath.Join(root, ".manifest-key"))
+	root, err := filepath.Abs(artifactRoot)
 	if err != nil {
-		return nil, fmt.Errorf("read evaluation artifact key: %w", err)
+		return nil, fmt.Errorf("resolve evaluation artifact root: %w", err)
 	}
-	if len(key) != 32 {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve evaluation artifact root links: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, keyFile.resolvedPath)
+	if err != nil || relative == "." || relative == ".." || !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("evaluation artifact key must be outside the artifact root")
+	}
+	if len(keyFile.body) < 32 {
 		return nil, fmt.Errorf("evaluation artifact key has invalid length")
 	}
-	return key, nil
+	return append([]byte(nil), keyFile.body...), nil
+}
+
+// privateEvaluationFile is one descriptor-verified supervisor input frozen before concurrent diagnostics begin.
+type privateEvaluationFile struct {
+	body         []byte
+	resolvedPath string
+}
+
+// readPrivateEvaluationFile rejects mutable link endpoints and broad permissions before reading a bounded supervisor input once.
+func readPrivateEvaluationFile(candidate, label string, limit int64) (privateEvaluationFile, error) {
+	path, err := filepath.Abs(candidate)
+	if err != nil {
+		return privateEvaluationFile{}, fmt.Errorf("resolve %s: %w", label, err)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return privateEvaluationFile{}, fmt.Errorf("resolve %s links: %w", label, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return privateEvaluationFile{}, fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return privateEvaluationFile{}, fmt.Errorf("%s must be a regular file", label)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return privateEvaluationFile{}, fmt.Errorf("%s must not be group or world accessible", label)
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return privateEvaluationFile{}, fmt.Errorf("open %s: %w", label, err)
+	}
+	opened, statErr := file.Stat()
+	if statErr != nil || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return privateEvaluationFile{}, fmt.Errorf("%s changed while it was opened", label)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(file, limit+1))
+	closeErr := file.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return privateEvaluationFile{}, fmt.Errorf("read %s: %w", label, err)
+	}
+	if int64(len(body)) > limit {
+		return privateEvaluationFile{}, fmt.Errorf("%s exceeds %d bytes", label, limit)
+	}
+	return privateEvaluationFile{body: body, resolvedPath: resolved}, nil
+}
+
+// writeEvaluationOwnershipMarker claims an otherwise empty supervisor-owned directory without storing authentication authority in it.
+func writeEvaluationOwnershipMarker(root, name, identity string) error {
+	path := filepath.Join(root, name)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create evaluation ownership marker: %w", err)
+	}
+	_, writeErr := io.WriteString(file, identity)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return errors.Join(err, os.Remove(path))
+	}
+	return nil
+}
+
+// verifyEvaluationOwnershipMarker distinguishes reusable Atlas directories from unrelated caller content.
+func verifyEvaluationOwnershipMarker(root, name, identity string) error {
+	path := filepath.Join(root, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("ownership marker must be a regular file")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if string(body) != identity {
+		return fmt.Errorf("ownership marker identity is invalid")
+	}
+	return nil
 }
 
 // evaluationEnvironment gives both treatments identical private Go caches and a fixed developer tool surface.
 func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
+	tools, err := newEvaluationTools(filepath.Join(workRoot, "tools"), forjExecutable)
+	if err != nil {
+		return nil, err
+	}
+	return evaluationEnvironmentWithTools(workRoot, tools)
+}
+
+// evaluationTools is one command-owned immutable executable snapshot shared by job-private environments.
+type evaluationTools struct {
+	digest string
+	dir    string
+}
+
+// newEvaluationTools snapshots the fixed command surface once before concurrent diagnostics begin.
+func newEvaluationTools(directory, forjExecutable string) (evaluationTools, error) {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return evaluationTools{}, err
+	}
+	digest, err := installEvaluationTools(directory, forjExecutable)
+	if err != nil {
+		return evaluationTools{}, err
+	}
+	if err := os.Chmod(directory, 0o500); err != nil {
+		return evaluationTools{}, fmt.Errorf("seal evaluation tool snapshot: %w", err)
+	}
+	return evaluationTools{dir: directory, digest: digest}, nil
+}
+
+// Verify detects same-user mutations to the shared tool snapshot before they can contaminate another job.
+func (tools evaluationTools) Verify() error {
+	digest, err := digestEvaluationTools(tools.dir)
+	if err != nil {
+		return err
+	}
+	if digest != tools.digest {
+		return fmt.Errorf("evaluation tool snapshot changed during diagnostic execution")
+	}
+	return nil
+}
+
+// newEvaluationJobEnvironments creates the paired treatment environments owned by one evaluation/trial job.
+func newEvaluationJobEnvironments(root string, tools evaluationTools) (map[string][]string, error) {
+	environments := make(map[string][]string, 2)
+	for _, profile := range []string{eval.GuidanceProfileNone, eval.GuidanceProfileAgents} {
+		environment, err := newEvaluationTreatmentEnvironment(root, profile, tools)
+		if err != nil {
+			return nil, err
+		}
+		environments[profile] = environment
+	}
+	return environments, nil
+}
+
+// newEvaluationTreatmentEnvironment gives one treatment its own writable process state below its job root.
+func newEvaluationTreatmentEnvironment(root, profile string, tools evaluationTools) ([]string, error) {
+	if profile != eval.GuidanceProfileNone && profile != eval.GuidanceProfileAgents {
+		return nil, fmt.Errorf("unsupported evaluation guidance profile %q", profile)
+	}
+	return evaluationEnvironmentWithTools(filepath.Join(root, profile), tools)
+}
+
+// evaluationEnvironmentWithTools gives one treatment private writable state while reusing the command-owned tool snapshot.
+func evaluationEnvironmentWithTools(workRoot string, tools evaluationTools) ([]string, error) {
 	goExecutable, err := exec.LookPath("go")
 	if err != nil {
 		return nil, fmt.Errorf("resolve Go executable: %w", err)
@@ -919,12 +1308,7 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 	goPath := filepath.Join(workRoot, "gopath")
 	home := filepath.Join(workRoot, "home")
 	temporary := filepath.Join(workRoot, "tmp")
-	toolsDir := filepath.Join(workRoot, "tools")
-	if err := errors.Join(os.MkdirAll(goCache, 0o700), os.MkdirAll(moduleCache, 0o700), os.MkdirAll(goPath, 0o700), os.MkdirAll(home, 0o700), os.MkdirAll(temporary, 0o700), os.MkdirAll(toolsDir, 0o700)); err != nil {
-		return nil, err
-	}
-	toolsDigest, err := installEvaluationTools(toolsDir, forjExecutable)
-	if err != nil {
+	if err := errors.Join(os.MkdirAll(goCache, 0o700), os.MkdirAll(moduleCache, 0o700), os.MkdirAll(goPath, 0o700), os.MkdirAll(home, 0o700), os.MkdirAll(temporary, 0o700)); err != nil {
 		return nil, err
 	}
 	overrides := map[string]string{
@@ -938,11 +1322,11 @@ func evaluationEnvironment(workRoot, forjExecutable string) ([]string, error) {
 		"GOWORK":                  "off",
 		"HOME":                    home,
 		"GOTMPDIR":                temporary,
-		"PATH":                    toolsDir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
+		"PATH":                    tools.dir + string(os.PathListSeparator) + filepath.Dir(goExecutable),
 		"TEMP":                    temporary,
 		"TMP":                     temporary,
 		"TMPDIR":                  temporary,
-		"ATLAS_EVAL_TOOLS_DIGEST": toolsDigest,
+		"ATLAS_EVAL_TOOLS_DIGEST": tools.digest,
 	}
 	base := baseEvaluationEnvironment()
 	environment := make([]string, 0, len(base)+len(overrides))
@@ -981,6 +1365,54 @@ func installEvaluationTools(toolsDir, forjExecutable string) (string, error) {
 		fmt.Fprintf(hash, "%s\x00%s\x00", name, digest)
 	}
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}
+
+// digestEvaluationTools recomputes the command snapshot identity without copying its executables again.
+func digestEvaluationTools(toolsDir string) (string, error) {
+	directory, err := os.Lstat(toolsDir)
+	if err != nil {
+		return "", fmt.Errorf("inspect evaluation tool snapshot: %w", err)
+	}
+	if !directory.IsDir() || directory.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("evaluation tool snapshot must be a real directory")
+	}
+	if runtime.GOOS != "windows" && directory.Mode().Perm()&0o222 != 0 {
+		return "", fmt.Errorf("evaluation tool snapshot directory became writable")
+	}
+	hash := sha256.New()
+	for _, name := range append([]string{"forj"}, evaluationSupportToolNames()...) {
+		path := filepath.Join(toolsDir, evaluationToolFileName(name))
+		info, err := os.Lstat(path)
+		if err != nil {
+			return "", fmt.Errorf("inspect evaluation tool %q: %w", name, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("evaluation tool %q must be a regular file", name)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o222 != 0 {
+			return "", fmt.Errorf("evaluation tool %q became writable", name)
+		}
+		input, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		fileHash := sha256.New()
+		_, copyErr := io.Copy(fileHash, input)
+		closeErr := input.Close()
+		if err := errors.Join(copyErr, closeErr); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(hash, "%s\x00sha256:%x\x00", name, fileHash.Sum(nil))
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}
+
+// evaluationToolFileName returns the platform-specific filename used in a tool snapshot.
+func evaluationToolFileName(name string) string {
+	if runtime.GOOS == "windows" && filepath.Ext(name) == "" {
+		return name + ".exe"
+	}
+	return name
 }
 
 // evaluationSupportToolNames keeps the diagnostic shell useful while making every available command an explicit harness decision.

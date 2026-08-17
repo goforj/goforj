@@ -49,7 +49,8 @@ entry point:
 forj atlas:eval run add-http-controller \
   --guidance agents \
   --model gpt-5.6-sol \
-  --credential /path/to/disposable-auth.json
+  --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
 The command should be a thin wrapper over an Atlas evaluation library. Projects
@@ -270,7 +271,8 @@ unknown-framework-shape            Ask for clarification without guessing
 forj atlas:eval run add-http-controller \
   --guidance agents \
   --model gpt-5.6-sol \
-  --credential /path/to/disposable-auth.json
+  --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
 The current command is deliberately diagnostic and uses the unconfined local
@@ -284,6 +286,7 @@ enforce those claims.
 forj atlas:eval compare add-http-controller \
   --model gpt-5.6-sol \
   --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key \
   --trials 5
 ```
 
@@ -298,24 +301,48 @@ forj atlas:eval suite core \
   --kind feature \
   --model gpt-5.6-sol \
   --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key \
   --workers 4 \
   --trials 3
 ```
 
 `--workers` runs complete `none`/`agents` pairs concurrently while keeping the
-two treatments in each pair sequential. The command owns immutable prepared
-bases; distinct base plans receive private writable preparation environments,
-and every worker owns separate Project, verifier, home, temporary, and Go cache
-state. Final results retain catalog order rather than completion order. The
-option speeds up unconfined diagnostics only. Different paths prevent ordinary
+two treatments in each pair sequential. The command serializes trusted base
+construction through one command-owned dependency seed that candidate code can
+never write. Every treatment and verifier still owns separate Project, home,
+temporary, and writable Go cache state. Final results retain catalog order
+rather than completion order. `--workers` speeds up unconfined diagnostics
+only. Different paths prevent ordinary
 collisions, but they are not a same-user security boundary: authoritative
 concurrent execution remains blocked on the isolated Phase 3 backend.
+
+Before creating authority or starting agents, the CLI verifies free space on
+the work-state volume using a conservative one GiB command allowance plus one
+GiB for each worker that can actually receive a job. A filtered one-evaluation
+suite therefore budgets one worker even when the caller requests eight. The
+guard is deliberately actionable: reduce `--workers` or free space rather than
+allowing concurrent Go caches to fail midway through evidence collection.
+Command roots hold an OS-level exclusive lease for their full lifetime. Crash
+recovery prunes only old, correctly marked roots whose lease can be acquired;
+elapsed time alone never makes a supported long-running suite disposable. The
+scan and each cleanup pass are bounded so a corrupted backlog cannot turn
+startup into an unbounded directory walk.
 
 ### Inspect a retained run
 
 ```bash
-forj atlas:eval report /path/to/run-artifacts/attempt-01J5Y6KQ7M4C
+forj atlas:eval report /path/to/run-artifacts/attempt-01J5Y6KQ7M4C \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
+
+Every command that writes or authenticates evidence requires the same external
+key file. It must be a private regular file outside `--artifacts`; the artifact
+root contains only an ownership marker and signed evidence, never the authority
+needed to forge that evidence. Roots created by the earlier embedded
+`.manifest-key` prototype are intentionally not reusable for new runs. To read
+legacy evidence, copy that key to a private external file, set its permissions
+to owner-only, and pass the copy to `report`; begin new runs in a fresh owned
+artifact root.
 
 The future authoritative output should be concise:
 
@@ -341,7 +368,8 @@ select:
 forj atlas:eval run add-http-controller \
   --guidance agents \
   --model gpt-5.6-sol \
-  --credential /path/to/disposable-auth.json
+  --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
 It may report deterministic artifact checks, but it cannot upgrade them into
@@ -573,10 +601,10 @@ The harness test matrix stays compact and contract-focused:
   action union, alias, merge, cycle, and unsupported version before mutation;
 - manifest resolution rejects missing or incompatible scenario, workflow, and
   verifier versions; and
-- targeted mutants calibrate every live verifier independently from the golden
-  recipe; representative flexible contracts, including controller and named
-  resource boundaries, also prove a second valid implementation family, while
-  exact generator-owned shapes remain intentionally exact;
+- golden Projects and proportional targeted mutants calibrate promoted
+  verifiers independently from the golden recipe; flexible contracts add
+  independently valid implementation families where the prompt can remain
+  unambiguous, while exact generator-owned shapes remain intentionally exact;
 
 Atlas deterministic workflow fixtures should expose a separate stable,
 versioned `WorkflowExpectationID`. A live definition imports that expectation
@@ -904,7 +932,10 @@ Suggested override:
 
 ```bash
 forj atlas:eval run add-http-controller \
-  --project-cache-dir /tmp/atlas-eval-projects
+  --project-cache-dir /tmp/atlas-eval-projects \
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
 ### Cache key
@@ -1110,7 +1141,11 @@ reuse within one invocation. In Phase 5, the same flag also bypasses the
 persistent cache:
 
 ```bash
-forj atlas:eval run add-http-controller --no-project-cache
+forj atlas:eval run add-http-controller \
+  --no-project-cache \
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
 ### Cache verification
@@ -1223,7 +1258,10 @@ capabilities:
 
 ```bash
 forj atlas:eval run add-http-controller \
-  --guidance agents,skill:goforj-add-http-route,tool:workflow-plan
+  --guidance agents,skill:goforj-add-http-route,tool:workflow-plan \
+  --model gpt-5.6-sol \
+  --credential /path/to/disposable-auth.json \
+  --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
 The run manifest must record the resolved files, skill versions, MCP tools, and
@@ -1605,16 +1643,19 @@ filters, or tool configuration from the agent-writable tree as trusted code.
 
 ### Verifier calibration
 
-Every scenario verifier should include known-good variants and deliberate
-mutants. Each named invariant must reject its intended mutant without rejecting
+Promoted core verifiers require a golden Project and at least one meaningful
+behavioral mutant for every verifier that makes a behavioral claim. Incident-
+driven and high-risk invariants require targeted mutants as they are promoted.
+Each named invariant must reject its intended mutant without rejecting
 acceptable implementation variation.
 
-Each verifier version owns a calibration registry. Every required invariant
-records its positive implementation variants, targeted negative mutants,
-framework/version applicability, owner, review trigger, and false-positive or
-false-negative incidents from live triage. No required gate ships without at
-least one independently authored positive variant and one targeted negative
-mutant. Framework, generator, or verifier releases rerun the complete registry.
+An exhaustive per-invariant, versioned calibration registry remains a later
+qualification tier. That registry will record positive implementation variants,
+targeted negative mutants, framework/version applicability, owner, review
+trigger, and false-positive or false-negative incidents from live triage.
+Framework, generator, or verifier releases rerun the applicable registry once
+that tier is established; it is not a blocker for the focused core diagnostic
+portfolio.
 
 The controller scenario, for example, should calibrate against:
 
@@ -1645,10 +1686,10 @@ model and belong in ordinary CI. The marker catches ordinary premature process
 exit; it is not an adversarial proof because unconfined candidate code can
 inspect the clone. Authoritative claims still require the isolated backend.
 
-At least two valid implementations for each core target should differ in
-nonessential names or structure, such as an existing domain service versus a
-use-case or query boundary. They prove the oracle recognizes framework and
-behavioral invariants rather than one golden implementation.
+Where a task stays unambiguous without prescribing a source layout, promoted
+prompts and probes should permit independently valid names or structure, such
+as an existing domain service versus a use-case or query boundary. Broader
+multi-variant coverage belongs to the later qualification tier.
 
 ### 4. Qualitative review
 
@@ -1806,9 +1847,11 @@ failure layered on every agent outcome.
 ## Initial Scenario Suite
 
 The promoted core suite should stay focused while covering the highest-leverage
-framework decisions. It currently contains 30 promoted evaluations; adding a
-surface requires a versioned workflow, semantic verifier, executable GoForj
-scenario, positive calibration, and a targeted mutant.
+framework decisions. Its current 30 evaluations are focused framework
+diagnostics, not representative evidence or macro guidance-efficacy guidance.
+Adding a surface requires a versioned workflow, semantic verifier, executable
+GoForj scenario, golden calibration, and proportional behavioral or
+incident-targeted mutant coverage.
 
 Each live evaluation names its exact GoForj scenario, workflow, and verifier
 IDs. The promoted entries below now have those three independently versioned
@@ -1896,7 +1939,10 @@ Modified` response when the validator matches.
 ### `repair-wire-provider`
 
 Seed a missing provider and ask the agent to fix the build. Require inspection
-of provider sets and prohibit manual edits to `wire_gen.go`.
+of provider sets and prohibit manual edits to `wire_gen.go`. The verifier runs
+the supported full build path in its disposable clone and compares regenerated
+Wire output to the checked-in file, so stale or manually edited derived output
+fails without mutating candidate artifacts.
 
 ### `unknown-framework-shape`
 
@@ -2753,6 +2799,6 @@ disposable, revocable Codex credential. Copying that credential into private
 process state prevents ambient configuration from affecting attribution, but
 it does not hide provider authority from same-UID candidate code. Terminal
 output and retained artifacts must share one redaction policy, and the local
-manifest key provides post-run integrity checking rather than adversarial
-authentication. Authoritative execution requires brokered provider transport
-and artifact signing authority outside the candidate boundary.
+external manifest key provides post-run integrity checking rather than
+adversarial authentication. Authoritative execution requires brokered provider
+transport and artifact signing authority outside the candidate boundary.
