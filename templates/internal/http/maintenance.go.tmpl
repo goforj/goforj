@@ -64,6 +64,9 @@ func maintenanceHTML(appName string) []byte {
 func (s *Server) maintenanceMode() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
+			if maintenanceControlRequest(r) && !maintenanceControlLocal(r) {
+				return r.NoContent(http.StatusNotFound)
+			}
 			if s.maintenancePathAllowed(r) {
 				return next(r)
 			}
@@ -74,6 +77,15 @@ func (s *Server) maintenanceMode() web.Middleware {
 			return s.maintenanceResponse(r)
 		}
 	}
+}
+
+// maintenanceControlRequest recognizes only the two framework-owned mutation routes.
+func maintenanceControlRequest(r web.Context) bool {
+	request := r.Request()
+	if request == nil || request.URL == nil || request.Method != http.MethodPost {
+		return false
+	}
+	return request.URL.Path == "/-/maintenance/enable" || request.URL.Path == "/-/maintenance/disable"
 }
 
 // maintenanceRoutes exposes the authenticated control plane used by the generated CLI commands.
@@ -91,7 +103,10 @@ func (s *Server) maintenanceRoutes() []web.RouteGroup {
 
 // enableMaintenance changes the backend only after diagnostic-token authorization.
 func (s *Server) enableMaintenance(r web.Context) error {
-	if !maintenanceControlLocal(r) || !diagnosticsAuthorized(r) {
+	if !maintenanceControlLocal(r) {
+		return r.NoContent(http.StatusNotFound)
+	}
+	if !diagnosticsAuthorized(r) {
 		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 	}
 	if err := s.maintenance.Enable(); err != nil {
@@ -102,7 +117,10 @@ func (s *Server) enableMaintenance(r web.Context) error {
 
 // disableMaintenance clears command-managed state without overriding deployment policy.
 func (s *Server) disableMaintenance(r web.Context) error {
-	if !maintenanceControlLocal(r) || !diagnosticsAuthorized(r) {
+	if !maintenanceControlLocal(r) {
+		return r.NoContent(http.StatusNotFound)
+	}
+	if !diagnosticsAuthorized(r) {
 		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 	}
 	if err := s.maintenance.Disable(); err != nil {
@@ -142,14 +160,15 @@ func (s *Server) maintenancePathAllowed(r web.Context) bool {
 	switch path {
 	case "/-/health", "/-/ready":
 		return request.Method == http.MethodGet || request.Method == http.MethodHead
-	case "/-/maintenance/enable", "/-/maintenance/disable":
-		return request.Method == http.MethodPost
 	case "/metrics":
 {{- if .ProjectComponents.Metrics }}
 		return s.metrics != nil && (request.Method == http.MethodGet || request.Method == http.MethodHead)
 {{- else }}
 		return false
 {{- end }}
+	}
+	if maintenanceControlRequest(r) {
+		return maintenanceControlLocal(r)
 	}
 	if !lighthouse.Enabled() || s.consoleHub == nil {
 		return false
