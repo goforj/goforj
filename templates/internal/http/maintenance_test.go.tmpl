@@ -171,8 +171,8 @@ func TestMaintenanceControlRequiresDiagnosticToken(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, applicationRecorder.Code)
 }
 
-// TestMaintenanceControlRejectsNonLoopbackCallers keeps public application traffic out of the control plane.
-func TestMaintenanceControlRejectsNonLoopbackCallers(t *testing.T) {
+// TestMaintenanceControlHidesFromNonLoopbackCallers keeps the control plane indistinguishable from an absent route.
+func TestMaintenanceControlHidesFromNonLoopbackCallers(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	server := newMaintenanceTestServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/enable", nil)
@@ -180,7 +180,21 @@ func TestMaintenanceControlRejectsNonLoopbackCallers(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer maintenance-test-token")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Empty(t, recorder.Body.String())
+}
+
+// TestMaintenanceControlDoesNotBypassMaintenanceForNonLoopbackCallers prevents the hidden route from revealing itself while traffic is gated.
+func TestMaintenanceControlDoesNotBypassMaintenanceForNonLoopbackCallers(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_ENABLED", "true")
+	server := newMaintenanceTestServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/disable", nil)
+	request.RemoteAddr = "192.0.2.10:32100"
+	request.Header.Set("Authorization", "Bearer maintenance-test-token")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Empty(t, recorder.Body.String())
 }
 
 // TestMaintenanceDisableCannotOverrideEnvironmentPolicy keeps deployment ownership authoritative.
