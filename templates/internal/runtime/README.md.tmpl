@@ -66,14 +66,14 @@ func (r *LifecycleRegistry) Shutdown(ctx context.Context) error {
 
 ## Maintenance Lifecycle
 
-The framework-owned `maintenance:enable` and `maintenance:disable` commands call an authenticated control endpoint on the selected App without booting its dependency graph:
+The framework-owned `maintenance:enable` and `maintenance:disable` commands call an authenticated loopback control endpoint on the selected App without booting its dependency graph. Run them inside the same host or container network namespace as the HTTP runtime:
 
 - HTTP rejects new application requests with `503`; requests already inside an application handler may finish.
 - Queue workers and scheduled tasks continue normally. Maintenance mode controls web availability only.
 
-`APP_MAINTENANCE_DRIVER=memory` is the dependency-free local default and changes the HTTP process reached through `APP_URL`. Production deployments should use `APP_MAINTENANCE_DRIVER=cache` with a distributed generated cache resource so maintenance survives process replacement and reaches every replica. `APP_MAINTENANCE_STORE` names that resource, such as `default` or `operations`; the resource keeps its existing `CACHE_*` driver and connection configuration.
+`APP_MAINTENANCE_DRIVER=memory` is the dependency-free local default and changes the HTTP process listening on `127.0.0.1` at the selected App's configured HTTP port. Production deployments should use `APP_MAINTENANCE_DRIVER=cache` with a distributed generated cache resource so maintenance survives process replacement and reaches every replica. `APP_MAINTENANCE_STORE` names that resource, such as `default` or `operations`; the resource keeps its existing `CACHE_*` driver and connection configuration.
 
-Memory mode is intentionally process-local and should not be used as production maintenance state. The control endpoint requires `Authorization: Bearer $APP_DIAG_TOKEN` and does not follow redirects, preventing the diagnostic token from being forwarded to a different host.
+Memory mode is intentionally process-local and should not be used as production maintenance state. The control endpoint accepts only loopback callers, requires `Authorization: Bearer $APP_DIAG_TOKEN`, and does not follow redirects.
 
 `APP_MAINTENANCE_ENABLED=true` is a per-process deployment override. It is authoritative over command-managed state, so `maintenance:disable` cannot make that HTTP process live; clear the environment setting and restart or redeploy it.
 

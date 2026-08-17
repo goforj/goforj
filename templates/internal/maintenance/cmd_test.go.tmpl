@@ -1,8 +1,11 @@
 package maintenance
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -20,7 +23,15 @@ func TestMaintenanceCommandsUseAuthenticatedControlEndpoint(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
-	t.Setenv("APP_URL", server.URL)
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	_, port, err := net.SplitHostPort(serverURL.Host)
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	t.Setenv("API_HTTP_PORT", port)
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 	if err := (&EnableCmd{}).Run(); err != nil {
 		t.Fatalf("maintenance enable: %v", err)
@@ -42,17 +53,41 @@ func TestMaintenanceCommandReportsControlFailure(t *testing.T) {
 		http.Error(w, "maintenance remains environment-enforced", http.StatusConflict)
 	}))
 	t.Cleanup(server.Close)
-	t.Setenv("APP_URL", server.URL)
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	_, port, err := net.SplitHostPort(serverURL.Host)
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	t.Setenv("API_HTTP_PORT", port)
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 	if err := (&DisableCmd{}).Run(); err == nil {
 		t.Fatal("maintenance:disable unexpectedly ignored endpoint failure")
 	}
 }
 
-// TestControlEndpointRejectsCredentialBearingURLs prevents diagnostic tokens from being sent to ambiguous targets.
-func TestControlEndpointRejectsCredentialBearingURLs(t *testing.T) {
-	t.Setenv("APP_URL", "https://user:password@example.com")
+// TestControlEndpointAlwaysUsesLoopback prevents public APP_URL configuration from receiving diagnostic credentials.
+func TestControlEndpointAlwaysUsesLoopback(t *testing.T) {
+	t.Setenv("APP_URL", "https://public.example.test/application")
+	t.Setenv("API_HTTP_PORT", "3210")
+	endpoint, err := controlEndpoint("enable")
+	if err != nil {
+		t.Fatalf("controlEndpoint() error = %v", err)
+	}
+	if endpoint != "http://127.0.0.1:3210/-/maintenance/enable" {
+		t.Fatalf("controlEndpoint() = %q", endpoint)
+	}
+	if strings.Contains(endpoint, "public.example.test") {
+		t.Fatal("controlEndpoint used APP_URL")
+	}
+}
+
+// TestControlEndpointRejectsInvalidPorts keeps configuration failures local and explicit.
+func TestControlEndpointRejectsInvalidPorts(t *testing.T) {
+	t.Setenv("API_HTTP_PORT", "invalid")
 	if _, err := controlEndpoint("enable"); err == nil {
-		t.Fatal("controlEndpoint accepted URL credentials")
+		t.Fatal("controlEndpoint accepted an invalid HTTP port")
 	}
 }

@@ -160,6 +160,7 @@ func TestMaintenanceControlRequiresDiagnosticToken(t *testing.T) {
 	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
 	server := newMaintenanceTestServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/enable", nil)
+	request.RemoteAddr = "127.0.0.1:32100"
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
@@ -168,6 +169,18 @@ func TestMaintenanceControlRequiresDiagnosticToken(t *testing.T) {
 	applicationRecorder := httptest.NewRecorder()
 	server.ServeHTTP(applicationRecorder, applicationRequest)
 	require.Equal(t, http.StatusNoContent, applicationRecorder.Code)
+}
+
+// TestMaintenanceControlRejectsNonLoopbackCallers keeps public application traffic out of the control plane.
+func TestMaintenanceControlRejectsNonLoopbackCallers(t *testing.T) {
+	t.Setenv("APP_MAINTENANCE_ENABLED", "false")
+	server := newMaintenanceTestServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/enable", nil)
+	request.RemoteAddr = "192.0.2.10:32100"
+	request.Header.Set("Authorization", "Bearer maintenance-test-token")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 }
 
 // TestMaintenanceDisableCannotOverrideEnvironmentPolicy keeps deployment ownership authoritative.
@@ -258,6 +271,7 @@ func newMaintenanceTestServerWithGroups(t *testing.T, groups []web.RouteGroup, c
 func setTestMaintenance(t *testing.T, server http.Handler, action string, wantStatus int) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, "/-/maintenance/"+action, nil)
+	request.RemoteAddr = "127.0.0.1:32100"
 	request.Header.Set("Authorization", "Bearer maintenance-test-token")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
