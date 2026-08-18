@@ -397,12 +397,21 @@ func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
 	if cwd, err := os.Getwd(); err != nil || cwd != sentinel {
 		t.Fatalf("working directory = %q, %v; want unchanged %q", cwd, err, sentinel)
 	}
-	for _, path := range []string{".goforj.yml", "go.mod", filepath.Join("cmd", "app", "main.go")} {
+	for _, path := range []string{".goforj.yml", "README.md", "go.mod", filepath.Join("cmd", "app", "main.go")} {
 		if _, err := os.Stat(filepath.Join(target, path)); err != nil {
 			t.Fatalf("target output %s: %v", path, err)
 		}
 		if _, err := os.Stat(filepath.Join(sentinel, path)); !os.IsNotExist(err) {
 			t.Fatalf("process cwd received project output %s: %v", path, err)
+		}
+	}
+	readme, err := os.ReadFile(filepath.Join(target, "README.md"))
+	if err != nil {
+		t.Fatalf("read generated project README: %v", err)
+	}
+	for _, expected := range []string{"twitter-banner.png", "# Rooted App", "forj dev", "forj build"} {
+		if !strings.Contains(string(readme), expected) {
+			t.Errorf("generated project README missing %q", expected)
 		}
 	}
 	assertNewProjectCommandsRootedAt(t, commandLog, target)
