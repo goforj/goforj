@@ -1609,20 +1609,32 @@ func newDormantDevWatcherRuntime(t *testing.T, out io.Writer, names ...string) *
 }
 
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
-	line := decorateWatcherLine("__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
-	if !contains(line, "Starting") {
-		t.Fatalf("expected starting label in trigger line: %q", line)
+	timestamp := time.Date(2026, time.August, 18, 20, 8, 57, 605_000_000, time.UTC)
+	tests := []struct {
+		name    string
+		watcher string
+		want    string
+	}{
+		{name: "default App", watcher: "Run App", want: "20:08:57.605 App          Starting"},
+		{name: "named App", watcher: "Run billing", want: "20:08:57.605 App          Starting"},
+		{name: "custom watcher", watcher: "API", want: "20:08:57.605 API          Starting"},
 	}
-	if !contains(line, "API") {
-		t.Fatalf("expected watcher name in trigger line: %q", line)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stripANSI(decorateWatcherLine(watcherTriggerMarker, test.watcher, timestamp)); got != test.want {
+				t.Fatalf("decorateWatcherLine() = %q, want %q", got, test.want)
+			}
+		})
 	}
-	if !contains(line, "./bin/app http:serve") {
-		t.Fatalf("expected command in trigger line: %q", line)
+	namedAppLine := decorateWatcherLine(watcherTriggerMarker, "Run billing", timestamp)
+	namedAppLine = decorateDevAppLogAppColumn(namedAppLine, "billing", len("billing"), true)
+	if got, want := stripANSI(namedAppLine), "20:08:57.605 billing App          Starting"; got != want {
+		t.Fatalf("named App trigger line = %q, want %q", got, want)
 	}
 }
 
 func TestDecorateWatcherLineFormatsANSIWrappedTriggerAsStarting(t *testing.T) {
-	line := decorateWatcherLine("\x1b[32m__FORJ_WATCHER_TRIGGER__\x1b[0m", "API", "./bin/app http:serve")
+	line := decorateWatcherLine("\x1b[32m__FORJ_WATCHER_TRIGGER__\x1b[0m", "API", time.Now())
 	if !contains(line, "Starting") {
 		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
@@ -1632,7 +1644,7 @@ func TestDecorateWatcherLineFormatsANSIWrappedTriggerAsStarting(t *testing.T) {
 }
 
 func TestDecorateWatcherLineFormatsSpinnerPrefixedTriggerAsStarting(t *testing.T) {
-	line := decorateWatcherLine("⠙__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
+	line := decorateWatcherLine("⠙__FORJ_WATCHER_TRIGGER__", "API", time.Now())
 	if !contains(line, "Starting") {
 		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
@@ -1642,7 +1654,7 @@ func TestDecorateWatcherLineFormatsSpinnerPrefixedTriggerAsStarting(t *testing.T
 }
 
 func TestDecorateWatcherLineUsesLastCarriageReturnSegment(t *testing.T) {
-	line := decorateWatcherLine("\r⠙ 1/4 build\r__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
+	line := decorateWatcherLine("\r⠙ 1/4 build\r__FORJ_WATCHER_TRIGGER__", "API", time.Now())
 	if !contains(line, "Starting") {
 		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
@@ -1674,7 +1686,7 @@ func TestFinalDevwatchTerminalFrameKeepsOnlyTheVisibleRedraw(t *testing.T) {
 
 func TestDevwatchWriterPreservesANSIForNormalOutput(t *testing.T) {
 	var out bytes.Buffer
-	writer := newDevwatchWriter(&out, nil, "stdout", "API", "./bin/app run", newDevwatchLifecycleState(0, nil))
+	writer := newDevwatchWriter(&out, nil, "stdout", "API", newDevwatchLifecycleState(0, nil))
 	if _, err := writer.Write([]byte("\x1b[31mred\x1b[0m\n")); err != nil {
 		t.Fatalf("writer returned error: %v", err)
 	}
